@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TDD RED → GREEN: output-headroom primitives (Fix 3 / Phase 166 CWF-02).
+ * Tests for the output-headroom primitives.
  *
  * Pure-function tests with arithmetic proof comments — no side effects, no I/O.
- * The characterization test pins the frontier/mid byte-identity invariant (WR-01 lesson:
- * always assert EXACT values, never merely "> 0").
+ * The characterization test pins the frontier/mid byte-identity invariant
+ * (always assert EXACT values, never merely "> 0").
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -59,7 +59,7 @@ describe("computeOutputHeadroom", () => {
   });
 
   it('returns 8960 for ("native", "high") — 8192 + 768', () => {
-    // THINKING_RESERVE[native][high] = 8192 (NVDA incident sizing); 8192 + 768 = 8960
+    // THINKING_RESERVE[native][high] = 8192 (sized to an observed high-thinking block); 8192 + 768 = 8960
     expect(computeOutputHeadroom("native", "high")).toBe(8_960);
   });
 
@@ -73,7 +73,7 @@ describe("computeOutputHeadroom", () => {
     expect(computeOutputHeadroom("native", "high")).toBeGreaterThan(
       computeOutputHeadroom("none", "high"),
     );
-    // Pin exact values (WR-01 lesson — never merely "> 0")
+    // Pin exact values — never merely "> 0"
     expect(computeOutputHeadroom("native", "high")).toBe(8_960);
     expect(computeOutputHeadroom("none", "high")).toBe(768);
   });
@@ -110,9 +110,9 @@ describe("downshiftThinkingLevel", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHARACTERIZATION: frontier/mid byte-identity invariant (WR-01)
-// computeTokenBudgetForProfile on a frontier profile must stay BYTE-IDENTICAL
-// to pre-Phase-166 — this plan does NOT touch token-budget.ts or budget-capacity-cap.ts.
+// CHARACTERIZATION: frontier/mid byte-identity invariant.
+// computeTokenBudgetForProfile on a frontier profile must stay BYTE-IDENTICAL —
+// the headroom primitives do NOT touch token-budget.ts or budget-capacity-cap.ts.
 // ---------------------------------------------------------------------------
 
 describe("computeTokenBudgetForProfile — frontier byte-identity characterization", () => {
@@ -137,10 +137,10 @@ describe("computeTokenBudgetForProfile — frontier byte-identity characterizati
 });
 
 // ---------------------------------------------------------------------------
-// ISSUE #3b (2026-06-22): computeFloorOutputHeadroom — the SINGLE floor-headroom
+// computeFloorOutputHeadroom — the SINGLE floor-headroom
 // source shared by the pre-flight bound and the fresh-tail residual. A native
 // model reserves the native "low" floor; under-counting it as the none floor is
-// the ~1024 gap that exhausted gpt-5-nano (live t6). The governor bottoms at "low"
+// the ~1024 gap that exhausted a live gpt-5-nano session. The governor bottoms at "low"
 // for native / "off" for none (downshiftThinkingLevel), so the floor == those levels.
 // ---------------------------------------------------------------------------
 describe("computeFloorOutputHeadroom — the shared governor-floor reserve", () => {

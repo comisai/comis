@@ -7,10 +7,10 @@ import type { MemorySearchResult } from "./memory.js";
  * recall (the "what else happened around then" lane — given the seed memories'
  * event times, surface OTHER memories near those times).
  *
- * This is a NEW port — it deliberately does NOT widen the security-reviewed
- * `MemoryPort` (store/search/delete). Per design §3.2 that surface is never
+ * This is a deliberately separate port — it does NOT widen the security-reviewed
+ * `MemoryPort` (store/search/delete). That surface is never
  * widened for agent use; new capabilities arrive as their own segregated port
- * (the same pattern as `MemoryEntityStore` §6.3 and `MemoryUsefulnessStore`).
+ * (the same pattern as `MemoryEntityStore` and `MemoryUsefulnessStore`).
  * The sole adapter is in @comis/memory (it owns the `db` handle and
  * runs the windowed SQL over the EXISTING `memories.occurred_at` column — NO new
  * table); the agent-side read path (memory-recall) consumes this port TYPE from

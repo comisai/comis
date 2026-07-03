@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for createFtsPopulator — the index-write half of FTS-01 (Phase
- * 180). These pin the populator's three contracts directly (the lcd-store.test.ts
+ * Unit tests for createFtsPopulator — the index-write half of the FTS search
+ * path. These pin the populator's three contracts directly (the lcd-store.test.ts
  * suite covers the wired end-to-end behavior; here we test the helper in
  * isolation against hand-built tables):
  *   1. NORMALIZATION applied — a twin row stores normalizeForSearch(content), so a
- *      folded query token matches and the RAW (un-folded) token does NOT (the I7
+ *      folded query token matches and the RAW (un-folded) token does NOT (the
  *      index side — the discriminator that proves the fold ran at write time).
  *   2. NULL-handle no-op — on a host WITHOUT the trigram twins, the guarded prep
  *      sets the twin handles null and the twin methods are clean no-ops (no throw).
- *   3. R4 columns from scope — the twin row carries the conversation_id + agent_id
+ *   3. Scope columns — the twin row carries the conversation_id + agent_id
  *      passed in the scope (the MATCH filters on them; a wrong scope finds nothing).
  *
- * Hebrew fixtures are codepoint-built (String.fromCodePoint; WR-01 — never literal
+ * Hebrew fixtures are codepoint-built (String.fromCodePoint — never literal
  * glyphs). "הספרים" normalizes to "הספרימ" (final mem folds; leading he kept).
  */
 import type { LcdMessagePart } from "@comis/core";
@@ -21,7 +21,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { createFtsPopulator } from "./lcd-store-fts-populate.js";
 
-// ── Hebrew fixtures (codepoint-built; WR-01) ────────────────────────────────
+// ── Hebrew fixtures (codepoint-built) ───────────────────────────────────────
 /** "הספרים" — he+samekh+pe+resh+yod+FINAL-mem (raw stored text). */
 const HE_HASFARIM_RAW = String.fromCodePoint(0x05d4, 0x05e1, 0x05e4, 0x05e8, 0x05d9, 0x05dd);
 /** "ספרימ" — samekh+pe+resh+yod+REGULAR-mem: the FOLDED query token (substring of "הספרימ"). */
@@ -60,11 +60,11 @@ function triMatch(db: Database.Database, table: string, matchExpr: string, conve
     .all(matchExpr, conversationId, agentId);
 }
 
-describe("createFtsPopulator — normalized trigram twin inserts (FTS-01)", () => {
+describe("createFtsPopulator — normalized trigram twin inserts", () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    // Full LCD schema incl. the 180-02 trigram twins (ensureLcdTables wires
+    // Full LCD schema incl. the trigram twins (ensureLcdTables wires
     // ensureTrigramTwins as its last statement). lcd_summaries is external-content
     // FTS-backed, so its INSERT trigger fires — harmless for the twin assertions.
     db = new Database(":memory:");
@@ -75,7 +75,7 @@ describe("createFtsPopulator — normalized trigram twin inserts (FTS-01)", () =
     ensureLcdTables(db);
   });
 
-  it("populateMessageTri stores the FOLDED content so a folded MATCH hits and the RAW token does not (I7 index side)", () => {
+  it("populateMessageTri stores the FOLDED content so a folded MATCH hits and the RAW token does not", () => {
     seedMessage(db, "m1", "conv", "agent");
     const pop = createFtsPopulator(db);
     pop.populateMessageTri("m1", textParts(HE_HASFARIM_RAW), { conversationId: "conv", agentId: "agent" });
@@ -95,7 +95,7 @@ describe("createFtsPopulator — normalized trigram twin inserts (FTS-01)", () =
     expect(triMatch(db, "lcd_summaries_fts_tri", quoted(HE_SFARIM_RAW), "conv", "agent")).toHaveLength(0);
   });
 
-  it("R4: the twin row carries the conversation_id + agent_id from the scope (a different agent's MATCH finds nothing)", () => {
+  it("the twin row carries the conversation_id + agent_id from the scope (a different agent's MATCH finds nothing)", () => {
     seedMessage(db, "m1", "conv", "agent-a");
     const pop = createFtsPopulator(db);
     pop.populateMessageTri("m1", textParts(HE_HASFARIM_RAW), { conversationId: "conv", agentId: "agent-a" });
@@ -167,11 +167,11 @@ describe("createFtsPopulator — null-handle no-op on a trigram-less host", () =
   });
 });
 
-describe("createFtsPopulator — per-twin prep independence on a partial-schema host (WR-01)", () => {
+describe("createFtsPopulator — per-twin prep independence on a partial-schema host", () => {
   let partial: Database.Database;
 
   beforeEach(() => {
-    // The PARTIAL-schema host WR-01 guards: the MESSAGE twin exists (its
+    // The PARTIAL-schema host this guards: the MESSAGE twin exists (its
     // ensureTrigramTwins block succeeded) but the SUMMARY twin does NOT (its block
     // failed — base tables diverged, a hand-edited dev db, or the summaries CREATE
     // threw while the messages one succeeded). schema-trigram.ts creates each twin
@@ -204,7 +204,7 @@ describe("createFtsPopulator — per-twin prep independence on a partial-schema 
     `);
   });
 
-  it("populateMessageTri still indexes into the PRESENT message twin even though the summary twin is absent (WR-01)", () => {
+  it("populateMessageTri still indexes into the PRESENT message twin even though the summary twin is absent", () => {
     // The defect: createFtsPopulator prepped all three twin statements in ONE
     // try/catch, so the absent-summary-twin prep threw and nulled ALL handles —
     // silently de-activating the message-twin write path even though

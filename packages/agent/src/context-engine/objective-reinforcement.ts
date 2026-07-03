@@ -7,8 +7,6 @@
  * when compaction has occurred -- avoids token waste on normal turns where
  * the objective is already present in the system prompt.
  *
- * - Objective survives compaction via transformContext hook
- *
  * @module
  */
 
@@ -43,7 +41,8 @@ function getMessageTextContent(msg: AgentMessage): string | undefined {
 /**
  * Check if a message is a compaction summary by inspecting both the
  * `compactionSummary` flag and the content text for the "[Compaction Summary]"
- * marker. Different versions of the compaction layer use different markers.
+ * marker. Both checks are needed: a summary may carry the runtime flag, the
+ * text marker, or both, depending on which compaction path produced it.
  */
 function isCompactionMessage(msg: AgentMessage): boolean {
   // Flag-based detection (typed as any since compactionSummary is a runtime extension)

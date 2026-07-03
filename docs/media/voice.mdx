@@ -76,19 +76,6 @@ multiple via `fallbackProviders` for automatic failover.
 | `groq` | whisper-large-v3-turbo | `GROQ_API_KEY` | Explicit opt-in; returns language detection and duration |
 | `deepgram` | nova-3 | `DEEPGRAM_API_KEY` | Explicit opt-in; high accuracy, real-time streaming |
 
-<Note>
-**Behavioral change (no backward-compat constraint):** earlier releases defaulted
-STT to `openai` and required `OPENAI_API_KEY`. The default is now `auto` (keyless).
-An install that relied on the implicit `openai` default plus a present
-`OPENAI_API_KEY` will resolve to `auto` → the keyless **local** whisper engine (it
-auto-downloads its model on the first voice note when ffmpeg is present and the host
-can reach the model hub), and honest-degrades to "not available" only if neither the
-local engine nor a reusable main-provider audio key can serve — **or** set
-`provider: openai` explicitly to restore the previous behavior. This is intentional:
-voice now works with zero credentials, and an OAuth-only main is never sent an
-empty-bearer request.
-</Note>
-
 <AccordionGroup>
   <Accordion title="auto (default, keyless-first)">
     The default. Resolves a provider in priority order: a keyless **local** whisper
@@ -193,7 +180,7 @@ choice depends on voice quality, budget, and whether you need an API key.
 | `elevenlabs` | eleven_multilingual_v2 | Rachel | `ELEVENLABS_API_KEY` | Paid (explicit opt-in) |
 
 <Note>
-**Behavioral change:** TTS defaults to `edge` (keyless) instead of `openai`. Edge
+**Keyless default:** TTS defaults to `edge`. Edge
 needs no key, so auto-reply works out of the box. A Codex/OAuth-only main also
 resolves to `edge`. Set `provider: openai` or `provider: elevenlabs` explicitly
 (with the matching key) for the paid providers.
@@ -484,8 +471,8 @@ is honest: Comis never fabricates a price it did not receive. (Token-based LLM
 cost for the agent's *reply* is tracked separately, as usual; this note is only
 about the STT/TTS calls themselves.)
 
-Voice turns appear in the existing per-session trajectory — this phase added no
-new on-disk artifact or data-directory path.
+Voice turns appear in the existing per-session trajectory — voice observability
+adds no new on-disk artifact or data-directory path.
 
 ## Related
 

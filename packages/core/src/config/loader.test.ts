@@ -309,7 +309,7 @@ integrations:
         memory: {
           dbPath: "/var/comis/memory.db",
           walMode: true,
-          // Phase 226: the recall keepers nest under memory.recall.
+          // The recall keys nest under memory.recall.
           recall: { embeddingModel: "text-embedding-3-small", embeddingDimensions: 1536 },
           compaction: { enabled: true, threshold: 500, targetSize: 250 },
           retention: { maxAgeDays: 90 },
@@ -422,7 +422,7 @@ integrations:
       }
     });
 
-    it("rejects old singular agent: key", () => {
+    it("rejects a singular agent: key (the agents: map is the only form)", () => {
       const result = validateConfig({ agent: { name: "TestBot" } });
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -430,7 +430,7 @@ integrations:
       }
     });
 
-    it("rejects old global skills: key", () => {
+    it("rejects a global skills: key (skills config is per-agent)", () => {
       const result = validateConfig({ skills: { toolPolicy: { profile: "full" } } });
       expect(result.ok).toBe(false);
       if (!result.ok) {

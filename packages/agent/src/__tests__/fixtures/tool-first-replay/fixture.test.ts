@@ -30,7 +30,7 @@ describe("Replay fixture invariants", () => {
     expect(messages[2].role).toBe("toolResult");
   });
 
-  it("encodes the v1 failure mode (assistant runs `pip install market-data-lib` via exec)", () => {
+  it("encodes the tool-first failure mode (assistant runs `pip install market-data-lib` via exec)", () => {
     const raw = readFileSync(resolve(here, "messages.json"), "utf8");
     const messages = JSON.parse(raw) as Message[];
     const installCalls = messages.flatMap((m) =>

@@ -136,11 +136,11 @@ describe("auth-domain contracts", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AuthSetContract — TDD: contract shape + residency canaries (04-01)
+// AuthSetContract — contract shape + residency canaries
 // ---------------------------------------------------------------------------
 
 describe("AuthSetContract", () => {
-  it("AUTH_CONTRACTS grows to exactly 3 entries after AuthSetContract addition", () => {
+  it("AUTH_CONTRACTS registers AuthSetContract (3 entries total)", () => {
     expect(AUTH_CONTRACTS.length).toBe(3);
   });
 

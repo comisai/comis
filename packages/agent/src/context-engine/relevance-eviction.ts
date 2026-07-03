@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DEPTH-01 — cache-stable relevance eviction of the evictable middle band.
+ * Cache-stable relevance eviction of the evictable middle band.
  *
  * The relevance-ranked replacement for the pure-recency middle-band fill at the
  * `margin-arbiter.ts:296` seam (`evictHistoryUnderBudget(middleBand, remainingPool)`). Where
@@ -10,7 +10,7 @@
  * SELECTION only — never output order (the downstream assembler assumes chronological order:
  * transcript repair + breakpoint math).
  *
- * Cache stability (the LOCKED #1 / lossless-claw §6.3 mistake to avoid — CONSERVATIVE gate):
+ * Cache stability (CONSERVATIVE gate — reordering a cached prefix is the costly mistake to avoid):
  *   - `supportsPromptCache === true` → DO NOT reorder. Return the recency fill
  *     (`evictHistoryUnderBudget`) so the cached prefix is byte-stable. A caching profile keeps
  *     recency above the cache fence; the "re-rank below the fence" sub-case is NOT built (the
@@ -21,9 +21,9 @@
  *   - `supportsPromptCache === false` (the typical local small/nano relevance-first
  *     population) → re-rank the full evictable band freely.
  *
- * Pinned survival (DEPTH-01 success criterion #2 / RETR-05): the middle band ALREADY excludes
- * S4 pins by construction (`margin-arbiter.ts:235`, step-atomic via `expandFloorsToStepIds`),
- * so the band this pass receives is pin-free. As DEFENSE-IN-DEPTH (the S4 suite extends to
+ * Pinned survival: the middle band ALREADY excludes security
+ * pins by construction (`margin-arbiter.ts:235`, step-atomic via `expandFloorsToStepIds`),
+ * so the band this pass receives is pin-free. As DEFENSE-IN-DEPTH (security pinning extends to
  * eviction), if a security-marked message nonetheless reaches the band (markers threaded), it
  * is separated out as an UNCONDITIONAL survivor (mirroring the arbiter's floor handling) and
  * is NEVER subject to the relevance budget — a relevance score can never evict a pin.
@@ -37,13 +37,13 @@
  *   - agent↛memory: it imports only `@comis/core` TYPES + in-package context-engine modules —
  *     never `@comis/memory` (forbidden by `test/architecture` "agent → memory"). The store
  *     arrives as the core `ContextStorePort` TYPE only (injected via `deps.contextStore`).
- *   - I2 (context-engine ↮ rag): the shared relevance scorer (`rag/relevance-scorer.ts`) is
+ *   - context-engine ↮ rag: the shared relevance scorer (`rag/relevance-scorer.ts`) is
  *     NOT imported — it is INJECTED as `deps.relevanceScorer` (DI at the budget boundary), and
  *     the `ArbiterRelevanceQuery`/`RelevanceScorerFn` shapes are the LOCAL structural contracts
- *     declared in `margin-arbiter.ts` (the rag types are structurally compatible). This is the
- *     exact cut that bit 173-03 — the relevance scorer is INJECTED, never imported.
+ *     declared in `margin-arbiter.ts` (the rag types are structurally compatible). The
+ *     relevance scorer is INJECTED, never imported.
  *
- * Match (WR-01, Phase 174-04): a band message is associated with its `searchLcd` hit by the
+ * Match: a band message is associated with its `searchLcd` hit by the
  * hit's STABLE `refId` (= `lcd_messages.id`), carried onto the BudgetItem as `lcdId` at
  * assembly (`lcd-assembler.resolveContextItem`). This is the robust match — a pure
  * `tool_use`/`tool_result` message (whose live block-text render is "" but whose stored FTS
@@ -56,7 +56,7 @@
  * `contextStore.searchLcd` read. Same input → same output (the FTS read is deterministic for a
  * fixed store + query). The `searchLcd` snippet is UNTRUSTED — on the id-less fallback it is
  * used ONLY transiently to associate a band message with its rank position and is NEVER logged
- * or returned (T-174-01-03); only the resulting ordinal rank drives selection.
+ * or returned; only the resulting ordinal rank drives selection.
  *
  * @module
  */
@@ -74,10 +74,10 @@ import type { ContextEngineDeps } from "./types.js";
  * pin-protecting replacement for the recency `evictHistoryUnderBudget(middleBand, poolTokens)`
  * at the margin-arbiter middle-band seam.
  *
- * @param deps - the context-engine deps (modelProfile, relevanceScorer, contextStore, R4 scope).
+ * @param deps - the context-engine deps (modelProfile, relevanceScorer, contextStore, read scope).
  * @param middleBand - the evictable (already pin-free by construction) history band + tokens.
  * @param poolTokens - the discretionary pool the middle band may consume (post-floors).
- * @param _liveMessages - CURRENTLY UNUSED (IN-02, Phase 174-04). The relevance query is built
+ * @param _liveMessages - CURRENTLY UNUSED. The relevance query is built
  *   UPSTREAM by the seam (`evictUnderArbiter` → `buildAssemblyRelevanceQuery`) and passed as
  *   `query`; this function never reads the live array. Retained for signature symmetry with the
  *   recency fill / a possible future in-function query refinement — prefixed `_` (unused).
@@ -91,8 +91,8 @@ export function rankMiddleBandByRelevance(
   _liveMessages: AgentMessage[],
   query: ArbiterRelevanceQuery,
 ): AgentMessage[] {
-  // --- Cache gate (CONSERVATIVE — LOCKED #1): a caching profile keeps recency. ---
-  // Reordering above the cache fence shreds the KV cache (the lossless-claw §6.3 mistake).
+  // --- Cache gate (CONSERVATIVE): a caching profile keeps recency. ---
+  // Reordering above the cache fence shreds the KV cache.
   // Returning the recency fill keeps the cached prefix byte-stable.
   if (deps.modelProfile?.supportsPromptCache === true) {
     return evictHistoryUnderBudget(middleBand, poolTokens);
@@ -105,10 +105,10 @@ export function rankMiddleBandByRelevance(
     return evictHistoryUnderBudget(middleBand, poolTokens);
   }
 
-  // --- Pinned survival (DEFENSE-IN-DEPTH, RETR-05): separate any security-marked item out
+  // --- Pinned survival (DEFENSE-IN-DEPTH): separate any security-marked item out
   //     of the relevance-evictable set as an UNCONDITIONAL survivor (never budget-evicted).
   //     The band is already pin-free by construction (margin-arbiter.ts:235); this is the
-  //     S4-extends-to-eviction backstop. Identity-tracked so the chronological restore re-admits
+  //     pinning-extends-to-eviction backstop. Identity-tracked so the chronological restore re-admits
   //     it regardless of the relevance budget. ---
   const markers = deps.securityPinMarkers;
   const pinnedMsgs = new Set<AgentMessage>();
@@ -125,9 +125,9 @@ export function rankMiddleBandByRelevance(
   }
 
   // --- FTS-the-band: rank the evictable band by BM25 relevance. ---
-  // The R4 scope is built from the same deps the assembler uses (WR-02 agent/tenant isolation).
+  // The read scope is built from the same deps the assembler uses (agent/tenant isolation).
   // searchLcd returns BM25-`rank`ed hits best-first; the per-item rank is the position of the
-  // hit whose STABLE `refId` (= lcd_messages.id) equals the band item's `lcdId` (WR-01 — the
+  // hit whose STABLE `refId` (= lcd_messages.id) equals the band item's `lcdId` (the
   // robust id-based match). Unmatched items rank WORST (after every matched item) — they fall
   // back to recency within the chronological restore. NB: the snippet is read ONLY for the
   // legacy id-less fallback association, never logged/returned.
@@ -140,9 +140,9 @@ export function rankMiddleBandByRelevance(
   // OR-join the (already alphanumeric, stopworded) terms so ANY term match ranks a message
   // (FTS5 MATCH of space-separated terms is implicit AND — an AND of the whole query almost
   // never matches a single historical message, which would silently degrade the pass to
-  // recency, the CR-01 no-op trap). The terms come from buildAssemblyRelevanceQuery's
-  // tokenizer (quotes + non-\p{L}\p{N} already stripped) AND ASSEMBLY_STOPWORDS now drops the
-  // FTS5 operator keywords near/and/or/not (IN-04), so the bare ` OR ` is FTS5-safe — no term
+  // recency — a no-op trap). The terms come from buildAssemblyRelevanceQuery's
+  // tokenizer (quotes + non-\p{L}\p{N} already stripped) AND ASSEMBLY_STOPWORDS drops the
+  // FTS5 operator keywords near/and/or/not, so the bare ` OR ` is FTS5-safe — no term
   // can be a bare operator that alters MATCH parsing.
   const ftsQuery = query.terms.join(" OR ");
   const result = store.searchLcd(scope, ftsQuery, {
@@ -155,11 +155,11 @@ export function rankMiddleBandByRelevance(
     return evictHistoryUnderBudget(middleBand, poolTokens);
   }
 
-  // WR-01: build the refId → best-first POSITION map ONCE. `searchLcd` returns hits ordered
+  // Build the refId → best-first POSITION map ONCE. `searchLcd` returns hits ordered
   // by relevance (BM25 rank on the FTS path; SELECT order on the LIKE fallback), and each hit
   // carries `refId` = lcd_messages.id. Keying on the stable id (not the snippet text) is the
   // robust match: a pure tool_use/tool_result message — whose live block-text render is "" but
-  // whose stored FTS snippet is the toolName+JSON envelope — now ranks correctly, and the
+  // whose stored FTS snippet is the toolName+JSON envelope — ranks correctly, and the
   // non-FTS5 LIKE fallback (snippet = metadata JSON, no BM25 rank) ranks too. First occurrence
   // of an id wins (best position). The snippet is NEVER read for an id-carrying item.
   const positionByRefId = new Map<string, number>();
@@ -169,7 +169,7 @@ export function rankMiddleBandByRelevance(
   }
 
   // Per-item relevance ordinal: lower = more relevant (best-first hit position). An item with a
-  // store `lcdId` matches by `refId` (WR-01 robust path); an id-less item (live/synthetic — no
+  // store `lcdId` matches by `refId` (the robust path); an id-less item (live/synthetic — no
   // store row) falls back to the legacy snippet-substring association. Unmatched → a large
   // sentinel so matched items always outrank them; ties broken by chronological index so the
   // order is total + deterministic.
@@ -198,7 +198,8 @@ export function rankMiddleBandByRelevance(
       const id = `band-${idx}`;
       idToItem.set(id, it);
       // content is intentionally empty — the scorer ranks the pre-ordered single FTS lane by
-      // position (single-lane identity), it does not re-tokenize content here (I2 cut clean).
+      // position (single-lane identity), it does not re-tokenize content here (keeps the
+      // context-engine ↮ rag cut clean).
       return { entry: { id, content: "" } as MemorySearchResult["entry"], score: undefined };
     });
 
@@ -230,7 +231,7 @@ export function rankMiddleBandByRelevance(
   const keptEvictable = new Set<AgentMessage>(evictHistoryUnderBudget(chronoAdmitted, poolTokens));
 
   // --- Stitch the kept history in ORIGINAL order: pins (UNCONDITIONAL, ride on top of the
-  //     pool — a relevance score can never evict a pin, RETR-05) PLUS the kept evictable set,
+  //     pool — a relevance score can never evict a pin) PLUS the kept evictable set,
   //     preserving middleBand order. The relevance pass drove SELECTION; output is chronological. ---
   const kept: AgentMessage[] = [];
   for (const it of middleBand) {
@@ -246,16 +247,16 @@ export function rankMiddleBandByRelevance(
 // ---------------------------------------------------------------------------
 
 /**
- * LEGACY id-less FALLBACK (WR-01): the relevance ordinal for a band message that has NO store
+ * LEGACY id-less FALLBACK: the relevance ordinal for a band message that has NO store
  * `lcdId` (a live/synthetic item — the fresh tail, a coalesced summary message, a unit fixture
  * with no id) — the position (0-based, best-first) of the FIRST FTS hit whose snippet contains
  * the message's rendered text. Returns a large sentinel when no hit matches (so matched items
  * always outrank unmatched ones). The snippet is used here ONLY for the transient match (never
  * logged/returned). A blank rendering never matches (→ sentinel).
  *
- * KNOWN RESIDUAL (DEPTH-01 limitation): this substring fallback STILL mis-handles a pure
+ * KNOWN RESIDUAL: this substring fallback STILL mis-handles a pure
  * tool_use/tool_result message (empty block-text render) and the non-FTS5 LIKE metadata-JSON
- * snippet for an id-less item. Store-resolved message-refs now carry `lcdId` and never reach
+ * snippet for an id-less item. Store-resolved message-refs carry `lcdId` and never reach
  * here (they match by `refId`), so the residual is confined to the genuinely id-less items
  * above — which are rare on the relevance-first path and correctly fall back to recency.
  */

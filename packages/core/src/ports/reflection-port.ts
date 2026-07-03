@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Reflection delta-op TYPES — the v2.31 Reflection engine's byte-stable
- * doc-refresh vocabulary (REFLECT-04). A Mental Model doc's `structuredBody` is a
+ * Reflection delta-op TYPES — the Reflection engine's byte-stable
+ * doc-refresh vocabulary. A Mental Model doc's `structuredBody` is a
  * section-list AST (`{ sections: { id, heading, body }[] }`); a reflect refresh of
  * an EXISTING doc emits a list of typed {@link DeltaOp}s (add / replace / remove a
  * section) rather than rewriting the whole body.
@@ -15,10 +15,10 @@
  *
  * The store widens `MentalModel`/`AdmitMentalModelInput` with
  * `structuredBody?: StructuredBody` (importing the type from HERE); the agent
- * reflection job (Plan 04) parses the LLM's delta-ops into {@link DeltaOp}s,
+ * reflection job parses the LLM's delta-ops into {@link DeltaOp}s,
  * applies them against the prior doc's AST via `applyDeltaOps`, and renders the
  * result for the `body` column. An ABSENT prior AST ⇒ the job treats the topic as
- * a NEW doc (synthesize fresh — Assumption A6).
+ * a NEW doc (synthesize fresh).
  *
  * @module
  */
@@ -50,8 +50,8 @@ export interface StructuredBody {
    * The corroboration cluster's COMMON-CORE opening-request tokens (the shared procedure,
    * per-instance specifics dropped — `commonCoreTokens`). Stored so reuse attribution
    * (`topicMatchedSkillNames`) can credit a SURFACED skill on a turn that instantiates its
-   * procedure WITHOUT the model having to explicitly `read` the SKILL.md. Optional — legacy /
-   * seeded docs omit it (those never auto-credit, only the explicit-read path). NOT rendered
+   * procedure WITHOUT the model having to explicitly `read` the SKILL.md. Optional — docs
+   * stored without it (e.g. seeded docs) never auto-credit, only the explicit-read path. NOT rendered
    * into the `body` markdown (`renderStructuredBody` ignores it).
    */
   topicTokens?: string[];

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * S2 critic isolation primitives.
+ * Critic isolation primitives.
  *
- * This is the security core of Phase 154. Every S2 threat (T-154-inject,
- * T-154-canary, T-154-scope, T-154-failclosed, T-154-safety) is mitigated here:
- * - T-154-inject: wrapReviewedOutput wraps the response as UNTRUSTED before the critic sees it
- * - T-154-canary: detectCanaryLeakage checks raw verdict text BEFORE Zod parse
- * - T-154-scope: detectImpliedToolCall intercepts scope-widening in verdict text
- * - T-154-failclosed: parseCriticVerdict never throws; every malformed path → not-verified
- * - T-154-safety: buildCriticSystemPrompt always receives buildSafetySection(false)
+ * This is the security core of the critic (verification) layer. Every
+ * critic-isolation threat is mitigated here:
+ * - injection: wrapReviewedOutput wraps the response as UNTRUSTED before the critic sees it
+ * - canary leakage: detectCanaryLeakage checks raw verdict text BEFORE Zod parse
+ * - scope widening: detectImpliedToolCall intercepts scope-widening in verdict text
+ * - fail-closed parse: parseCriticVerdict never throws; every malformed path → not-verified
+ * - safety core: buildCriticSystemPrompt always receives buildSafetySection(false)
  *
  * File-size: ≤200 lines (do not exceed; extract helpers if needed)
  * Forbidden: Date.now(), raw setTimeout (use systemSetTimeout in verification-gate.ts).
@@ -56,7 +56,7 @@ export function isCompletionClaim(response: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// S2: detect implied tool calls in verdict text (scope-widening prevention)
+// Detect implied tool calls in verdict text (scope-widening prevention)
 // ---------------------------------------------------------------------------
 const TOOL_CALL_PATTERNS = [
   /\bcall\s+\w+/i,
@@ -75,7 +75,7 @@ export function detectImpliedToolCall(verdictText: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// S2: total parse — never throws, fail-closed on malformed
+// Total parse — never throws, fail-closed on malformed
 // ---------------------------------------------------------------------------
 function extractFirstJsonObject(text: string): unknown {
   const start = text.indexOf("{");
@@ -113,12 +113,12 @@ export function parseCriticVerdict(raw: string): CriticVerdict {
 }
 
 // ---------------------------------------------------------------------------
-// S2: build the critic system prompt (safety core + canary + checklist)
+// Build the critic system prompt (safety core + canary + checklist)
 // ---------------------------------------------------------------------------
 export interface CriticSystemPromptParams {
   checklist: Array<{ index: number; description: string; status: string }>;
   canaryToken: string;
-  /** Always pass buildSafetySection(false) — never [] (the S1 trap from passing true) */
+  /** Always pass buildSafetySection(false) — never [] (passing true returns [] and silently drops the safety core) */
   safetyCore: string[];
 }
 
@@ -130,7 +130,7 @@ export interface CriticSystemPromptParams {
  * - Explicit fail-closed and UNTRUSTED-content instructions
  *
  * CRITICAL: always call with safetyCore = buildSafetySection(false).
- * buildSafetySection(true) returns [] (S1 trap) — test asserts "## Safety" is present.
+ * buildSafetySection(true) returns [] (silently dropping the safety core) — test asserts "## Safety" is present.
  */
 export function buildCriticSystemPrompt(
   params: CriticSystemPromptParams,
@@ -158,7 +158,7 @@ export function buildCriticSystemPrompt(
 }
 
 // ---------------------------------------------------------------------------
-// S2: wrap the reviewed output as untrusted (mandatory before completeSimple)
+// Wrap the reviewed output as untrusted (mandatory before completeSimple)
 // ---------------------------------------------------------------------------
 /**
  * Wrap the agent response as untrusted input before sending to the critic.
@@ -170,7 +170,7 @@ export function buildCriticSystemPrompt(
  * 3. Wraps in <<<UNTRUSTED_{delimiter}>>> / <<<END_UNTRUSTED_{delimiter}>>> delimiters
  *
  * MUST be called before any completeSimple() user message construction.
- * critic-isolation.test.ts D1 asserts this was called (spy assertion).
+ * critic-isolation.test.ts asserts this was called (spy assertion).
  */
 export function wrapReviewedOutput(response: string): string {
   return wrapExternalContent(response, {

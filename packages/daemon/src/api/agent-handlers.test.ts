@@ -407,7 +407,7 @@ describe("createAgentHandlers", () => {
   // side-effects, NOT durable state — they NEVER reach config.yaml.
   // -------------------------------------------------------------------------
   describe("agents.create with inlineContent", () => {
-    it("Test 1 (full inline): forwards role+identity to helper, returns inlineWritesResult on RPC payload", async () => {
+    it("full inlineContent: forwards role+identity to helper, returns inlineWritesResult on RPC payload", async () => {
       mockWriteInline.mockResolvedValueOnce({
         ok: true,
         value: { roleWritten: true, identityWritten: true, bytesWritten: 2 },
@@ -441,7 +441,7 @@ describe("createAgentHandlers", () => {
       });
     });
 
-    it("Test 2 (role-only): forwards role only, returns partial inlineWritesResult", async () => {
+    it("role-only inlineContent: forwards role only, returns partial inlineWritesResult", async () => {
       mockWriteInline.mockResolvedValueOnce({
         ok: true,
         value: { roleWritten: true, identityWritten: false, bytesWritten: 1 },
@@ -470,7 +470,7 @@ describe("createAgentHandlers", () => {
       });
     });
 
-    it("Test 3 (no inlineContent — regression): result OMITS inlineWritesResult; helper not invoked", async () => {
+    it("no inlineContent (regression): result OMITS inlineWritesResult; helper not invoked", async () => {
       const persistDeps = makePersistDeps();
       const deps = makeDeps({ persistDeps });
       const handlers = createAgentHandlers(deps);
@@ -485,7 +485,7 @@ describe("createAgentHandlers", () => {
       expect(mockWriteInline).not.toHaveBeenCalled();
     });
 
-    it("Test 4 (persisted config strips role/identity): patch.agents[agentId] has no role/identity keys even when inlineContent supplied", async () => {
+    it("persisted config strips role/identity: patch.agents[agentId] has no role/identity keys even when inlineContent supplied", async () => {
       mockWriteInline.mockResolvedValueOnce({
         ok: true,
         value: { roleWritten: true, identityWritten: true, bytesWritten: 2 },
@@ -514,7 +514,7 @@ describe("createAgentHandlers", () => {
       }
     });
 
-    it("Test 5 (helper failure): RPC still returns created:true; inlineWritesResult carries the err shape; no throw", async () => {
+    it("helper failure: RPC still returns created:true; inlineWritesResult carries the err shape; no throw", async () => {
       mockWriteInline.mockResolvedValueOnce({
         ok: false,
         error: { kind: "io", file: "ROLE.md", message: "EACCES" },
@@ -1583,8 +1583,8 @@ describe("createAgentHandlers", () => {
   // On miss → throw with the documented "not found in store" wording → the
   // daemon's in-memory map AND YAML are both unchanged (failure leaves
   // state untouched). On success → reference-replacement preserved (the
-  // contract the Option B closure depends on; pinned by the test below as a
-  // regression guard).
+  // contract the live getApiKey closure depends on; pinned by the test below
+  // as a regression guard).
   // -------------------------------------------------------------------------
 
   describe("agents.update oauthProfiles validation", () => {
@@ -1703,9 +1703,9 @@ describe("createAgentHandlers", () => {
         _trustLevel: "admin",
       });
 
-      // Reference replacement (NOT in-place mutation). The Option B
+      // Reference replacement (NOT in-place mutation). The live getApiKey
       // closure dereferences container.config.agents[agentId] on every
-      // getApiKey call; this contract is what makes hot-update of
+      // call; this contract is what makes hot-update of
       // oauthProfiles observable without daemon restart.
       expect(deps.agents["default"]).not.toBe(originalRef);
       expect(deps.agents["default"]!.oauthProfiles).toEqual({

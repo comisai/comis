@@ -9,11 +9,11 @@
  * cacheFenceIndex is intentionally NOT consulted to gate stripping. The
  * cleaner is pure/deterministic — input messages → same cleaned output
  * every time — so iteration 1 strips, Anthropic caches the cleaned prefix,
- * iteration 2 strips identically, and the cache hits. The prior fence-skip
- * caused per-execution divergence: iter 1 stripped (fence=-1) and built a
- * thinking-free cached prefix, iter 2 preserved fence-protected messages
- * (fence>0) and re-introduced thinking blocks at positions Anthropic had
- * cached without them, which the prompt-cache validator rejected with
+ * iteration 2 strips identically, and the cache hits. Gating the strip on the
+ * fence causes per-execution divergence: iter 1 strips (fence=-1) and builds a
+ * thinking-free cached prefix, iter 2 preserves fence-protected messages
+ * (fence>0) and re-introduces thinking blocks at positions Anthropic has
+ * cached without them, which the prompt-cache validator rejects with
  * `400 ... blocks cannot be modified`. The cacheFenceIndex on the budget
  * is read for diagnostic stats only and never gates the strip decision.
  *
@@ -44,9 +44,9 @@ export function createThinkingBlockCleaner(
   onCleaned?: (stats: {
     blocksRemoved: number;
     /** Cache fence index when present on the budget; reported for diagnostics
-     *  only. Stripping is no longer gated on the fence. */
+     *  only. Stripping is never gated on the fence. */
     cacheFenceIndex?: number;
-    /** Number of messages protected by the cache fence. Always undefined now
+    /** Number of messages protected by the cache fence. Always undefined
      *  because the fence does not protect any messages from stripping. */
     messagesProtected?: number;
     /** Total messages in the conversation. */
@@ -147,8 +147,8 @@ export function createThinkingBlockCleaner(
       if (!anyChanged) return messages;
 
       // Report cleaning stats via callback. cacheFenceIndex is reported for
-      // diagnostic visibility but is no longer gating stripping. messagesProtected
-      // is intentionally omitted because no messages are fence-protected anymore.
+      // diagnostic visibility but never gates stripping. messagesProtected
+      // is intentionally omitted because no messages are fence-protected.
       onCleaned?.({
         blocksRemoved,
         ...(budget.cacheFenceIndex >= 0 && blocksRemoved > 0 && {

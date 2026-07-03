@@ -5,9 +5,9 @@
  *
  * TIER: default CI / fast unit tier (no model, no store). This file imports BOTH
  * `qa-answer-prompt.ts` AND `__fixtures__/qa-judge-stub.ts` so NEITHER is a
- * 0%-coverage file under the agent `all:true` coverage floor (MEMORY.md: a
- * never-imported src file fails CI's full `pnpm test --coverage`; `__fixtures__`
- * is NOT in vitest.config.ts's coverage `exclude`, so the stub is measured too).
+ * 0%-coverage file under the agent `all:true` coverage floor (a never-imported
+ * src file fails CI's full `pnpm test --coverage`; `__fixtures__` is NOT in
+ * vitest.config.ts's coverage `exclude`, so the stub is measured too).
  *
  * Coverage map:
  * - formatAnswerContext: empty -> sentinel (no throw); non-empty -> each

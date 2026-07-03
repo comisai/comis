@@ -67,7 +67,7 @@ describe("createLcdBrowseStore.listConversations", () => {
     expect(c1.updatedAt).toBe(2000); // max created_at
   });
 
-  it("isolates conversations per agent so a shared conversation_id never leaks across agents (R4/WR-02)", () => {
+  it("isolates conversations per agent so a shared conversation_id never leaks across agents", () => {
     // Same conversation_id + tenant + session, DIFFERENT agentId.
     const scopeA: ContextStoreScope = { conversationId: "conv-shared", tenantId: "tenant_s", agentId: "agent-a", sessionKey: "conv-shared" };
     const scopeB: ContextStoreScope = { conversationId: "conv-shared", tenantId: "tenant_s", agentId: "agent-b", sessionKey: "conv-shared" };

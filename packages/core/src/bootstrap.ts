@@ -31,13 +31,13 @@ export const INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME =
 /**
  * Resolve runtime paths in config.
  * - dataDir precedence: explicit config.dataDir > env COMIS_DATA_DIR > ~/.comis
- *   (matches the daemon boot resolution at daemon.ts and the CLI). Before
- *   260611 the env var was IGNORED here, splitting the system in two: boot
- *   paths (.env, secrets.db, D14 lock) honored COMIS_DATA_DIR while
- *   config-derived paths (memory.dbPath, workspace, sessions) silently landed
- *   in the real ~/.comis — observed live when isolated test daemons opened
- *   ~/.comis/test-memory-default.db despite COMIS_DATA_DIR pointing at a
- *   temp dir.
+ *   (matches the daemon boot resolution at daemon.ts and the CLI). The env
+ *   var MUST be honored here: ignoring it splits the system in two — boot
+ *   paths (.env, secrets.db, the data-dir singleton lock) would honor
+ *   COMIS_DATA_DIR while config-derived paths (memory.dbPath, workspace,
+ *   sessions) silently landed in the real ~/.comis (e.g. an isolated test
+ *   daemon opening ~/.comis/test-memory-default.db despite COMIS_DATA_DIR
+ *   pointing at a temp dir).
  * - memory.dbPath resolves relative to dataDir if not absolute
  */
 function resolveConfigPaths(

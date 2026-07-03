@@ -76,18 +76,15 @@ export interface ToolAssemblyDeps {
    *  Step-0 pinned-first lane (the `deps.pinnedStore !== undefined` half of the gate).
    *  A missing forward here is a silent no-op: pinned memories never appear in
    *  agent recall even when the store is wired in the daemon and `rag.pinned.enabled`
-   *  is true (the R6 blocker). TYPE-only from @comis/core (the agent↛memory build cut). */
+   *  is true. TYPE-only from @comis/core (the agent↛memory build cut). */
   pinnedStore?: import("@comis/core").MemoryPinnedStore;
-  /** Optional mental-model store (the v2.31 Reflection doc store), forwarded into
-   *  prompt-assembly's LLM-free `<user_profile>` standing-block injection (FOLD-01, Phase 225
-   *  Plan 02 — the rewired source replacing `userRepresentationStore`; a deterministic
+  /** Optional mental-model store (the Reflection doc store), forwarded into
+   *  prompt-assembly's LLM-free `<user_profile>` standing-block injection (a deterministic
    *  `list(scope,"profile")` + the pure `buildProfileBlock` formatter, NO model call). Absent ->
    *  no list, no push, byte-identical prompt. TYPE-only from @comis/core (the agent↛memory build
    *  cut). A missing forward here leaves the profile injection a silent no-op even when the store
-   *  is wired in the daemon (the documented latent field-plumbing drop — Pitfall 1). */
+   *  is wired in the daemon. */
   mentalModelStore?: import("@comis/core").MentalModelStorePort;
-  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
-  //  social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
   /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
   timers?: import("@comis/core").TimerPort;
   hookRunner?: HookRunner;
@@ -120,7 +117,7 @@ export interface ToolAssemblyDeps {
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
   /**
-   * AUTHOR-03 (174-05 / CR-01): live read of
+   * Live read of
    * `config.orchestration.authoring.gbnfConstrain`. Resolver form (not a
    * static boolean) because the gate is runtime-mutable via config.write
    * (`orchestration` is NOT in IMMUTABLE_CONFIG_PREFIXES), so a boot-time
@@ -186,11 +183,11 @@ export interface ToolAssemblyResult {
   deliveredGuides: Set<string>;
   /** Capability class from ModelProfile (resolved once per execution in pi-executor). */
   capabilityClass: CapabilityClass;
-  /** SUMW-02: the turn's budget window — computeTokenBudgetForProfile().windowTokens
+  /** The turn's budget window — computeTokenBudgetForProfile().windowTokens
    *  = min(reconciled contextWindow, capability class cap). The ONE utilization
-   *  denominator shared with assembly + CWF-02 preflight; threaded through
-   *  postExecution to the LCD after-turn triggers (REQUIRED — a fallback would
-   *  silently restore the configured-window denominator, the DIST-01 bug class). */
+   *  denominator shared with assembly + the context-window-fit preflight; threaded
+   *  through postExecution to the LCD after-turn triggers (REQUIRED — a fallback
+   *  would silently restore the configured-window denominator). */
   budgetWindowTokens: number;
   /** Discovery tracker for deferred tool discovery state. */
   discoveryTracker: DiscoveryTracker;
@@ -208,13 +205,13 @@ export interface ToolAssemblyResult {
   promptResult: ExecutionPromptResult;
   /** Estimated system token count (system prompt + tool definition overhead). */
   cachedSystemTokensEstimate: number;
-  /** I1 / WR-01: estimated WHOLE fresh-tail preamble token count (the entire
+  /** Estimated WHOLE fresh-tail preamble token count (the entire
    *  `dynamicPreamble` + `inlineMemory` blob envelope-wrapper prepends into the
    *  latest user message — skills XML, MCP instructions, deferred-tools context,
    *  date/channel lines, recalled memory, …, NOT just recall) — a SEPARATE budget
    *  subtrahend, never folded into the system estimate above. The whole preamble is
    *  counted on purpose (it rides the unconditionally-shipped fresh tail and is
-   *  reserved nowhere else); see token-budget.ts WR-01. */
+   *  reserved nowhere else); see token-budget.ts. */
   cachedFreshTailPreambleTokens: number;
 }
 
@@ -238,8 +235,8 @@ export interface ToolAssemblyParams {
   modelCompat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai" | "gbnf"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
   /** ModelProfile resolved once per execution in pi-executor. Used to thread capabilityClass to consumers. */
   modelProfile?: ModelProfile;
-  /** KNOB-02: served/capability window provenance built at the pi-executor reconcile.
-   *  Absent ⇒ budget reports profile.contextWindow as raw (pre-KNOB-02). */
+  /** Served/capability window provenance built at the pi-executor reconcile.
+   *  Absent ⇒ budget reports profile.contextWindow as raw (no provenance). */
   windowProvenance?: WindowProvenance;
   agentId?: string;
   safetyReinforcement?: string;

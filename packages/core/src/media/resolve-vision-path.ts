@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * resolveVisionPath — the pure, I/O-free ladder resolver for the
- * provider-following VISION path (VIS-02/03).
+ * provider-following VISION path.
  *
  * Mirrors the numbered-priority structure of `resolveImageProvider`
  * (packages/core/src/media/resolve-image-provider.ts): a single function,
@@ -16,20 +16,19 @@
  * or the pi-ai catalog — so it is trivially unit-testable with no daemon and no
  * network. It only LABELS which path (`main-vision` / `registry` /
  * `gemini-video` / `unavailable`) the handler must execute; the handler runs the
- * chosen tier (the 183 firewall: the handler consumes a resolver, never
- * re-derives selection).
+ * chosen tier (the handler consumes a resolver, never re-derives selection).
  *
- * Honest-capability invariant (I3 / T-187-03): a vision-incapable main provider
+ * Honest-capability invariant: a vision-incapable main provider
  * or absent main credentials falls to the registry (which has its OWN keys) or,
  * when nothing can serve, yields `{ ok: false, errorKind, hint }` — NEVER a
  * silent fall-through that bills a different provider. Each skipped tier is
- * reported via `onSkip` (VIS-03 path-logging).
+ * reported via `onSkip` (path-logging).
  *
- * The locked ladder ORDER (CONTEXT/RESEARCH): main-vision FIRST (image only —
- * pi-ai has no video content type, Pitfall 3, so `mediaKind:"video"` NEVER
+ * The locked ladder ORDER: main-vision FIRST (image only —
+ * pi-ai has no video content type, so `mediaKind:"video"` NEVER
  * returns `main-vision`) → registry SECOND → gemini-video THIRD (raw video only)
  * → honest-unavailable LAST. An explicit vision `defaultProvider` overrides
- * main-first (A3 — I2 parity: explicit operator config wins).
+ * main-first (explicit operator config wins).
  *
  * @module
  */
@@ -38,7 +37,7 @@ import type { ImageErrorKind } from "./image-error.js";
 
 /**
  * Discriminated result: a concrete vision path (with its `path` provenance
- * label — the VIS-03 "which path" signal) or an honest-unavailable carrying a
+ * label — the "which path" signal) or an honest-unavailable carrying a
  * domain `errorKind` + a knob-naming `hint`.
  */
 export type VisionPathSelection =
@@ -62,11 +61,11 @@ export interface VisionPathInput {
   mainCredsAvailable: boolean;
   /** Would `selectVisionProvider(registry, mediaKind)` return a provider? */
   registryAvailable: boolean;
-  /** `integrations.media.vision.defaultProvider` — when set (non-empty), explicit wins (A3). */
+  /** `integrations.media.vision.defaultProvider` — when set (non-empty), explicit wins. */
   explicitDefaultProvider?: string;
 }
 
-/** The exact config knobs a VIS-03 hint names (the actionable levers). */
+/** The exact config knob an unavailable hint names (the actionable lever). */
 const VISION_KNOB = "integrations.media.vision.defaultProvider";
 
 function unavailableHint(mainProviderId: string): string {
@@ -82,7 +81,7 @@ function unavailableHint(mainProviderId: string): string {
  * Decide the vision path. Pure: same input → same output, no I/O.
  *
  * @param input precomputed capability/cred/registry signals (the daemon resolves them)
- * @param onSkip optional VIS-03 reporter — each non-chosen tier reports its reason
+ * @param onSkip optional skip reporter — each non-chosen tier reports its reason
  */
 export function resolveVisionPath(
   input: VisionPathInput,
@@ -97,7 +96,7 @@ export function resolveVisionPath(
     explicitDefaultProvider,
   } = input;
 
-  // VIDEO: pi-ai has NO video content type (Pitfall 3) — main-vision is N/A.
+  // VIDEO: pi-ai has NO video content type — main-vision is N/A.
   // Raw video stays Gemini-only via the registry's video selection.
   if (mediaKind === "video") {
     if (registryAvailable) {
@@ -112,7 +111,7 @@ export function resolveVisionPath(
   }
 
   // IMAGE ladder.
-  // 1. A3 explicit-override (I2 parity): an explicit, non-empty vision
+  // 1. Explicit-override: an explicit, non-empty vision
   //    defaultProvider beats main-first — skip main-vision, go to the registry.
   const hasExplicit =
     typeof explicitDefaultProvider === "string" && explicitDefaultProvider.length > 0;

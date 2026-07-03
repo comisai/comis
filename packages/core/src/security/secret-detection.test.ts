@@ -2,7 +2,7 @@
 /**
  * Keystone secret-detection tests.
  *
- * Anchors (assert the WRONG-answer fixes vs the old `looksLikePlaintextSecret`):
+ * Anchors (the leak classes the keystone exists to catch):
  *   - looksLikeSecretValue("Bearer hf_<44+>") === true
  *   - isSecretFieldName("Authorization") === true
  *   - scanForSecrets({headers:{Authorization:"Bearer ${TOK}"}}) === []  (env-ref exemption)
@@ -29,7 +29,7 @@ import {
 // backstop fires after a leading scheme is stripped.
 const HF_BODY = "hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789AbCdEf";
 
-describe("looksLikeSecretValue — scheme strip (bug closure)", () => {
+describe("looksLikeSecretValue — auth-scheme and quote stripping", () => {
   it("detects a Bearer-prefixed high-entropy token", () => {
     expect(looksLikeSecretValue(`Bearer ${HF_BODY}`)).toBe(true);
   });
@@ -75,7 +75,7 @@ describe("looksLikeSecretValue — scheme strip (bug closure)", () => {
 });
 
 describe("isSecretFieldName — superset", () => {
-  it("flags Authorization (the old pattern missed it)", () => {
+  it("flags the Authorization header field name", () => {
     expect(isSecretFieldName("Authorization")).toBe(true);
   });
 
@@ -96,7 +96,7 @@ describe("isSecretFieldName — superset", () => {
     }
   });
 
-  it("preserves the old SECRET_FIELD_PATTERN positives", () => {
+  it("flags pattern-matched secret field names (botToken, appSecret, …)", () => {
     for (const name of [
       "botToken",
       "appSecret",
@@ -239,9 +239,9 @@ describe("redactForDisplay — secret-named array values", () => {
   });
 });
 
-// ── explicit prefix entries — vocabulary unification ────────────────────────
+// ── explicit prefix entries — tokens below the entropy-backstop floor ───────
 
-describe("explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)", () => {
+describe("explicit prefix entries — hf_/hfr_/r8_ tokens below the entropy floor", () => {
   // Tokens that are above the minimum-body-length gate (patterns.ts requires 18+)
   // but below the 44-char entropy backstop floor, so they only match via the
   // explicit prefix entry. Without explicit entries in PLAINTEXT_SECRET_PREFIXES,
@@ -262,13 +262,12 @@ describe("explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)", ()
   });
 });
 
-// ── keystone false-negatives — common credential shapes slip the scanner ────
+// ── short provider tokens — must match via explicit prefixes, not entropy ───
 
-describe("looksLikeSecretValue correctly detects provider prefixes absent from keystone", () => {
-  // Without these explicit entries in PLAINTEXT_SECRET_PREFIXES, these all
-  // return false because their prefixes are absent and the values are too
-  // short for the entropy backstop. Adding the missing prefixes to the keystone
-  // makes them return true.
+describe("looksLikeSecretValue detects short provider-prefixed credentials (AIza/ya29./xapp-/pplx-/comis_)", () => {
+  // These provider prefixes are explicit PLAINTEXT_SECRET_PREFIXES entries
+  // because realistic tokens of these shapes are too short for the entropy
+  // backstop — without the explicit entry each would return false.
 
   it("realistic Google API key (AIzaSy...) detected as secret", () => {
     // AIzaSy + 33 chars = 39 chars total — below the 44-char entropy backstop floor
@@ -294,7 +293,7 @@ describe("looksLikeSecretValue correctly detects provider prefixes absent from k
   });
 
   it("scanForSecrets flags AIza key inside MCP args array", () => {
-    // Confirmed end-to-end regression: plaintext Google API key in mcp args passes the firewall
+    // End-to-end guard: a plaintext Google API key in mcp args must be flagged
     const findings = scanForSecrets({
       integrations: {
         mcp: {

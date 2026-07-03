@@ -1,26 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the video.generate RPC handler (Phase 188 baseline → Phase 189
- * inline→submit switch).
+ * Tests for the video.generate RPC handler (inline→submit switch).
  *
- * Phase 189 (JOB-04 / JOB-02): `video.generate` no longer runs the inline
+ * `video.generate` no longer runs the inline
  * `port.execute()` (which blocked the turn on the full render) + persist/deliver/
  * base64 tail. It now `port.submit()`s, persists a `pending` VideoJobStore row,
  * hands the job to the background poller, and returns `{jobId, state:"submitted",
  * estimatedCostUsd}` PROMPTLY. The completion tail (poll→fetch→persist→deliver→
- * record→markDone) moved to the poller (setup-video-poller.ts).
+ * record→markDone) runs in the poller (setup-video-poller.ts).
  *
  * What this suite proves:
  *   - submit-not-execute: deps.provider.submit is called; deps.provider.execute is NOT.
- *   - persist + track: a successful submit inserts the JOB-01 row + tracks the job;
+ *   - persist + track: a successful submit inserts the job-store row + tracks the job;
  *     the handler does NOT persist/deliver/base64 (that is the poller's job now).
- *   - submit failure: the SAME classified-error WARN path as the 188 !ok branch.
- *   - pre-submit gates PRESERVED (non-regression): SEC-02 cost ceiling, the count
- *     rate limit, the missing-prompt error, WR-02 resolved defaults — all still
+ *   - submit failure: the SAME classified-error WARN path as the inline !ok branch.
+ *   - pre-submit gates PRESERVED (non-regression): the cost ceiling, the count
+ *     rate limit, the missing-prompt error, resolved defaults — all still
  *     hold and block BEFORE submit.
- *   - SEC-03 image_url through the SSRF resolver; no credential VALUE in any log.
+ *   - image_url through the SSRF resolver; no credential VALUE in any log.
  *   - loose-record: {jobId,state,estimatedCostUsd} validates vs the EXISTING
- *     VideoGenerateContract.response (A3 — no contract change for video.generate).
+ *     VideoGenerateContract.response (no contract change for video.generate).
  *
  * @module
  */
@@ -29,17 +28,17 @@ import { createVideoHandlers, type VideoHandlerDeps } from "./video-handlers.js"
 import { VideoGenError, getToolMetadata } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-// SEC-03: the credential KEY-NAME set Pino redacts. The assertion below checks
+// The credential KEY-NAME set Pino redacts. The assertion below checks
 // no credential VALUE leaks into any video log line.
 import { CREDENTIAL_KEYS } from "@comis/observability";
-// SEC-01 regression-guard (Phase 192-04): a side-effect import of @comis/skills
+// A side-effect import of @comis/skills
 // runs the tool-metadata bootstrap (tool-bridge.ts calls registerAllToolMetadata()
-// at module load) so the SEC suite can pin video_generate/video_status
+// at module load) so the never-export suite can pin video_generate/video_status
 // never-export via getToolMetadata, beside the architecture gate
 // (mcp-export-policy.test.ts). This is exactly how production registers metadata.
 import "@comis/skills";
 
-// Mock node:fs/promises so the SEC-03 workspace-file reference branch (and the
+// Mock node:fs/promises so the workspace-file reference branch (and the
 // shared resolver) does no real I/O.
 vi.mock("node:fs/promises", () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -47,7 +46,7 @@ vi.mock("node:fs/promises", () => ({
   readFile: vi.fn().mockResolvedValue(Buffer.from("REF-FILE-BYTES")),
 }));
 
-// CR-01: the image_url URL branch routes through the shared DNS-pinned SSRF
+// The image_url URL branch routes through the shared DNS-pinned SSRF
 // fetcher (ssrf-image-fetch.ts → undici Agent + fetch). Mock undici so Agent is
 // a real class and fetch delegates to globalThis.fetch — NEVER the real network.
 const { undiciAgentCtor, undiciAgentClose } = vi.hoisted(() => {
@@ -67,12 +66,12 @@ vi.mock("undici", () => {
 });
 
 // Preserve the contract registry + stripInternalFields + VideoGenError + the
-// trace accessor; stub safePath (joins segments — the SEC-03 confinement test
+// trace accessor; stub safePath (joins segments — the confinement test
 // asserts the resolved path goes THROUGH safePath) and validateUrl (defaults ok
 // with a resolved IP so the URL branch pins DNS; the SSRF test overrides it).
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
-  // IN-02: wrap the matrix accessors in spies that DELEGATE to the real
+  // Wrap the matrix accessors in spies that DELEGATE to the real
   // implementation by default (so the happy-path + real-backend reject tests
   // exercise the genuine VIDEO_MODELS matrix), but can be overridden per-test
   // (the i2v-on-a-t2v-only-backend reject needs a fabricated t2v-only cell —
@@ -148,7 +147,7 @@ const insertMock = (deps: VideoHandlerDeps) =>
 const trackMock = (deps: VideoHandlerDeps) =>
   deps.videoPoller.track as unknown as ReturnType<typeof vi.fn>;
 
-describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
+describe("createVideoHandlers (inline→submit)", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     // Re-establish the matrix-accessor delegation after clearAllMocks: a per-test
@@ -163,7 +162,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     (core.supportedModes as unknown as ReturnType<typeof vi.fn>).mockImplementation(realCore.supportedModes);
   });
 
-  // ─── JOB-04 submit-not-execute ───
+  // ─── submit-not-execute ───
   it("submits (NOT execute) and returns {success,jobId,state:'submitted',estimatedCostUsd}", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
@@ -180,8 +179,8 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(result.estimatedCostUsd!).toBeGreaterThan(0);
   });
 
-  // ─── persist + track (JOB-01 fields) ───
-  it("on submit inserts the JOB-01 row + tracks the job; does NOT persist/deliver inline", async () => {
+  // ─── persist + track (job-store fields) ───
+  it("on submit inserts the job-store row + tracks the job; does NOT persist/deliver inline", async () => {
     const sendAttachment = vi.fn().mockResolvedValue(ok("msg"));
     const deps = createMockDeps({ getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment }) });
     const handlers = createVideoHandlers(deps);
@@ -191,7 +190,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       _callerChannelType: "telegram",
       _callerChannelId: "chat-1",
     });
-    // insert called with the JOB-01 fields (channel from rawParams._callerChannel*).
+    // insert called with the job-store fields (channel from rawParams._callerChannel*).
     expect(insertMock(deps)).toHaveBeenCalledTimes(1);
     const row = insertMock(deps).mock.calls[0]![0] as Record<string, unknown>;
     expect(row.jobId).toBe("fal-req-abc123");
@@ -209,8 +208,8 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(sendAttachment).not.toHaveBeenCalled();
   });
 
-  // ─── WR-02: track() receives the FULL routing record (not the bare job) ───
-  it("WR-02/WR-06: tracks the job with a record carrying the routing (agentId/channelType/channelId)", async () => {
+  // ─── track() receives the FULL routing record (not the bare job) ───
+  it("tracks the job with a record carrying the routing (agentId/channelType/channelId)", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({
@@ -219,7 +218,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       _callerChannelType: "telegram",
       _callerChannelId: "chat-1",
     });
-    // The poller now drives the job from the in-memory record (WR-02/WR-06: no
+    // The poller now drives the job from the in-memory record (no
     // listPending scan), so track MUST receive the routing — not the bare
     // {jobId,provider,model} job, which would orphan the insert-failure path.
     const tracked = trackMock(deps).mock.calls[0]![0] as Record<string, unknown>;
@@ -230,8 +229,8 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(tracked.state).toBe("pending");
   });
 
-  // ─── WR-02: an insert failure does NOT silently orphan — track still drives it ───
-  it("WR-02: on a store insert failure the job is still tracked WITH routing (in-memory delivery, not orphaned)", async () => {
+  // ─── an insert failure does NOT silently orphan — track still drives it ───
+  it("on a store insert failure the job is still tracked WITH routing (in-memory delivery, not orphaned)", async () => {
     const deps = createMockDeps({
       videoJobStore: {
         insert: vi.fn().mockResolvedValue(err(new Error("sqlite disk I/O error"))),
@@ -251,9 +250,9 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       _callerChannelId: "chat-1",
     })) as { success: boolean };
     // The insert failed, but track is STILL called with the routing record, so the
-    // rendered clip is delivered in-memory (the orphan bug is gone). On pre-fix
-    // code track received the bare job (no routing → loadRecord→listPending found
-    // nothing → never delivered).
+    // rendered clip is delivered in-memory (the orphan bug is gone). Without the
+    // routing record, track would receive the bare job (no routing →
+    // loadRecord→listPending finds nothing → never delivered).
     expect(trackMock(deps)).toHaveBeenCalledTimes(1);
     const tracked = trackMock(deps).mock.calls[0]![0] as Record<string, unknown>;
     expect(tracked.channelType).toBe("telegram");
@@ -266,14 +265,14 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(w).toBeTruthy();
   });
 
-  // ─── WARNING-3: the inserted row carries a traceId so the off-turn poller can stitch ───
+  // ─── the inserted row carries a traceId so the off-turn poller can stitch ───
   it("persists a traceId on the row (captured from the in-turn context) for off-turn stitching", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "trace me" });
     const row = insertMock(deps).mock.calls[0]![0] as Record<string, unknown>;
     // The row MUST carry a traceId KEY (value may be undefined outside an ALS
-    // scope in this unit test, but the field must be threaded — I8 / Pitfall 5).
+    // scope in this unit test, but the field must be threaded).
     expect("traceId" in row).toBe(true);
   });
 
@@ -331,7 +330,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect((w![0] as { hint?: string }).hint).toMatch(/maxPerHour/);
   });
 
-  it("SEC-02: blocks BEFORE submit when the worst-case estimate exceeds the ceiling", async () => {
+  it("blocks BEFORE submit when the worst-case estimate exceeds the ceiling", async () => {
     const costLimiter = {
       canSpend: vi.fn().mockReturnValue(false),
       record: vi.fn(),
@@ -356,7 +355,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(result.hint).toMatch(/maxCostPerHourUsd/);
   });
 
-  it("SEC-02: the handler does NOT record cost on submit (the poller reconciles on done)", async () => {
+  it("the handler does NOT record cost on submit (the poller reconciles on done)", async () => {
     const costLimiter = {
       canSpend: vi.fn().mockReturnValue(true),
       record: vi.fn(),
@@ -370,7 +369,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(costLimiter.record).not.toHaveBeenCalled();
   });
 
-  it("WR-02: a request omitting duration/resolution resolves the CONFIG defaults into the submit input", async () => {
+  it("a request omitting duration/resolution resolves the CONFIG defaults into the submit input", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake" });
@@ -380,7 +379,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(input.resolution).toBe("720p");
   });
 
-  it("WR-02: the estimate is computed against the SAME resolved duration the port receives", async () => {
+  it("the estimate is computed against the SAME resolved duration the port receives", async () => {
     const costLimiter = {
       canSpend: vi.fn().mockReturnValue(true),
       record: vi.fn(),
@@ -396,7 +395,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(input.durationSecs).toBe(8);
   });
 
-  it("WR-03: a cost-ceiling block does NOT consume a count slot (the render never happened)", async () => {
+  it("a cost-ceiling block does NOT consume a count slot (the render never happened)", async () => {
     const costLimiter = {
       canSpend: vi.fn().mockReturnValue(false),
       record: vi.fn(),
@@ -411,7 +410,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(tryAcquire).not.toHaveBeenCalled();
   });
 
-  it("WR-03: a request that passes the cost gate DOES consume exactly one count slot", async () => {
+  it("a request that passes the cost gate DOES consume exactly one count slot", async () => {
     const costLimiter = {
       canSpend: vi.fn().mockReturnValue(true),
       record: vi.fn(),
@@ -445,8 +444,8 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(input.audio).toBe(true);
   });
 
-  // ─── SEC-03: image_url through the SSRF resolver ───
-  it("SEC-03: resolves image_url through the resolver and threads referenceImage to submit()", async () => {
+  // ─── image_url through the SSRF resolver ───
+  it("resolves image_url through the resolver and threads referenceImage to submit()", async () => {
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({
@@ -460,7 +459,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(input.referenceImage!.mimeType).toBe("image/png");
   });
 
-  it("SEC-03: an SSRF-rejected image_url URL throws (no submit) — the security floor holds", async () => {
+  it("an SSRF-rejected image_url URL throws (no submit) — the security floor holds", async () => {
     const core = await import("@comis/core");
     (core.validateUrl as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: false,
@@ -478,8 +477,8 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(deps.provider.submit).not.toHaveBeenCalled();
   });
 
-  // ─── SEC-03 redaction: no credential VALUE in any log line ───
-  it("SEC-03: no credential value (FAL_KEY/bearer/XAI/GOOGLE) appears in any log payload", async () => {
+  // ─── redaction: no credential VALUE in any log line ───
+  it("no credential value (FAL_KEY/bearer/XAI/GOOGLE) appears in any log payload", async () => {
     const secret = "fal-SECRETKEY-1234567890abcdefABCDEF";
     const deps = createMockDeps({
       provider: {
@@ -506,8 +505,8 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(JSON.stringify(w![0])).not.toContain(secret);
   });
 
-  // ─── RES-01 lockstep obs ───
-  it("RES-01: resolves the agent's main provider for the obs line (lockstep, default fallback)", async () => {
+  // ─── lockstep obs ───
+  it("resolves the agent's main provider for the obs line (lockstep, default fallback)", async () => {
     const deps = createMockDeps({
       resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "google" }),
     });
@@ -520,8 +519,8 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect((info![0] as { agentId?: string }).agentId).toBe("default");
   });
 
-  // ─── A3: the {jobId,state,estimatedCostUsd} return validates vs the loose record ───
-  it("A3: the {jobId,state,estimatedCostUsd} handle validates against VideoGenerateContract.response", async () => {
+  // ─── the {jobId,state,estimatedCostUsd} return validates vs the loose record ───
+  it("the {jobId,state,estimatedCostUsd} handle validates against VideoGenerateContract.response", async () => {
     const core = await import("@comis/core");
     const deps = createMockDeps();
     const handlers = createVideoHandlers(deps);
@@ -530,16 +529,16 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     expect(() => core.VideoGenerateContract.response.parse(result)).not.toThrow();
   });
 
-  // ─── OBS-04 deferred: the handler emits NO video.* trajectory events ───
-  it("OBS-04 (Phase 192): the videoHandlerDeps shape has NO trajectory/eventBus field (logger-only)", () => {
+  // ─── default deps carry no trajectory/eventBus field (logger-only) ───
+  it("the videoHandlerDeps shape has NO trajectory/eventBus field by default (logger-only)", () => {
     const deps = createMockDeps();
     expect("trajectoryRegistry" in deps).toBe(false);
     expect("eventBus" in deps).toBe(false);
   });
 
-  // ─── IN-02: per-model param validation against VIDEO_MODELS, BEFORE submit ───
-  describe("IN-02 param validation (mode + caps + reject hints) before submit", () => {
-    it("IN-02: i2v on a t2v-only backend rejects BEFORE submit with a supported-modes hint (submit not called)", async () => {
+  // ─── per-model param validation against VIDEO_MODELS, BEFORE submit ───
+  describe("param validation (mode + caps + reject hints) before submit", () => {
+    it("i2v on a t2v-only backend rejects BEFORE submit with a supported-modes hint (submit not called)", async () => {
       // No real backend is t2v-only — override the matrix accessors so the
       // EXECUTING provider exposes t2v but NOT i2v (listVideoModelCaps(...,"i2v")
       // undefined). The handler must reject with a modes hint, NOT submit.
@@ -567,7 +566,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect((w![0] as { errorKind?: string }).errorKind).toBe("precondition");
     });
 
-    it("IN-02: an unsupported resolution (4k on grok) rejects BEFORE submit listing the valid set", async () => {
+    it("an unsupported resolution (4k on grok) rejects BEFORE submit listing the valid set", async () => {
       const deps = createMockDeps({
         provider: {
           id: "grok",
@@ -596,7 +595,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       })) as { success: boolean; hint?: string };
 
       expect(result.success).toBe(false);
-      // The hint LISTS grok's valid resolutions (the I3 honest set).
+      // The hint LISTS grok's valid resolutions (the honest set).
       expect(result.hint).toMatch(/480p/);
       expect(result.hint).toMatch(/720p/);
       expect(deps.provider.submit).not.toHaveBeenCalled();
@@ -605,7 +604,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect((w![0] as { errorKind?: string }).errorKind).toBe("precondition");
     });
 
-    it("IN-02 (Pitfall 2): a Veo 1080p render with duration!=8 rejects with a requires-8s hint (no submit)", async () => {
+    it("a Veo 1080p render with duration!=8 rejects with a requires-8s hint (no submit)", async () => {
       const deps = createMockDeps({
         provider: {
           id: "veo",
@@ -644,7 +643,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect((w![0] as { errorKind?: string }).errorKind).toBe("precondition");
     });
 
-    it("IN-02 (Pitfall 2): a Veo 1080p render with duration 8 PASSES validation and submits", async () => {
+    it("a Veo 1080p render with duration 8 PASSES validation and submits", async () => {
       const deps = createMockDeps({
         provider: {
           id: "veo",
@@ -677,14 +676,14 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect(deps.provider.submit).toHaveBeenCalledTimes(1);
     });
 
-    // WR-02: the matrix declares maxReferenceImages on every cell but the
+    // The matrix declares maxReferenceImages on every cell but the
     // validator must ENFORCE it. veo-2.0-generate-001 i2v is maxReferenceImages:0
     // ("no refs") — an i2v request (image present) resolving to it returns a
     // NON-undefined caps object, so the `if (!caps)` mode-reject does NOT fire;
     // without an explicit maxReferenceImages guard the image ships to a model the
-    // matrix says cannot accept one → a guaranteed provider 4xx. RED on pre-fix
-    // code: the request PASSES validation and submit() is called.
-    it("WR-02: an i2v request resolving to a maxReferenceImages:0 model (veo-2.0) rejects BEFORE submit", async () => {
+    // matrix says cannot accept one → a guaranteed provider 4xx. This guards that
+    // the request is rejected and submit() is NOT called.
+    it("an i2v request resolving to a maxReferenceImages:0 model (veo-2.0) rejects BEFORE submit", async () => {
       const deps = createMockDeps({
         provider: {
           id: "veo",
@@ -724,10 +723,10 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect((w![0] as { errorKind?: string }).errorKind).toBe("precondition");
     });
 
-    // WR-02 non-regression: a t2v request (no image) on the SAME 0-ref model is
+    // Non-regression: a t2v request (no image) on the SAME 0-ref model is
     // NOT rejected by the reference-image guard — maxReferenceImages only gates
     // the i2v (image-present) path.
-    it("WR-02: a t2v request (no image) on veo-2.0 is NOT blocked by the maxReferenceImages guard", async () => {
+    it("a t2v request (no image) on veo-2.0 is NOT blocked by the maxReferenceImages guard", async () => {
       const deps = createMockDeps({
         provider: {
           id: "veo",
@@ -763,12 +762,12 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect(w).toBeFalsy();
     });
 
-    // WR-01: the requires-8s reject hint must match what is ENFORCED. The check
-    // fires only on resolution (1080p/4k), but the hint claimed "(and reference
-    // images)" require 8s — a rule the validator never enforces and RESEARCH does
-    // not document for the native Veo SDK. RED on pre-fix code: the hint contains
-    // the over-claiming "reference images" clause.
-    it("WR-01: the requires-8s reject hint states only the resolution rule (no unenforced reference-image claim)", async () => {
+    // The requires-8s reject hint must match what is ENFORCED. The check
+    // fires only on resolution (1080p/4k); the hint must NOT claim "(and reference
+    // images)" require 8s — a rule the validator never enforces and that is not
+    // documented for the native Veo SDK. This guards that the hint does not
+    // contain the over-claiming "reference images" clause.
+    it("the requires-8s reject hint states only the resolution rule (no unenforced reference-image claim)", async () => {
       const deps = createMockDeps({
         provider: {
           id: "veo",
@@ -810,17 +809,17 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect((w![0] as { hint?: string }).hint).not.toMatch(/reference image/i);
     });
 
-    it("IN-02 duration snap: an out-of-enum duration:5 on FAL reaches port.submit snapped to 6 (round-half-up)", async () => {
+    it("duration snap: an out-of-enum duration:5 on FAL reaches port.submit snapped to 6 (round-half-up)", async () => {
       const deps = createMockDeps();
       const handlers = createVideoHandlers(deps);
       await handlers["video.generate"]!({ _agentId: "agent-1", prompt: "a quiet lake", duration: 5 });
       const submit = deps.provider.submit as ReturnType<typeof vi.fn>;
       const [input] = submit.mock.calls[0]! as [Record<string, unknown>];
-      // 5 is equidistant between 4 and 6 → round-half-up → 6 (Plan 01 snapDuration).
+      // 5 is equidistant between 4 and 6 → round-half-up → 6 (snapDuration).
       expect(input.durationSecs).toBe(6);
     });
 
-    it("IN-02 validates against the EXECUTING deps.provider.id, never the caller main.providerId", async () => {
+    it("validates against the EXECUTING deps.provider.id, never the caller main.providerId", async () => {
       // The caller's main provider is grok (480p/720p — would reject 4k), but the
       // EXECUTING provider is fal (4k valid). Validating against the executor must
       // ACCEPT 4k and submit (a t2v 4k FAL render), proving the executor is the key.
@@ -839,9 +838,9 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     });
   });
 
-  // ─── IN-01: the SSRF resolver is REUSED for image_url (no second fetcher) ───
-  describe("IN-01 SSRF reuse + i2v mode threading (singular image_url)", () => {
-    it("IN-01: a blocked-host image_url is rejected by the SHARED resolver — submit is never called", async () => {
+  // ─── the SSRF resolver is REUSED for image_url (no second fetcher) ───
+  describe("SSRF reuse + i2v mode threading (singular image_url)", () => {
+    it("a blocked-host image_url is rejected by the SHARED resolver — submit is never called", async () => {
       const core = await import("@comis/core");
       (core.validateUrl as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         ok: false,
@@ -860,7 +859,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       expect(deps.provider.submit).not.toHaveBeenCalled();
     });
 
-    it("IN-01: a workspace-path image_url resolves under the caller's agent dir and threads referenceImage", async () => {
+    it("a workspace-path image_url resolves under the caller's agent dir and threads referenceImage", async () => {
       const deps = createMockDeps({
         workspaceDirs: new Map([["agent-1", "/ws/agent-1"]]),
       });
@@ -879,8 +878,8 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
     });
   });
 
-  // ─── OBS-04 (Phase 192): the in-turn trajectory emits + sessionKey persist ───
-  describe("OBS-04 in-turn trajectory emits + sessionKey persist", () => {
+  // ─── the in-turn trajectory emits + sessionKey persist ───
+  describe("in-turn trajectory emits + sessionKey persist", () => {
     /** A capture recorder + a registry resolving it by sessionKey. */
     function captureRegistry() {
       const calls: Array<{ type: string; data: Record<string, unknown> }> = [];
@@ -954,7 +953,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
       const failed = reg.calls.find((c) => c.type === "video.failed");
       expect(failed).toBeDefined();
       expect(failed!.data).toEqual({ errorKind: "quota_exceeded", provider: "fal" });
-      // SEC-02 NON-REGRESSION: the existing WARN with the pinned step survives,
+      // NON-REGRESSION: the existing WARN with the pinned step survives,
       // and there is EXACTLY ONE cost-ceiling WARN (no emitter double-log).
       const ceilingWarns = warnCalls(deps).filter(
         (c) => (c[0] as { step?: string }).step === "video_cost_ceiling",
@@ -965,7 +964,7 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
 
     it("off-turn safety: with no trajectoryRegistry the in-turn submit still succeeds (the logger floor survives)", async () => {
       // No trajectoryRegistry (a boot mode without one) → the emits no-op, the
-      // handler still submits + persists + logs the §2.7 line.
+      // handler still submits + persists + logs the completion line.
       const deps = createMockDeps();
       const handlers = createVideoHandlers(deps);
       const result = (await handlers["video.generate"]!({
@@ -980,14 +979,14 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
 });
 
 // ===========================================================================
-// SEC-03 redaction (Phase 192-04) — the FULL secret set incl. the Veo
+// Redaction — the FULL secret set incl. the Veo
 // keyed-download-URL, asserted across the HANDLER's log lines at every level.
 //
-// The image-handlers.test.ts:1795 redaction-assert twin, extended for video:
+// The image-handlers.test.ts redaction-assert twin, extended for video:
 //   - the secret set adds a FAL_KEY shape, an XAI_API_KEY shape, a GOOGLE_API_KEY
 //     (`AIza…`) shape, a Bearer, AND the Veo keyed-download-URL (`…&key=AIza…`) —
-//     the secret-bearing string the image-only test never covered (RESEARCH
-//     Runtime State Inventory: the Veo `uri + "&key="` download URL).
+//     the secret-bearing string the image-only test never covered (the Veo
+//     `uri + "&key="` download URL).
 //   - the harness captures EVERY call across all 4 levels and ALSO extracts the
 //     serialized `err.message` (a raw provider Error rides `err: cause` on the
 //     poller WARN; plain `JSON.stringify(Error)` drops `.message`, so the harness
@@ -998,13 +997,13 @@ describe("createVideoHandlers (Phase 189 — inline→submit)", () => {
 // leak is a bug in the log construction, fixed THERE (the de-mask discipline).
 // ===========================================================================
 
-// The full SEC-03 secret set, in REALISTIC provider-key formats so the de-mask
+// The full secret set, in REALISTIC provider-key formats so the de-mask
 // discipline (sanitizeLogString + the Pino redact set) actually engages:
 //   - GOOGLE_SECRET: a real `AIzaSy`+33 Google API key (the Veo credential).
 //   - BEARER_SECRET / SK_SECRET: a Bearer + an OpenAI/Anthropic-style sk- key
 //     (xAI Grok also authenticates via a Bearer; the sk- shape is the generic).
 //   - VEO_KEYED_URL: the Veo download URI with the API key as `&key=AIza…` —
-//     the secret-bearing string the image-only SEC-03 test never covered.
+//     the secret-bearing string the image-only test never covered.
 // NONE may appear in any captured log line at any level.
 const GOOGLE_SECRET = "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456";
 const BEARER_SECRET = "Bearer sk-grok-9f8e7d6c5b4a32100123456789ab";
@@ -1068,7 +1067,7 @@ function assertNoVideoSecretLeak(deps: { logger: ReturnType<typeof createMockLog
   expect(CREDENTIAL_KEYS.has("apiKey")).toBe(true);
 }
 
-describe("createVideoHandlers — SEC-03 no secret in any log line (full set + Veo keyed-URL)", () => {
+describe("createVideoHandlers — no secret in any log line (full set + Veo keyed-URL)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -1168,13 +1167,13 @@ describe("createVideoHandlers — SEC-03 no secret in any log line (full set + V
 });
 
 // ===========================================================================
-// SEC-01 regression-guard (Phase 192-04) — video_generate / video_status stay
-// never-export, asserted in the SEC suite BESIDE the architecture gate
+// Never-export regression-guard — video_generate / video_status stay
+// never-export, asserted here BESIDE the architecture gate
 // (mcp-export-policy.test.ts). A cost-bearing outbound tool must never reach the
 // MCP-exported set. Belt-and-suspenders: the arch gate enforces an explicit
 // policy on every registered tool; this pins the SPECIFIC video policy here.
 // ===========================================================================
-describe("video tools — SEC-01 never-export regression-guard", () => {
+describe("video tools — never-export regression-guard", () => {
   // Metadata is registered by the top-level side-effect import of @comis/skills.
   it.each(["video_generate", "video_status"] as const)(
     "%s resolves mcpExportPolicy 'never-export' (a generated clip bills + delivers — never MCP-exported)",

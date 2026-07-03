@@ -82,14 +82,15 @@ const mechanicalDeltas = [
   },
 ];
 
-// --- What the new tracks provably do (keyless, $0) - SEPARATE from accuracy --
+// --- What the memory tracks provably do (keyless, $0) - SEPARATE from accuracy --
 // Six capabilities shipped + proven keyless at $0. Each row is a STRUCTURAL
 // invariant of the shipped code, NOT an end-to-end QA-accuracy lift, and is kept
 // out of the accuracy table on purpose. The ask-your-memory row cites the
-// gate-safe consolidated re-prove capstone (the per-track manifest dir slug
-// itself names a forbidden marketing token). The one measured learning signal is
-// a recall-SCORE lift; the costed competitor comparison is the deferred re-run.
-const v29Capabilities = [
+// consolidated re-prove gate report rather than its per-track manifest (that
+// directory's name contains a term the site's copy never prints). The one
+// measured learning signal is a recall-SCORE lift; the costed competitor
+// comparison lives in the head-to-head section below.
+const memoryCapabilities = [
   {
     name: "Learning-to-rank (trust frozen)",
     delta: "bandit recall-SCORE lift +0.1 over 5 episodes (rank position flat on the keyless lane)",
@@ -134,11 +135,11 @@ const v29Capabilities = [
   },
 ];
 
-// --- COMPETITIVE HEAD-TO-HEAD (the costed re-run, finally measured) ---------
+// --- COMPETITIVE HEAD-TO-HEAD (operator-costed, measured) -------------------
 // accuracy, cross-judged - the SECOND real QA-accuracy set after the measured
 // baseline. Competitors re-run by US under one protocol (answer claude-sonnet-4-6
 // + judges gpt-4o AND claude, cross-judge spread 0.0 on every cell), best-effort
-// N=8. Every cell read from the phase114-prove2 manifest. Binding framing:
+// N=8. Every cell read from the committed h2hManifest run dir. Binding framing:
 // Comis TIED mem0 - the framing is "competitive-with mem0 / at-$0-on-device",
 // NEVER a superiority claim. The differentiator is cost/latency/locality, not quality.
 const h2hManifest = "benchmarks/results/2026-06-02-phase114-prove2";
@@ -313,7 +314,7 @@ const headToHead = {
           and the costed competitor comparison is the operator-costed re-run below.
         </p>
         <div class="grid md:grid-cols-2 gap-6">
-          {v29Capabilities.map((m) => (
+          {memoryCapabilities.map((m) => (
             <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6">
               <h3 class="text-white font-semibold mb-2">{m.name}</h3>
               <p class="text-muted-light font-mono text-sm mb-3">{m.delta}</p>

@@ -4,10 +4,10 @@
  *
  * TIER: default CI / fast unit tier (no model, no store, no dataset download).
  * Imports `qa-judge-prompt.ts` so the module is never a 0%-coverage file under
- * the agent `all:true` coverage floor (MEMORY.md: a never-imported src file
- * fails CI's full `pnpm test --coverage`).
+ * the agent `all:true` coverage floor (a never-imported src file fails CI's
+ * full `pnpm test --coverage`).
  *
- * Coverage map (one RED case per branch — Pitfall 5):
+ * Coverage map (one RED case per branch):
  * - the 3-way shared rubric (single-session-user/-assistant, multi-session),
  * - temporal-reasoning (shared body + the off-by-one-days sentence),
  * - knowledge-update (the updated-answer rubric),
@@ -93,7 +93,7 @@ describe("buildJudgePrompt (uniform tail + the untrusted slots)", () => {
   });
 });
 
-describe("buildJudgePrompt (prompt-injection ordering — Pitfall 3)", () => {
+describe("buildJudgePrompt (prompt-injection ordering)", () => {
   it("places the rubric BEFORE every untrusted slot", () => {
     // Use injection-shaped untrusted values so a regression that puts the slots
     // first would be caught: the rubric MARKER must precede all three.
@@ -114,7 +114,7 @@ describe("buildJudgePrompt (in-prompt JSON verdict contract — pi-ai adaptation
     expect(p).toContain(`"reasoning"`);
   });
 
-  it("never ports Hindsight's `correct=no` source typo (Correction #7)", () => {
+  it("never ports Hindsight's `correct=no` source typo into any rubric", () => {
     for (const c of [...JUDGE_CATEGORIES, "unknown"]) {
       expect(buildJudgePrompt(c, Q, GOLD, ANS)).not.toContain("correct=no");
     }

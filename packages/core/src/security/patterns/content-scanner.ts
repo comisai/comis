@@ -4,7 +4,8 @@
  *
  * Detects code execution, environment access, cryptocurrency mining,
  * network exfiltration, obfuscation, XML breakout, and workspace
- * injection patterns. Originally from content-scanner.ts.
+ * injection patterns. Consumed by the skills content scanner and the
+ * workspace loader.
  *
  * @module content-scanner
  */

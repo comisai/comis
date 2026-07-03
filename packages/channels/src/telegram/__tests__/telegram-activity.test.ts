@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram EditPlace renderer tests (§18.2 EditPlace rows).
+ * Telegram EditPlace renderer tests.
  *
  * The single net-new piece of logic here is `classifyTelegramError` —
  * it reads STRUCTURAL GrammyError fields (`error_code`, `parameters.retry_after`,
@@ -11,8 +11,8 @@
  *
  * Time discipline: every test drives the injected FakeTimers/FakeClock — no raw
  * setTimeout/Date.now (globals.test.ts fails the build otherwise). Golden
- * fixtures assert via readFixture + toEqual (NEVER toMatchSnapshot — auto-write
- * self-heals, Pitfall 3).
+ * fixtures assert via readFixture + toEqual (NEVER toMatchSnapshot — snapshot
+ * auto-write silently self-heals a regression).
  */
 import { describe, it, expect } from "vitest";
 import type {
@@ -407,7 +407,7 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeTelegramAdapter();
-  // Omit `clock` so the §8.5
+  // Omit `clock` so the
   // "(running N s)" elapsed fallback is skipped and committed fixtures stay
   // byte-stable. Strategy-level tests in edit-place.test.ts inject a clock and
   // assert the elapsed text — that is the live-production wiring contract.
@@ -437,7 +437,7 @@ function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
 
 const okReceipt = (deliveredAtMs: number): FinalDeliveryReceipt => receiptAt(deliveredAtMs);
 
-describe("Telegram golden fixtures (§18.2 EditPlace rows — readFixture + toEqual)", () => {
+describe("Telegram golden fixtures (EditPlace scenarios — readFixture + toEqual)", () => {
   it("S1 trivial chat — zero renderer messages (kind:success trivial, no placeholder ever applied)", async () => {
     await runScenario("S1", [], { kind: "success", trivial: true, delivery: okReceipt(0) }, 0);
   });
@@ -466,12 +466,11 @@ describe("Telegram golden fixtures (§18.2 EditPlace rows — readFixture + toEq
     );
   });
 
-  // NOTE: the shipped createEditPlaceRenderer treats
+  // NOTE: createEditPlaceRenderer treats
   // success_with_recovered_failures identically to success (edit "✓ done" → gated
-  // delete). §18.2-S5 aspires to "0 delete" for the recovered case; that policy
-  // lives in edit-place.ts and is out of scope here.
+  // delete). Keeping the activity message for the recovered case ("0 delete")
+  // would be an edit-place.ts policy change, out of scope for this channel test.
   // The fixture pins the ACTUAL renderer output (delete present).
-  // The recovered-failure keep-policy is a follow-up.
   it("S5 recovered failure — edits incl. recovery then ✓ done, kind:success_with_recovered_failures (renderer deletes)", async () => {
     const recovered = ev(1, { status: "failed", errorKind: "network" });
     await runScenario(

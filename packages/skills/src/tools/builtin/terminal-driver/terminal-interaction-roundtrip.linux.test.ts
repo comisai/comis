@@ -10,8 +10,8 @@
  * `posix_spawnp` in-harness): a real submit ->
  * settle -> observe loop AND a real control-key exit. `describe.skipIf(
  * process.platform !== "linux")` so it COMPILES + SKIPS on macOS and runs live on
- * `comisvps` (where forkpty works). The orchestrator flips it green on the VPS
- * post-execute. Mirrors the `bwrap-egress-integration.test.ts` Linux-gate idiom +
+ * a Linux host (where forkpty works). Run it on Linux to prove the live
+ * round-trip. Mirrors the `bwrap-egress-integration.test.ts` Linux-gate idiom +
  * the macOS sibling's bridge shape, but end-to-end through the TOOLS (not
  * the worker directly).
  *

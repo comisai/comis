@@ -119,7 +119,7 @@ const TARGETED_BOOST = 1.5;
  *   - `preference`  → up-weights the `entity` lane (preferences are entity-associative — the
  *                     person↔preference links the entity lane surfaces).
  *   - `enumeration` → NEUTRAL on every lane: enumeration's payoff is DIVERSITY, which is handled
- *                     by the MMR-λ knob, NOT a lane weight (documented design fork).
+ *                     by the MMR-λ knob, NOT a lane weight (a deliberate design fork).
  *   - `factual`     → NEUTRAL everywhere (the default-lookup byte-identity case).
  *
  * The switch over the closed {@link Intent} union carries an exhaustive `const _exhaustive: never`
@@ -153,7 +153,7 @@ const SYNONYM_FANOUT_CAP = 3;
 
 /**
  * A SMALL, BOUNDED static synonym/acronym table (project/domain acronyms + a few common
- * synonyms) — NOT a generated thesaurus (the locked "bounded static map" decision). Keyed by a
+ * synonyms) — deliberately a bounded static map, NOT a generated thesaurus. Keyed by a
  * lowercase token; the value is the expansion phrase(s) appended to the query. Expansions are
  * plain tokens (no FTS5 special chars) so the OR-join in buildFtsQuery stays injection-safe.
  */
@@ -170,8 +170,8 @@ const SYNONYM_MAP: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * Expand a query STRING via the bounded {@link SYNONYM_MAP} (whole-query expansion — the
- * locked fork). For each token, up to {@link SYNONYM_FANOUT_CAP} mapped expansion phrases are
+ * Expand a query STRING via the bounded {@link SYNONYM_MAP} (whole-query expansion, by
+ * design). For each token, up to {@link SYNONYM_FANOUT_CAP} mapped expansion phrases are
  * appended (so buildFtsQuery's OR-join surfaces both the original term and its synonyms), then the
  * whole token list is de-duplicated and re-joined with single spaces.
  *

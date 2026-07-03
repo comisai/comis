@@ -80,7 +80,7 @@ export interface ProcessHeaderCredentialsOpts {
    * Optional daemon-owned write handle over the shared SecretManager backing Map.
    * When provided, extracted MCP header secrets are live-applied via upsert after
    * secretStore.set succeeds — so broker/exec observe the value on their next request
-   * without a daemon restart (additive no-restart — P4a). Optional chaining guards legacy
+   * without a daemon restart (additive writes are live immediately). Optional chaining guards
    * callers and test setups that don't wire the mutable handle.
    */
   mutableSecretManager?: MutableSecretManager;
@@ -193,8 +193,8 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): Pr
       );
     }
     // Live-apply: upsert into the shared SecretManager Map so broker/exec observe the new
-    // value on their next request without a restart (additive no-restart — P4a).
-    // Optional chaining guards callers (tests, legacy paths) that don't wire the handle.
+    // value on their next request without a restart (additive writes are live immediately).
+    // Optional chaining guards callers (e.g. tests) that don't wire the handle.
     opts.mutableSecretManager?.upsert(varName, headerValue);
     // Rewrite the header value in place to the ${VAR} reference (for persistence).
     // resolvedHeaders already holds the raw value from the initial copy above.

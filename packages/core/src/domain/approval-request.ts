@@ -22,7 +22,7 @@ import { z } from "zod";
 export const ApprovalRequestSchema = z.strictObject({
   /** Unique identifier for this approval request */
   requestId: z.string().uuid(),
-  /** 12-char base62 callback-safe identifier minted by the approval-gate (§6.4.1) */
+  /** 12-char base62 callback-safe identifier minted by the approval-gate */
   shortId: z.string().length(12).regex(/^[0-9A-Za-z]+$/),
   /** Name of the tool being invoked */
   toolName: z.string(),
@@ -69,7 +69,7 @@ export type ApprovalResolution = z.infer<typeof ApprovalResolutionSchema>;
 /** Schema for a serialized pending approval request (for restart persistence). */
 export const SerializedApprovalRequestSchema = z.strictObject({
   requestId: z.string().uuid(),
-  /** 12-char base62 callback-safe identifier minted by the approval-gate (§6.4.1) */
+  /** 12-char base62 callback-safe identifier minted by the approval-gate */
   shortId: z.string().length(12).regex(/^[0-9A-Za-z]+$/),
   toolName: z.string(),
   action: z.string(),

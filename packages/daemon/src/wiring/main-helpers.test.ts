@@ -15,13 +15,13 @@ import type { BootContext } from "../daemon-types.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
-// EMB-01 — resolveModelHealthMultilingual: the provider-aware boot-snapshot
+// resolveModelHealthMultilingual: the provider-aware boot-snapshot
 // helper extracted from daemon.ts (keeps the composition root under its line cap).
 //
 // Resolves the two advisory multilingual booleans for the model_health row. The
-// embedder id is PROVIDER-AWARE (Pitfall 3 — never the legacy memory field); the
-// reranker default bge-reranker-v2-m3 must classify multilingual (Pitfall 2).
-// Advisory only — nothing here gates recall (I4).
+// embedder id is PROVIDER-AWARE (never the legacy memory field); the
+// reranker default bge-reranker-v2-m3 must classify multilingual.
+// Advisory only — nothing here gates recall.
 // ---------------------------------------------------------------------------
 
 type Config = BootContext["container"]["config"];
@@ -39,21 +39,21 @@ function configWith(overrides: {
   };
 }
 
-describe("resolveModelHealthMultilingual (EMB-01 provider-aware boot helper)", () => {
-  it("classifies the DEFAULT install: nomic embedder -> \"unknown\", bge-reranker-v2-m3 reranker -> true (Pitfall 2)", () => {
+describe("resolveModelHealthMultilingual (provider-aware boot helper)", () => {
+  it("classifies the DEFAULT install: nomic embedder -> \"unknown\", bge-reranker-v2-m3 reranker -> true", () => {
     const result = resolveModelHealthMultilingual(AppConfigSchema.parse({}) as unknown as Config);
     expect(result.embeddingMultilingual).toBe("unknown"); // nomic-embed-text-v1.5, no hit
     expect(result.rerankerMultilingual).toBe(true); // the shipped multilingual reranker default
   });
 
-  it("resolves the LOCAL embedder id from embedding.local.modelUri (provider auto/local — Pitfall 3)", () => {
+  it("resolves the LOCAL embedder id from embedding.local.modelUri (provider auto/local)", () => {
     const result = resolveModelHealthMultilingual(
       configWith({ embedding: { provider: "local", local: { modelUri: "hf:org/bge-m3-GGUF:bge-m3.Q8_0.gguf" } } }),
     );
     expect(result.embeddingMultilingual).toBe(true); // bge-m3 hits the embedder regex
   });
 
-  it("resolves the OPENAI embedder id from embedding.openai.model when provider === openai (Pitfall 3)", () => {
+  it("resolves the OPENAI embedder id from embedding.openai.model when provider === openai", () => {
     const result = resolveModelHealthMultilingual(
       configWith({ embedding: { provider: "openai", openai: { model: "multilingual-e5-large" } } }),
     );
@@ -66,7 +66,7 @@ describe("resolveModelHealthMultilingual (EMB-01 provider-aware boot helper)", (
   });
 
   it("returns rerankerMultilingual \"unknown\" for a non-multilingual reranker id (no per-reranker config flag)", () => {
-    // Phase 226: the reranker model lives under memory.recall — override the whole recall block.
+    // The reranker model lives under memory.recall — override the whole recall block.
     const base = AppConfigSchema.parse({}) as unknown as Config;
     const result = resolveModelHealthMultilingual(
       configWith({ memory: { recall: { ...base.memory.recall, rerankerModel: "hf:org/some-english-reranker.gguf" } } }),
@@ -76,7 +76,7 @@ describe("resolveModelHealthMultilingual (EMB-01 provider-aware boot helper)", (
 });
 
 // ---------------------------------------------------------------------------
-// WR-04 (186) — buildImageHandlerDeps: the imageHandlerDeps slice extracted from
+// buildImageHandlerDeps: the imageHandlerDeps slice extracted from
 // daemon.ts (relieves the composition-root line cap). Characterization test for
 // the disabled-image gate + the 1:1 field mapping (behavior-neutral extraction).
 // ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ function imageBootSlice(
   return slice as unknown as Parameters<typeof buildImageHandlerDeps>[0];
 }
 
-describe("buildImageHandlerDeps (WR-04 extracted imageHandlerDeps slice)", () => {
+describe("buildImageHandlerDeps (extracted imageHandlerDeps slice)", () => {
   const resolver = (agentId: string): { providerId: string } => ({ providerId: `main-${agentId}` });
 
   it("returns undefined when the image provider is absent (disabled-image gate)", () => {
@@ -132,7 +132,7 @@ describe("buildImageHandlerDeps (WR-04 extracted imageHandlerDeps slice)", () =>
     expect(deps!.eventBus).toBe(slice.container.eventBus);
     expect(deps!.workspaceDirs).toBe(slice.workspaceDirs);
     expect(deps!.defaultWorkspaceDir).toBe("/ws/default");
-    // RES-01: the resolver is forwarded; getChannelAdapter resolves by type.
+    // The resolver is forwarded; getChannelAdapter resolves by type.
     expect(deps!.resolveAgentMainProvider).toBe(resolver);
     expect(deps!.getChannelAdapter("telegram")).toBe(slice.adaptersByType.get("telegram"));
     expect(deps!.getChannelAdapter("irc")).toBeUndefined();
@@ -140,13 +140,13 @@ describe("buildImageHandlerDeps (WR-04 extracted imageHandlerDeps slice)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// VIS-01 (187-02) — resolveVisionApiKey: the cred-by-PROVIDER switch the vision
+// resolveVisionApiKey: the cred-by-PROVIDER switch the vision
 // bridge uses (mirrors resolveImageApiKey at pi-image-adapter.ts:279, but keyed
 // by PROVIDER, since vision keys are OPENAI/ANTHROPIC/GOOGLE_API_KEY). Reads the
 // SAME SecretManager the main completion path uses — never the raw environment.
 // ---------------------------------------------------------------------------
 
-describe("resolveVisionApiKey (VIS-01 cred-by-provider switch)", () => {
+describe("resolveVisionApiKey (cred-by-provider switch)", () => {
   const sm = (entries: Record<string, string>): { get(k: string): string | undefined } => ({
     get: (k: string) => entries[k],
   });
@@ -171,13 +171,13 @@ describe("resolveVisionApiKey (VIS-01 cred-by-provider switch)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// VIS-01 (187-02) — buildMediaVisionBundle: the wiring helper that closes over
+// buildMediaVisionBundle: the wiring helper that closes over
 // the SecretManager + the default agent's OAuth manager + resolveAgentModel and
-// builds the mainProviderVision capability via createMainProviderVision (Plan 01).
+// builds the mainProviderVision capability via createMainProviderVision.
 // ---------------------------------------------------------------------------
 
 /** A minimal boot container for buildMediaVisionBundle. The agents/models config
- *  drives the I4 resolveModel lockstep; the secretManager backs resolveApiKey. */
+ *  drives the resolveModel lockstep; the secretManager backs resolveApiKey. */
 function visionBundleDeps(
   overrides: Partial<Parameters<typeof buildMediaVisionBundle>[0]> = {},
 ): Parameters<typeof buildMediaVisionBundle>[0] {
@@ -203,13 +203,13 @@ function visionBundleDeps(
   return slice as unknown as Parameters<typeof buildMediaVisionBundle>[0];
 }
 
-describe("buildMediaVisionBundle (VIS-01 wiring helper)", () => {
+describe("buildMediaVisionBundle (wiring helper)", () => {
   it("returns a capability with a callable describeImage (so the bridge is reachable)", () => {
     const { capability } = buildMediaVisionBundle(visionBundleDeps());
     expect(typeof capability.describeImage).toBe("function");
   });
 
-  it("resolves the agent's main {provider, modelId} via resolveAgentModel (I4 lockstep) and its provider key", async () => {
+  it("resolves the agent's main {provider, modelId} via resolveAgentModel (lockstep) and its provider key", async () => {
     // The describeImage call exercises resolveModel (anthropic/claude) + resolveApiKey
     // (ANTHROPIC_API_KEY present) → it gets PAST the cred gate to the getModel step.
     // We assert it does NOT short-circuit on auth_required (the cred WAS resolved).
@@ -264,11 +264,11 @@ describe("buildMediaVisionBundle (VIS-01 wiring helper)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// VIS-01 (187-02) — built-but-not-wired SOURCE GUARD (mirror the 184 source
-// guard). The resolver + bridge are useless unless daemon.ts CONSTRUCTS
+// Built-but-not-wired SOURCE GUARD: the resolver + bridge are useless unless
+// daemon.ts CONSTRUCTS
 // buildMediaVisionBundle and FOLDS `mainProviderVision` onto the MediaApiDeps
 // literal. Assert the live daemon.ts wiring at the source level so a future
-// refactor that drops the fold fails this test (not silently disables VIS-01).
+// refactor that drops the fold fails this test (not silently disables the bridge).
 // ---------------------------------------------------------------------------
 
 describe("daemon.ts wires buildMediaVisionBundle into MediaApiDeps (built-but-not-wired guard)", () => {

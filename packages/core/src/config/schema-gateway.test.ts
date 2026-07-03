@@ -277,11 +277,10 @@ describe("GatewayTokenSchema -- mcp-client disjointness", () => {
   // -------------------------------------------------------------------------
   // mcp-client must be the SOLE scope
   //
-  // The original refine only blocked `admin + mcp-client` (and the wildcard
-  // rule added `* + mcp-client`). A token with `["rpc", "mcp-client"]` still
-  // passed:
-  //   1. It satisfies the `/mcp/v1` gates (has mcp-client; no admin/*).
-  //   2. It also authenticates to /ws and satisfies checkScope(scopes, "rpc")
+  // Blocking only `admin + mcp-client` (and `* + mcp-client`) is not enough:
+  // a token with `["rpc", "mcp-client"]` would otherwise
+  //   1. satisfy the `/mcp/v1` gates (has mcp-client; no admin/*), and
+  //   2. also authenticate to /ws and satisfy checkScope(scopes, "rpc")
   //      on every rpc-scoped RPC method.
   //
   // Operationally, an mcp-client token is supposed to be an EXTERNAL trust

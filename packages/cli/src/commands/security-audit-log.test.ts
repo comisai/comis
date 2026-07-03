@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Behavior tests for the `comis security audit-log` CLI subcommand (AUDIT-05,
- * Phase 176 Plan 05).
+ * Behavior tests for the `comis security audit-log` CLI subcommand.
  *
  * Covers: the filter-flag → `obs.audit.query` param threading, the table render,
  * the `--format json` branch, and registration on the `comis security` tree.

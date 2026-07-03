@@ -66,7 +66,7 @@ import {
   loginOpenAICodexOAuth,
   isRemoteEnvironment,
   // createFileLock and OAuth helpers are consumed from @comis/core.
-  // CLI no longer routes through the @comis/agent barrel for these.
+  // CLI does not route through the @comis/agent barrel for these.
   createFileLock,
   // createConsoleLogger is the Pino-free logger for CLI use.
   // CLI does not import from @comis/infra.
@@ -100,11 +100,11 @@ const PROVIDER_OPENAI_CODEX = "openai-codex" as const;
 // + the data-dir convention, so `comis auth …` finds the SAME config the daemon
 // uses WITHOUT requiring an explicit COMIS_CONFIG_PATHS on the command line.
 //
-// Before this, auth.ts checked ONLY `${HOME}/.comis/config.yaml` (a single path).
-// A config at `/etc/comis/config.yaml`, a `config.local.yaml`, or a daemon run
-// with COMIS_DATA_DIR pointing elsewhere was therefore MISSED — and on a miss,
-// `loadStorageMode` silently defaulted to FILE (plaintext) OAuth credential
-// storage even when the operator had configured `security.storage: encrypted`,
+// Checking a single hardcoded path (`${HOME}/.comis/config.yaml`) would MISS a
+// config at `/etc/comis/config.yaml`, a `config.local.yaml`, or a daemon run
+// with COMIS_DATA_DIR pointing elsewhere — and on a miss,
+// `loadStorageMode` silently defaults to FILE (plaintext) OAuth credential
+// storage even when the operator has configured `security.storage: encrypted`,
 // writing OAuth tokens to plaintext `auth-profiles.json`. This resolver closes
 // that gap; the loud warning in `loadStorageMode` closes the silent-downgrade.
 // ---------------------------------------------------------------------------
@@ -182,9 +182,9 @@ export async function loadStorageMode(): Promise<CredentialStorageMode> {
   // WARN loudly: writing OAuth tokens to plaintext when the operator may have
   // configured `security.storage: encrypted` is a security footgun (it was
   // exactly how openai-codex tokens once landed in plaintext auth-profiles.json).
-  // This branch now fires ONLY when the file is truly absent — so the message
-  // is accurate again (previously it also fired when the file existed but a
-  // ${VAR} ref failed to resolve, pointing the operator the wrong way).
+  // This branch fires ONLY when the file is truly absent — firing it when the
+  // file exists but a ${VAR} ref fails to resolve would point the operator
+  // the wrong way.
   if (!existsSync(configPath)) {
     info(
       `No Comis config found at ${configPath} — defaulting to FILE (plaintext) OAuth ` +
@@ -518,8 +518,8 @@ export function registerAuthCommand(program: Command): void {
         await requireDaemonOrExit();
         try {
           // callTyped always enforces the AuthListContract request/response
-          // schemas (Zod parse on both sides). The daemon side has always
-          // parsed; the CLI side now matches (no env gating).
+          // schemas (Zod parse on both sides). Both the daemon side and the
+          // CLI side parse unconditionally (no env gating).
           const result = await withClient(async (client) =>
             callTyped(
               client,
@@ -706,8 +706,8 @@ export function registerAuthCommand(program: Command): void {
         }
       }
 
-      // From here down: BYTE-IDENTICAL to the pre-migration auth status
-      // grouping. The encrypted-branch profile rows have the same shape
+      // From here down the grouping is shared by both branches: the
+      // encrypted-branch profile rows have the same shape
       // (provider/profileId/expires/email?/displayName?) as the file-branch
       // projection, so a single grouping algorithm handles both.
       if (profiles.length === 0) {

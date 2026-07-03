@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the leaf-pass store-read helpers extracted from
- * lcd-compaction-trigger.ts (Phase 180-08 file-size extraction). These pin the
+ * lcd-compaction-trigger.ts (file-size extraction). These pin the
  * relocated behavior is byte-identical: previousSummaryContent returns the last
  * summary of ANY kind (or undefined), and chunkOrdinalWindow maps first/last ids
  * to the [start,end] window with the defensive divergence guards.

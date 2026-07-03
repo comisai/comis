@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for buildTemporalGuidanceBlock — the read-time contradiction guidance
- * formatter (design §7.3). Pure function over
- * {@link MemorySearchResult}[]; the §7.3 block is a FIXED constant returned iff
+ * formatter. Pure function over
+ * {@link MemorySearchResult}[]; the guidance block is a FIXED constant returned iff
  * >=2 memories are surfaced (the `sharesTopic` baseline).
  *
- * Load-bearing RED-first assertions:
- * - >=2 results -> a string CONTAINING each load-bearing §7.3 phrase (block text).
+ * Load-bearing assertions:
+ * - >=2 results -> a string CONTAINING each load-bearing guidance phrase (block text).
  * - exactly 1 result -> undefined (the <2 gate; no block).
  * - 0 results -> undefined (the <2 gate; no block).
  * - NON-MUTATION: the input array and its result objects are unchanged after the call
@@ -52,8 +52,8 @@ const PHRASES = [
   "say so rather than guess",
 ];
 
-// The read-side current-truth / as-of section composed into the block (RESEARCH
-// §temporal-guidance). Fixed prose — it tells the LLM HOW to read current-truth vs history
+// The read-side current-truth / as-of section composed into the block.
+// Fixed prose — it tells the LLM HOW to read current-truth vs history
 // (the higher-trust value is the CURRENT answer; superseded values still exist as history,
 // reachable as-of a past time). NEVER interpolates entry.content.
 const KG_PHRASES = [
@@ -64,8 +64,8 @@ const KG_PHRASES = [
   "as of a past time",
 ];
 
-describe("buildTemporalGuidanceBlock — read-time §7.3 contradiction guidance", () => {
-  it("returns the §7.3 block (all load-bearing phrases) when >=2 memories are surfaced", () => {
+describe("buildTemporalGuidanceBlock — read-time contradiction guidance", () => {
+  it("returns the guidance block (all load-bearing phrases) when >=2 memories are surfaced", () => {
     const block = buildTemporalGuidanceBlock([
       makeResult("m1", "user_a owns a horse named Bella"),
       makeResult("m2", "user_a sold the horse last month"),

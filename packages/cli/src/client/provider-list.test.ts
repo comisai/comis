@@ -20,7 +20,7 @@ vi.mock("./rpc-client.js", () => ({
 }));
 
 // Mock @comis/core for the local-fallback path. createModelCatalog lives in
-// @comis/core (no longer routed through @comis/agent).
+// @comis/core (not routed through @comis/agent).
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

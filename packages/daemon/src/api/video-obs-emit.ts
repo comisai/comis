@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-04 (Phase 192): the video-turn trajectory direct-emit helper.
+ * The video-turn trajectory direct-emit helper.
  *
  * The daemon video RPC handler (`video.generate`, in-turn) AND the off-turn
  * background poller (`setup-video-poller.ts`) record a video turn's lifecycle
@@ -13,25 +13,25 @@
  * NO-OPs every emit when no recorder resolved — a session that closed (the agent
  * destroyed it) or a daemon restart leaves the in-memory session registry empty,
  * so `getRecorder` returns null/undefined and the live off-turn emit is
- * best-effort. The BINDING OBS-04 oracle is the OFFLINE assembler (Plan 02's
+ * best-effort. The BINDING oracle is the OFFLINE assembler (pinned by the
  * reconstruct test), which reads the persisted trajectory + the job store
  * independent of any live recorder — so a no-op here is correct, never a crash.
  *
  * DIVERGENCE FROM `createVisionObsEmitter` (vision-obs-emit.ts): the vision twin
  * FUSES the trajectory record AND the §2.7 log line per call, because the vision
- * handler had NO prior structured logging. The video handler (188) + poller
- * (189/190) ALREADY carry the complete §2.7 logger floor — an INFO completion
+ * handler carries no structured logging of its own. The video handler + poller
+ * ALREADY carry the complete §2.7 logger floor — an INFO completion
  * line + an ERROR/WARN with errorKind+hint on EVERY branch, with branch-specific
- * `step` tags the SEC-02 / poller-step tests pin. So THIS emitter is
+ * `step` tags their tests pin. So THIS emitter is
  * trajectory-RECORD-focused: it adds ONLY the per-session trajectory records and
  * does NOT re-log (a fused log would DOUBLE-emit the §2.7 line). The handler/
  * poller keep their existing logger lines and call these methods beside them.
  *
- * CONTENT-FREE (T-192-01): every recorded payload carries ids / labels / counts /
+ * CONTENT-FREE: every recorded payload carries ids / labels / counts /
  * `costUsd` / `outcome` / `errorKind` / booleans ONLY — NEVER the prompt, the
  * video bytes, a credential, the Veo keyed-download-URL, or a raw provider
  * message. `costUsd`/`model`/`sizeBytes`/`durationSecs` ride `video.generated`
- * presence-conditionally (FAL reports no actual cost — Pitfall 4 — so an absent
+ * presence-conditionally (FAL reports no actual cost, so an absent
  * value never appears as an `undefined` key). The domain `VideoErrorKind` rides
  * `video.failed.errorKind` verbatim (the redaction-safe detail + the closed log
  * union via VIDEO_ERR_TO_LOG ride the structured Pino LOG, not the trajectory).
@@ -54,7 +54,8 @@ export interface VideoObsEmitter {
   /** A job was SUBMITTED: record video.submitted {provider, jobId}. */
   submitted(args: { provider: string; jobId: string }): void;
   /** A render SUCCEEDED (off-turn): record video.generated with the cost-carry
-   *  (model/costUsd/sizeBytes/durationSecs presence-conditional — Pitfall 4). */
+   *  (model/costUsd/sizeBytes/durationSecs presence-conditional — some
+   *  providers report no actual cost). */
   generated(args: {
     provider: string;
     model?: string;

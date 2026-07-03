@@ -355,9 +355,8 @@ export function buildNonInteractiveState(
 
   // Model selection -- delegate to daemon when not specified.
   // The literal "default" is resolved at agent-execution time via the
-  // pi-ai catalog (builtin-provider-guard.ts:45 baseUrl pattern). The
-  // previous hardcoded provider->model map was removed -- the daemon
-  // decides at runtime.
+  // pi-ai catalog (builtin-provider-guard.ts baseUrl pattern). There is
+  // no CLI-side provider->model map -- the daemon decides at runtime.
   const model = opts.model ?? "default";
 
   // Channel configs
@@ -412,7 +411,7 @@ export function buildNonInteractiveState(
   }
 
   // Image-generation provider (step 08d, skipped in non-interactive mode).
-  // Mirrors the interactive step (CRED-01): an openai/google/openrouter choice
+  // Mirrors the interactive step's credential-reuse rule: an openai/google/openrouter choice
   // that matches the main provider reuses --api-key; fal or a cross-provider
   // choice uses --image-api-key; auto and openai-codex (OAuth) take no key.
   let imageProvider: ImageProviderConfig | undefined;
@@ -435,7 +434,7 @@ export function buildNonInteractiveState(
 
   // Video-generation provider (step 08c, skipped in non-interactive mode).
   // Build the state the step would have produced from --video-provider. The
-  // credential resolution mirrors the interactive step (CRED-01): a google/xai
+  // credential resolution mirrors the interactive step's reuse rule: a google/xai
   // choice that matches the main provider reuses --api-key (no extra key); fal
   // or a cross-provider google/xai uses --video-api-key.
   let videoProvider: VideoProviderConfig | undefined;

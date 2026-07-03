@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * pipelineAuthoringGate unit tests (TELEM-02 — the measure-first gate).
+ * pipelineAuthoringGate unit tests — the measure-first gate.
  *
- * Proves the pre-committed, PURE, deterministic decision rule that gates Phase
- * 174 (P2/AUTHOR): given the small-vs-frontier pipeline-authoring aggregate, it
- * returns `{ buildAuthor, reason }` — build ONLY when the small-tier sample is
+ * Proves the pre-committed, PURE, deterministic decision rule: given the
+ * small-vs-frontier pipeline-authoring aggregate, it returns
+ * `{ buildAuthor, reason }` — build ONLY when the small-tier sample is
  * non-trivial (>= MIN_SMALL_TIER_SAMPLE) AND its validity is materially below
  * frontier (>= MATERIAL_GAP_PP percentage points). No data / below threshold ->
- * defer. The rule is the deliverable (D-RULE), not a live verdict: same
- * aggregate -> same verdict forever (the X3 determinism / Repudiation control,
- * T-173-09) — no I/O, no Date.now, no globals.
- *
- * RED on pre-patch code: `./pipeline-authoring-gate.js` does not exist (the
- * Wave-0 gap), so the import throws and every case fails. GREEN once the module
- * lands.
+ * defer. The rule is the deliverable, not a live verdict: same aggregate ->
+ * same verdict forever (determinism makes the decision reproducible and
+ * non-repudiable) — no I/O, no Date.now, no globals.
  *
  * @module
  */
@@ -28,7 +24,7 @@ import {
   type PipelineAuthoringAggregate,
 } from "./pipeline-authoring-gate.js";
 
-describe("pipelineAuthoringGate (TELEM-02 — pre-committed deterministic gate)", () => {
+describe("pipelineAuthoringGate (pre-committed deterministic gate)", () => {
   it("pins the documented pre-committed thresholds (>= 20 invocations, >= 15pp gap)", () => {
     // The thresholds ARE the committed rule — pin them so a silent retune fails.
     expect(MIN_SMALL_TIER_SAMPLE).toBe(20);
@@ -49,8 +45,8 @@ describe("pipelineAuthoringGate (TELEM-02 — pre-committed deterministic gate)"
   });
 
   it("is PURE by source: no Date.now / Math.random / globalThis / process. reference", () => {
-    // T-173-09 (Repudiation): the rule reads no clock and no global — the verdict
-    // is reproducible forever from the aggregate alone. (The arch globals gate
+    // Repudiation control: the rule reads no clock and no global — the verdict is
+    // reproducible forever from the aggregate alone. (The arch globals gate
     // enforces this repo-wide; this co-located check pins it at the unit level.)
     const src = readFileSync(
       fileURLToPath(new URL("./pipeline-authoring-gate.ts", import.meta.url)),
@@ -134,7 +130,7 @@ describe("pipelineAuthoringGate (TELEM-02 — pre-committed deterministic gate)"
     expect(verdict.reason).toMatch(/45\.0pp/);
   });
 
-  it("INFO-DISCLOSURE (T-173-10): the reason carries only counts + the pp gap (no agent ids, no body)", () => {
+  it("INFO-DISCLOSURE: the reason carries only counts + the pp gap (no agent ids, no body)", () => {
     const verdict = pipelineAuthoringGate({
       smallTierInvocations: 50,
       smallTierValidRate: 0.5,
@@ -145,12 +141,11 @@ describe("pipelineAuthoringGate (TELEM-02 — pre-committed deterministic gate)"
     expect(verdict.reason).toMatch(/pp/);
   });
 
-  // IN-01 (Phase 173 review): the production reducer can only ever produce
-  // finite 0..1 rates, but the gate is an exported pure function on the package
-  // public API. A future second caller passing NaN/Infinity would make
-  // `gapPp < MATERIAL_GAP_PP` evaluate false (NaN comparisons are false) and
-  // fall through to a WRONG buildAuthor:true. A non-finite rate must FAIL-SAFE
-  // (defer), never build.
+  // The production reducer can only ever produce finite 0..1 rates, but the gate
+  // is an exported pure function on the package public API. A future second
+  // caller passing NaN/Infinity would make `gapPp < MATERIAL_GAP_PP` evaluate
+  // false (NaN comparisons are false) and fall through to a WRONG
+  // buildAuthor:true. A non-finite rate must FAIL-SAFE (defer), never build.
   it("FAIL-SAFE: a NaN validity rate (ample sample) DEFERS with an invalid-aggregate reason, never builds", () => {
     const verdict = pipelineAuthoringGate({
       smallTierInvocations: 50,

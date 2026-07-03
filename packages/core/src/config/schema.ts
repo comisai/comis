@@ -75,10 +75,11 @@ export const AppConfigSchema = z.strictObject({
     /** Observability persistence configuration */
     observability: ObservabilityConfigSchema.default(() => ObservabilityConfigSchema.parse({})),
     /**
-     * Orchestration authoring gates (Phase 174 / v2.27 P2). SHIPPED GATED-OFF:
+     * Orchestration authoring gates. SHIPPED GATED-OFF:
      * `orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}` all
      * default false, so an absent section parses to the inert all-false gate and
-     * behavior is byte-identical to today (the load-bearing invariant).
+     * the feature is fully inert unless explicitly enabled (the load-bearing
+     * invariant).
      */
     orchestration: OrchestrationConfigSchema.default(() => OrchestrationConfigSchema.parse({})),
     /**

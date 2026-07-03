@@ -71,8 +71,8 @@ describe("analyzeRecallTrace (rerank-lift-realized)", () => {
     // preScores/postScores are independently optional with NO cross-field
     // length invariant in the schema. A malformed producer emitting mismatched
     // lengths must NOT inflate rerankLiftRealized — a length mismatch is
-    // malformed input, not an observed reordering. Pre-patch, argsortDiffers
-    // returns true on a length mismatch and the "ran" path counted it as lift.
+    // malformed input, not an observed reordering. If argsortDiffers returned
+    // true on a length mismatch, the "ran" path would count it as lift.
     const mismatched = JSON.stringify({
       traceSchema: "comis-recall-trace",
       schemaVersion: 1,

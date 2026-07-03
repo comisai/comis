@@ -12,32 +12,32 @@ export interface ImageGenInput {
   size?: string;
   /** Whether to run safety checker on output (default: true) */
   safetyChecker?: boolean;
-  /** IN-01: optional reference image (edit/img2img) — base64 + mime, resolved by the handler. */
+  /** Optional reference image (edit/img2img) — base64 + mime, resolved by the handler. */
   referenceImage?: { data: string; mimeType: string };
-  /** IN-02/CFG-02: optional model override (validated by the handler against the provider's list). */
+  /** Optional model override (validated by the handler against the provider's list). */
   model?: string;
 }
 
 /**
  * Output from image generation providers.
  *
- * `costUsd`/`model`/`provider` are OPTIONAL and ADDITIVE (OBS-01/03, Phase 186):
+ * `costUsd`/`model`/`provider` are OPTIONAL and ADDITIVE:
  * the pi-ai adapter (`toImageGenOutput`) maps them from `AssistantImages`
- * (`usage.cost.total`/`model`/`provider`), but the legacy fal/openai skills
+ * (`usage.cost.total`/`model`/`provider`), but the fal/openai skills
  * adapters that also implement `ImageGenerationPort` simply leave them unset —
- * a text-only/legacy return `{ buffer, mimeType }` is still valid.
+ * a minimal `{ buffer, mimeType }` return is still valid.
  */
 export interface ImageGenOutput {
   /** Raw image bytes */
   buffer: Buffer;
   /** MIME type of the image (e.g., "image/png") */
   mimeType: string;
-  /** OBS-03 — generation cost in USD (pi-ai `Usage.cost.total`); unset when the
-   *  provider reports no usage or a legacy adapter does not map it. */
+  /** Generation cost in USD (pi-ai `Usage.cost.total`); unset when the
+   *  provider reports no usage or the adapter does not map it. */
   costUsd?: number;
-  /** OBS-01/03 — the model id that produced the image (e.g. "gpt-image-1"). */
+  /** The model id that produced the image (e.g. "gpt-image-1"). */
   model?: string;
-  /** OBS-01/03 — the executing provider id (e.g. "openai", "google"). */
+  /** The executing provider id (e.g. "openai", "google"). */
   provider?: string;
 }
 
@@ -45,9 +45,9 @@ export interface ImageGenOutput {
  * Image generation port — concrete hexagonal boundary for image-generation
  * adapters (OpenAI gpt-image-1, fal.ai, etc.).
  *
- * Inlined the previous `Provider<TInput, TOutput>` generic into this
- * concrete interface: the generic had a single consumer
- * (`ImageGenerationPort`), and the optional `estimateCost` field had zero
+ * Deliberately a concrete interface, not a `Provider<TInput, TOutput>`
+ * generic: a generic would have a single consumer
+ * (`ImageGenerationPort`), and an optional `estimateCost` field would have zero
  * production callers.
  */
 export interface ImageGenerationPort {
@@ -60,14 +60,14 @@ export interface ImageGenerationPort {
 }
 
 /**
- * Input for a video generation request (text-to-video baseline; the full
- * image-to-video variant-selection lands Phase 191). All fields beyond `prompt`
- * are optional and provider-validated.
+ * Input for a video generation request (text-to-video, plus image-to-video via
+ * `referenceImage`). All fields beyond `prompt` are optional and
+ * provider-validated.
  */
 export interface VideoGenInput {
   /** Text prompt describing the desired video */
   prompt: string;
-  /** Clip length in normalized seconds; the adapter encodes per backend (Phase 191) */
+  /** Clip length in normalized seconds; the adapter encodes per backend */
   durationSecs?: number;
   /** "16:9" | "9:16" | "1:1" (provider-validated) */
   aspectRatio?: string;
@@ -79,19 +79,19 @@ export interface VideoGenInput {
   negativePrompt?: string;
   /** Deterministic seed (provider-dependent) */
   seed?: number;
-  /** Phase 188 / 191 (IN-01): SSRF-resolved first-frame reference image for
-   *  image-to-video — base64 + mime, resolved by the handler. This singular field
-   *  is the PRIMARY and (Phase 191) the ONLY consumed image input: each adapter
-   *  variant-selects on its presence (FAL swaps to its /image-to-video endpoint;
-   *  Veo/Grok add the image on the same model). */
+  /** SSRF-resolved first-frame reference image for image-to-video — base64 +
+   *  mime, resolved by the handler. This singular field is the PRIMARY and the
+   *  ONLY consumed image input: each adapter variant-selects on its presence
+   *  (FAL swaps to its /image-to-video endpoint; Veo/Grok add the image on the
+   *  same model). */
   referenceImage?: { data: string; mimeType: string };
-  /** Phase 191 (IN-01) — FORWARD-COMPAT SCAFFOLDING, NOT consumed this phase.
-   *  Additional reference images for i2v, each with a role. `referenceImage` (the
-   *  first-frame) stays the primary, sole-consumed singular input this phase;
-   *  multi-ref consumption (Veo lastFrame/referenceImages, Grok reference_images,
-   *  FAL first-last-frame) is a LOCKED fast-follow deferral. This optional field
-   *  is byte-compatible scaffolding so the future phase is additive-only — no
-   *  adapter reads it yet. Each `ref` is the SSRF-resolved { data, mimeType }. */
+  /** FORWARD-COMPAT SCAFFOLDING — NOT consumed yet. Additional reference
+   *  images for i2v, each with a role. `referenceImage` (the first-frame) stays
+   *  the primary, sole-consumed singular input; multi-ref consumption (Veo
+   *  lastFrame/referenceImages, Grok reference_images, FAL first-last-frame) is
+   *  a deliberate deferral. This optional field is byte-compatible scaffolding
+   *  so future consumption is additive-only — no adapter reads it yet. Each
+   *  `ref` is the SSRF-resolved { data, mimeType }. */
   referenceImages?: { ref: { data: string; mimeType: string }; role: "first_frame" | "last_frame" | "reference" }[];
   /** Overrides the per-backend default video model */
   model?: string;
@@ -101,12 +101,12 @@ export interface VideoGenInput {
  * An in-flight job handle — the durable `submit()` result.
  *
  * `jobId` is the OPAQUE provider id (e.g. the FAL `request_id`): it is stable
- * across `poll()` calls and contains NO secret (VPORT-03). It is safe to log;
+ * across `poll()` calls and contains NO secret. It is safe to log;
  * the bearer token / `FAL_KEY` that authenticated the submit is never part of
- * it. The runtime no-secret assertion lands in Plan 03's adapter test.
+ * it. The runtime no-secret assertion lives in the adapter tests.
  */
 export interface VideoGenJob {
-  /** Opaque, stable-across-poll, secret-free provider request id (VPORT-03) */
+  /** Opaque, stable-across-poll, secret-free provider request id */
   jobId: string;
   /** The executing backend id (e.g. "fal") */
   provider: string;
@@ -116,9 +116,9 @@ export interface VideoGenJob {
 
 /**
  * A `poll()` snapshot. `state` is the normalized lifecycle; `done` is the only
- * terminal-success state (`failed` short-circuits the poll loop in Plan 03).
+ * terminal-success state (`failed` short-circuits the poll loop).
  *
- * `errorKind`/`hint` are OPTIONAL and ADDITIVE (Phase 190 WR-01): when an adapter
+ * `errorKind`/`hint` are OPTIONAL and ADDITIVE: when an adapter
  * can classify a terminal `failed` state at poll time (a Veo `operation.error`, a
  * Grok `status:"failed"|"expired"`), it threads the SAME classified
  * `{ videoErrorKind, hint }` it produces on the in-turn `execute()` path onto the
@@ -134,9 +134,9 @@ export interface VideoGenJob {
 export interface VideoJobStatus {
   jobId: string;
   state: "pending" | "done" | "failed";
-  /** WR-01 — the classified domain error kind on a terminal `failed` snapshot. */
+  /** The classified domain error kind on a terminal `failed` snapshot. */
   errorKind?: VideoErrorKind;
-  /** WR-01 — the actionable, secret-free operator hint paired with `errorKind`. */
+  /** The actionable, secret-free operator hint paired with `errorKind`. */
   hint?: string;
 }
 
@@ -144,8 +144,8 @@ export interface VideoJobStatus {
  * Output of a completed render.
  *
  * `durationSecs`/`costUsd`/`model`/`provider`/`sourceUrl` are OPTIONAL and
- * ADDITIVE (mirror `ImageGenOutput`): a legacy/minimal return is still a valid
- * `{ buffer, mimeType }`.
+ * ADDITIVE (mirror `ImageGenOutput`): a minimal `{ buffer, mimeType }` return
+ * is still valid.
  */
 export interface VideoGenOutput {
   /** Raw video bytes (downloaded from the expiring provider URL) */
@@ -160,7 +160,7 @@ export interface VideoGenOutput {
   model?: string;
   /** The executing provider id (e.g. "fal", "google") */
   provider?: string;
-  /** DEL-01 — the (expiring) provider URL retained for the buffer-vs-link
+  /** The (expiring) provider URL retained for the buffer-vs-link
    *  delivery choice; the buffer is the durable artifact. */
   sourceUrl?: string;
 }
@@ -172,28 +172,28 @@ export interface VideoGenOutput {
  * Unlike `ImageGenerationPort`, video is an async submit→poll→download
  * lifecycle: renders take 30 s–5 min and can outlive the originating turn. The
  * port therefore exposes the discrete `submit`/`poll`/`fetchResult` steps (so
- * Phase 189's background poller can drive the loop externally byte-for-byte)
+ * the daemon's background poller can drive the loop externally byte-for-byte)
  * AND an inline `execute()` convenience that runs the bounded poll-loop in one
- * call (the Phase 188 baseline; Plan 03 wires the loop).
+ * call.
  */
 export interface VideoGenerationPort {
   /** Unique provider identifier (e.g., "fal", "veo", "grok") */
   readonly id: string;
   /** Whether the provider is currently available (API key present, etc.) */
   isAvailable(): boolean;
-  /** Submit a render; capture the durable opaque jobId (VPORT-03). */
+  /** Submit a render; capture the durable opaque jobId. */
   submit(input: VideoGenInput): Promise<Result<VideoGenJob, Error>>;
   /** Poll a submitted job's status (idempotent; jobId stable). */
   poll(job: VideoGenJob): Promise<Result<VideoJobStatus, Error>>;
   /** Fetch + download the finished result to a buffer. `opts` bounds the
-   *  download (WR-01): an optional abort signal (the operator deadline; threaded
+   *  download: an optional abort signal (the operator deadline; threaded
    *  by `execute`) and a byte cap (defaulted by the adapter). */
   fetchResult(
     job: VideoGenJob,
     opts?: { signal?: AbortSignal; maxBytes?: number },
   ): Promise<Result<VideoGenOutput, Error>>;
-  /** Inline convenience: submit + bounded poll-loop + fetchResult (Plan 03
-   *  wires the loop; a deadline overrun surfaces as `job_timeout`). */
+  /** Inline convenience: submit + bounded poll-loop + fetchResult (a deadline
+   *  overrun surfaces as `job_timeout`). */
   execute(
     input: VideoGenInput,
     opts: { timeoutMs: number; pollIntervalMs: number; signal?: AbortSignal },

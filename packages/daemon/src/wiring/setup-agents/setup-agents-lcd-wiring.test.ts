@@ -2,7 +2,7 @@
 /**
  * Forward-presence test — drives the REAL `setupSingleAgent` boot path and
  * asserts that `lcdStore` from `SingleAgentDeps` is actually forwarded into the
- * `createPiExecutor(...)` deps object literal as `contextStore` (Phase 128, A4).
+ * `createPiExecutor(...)` deps object literal as `contextStore`.
  *
  * The field-plumbing lesson this file guards (the user-representation / relationship
  * / tuned-alpha siblings): a store can be threaded through the TYPES
@@ -52,7 +52,7 @@ vi.mock("@comis/agent", () => ({
   createAuthRotationAdapter: vi.fn(() => ({})),
   resolveCompactionModel: vi.fn(() => ""),
   resolveOperationDefaults: vi.fn(() => ({ mid: "concrete-model" })),
-  // KNOB-01 + FLOOR-01 (176-05): the boot-honesty block runs unconditionally in
+  // The boot-honesty block runs unconditionally in
   // setupSingleAgent — stubbed inert here (this suite pins a different wire).
   compareServedWindowForProvider: vi.fn(() => undefined),
   collectAgentBootWindowInfo: vi.fn(() => ({})),

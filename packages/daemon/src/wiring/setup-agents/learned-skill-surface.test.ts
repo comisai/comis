@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the learned-skill surface helper (SURFACE-01/03 + D1).
+ * Tests for the learned-skill surface helper.
  *
  * The cache keystone: learned `<skill>` blocks append AFTER platform blocks in
  * ONE `<available_skills>` wrapper, so the per-session prompt-skills freeze
@@ -133,11 +133,11 @@ describe("mergeLearnedSkillsXml — append after platform", () => {
     const xml = mergeLearnedSkillsXml([platform("P1")], [learned({ name: "L1" })], workDir);
     // Platform default source is bundled; learned explicitly carries learned.
     expect(xml).toContain("<source>learned</source>");
-    // WR-02: the learned <location> is the ABSOLUTE materialized SKILL.md path —
+    // The learned <location> is the ABSOLUTE materialized SKILL.md path —
     // consistent with platform skills (which emit metadata.path, an absolute path)
-    // so the ATTR-01 attribution index (keyed on the exact <location> string the
+    // so the skill-use attribution index (keyed on the exact <location> string the
     // model reads with) matches a `read` of that same absolute path. A relative
-    // location mixed into an absolute-location block is the WR-02 attribution smell.
+    // location mixed into an absolute-location block would silently break attribution.
     const expectedAbs = safePath(workDir, ".learned-skills", "L1", "SKILL.md");
     expect(xml).toContain(`<location>${expectedAbs}</location>`);
     // It must NOT be the workspace-relative form (the pre-fix asymmetry).
@@ -167,15 +167,15 @@ describe("mergeLearnedSkillsXml — append after platform", () => {
 });
 
 // ---------------------------------------------------------------------------
-// MODEL-03 byte-identity goldens — a kind='skill' MentalModel renders + materializes
-// BYTE-FOR-BYTE as the pre-migration learned skill did (the no-behavior-change pin).
+// Byte-identity goldens — a kind='skill' MentalModel renders + materializes
+// to exactly the pinned bytes (the no-behavior-change pin).
 // The renderer is byte-deterministic from {name,description,location,source}; a
 // kind='skill' row maps to the same PromptSkillDescription, so no `kind` branch
 // alters the output. A FIXED workspace dir ('/ws') keeps the absolute <location>
 // reproducible in the inline snapshot.
 // ---------------------------------------------------------------------------
 
-describe("MODEL-03: kind='skill' surface render + SKILL.md are byte-identical (golden)", () => {
+describe("kind='skill' surface render + SKILL.md are byte-identical (golden)", () => {
   it("mergeLearnedSkillsXml appends a kind='skill' row LAST with <source>learned</source> + absolute SKILL.md location", () => {
     const xml = mergeLearnedSkillsXml(
       [platform("platform-a")],
@@ -250,12 +250,13 @@ describe("materializeLearnedSkills — derive wholesale", () => {
     expect(existsSync(safePath(workDir, ".learned-skills", "stale", "SKILL.md"))).toBe(false);
   });
 
-  it("WR-04: one poison (path-traversal) skill name is SKIPPED — the other skills still materialize, no throw, no escape", () => {
+  it("one poison (path-traversal) skill name is SKIPPED — the other skills still materialize, no throw, no escape", () => {
     // A single malformed `name` (a `..` traversal that makes safePath throw) must
     // NOT abort the whole batch after the wholesale rmSync (which would leave
     // `.current` empty + a half-written subtree). Each skill is materialized under
-    // its own try/catch: the bad one is dropped, the good ones survive. Pre-WR-04
-    // the throw propagates out of materializeLearnedSkills → the batch is poisoned.
+    // its own try/catch: the bad one is dropped, the good ones survive. Without the
+    // per-skill try/catch the throw propagates out of materializeLearnedSkills → the
+    // batch is poisoned.
     expect(() =>
       materializeLearnedSkills(workDir, [
         learned({ name: "good-before" }),
@@ -388,12 +389,11 @@ describe("refreshLearnedSkillSurface — async list + materialize + cache", () =
 });
 
 // ---------------------------------------------------------------------------
-// GAP-2 half-2 (Phase 225 Plan 02, Pitfall 1): the wholesale surface MUST be
-// kind-filtered to EXCLUDE kind:"profile" — a profile doc surfaces ONCE (in the
-// rewired <user_profile> block, prompt-assembly), never ALSO in <available_skills>.
-// The fix changes `list(scope)` → `list(scope, "skill")` (the listByKindStmt
-// path). RED on the pre-fix code: the unfiltered list() returns the profile doc,
-// which then materializes into .learned-skills (the double-surface).
+// The wholesale surface MUST be kind-filtered to EXCLUDE kind:"profile" — a
+// profile doc surfaces ONCE (in the <user_profile> block, prompt-assembly),
+// never ALSO in <available_skills>. Without the kind filter, the unfiltered
+// list() returns the profile doc, which then materializes into .learned-skills
+// (the double-surface).
 // ---------------------------------------------------------------------------
 
 /**
@@ -424,7 +424,7 @@ function makeKindAwareStore(docs: MentalModel[]): {
   return { store, kindCalls: () => calls };
 }
 
-describe("GAP-2 half-2: the wholesale surface kind-filters OUT kind:'profile' (no double-surface)", () => {
+describe("the wholesale surface kind-filters OUT kind:'profile' (no double-surface)", () => {
   it("a kind:'profile' doc in the store is NOT materialized into .learned-skills", async () => {
     const { store } = makeKindAwareStore([
       learned({ name: "alpha", kind: "skill" }),
@@ -454,7 +454,7 @@ describe("GAP-2 half-2: the wholesale surface kind-filters OUT kind:'profile' (n
     const { store, kindCalls } = makeKindAwareStore([learned({ name: "alpha", kind: "skill" })]);
     await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
 
-    // The surface admits skill + topic (Plan 03) while excluding profile. A SINGLE
+    // The surface admits skill + topic while excluding profile. A SINGLE
     // list() round-trip cannot express "skill OR topic" via the single-kind
     // listByKindStmt filter, so the surface lists unfiltered (kind === undefined)
     // and filters in code to skill|topic. Every list() call is unfiltered.
@@ -464,15 +464,13 @@ describe("GAP-2 half-2: the wholesale surface kind-filters OUT kind:'profile' (n
 });
 
 // ---------------------------------------------------------------------------
-// FOLD-02 (Phase 225 Plan 03): the wholesale surface BROADENS to admit
-// kind:"topic" (the design's one-store unification — a surfaced topic doc IS the
-// observation recall medium) while STILL excluding kind:"profile" (the Plan-02
-// guard — a profile doc surfaces ONCE, in <user_profile>). The filter becomes
+// The wholesale surface admits kind:"topic" (the one-store unification — a
+// surfaced topic doc IS the observation recall medium) while STILL excluding
+// kind:"profile" (a profile doc surfaces ONCE, in <user_profile>). The filter is
 // `d.kind === "skill" || d.kind === "topic"` over an unfiltered list(scope).
-// RED on the Plan-02 code (list(scope,"skill")): a kind:topic doc does NOT surface.
 // ---------------------------------------------------------------------------
 
-describe("FOLD-02: the wholesale surface admits kind:'topic' (still excludes kind:'profile')", () => {
+describe("the wholesale surface admits kind:'topic' (still excludes kind:'profile')", () => {
   it("a kind:'topic' doc IS materialized into .learned-skills (the observation recall medium)", async () => {
     const { store } = makeKindAwareStore([
       learned({ name: "alpha", kind: "skill" }),
@@ -496,11 +494,11 @@ describe("FOLD-02: the wholesale surface admits kind:'topic' (still excludes kin
 
     expect(surfaced.some((s) => s.name === "alpha")).toBe(true);
     expect(surfaced.some((s) => s.kind === "topic")).toBe(true);
-    // The profile doc stays excluded (no double-surface — the Plan-02 guard holds).
+    // The profile doc stays excluded (the no-double-surface guard holds).
     expect(surfaced.some((s) => s.kind === "profile")).toBe(false);
   });
 
-  it("a kind:'profile' doc is STILL NOT materialized into .learned-skills (regression of the Plan-02 guard)", async () => {
+  it("a kind:'profile' doc is STILL NOT materialized into .learned-skills (the no-double-surface guard)", async () => {
     const { store } = makeKindAwareStore([
       learned({ name: "topic-cluster-x", id: "id-topic", kind: "topic" }),
       learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
@@ -513,8 +511,8 @@ describe("FOLD-02: the wholesale surface admits kind:'topic' (still excludes kin
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: createRefreshableLearnedSkillSurface — a re-refresh after a promote
-// picks up the newly-active skill on the NEXT listing (SURFACE-03: it updates
+// createRefreshableLearnedSkillSurface — a re-refresh after a promote
+// picks up the newly-active skill on the NEXT listing (it updates
 // cache.current; the next freeze reads it). Without the re-refresh the boot
 // snapshot is the only one a daemon ever sees → a promoted skill never surfaces.
 // ---------------------------------------------------------------------------
@@ -524,10 +522,10 @@ function makeRegistryForSurface(): import("@comis/skills").SkillRegistry {
   return makeRegistry([platform("P1")]);
 }
 
-describe("WR-01: createRefreshableLearnedSkillSurface re-refresh picks up a promoted skill", () => {
+describe("createRefreshableLearnedSkillSurface re-refresh picks up a promoted skill", () => {
   it("a promote (list() now returns the skill active) surfaces it on a subsequent refresh()", async () => {
     // list() starts empty, then returns the skill ACTIVE after a 'promote' — the
-    // re-refresh picks up the new surfaceable set (SURFACE-03 next-session pickup).
+    // re-refresh picks up the new surfaceable set (next-session pickup).
     let listed: MentalModel[] = [];
     const store = {
       admit: async () => ok({ id: "x", admitted: true }),
@@ -564,7 +562,7 @@ describe("WR-01: createRefreshableLearnedSkillSurface re-refresh picks up a prom
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: the surface registry routes a refresh(agentId) to the registered
+// The surface registry routes a refresh(agentId) to the registered
 // agent's refresh closure; an unregistered (default-off) agent is a no-op.
 // ---------------------------------------------------------------------------
 
@@ -597,12 +595,12 @@ describe("createLearnedSkillSurfaceRegistry — per-agent refresh routing", () =
 });
 
 // ---------------------------------------------------------------------------
-// WR-03: wireAgentLearnedSkillSurface gating — default-off (enabled:false) does
+// wireAgentLearnedSkillSurface gating — default-off (enabled:false) does
 // ZERO surface work: NO store list(), NO .learned-skills materialize/rmSync, and
 // .current is []. Enabled wires the cache + registers it.
 // ---------------------------------------------------------------------------
 
-describe("wireAgentLearnedSkillSurface — WR-03 default-off does no surface work", () => {
+describe("wireAgentLearnedSkillSurface — default-off does no surface work", () => {
   it("enabled:false → no list() call, no .learned-skills dir touched, .current is []", async () => {
     let listCalls = 0;
     const store = {
@@ -621,7 +619,7 @@ describe("wireAgentLearnedSkillSurface — WR-03 default-off does no surface wor
     const registry = createLearnedSkillSurfaceRegistry();
 
     const cache = wireAgentLearnedSkillSurface({
-      enabled: false, // WR-03: gated OFF
+      enabled: false, // gated OFF
       agentId: "a1",
       learnedSkillStore: store,
       scope,

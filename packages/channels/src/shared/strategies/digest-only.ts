@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DigestOnly — end-of-turn email digest, silent on success (§7.2 / §7.3 row
- * "DigestOnly"). Used by Email (largest cap; the assistant reply IS the activity
+ * DigestOnly — end-of-turn email digest, silent on success.
+ * Used by Email (largest cap; the assistant reply IS the activity
  * on success, so no separate activity message is sent).
  *
  * State machine:
@@ -32,7 +32,7 @@ import { eventLabel } from "./render.js";
  * Failure-digest header glyph when no theme markers are injected (default-theme
  * parity). DigestOnly does NOT route through the shared `failureLabel` helper:
  * Email's failure header is the bracketed ASCII tag `"[FAILED]"`, NOT the `❌`
- * the shared `DEFAULT_MARKERS` use. This literal is the historical Email
+ * the shared `DEFAULT_MARKERS` use. This literal is the established Email
  * default; a marker-less call MUST stay byte-identical to it (golden-fixture
  * parity for the 5 Email digest fixtures).
  */
@@ -53,7 +53,7 @@ export interface DigestOnlyDeps {
   /**
    * Resolved theme status markers. The `failure` glyph on the digest
    * header follows this. Omitted → the Email default (`[FAILED]`), keeping a
-   * marker-less call byte-identical to the historical digest body. Only
+   * marker-less call byte-identical to the fixture-pinned digest body. Only
    * `failure` is read (success sends nothing; subagent/running never appear on
    * the header).
    */

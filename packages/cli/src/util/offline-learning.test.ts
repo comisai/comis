@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-02 (Phase 198): tests for the OFFLINE outcome-learning reader behind
+ * Tests for the OFFLINE outcome-learning reader behind
  * `comis memory learning`. Drives the PRODUCTION write path
  * (`createSqliteOutcomeStore.observe`) into a temp `memory.db`, then asserts the
  * counts-only coverage/volume/ratio roll-up — including the content-free
@@ -104,9 +104,9 @@ describe("readLearningStatsOffline", () => {
     expect(stats!.perAgent.find((a) => a.agentId === "bob")!.outcomes).toEqual({ failure: 1 });
   });
 
-  it("counts per-source volume as DISTINCT trajectories, not raw rows (WR-03 robustness)", async () => {
-    // A single trajectory carrying MULTIPLE same-source rows (the residual of the
-    // WR-02 per-node flood, or any future multi-row source) must NOT inflate the
+  it("counts per-source volume as DISTINCT trajectories, not raw rows", async () => {
+    // A single trajectory carrying MULTIPLE same-source rows (per-node residual
+    // rows, or any future multi-row source) must NOT inflate the
     // per-source figure: `sources.pipeline` is "trajectories with a pipeline signal"
     // (COUNT(DISTINCT trajectory_id)), so three pipeline rows on one trajectory read
     // as 1, not 3. totalRows is the same distinct-signal sum.
@@ -124,7 +124,7 @@ describe("readLearningStatsOffline", () => {
     expect(alice.trajectories).toBe(1);
   });
 
-  it("is content-free: a hostile body/confidence/recalled-id never surfaces (T-198-27)", async () => {
+  it("is content-free: a hostile body/confidence/recalled-id never surfaces", async () => {
     const dir = tmpDataDir();
     await seed(dir, [
       {

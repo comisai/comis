@@ -13,7 +13,7 @@ export default tseslint.config(
       "**/node_modules/**",
       "packages/*/dist/**",
       ".claude/worktrees/**",
-      // GSD planning state (gitignored, commit_docs:false) — never product code.
+      // Local planning/workflow state (gitignored) — never product code.
       // Archived spike scripts / reproduction artifacts can be any extension
       // (.mjs/.ts); eslint must not lint planning artifacts.
       ".planning/**",

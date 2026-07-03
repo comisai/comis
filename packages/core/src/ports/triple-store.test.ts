@@ -181,9 +181,9 @@ describe("TripleStorePort — type-only segregated KG port", () => {
 });
 
 /**
- * The as-of time-travel contract completion.
+ * The as-of time-travel contract.
  *
- * The earlier cut shipped the valid-time `asOf`; this one adds (a) a txn-time variant of
+ * Beyond the valid-time `asOf`, the port carries (a) a txn-time variant of
  * `asOf` (the `mode: "valid" | "txn"` discriminator — valid-time answers "what
  * was BELIEVED true at instant t", txn-time answers "what the system had
  * RECORDED as of t") and (b) `currentTruth`, the default-recall read that

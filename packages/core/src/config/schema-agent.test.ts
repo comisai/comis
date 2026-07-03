@@ -97,13 +97,13 @@ describe("AgentConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // thinking.downshiftOnTightWindow (Fix 3 / Phase 166 CWF-02)
+  // thinking.downshiftOnTightWindow
   // -------------------------------------------------------------------------
 
   describe("thinking.downshiftOnTightWindow", () => {
     it("defaults thinking.downshiftOnTightWindow to true when thinking is omitted", () => {
       const result = AgentConfigSchema.parse({});
-      // CWF-02: thinking-effort governor defaults to enabled.
+      // The thinking-effort governor defaults to enabled.
       expect(result.thinking.downshiftOnTightWindow).toBe(true);
     });
 
@@ -209,14 +209,14 @@ describe("AgentConfigSchema", () => {
     }
   });
 
-  it("cacheBreakpointStrategy defaults to 'auto' (→ multi-zone; live-2026-06-18 cache regression)", () => {
-    // The default was regressed to 'single' (#110, 2026-05-17), which forces the
-    // single-breakpoint strategy on every default install. On a long tool-using turn
-    // that places one breakpoint across a 37-41 block conversation → the 20-block
-    // Anthropic lookback window is blown → cache miss → the whole tool suffix is
-    // re-written every iteration (O(N^2) cache_creation, the 2.55M-write bill).
-    // resolveBreakpointStrategy maps 'auto' → 'multi-zone' (W11), which is the documented
-    // mitigation; the default MUST be 'auto' so a default install gets multi-zone.
+  it("cacheBreakpointStrategy defaults to 'auto' (→ multi-zone; cache-cost regression guard)", () => {
+    // The default was regressed to 'single' (#110), which forces the single-breakpoint
+    // strategy on every default install. On a long tool-using turn that places one
+    // breakpoint across a 37-41 block conversation → the 20-block Anthropic lookback
+    // window is blown → cache miss → the whole tool suffix is re-written every
+    // iteration (O(N^2) cache_creation cost). resolveBreakpointStrategy maps 'auto' →
+    // 'multi-zone', the mitigation; the default MUST be 'auto' so a default install
+    // gets multi-zone.
     const result = AgentConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -677,12 +677,12 @@ describe("RagConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
-// RagConfigSchema.rerank (cross-encoder reranking, default-OFF)
+// RagConfigSchema.rerank (cross-encoder reranking, default-ON opt-out)
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.rerank", () => {
   it("defaults reranking ON (opt-out posture) with the candidate cap, timeout, and minResults", () => {
-    // Opt-out posture supersedes the earlier default-OFF decision:
+    // Opt-out posture:
     // rerank is a $0-at-recall capability, default-ON at the schema level. The daemon's
     // EFFECTIVE-rerank precedence (raw pre-Zod signal + model-present) still governs the
     // auto-on/download path, so a bare config does NOT force a 606MB download.
@@ -766,7 +766,7 @@ describe("RagConfigSchema.scoring", () => {
     // The FadeMem decay magnitude knob — the SINGLE canonical `rag.scoring.forgetAlpha`,
     // alongside the other alphas (NOT a knob on `rag.forget`, which carries only the on/off
     // toggle — the single-knob invariant). Bounded small (same magnitude as trust/proof) so a
-    // stale memory's decay RANKS but cannot overturn trust-first (Pitfall 2). Neutral (factor
+    // stale memory's decay RANKS but cannot overturn trust-first ordering. Neutral (factor
     // 1.0) whenever forget is OFF or at event-age 0.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
@@ -864,7 +864,7 @@ describe("RagConfigSchema.lanes", () => {
   });
 
   it("rejects an unknown key inside lanes (strictObject)", () => {
-    // `temporal` is now a VALID sub-lane — use a genuinely-unknown key.
+    // `temporal` is a VALID sub-lane — use a genuinely-unknown key.
     const result = RagConfigSchema.safeParse({ lanes: { bogusLane: { weight: 1 } } });
     expect(result.success).toBe(false);
   });
@@ -877,7 +877,7 @@ describe("RagConfigSchema.lanes", () => {
 
 // ---------------------------------------------------------------------------
 // RagConfigSchema.lanes.temporal (the temporal-spread lane,
-// opt-in / default-OFF — mirrors rag.entityLane; default windowDays:7)
+// default-ON / opt-out — mirrors rag.entityLane; default windowDays:7)
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.lanes.temporal", () => {
@@ -934,7 +934,7 @@ describe("RagConfigSchema.lanes.temporal", () => {
 
 // ---------------------------------------------------------------------------
 // RagConfigSchema.lanes.causal (the causal one-hop recall
-// lane, opt-in / default-OFF — the exact temporal-lane sibling; no windowDays)
+// lane, default-ON / opt-out — the exact temporal-lane sibling; no windowDays)
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.lanes.causal", () => {
@@ -979,7 +979,7 @@ describe("RagConfigSchema.lanes.causal", () => {
 
 // ---------------------------------------------------------------------------
 // RagConfigSchema.lanes.graphSpread (the recursive-CTE graph-
-// spread recall lane, opt-in / default-OFF — the temporal/causal-lane sibling,
+// spread recall lane, default-ON / opt-out — the temporal/causal-lane sibling,
 // plus maxDepth + fanOut caps for the bounded walk)
 // ---------------------------------------------------------------------------
 
@@ -1045,7 +1045,7 @@ describe("RagConfigSchema.lanes.graphSpread", () => {
 
 // ---------------------------------------------------------------------------
 // RagConfigSchema.feedback (recall-utility feedback loop,
-// opt-in / default-OFF — mirrors rag.entityLane)
+// default-ON / opt-out — mirrors rag.entityLane)
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.feedback", () => {
@@ -1144,8 +1144,8 @@ describe("RagConfigSchema.feedback", () => {
 });
 
 // ---------------------------------------------------------------------------
-// RagConfigSchema.mmr (MMR diversity re-rank, opt-in /
-// default-OFF; λ bounded [0,1] — 1.0 = pure relevance = byte-identical order)
+// RagConfigSchema.mmr (MMR diversity re-rank, default-ON /
+// opt-out; λ bounded [0,1] — 1.0 = pure relevance = byte-identical order)
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.mmr", () => {
@@ -1202,7 +1202,7 @@ describe("RagConfigSchema.mmr", () => {
 
 // ---------------------------------------------------------------------------
 // RagConfigSchema.forget (the recall-side gate for the
-// FadeMem per-type decay factor, default-OFF; OFF ⇒ forgetFactor exactly 1.0,
+// FadeMem per-type decay factor, default-ON; OFF ⇒ forgetFactor exactly 1.0,
 // byte-identical recall; the neutral-importance byte-identity holds even when ON)
 // ---------------------------------------------------------------------------
 
@@ -1257,7 +1257,7 @@ describe("RagConfigSchema.forget", () => {
 
 // ---------------------------------------------------------------------------
 // RagConfigSchema.queryUnderstanding (LLM-free query
-// understanding toggles, all opt-in / default-OFF — byte-identical when off)
+// understanding toggles, all default-ON / opt-out)
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.queryUnderstanding", () => {
@@ -1332,7 +1332,7 @@ describe("RagConfigSchema additive (mmr + queryUnderstanding)", () => {
 
   it("is additive — every pre-existing RagConfig default is unchanged when mmr + queryUnderstanding are added", () => {
     // Snapshot the existing defaults so a regression on any of them trips here, not silently
-    // downstream (the schema-cascade class — the memoryReasoning precedent).
+    // downstream (the schema-cascade failure class: a new sub-schema shifting sibling defaults).
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {

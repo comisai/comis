@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Coverage tests for the ResultRef type + its pure threshold/GC math (Phase
- * 212, REF-01/REF-03).
+ * Coverage tests for the ResultRef type + its pure threshold/GC math.
  *
- * ResultRef is NET-NEW and DISTINCT from microcompaction-guard.ts (Gap 2):
- * proactive (a handle BY DEFAULT above a per-tool threshold), workspace-relative
- * `results/` (not `<sessionDir>/tool-results/`), a structured handle (not a
- * string ref), per-run GC lifecycle (not session-lifetime). The actual disk I/O
- * lives in Plan 03's `result-ref-store.ts` (skills); this module is the TYPE +
- * the pure math only — every fn takes an injected `nowMs`/byte-count, so there
- * is zero `Date.now()`/fs coupling (all macOS-unit-testable).
+ * ResultRef is DISTINCT from microcompaction-guard.ts: proactive (a handle BY
+ * DEFAULT above a per-tool threshold), workspace-relative `results/` (not
+ * `<sessionDir>/tool-results/`), a structured handle (not a string ref),
+ * per-run GC lifecycle (not session-lifetime). The actual disk I/O lives in
+ * `result-ref-store.ts` (skills); this module is the TYPE + the pure math only
+ * — every fn takes an injected `nowMs`/byte-count, so there is zero
+ * `Date.now()`/fs coupling (all macOS-unit-testable).
  *
  * @module
  */
@@ -154,22 +153,21 @@ describe("checkPerFileCap", () => {
 });
 
 describe("result-ref cap constants", () => {
-  it("declares sane M1 per-file and per-run aggregate caps", () => {
+  it("declares positive per-file and larger per-run aggregate caps", () => {
     expect(PER_FILE_CAP_BYTES).toBeGreaterThan(0);
     expect(PER_RUN_AGGREGATE_CAP_BYTES).toBeGreaterThan(PER_FILE_CAP_BYTES);
   });
 });
 
 // ---------------------------------------------------------------------------
-// QRY-03: pin the shipped GC / TTL / per-run-cap math against the SHIPPED named
-// caps (not arbitrary numbers). The arithmetic is already covered above; this
-// block makes QRY-03's specific bounds — the 8 MiB per-file cap, the 64 MiB
-// per-run aggregate cap, and the TTL eviction predicate — the explicit assertion
+// Pin the shipped GC / TTL / per-run-cap math against the SHIPPED named caps
+// (not arbitrary numbers). The arithmetic is already covered above; this block
+// makes the specific bounds — the 8 MiB per-file cap, the 64 MiB per-run
+// aggregate cap, and the TTL eviction predicate — the explicit assertion
 // target, so a future change to a cap or the eviction order trips a named test.
-// The math is DONE (shipped in result-ref.ts); this ASSERTS it holds. T-221-QRY-08.
 // ---------------------------------------------------------------------------
 
-describe("QRY-03: results/ GC / TTL / per-run-cap enforced (assert the shipped math)", () => {
+describe("results/ GC / TTL / per-run-cap enforced against the shipped named caps", () => {
   it("checkPerFileCap rejects a result one byte over the 8 MiB PER_FILE_CAP_BYTES", () => {
     // At-cap stays inline; one byte over is refused with the overflow handle —
     // the store turns this into a content-free result_ref_too_large (no truncate).

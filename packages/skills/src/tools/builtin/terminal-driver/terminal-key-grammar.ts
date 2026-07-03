@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The pure named-key grammar (spec §5 send_key).
+ * The pure named-key grammar behind `send_key`.
  *
  * Turns a `send_key` chord (`"C-c"`, `"Up"`, `"S-Tab"`, `"M-x"`) into the exact
  * control/escape byte sequence a PTY consumes. This is a standalone,

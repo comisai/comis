@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The per-session terminal-emulator wrapper (spec §2.4 rendering).
+ * The per-session terminal-emulator wrapper (rendering).
  *
  * Wraps a REAL `@xterm/headless` `Terminal` into a small pluggable surface the
- * worker stores per session. This is the new source of truth for the `read`
+ * worker stores per session. This is the source of truth for the `read`
  * snapshot: a stable `cols×rows` character grid, the REAL cursor
  * (`buffer.active.cursorX/cursorY`), and the REAL alt-screen flag
- * (`buffer.active.type === "alternate"`) — REPLACING the earlier raw stdout-ring
- * snapshot. Full-screen TUIs (`vim`/`htop`) draw into a stable grid; the agent
- * must perceive that grid, not a raw byte log.
+ * (`buffer.active.type === "alternate"`) — the raw stdout-ring is only the
+ * emulator-absent fallback. Full-screen TUIs (`vim`/`htop`) draw into a stable
+ * grid; the agent must perceive that grid, not a raw byte log.
  *
  * The emulator is extracted into this module (not inlined in the worker) so the
  * worker stays under the 800-line architecture cap — the heavy @xterm
  * integration lives here.
  *
- * Render formats (§2.4): `snapshot({format})` returns the plain grid
+ * Render formats: `snapshot({format})` returns the plain grid
  * (`text`, default), the ansi-with-SGR serialization (`ansi` via the
  * SerializeAddon's `serialize()`), or an HTML fragment (`html` via
  * `serializeAsHTML()`). `snapshot({scrollback:N})` includes the N retained rows
- * ABOVE the viewport (perception beyond the fold). Per §11 the
+ * ABOVE the viewport (perception beyond the fold). The
  * addon-serialize dep is pinned (0.14.0) + golden-frame tested against
  * churn.
  *
@@ -28,7 +28,7 @@
  * screen-diff (a changed flag + changed-row range) so the agent / the
  * classifier can cheaply see what changed without re-diffing whole grids.
  *
- * §2.4 flush primitive: `@xterm`'s `term.write(data, cb)` is ASYNC-PARSED — the
+ * Flush primitive: `@xterm`'s `term.write(data, cb)` is ASYNC-PARSED — the
  * callback fires once the chunk is fully parsed into the buffer. `write` here
  * returns a Promise that resolves on that callback, so the worker can `await`
  * the parse before serializing a SETTLED frame (the "debounce → serialize once
@@ -87,17 +87,17 @@ export interface SessionEmulatorOptions {
    */
   scrollback: number;
   /**
-   * An OPTIONAL read-side render transform — a selected platform profile's `transformSnapshot`
-   * (RENDER-01). Applied to TEXT-format snapshots AFTER the agnostic grid is built; the emulator
+   * An OPTIONAL read-side render transform — a selected platform profile's `transformSnapshot`.
+   * Applied to TEXT-format snapshots AFTER the agnostic grid is built; the emulator
    * attaches the viewport cell `grid` so the transform can read cell-level attributes (e.g. `dim`).
    * GENERIC (the engine knows nothing of the profile) and identity by default — absent ⇒ the plain
-   * `translateToString` grid, byte-identical to today (INV-1). The Claude ghost-strip is one such
-   * transform, living in `platforms/claude-code/profile.ts` — never here.
+   * `translateToString` grid, byte-identical to the untransformed path. The Claude ghost-strip is
+   * one such transform, living in `platforms/claude-code/profile.ts` — never here.
    */
   transformSnapshot?: (snap: EmulatorSnapshot) => EmulatorSnapshot;
 }
 
-/** The render format for `snapshot().screen` (spec §2.4 / §5 `read` formats). */
+/** The render format for `snapshot().screen` (the `read` tool's format choices). */
 export type RenderFormat = "text" | "ansi" | "html";
 
 /**
@@ -148,9 +148,9 @@ export interface EmulatorSnapshot {
   /**
    * The viewport cell grid (rows × cells, each `{chars,dim,width}`) — the structured input a
    * read-side platform-profile `transformSnapshot` needs for the cell-level attributes the
-   * flattened `screen` string has lost (e.g. SGR-2 `dim` for the Claude ghost-strip, RENDER-01).
+   * flattened `screen` string has lost (e.g. SGR-2 `dim` for the Claude ghost-strip).
    * Populated by the emulator ONLY for `format:"text"` snapshots AND only when a profile transform
-   * is wired (the agnostic path never builds it — zero added cost, INV-1). Absent ⇒ a transform
+   * is wired (the agnostic path never builds it — zero added cost). Absent ⇒ a transform
    * must no-op (it has no cell attributes to act on).
    */
   grid?: readonly (readonly RenderCell[])[];
@@ -163,7 +163,7 @@ export interface EmulatorSnapshot {
  */
 export interface SessionEmulator {
   /**
-   * Feed a chunk into the emulator. Resolves on the §2.4 parse-complete flush
+   * Feed a chunk into the emulator. Resolves on the parse-complete flush
    * (the `@xterm` `write(data, cb)` callback), so the worker can await the parse
    * before serializing a settled frame.
    */
@@ -177,7 +177,7 @@ export interface SessionEmulator {
   /** Resize the grid; reflows the buffer. */
   resize(cols: number, rows: number): void;
   /**
-   * True when buffer lines exist BELOW the displayed viewport bottom — the §2.4
+   * True when buffer lines exist BELOW the displayed viewport bottom — the
    * "more content below the fold" signal the settle composes (a below-fold
    * frame is NOT settled). False at the bottom, on short output, and on the
    * alternate buffer (alt apps own the full screen, no scrollback below).
@@ -246,7 +246,7 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
 
   // The SerializeAddon backs the `ansi`/`html` formats. Loaded once at
   // construction; `serialize()`/`serializeAsHTML()` read the buffer on demand.
-  // Pinned 0.14.0 + golden-frame tested against addon churn (§11).
+  // Pinned 0.14.0 + golden-frame tested against addon churn.
   const serializeAddon = new SerializeAddon();
   term.loadAddon(serializeAddon);
 
@@ -269,7 +269,7 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
       }
     }
     // The AGNOSTIC grid: every viewport row is the plain `translateToString(true)` — no platform
-    // transforms (RENDER-01 / INV-1). A profile's read-side `transformSnapshot` (e.g. the Claude
+    // transforms. A profile's read-side `transformSnapshot` (e.g. the Claude
     // ghost-strip) is applied later, in `snapshot()`, using the cell `grid` — never woven in here.
     for (let y = 0; y < term.rows; y++) {
       lines.push(buf.getLine(buf.baseY + y)?.translateToString(true) ?? "");
@@ -279,7 +279,7 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
 
   /**
    * Build the viewport cell grid (rows × cells) for a read-side profile transform. Read on demand
-   * (text format + a wired transform only) so the agnostic path pays nothing (INV-1).
+   * (text format + a wired transform only) so the agnostic path pays nothing.
    */
   function readViewportGrid(): RenderCell[][] {
     const buf = term.buffer.active;
@@ -310,7 +310,7 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
     term,
 
     write(data: string): Promise<void> {
-      // The callback is the §2.4 parse-complete flush — resolve on it (NOT on
+      // The callback is the parse-complete flush — resolve on it (NOT on
       // write's synchronous return) so the worker's await genuinely waits for the
       // grid to reflect the bytes.
       return new Promise<void>((resolve) => {
@@ -329,11 +329,11 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
         rows: term.rows,
         alt: buf.type === "alternate",
       };
-      // Apply the selected profile's read-side transform (RENDER-01) AFTER the agnostic snapshot.
+      // Apply the selected profile's read-side transform AFTER the agnostic snapshot.
       // ONLY for `text` (the sole format whose `screen` is the plain row grid the transform rewrites)
       // and ONLY when a transform is wired — the engine attaches the viewport cell `grid` so the
       // transform can read cell attributes (`dim`) the flat `screen` lost. No transform / non-text ⇒
-      // the plain grid is returned untouched (INV-1). The engine stays platform-agnostic: it applies
+      // the plain grid is returned untouched. The engine stays platform-agnostic: it applies
       // a generic hook, never a Claude-specific branch.
       if (transformSnapshot !== undefined && format === "text") {
         return transformSnapshot({ ...base, grid: readViewportGrid() });
@@ -445,7 +445,7 @@ export interface ReadResult {
  * validated to one of `text|ansi|html` (anything else → `text`); `scrollback` is
  * a non-negative number (anything else → `0`). Kept here so the worker stays
  * under the 800-line cap. `includeAltBuffer` is ignored for now — alt is captured
- * by default per §2.4; an explicit alt-exclude is out of scope.
+ * by default; an explicit alt-exclude is out of scope.
  *
  * @param params - The decoded read-frame params (`frame.params`).
  * @returns The validated `{format, scrollback}` snapshot options.

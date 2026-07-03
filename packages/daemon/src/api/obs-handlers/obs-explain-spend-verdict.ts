@@ -1,35 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WR-4 (177-obs-loop): the NAMED terminal SPEND root-cause verdict spliced into
+ * The NAMED terminal SPEND root-cause verdict spliced into
  * the `obs-explain-heuristics` registry — `spend_exceeded`.
  *
  * Extracted into this sibling (the `obs-explain-learning-verdicts.ts` discipline)
  * to keep `obs-explain-heuristics.ts` under the 500-line `obs-handlers/*` subdir
  * cap. PURE: no LLM, no I/O, no globals — same signals ⇒ same verdict forever
- * (the Glass Box determinism invariant).
+ * (the report-determinism invariant).
  *
- * Ordering contract (registry position #2 — LIVE v2.28 260621): the dollars
+ * Ordering contract (registry position #2): the dollars
  * kill-switch is an ADMINISTRATIVE pre-emption that aborts at admission, causally
  * INDEPENDENT of tool failures (a failed tool returns ~0 bytes / ~$0 and cannot
  * drive cumulative spend). It is therefore NOT a downstream terminal label like
  * context_exhausted / output_starved / prompt_timeout (which a runaway tool CAN
  * cause) — it out-ranks the breaker/dependency/timeout/degradation heuristics and
- * sits directly below the single X3-frozen content_heuristic_misclassification
- * verdict (the one specific Comis-defect indicator). It was originally spliced
- * into the terminal band below every tool-failure cause; a live VPS incident
- * proved that masked the kill-switch behind chronic breaker noise — a spend-killed
- * session root-caused to breaker_opened_repeated_failure while the operator's
- * turns were all blocked by the ceiling. Before the verdict existed at all a
- * spend-killed session root-caused to NOTHING (the security-review WR-4 finding);
- * both gaps directly violated this milestone's thesis + CLAUDE.md's troubleshooting
- * feedback loop ("verdict ranked chronic noise over the acute event").
+ * sits directly below the single fixture-frozen content_heuristic_misclassification
+ * verdict (the one specific Comis-defect indicator). Splicing it any lower —
+ * into the terminal band below the tool-failure causes — masks the kill-switch
+ * behind chronic breaker noise: a spend-killed
+ * session would root-cause to breaker_opened_repeated_failure while the operator's
+ * turns were all blocked by the ceiling (and without the verdict at all a
+ * spend-killed session root-causes to NOTHING). The acute administrative event
+ * must out-rank the chronic noise.
  *
  * Keys on the metadata-derived endReason (END_REASON_MAP spend_exceeded →
- * "spend_exceeded", WR-2). The frozen 678/503 fixtures carry no endReason
+ * "spend_exceeded"). The frozen 678/503 fixtures carry no endReason
  * "spend_exceeded" ⇒ cannot regress them. The detail NAMES the config key family
- * the operator turns (the §2.7 "name the knob" doctrine); the exact breached
+ * the operator turns (the "name the exact knob" doctrine); the exact breached
  * scope + per-scope $ amounts live on the content-free spend.exceeded trajectory
- * record (WR-4), pointed to by the suggested step. The return type is structurally
+ * record, pointed to by the suggested step. The return type is structurally
  * identical to the registry's `RootCause` (no cross-module type import ⇒ no cycle).
  *
  * @module
@@ -48,11 +47,11 @@ type SpendVerdict = { code: string; detail: string; suggestedNextSteps: string[]
 export const spendExceededVerdict = (s: IncidentSignals): SpendVerdict | null => {
   if (s.endReason !== "spend_exceeded") return null;
 
-  // OBS-3 (openclaw-usecases 2026-06-25): a per-ROOT `autonomy.budget` abort (the
+  // A per-ROOT `autonomy.budget` abort (the
   // token / wall-clock / aggregateUsd limb) is a DIFFERENT knob tree than the priced
   // `observability.spend` ceiling — pointing the operator at observability.spend.*
-  // misdirects them (the SPEND-ABORT-OBS class — already fixed in the WARN; this is
-  // the same fix at the `explain` VERDICT layer). When the terminal abort carried the
+  // misdirects them (the WARN log line already draws this distinction; the
+  // `explain` VERDICT layer must match it). When the terminal abort carried the
   // per-root limb, name `autonomy.budget.<limb>` + the numbers in their own unit so
   // the verdict answers "which limb, by how much, which knob" in one call.
   const prb = s.perRootBudget;

@@ -5,7 +5,7 @@
  * `SingleAgentDeps` is actually forwarded into the `createPiExecutor(...)` deps
  * object literal.
  *
- * The DIST-03 read-side carry-in (Phase 173, C1→C2) activates the dormant
+ * The provenance read-side wiring activates the
  * provenance down-weighting pass (memory-recall.ts Step 5c). That pass is gated
  * `if (deps.provenanceStore != null)` — so if the daemon composition omits the
  * forward, the pass stays DORMANT in production even though the adapter compiles
@@ -43,7 +43,7 @@ vi.mock("@comis/agent", () => ({
   createAuthRotationAdapter: vi.fn(() => ({})),
   resolveCompactionModel: vi.fn(() => ""),
   resolveOperationDefaults: vi.fn(() => ({ mid: "concrete-model" })),
-  // KNOB-01 + FLOOR-01 (176-05): the boot-honesty block runs unconditionally in
+  // The boot-honesty block runs unconditionally in
   // setupSingleAgent — stubbed inert here (this suite pins a different wire).
   compareServedWindowForProvider: vi.fn(() => undefined),
   collectAgentBootWindowInfo: vi.fn(() => ({})),
@@ -157,12 +157,12 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
 
 // --- Test ------------------------------------------------------------------
 
-describe("setupSingleAgent forwards provenanceStore into createPiExecutor (DIST-03 built-but-not-wired guard)", () => {
+describe("setupSingleAgent forwards provenanceStore into createPiExecutor (built-but-not-wired guard)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("passes the SingleAgentDeps.provenanceStore through to the executor deps so the DIST-03 provenance pass fires at runtime", async () => {
+  it("passes the SingleAgentDeps.provenanceStore through to the executor deps so the provenance down-weighting pass fires at runtime", async () => {
     // RED on pre-fix code: the createPiExecutor object literal omits provenanceStore,
     // so memory-recall's Step 5c gate (deps.provenanceStore != null) is ALWAYS false in
     // the live daemon — the down-weighting is BUILT but DORMANT. GREEN once the forward

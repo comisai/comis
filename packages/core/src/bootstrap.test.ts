@@ -132,10 +132,10 @@ describe("bootstrap", () => {
       expect(raw!.get("offAgent")).toBe(false);
       // The PARSED config, by contrast, erased the unset agent's signal to a concrete boolean —
       // the schema default. rag.rerank.enabled's default is ON, so the
-      // unset agent parses to `true` (was `false` pre-flip); the raw map still carries `undefined`.
+      // unset agent parses to `true`; the raw map still carries `undefined`.
       expect(result.value.config.agents.unsetAgent!.rag.rerank.enabled).toBe(true);
       // Proving the raw map is NOT just a view of the parsed config: unset -> undefined,
-      // parsed -> true. That divergence is the whole point of this fix.
+      // parsed -> true. That divergence is the whole point of the raw map.
       expect(raw!.get("unsetAgent")).not.toBe(result.value.config.agents.unsetAgent!.rag.rerank.enabled);
     }
   });
@@ -245,16 +245,16 @@ describe("bootstrap", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 260611 live-fire fix: resolveConfigPaths ignored COMIS_DATA_DIR.
-// daemon.ts:1303 resolves the BOOT data dir as env.COMIS_DATA_DIR ?? ~/.comis
-// (so .env loading, secrets.db, the D14 lock all honor the env var), but
-// resolveConfigPaths defaulted an empty config.dataDir straight to ~/.comis —
-// a split-brain where config-derived paths (memory.dbPath, workspace,
-// sessions) land in the PRODUCTION ~/.comis while boot paths use the override.
-// Observed live: every MEM Stage-B test daemon (isolated temp COMIS_DATA_DIR)
-// opened ~/.comis/test-memory-default.db; only the VITEST write-guard kept
-// session indexes out of the real data dir. Precedence (matches the CLI and
-// daemon boot): explicit config.dataDir > env COMIS_DATA_DIR > ~/.comis.
+// resolveConfigPaths must honor COMIS_DATA_DIR.
+// daemon.ts resolves the BOOT data dir as env.COMIS_DATA_DIR ?? ~/.comis
+// (so .env loading, secrets.db, the data-dir singleton lock all honor the env
+// var). If resolveConfigPaths defaulted an empty config.dataDir straight to
+// ~/.comis instead, the system would split-brain: config-derived paths
+// (memory.dbPath, workspace, sessions) land in the PRODUCTION ~/.comis while
+// boot paths use the override — e.g. a test daemon with an isolated temp
+// COMIS_DATA_DIR opening ~/.comis/test-memory-default.db. Precedence (matches
+// the CLI and daemon boot): explicit config.dataDir > env COMIS_DATA_DIR >
+// ~/.comis.
 // ---------------------------------------------------------------------------
 
 describe("bootstrap — dataDir honors COMIS_DATA_DIR (explicit config > env > ~/.comis)", () => {

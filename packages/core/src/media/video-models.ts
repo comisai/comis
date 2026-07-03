@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * VIDEO_MODELS + listVideoModelCaps + supportedModes + snapDuration — the
- * per-model video-capability matrix (CAP-02). The single source of truth the
- * IN-02 param validator (Plan 02 `video-handlers.ts`) and the IN-03 dynamic
- * tool description (Plan 03 `video-generate-tool.ts`) both read.
+ * per-model video-capability matrix. The single source of truth the
+ * param validator (`video-handlers.ts`) and the dynamic
+ * tool description (`video-generate-tool.ts`) both read.
  *
  * Shape mirrors the sibling `video-pricing.ts` (a backend-keyed
- * `Record<string, ...| undefined>` indexed only AFTER the SEC-04
+ * `Record<string, ...| undefined>` indexed only AFTER the
  * `isBlockedObjectKey` guard, with the const kept intra-core and only the
  * accessors on the barrel) and `image-models.ts`'s accessor-export discipline,
- * extended with OpenClaw-style mode-keying (`t2v`/`i2v`/`v2v`) + per-model
- * `byModel` overrides and Hermes's enum-snap-vs-range-clamp duration heuristic.
+ * extended with mode-keying (`t2v`/`i2v`/`v2v`) + per-model
+ * `byModel` overrides and an enum-snap-vs-range-clamp duration heuristic.
  *
  * The per-model enums are POINT-IN-TIME — re-verified against the live FAL/Veo/
- * Grok docs 2026-06-15 (carrying the Phase-190 corrections: Grok 480p/720p only
+ * Grok docs 2026-06-15 (Grok 480p/720p only
  * + `grok-imagine-video` the only id; Veo 3.0 audio-by-default; FAL
  * `fal-ai/veo3.1/fast`). They drift ~monthly and are overridable by the
  * config/tool `model` arg (the `byModel` overrides cover the cells that differ
  * today, e.g. Veo 2 = 720p-only + no audio). Do NOT treat them as permanent —
- * re-verify at the plan time of any later phase touching this matrix.
+ * re-verify against the live provider docs before any change to this matrix.
  *
- * SEC-04: every `VIDEO_MODELS[backend]` and `modeCaps.byModel[model]` index is
+ * Prototype-pollution guard: every `VIDEO_MODELS[backend]` and `modeCaps.byModel[model]` index is
  * preceded by `isBlockedObjectKey` (the prototype-pollution guard reused from
  * `resolve-video-provider.ts`, same as `estimateVideoCostUsd` in
  * `video-pricing.ts`). A poisoned key returns `undefined`/`[]`/the default
@@ -53,15 +53,15 @@ export interface VideoModelCaps {
   audio: boolean;
   maxReferenceImages: number;
   /**
-   * Pitfall 2 (Veo): resolutions that REQUIRE `durationSecs === 8` (1080p/4k).
-   * The IN-02 validator (Plan 02) special-cases this as an honest pre-submit
+   * Veo cross-field rule: resolutions that REQUIRE `durationSecs === 8` (1080p/4k).
+   * The param validator special-cases this as an honest pre-submit
    * reject ("4k requires duration 8") rather than letting it surface as a
    * provider 4xx. Absent = no cross-field rule.
    */
   requires8sFor?: readonly string[];
 }
 
-/** A mode's default caps plus optional per-model overrides (OpenClaw `*ByModel`). */
+/** A mode's default caps plus optional per-model overrides. */
 type ModeCaps = { default: VideoModelCaps; byModel?: Record<string, VideoModelCaps> };
 
 /** A backend's per-mode caps. `v2v` is RESERVED but wired to no backend (deferred). */
@@ -105,12 +105,12 @@ const GROK_BASE = {
 } as const;
 
 /**
- * The CAP-02 matrix: backend → mode → {default + per-model overrides}. Keyed by
+ * The capability matrix: backend → mode → {default + per-model overrides}. Keyed by
  * the resolved port id (`fal`/`veo`/`grok`) — the only key both the daemon
  * handler (`deps.provider.id`) and the skills tool builder (`ctx.videoGenProvider.id`)
  * share. `v2v` is RESERVED (omitted on every backend → `undefined` on lookup,
  * deferred). Kept intra-core (NOT on the `@comis/core` barrel) — consumed only
- * via the accessors below (`public-export-consumers` gate, Pitfall 6).
+ * via the accessors below (enforced by the `public-export-consumers` gate).
  */
 export const VIDEO_MODELS: Record<string, BackendCaps | undefined> = {
   fal: {
@@ -135,30 +135,30 @@ export const VIDEO_MODELS: Record<string, BackendCaps | undefined> = {
 
 /**
  * The caps for a (backend, mode[, model]) cell, or `undefined` when the backend
- * is unknown/blocked or the mode key is absent (CAP-02 (b): an i2v request on a
+ * is unknown/blocked or the mode key is absent (an i2v request on a
  * t2v-only backend, or any `v2v` request → the handler rejects with the
  * supported-modes list). A per-model `byModel` override wins over the mode
- * default (CAP-02 (c)). SEC-04 precedes EVERY index.
+ * default. The blocked-key guard precedes EVERY index.
  */
 export function listVideoModelCaps(
   backend: string,
   mode: "t2v" | "i2v" | "v2v",
   model?: string,
 ): VideoModelCaps | undefined {
-  if (isBlockedObjectKey(backend)) return undefined; // SEC-04 (backend index)
+  if (isBlockedObjectKey(backend)) return undefined; // pollution guard (backend index)
   const be = VIDEO_MODELS[backend];
   const modeCaps = be?.[mode];
-  if (!modeCaps) return undefined; // CAP-02 (b): mode omitted → undefined
+  if (!modeCaps) return undefined; // mode omitted from the matrix → undefined
   if (model && !isBlockedObjectKey(model) && modeCaps.byModel?.[model]) {
-    return modeCaps.byModel[model]; // CAP-02 (c): override wins (SEC-04 on model)
+    return modeCaps.byModel[model]; // override wins (model key guarded too)
   }
   return modeCaps.default;
 }
 
 /**
  * The modes a backend supports (the present mode keys), `[]` for an
- * unknown/blocked backend. Used to build the IN-02 reject hint (Plan 02) when a
- * requested mode is unsupported. SEC-04 guarded.
+ * unknown/blocked backend. Used to build the validator's reject hint when a
+ * requested mode is unsupported. Blocked-key guarded.
  */
 export function supportedModes(backend: string): ("t2v" | "i2v" | "v2v")[] {
   if (isBlockedObjectKey(backend)) return [];
@@ -176,7 +176,7 @@ export function supportedModes(backend: string): ("t2v" | "i2v" | "v2v")[] {
  *   than requested is the safer default over slightly shorter. Deterministic.
  */
 export function snapDuration(caps: VideoModelCaps, d: number): number {
-  // IN-01: fail CLOSED on a non-finite duration (defense-in-depth — upstream Zod
+  // Fail CLOSED on a non-finite duration (defense-in-depth — upstream Zod
   // normally rejects NaN). For a range cell, Math.min(max, Math.max(min, NaN))
   // would pass NaN straight to the wire; for an enum cell the reduce silently
   // coerces to the seed. Snap to the smallest/min member so a non-finite value

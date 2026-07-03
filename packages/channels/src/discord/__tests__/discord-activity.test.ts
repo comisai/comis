@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discord EditPlace renderer tests (§18.2 EditPlace rows).
+ * Discord EditPlace renderer tests.
  *
- * The single net-new piece of logic is `classifyDiscordError` — it reads the
+ * The single Discord-specific piece of logic is `classifyDiscordError` — it reads the
  * STRUCTURAL DiscordAPIError fields (`.code` / `.status` / `.retryAfter`, and
  * `.cause`), distinct from grammy's `error_code` and Slack's `data.error`. It
  * NEVER parses the generic "Failed to…" string. `makeDiscordRenderActions` maps
@@ -12,12 +12,12 @@
  * S7 is an affordance SHELL: a subagent placeholder renders the parent line and
  * requests the thread-expand egress (recorded as `threadCreate`), but NO
  * interaction handler is registered and NO signed callback_data is produced —
- * the InteractiveCallbackRouter lives in a separate component (§17.3). A negative
+ * the InteractiveCallbackRouter lives in a separate component. A negative
  * assertion confirms no callback wiring exists.
  *
  * Time discipline: every test drives the injected FakeTimers/FakeClock — no raw
  * setTimeout/Date.now. Golden fixtures assert via readFixture + toEqual (NEVER
- * toMatchSnapshot — auto-write self-heals, Pitfall 3).
+ * toMatchSnapshot — auto-write self-heals a wrong fixture).
  */
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
@@ -76,7 +76,7 @@ function receiptAt(deliveredAtMs: number): FinalDeliveryReceipt {
   return { ok: true, deliveredChunks: 1, lastChunkMessageId: "msg-final", deliveredAtMs };
 }
 
-// --- Task 1: classifyDiscordError (structural .code/.status/.retryAfter) ----
+// --- classifyDiscordError (structural .code/.status/.retryAfter) ------------
 
 describe("classifyDiscordError (structural DiscordAPIError fields, never the message string)", () => {
   it("maps an HTTP 429 (RateLimitError-shaped retryAfter) to rate_limited with retryAfter*1000", () => {
@@ -139,7 +139,7 @@ describe("classifyDiscordError (structural DiscordAPIError fields, never the mes
   });
 });
 
-// --- Task 1: makeDiscordRenderActions (Result discipline, guards) -----------
+// --- makeDiscordRenderActions (Result discipline, guards) -------------------
 
 describe("makeDiscordRenderActions (Result discipline, optional-method guards)", () => {
   it("sends the placeholder and records the created message id", async () => {
@@ -198,7 +198,7 @@ describe("makeDiscordRenderActions (Result discipline, optional-method guards)",
   });
 });
 
-// --- Task 1: createDiscordActivityRenderer (EditPlace wiring) ---------------
+// --- createDiscordActivityRenderer (EditPlace wiring) -----------------------
 
 describe("createDiscordActivityRenderer (EditPlace wiring + deliveredAt-gated delete)", () => {
   it("returns an EditPlace renderer that can edit and delete", () => {
@@ -265,7 +265,7 @@ describe("Discord S7 subagent thread-expand affordance + signed approval UI", ()
   it("renders the parent line AND records a thread-create egress for a subagent placeholder", async () => {
     const timer = createFakeTimers();
     const fake = createFakeDiscordAdapter();
-    // Drop the clock dep so the §8.5 elapsed fallback is skipped and
+    // Drop the clock dep so the "(running N s)" elapsed fallback is skipped and
     // `send.text === "🤖 subagent: 3 steps"` byte-stably.
     const r = createDiscordActivityRenderer(fake, "chat-1", { timer });
 
@@ -278,13 +278,11 @@ describe("Discord S7 subagent thread-expand affordance + signed approval UI", ()
     expect(thread).toEqual({ op: "threadCreate", parentId: "dc-msg-0" });
   });
 
-  it("FLIPPED (§17.3): the renderer NOW wires the signed approval UI (the router owns resolution)", () => {
-    // An earlier iteration forbade callback_data/signing in this file (the
-    // affordance was a deferral shell). The current design makes Discord paint
-    // native signed components: the renderer references `buildApprovalButtons`
-    // and threads the injected `signCallbackData` through to `callback_data`.
-    // This assertion is the positive inverse of the earlier negative — see
-    // discord-activity.approval.test.ts for the behavioural proof.
+  it("the renderer wires the signed approval UI (the router owns resolution)", () => {
+    // Discord paints native signed components: the renderer references
+    // `buildApprovalButtons` and threads the injected `signCallbackData`
+    // through to `callback_data` — see discord-activity.approval.test.ts for
+    // the behavioural proof.
     const here = dirname(fileURLToPath(import.meta.url));
     const src = fs.readFileSync(`${here}/../discord-activity.ts`, "utf8");
     expect(src).toMatch(/buildApprovalButtons/);
@@ -301,7 +299,7 @@ describe("Discord S7 subagent thread-expand affordance + signed approval UI", ()
   });
 });
 
-// --- Task 3: 11 golden fixtures (S1-S7, S9-S12; no S8) ----------------------
+// --- 11 golden fixtures (S1-S7, S9-S12; no S8) -------------------------------
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeDiscordAdapter>): unknown {
@@ -322,9 +320,8 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeDiscordAdapter();
-  // Fixture reconciliation: the golden fixtures were
-  // pinned BEFORE renderFrameText emitted the §8.5 "(running N s)" elapsed
-  // fallback. Omitting `clock` from the wrapper deps skips the strategy's
+  // The golden fixtures deliberately exclude renderFrameText's "(running N s)"
+  // elapsed fallback. Omitting `clock` from the wrapper deps skips the strategy's
   // first-apply startedAtMs capture (elapsedMs stays undefined → fallback
   // skipped), keeping every committed fixture byte-stable. The strategy-level
   // tests in edit-place.test.ts DO inject a clock and explicitly assert the
@@ -355,7 +352,7 @@ function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
 
 const okReceipt = (deliveredAtMs: number): FinalDeliveryReceipt => receiptAt(deliveredAtMs);
 
-describe("Discord golden fixtures (§18.2 EditPlace rows — readFixture + toEqual)", () => {
+describe("Discord golden fixtures (EditPlace call-logs — readFixture + toEqual)", () => {
   it("S1 trivial chat — zero renderer messages", async () => {
     await runScenario("S1", [], { kind: "success", trivial: true, delivery: okReceipt(0) }, 0);
   });

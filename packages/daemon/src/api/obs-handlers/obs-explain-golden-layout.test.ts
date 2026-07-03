@@ -10,23 +10,23 @@
  * integration the per-reader test does NOT cover.
  *
  * Why a real on-disk layout (NOT a hand-authored fixture): a frozen fixture is
- * EXACTLY what let two production-breaking reader bugs through eight phase
- * reviews — both would FAIL this test on pre-fix code:
- *   - d510322f — `makeRealReader` resolved a flat `<dataDir>/sessions/<id>.*`
+ * EXACTLY what let two production-breaking reader bugs slip past review —
+ * both would FAIL this test:
+ *   - the flat-path bug — `makeRealReader` resolved a flat `<dataDir>/sessions/<id>.*`
  *     path that does not exist in production (the real layout is
  *     `<dataDir>/workspace/sessions/<tenant>/<channel>/<file>` resolved via the
  *     co-located `.trajectory-path.json` pointer) → an EMPTY IncidentReport for
  *     EVERY real session. Gated here by the NON-EMPTY assertions.
- *   - 2c0fa9d0 — the signals normalizer read `data.diskPath` where the writer
- *     emits `data.diskPathRel` → `"<offloaded>"` drill-down pointers. Gated here
- *     by `offloads[0].pointer === "tool-results/call_abc.json"` (NOT
- *     "<offloaded>"). The Task-1b rigor check proves this assertion goes RED on
- *     the reintroduced `data.diskPath` read.
+ *   - the field-name bug — the signals normalizer read `data.diskPath` where the
+ *     writer emits `data.diskPathRel` → `"<offloaded>"` drill-down pointers.
+ *     Gated here by `offloads[0].pointer === "tool-results/call_abc.json"` (NOT
+ *     "<offloaded>") — the assertion goes RED if a `data.diskPath` read is
+ *     reintroduced.
  *
  * The layout is built via the REAL helpers — `parseFormattedSessionKey`
  * (@comis/core), `sessionKeyToPath` (@comis/agent), and the production
  * `writeTrajectoryPointerFileBestEffort` (@comis/observability) — under a
- * `fs.mkdtemp` temp dir in `os.tmpdir()` (H2 guard: NEVER `~/.comis`). `path.join`
+ * `fs.mkdtemp` temp dir in `os.tmpdir()` (NEVER `~/.comis`). `path.join`
  * is used in this TEST file only — the no-path.join ESLint rule scopes to
  * non-test `src/**`; the SUT still resolves via `safePath`.
  *
@@ -94,7 +94,7 @@ function trajectoryLines(): string {
   });
   // The offload's `data.diskPathRel` is the load-bearing field — the writer
   // emits diskPathRel (translate-payload.ts), never diskPath; reading diskPath
-  // is the 2c0fa9d0 bug the golden test (+ Task-1b) gates.
+  // is the field-name regression this golden test gates.
   const offload = JSON.stringify({
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
@@ -167,9 +167,9 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
       { sessionKey: SESSION_KEY, depth: "summary" },
     );
 
-    // NON-EMPTY: a confident-looking empty report on pre-d510322f flat-path code
-    // (endReason=unknown, 0 failures/offloads). The metadata companion resolving
-    // proves the workspace/sessions tree was read.
+    // NON-EMPTY: flat-path resolution would yield a confident-looking empty
+    // report (endReason=unknown, 0 failures/offloads). The metadata companion
+    // resolving proves the workspace/sessions tree was read.
     expect(report.outcome.endReason).toBe("completed_with_tool_errors");
     expect(report.outcome.degraded).toBe(true);
     expect(report.toolStats.web_fetch).toBeDefined();
@@ -177,8 +177,8 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     expect(report.failures.length).toBeGreaterThanOrEqual(1);
     expect(report.offloads.length).toBe(1);
 
-    // POINTER RESOLVES: "<offloaded>" on pre-2c0fa9d0 data.diskPath code — the
-    // EXACT 2c0fa9d0 regression the Task-1b rigor check demonstrates.
+    // POINTER RESOLVES: a data.diskPath read would yield "<offloaded>" — the
+    // EXACT field-name regression this assertion forbids.
     expect(report.offloads[0]!.pointer).toBe("tool-results/call_abc.json");
     expect(report.offloads[0]!.pointer).not.toBe("<offloaded>");
   });

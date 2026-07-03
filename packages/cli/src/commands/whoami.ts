@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `comis whoami` — operator/agent CLI for the Phase-215 `capabilities.introspect`
+ * `comis whoami` — operator/agent CLI for the `capabilities.introspect`
  * read: the run's resolved orchestration capabilities + the remaining per-root
  * budget/quota.
  *
@@ -17,7 +17,7 @@
  * never raw `client.call`. `callTyped` runs `CapabilitiesIntrospectContract`
  * request + response parse.
  *
- * LIVE-ONLY (Pitfall 4 / G5 / T-215-13): unlike `comis explain`, `whoami` has NO
+ * LIVE-ONLY: unlike `comis explain`, `whoami` has NO
  * `--offline` mode and NO unreachable-fallback. The remaining budget/quota lives
  * ONLY in the running daemon's `BoundedAutonomy` maps — never on disk — so a
  * post-mortem reconstruction is impossible. On an unreachable (or token-rejected)

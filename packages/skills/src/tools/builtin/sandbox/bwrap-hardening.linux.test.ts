@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * (Linux/VPS) — the bwrap-REAL §4.7 escape-class proof suite (JAIL-01/02/03/04).
+ * (Linux/VPS) — the real-bwrap escape-class proof suite.
  *
  * These four CVE-class assertions are the hard containment gate for the
  * autonomy jail. They MUST compile cleanly on macOS (`tsc --noEmit` passes) but
@@ -12,18 +12,17 @@
  * The five classes (one `it` each):
  *   1. TIOCSTI keystroke-injection (CVE-2017-5226) — the ioctl inside the jail
  *      errors (--new-session detaches the controlling TTY; --seccomp is the
- *      defense-in-depth backstop). T-211-17.
+ *      defense-in-depth backstop).
  *   2. CVE-2026-25725 writable-path — a nonexistent host config path is NOT
  *      creatable from inside the jail (no RO-bound parent smuggles a creatable
- *      child). T-211-18.
+ *      child).
  *   3. symlink-escape — a symlinked leaf cannot smuggle a blocked path past the
  *      validator into the real jail (validateBindMount throws at construction).
- *      T-211-20.
  *   4. CVE-2025-66479 egress — the --unshare-net jail cannot reach the network
- *      (hard cut, no allowlist-empty=allow-all failure mode). T-211-19.
- *   5. CLI-05 bound-binary writable-path — the `--ro-bind`-bound comis-agent
+ *      (hard cut, no allowlist-empty=allow-all failure mode).
+ *   5. bound-binary writable-path — the `--ro-bind`-bound comis-agent
  *      binary is NOT writable from inside the jail (a writable binary is a
- *      host-RCE vector). T-219-23.
+ *      host-RCE vector).
  *
  * @module
  */
@@ -59,8 +58,8 @@ function baseJailArgs(opts?: { workspacePath?: string }): string[] {
   });
 }
 
-describe.skipIf(!hardeningAvailable)("bwrap §4.7 hardening — escape-class proofs (Linux only)", () => {
-  // -- 1. TIOCSTI keystroke injection (CVE-2017-5226, JAIL-01 / T-211-17) -----
+describe.skipIf(!hardeningAvailable)("bwrap hardening — escape-class proofs (Linux only)", () => {
+  // -- 1. TIOCSTI keystroke injection (CVE-2017-5226) -------------------------
   it(
     "rejects the TIOCSTI ioctl inside the jail (--new-session + seccomp backstop)",
     { timeout: 15_000 },
@@ -89,7 +88,7 @@ describe.skipIf(!hardeningAvailable)("bwrap §4.7 hardening — escape-class pro
     },
   );
 
-  // -- 2. CVE-2026-25725 writable-path (JAIL-02 / T-211-18) -------------------
+  // -- 2. CVE-2026-25725 writable-path ----------------------------------------
   it(
     "a nonexistent host config path is NOT creatable from inside the jail",
     { timeout: 15_000 },
@@ -117,7 +116,7 @@ describe.skipIf(!hardeningAvailable)("bwrap §4.7 hardening — escape-class pro
     },
   );
 
-  // -- 2b. CLI-05 bound comis-agent binary is NOT writable (T-219-23) ---------
+  // -- 2b. bound comis-agent binary is NOT writable ---------------------------
   it(
     "the --ro-bind-bound comis-agent binary is NOT writable from inside the jail",
     { timeout: 15_000 },
@@ -125,7 +124,7 @@ describe.skipIf(!hardeningAvailable)("bwrap §4.7 hardening — escape-class pro
       // A writable interpreter/binary bind is a host-RCE vector. Bind a real temp
       // comis-agent binary RO via the PRODUCTION path (jailAgentCli mode "bind"),
       // then attempt to overwrite it from inside the jail — the write must fail
-      // (EROFS/EACCES), proving the bind is read-only (CLI-05 / §4.7 audit).
+      // (EROFS/EACCES), proving the bind is read-only.
       const dir = mkdtempSync(join(tmpdir(), "comis-agent-bin-"));
       const binPath = join(dir, "comis-agent-entry.js");
       try {
@@ -162,7 +161,7 @@ describe.skipIf(!hardeningAvailable)("bwrap §4.7 hardening — escape-class pro
     },
   );
 
-  // -- 3. symlink-escape (JAIL-03 / T-211-20) --------------------------------
+  // -- 3. symlink-escape ------------------------------------------------------
   it(
     "a symlinked leaf resolving to a blocked path is refused at jail construction",
     () => {
@@ -191,7 +190,7 @@ describe.skipIf(!hardeningAvailable)("bwrap §4.7 hardening — escape-class pro
     },
   );
 
-  // -- 4. CVE-2025-66479 egress (JAIL-04 / T-211-19) -------------------------
+  // -- 4. CVE-2025-66479 egress -----------------------------------------------
   it(
     "the --unshare-net (none mode) jail cannot reach the network",
     { timeout: 15_000 },

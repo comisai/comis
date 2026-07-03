@@ -15,8 +15,8 @@ import { CHARS_PER_TOKEN_RATIO } from "../../../context-engine/index.js";
  * `CHARS_PER_TOKEN_RATIO * scriptTokenFactor(text)`. For non-text blocks
  * (images, tool_use JSON) falls back to JSON.stringify length over the same
  * factored divisor — the factor always scans the EXACT string whose length
- * is divided (TOK-01). The 3.5 ratio better matches Anthropic's tokenizer
- * than the previously used 4.0 ratio; the script factor (1.0 for pure
+ * is divided. The 3.5 ratio matches Anthropic's tokenizer better than a
+ * naive 4.0; the script factor (1.0 for pure
  * ASCII, <1 for dense non-Latin scripts) keeps the estimate conservative
  * for Hebrew/Arabic/CJK content.
  *

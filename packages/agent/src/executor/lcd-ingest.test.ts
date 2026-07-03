@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LCD afterTurn ingest write-path (Plan 128-03, A1).
+ * Tests for the LCD afterTurn ingest write-path.
  *
- * RED-first. Drives the not-yet-built `ingestTurn`:
- *  - Test 1 (append the delta): N new messages → exactly N `append` calls with
+ * Drives `ingestTurn`:
+ *  - Append the delta: N new messages → exactly N `append` calls with
  *    monotonic seq starting at `startSeq`, each carrying role / tokenCount /
  *    createdAt / parts.
- *  - Test 2 (idempotent / empty delta): the helper appends exactly
+ *  - Idempotent / empty delta: the helper appends exactly
  *    `messages.length` rows; an EMPTY delta appends nothing (the idempotency
  *    contract — the caller passes only the not-yet-persisted slice).
- *  - Test 3 (tokenCount agent-side): each `append` carries
+ *  - tokenCount agent-side: each `append` carries
  *    `estimateMessageTokens(msg)`; a thinking block's reasoning tokens ARE
- *    counted (F3) even though the codec excludes reasoning from visible content.
- *  - Test 4 (parts via codec): each `append` carries `messageToParts(msg)` — a
+ *    counted even though the codec excludes reasoning from visible content.
+ *  - Parts via codec: each `append` carries `messageToParts(msg)` — a
  *    `tool_use` block survives as a STRUCTURED block (NOT flattened to text).
- *  - Test 5 (scope correct): the SECURITY scope columns
+ *  - Scope correct: the SECURITY scope columns
  *    `{ conversationId, tenantId, agentId, sessionKey }` are all populated.
- *  - Test 6 (non-fatal): a throwing `append` does NOT propagate out of
+ *  - Non-fatal: a throwing `append` does NOT propagate out of
  *    `ingestTurn` — it logs + continues (subsequent messages still attempted).
- *  - Test 7 (round-trip integration — the load-bearing proof): a multi-step
- *    turn ingested via `ingestTurn` then read back via the Plan-02 LCD assembler
+ *  - Round-trip integration (the load-bearing proof): a multi-step
+ *    turn ingested via `ingestTurn` then read back via the LCD assembler
  *    reconstructs faithful messages with the `tool_use`/`tool_result` blocks
  *    intact and the stable id paired — exactly what the assembler reads.
  *
@@ -55,9 +55,9 @@ const SCOPE: ContextStoreScope = {
   tenantId: "tenant_a",
   agentId: "agent_a",
   // The codebase invariant is conversationId === sessionKey === formattedKey
-  // (executor-post-execution.ts:894). The R3 fail-closed predicate (132-04)
+  // (executor-post-execution.ts:894). The fail-closed predicate
   // refuses a conversationId/sessionKey CONFLICT, so the shared fixture must
-  // satisfy the invariant — the WR-01 guard tests below exercise the SHRINK
+  // satisfy the invariant — the shrink-guard tests below exercise the SHRINK
   // path, not the fail-closed path.
   sessionKey: CONVERSATION_ID,
 };
@@ -125,8 +125,8 @@ function makeRecordingStore(): {
   appended: AppendMessageInput[];
 } {
   const appended: AppendMessageInput[] = [];
-  // Phase 164 Plan 01 added three new ContextStorePort methods — stub them here
-  // so this double satisfies the interface after Plan 01 lands.
+  // Stub the epoch-cursor ContextStorePort methods here so this double
+  // satisfies the full interface.
   let cursorStore: { epochAnchor: string; ingestedLiveLen: number } | null = null;
   const store: ContextStorePort = {
     append(input: AppendMessageInput): void {
@@ -165,7 +165,7 @@ const dagConfig = (freshTailTurns: number) =>
 // ---------------------------------------------------------------------------
 
 describe("ingestTurn", () => {
-  it("Test 1: appends the delta with monotonic seq from startSeq, carrying role/tokenCount/createdAt/parts", () => {
+  it("appends the delta with monotonic seq from startSeq, carrying role/tokenCount/createdAt/parts", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();
     const delta: AgentMessage[] = [
@@ -187,7 +187,7 @@ describe("ingestTurn", () => {
     }
   });
 
-  it("Test 2: an EMPTY delta appends nothing (the idempotent-retry contract)", () => {
+  it("an EMPTY delta appends nothing (the idempotent-retry contract)", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();
 
@@ -196,7 +196,7 @@ describe("ingestTurn", () => {
     expect(appended).toHaveLength(0); // a retry with no new messages persists nothing
   });
 
-  it("Test 2b: strips the injected inline-recall block from a USER message before storing (carve recall out of F1)", () => {
+  it("strips the injected inline-recall block from a USER message before storing (carve recall out of the lossless store)", () => {
     // The envelope-wrapper prepends the top-1 RAG memory inline to the user text;
     // that TRANSIENT cross-session recall must NOT be persisted into the lossless
     // store — otherwise a prior session's facts bloat the store, cross-contaminate
@@ -225,7 +225,7 @@ describe("ingestTurn", () => {
     expect(appended[0]!.tokenCount).toBe(estimateMessageTokens(userMsg(userText.replace(recallPrefix, "")) as unknown as Parameters<typeof estimateMessageTokens>[0]));
   });
 
-  it("Test 2c: a NON-user message that happens to contain the recall phrasing is NOT stripped (scope = user turns only)", () => {
+  it("a NON-user message that happens to contain the recall phrasing is NOT stripped (scope = user turns only)", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();
     // An assistant message never carries the injected prefix; never mutate it.
@@ -234,7 +234,7 @@ describe("ingestTurn", () => {
     expect(JSON.stringify(appended[0]!.parts)).toContain("Relevant context from memory");
   });
 
-  it("Test 3: tokenCount is computed agent-side via estimateMessageTokens; thinking tokens ARE counted (F3)", () => {
+  it("tokenCount is computed agent-side via estimateMessageTokens; thinking tokens ARE counted", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();
     const thinking = "a".repeat(400); // 400/4 = 100 reasoning tokens (CHARS_PER_TOKEN)
@@ -243,15 +243,15 @@ describe("ingestTurn", () => {
     ingestTurn(store, SCOPE, 0, [msg as AgentMessage], FIXED_NOW, logger);
 
     expect(appended).toHaveLength(1);
-    // Exactly the agent-side estimate — the store NEVER computes tokens (127 contract).
+    // Exactly the agent-side estimate — the store NEVER computes tokens.
     expect(appended[0]!.tokenCount).toBe(estimateMessageTokens(msg));
-    // F3: the reasoning tokens are budgeted at write time (the estimate counts the
+    // The reasoning tokens are budgeted at write time (the estimate counts the
     // thinking block) — so a message WITH reasoning costs strictly more than one without.
     const withoutThinking = assistantText("answer");
     expect(estimateMessageTokens(msg)).toBeGreaterThan(estimateMessageTokens(withoutThinking));
   });
 
-  it("Test 4: parts are produced by messageToParts — a tool_use survives as a STRUCTURED block, not text", () => {
+  it("parts are produced by messageToParts — a tool_use survives as a STRUCTURED block, not text", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();
     const msg = assistantToolCall("tu_42", "read", { path: "/x" });
@@ -262,13 +262,13 @@ describe("ingestTurn", () => {
     // Byte-for-byte the codec output (verbatim metadata.raw blocks + envelope).
     expect(appended[0]!.parts).toEqual(messageToParts(msg));
     // The tool_use part is a structured tool_use part carrying the stable id —
-    // NOT flattened to a text part (the deleted dag-assembler bug).
+    // NOT flattened to a text part (flattening would break tool-result pairing).
     const part = appended[0]!.parts[0]!;
     expect(part.kind).toBe("tool_use");
     expect(part.toolCallId).toBe("tu_42");
   });
 
-  it("Test 5: the scope passed to append carries all four SECURITY columns populated", () => {
+  it("the scope passed to append carries all four SECURITY columns populated", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();
 
@@ -277,14 +277,14 @@ describe("ingestTurn", () => {
     expect(appended).toHaveLength(1);
     const scope = appended[0]!.scope;
     // No undefined/empty scoping column — a missing one would create a
-    // cross-session-readable row (threat (c) / T-128-08).
+    // cross-session-readable row (the scope-isolation threat).
     expect(scope.conversationId).toBeTruthy();
     expect(scope.tenantId).toBeTruthy();
     expect(scope.agentId).toBeTruthy();
     expect(scope.sessionKey).toBeTruthy();
   });
 
-  it("Test 6: a throwing append is non-fatal — no throw escapes; subsequent messages still attempted + logged", () => {
+  it("a throwing append is non-fatal — no throw escapes; subsequent messages still attempted + logged", () => {
     const attempts: number[] = [];
     const store: ContextStorePort = {
       append(input: AppendMessageInput): void {
@@ -313,7 +313,7 @@ describe("ingestTurn", () => {
     );
   });
 
-  it("Test 7: round-trip — a multi-step turn ingested via ingestTurn reads back faithfully through the Plan-02 assembler", async () => {
+  it("round-trip — a multi-step turn ingested via ingestTurn reads back faithfully through the LCD assembler", async () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);
@@ -330,12 +330,12 @@ describe("ingestTurn", () => {
     // WRITE-PATH: ingest the whole turn at afterTurn (startSeq 0 — empty store).
     ingestTurn(store, SCOPE, 0, turn, FIXED_NOW, logger);
 
-    // READ-PATH: the Plan-02 assembler reconstructs history FROM THE STORE. The
+    // READ-PATH: the LCD assembler reconstructs history FROM THE STORE. The
     // live array is the FULL canonical conversation (the SDK passes
-    // `state.messages`, never a tail-only slice — CR-01); with freshTailTurns=1
+    // `state.messages`, never a tail-only slice); with freshTailTurns=1
     // the fresh tail is just the trailing assistant, so the tu_1 step falls in the
     // history prefix [0,3) which the assembler takes from the STORE rows (the
-    // codec round-trip), proving the write→read→assemble path the loop bug broke.
+    // codec round-trip), proving the full write→read→assemble path end to end.
     const mockLogger = createMockLogger();
     const deps: ContextEngineDeps = {
       logger: mockLogger as unknown as ContextEngineDeps["logger"],
@@ -343,7 +343,7 @@ describe("ingestTurn", () => {
       contextStore: store,
       conversationId: CONVERSATION_ID,
       agentId: "agent_a",
-      tenantId: "tenant_a", // R4 (132-03): the assembler reads with the full scope (else fails closed — WR-02)
+      tenantId: "tenant_a", // the assembler reads with the full scope (else it fails closed)
       sessionKey: CONVERSATION_ID, // conversationId === sessionKey invariant
     };
     const engine = createLcdContextEngine(dagConfig(1), deps);
@@ -364,7 +364,7 @@ describe("ingestTurn", () => {
     expect(out.some((m) => roleOf(m) === "user")).toBe(true);
   });
 
-  it("Test 8: emits a step-tagged DEBUG with the canonical observability fields after a successful ingest", () => {
+  it("emits a step-tagged DEBUG with the canonical observability fields after a successful ingest", () => {
     const { store } = makeRecordingStore();
     const logger = createMockLogger();
 
@@ -384,7 +384,7 @@ describe("ingestTurn", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ingestTurnGuarded — the WR-01 shrink guard: derive the delta defensively and
+// ingestTurnGuarded — the shrink guard: derive the delta defensively and
 // SKIP cleanly (with a WARN) when the live array is shorter than the store's
 // persisted high-water mark, rather than slicing past the end and either
 // persisting nothing forever or re-appending at an existing seq (the unique
@@ -397,7 +397,7 @@ describe("ingestTurn", () => {
  * @param persistedCount The number of placeholder rows `getMessages` reports.
  * @param initialCursor  Optional epoch cursor to pre-seed `getIngestCursor`. When
  *   provided, the cursor's epochAnchor must match the live[0] anchor of the test's
- *   live array so the WR-01 genuine-shrink path fires (not the new-epoch path).
+ *   live array so the genuine-shrink path fires (not the new-epoch path).
  *   Pass null (the default) to simulate a fresh store (no prior ingest — cursor
  *   not yet written); any call to ingestTurnGuarded will then take the new-epoch
  *   continuation path regardless of live length.
@@ -410,7 +410,7 @@ function makeStoreWithPersistedCount(
   appended: AppendMessageInput[];
 } {
   const appended: AppendMessageInput[] = [];
-  // Phase 164 Plan 01 added three new ContextStorePort methods — stub them here.
+  // Stub the epoch-cursor ContextStorePort methods here.
   let cursor = initialCursor;
   const store: ContextStorePort = {
     append(input: AppendMessageInput): void {
@@ -434,14 +434,14 @@ function makeStoreWithPersistedCount(
   return { store, appended };
 }
 
-describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
-  it("Test 9: live array SHORTER than the persisted high-water mark → SKIPS the append and WARNs (no seq collision)", () => {
+describe("ingestTurnGuarded (shrink guard)", () => {
+  it("live array SHORTER than the persisted high-water mark → SKIPS the append and WARNs (no seq collision)", () => {
     // The store already holds 6 persisted rows; a heal reassigned state.messages
     // SMALLER (4 < 6). Slicing live[6..] from a length-4 array is empty (or, on a
     // rewritten tail, re-appends at an existing seq → unique-index throw). The
     // guard must SKIP and WARN so the divergence is observable, not silent.
     //
-    // Phase 164: the new epoch-cursor algorithm requires a pre-seeded cursor whose
+    // The epoch-cursor algorithm requires a pre-seeded cursor whose
     // epochAnchor matches live[0] so the genuine-shrink path fires (not new-epoch).
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
@@ -473,10 +473,10 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
     );
   });
 
-  it("Test 10: live array >= persisted high-water mark → appends only the not-yet-persisted delta", () => {
+  it("live array >= persisted high-water mark → appends only the not-yet-persisted delta", () => {
     // Normal mid-turn: 2 already persisted, live has 4 → append exactly live[2..4).
     //
-    // Phase 164: pre-seed cursor with epochAnchor matching live[0] and
+    // Pre-seed cursor with epochAnchor matching live[0] and
     // ingestedLiveLen=2 (the store has 2 rows, cursor says 2 live ingested).
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
@@ -500,15 +500,15 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("Test 9b (I1): the WR-01 divergence skip invokes onDivergence('live_store_divergence') so the executor emits context:dag_degraded", () => {
-    // RED on pre-patch: ingestTurnGuarded has no onDivergence callback — the
-    // divergence branch only WARNs (Pino-only), the signal never reaches the bus.
-    // GREEN: a 7th onDivergence(reason) callback (sibling to onFailClosed) fires
-    // on the live/store-divergence skip, carrying the closed-meaning reason tag
-    // (NEVER message content) — the agent-side caller turns it into a
-    // health_signal-bound context:dag_degraded emit.
+  it("the shrink-guard divergence skip invokes onDivergence('live_store_divergence') so the executor emits context:dag_degraded", () => {
+    // Without the callback, the divergence branch would only WARN (Pino-only)
+    // and the signal would never reach the bus. The onDivergence(reason)
+    // callback (sibling to onFailClosed) fires on the live/store-divergence
+    // skip, carrying the closed-meaning reason tag (NEVER message content) —
+    // the agent-side caller turns it into a health_signal-bound
+    // context:dag_degraded emit.
     //
-    // Phase 164: pre-seed cursor with same epoch anchor (live[0] matches) and
+    // Pre-seed cursor with same epoch anchor (live[0] matches) and
     // ingestedLiveLen=6 so live.length(4) < 6 hits the genuine-shrink path.
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
@@ -530,16 +530,16 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
     expect(appended).toHaveLength(0);
     expect(logger.warn).toHaveBeenCalled();
     // The divergence callback fired with the closed reason tag; the fail-closed
-    // callback did NOT (this is the WR-01 shrink path, not the R3 refuse path).
+    // callback did NOT (this is the shrink path, not the fail-closed refuse path).
     expect(onDivergence).toHaveBeenCalledTimes(1);
     expect(onDivergence).toHaveBeenCalledWith("live_store_divergence");
     expect(onFailClosed).not.toHaveBeenCalled();
   });
 
-  it("Test 9c (I1): a non-divergent ingest does NOT invoke onDivergence", () => {
+  it("a non-divergent ingest does NOT invoke onDivergence", () => {
     // The callback is divergence-only — a normal delta append never fires it.
     //
-    // Phase 164: pre-seed cursor with ingestedLiveLen=2 (same as persisted count)
+    // Pre-seed cursor with ingestedLiveLen=2 (same as persisted count)
     // so the first call is steady-state (not new-epoch).
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
@@ -561,20 +561,20 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fail-closed rollover predicate (R3, Plan 132-04). LOSSLESS-CLAW §5: an
+// Fail-closed rollover predicate: an
 // ambiguous/malformed scope must REFUSE the ingest write (skip + WARN,
 // errorKind "precondition") rather than silently reattach a turn's messages to
 // the WRONG (prior) conversation. The codebase invariant is
 // conversationId === sessionKey === formattedKey (executor-post-execution.ts:894);
 // an empty security column OR a conversationId/sessionKey conflict is internally
-// inconsistent — refuse, never guess. RED-first: today no such predicate exists,
-// so a malformed scope's write PROCEEDS.
+// inconsistent — refuse, never guess. Without the predicate, a malformed
+// scope's write would PROCEED.
 // ---------------------------------------------------------------------------
 
-describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
+describe("ingestTurnGuarded (fail-closed rollover predicate)", () => {
   const LIVE: AgentMessage[] = [userMsg("u0") as AgentMessage, assistantText("a0") as AgentMessage];
 
-  it("Test 11: an empty agentId is refused (write SKIPPED) and WARNs with errorKind precondition + hint", () => {
+  it("an empty agentId is refused (write SKIPPED) and WARNs with errorKind precondition + hint", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
     const scope: ContextStoreScope = { ...SCOPE, agentId: "" };
@@ -596,7 +596,7 @@ describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
     );
   });
 
-  it("Test 12: an empty tenantId is refused (write SKIPPED) and WARNs", () => {
+  it("an empty tenantId is refused (write SKIPPED) and WARNs", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
     const scope: ContextStoreScope = { ...SCOPE, tenantId: "" };
@@ -610,7 +610,7 @@ describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
     );
   });
 
-  it("Test 13: a blank (whitespace-only) sessionKey is refused (write SKIPPED) and WARNs", () => {
+  it("a blank (whitespace-only) sessionKey is refused (write SKIPPED) and WARNs", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
     // A whitespace-only column is as ambiguous as an empty one — trim before the check.
@@ -625,7 +625,7 @@ describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
     );
   });
 
-  it("Test 14: an empty conversationId is refused (write SKIPPED) and WARNs", () => {
+  it("an empty conversationId is refused (write SKIPPED) and WARNs", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
     const scope: ContextStoreScope = { ...SCOPE, conversationId: "" };
@@ -639,7 +639,7 @@ describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
     );
   });
 
-  it("Test 15: a conversationId that conflicts with its sessionKey is refused rather than reattached", () => {
+  it("a conversationId that conflicts with its sessionKey is refused rather than reattached", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
     // The codebase invariant is conversationId === sessionKey (both = formattedKey).
@@ -656,7 +656,7 @@ describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
     );
   });
 
-  it("Test 16: a well-formed, consistent scope still ingests (the predicate does not over-refuse)", () => {
+  it("a well-formed, consistent scope still ingests (the predicate does not over-refuse)", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
     // conversationId === sessionKey, all columns populated → safe → ingest proceeds.
@@ -677,7 +677,7 @@ describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
     );
   });
 
-  it("Test 17: isScopeSafeForIngest reports ok for a consistent scope and not-ok with a reason for a malformed one", () => {
+  it("isScopeSafeForIngest reports ok for a consistent scope and not-ok with a reason for a malformed one", () => {
     expect(
       isScopeSafeForIngest({
         conversationId: "k",
@@ -699,17 +699,16 @@ describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)
+// Continue-append / rebase (the epoch-cursor algorithm)
 //
-// These tests drive the epoch-cursor algorithm in `ingestTurnGuarded`. RED
-// before the Plan 02 GREEN patch; all prior tests remain GREEN throughout.
+// These tests drive the epoch-cursor algorithm in `ingestTurnGuarded`.
 // ---------------------------------------------------------------------------
 
-describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
+describe("continue-append / rebase (the epoch-cursor algorithm)", () => {
   // -------------------------------------------------------------------------
   // Epoch-B message fixtures (genuinely disjoint from epoch-A timestamps).
   // live[0] differs in role+timestamp+content from any epoch-A message so
-  // messageEpochAnchor produces a distinct anchor (RR2 RED fixture).
+  // messageEpochAnchor produces a distinct anchor (the re-base fixture).
   // -------------------------------------------------------------------------
   const EPOCH_B_TS_0 = 9_000_000;
   const EPOCH_B_TS_1 = 9_000_001;
@@ -727,13 +726,13 @@ describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
   }
 
   // -------------------------------------------------------------------------
-  // Test R1 (RR2): pre-populated store (epoch A, 38 rows) + fresh disjoint live
+  // Pre-populated store (epoch A, 38 rows) + fresh disjoint live
   // (epoch B) — continue-append produces no gap.
   //
-  // RED before patch: current live.slice(persisted) → live.length(2) < 38 →
-  // onDivergence fires, nothing appended.
+  // Without epoch-aware re-base handling, a plain live.slice(persisted) with
+  // live.length(2) < 38 would fire onDivergence and append nothing.
   // -------------------------------------------------------------------------
-  it("Test R1 (RR2): re-based transcript appended as continuation (no gap)", () => {
+  it("a re-based transcript is appended as a continuation (no gap)", () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);
@@ -753,7 +752,7 @@ describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
     ];
     const onDivergence1 = vi.fn();
     const onRebase1 = vi.fn();
-    // RR2: onRebase must be called; onDivergence must NOT be called
+    // onRebase must be called; onDivergence must NOT be called
     ingestTurnGuarded(store, SCOPE, liveTurn1, FIXED_NOW, logger, undefined, onDivergence1, onRebase1);
     expect(onDivergence1).not.toHaveBeenCalled();
     expect(onRebase1).toHaveBeenCalledWith("session_rebase");
@@ -784,10 +783,10 @@ describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test R2 (RR6): onRebase callback receives "session_rebase"; onDivergence NOT
+  // The onRebase callback receives "session_rebase"; onDivergence is NOT
   // called during a re-base.
   // -------------------------------------------------------------------------
-  it("Test R2 (RR6): onRebase receives session_rebase; onDivergence not called on re-base", () => {
+  it("onRebase receives session_rebase; onDivergence is not called on a re-base", () => {
     const { store } = makeRecordingStore();
     const logger = createMockLogger();
     const onDivergence = vi.fn();
@@ -806,11 +805,11 @@ describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test S1 (RR3 keystone): steady-state — same epoch, live grows monotonically.
-  // Seqs must be 0..7 continuous; cursor.ingestedLiveLen tracks live.length.
-  // MUST pass BOTH before and after the patch (byte-identical).
+  // Steady-state — same epoch, live grows monotonically. Seqs must be 0..7
+  // continuous; cursor.ingestedLiveLen tracks live.length. This is the
+  // baseline the re-base handling must never disturb.
   // -------------------------------------------------------------------------
-  it("Test S1 (RR3): steady-state seqs are 0..7 continuous; cursor tracks live.length", () => {
+  it("steady-state: seqs are 0..7 continuous; cursor tracks live.length", () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);
@@ -855,7 +854,7 @@ describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
 
     const rows = store.getMessages(SCOPE);
     expect(rows.length).toBe(8);
-    // seqs 0..7 continuous — byte-identical to pre-patch
+    // seqs 0..7 continuous — no gap and no re-numbering
     for (let i = 0; i < 8; i++) {
       expect(rows[i]!.seq).toBe(i);
     }
@@ -868,10 +867,10 @@ describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test G1 (RR5): genuine in-session shrink (same epochAnchor, live.length <
+  // Genuine in-session shrink (same epochAnchor, live.length <
   // ingestedLiveLen) → onDivergence called; onRebase NOT called; nothing appended.
   // -------------------------------------------------------------------------
-  it("Test G1 (RR5): genuine shrink in same epoch → onDivergence; onRebase not called", () => {
+  it("genuine shrink in the same epoch → onDivergence; onRebase not called", () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);
@@ -903,11 +902,11 @@ describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test I1 (RR1 idempotency): calling ingestTurnGuarded twice with the exact
+  // Idempotency: calling ingestTurnGuarded twice with the exact
   // same live array (same epoch, same length) appends the delta exactly once.
   // Second call is a no-op (delta = live.slice(ingestedLiveLen) = []).
   // -------------------------------------------------------------------------
-  it("Test I1 (RR1 idempotency): second call on same live array is a no-op (no duplicate rows)", () => {
+  it("idempotency: a second call on the same live array is a no-op (no duplicate rows)", () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);
@@ -933,11 +932,11 @@ describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test L1 (hardening directive 1 — false-rebase guard): live[0] stable across
+  // False-rebase guard: live[0] stable across
   // N growing turns in one epoch → exactly ONE epochAnchor stored; cursor never
   // changes its anchor within the epoch.
   // -------------------------------------------------------------------------
-  it("Test L1 (false-rebase guard): stable live[0] across N turns → single epochAnchor", () => {
+  it("false-rebase guard: a stable live[0] across N turns keeps a single epochAnchor", () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);

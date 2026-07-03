@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Deterministic, conservative DAG template matcher (AUTHOR-01 / Phase 174-03).
+ * Deterministic, conservative DAG template matcher.
  *
  * Maps a weak-model raw graph to one of the CANONICAL_DAG_TEMPLATES by SHAPE
  * (node count + dependency topology: N independent leaves + a single fan-in) and
  * slot/keyword inference. It is the daemon-side conservative repair primitive:
- * pure, deterministic, and NO model reprompt (D-CONSERVATIVE — the
- * repairDagWithBoundedRetries reprompt seam is the agent-side path; the daemon
- * RPC handler has no model loop, so the repair here is template-match only).
+ * pure, deterministic, and NO model reprompt (the repairDagWithBoundedRetries
+ * reprompt seam is the agent-side path; the daemon RPC handler has no model
+ * loop, so the repair here is template-match only).
  *
  * Returns "matched" ONLY when exactly one template fits unambiguously by SHAPE
  * AND the graph's task/nodeId text corroborates that template's intent via a
- * disambiguating keyword (WR-01: shape alone is never enough — buildMatch
+ * disambiguating keyword (shape alone is never enough — buildMatch
  * discards the user's tasks for the canonical strings, so a shape-only match
  * would silently rewrite the intent); otherwise "ambiguous" (a plausible shape
  * the content does not confirm, or >=2 plausible canonical shapes — surface a
  * structured did-you-mean) or "no-match" (fall through to the fail-closed throw).
  *
  * On "matched", slot values are filled via fillDagTemplate, which JSON-escapes
- * weak-model slot values (CR-03) so the filled graph parses clean.
+ * weak-model slot values so the filled graph parses clean.
  *
  * No daemon import — this lives in @comis/agent and is INJECTED into the daemon
  * buildGraphInput via deps.repairMatch (the daemon→agent boundary is crossed at
@@ -184,7 +184,7 @@ function inferSlots(
 
 /**
  * Conservatively match a weak-model raw graph to a canonical template by SHAPE
- * (node count + dependency topology) corroborated by KEYWORD (WR-01).
+ * (node count + dependency topology) corroborated by KEYWORD.
  * Deterministic, no model call. Returns "matched" ONLY when exactly one
  * template fits the shape AND a disambiguating keyword confirms the intent;
  * otherwise "ambiguous" (shape fits but content does not corroborate, or >=2
@@ -211,14 +211,14 @@ export function matchRawGraphToTemplate(rawGraph: unknown): TemplateMatch {
   if (shapeCandidates.length === 0) return { kind: "no-match" };
 
   // The graph text (nodeId + task) used to corroborate the matched template's
-  // INTENT against its shape (WR-01). buildMatch's fillDagTemplate REPLACES the
+  // INTENT against its shape. buildMatch's fillDagTemplate REPLACES the
   // user's tasks with the canonical template strings, so a `matched` on shape
   // alone silently rewrites the user's intent — every `matched` must be gated
   // on at least one disambiguating keyword, never on shape alone.
   const text = graphText(nodes);
 
   // A single template fits the shape (e.g. debate's unique 3-node 2+1). SHAPE
-  // alone is NOT enough (WR-01): the user's tasks would be discarded for the
+  // alone is NOT enough: the user's tasks would be discarded for the
   // canonical strings. Require the candidate's keyword set to corroborate the
   // intent; on a keyword miss, return the structured did-you-mean (no false
   // synthesis) — the shape is plausible but the content does not confirm it.
@@ -238,7 +238,7 @@ export function matchRawGraphToTemplate(rawGraph: unknown): TemplateMatch {
     return buildMatch(keywordCandidates[0]!, rawGraph, nodes);
   }
 
-  // Zero keyword hits, or >=2 → ambiguous (D-CONSERVATIVE: no false synthesis).
+  // Zero keyword hits, or >=2 → ambiguous (conservative: no false synthesis).
   // The candidate list is the shape-fitting templates (the genuinely plausible
   // ones), or the keyword-overlapping subset when that is the narrower set.
   const candidates = keywordCandidates.length >= 2 ? keywordCandidates : shapeCandidates;

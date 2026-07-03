@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * FLOOR-01 (Phase 176): boot-time minViable viable-floor check.
+ * Boot-time minViable viable-floor check.
  *
  * Computes
  *   minViable = bootstrapTotalTokens + toolSchemaTokens + outputHeadroomFloor
  *             + freshTailReserve + safetyMargin
  * per agent at boot and emits ONE WARN when the effective context window cannot
  * fit even the scaffold floor — so an infeasible window surfaces at boot instead
- * of on the first real message (the CWF-02 preflight runs only at turn time).
+ * of on the first real message (the pre-flight fit check runs only at turn time).
  *
- * I8 single-sourcing: every term imports its turn-time home module — never a
+ * Single-sourcing: every term imports its turn-time home module — never a
  * parallel formula. {@link VIABLE_FLOOR_SHARED_SOURCES} is the drift-pin
  * surface: viable-floor.test.ts asserts FUNCTION-REFERENCE IDENTITY against
- * each home module, so a re-derived local copy cannot pass (Pitfall 8).
- * WR-03 extends I8 from the formula to its INPUT: the toolSchemaTokens term
+ * each home module, so a re-derived local copy cannot pass.
+ * The same single-sourcing extends from the formula to its INPUT: the toolSchemaTokens term
  * measures the same CONVERTED ToolDefinition corpus the turn-time S estimate
  * measures (lean descriptions + guidelines) via
  * {@link AgentBootWindowInfo.convertTools} — the daemon binds the executor's
  * own convertTools closure, so formula AND corpus are shared.
  *
- * WARN-only (I1/D-02 adapt-down moat): this module never throws on the
- * infeasible branch and never refuses boot. The daemon wiring (plan 176-05)
+ * WARN-only (adapt down, never refuse): this module never throws on the
+ * infeasible branch and never refuses boot. The daemon wiring
  * wraps the per-agent evaluation in a fail-open try/catch and threads
  * {@link collectAgentBootWindowInfo} beside the per-agent registry.
  *
@@ -44,11 +44,11 @@ import { PREAMBLE_WARN_THRESHOLD_BY_CLASS } from "../executor/executor-tool-asse
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 
 // ---------------------------------------------------------------------------
-// I8 drift-pin surface
+// Drift-pin surface
 // ---------------------------------------------------------------------------
 
 /**
- * Drift-pin surface (I8/R-3): the floor's term functions ARE these imports.
+ * Drift-pin surface: the floor's term functions ARE these imports.
  * viable-floor.test.ts asserts reference identity against each home module —
  * a re-derived local copy cannot pass.
  */
@@ -84,21 +84,21 @@ export interface AgentBootWindowInfo {
   windowSource: "served" | "capability" | "configured";
   /** Profile resolved on the RECONCILED window, exactly like pi-executor.ts:363-368. */
   modelProfile: ModelProfile;
-  /** bootstrapTotalMaxChars ?? bootstrapMaxChars from resolveScaffoldDefaults (A2). */
+  /** bootstrapTotalMaxChars ?? bootstrapMaxChars from resolveScaffoldDefaults. */
   scaffoldBootstrapChars: number;
-  /** E1: the class's active-tool ceiling from resolveScaffoldDefaults (small→24, nano/mid/frontier→
+  /** The class's active-tool ceiling from resolveScaffoldDefaults (small→24, nano/mid/frontier→
    *  undefined). Makes the floor's toolSchemaTokens term deferral-aware (see computeMinViableEquation). */
   activeToolCeiling?: number;
   /** contextEngine.budget.minVisibleOutputTokens when configured. */
   minVisibleOutputTokens?: number;
-  /** WR-03 (176 review): convert the raw boot toolset to the SAME
+  /** Convert the raw boot toolset to the SAME
    *  ToolDefinition corpus the turn-time S estimate measures (lean-description
    *  swap + promptGuidelines append — tool-definition-adapter.ts). The daemon
    *  wiring binds the EXACT closure PiExecutorDeps.convertTools receives, so
    *  the boot toolSchemaTokens term and the turn-time S term measure ONE
-   *  corpus by construction (I8 extended from the formula to its input —
-   *  pre-fix the boot term ran the shared reduce over RAW descriptions, which
-   *  are typically much longer than lean ones, systematically over-counting).
+   *  corpus by construction (single-sourcing extended from the formula to its
+   *  input — running the shared reduce over RAW descriptions, which are
+   *  typically much longer than lean ones, would systematically over-count).
    *  Absent ⇒ the floor measures the raw toolset (conservative over-count;
    *  production wiring always binds it). */
   convertTools?: (tools: ReadonlyArray<ToolOverheadInput>) => ReadonlyArray<ToolOverheadInput>;
@@ -113,7 +113,7 @@ export interface AgentBootWindowInfo {
  *
  * Mirroring the executor by construction (same resolver imports, same `?? 8_192`
  * fallback, same normalize step) means the boot floor and the first real turn
- * cannot disagree about the window (Pitfall 5).
+ * cannot disagree about the window.
  */
 export function collectAgentBootWindowInfo(params: {
   agentId: string;
@@ -139,7 +139,7 @@ export function collectAgentBootWindowInfo(params: {
   explicitCapabilityClass: string | undefined;
   /** PerAgentConfig — scaffold + budget knobs (read defensively). */
   agentConfig: Parameters<typeof resolveScaffoldDefaults>[1];
-  /** WR-03: the executor's convertTools closure — see AgentBootWindowInfo.convertTools. */
+  /** The executor's convertTools closure — see AgentBootWindowInfo.convertTools. */
   convertTools?: (tools: ReadonlyArray<ToolOverheadInput>) => ReadonlyArray<ToolOverheadInput>;
 }): AgentBootWindowInfo {
   const normalizedId = normalizeModelId(params.providerId, params.modelId).modelId;
@@ -160,7 +160,7 @@ export function collectAgentBootWindowInfo(params: {
     explicitClass as CapabilityClass | undefined,
   );
   const scaffold = resolveScaffoldDefaults(modelProfile, params.agentConfig);
-  // A2: small/nano → bootstrapTotalMaxChars (5_000); frontier/mid → undefined,
+  // small/nano → bootstrapTotalMaxChars (5_000); frontier/mid → undefined,
   // fall back to bootstrapMaxChars (always a number — the 20_000 sentinel).
   const scaffoldBootstrapChars = scaffold.bootstrapTotalMaxChars ?? scaffold.bootstrapMaxChars;
   const minVisibleOutputTokens = params.agentConfig.contextEngine?.budget?.minVisibleOutputTokens;
@@ -200,7 +200,7 @@ export interface MinViableEquation {
 /**
  * Compute the boot minViable equation. Pure — no I/O, no logging.
  *
- * Every term is single-sourced from its turn-time home (I8):
+ * Every term is single-sourced from its turn-time home:
  *   - bootstrapTotalTokens: scaffold chars ÷ CHARS_PER_TOKEN_RATIO (constants.ts)
  *   - toolSchemaTokens: toolDefOverheadChars (tool-overhead.ts — the same function
  *     the turn-time S estimate uses) ÷ CHARS_PER_TOKEN_RATIO
@@ -219,22 +219,22 @@ export function computeMinViableEquation(params: {
   capabilityClass: string;
   effectiveWindow: number;
   minVisibleOutputTokens?: number;
-  /** E1 (obs-sweep): the class's active-tool ceiling (scaffold-defaults). When finite and the
+  /** The class's active-tool ceiling (scaffold-defaults). When finite and the
    *  toolset exceeds it, the floor measures only the deferred (active) corpus — see below. */
   activeToolCeiling?: number;
 }): MinViableEquation {
-  // flat-by-design: boot viable-floor over machine bootstrap/tool-schema chars (Latin by construction) (TOK-01)
+  // flat-by-design: boot viable-floor over machine bootstrap/tool-schema chars (Latin by construction)
   const bootstrapTotalTokens = Math.ceil(params.scaffoldBootstrapChars / CHARS_PER_TOKEN_RATIO);
-  // E1 (obs-sweep package-delivery-20260628): DEFERRAL-AWARE tool-schema floor. At turn time
+  // DEFERRAL-AWARE tool-schema floor. At turn time
   // applyToolDeferral (tool-deferral.ts) defers by COUNT against `activeToolCeiling`, shipping only
   // ~ceiling active tools + a wire-stripped discover_tools stub (toolDefOverheadChars already skips
-  // the stubs). The boot floor was fed the RAW full toolset, so it counted the FULL pre-deferral
-  // corpus (~26K tokens) and false-WARNed a small-class agent that runs fine via discover_tools.
+  // the stubs). Fed the RAW full toolset, the boot floor would count the FULL pre-deferral
+  // corpus (~26K tokens) and false-WARN a small-class agent that runs fine via discover_tools.
   // Mirror the deferral: when a finite ceiling is exceeded, count only the `ceiling` LARGEST tools by
   // individual overhead — a CONSERVATIVE upper bound on the active set (applyToolDeferral chooses by
   // COUNT, not size, so the real active corpus is ≤ this), so the floor tracks deferral without ever
   // under-warning a genuinely-infeasible window. Single-sources the ceiling from scaffold-defaults
-  // (the same knob the turn uses). flat-by-design (TOK-01).
+  // (the same knob the turn uses). flat-by-design.
   const ceiling = params.activeToolCeiling;
   const toolChars =
     ceiling !== undefined && Number.isFinite(ceiling) && params.tools.length > ceiling
@@ -244,7 +244,7 @@ export function computeMinViableEquation(params: {
           .slice(0, ceiling)
           .reduce((sum, n) => sum + n, 0)
       : toolDefOverheadChars(params.tools);
-  // flat-by-design: tool-schema overhead chars (machine-rendered JSON, Latin by construction) (TOK-01)
+  // flat-by-design: tool-schema overhead chars (machine-rendered JSON, Latin by construction)
   const toolSchemaTokens = Math.ceil(toolChars / CHARS_PER_TOKEN_RATIO);
 
   // Post-downshift minimum thinking level: native → "low", none → "off".
@@ -257,10 +257,10 @@ export function computeMinViableEquation(params: {
       ? computeOutputHeadroom(params.reasoningStyle, floorLevel)
       : computeOutputHeadroom(params.reasoningStyle, floorLevel, params.minVisibleOutputTokens);
 
-  // A1: the per-class preamble threshold doubles as the fresh-tail reserve.
+  // The per-class preamble threshold doubles as the fresh-tail reserve.
   // frontier's Infinity means "the preamble WARN never fires", NOT "infinite
   // preamble" — mapping Infinity → 0 keeps frontier's minViable finite and its
-  // boot WARN practically unreachable (R-4: healthy boots stay silent).
+  // boot WARN practically unreachable (healthy boots stay silent).
   const thresholdByClass: Readonly<Record<string, number>> = PREAMBLE_WARN_THRESHOLD_BY_CLASS;
   const threshold = thresholdByClass[params.capabilityClass] ?? 0;
   const freshTailReserve = Number.isFinite(threshold) ? threshold : 0;
@@ -305,12 +305,12 @@ export function computeMinViableEquation(params: {
  * Evaluate the viable floor for one agent and WARN once when the effective
  * window is below minViable.
  *
- * Healthy (effectiveWindow >= minViable) → returns undefined, emits NOTHING
- * (R-4). Infeasible → ONE structured WARN (I7: every term named with its value,
+ * Healthy (effectiveWindow >= minViable) → returns undefined, emits NOTHING.
+ * Infeasible → ONE structured WARN (every term named with its value,
  * the binding window source, the per-source knob sentence, and — when tool
  * schemas dominate — the active-tool-ceiling lever) and returns the equation.
  *
- * Never throws on the emit path (I1/D-02): errorKind "config" (A5) — the
+ * Never throws on the emit path: errorKind "config" — the
  * window/scaffold mismatch is configuration, not a runtime resource failure.
  */
 export function evaluateViableFloorForAgent(params: {
@@ -319,7 +319,7 @@ export function evaluateViableFloorForAgent(params: {
   logger: { warn(obj: Record<string, unknown>, msg: string): void };
 }): MinViableEquation | undefined {
   const { info } = params;
-  // WR-03: measure the corpus the turn actually ships. The turn-time S term
+  // Measure the corpus the turn actually ships. The turn-time S term
   // runs the shared toolDefOverheadChars over the CONVERTED ToolDefinition[]
   // (lean descriptions + guidelines, via the executor's convertTools); the
   // daemon loop feeds this function the RAW AgentTool[], so without the same
@@ -333,17 +333,17 @@ export function evaluateViableFloorForAgent(params: {
     capabilityClass: info.modelProfile.capabilityClass,
     effectiveWindow: info.effectiveWindow,
     minVisibleOutputTokens: info.minVisibleOutputTokens,
-    // E1: deferral-aware — when the class pins a finite ceiling, the floor measures the deferred
-    // (active) corpus, not the full pre-deferral toolset (which false-WARNed small-class agents).
+    // Deferral-aware — when the class pins a finite ceiling, the floor measures the deferred
+    // (active) corpus, not the full pre-deferral toolset (which would false-WARN small-class agents).
     ...(info.activeToolCeiling !== undefined && { activeToolCeiling: info.activeToolCeiling }),
   });
   if (info.effectiveWindow >= eq.minViable) {
-    return undefined; // R-4: healthy boots stay silent.
+    return undefined; // Healthy boots stay silent.
   }
 
   // Per-source knob sentence — fixed-string templates + numbers + knob names
-  // only (I7/T-176-08: no schema bodies, no message content, no env values).
-  // IN-06 (WR-01 principle): the capability branch leads with the PIN — the
+  // only (no schema bodies, no message content, no env values).
+  // The capability branch leads with the PIN — the
   // boot resolver (like the executor reconcile) reads only
   // DEFAULT_EFFECTIVE_CAP_BY_CLASS[pinned class]; the contextEngine.budget.*
   // caps can only clamp FURTHER and cannot raise this bind, so they are a
@@ -357,7 +357,7 @@ export function evaluateViableFloorForAgent(params: {
   const dominanceSentence =
     eq.dominantTerm === "toolSchemaTokens"
       ? info.activeToolCeiling !== undefined
-        ? // E1: the floor is already deferral-aware (measures the ${ceiling}-tool active corpus), so a
+        ? // The floor is already deferral-aware (measures the ${ceiling}-tool active corpus), so a
           // WARN here means even the DEFERRED surface does not fit — "pin small" is already in effect.
           `Tool schemas dominate the floor EVEN AFTER deferral to the ${info.activeToolCeiling}-tool active ceiling — the deferred active corpus still does not fit. Disable unused MCP servers / builtin tool groups, or raise the window.`
         : `Tool schemas dominate the floor — reduce the active tool surface: pin capabilityClass (small defers to a 24-tool active ceiling via discover_tools) or disable unused MCP servers / builtin tool groups.`

@@ -6,9 +6,9 @@
  * and @comis/daemon (credential-resolver). Canonical set = {ollama, lm-studio}.
  *
  * Rationale: lm-studio, like ollama, is a local inference server that does not
- * require authentication by default. The agent-side Set previously contained only
- * "ollama" — a divergence from the daemon (which correctly included lm-studio).
- * This constant closes that divergence.
+ * require authentication by default. Sharing one constant keeps the agent- and
+ * daemon-side sets from diverging (a per-package copy could drop a member on
+ * one side only).
  *
  * @module
  */

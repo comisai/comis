@@ -190,9 +190,9 @@ describe("createToolResultSizeBouncer", () => {
   });
 
   it("WARN carries a dedupKey field of '${toolName}:${toolCallId}' (withDedup key) and counter stays 1 across repeats", () => {
-    // H2 migration: the truncation WARN now goes through withDedup, which keys
-    // on a `dedupKey` field. The counter (truncatedTools) keeps its OWN guard,
-    // so it increments once per key even though the LOG is collapsed.
+    // The truncation WARN goes through withDedup, which keys on a `dedupKey`
+    // field. The counter (truncatedTools) keeps its OWN guard, so it
+    // increments once per key even though the LOG is collapsed.
     const { wrapper, getTruncationSummary } = createToolResultSizeBouncer(1_000, logger);
     const wrappedFn = wrapper(base);
 

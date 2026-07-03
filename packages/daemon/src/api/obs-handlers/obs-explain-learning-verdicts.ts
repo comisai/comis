@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-02 (Phase 201, P2 skills shadow): the two BENIGN procedural-learning
+ * The two BENIGN procedural-learning
  * verdict predicates spliced into the `obs-explain-heuristics` registry —
  * `learned_skill_failing` + `synthesis_abstained_low_capability`.
  *
@@ -70,8 +70,3 @@ export const synthesisAbstainedVerdict: VerdictPredicate = (s) => {
     ],
   };
 };
-
-// Phase 226 SIMPLIFY-04: userModelRevisedVerdict was DELETED — the user-rep-revision
-// signal it keyed on was removed with its 0-emit event (the user-rep revision path
-// folded into the reflection engine in Phase 225). Its registration in
-// obs-explain-heuristics.ts was removed in the same lockstep.

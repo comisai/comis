@@ -138,9 +138,9 @@ Groups provide convenient bulk operations using `group:xxx` syntax in allow/deny
 | `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` |
 
 <Note>
-The `group:context` / `group:context_expand` groups bundled the DAG context
-engine's `ctx_*` recall tools. Those tools and groups were removed pending the
-v2.12 "Lossless Context DAG" reimplementation and return with the LCD engine.
+There are no `group:context` / `group:context_expand` groups: the DAG context
+engine's on-demand `ctx_*` recall tools are not yet shipped, so no tool group
+bundles them.
 </Note>
 
 ### Resolution Precedence

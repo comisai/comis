@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-02/03 (Phase 196): the daemon voice-handler wiring shim.
+ * The daemon voice-handler wiring shim.
  *
  * `media-handlers.ts` is at its 800-line cap with ZERO allowlist cushion, so the
  * `media.transcribe` / `tts.synthesize` obs wiring lives HERE (a sibling), not
  * inline — each handler call-site becomes `const voice = wireVoiceForHandler(
  * rawParams, deps, "stt"|"tts")` + `voice.completed(...)` / `voice.failed(...)`.
  *
- * The shim resolves the OBS-03 selection (`provider`/`keyless`/`source` + the
+ * The shim resolves the voice selection (`provider`/`keyless`/`source` + the
  * `onSkip` reasons) from the boot-resolved `deps.voiceSelection` (the SAME
  * `SttSelection`/`TtsSelection` the adapter construction used — NO second source
  * of truth). When `voiceSelection` is absent (a boot mode without the audio
- * selector / a pre-193 test harness) it falls back to the config provider +
+ * selector / a test harness that omits it) it falls back to the config provider +
  * a keyless heuristic (`local`/`edge`) — an honest best effort, never a crash:
  * a concrete config provider is labeled `source:"explicit"`, but an unpinned
- * `auto`/`configured` is labeled `source:"fallback"` (WR-03 — never fabricate an
- * explicit rung the resolver never produced). It then delegates to `wireVoiceObs` (the
- * record + the §2.7 INFO/WARN line + the SEC-01 host-only redaction), so this
- * module adds NO logging/redaction of its own.
+ * `auto`/`configured` is labeled `source:"fallback"` (never fabricate an
+ * explicit rung the resolver never produced). It then delegates to `wireVoiceObs`
+ * (the record + the one INFO/WARN log line + the host-only credential redaction),
+ * so this module adds NO logging/redaction of its own.
  *
  * @module
  */
@@ -65,7 +65,7 @@ type VoiceWiringDeps = Pick<
   | "defaultAgentId"
   | "resolveAgentMainProvider"
   | "voiceSelection"
-  // OBS-04 (196): the obs store the voice_degraded fleet emit inserts into (already
+  // The obs store the voice_degraded fleet emit inserts into (already
   // on MediaApiDeps — no new dep). Optional; absent → the emit no-ops.
   | "obsStore"
 >;
@@ -93,7 +93,7 @@ export function toSttErrorKind(err: unknown): SttErrorKind {
   }
 }
 
-/** Resolve the OBS-03 voice selection for `kind` from the boot-resolved
+/** Resolve the voice selection for `kind` from the boot-resolved
  *  `deps.voiceSelection`, falling back to the config provider + keyless heuristic. */
 function resolveVoiceRequested(
   deps: VoiceWiringDeps,
@@ -113,7 +113,7 @@ function resolveVoiceRequested(
   // must never crash the handler even if a config slice is unexpectedly absent.
   const provider =
     (kind === "stt" ? deps.mediaConfig.transcription?.provider : deps.mediaConfig.tts?.provider) ?? "configured";
-  // WR-03 (196 review): be HONEST about the rung. A concrete config provider
+  // Be HONEST about the rung. A concrete config provider
   // (e.g. `local`/`edge`/`openai`) was used verbatim → that IS an explicit pin.
   // But `auto` / the `?? "configured"` placeholder is NOT an explicit choice —
   // the resolver never ran, so labeling it `explicit` would fabricate a selection
@@ -127,10 +127,10 @@ function resolveVoiceRequested(
 }
 
 /**
- * Build the wired voice-obs for a daemon voice handler. Resolves the OBS-03
+ * Build the wired voice-obs for a daemon voice handler. Resolves the voice
  * selection, fires `media.${kind}.requested` (with `source` + `onSkip`), and
  * returns the {@link WiredVoiceObs} whose `.completed` / `.failed` each record the
- * trajectory event AND emit the one §2.7 line. The `provider`/`keyless`/`source`
+ * trajectory event AND emit the one log line. The `provider`/`keyless`/`source`
  * are surfaced on the return so the handler does not re-derive them.
  */
 export function wireVoiceForHandler(
@@ -145,7 +145,7 @@ export function wireVoiceForHandler(
     sessionKey: rawParams._callerSessionKey as string | undefined,
     trajectoryRegistry: deps.trajectoryRegistry,
     logger: deps.logger,
-    // OBS-04: thread the obsStore so a failure feeds the fleet voice_health finding.
+    // Thread the obsStore so a failure feeds the fleet voice_health finding.
     ...(deps.obsStore !== undefined ? { obsStore: deps.obsStore } : {}),
     agentId,
     kind,

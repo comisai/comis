@@ -7,9 +7,9 @@
  * NOT be added to it. This mirrors `ImageErrorKind` (image-error.ts), where the
  * domain classification is its own type, separate from the log union.
  *
- * DIVERGENCE 2 from the image union: video adds `job_timeout` for the bounded
- * poll-loop deadline of `execute()` (VPORT-02) — distinct from `timeout` (a single
- * provider HTTP call timing out) — and (WR-02, Phase 192) `delivery_failed` for a
+ * Video diverges from the image union in two ways: it adds `job_timeout` for the
+ * bounded poll-loop deadline of `execute()` — distinct from `timeout` (a single
+ * provider HTTP call timing out) — and `delivery_failed` for a
  * render that SUCCEEDED but whose off-turn channel delivery exhausted its retries.
  * These are video-only additions; each is mapped onto an EXISTING closed log
  * `ErrorKind` (the closed log union is never extended). `delivery_failed` keeps the
@@ -21,7 +21,7 @@
  * `VideoErrorKind` is mapped onto exactly one of the closed log `ErrorKind`
  * values, so observability stays parseable while the domain vocabulary stays
  * expressive. Callers log `{ errorKind: VIDEO_ERR_TO_LOG[k], videoErrorKind: k,
- * hint }` per the §2.7 logging matrix.
+ * hint }` per the AGENTS.md §2.7 logging matrix.
  *
  * @module
  */
@@ -42,7 +42,7 @@ export type VideoErrorKind =
  * Maps each domain `VideoErrorKind` onto one of the CLOSED 10-member log
  * `ErrorKind` literals. The closed union is never extended — this map is the
  * single point where the two vocabularies meet. Both `timeout` and the
- * video-only `job_timeout` collapse onto the closed log `"timeout"` (DIVERGENCE 2).
+ * video-only `job_timeout` collapse onto the closed log `"timeout"`.
  */
 export const VIDEO_ERR_TO_LOG: Record<VideoErrorKind, ErrorKind> = {
   unsupported_provider: "precondition",
@@ -52,7 +52,7 @@ export const VIDEO_ERR_TO_LOG: Record<VideoErrorKind, ErrorKind> = {
   job_timeout: "timeout",
   empty_response: "dependency",
   content_blocked: "dependency",
-  // WR-02: a delivery exhaustion is a channel/transport (platform-side) failure,
+  // A delivery exhaustion is a channel/transport (platform-side) failure,
   // NOT a provider dependency failure — keep it distinct from empty_response.
   delivery_failed: "platform",
 };
@@ -63,9 +63,9 @@ export const VIDEO_ERR_TO_LOG: Record<VideoErrorKind, ErrorKind> = {
  * Mirrors `ImageGenError` (packages/daemon/src/api/pi-image-adapter.ts). A video
  * adapter throws this inside its `execute()`/`submit()` boundary (caught by
  * `fromPromise`), so the resulting `Result` err carries a structured error — NOT
- * a message-only/string-encoded one. Plan 04's `makeUnavailableVideoPort` +
+ * a message-only/string-encoded one. `makeUnavailableVideoPort` +
  * the handler's `extractVideoHint` construct/read this exact shape, so the
- * typed-class form is the cross-plan contract. The `message` is user-safe (it
+ * typed-class form is a cross-module contract. The `message` is user-safe (it
  * never echoes the raw provider error, which could contain a key or token).
  */
 export class VideoGenError extends Error {

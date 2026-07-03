@@ -8,10 +8,10 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * recall (the people/things/topics memories mention, and the one-hop lane that
  * surfaces memories sharing them).
  *
- * This is a NEW port — it deliberately does NOT widen the security-reviewed
- * `MemoryPort` (store/search/delete). Per design §3.2 that surface is never
+ * This is a deliberately separate port — it does NOT widen the security-reviewed
+ * `MemoryPort` (store/search/delete). That surface is never
  * widened for agent use; new capabilities arrive as their own segregated port
- * (the same pattern as `MemoryConsolidationStore` §6.5). The sole adapter is in
+ * (the same pattern as `MemoryConsolidationStore`). The sole adapter is in
  * @comis/memory (it owns the `db` handle and runs all SQL); the agent-side
  * write path (memory-review-job) and read path (memory-recall) consume this
  * port TYPE from @comis/core — they cannot import @comis/memory (the
@@ -28,9 +28,9 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * tenants) must NEVER collapse to one entity row or surface each other's
  * memories even when an entity name is identical.
  *
- * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} (`{tenantId,
- * agentId, now?}`) — the isolation fields are NOT re-declared here (that was the
- * 15× per-port repetition the collapse kills). This is a thin alias that DERIVES
+ * Unified onto the canonical {@link LearningScope} (`{tenantId,
+ * agentId, now?}`) — the isolation fields are NOT re-declared here (one
+ * canonical definition instead of a per-port copy). This is a thin alias that DERIVES
  * `tenantId`/`agentId` from `LearningScope` and re-narrows the injected clock
  * `now` to REQUIRED (the entity write path — `resolveAndLink` — bookkeeps
  * `first_seen`/`last_seen` from it; NEVER `Date.now()`).

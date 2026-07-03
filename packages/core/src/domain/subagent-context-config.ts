@@ -42,7 +42,7 @@ export const SubagentContextConfigSchema = z.strictObject({
   resultTagPrefix: z.string().min(1).max(100).default("Subagent Result"),
   /** Maximum tokens for parent context summary (when includeParentHistory = "summary") */
   parentSummaryMaxTokens: z.number().int().min(100).max(10_000).default(1_000),
-  /** Maximum queued spawns per caller before true backpressure rejection. 0 disables queuing (preserves old throw behavior). */
+  /** Maximum queued spawns per caller before true backpressure rejection. 0 disables queuing (an over-cap spawn throws immediately instead of waiting). */
   maxQueuedPerAgent: z.number().int().min(0).max(50).default(10),
   /** How long a queued spawn waits before failing with timeout (ms). */
   queueTimeoutMs: z.number().int().min(1000).max(600_000).default(120_000),

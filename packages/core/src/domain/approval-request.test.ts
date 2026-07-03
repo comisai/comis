@@ -6,9 +6,9 @@ import {
   ApprovalResolutionSchema,
 } from "./approval-request.js";
 
-// §6.4.1: ApprovalRequestSchema AND SerializedApprovalRequestSchema
+// ApprovalRequestSchema AND SerializedApprovalRequestSchema
 // require a 12-char base62 `shortId` (the gate mints it). Malformed / wrong-length /
-// non-base62 values must reject. ApprovalResolutionSchema is UNCHANGED (no shortId).
+// non-base62 values must reject. ApprovalResolutionSchema carries no shortId.
 
 const VALID_SHORT_ID = "Ab3Xy9Qz0Lmp"; // 12 chars, base62
 const VALID_REQUEST_ID = "2a5cc745-9900-4165-864e-611542a1e753"; // valid RFC-4122 v4
@@ -105,7 +105,7 @@ describe("SerializedApprovalRequestSchema shortId", () => {
   });
 });
 
-describe("ApprovalResolutionSchema is unchanged by the shortId addition", () => {
+describe("ApprovalResolutionSchema carries no shortId field", () => {
   it("still validates a resolution object that has no shortId field", () => {
     const result = ApprovalResolutionSchema.safeParse({
       requestId: VALID_REQUEST_ID,

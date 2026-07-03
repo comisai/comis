@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: the runId path-traversal guard (assertSafeRunId) throws a
 // PathTraversalError so a worktree dir can NEVER escape the agent's jailed
-// workspace (T-219-11) — a security assertion that MUST fail LOUD, not degrade.
+// workspace — a security assertion that MUST fail LOUD, not degrade.
 // createWorktree (the lifecycle, @comis/skills/tools) also throws WorktreeGitError
 // on a git failure; both surface at the executeSubAgent boundary which fails the
 // spawn rather than silently running a non-worktree / escaped-path child.
 /**
- * `worktree-spawn-run` — the WT-01 create/run/clean seam for executeSubAgent.
+ * `worktree-spawn-run` — the create/run/clean seam for executeSubAgent.
  *
  * When a `spawn --worktree` child runs (its session metadata carries
  * `worktree:true`), executeSubAgent runs it in an ISOLATED git worktree instead
@@ -14,10 +14,10 @@
  * keeps executeSubAgent itself small (the 800-line file-size cap):
  *
  *   1. {@link resolveWorktreeDir} — the worktree dir, CONFINED under the child's
- *      jailed workspace via `safePath` (T-219-11 — a worktree NEVER escapes the
+ *      jailed workspace via `safePath` (a worktree NEVER escapes the
  *      jail; the child stays attenuated + jailed, just on its own working tree).
  *   2. {@link prepareWorktree}    — create the worktree (the lifecycle's
- *      createWorktree over the injected GitExec), register it (WT-02 orphan
+ *      createWorktree over the injected GitExec), register it (orphan
  *      tracking), and return `{ dir, cleanup }`. `cleanup()` runs the lifecycle's
  *      PRECISE cleanIfUnchanged: a pristine worktree is removed + dropped from the
  *      registry; a dirty/ahead one is PRESERVED (the entry is marked completed and
@@ -46,7 +46,7 @@ const WORKTREES_SUBDIR = ".worktrees";
  * A runId is daemon-minted (`root-…` / a randomUUID-derived `sub-agent-<id>`), so
  * it is never attacker-controlled in production — but a path separator / traversal
  * token in it would let the worktree dir drift, so we reject it explicitly
- * (defense in depth, T-219-11). The `wt-<runId>` prefix already anchors the first
+ * (defense in depth). The `wt-<runId>` prefix already anchors the first
  * path component (so `safePath`'s prefix check stays inside the workspace), but a
  * separator inside the runId could still split it into a deeper dir — fail LOUD.
  */
@@ -60,7 +60,7 @@ function assertSafeRunId(runId: string): void {
  * Resolve the worktree dir for a run, CONFINED under the child's jailed workspace
  * (`<workspaceDir>/.worktrees/wt-<runId>`). The runId is validated (no separators /
  * `..` / null) AND `safePath` rejects any resolved path that escapes the workspace
- * — a worktree can never escape the jail (T-219-11). Throws on either guard (fail
+ * — a worktree can never escape the jail. Throws on either guard (fail
  * LOUD, never a silent escape).
  */
 export function resolveWorktreeDir(workspaceDir: string, runId: string): string {
@@ -72,7 +72,7 @@ export function resolveWorktreeDir(workspaceDir: string, runId: string): string 
 export interface PrepareWorktreeDeps {
   /** The lifecycle GitExec (the daemon binds the real execFile wrapper; tests inject a fake). */
   gitExec: GitExec;
-  /** The shared registry the boot/periodic sweep reads (WT-02). */
+  /** The shared registry the boot/periodic sweep reads. */
   registry: WorktreeRegistry;
   /** The child's jailed workspace dir — the worktree is confined under it. */
   workspaceDir: string;

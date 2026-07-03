@@ -1,9 +1,9 @@
 name: Live-Fire Release Gate
 
-# The v2.13 live-fire framework wired as a repeatable, budget-capped, SCHEDULED
+# The live-fire framework wired as a repeatable, budget-capped, SCHEDULED
 # release gate that publishes READINESS.md per run.
 #
-# This is the new "safe to ship" gate — `pnpm test:live all` against REAL LLMs +
+# This is the "safe to ship" gate — `pnpm test:live all` against REAL LLMs +
 # real providers — complementing (NOT replacing) `pnpm validate`. It runs on a
 # schedule + manual dispatch ONLY: real provider calls cost money, so this NEVER
 # runs per-PR. The pre-push hook stays mock-only; live never blocks a push.

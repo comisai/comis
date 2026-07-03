@@ -3,10 +3,8 @@
  * Provider-agnostic signed-replay error detector.
  *
  * Detects provider rejections of stored signed thinking / reasoning state on
- * the latest assistant message during replay. Triggered by a real production
- * incident on `srv1593437` 2026-04-24T20:07:34Z (trace
- * `93ba66cf-4283-4ed4-92bd-73d00b4eeb76`, request_id
- * `req_011CaPCYYKfJRpuG3w2y5s52`) where Anthropic returned
+ * the latest assistant message during replay. Motivated by a real production
+ * incident where Anthropic returned
  * `400 invalid_request_error: messages.5.content.17: 'thinking' or
  * 'redacted_thinking' blocks in the latest assistant message cannot be
  * modified` after a 74-min idle gap with multiple daemon restarts.

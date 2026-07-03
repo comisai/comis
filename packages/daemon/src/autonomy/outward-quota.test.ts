@@ -7,7 +7,7 @@ import type { FakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
-// QUOTA-01/02: outward is the irreversible-action gate. Origin-channel sends pass
+// Outward is the irreversible-action gate. Origin-channel sends pass
 // under a per-hour quota; a NEW target needs an explicit per-target grant; a
 // high-volume / mass-recipient send is gated even to origin. Clock is INJECTED.
 // ---------------------------------------------------------------------------
@@ -94,14 +94,14 @@ describe("createOutwardQuota", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INTRO-01 (Phase 215-02): a PURE `remaining(agentId, channelId)` read — the
-  // per-hour headroom the `capabilities.introspect` / `whoami` RPC reports. The
-  // 213 gate tracks the rolling-hour `counters` internally but exposed NO read
-  // surface (RESEARCH Pitfall 3). `remaining` reports `maxPerHour - count` for
-  // the LIVE window as a READ-ONLY view — it must NOT reset/advance the window
-  // (Pitfall 3 / T-215-05): the load-bearing invariant is no `counters.set`.
+  // A PURE `remaining(agentId, channelId)` read — the per-hour headroom the
+  // `capabilities.introspect` / `whoami` RPC reports. The gate tracks the
+  // rolling-hour `counters` internally but exposes NO write on this read path.
+  // `remaining` reports `maxPerHour - count` for the LIVE window as a READ-ONLY
+  // view — it must NOT reset/advance the window: the load-bearing invariant is
+  // no `counters.set`.
   // -------------------------------------------------------------------------
-  it("remaining(agentId, channelId) reports maxPerHour minus the count consumed in the live window (INTRO-01)", () => {
+  it("remaining(agentId, channelId) reports maxPerHour minus the count consumed in the live window", () => {
     const { quota } = makeQuota({ maxPerHour: 3 });
 
     // Fresh key → full allowance.
@@ -117,7 +117,7 @@ describe("createOutwardQuota", () => {
     expect(quota.remaining("agentA", "chan-origin").perHourRemaining).toBe(0);
   });
 
-  it("remaining() returns the full allowance for an unseen key OR an expired window (INTRO-01)", () => {
+  it("remaining() returns the full allowance for an unseen key OR an expired window", () => {
     const { clock, quota } = makeQuota({ maxPerHour: 3 });
 
     // Unseen key → full allowance.

@@ -1,21 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for {@link DialecticConfigSchema}: the
- * default-OFF per-agent opt-in knob that gates the `memory_ask` tool (the
- * ONE allowed query-time LLM surface). RED-first: the schema module does not
- * exist until the GREEN patch.
+ * per-agent knob that gates the `memory_ask` tool (the
+ * ONE allowed query-time LLM surface).
  *
  * The contract these tests pin:
- *   - `enabled` defaults to `false` — the cost gate. A config that omits the
- *     `dialectic` block, or sets it `{}`, can NEVER silently enable the
- *     query-time LLM.
+ *   - `enabled` defaults to `true` (opt-out posture) — it is a COST feature,
+ *     force-disabled at the wiring layer when the master cost-feature switch
+ *     is off.
  *   - `maxOutputTokens` + `maxRecall` are positive-int DoS bounds, both
  *     defaulted (the cost axis).
- *   - `z.strictObject` rejects unknown keys (matches the social-modeling
- *     discipline).
- *   - the knob is registered onto `PerAgentConfigSchema` as `.optional()` —
- *     present-and-enabled parses, AND omitting it entirely parses (no existing
- *     default changes).
+ *   - `z.strictObject` rejects unknown keys (typo guard).
+ *   - the knob is registered onto `PerAgentConfigSchema` with a populated
+ *     default — a config that omits the `dialectic` block still parses.
  *
  * @module
  */
@@ -43,7 +40,7 @@ describe("DialecticConfigSchema", () => {
     expect(parsed.maxRecall).toBe(10);
   });
 
-  it("rejects an unknown key (z.strictObject — the social-modeling discipline)", () => {
+  it("rejects an unknown key (z.strictObject typo guard)", () => {
     expect(() => DialecticConfigSchema.parse({ foo: 1 })).toThrow();
   });
 
@@ -64,7 +61,7 @@ describe("PerAgentConfigSchema dialectic registration", () => {
   });
 
   it("defaults dialectic ON for a config that omits it (opt-out posture; kill-switch-gated)", () => {
-    // The knob is no longer `.optional()`; a bare config gets it populated +
+    // The knob is not `.optional()`; a bare config gets it populated +
     // enabled. The master cost-feature kill switch still force-disables memory_ask at the wiring
     // layer (buildDialecticWiring returns the dead `{}` when costFeatures is off).
     const parsed = PerAgentConfigSchema.parse({});

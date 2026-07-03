@@ -153,8 +153,8 @@ describe("resolveAgentModel", () => {
 });
 
 describe("resolveAgentMainProvider", () => {
-  // WR-01 (183-REVIEW): the handler-side accessor that proves the RES-01 I4
-  // lockstep — it must resolve the SAME provider the completion path
+  // The handler-side accessor that proves the provider-resolution lockstep —
+  // it must resolve the SAME provider the completion path
   // (resolveAgentModel) resolves, INCLUDING the default-agent fallback. The
   // bug was a literal `"default"` fallback that breaks any deployment whose
   // default agent is renamed (CLAUDE.md documents real `mldag` / `head_trader`
@@ -198,7 +198,7 @@ describe("resolveAgentMainProvider", () => {
   });
 
   it("yields an honest non-throwing sentinel when neither the agentId nor the defaultAgentId is in the map", () => {
-    // WR-01 extra guard: a misconfigured map (no matching agent, no default
+    // Extra guard: a misconfigured map (no matching agent, no default
     // entry) must NOT throw resolveAgentModel(undefined,…) — it returns a
     // sentinel providerId with no IMAGE_CAPABILITY entry, driving the honest
     // unavailable path rather than crashing the handler.

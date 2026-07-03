@@ -100,31 +100,31 @@ export interface ComisToolMetadata {
   mcpExportPolicy?: "safe" | "permission-gated" | "never-export";
   /** When true, this tool's lifecycle produces no activity messages (the
    *  activity pipeline skips it). Lifecycle reactions + final delivery are
-   *  unaffected. Read by the activity layer (§16.11). */
+   *  unaffected. Read by the activity layer. */
   suppressActivity?: boolean;
   /** When true, a non-zero `details.exitCode` in this tool's RESULT is the DRIVEN
    *  subject's exit code (informational), NOT the tool's own outcome — so the bridge's
-   *  exit-code failure heuristic (§D1) must NOT flag the call as failed. Set on the
+   *  exit-code failure heuristic must NOT flag the call as failed. Set on the
    *  terminal-driver perception tools (status/read/wait), whose result reports the driven
    *  session's `exitCode`. Without it a driven program exiting non-zero (e.g. bash `exit 1`)
-   *  misclassifies a perfectly-successful `terminal_session_status` as a tool failure
-   *  (real-VPS 2026-06-16). Default (absent) ⇒ the heuristic applies (exec/process, where
+   *  misclassifies a perfectly-successful `terminal_session_status` as a tool
+   *  failure. Default (absent) ⇒ the heuristic applies (exec/process, where
    *  the exit code IS the tool's outcome). */
   exitCodeIsDrivenSession?: boolean;
   /** Tool-specific failure classifier consulted *before* the `tool:executed`
-   *  emit (§16.10), so observability never sees the raw result. Receives the
+   *  emit, so observability never sees the raw result. Receives the
    *  tool result and the SDK `isError` flag; returns `true`/`false` (failed or
    *  not) or `{ errorKind, … }` (failed, with a closed-union classification plus
    *  optional verdict provenance). Lets a tool flag a logically-failed result
-   *  that the SDK reported as success (e.g. a non-zero exit code). (§16.11).
+   *  that the SDK reported as success (e.g. a non-zero exit code).
    *
-   *  Verdict provenance (P2/D2) — all optional, additive on the contract:
+   *  Verdict provenance — all optional, additive on the contract:
    *  - `classifiedField`: which STRUCTURED field drove the verdict (never the body).
    *  - `matchedRule`: the literal regex/rule description that matched (a fixed
    *    string, not a serialized RegExp and not tool-output data).
    *  - `matchedToken`: the concrete token that matched (e.g. a status code). This
    *    is the only provenance field that may carry tool output, so downstream
-   *    sinks (Plan 04) bound it via `sanitizeLogString(...).slice(0, 1500)`. */
+   *    log sinks bound it via `sanitizeLogString(...).slice(0, 1500)`. */
   failureDetector?: (
     result: unknown,
     isError: boolean,
@@ -132,11 +132,11 @@ export interface ComisToolMetadata {
     | boolean
     | {
         errorKind: ErrorKind;
-        /** Which structured field drove the verdict (P2/D2). */
+        /** Which structured field drove the verdict. */
         classifiedField?: "error" | "status" | "message" | "failures";
-        /** The regex/rule literal that matched (P2/D2). */
+        /** The regex/rule literal that matched. */
         matchedRule?: string;
-        /** The concrete token that matched, e.g. a status code (P2/D2). */
+        /** The concrete token that matched, e.g. a status code. */
         matchedToken?: string;
       };
 }

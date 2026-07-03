@@ -90,13 +90,13 @@ export function deriveOllamaNativeBase(configuredBaseUrl: string): string {
 /**
  * Minimum plausible served context window. Anything smaller is treated as a
  * bogus third-party value (e.g. a bad Modelfile `PARAMETER num_ctx`) and
- * rejected so it cannot shrink every turn's budget (IN-02, Phase 176 review).
+ * rejected so it cannot shrink every turn's budget.
  * No model Ollama serves runs below 512 tokens.
  */
 const MIN_PLAUSIBLE_SERVED_WINDOW = 512;
 
 /**
- * IN-02 input hardening: validate + clamp a raw `context_length` value from
+ * Input hardening: validate + clamp a raw `context_length` value from
  * an Ollama API response before it drives the budget reconcile.
  * Returns the FLOORED integer when the value is a finite number within the
  * sane range; undefined otherwise (caller falls through to the /api/show
@@ -185,7 +185,7 @@ export async function probeOllamaServedWindow(
       entry.name === modelId,
   );
 
-  // IN-05: distinguish a PRESENT-but-rejected value from an absent field so
+  // Distinguish a PRESENT-but-rejected value from an absent field so
   // the final err can name the right lever (a bogus Modelfile num_ctx vs a
   // genuinely missing context_length).
   let rejectedImplausible = false;
@@ -247,8 +247,8 @@ export async function probeOllamaServedWindow(
   }
   if (rawDetailsContextLength !== undefined) rejectedImplausible = true;
 
-  // Both endpoints exhausted. IN-05 (Phase 176 review): branch presence vs
-  // absence — a value Ollama DID return but the IN-02 sanitization rejected
+  // Both endpoints exhausted. Branch presence vs absence — a value Ollama
+  // DID return but the sanitization rejected
   // (e.g. a typo'd Modelfile PARAMETER num_ctx) is bad input ("validation"),
   // and reporting it as "not found" would send the operator to restart a
   // server that is up and answering. A genuinely absent field keeps the
@@ -291,7 +291,7 @@ export interface ProbeAllOllamaProvidersParams {
   /** Timeout per provider probe in ms. */
   timeoutMs: number;
   /**
-   * IMP-2a (package-delivery-20260628): also fire a fire-and-forget LOAD-ONLY warm-up
+   * When true, also fire a fire-and-forget LOAD-ONLY warm-up
    * (`prewarmOllamaModel`) per ollama provider so the model is resident before the first user
    * turn — a cold model's first inference can exceed the per-inference stall budget and abort the
    * first turn after a (re)start "request took too long". Default false (byte-identical when unset).
@@ -305,9 +305,9 @@ export interface ProbeAllOllamaProvidersParams {
 }
 
 /**
- * Single source for "which model did the probe use" (KNOB-01's served-window
- * comparator shares it — the 17fdd1e5 bug class was two sites deriving this
- * expression differently). ProviderEntrySchema has NO `defaultModel`; the
+ * Single source for "which model did the probe use" (the served-window
+ * comparator shares it — two sites deriving this expression independently
+ * is how they once disagreed). ProviderEntrySchema has NO `defaultModel`; the
  * model lives under `models[].id`. Falling back to the first configured model
  * lets the /api/show cold-start path (boot, before any inference, when
  * /api/ps is empty) send a real model name instead of "" (which Ollama
@@ -342,7 +342,7 @@ const PREWARM_TIMEOUT_MS = 300_000;
  * Fire-and-forget LOAD-ONLY warm-up: POST {nativeBaseUrl}/api/generate with the model + keep_alive and an
  * EMPTY prompt, which loads the model into memory WITHOUT generating (the Ollama preload idiom).
  *
- * Why (IMP-2a, package-delivery-20260628, local qwen3.6:35b): a cold local model's FIRST inference —
+ * Why (observed live with a local qwen3.6:35b): a cold local model's FIRST inference —
  * prompt-processing the full tool-corpus prompt — emits no tokens for a long time and can exceed the
  * per-inference stall budget (`agents.<id>.promptTimeout.promptTimeoutMs`, default 180s), so the FIRST
  * user turn after a daemon (re)start aborts "request took too long" BEFORE any tool call. Warming at boot
@@ -409,7 +409,7 @@ export async function probeAllOllamaProviders(
     const nativeBase = deriveOllamaNativeBase(entry.baseUrl ?? "http://localhost:11434");
     const modelId = resolveProbedModelId(entry);
 
-    // IMP-2a: fire-and-forget LOAD-ONLY warm-up (NOT awaited — must not block boot; the model loads in
+    // Fire-and-forget LOAD-ONLY warm-up (NOT awaited — must not block boot; the model loads in
     // the background so the first user turn runs warm). Non-fatal; detached from the probe `tasks`.
     if (prewarm) {
       // prewarmOllamaModel never throws; suppressError satisfies the no-empty-catch rule for the void promise.
@@ -431,11 +431,11 @@ export async function probeAllOllamaProviders(
             "Ollama served context window discovered",
           );
         } else {
-          // W12 (obs-llm-troubleshooting): branch the hint by failure class. An
+          // Branch the hint by failure class. An
           // HTTP status means Ollama responded — "start Ollama" points the
           // operator away from the real cause (live: HTTP 400 from /api/show
           // while the server was up; the model name/payload was the suspect).
-          // IN-05: errorKind "validation" means Ollama responded WITH a value
+          // errorKind "validation" means Ollama responded WITH a value
           // that the sanitizer rejected as implausible — the lever is the
           // Modelfile num_ctx, not the server, and not the probe opt-out.
           const isHttpStatusFailure = result.error.message.startsWith("HTTP ");

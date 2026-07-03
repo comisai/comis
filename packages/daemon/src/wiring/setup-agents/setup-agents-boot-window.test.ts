@@ -57,7 +57,7 @@ describe("runBootWindowHonestyChecks (setup-agents-runtime extraction)", () => {
 
     expect(servedWindowComparisons.get("my-ollama")).toMatchObject({ served: 8192 });
     expect(agentBootWindowInfo.get("main")).toMatchObject({ agentId: "main" });
-    // WR-03 corpus pin: the SAME convertTools reference flows into the collector
+    // Corpus pin: the SAME convertTools reference flows into the collector
     expect(mockedCollect).toHaveBeenCalledWith(
       expect.objectContaining({ convertTools: params.convertTools }),
     );
@@ -74,7 +74,7 @@ describe("runBootWindowHonestyChecks (setup-agents-runtime extraction)", () => {
     expect(servedWindowComparisons.size).toBe(0);
   });
 
-  it("fails open: a throwing collector is WARN-logged with hint + errorKind and never throws (FLOOR-01-16)", () => {
+  it("fails open: a throwing collector is WARN-logged with hint + errorKind and never throws", () => {
     mockedCompare.mockReturnValue(undefined);
     mockedCollect.mockImplementation(() => {
       throw new Error("boom");

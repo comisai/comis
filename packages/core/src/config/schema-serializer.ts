@@ -21,10 +21,9 @@ import { SECTION_REGISTRY } from "./section-registry.js";
 /**
  * Maps config section names to their Zod schema objects.
  *
- * Derived from SECTION_REGISTRY. The legacy standalone SECTION_SCHEMAS
- * literal previously held its own 16-entry list and drifted from
- * field-metadata.ts and managed-sections.ts. Now there is a single source
- * of truth.
+ * Derived from SECTION_REGISTRY — never a standalone literal list, which
+ * would drift from field-metadata.ts and managed-sections.ts. The registry
+ * is the single source of truth for the section set.
  */
 const SECTION_SCHEMAS: Record<string, z.ZodType> = Object.fromEntries(
   Object.entries(SECTION_REGISTRY)

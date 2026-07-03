@@ -6,7 +6,7 @@ const RERANKER_Q8_SLUG =
   "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf";
 
 describe("MemoryConfigSchema reranker fields", () => {
-  it("defaults recall.rerankerModel to the bge-reranker-v2-m3 Q8_0 GGUF slug (Phase 226 — nested under memory.recall)", () => {
+  it("defaults recall.rerankerModel to the bge-reranker-v2-m3 Q8_0 GGUF slug (nested under memory.recall)", () => {
     const result = MemoryConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -65,7 +65,7 @@ describe("MemoryConfigSchema reranker fields", () => {
     }
   });
 
-  it("leaves the existing MemoryConfig defaults untouched (recall keepers nested under memory.recall — Phase 226)", () => {
+  it("leaves the existing MemoryConfig defaults untouched (recall keepers nested under memory.recall)", () => {
     const result = MemoryConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -87,7 +87,7 @@ describe("MemoryConfigSchema reranker fields", () => {
     expect(result.success).toBe(false);
   });
 
-  it("Phase 226: the FLAT recall keys are GONE — a config using memory.embeddingModel/rerankerModel (un-nested) is rejected", () => {
+  it("the recall keys only exist nested — a config using flat memory.embeddingModel/rerankerModel is rejected", () => {
     expect(MemoryConfigSchema.safeParse({ embeddingModel: "x" }).success).toBe(false);
     expect(MemoryConfigSchema.safeParse({ rerankerModel: "x" }).success).toBe(false);
     expect(MemoryConfigSchema.safeParse({ embeddingDimensions: 1536 }).success).toBe(false);
@@ -95,16 +95,16 @@ describe("MemoryConfigSchema reranker fields", () => {
 });
 
 // ---------------------------------------------------------------------------
-// memory.enabled master kill switch (Phase 226 — renamed from memory.costFeatures.enabled)
+// memory.enabled master kill switch
 //
 // A single top-level gate that, when `false`, force-disables ALL LLM
 // cost-bearing memory + learning features (the crons + the learning layer + the
 // dialectic tool) regardless of their per-agent config. Default TRUE (opt-out), so a
 // bare config is byte-identical (the gate is on but gates nothing until a per-agent
-// feature is enabled). The former nested CostFeaturesConfigSchema is GONE (no compat shim).
+// feature is enabled). There is NO nested costFeatures block (no alias, no compat shim).
 // ---------------------------------------------------------------------------
 
-describe("MemoryConfigSchema enabled master kill switch (Phase 226)", () => {
+describe("MemoryConfigSchema enabled master kill switch", () => {
   it("defaults enabled to true (the opt-out posture — operator disables)", () => {
     const result = MemoryConfigSchema.safeParse({});
     expect(result.success).toBe(true);
@@ -125,7 +125,7 @@ describe("MemoryConfigSchema enabled master kill switch (Phase 226)", () => {
     expect(MemoryConfigSchema.safeParse({ enabled: "nope" }).success).toBe(false);
   });
 
-  it("the former costFeatures nested key is GONE — a config carrying it is rejected (z.strictObject, no compat shim)", () => {
+  it("a costFeatures nested key is rejected — memory.enabled is the only gate (z.strictObject, no compat shim)", () => {
     expect(MemoryConfigSchema.safeParse({ costFeatures: { enabled: true } }).success).toBe(false);
     expect(MemoryConfigSchema.safeParse({ costFeatures: { enabled: false } }).success).toBe(false);
   });

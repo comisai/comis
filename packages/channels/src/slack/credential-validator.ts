@@ -86,8 +86,8 @@ export async function validateSlackCredentials(
   }
   try {
     const { WebClient } = await import("@slack/web-api");
-    // E2E seam: pass slackApiUrl only when redirected — production path
-    // constructs the WebClient with the same single-arg shape as before.
+    // E2E seam: pass slackApiUrl only when redirected — the production path
+    // constructs the WebClient with the single-arg shape (no options object).
     const client = opts.apiRoot
       ? new WebClient(opts.botToken, { slackApiUrl: opts.apiRoot })
       : new WebClient(opts.botToken);

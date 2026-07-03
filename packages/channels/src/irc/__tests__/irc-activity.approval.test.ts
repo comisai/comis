@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IRC plain-text approval-prompt tests (renderer half; §6.4.6 / §18.3).
+ * IRC plain-text approval-prompt tests (renderer half).
  *
- * IRC has no button surface (LinePerEvent, text-only — §7.1), so a `kind:"approval"`
+ * IRC has no button surface (LinePerEvent, text-only), so a `kind:"approval"`
  * event renders the plain-text prompt `buildApprovalText(event, { includeShortId })`
  * as its per-event line: "Reply approve or deny within the approval timeout" when a
  * single approval is pending in the frame, and the shortId-disambiguated form
  * "Reply approve <S> or deny <S>" when more than one is pending in the same session
  * (so the user's reply, parsed by the router's plain-text branch, is
- * unambiguous). NO signed buttons appear — HMAC is skipped for plaintext (§6.4.6);
+ * unambiguous). NO signed buttons appear — HMAC is skipped for plaintext prompts;
  * the router scopes the reply to `pendingForSession` and replay is blocked by
  * pending-table removal.
  *
@@ -95,7 +95,7 @@ describe("IRC plain-text approval prompt (no buttons, shortId when ambiguous)", 
     if (sends[1].op === "send") expect(sends[1].text).toBe("Reply approve Irc222Bbb222 or deny Irc222Bbb222");
   });
 
-  it("renders the prompt as TEXT only — no buttons reach the IRC send (HMAC skipped, §6.4.6)", async () => {
+  it("renders the prompt as TEXT only — no buttons reach the IRC send (HMAC skipped for plaintext)", async () => {
     const clock = createFakeClock(0);
     const fake = createFakeIrcAdapter();
     const r = createIrcActivityRenderer(fake, "chan-1", { clock });

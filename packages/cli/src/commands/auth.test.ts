@@ -244,10 +244,10 @@ describe("registerAuthCommand", () => {
 });
 
 // ---------------------------------------------------------------------------
-// auth login — mode branching (TDD RED tests — Task 1 of plan 04-03)
+// auth login — mode branching
 //
-// These tests assert the encrypted/env/':'-separator behaviors that will be
-// implemented in Task 2. They must FAIL before the implementation (RED).
+// These tests assert the encrypted/env/':'-separator behaviors of the
+// storage-mode branch in `auth login`.
 // ---------------------------------------------------------------------------
 
 describe("auth login — mode branching", () => {
@@ -459,16 +459,14 @@ describe("auth login — mode branching", () => {
 });
 
 // ---------------------------------------------------------------------------
-// loadStorageMode env-ref resolution (TDD RED tests — Task 1 of plan 260602-rtj)
+// loadStorageMode env-ref resolution
 //
-// Bug 2: loadStorageMode calls loadConfigFile without getSecret, so
-// ${VAR} refs are not resolved before validateConfig. A config whose
-// gateway.tokens[0].secret is written as ${COMIS_GATEWAY_TOKEN} fails
+// If loadStorageMode called loadConfigFile without getSecret, ${VAR} refs
+// would not be resolved before validateConfig: a config whose
+// gateway.tokens[0].secret is written as ${COMIS_GATEWAY_TOKEN} would fail
 // Zod min(32) validation (the literal ref is 22 chars) → exit:1.
-//
-// These tests must FAIL on the pre-patch code (RED). After the fix
-// (GREEN), loadStorageMode loads ~/.comis/.env before validating so refs
-// are resolved correctly.
+// loadStorageMode must load ~/.comis/.env before validating so refs are
+// resolved correctly.
 // ---------------------------------------------------------------------------
 
 describe("loadStorageMode env-ref resolution", () => {
@@ -531,13 +529,12 @@ describe("loadStorageMode env-ref resolution", () => {
   });
 
   it("loadStorageMode resolves ${ENV} refs from .env before validateConfig so auth list does not exit:1", async () => {
-    // PRE-FIX (RED): loadStorageMode calls loadConfigFile without getSecret.
-    // validateConfig receives the literal "${COMIS_GATEWAY_TOKEN}" (22 chars)
-    // which fails z.string().min(32) → process.exit(1).
-    //
-    // POST-FIX (GREEN): loadStorageMode calls loadEnvFile(dataDir/.env) first,
-    // then loadConfigFile(configPath, { getSecret: k => process.env[k] }).
-    // The ref resolves to 34 chars → validateConfig passes → encrypted mode.
+    // loadStorageMode must call loadEnvFile(dataDir/.env) first, then
+    // loadConfigFile(configPath, { getSecret: k => process.env[k] }), so the
+    // ref resolves to 34 chars → validateConfig passes → encrypted mode.
+    // Skipping the .env load would hand validateConfig the literal
+    // "${COMIS_GATEWAY_TOKEN}" (22 chars), failing z.string().min(32) →
+    // process.exit(1).
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
@@ -562,15 +559,15 @@ describe("loadStorageMode env-ref resolution", () => {
 //
 // In encrypted mode the load-bearing secrets (COMIS_GATEWAY_TOKEN, bot token)
 // live in secrets.db — UNREACHABLE from the CLI (no SECRETS_MASTER_KEY-backed
-// store access). The prior fix (plan 260602-rtj) only resolved refs that live
-// in ~/.comis/.env; it does NOT cover the encrypted-secrets-db reality, where
-// loadConfigFile({ getSecret: process.env }) fails the ${VAR} substitution and
-// loadStorageMode silently degraded to "file" → the encrypted OAuth profiles
-// became invisible to `auth list/logout/status`.
+// store access). Resolving refs from ~/.comis/.env alone does NOT cover the
+// encrypted-secrets-db reality: loadConfigFile({ getSecret: process.env })
+// fails the ${VAR} substitution and loadStorageMode silently degrades to
+// "file" → the encrypted OAuth profiles become invisible to
+// `auth list/logout/status`.
 //
 // Reading security.storage needs NONE of those secrets. loadStorageMode must
 // pre-read the mode from YAML (preReadStorageMode: no substitution, no Zod)
-// and return "encrypted". RED on pre-patch code (returns "file").
+// and return "encrypted".
 // ---------------------------------------------------------------------------
 describe("loadStorageMode with secrets in the encrypted store (not .env)", () => {
   let tmpDir: string;
@@ -624,10 +621,10 @@ describe("loadStorageMode with secrets in the encrypted store (not .env)", () =>
   });
 
   it("returns 'encrypted' when the config sets it but secrets are unreachable from the CLI", async () => {
-    // PRE-FIX (RED): loadConfigFile({ getSecret: process.env }) fails the
-    // ${COMIS_GATEWAY_TOKEN} substitution → loadStorageMode returns "file".
-    // POST-FIX (GREEN): preReadStorageMode reads `security.storage: encrypted`
-    // straight from YAML, needing no secret → returns "encrypted".
+    // preReadStorageMode reads `security.storage: encrypted` straight from
+    // YAML, needing no secret → returns "encrypted". A full
+    // loadConfigFile({ getSecret: process.env }) would fail the
+    // ${COMIS_GATEWAY_TOKEN} substitution and misreport "file".
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     await expect(loadStorageMode()).resolves.toBe("encrypted");

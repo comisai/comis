@@ -11,7 +11,7 @@
  *
  * Rate limiter: shares the SAME `patchBucket` instance as `config.patch`
  * (constructed in `index.ts`) so the 5-ops-per-60s budget covers patch +
- * apply combined (matches the pre-split merged limit).
+ * apply combined (one shared budget, not one per method).
  *
  * @module
  */
@@ -265,7 +265,7 @@ export function bindConfigExportHandlers(
       if (!deps.configGitManager) {
         throw new Error("Config versioning not available");
       }
-      // Bespoke pre-Zod check FIRST: matches the legacy error UX
+      // Bespoke pre-Zod check FIRST: preserves the user-facing error message
       // ("sha parameter is required for config rollback"). The contract's
       // `z.string().min(1)` enforces the same condition but with a
       // Zod-style message.
@@ -280,7 +280,7 @@ export function bindConfigExportHandlers(
         throw new Error(`Config rollback failed: ${rollbackResult.error}`);
       }
 
-      // Trigger daemon restart (same pattern as gateway.restart) per user decision.
+      // Trigger daemon restart (same pattern as gateway.restart).
       // `.unref()` so the timer doesn't keep the event loop alive on its own
       // (production gateway/ws server keeps it alive so the timer still fires;
       // tests can exit cleanly).

@@ -77,10 +77,10 @@ function isStopword(t: string): boolean {
  * Lowercase, split on any run of non-(letter|number) codepoints, and keep
  * non-empty tokens. Unicode-aware: `\p{L}` matches Hebrew/Arabic/Cyrillic/CJK
  * letters (not just `a-z`), so a non-Latin memory and an overlapping non-Latin
- * response tokenize to real terms instead of collapsing to nothing (OBS-01
- * de-Anglicization — the prior ASCII-only character class stripped every
- * non-ASCII letter, forcing non-Latin attribution permanently to 0). Diacritic-Latin
- * tokens (`café`) now survive whole — intentional; the I1 byte-identity pin is
+ * response tokenize to real terms instead of collapsing to nothing (an
+ * ASCII-only character class would strip every non-ASCII letter, forcing
+ * non-Latin attribution permanently to 0). Diacritic-Latin
+ * tokens (`café`) survive whole — intentional; the byte-identity pin is
  * pure-ASCII, which this split leaves unchanged. Deterministic and
  * allocation-bounded by the input length; a single split on a fixed char-class
  * with the `u` flag — no nested quantifiers, no backtracking surface (no ReDoS).
@@ -100,7 +100,7 @@ function tokenize(text: string): string[] {
  * <2 tokens or when every adjacent pair is stopword-only. The stopword test is
  * Latin-gated (`isStopword`) so a non-Latin bigram is never dropped as
  * "pure-stopword" — a two-word Hebrew/Arabic/Cyrillic phrase always yields a
- * bigram (OBS-01).
+ * bigram.
  */
 function significantBigrams(tokens: readonly string[]): string[] {
   const out: string[] = [];
@@ -141,7 +141,7 @@ export function attributeRecallUsage(
     const memTokens = tokenize(mem.content);
     // Significant unigrams: content words not in the stopword set. The stopword
     // filter is Latin-gated (isStopword) — a non-Latin token is always
-    // significant (OBS-01: never dropped by the English STOPWORDS set).
+    // significant (never dropped by the English STOPWORDS set).
     const memSignificant = memTokens.filter((t) => !isStopword(t));
     const memSignificantSet = new Set(memSignificant);
     // Bigrams preserve phrase structure but drop pure-stopword pairs (so a

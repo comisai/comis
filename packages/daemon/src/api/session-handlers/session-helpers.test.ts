@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// UX-1 (LOCAL re-test 2026-06-20): `comis sessions list` reported a 2-part key
+// Observed live: `comis sessions list` reported a 2-part key
 // (`default:openai-api`) for a workspace JSONL session, but the LCD/`reset`/
 // `explain` paths key on the canonical 3-part `tenant:user:channel` form
 // (`default:openai-api:openai`). Copying the listed key into `sessions reset`
@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { parseFormattedSessionKey } from "@comis/core";
 import { scanWorkspaceSessions } from "./session-helpers.js";
 
-describe("scanWorkspaceSessions — canonical tenant:user:channel sessionKey (UX-1)", () => {
+describe("scanWorkspaceSessions — canonical tenant:user:channel sessionKey", () => {
   let dir: string;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "comis-ux1-"));
@@ -49,14 +49,14 @@ describe("scanWorkspaceSessions — canonical tenant:user:channel sessionKey (UX
     expect(parsed!.channelId).toBe("telegram");
   });
 
-  // The DM/peer case the UX-1 fix MISSED: a filename carrying the ~peer~ encoding
-  // (sessions/{tenant}/{channel}/{userId~peer~peerId}.jsonl) must decode to the
-  // CANONICAL formatSessionKey form `tenant:user:channel:peer:peerId` — NOT the
-  // hybrid `tenant:(userId~peer~peerId):channel` that `explain`/`mirror`/`reset`
-  // reject. Live 2026-06-21 (rig Phase-0): `session.list` returned
+  // The DM/peer case the channel-directory fix missed: a filename carrying the
+  // ~peer~ encoding (sessions/{tenant}/{channel}/{userId~peer~peerId}.jsonl) must
+  // decode to the CANONICAL formatSessionKey form `tenant:user:channel:peer:peerId`
+  // — NOT the hybrid `tenant:(userId~peer~peerId):channel` that
+  // `explain`/`mirror`/`reset` reject. Observed live: `session.list` returned
   // `default:111~peer~111:424242`, so `tg explain`/`tg mirror` map-missed ("no
   // trajectory found") on a session whose stored key is `default:111:424242:peer:111`.
-  it("decodes the ~peer~ filename to the canonical peer-tagged key (the DM gap UX-1 missed)", () => {
+  it("decodes the ~peer~ filename to the canonical peer-tagged key (the DM gap)", () => {
     writeSession("default", "424242", "111~peer~111.jsonl");
     const s = scanWorkspaceSessions(dir).find((r) => r.sessionKey.includes("424242"))!;
     expect(s).toBeDefined();

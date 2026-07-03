@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * FLEET-03 (v2.30 Phase 220-01) autonomy/durable-run lifecycle row-builders.
+ * Autonomy/durable-run lifecycle row-builders.
  *
  * The four typed durable/autonomy events — orphaned / resumed / revoked / killed —
- * mapped to content-free `health_signal` diagnostic rows (the GENQ-01 / ORCH-OBS
- * clone: a new `signal:` label rides the EXISTING `obs_diagnostics`
- * `health_signal` category, NO migration). Extracted into this sibling module —
- * mirroring `obs-orchestration-rows.ts` — to keep `obs-persistence-wiring.ts`
- * under the 800-line cap (the Plan 01/03 file-size-extraction precedent).
+ * mapped to content-free `health_signal` diagnostic rows (a new `signal:` label
+ * rides the EXISTING `obs_diagnostics` `health_signal` category, NO migration).
+ * Extracted into this sibling module — mirroring `obs-orchestration-rows.ts` —
+ * to keep `obs-persistence-wiring.ts` under the 800-line cap.
  * Re-exported by the wiring file so the public API (and the test imports) stay
  * byte-identical.
  *
- * CONTENT-FREE by construction (T-220-01 / T-220-02): each `details` carries the
+ * CONTENT-FREE by construction: each `details` carries the
  * closed `signal` label + the closed reason ENUM (orphaned) / the integer COUNT
  * (revoked/killed) / the numeric stepIndex (resumed) + the rootRunId (an id)
  * ONLY — NEVER the engine's free-text orphan reason, a lease bearer/selector, or
- * any body (§2.7). The free-text orphan reason stays on the WARN log / notify at
+ * any body (AGENTS.md §2.7). The free-text orphan reason stays on the WARN log / notify at
  * the source (durable-resume-engine.ts); it never reaches the typed event or this
  * row. The report is therefore SAFE to paste into a review.
  *
@@ -55,8 +54,8 @@ export function durableOrphanedEventToRow(payload: EventMap["durable:orphaned"])
 /**
  * Map a `durable:resumed` event to a `health_signal` diagnostic row. A resumed
  * in-flight run is healthy crash-recovery, not degradation, so severity:"info" —
- * a resume does NOT inflate the fleet degrade count (the A2 / BENIGN_DAG_DEGRADED
- * precedent). `details` carries the numeric stepIndex (the resumed checkpoint
+ * a resume does NOT inflate the fleet degrade count (the same benign-reason
+ * discipline as BENIGN_DAG_DEGRADED_REASONS). `details` carries the numeric stepIndex (the resumed checkpoint
  * position) + the rootRunId ONLY.
  */
 export function durableResumedEventToRow(payload: EventMap["durable:resumed"]): DiagnosticRow {
@@ -80,7 +79,7 @@ export function durableResumedEventToRow(payload: EventMap["durable:resumed"]): 
  * Map an `autonomy:revoked` event to a `health_signal` diagnostic row. A
  * cooperative lease/tree revoke had no fleet surface (it was INFO-log-only).
  * `details` carries the revoked COUNT + the rootRunId ONLY — NEVER the lease
- * bearer, selector, or any body (T-220-02). severity:"warning" (an operator
+ * bearer, selector, or any body. severity:"warning" (an operator
  * intervention an admin must see in the fleet roll-up).
  */
 export function autonomyRevokedEventToRow(payload: EventMap["autonomy:revoked"]): DiagnosticRow {
@@ -104,8 +103,8 @@ export function autonomyRevokedEventToRow(payload: EventMap["autonomy:revoked"])
  * Map an `autonomy:killed` event to a `health_signal` diagnostic row. A hard
  * kill (run.kill) flips durable status to 'revoked' INDISTINGUISHABLY from a
  * cooperative revoke in the table — so the DISTINCT `autonomy_killed` signal
- * label is the ONLY way the fleet lens separates killed from revoked counts
- * (RESEARCH OQ1). `details` carries the killed COUNT + the rootRunId ONLY.
+ * label is the ONLY way the fleet lens separates killed from revoked counts.
+ * `details` carries the killed COUNT + the rootRunId ONLY.
  * severity:"warning".
  */
 export function autonomyKilledEventToRow(payload: EventMap["autonomy:killed"]): DiagnosticRow {
@@ -126,8 +125,8 @@ export function autonomyKilledEventToRow(payload: EventMap["autonomy:killed"]): 
 }
 
 /**
- * FLEET-02 (Phase 220-05): map an `autonomy:denial_breaker_tripped` event to a
- * `health_signal` diagnostic row. A Phase-217 capability-DENIAL breaker trip
+ * Map an `autonomy:denial_breaker_tripped` event to a
+ * `health_signal` diagnostic row. A capability-DENIAL breaker trip
  * (N consecutive floor-blocks aborted + killed the run tree) had NO fleet surface:
  * the trip is never a session endReason and never a `breakerTripCount`, so the
  * fleet lens's `breakerTrips` read-back (← `breakerTripTotal`, the TOOL-failure

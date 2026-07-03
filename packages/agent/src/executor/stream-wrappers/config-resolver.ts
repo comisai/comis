@@ -32,16 +32,16 @@ export interface ConfigResolverConfig {
   /** Cache retention for Anthropic provider. Default: "long".
    *  Accepts a getter function for per-execution dynamic resolution. */
   cacheRetention?: CacheRetention | (() => CacheRetention | undefined);
-  /** Phase 166 Fix 3: getter returning the assembled input token count for the current dispatch.
+  /** Getter returning the assembled input token count for the current dispatch.
    *  Set by lcd-assembler.transformContext via the onAssembledInputTokens callback.
    *  When provided and > 0, max_tokens is clamped to effectiveWindow − assembledInputTokens.
    *  When absent or returns 0 (frontier/mid or pre-assembler call), falls back to static config.maxTokens. */
   getAssembledInputTokens?: () => number | undefined;
-  /** Phase 166 Fix 3: getter for the effective context window.
+  /** Getter for the effective context window.
    *  Source: effectiveWindowRef.current set by the onEffectiveWindow callback from lcd-assembler.
    *  When absent or returns Infinity, the dynamic clamp is skipped (frontier/mid byte-identical). */
   getEffectiveWindow?: () => number | undefined;
-  /** Phase 166 Fix 3: reasoning-aware output headroom floor for dynamic max_tokens clamp.
+  /** Reasoning-aware output headroom floor for the dynamic max_tokens clamp.
    *  Computed from computeOutputHeadroom(reasoningStyle, thinkingLevel) before the dispatch. */
   getOutputHeadroom?: () => number;
 }
@@ -50,7 +50,7 @@ export interface ConfigResolverConfig {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** SYS-BOUNDARY: Deterministic marker between static and dynamic system prompt blocks.
+/** Deterministic marker between static and dynamic system prompt blocks.
  *  Enables cache break diagnostics to identify whether changes are in the
  *  stable or dynamic portion. Appended to staticPrefix block. */
 export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "\n\n---SYSTEM-PROMPT-DYNAMIC-BOUNDARY---\n\n";
@@ -70,8 +70,8 @@ export function resolveBreakpointStrategy(
   if (strategy === "single" || strategy === "multi-zone") {
     return strategy;
   }
-  // W11: All providers use multi-zone strategy. Previous "single" for
-  // direct anthropic caused breakpoint budget exhaustion.
+  // All providers use the multi-zone strategy — "single" for direct
+  // Anthropic exhausts the breakpoint budget.
   return "multi-zone";
 }
 
@@ -104,7 +104,7 @@ export function createConfigResolver(
       // Skip temperature for reasoning models (e.g. OpenAI o-series, gpt-5.4-mini)
       // -- they don't support the parameter and the API returns 400.
 
-      // Phase 166 Fix 3: dynamic max_tokens clamp.
+      // Dynamic max_tokens clamp.
       // clamp(configuredMax, MIN_VISIBLE_OUTPUT_TOKENS, effectiveWindow − assembledInputTokens)
       // Guard: both assembled > 0 AND effectiveWindow < Infinity must hold;
       // otherwise fall back to static config.maxTokens (frontier/mid byte-identical path).

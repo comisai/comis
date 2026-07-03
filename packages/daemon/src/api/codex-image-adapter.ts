@@ -5,17 +5,17 @@
 // `fromPromise` at the `execute()` boundary and converted to a `Result` err —
 // no throw escapes the port. Mirrors the pi-image-adapter.ts precedent.
 /**
- * Per-call-bearer Codex image adapter (CDX-01 + CDX-02 wiring).
+ * Per-call-bearer Codex image adapter.
  *
  * An `ImageGenerationPort` for the Codex (ChatGPT-login) provider that, on
  * EVERY `execute()`:
  *   1. resolves the OAuth bearer via `oauthManager.getApiKey("openai-codex",
  *      {oauthProfiles})` — PER CALL, so an expired token refreshes inside
- *      getApiKey (CDX-01). `getApiKey` self-short-circuits on a still-valid
+ *      getApiKey. `getApiKey` self-short-circuits on a still-valid
  *      token (60s buffer), so per-call is cheap in the common case.
  *   2. on a `!ok` result (any `OAuthError.code`: NO_CREDENTIALS / REFRESH_FAILED
  *      / PROFILE_NOT_FOUND / …) → throws a typed `ImageGenError(auth_required)`
- *      with a `comis auth login` hint (success-criterion 3). The image port
+ *      with a `comis auth login` hint. The image port
  *      maps ALL auth-resolution failures to `auth_required` (it never falls
  *      through to a plain key — unlike the completion path).
  *   3. builds the CF headers from THAT SAME freshly-resolved bearer's JWT
@@ -30,10 +30,10 @@
  * openrouter static-key path untouched (no regression).
  *
  * The custom `openai-codex-images` transport (`generateImagesCodex`) must be
- * registered in pi-ai's registry before this adapter runs (Plan 02's PI-02
- * seam extension); this file does not register it.
+ * registered in pi-ai's registry before this adapter runs; this file does not
+ * register it.
  *
- * SEC-03 (Pitfall 3): the bearer flows ONLY via `ImagesOptions.apiKey`, the CF
+ * Secret discipline: the bearer flows ONLY via `ImagesOptions.apiKey`, the CF
  * headers ONLY via `ImagesOptions.headers`; neither is ever logged. The only
  * log surface is `toImageGenOutput`'s WARN (`{errorKind, imageErrorKind,
  * hint}` — never the key/account-id/headers).
@@ -58,11 +58,12 @@ import { buildCodexImageHeaders } from "./codex-images-transport.js";
 const CODEX_PROVIDER_ID = "openai-codex";
 
 /**
- * Hand-built codex `ImagesModel` (Pitfall 5 — pi-ai's image catalog is
+ * Hand-built codex `ImagesModel` (pi-ai's image catalog is
  * openrouter-only, so `getImageModel("openai-codex", …)` has no entry). The
  * transport reads only `model.baseUrl`/`model.id`/`model.api`/`model.provider`.
- * `cost: 0` is fine for 184 — real cost mapping is Phase 186 (OBS-03). The
- * model id is overridable later by config/tool (A2); for 184 it defaults to
+ * `cost: 0` is a placeholder — no real cost mapping exists yet (the codex
+ * transport never populates `usage`, so codex image generations are recorded
+ * at $0). The model id is overridable via `opts.model`; it defaults to
  * `gpt-image-1` (the hosted tool may select the image model server-side under
  * `tool_choice:image_generation` regardless of this top-level value).
  */
@@ -85,8 +86,8 @@ export const CODEX_IMAGE_MODEL: ImagesModel<"openai-codex-images"> = {
  * @param opts.oauthProfiles - The agent's `Record<provider, profileId>` map,
  *   passed to `getApiKey` for per-agent profile preference.
  * @param opts.model         - Optional override of {@link CODEX_IMAGE_MODEL}.
- * @param opts.timeoutMs     - Optional HTTP timeout (ms). WR-02 (184-REVIEW):
- *   the custom codex transport does NOT honor `ImagesOptions.timeoutMs` (only
+ * @param opts.timeoutMs     - Optional HTTP timeout (ms).
+ *   The custom codex transport does NOT honor `ImagesOptions.timeoutMs` (only
  *   pi-ai's openrouter builtin does), so the adapter enforces it here by
  *   aborting the request's `AbortSignal` after `timeoutMs` — a hung SSE stream
  *   surfaces as `imageErrorKind:"timeout"` instead of blocking forever.
@@ -104,13 +105,13 @@ export function createCodexImageAdapter(opts: {
    * `hasCredentials` is cache-only — cold at boot in encrypted-store mode — so a
    * logged-in Codex profile read as unavailable. `isAvailable()` prefers this
    * flag; it falls back to the cache-only check only when it is not threaded
-   * (callers/tests). Absent ⇒ the legacy sync behavior.
+   * (callers/tests). Absent ⇒ the cache-only sync check.
    */
   credentialsAvailable?: boolean;
 }): ImageGenerationPort {
   return {
     id: CODEX_PROVIDER_ID,
-    // CRED-01: codex credential availability is the OAuth credential, NOT the
+    // Codex credential availability is the OAuth credential, NOT the
     // SecretManager (the bearer is OAuth, not an env key). Prefer the boot-
     // resolved STORE-AWARE snapshot (the selector's codexCredentialsAvailable);
     // fall back to the sync cache-only check only when it was not threaded — the
@@ -121,7 +122,7 @@ export function createCodexImageAdapter(opts: {
     execute(input: ImageGenInput): Promise<Result<ImageGenOutput, Error>> {
       return fromPromise(
         (async () => {
-          // CDX-01: resolve the bearer PER CALL — refresh fires inside getApiKey
+          // Resolve the bearer PER CALL — refresh fires inside getApiKey
           // on expiry; self-short-circuits when the cached token is still valid.
           const tok = await opts.oauthManager.getApiKey(CODEX_PROVIDER_ID, {
             oauthProfiles: opts.oauthProfiles,
@@ -136,7 +137,7 @@ export function createCodexImageAdapter(opts: {
             });
           }
           const bearer = tok.value;
-          // WR-02 (184-REVIEW): the custom codex transport never reads
+          // The custom codex transport never reads
           // `options.timeoutMs` (it is only honored by pi-ai's openrouter
           // builtin), so a hung SSE stream would block `reader.read()` — and
           // this image RPC + a rate-limiter slot — forever. Enforce the timeout
@@ -149,10 +150,10 @@ export function createCodexImageAdapter(opts: {
               ? systemSetTimeout(() => ac.abort(), opts.timeoutMs)
               : undefined;
           try {
-            // CDX-02: headers from the SAME freshly-resolved JWT (one JWT → its
-            // own account-id; cannot diverge — T-184-05). The bearer rides
-            // options.apiKey; the headers ride options.headers. Neither is
-            // logged. WR-03 (184-REVIEW): no `maxRetries` — the custom codex
+            // Headers from the SAME freshly-resolved JWT (one JWT → its
+            // own account-id; the identity cannot diverge from the credential).
+            // The bearer rides options.apiKey; the headers ride options.headers.
+            // Neither is logged. No `maxRetries` — the custom codex
             // transport is single-shot (it has no retry loop and never reads
             // `options.maxRetries`), so the option would be a lie.
             const options: ProviderImagesOptions = {
@@ -160,7 +161,7 @@ export function createCodexImageAdapter(opts: {
               headers: buildCodexImageHeaders(bearer),
               signal: ac.signal,
             };
-            // ── THE ONE generateImages call site (I1) ───────────────────────
+            // ── THE ONE generateImages call site ────────────────────────────
             const res = await generateImages(
               opts.model ?? CODEX_IMAGE_MODEL,
               { input: [{ type: "text", text: input.prompt }] },
@@ -174,7 +175,7 @@ export function createCodexImageAdapter(opts: {
               // the actual Codex rejection was INVISIBLE in the logs (the
               // "returned no image twice" incident: the agent only ever saw
               // "non-image response", never the status). Surface it at WARN so it
-              // is diagnosable at the default level. SEC-03: res.errorMessage is
+              // is diagnosable at the default level. res.errorMessage is
               // the status/cause only — never the bearer/account-id/headers
               // (those ride options.apiKey/options.headers, never the response).
               opts.logger.warn(

@@ -9,9 +9,9 @@
  *  - `runTokenCeilingMicrocompact`: token-budget trigger. Runs when the
  *    estimated context size exceeds the configured ceiling. Does NOT call
  *    `onAdaptiveRetentionReset` because the cache may still be warm.
- *  - `runEveryTurnMicrocompact` (EFF-01): UNCONDITIONAL every-turn pass. Runs
+ *  - `runEveryTurnMicrocompact`: UNCONDITIONAL every-turn pass. Runs
  *    on every turn regardless of TTL/ceiling so the long-running coordinator's
- *    context stays flat, not only after an idle gap. Fence-protected (EFF-03)
+ *    context stays flat, not only after an idle gap. Fence-protected
  *    and, like the ceiling trigger, does NOT reset adaptive retention (the cache
  *    may still be warm). Clears tool results only — never thinking blocks, which
  *    `stripReplayThinking` already handles on the cached prefix.
@@ -91,7 +91,7 @@ export function runTokenCeilingMicrocompact(
   if (!config.microcompactTokenCeiling || !config.sessionKey) return;
   const msgs = result.messages as Array<Record<string, unknown>>;
   if (!Array.isArray(msgs)) return;
-  // flat-by-design: aggregate in-request hygiene trigger over estimateContextChars; the request-body accounting roots (estimateBlockTokens) are factored (TOK-01)
+  // flat-by-design: aggregate in-request hygiene trigger over estimateContextChars; the request-body accounting roots (estimateBlockTokens) are factored
   const estimatedTokens = estimateContextChars(msgs as unknown as Message[]) / CHARS_PER_TOKEN_RATIO;
   if (estimatedTokens <= config.microcompactTokenCeiling) return;
 
@@ -110,14 +110,14 @@ export function runTokenCeilingMicrocompact(
 }
 
 /**
- * Every-turn microcompact (EFF-01) -- unconditional Tier-0 pass.
+ * Every-turn microcompact -- unconditional Tier-0 pass.
  *
  * Unlike the TTL and token-ceiling triggers (which only fire after an idle gap or
  * once the context crosses a size ceiling), this runs on EVERY turn so a long-running
  * coordinator's context stays flat continuously rather than only recovering after an
  * idle period. It clears stale compactable tool results beyond the keep window.
  *
- * Cache-stable (EFF-03): threads `getCacheFenceIndex()` so it never clears at/below
+ * Cache-stable: threads `getCacheFenceIndex()` so it never clears at/below
  * the cached prefix (a clear inside the fence would re-pay cache_creation on the whole
  * suffix every turn), keeps the last `observationKeepWindow` results, and -- because the
  * cleared-result placeholder is byte-stable and frozen by tool-call-id -- the cached

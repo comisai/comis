@@ -584,12 +584,12 @@ export const MediaProvidersContract = defineContract({
  * delivery (via `adapter.sendAttachment`) OR base64 fallback when no
  * channel context is present.
  *
- * Request: `prompt`/`size` plus the optional CFG-02 fields `model` (a
+ * Request: `prompt`/`size` plus the optional fields `model` (a
  * provider-default override, validated by the handler against the provider's
- * model list — IN-02) and `reference_image` (a workspace path / url / data-uri
- * STRING for edit/img2img, resolved by the handler — IN-01). The fields are
+ * model list) and `reference_image` (a workspace path / url / data-uri
+ * STRING for edit/img2img, resolved by the handler). The fields are
  * additive (prompt-only callers are unaffected) and exist on the parsed request
- * so the handler sees them typed (Pitfall 5).
+ * so the handler sees them typed.
  *
  * Bespoke pre-Zod validation (handler returns `{ success: false, error }`-
  * shape — does NOT throw):
@@ -610,10 +610,10 @@ export const ImageGenerateContract = defineContract({
   request: z.object({
     prompt: z.string().optional(),
     size: z.string().optional(),
-    // CFG-02 (Pitfall 5): the handler `.parse`s this request — without growing
-    // it, `params.model`/`params.reference_image` are typed `undefined` to the
-    // handler even though Zod would pass unknown keys through at runtime. Plan 03
-    // consumes these typed fields (IN-01 reference resolution + IN-02 model
+    // The handler `.parse`s this request — without declaring these fields,
+    // `params.model`/`params.reference_image` are typed `undefined` to the
+    // handler even though Zod would pass unknown keys through at runtime. The
+    // handler consumes these typed fields (reference resolution + model
     // validation). Additive: existing prompt/size callers are unaffected.
     model: z.string().optional(),
     // A workspace file path / url / data-uri STRING (resolved by the handler).
@@ -631,16 +631,16 @@ export const ImageGenerateContract = defineContract({
  * `video.generate` — generate a video via the agent's main provider's video
  * backend (or explicit FAL), through one `VideoGenerationPort` whose inline
  * `execute()` does submit→poll→download. Applies a per-agent rate limit + a
- * PRE-submit worst-case cost ceiling (SEC-02, I6) + direct channel delivery
+ * PRE-submit worst-case cost ceiling + direct channel delivery
  * (via `adapter.sendAttachment` with `AttachmentPayload.type:"video"`) OR a
- * size-capped base64 fallback when no channel context is present (DEL-04).
+ * size-capped base64 fallback when no channel context is present.
  *
  * Request: `prompt` plus the optional fields `duration` / `aspect_ratio` /
  * `resolution` / `audio` / `negative_prompt` / `seed` / `image_url`
  * (SSRF-guarded workspace path / url / data-uri for image-to-video) / `model`
  * (a provider-default endpoint override). The fields are additive (prompt-only
  * callers are unaffected) and exist on the parsed request so the handler
- * (Plan 04) sees them typed. Only the allowlisted request shapes
+ * sees them typed. Only the allowlisted request shapes
  * (z.string()/z.number()/z.boolean()/.optional()) are used — NO `.url()` /
  * `.regex()` refinements (the 12-shape contract allowlist; the handler enforces
  * SSRF on `image_url`).
@@ -668,19 +668,19 @@ export const VideoGenerateContract = defineContract({
 /**
  * `video.status` — read the status/progress/result of a video-generation job
  * by its opaque job handle (the `jobId` `video.generate` returned at submit),
- * SCOPED to the calling agent. The Phase-189 async lifecycle: `video.generate`
+ * SCOPED to the calling agent. The async lifecycle: `video.generate`
  * submits + returns a handle; the background poller drives the render to
  * completion off-turn; `video.status{job_id}` reports the durable terminal state.
  *
- * AGENT-SCOPED (JOB-04 / TARGET-01): the handler resolves the agent explicitly
+ * AGENT-SCOPED: the handler resolves the agent explicitly
  * and reads `videoJobStore.get(job_id, agentId)` — a job belonging to ANOTHER
  * agent returns not-found (`{state:"failed", error:"No video job <id> for this
- * agent"}`), NEVER the other agent's mediaPath/cost (threat T-189-10).
+ * agent"}`), NEVER the other agent's mediaPath/cost (cross-agent job probing).
  *
- * Request: `job_id` (the opaque, secret-free provider request id — T-189-12;
+ * Request: `job_id` (the opaque, secret-free provider request id;
  * echoing an unknown id in the not-found error leaks nothing).
  *
- * Response: `state` is a CLOSED `z.enum(["pending","done","failed"])` (O4 — the
+ * Response: `state` is a CLOSED `z.enum(["pending","done","failed"])` (the
  * enum tightens the contract over the loose-record `video.generate` handle);
  * `progress` / `mediaPath` / `costUsd` / `error` are present per terminal state.
  * Only the allowlisted request/response shapes are used (z.string()/z.number()/
@@ -710,11 +710,6 @@ export const VideoStatusContract = defineContract({
  * PropertyAssignment order. The order within this array is documentation-only;
  * the bidirectional 1:1 architecture test treats `MEDIA_CONTRACTS` as an
  * unordered set.
- *
- * NOTE: `video.status`'s daemon handler (`createVideoStatusHandlers`) lands in
- * Phase 189 Plan 03 in the SAME wave the contract is declared, so the
- * bidirectional handler-parity gate and the web codegen drift gate both see it
- * closed within this plan (no cross-wave strand — the 188 BLOCKER-1 class).
  */
 export const MEDIA_CONTRACTS = [
   // media-handlers.ts (15)

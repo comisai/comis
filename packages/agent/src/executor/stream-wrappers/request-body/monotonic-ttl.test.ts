@@ -8,7 +8,7 @@
  *  1. zero markers (no-op, no WARN)
  *  2. single marker (no-op, no WARN)
  *  3. already monotonic (no-op, no WARN)
- *  4. production failure shape (daemon.1.log:439 reproducer)
+ *  4. production failure shape (live-observed 400 reproducer)
  *  5. multi-upgrade (two earlier 5m + one late 1h)
  *  6. cross-region (5m in system, 1h in first message)
  *  7. tools-prefix (5m on a tool block, 1h in system)
@@ -109,7 +109,7 @@ describe("enforceMonotonicTtlOrdering", () => {
 
   it("production failure shape (system=1h, messages[8]=5m, messages[10]=1h, 11 messages): upgrades messages[8] to 1h and emits exactly one WARN", () => {
     const logger = makeLogger();
-    // Reproduces daemon.1.log:439: system carries 1h, an interior message
+    // Reproduces the live-observed 400: system carries 1h, an interior message
     // (index 8) carries 5m, the last user message (index 10) carries 1h.
     // Anthropic rejects: "messages.10.content.0.cache_control.ttl: a
     // ttl='1h' cache_control block must not come after a ttl='5m'".

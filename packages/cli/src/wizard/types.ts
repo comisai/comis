@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Foundational types and constants for the init wizard redesign.
+ * Foundational types and constants for the init wizard.
  *
  * Core type system for the wizard architecture: immutable state
  * accumulation, structured validation, and multi-flow support.
@@ -104,7 +104,7 @@ export type ToolProviderConfig = {
  * collect: `fal` always (`FAL_KEY`), or `google`/`xai` when the agent's MAIN
  * provider doesn't already supply the matching key. `auto` (follow-main, the
  * recommended default) and a key-reusing `google`/`xai` carry no `apiKey` —
- * CRED-01: video reuses the main provider's secret, no video-specific key (I9).
+ * video reuses the main provider's secret, no video-specific key.
  */
 export type VideoProviderConfig = {
   provider: string;
@@ -122,7 +122,7 @@ export type VideoProviderConfig = {
  * always (`FAL_KEY`), or `openai`/`google`/`openrouter` when the agent's MAIN
  * provider doesn't already supply the matching key. `auto` (follow-main) and
  * `openai-codex` (OAuth bearer, set up via `comis auth login`) carry no `apiKey`
- * — CRED-01: image reuses the main provider's secret, no image-specific key.
+ * — image reuses the main provider's secret, no image-specific key.
  */
 export type ImageProviderConfig = {
   provider: string;
@@ -134,7 +134,7 @@ export type ImageProviderConfig = {
  * step. `provider` is one of core's `TranscriptionConfigSchema` enum values
  * (`openai` | `groq` | `deepgram`) written to
  * `integrations.media.transcription.provider`. `apiKey` is present unless the
- * agent's MAIN provider already supplies the matching key (CRED-01) —
+ * agent's MAIN provider already supplies the matching key —
  * `deepgram` always needs its own `DEEPGRAM_API_KEY`.
  */
 export type TranscriptionProviderConfig = {
@@ -318,9 +318,9 @@ export type SupportedToolProvider = {
 /**
  * All supported web-search tool providers with credential guidance.
  *
- * TTS (ElevenLabs / OpenAI) moved to the dedicated `tts` step so the wizard
- * writes `integrations.media.tts.provider` and never asks for the same key
- * twice — this list is now search-only.
+ * This list is search-only: TTS providers (ElevenLabs / OpenAI) belong to the
+ * dedicated `tts` step so the wizard writes `integrations.media.tts.provider`
+ * and never asks for the same key twice.
  */
 export const SUPPORTED_TOOL_PROVIDERS: readonly SupportedToolProvider[] = [
   { id: "brave", label: "Brave Search", hint: "Web search capability", envKey: "SEARCH_API_KEY" },
@@ -361,7 +361,7 @@ export type SupportedVideoProvider = {
  * so this list can never diverge from the config vocabulary the daemon accepts.
  *
  * `auto` is the recommended default (provider-following): video generation
- * follows the agent's main provider and reuses its credentials (CRED-01/I9).
+ * follows the agent's main provider and reuses its credentials.
  * `google` → Veo and `xai` → Grok Imagine reuse `GOOGLE_API_KEY`/`XAI_API_KEY`
  * (the same key the completion path uses); only `fal` needs a dedicated `FAL_KEY`.
  */
@@ -376,7 +376,7 @@ export const SUPPORTED_VIDEO_PROVIDERS: readonly SupportedVideoProvider[] = [
  * Map a video-generation provider id to the env-var key its credential is
  * stored under. `auto` is absent (follow-main, no dedicated key). `google`/`xai`
  * reuse the SAME env keys as the matching LLM provider (`PROVIDER_ENV_KEYS`), so
- * a `google`/`xai` main agent needs no extra credential (CRED-01).
+ * a `google`/`xai` main agent needs no extra credential.
  */
 export const VIDEO_PROVIDER_ENV_KEYS: Record<string, string> = {
   fal: "FAL_KEY",
@@ -407,7 +407,7 @@ export type SupportedImageProvider = {
  * diverge from the config vocabulary the daemon accepts.
  *
  * `auto` is the recommended default (provider-following): image generation
- * follows the agent's main provider and reuses its credentials (CRED-01).
+ * follows the agent's main provider and reuses its credentials.
  * `openai`/`google`/`openrouter` reuse `OPENAI_API_KEY`/`GOOGLE_API_KEY`/
  * `OPENROUTER_API_KEY` (the same key the completion path uses); `fal` needs a
  * dedicated `FAL_KEY`; `openai-codex` uses the Codex OAuth login (no static key).
@@ -426,7 +426,7 @@ export const SUPPORTED_IMAGE_PROVIDERS: readonly SupportedImageProvider[] = [
  * is stored under. `auto` and `openai-codex` are absent (follow-main / OAuth).
  * `openai`/`google`/`openrouter` reuse the SAME env keys as the matching LLM
  * provider (`PROVIDER_ENV_KEYS`), so a matching main agent needs no extra
- * credential (CRED-01).
+ * credential.
  */
 export const IMAGE_PROVIDER_ENV_KEYS: Record<string, string> = {
   fal: "FAL_KEY",
@@ -461,8 +461,8 @@ export type SupportedTranscriptionProvider = {
  * Keyless-first ordering: `auto` (the recommended default — keyless-first /
  * follow-main) and `local` (in-process whisper) come before the keyed cloud
  * providers and OMIT `envKey` (their absence from `TRANSCRIPTION_PROVIDER_ENV_KEYS`
- * drives the no-prompt branch). `openai`/`groq` reuse the matching LLM key
- * (CRED-01); `deepgram` always needs its own `DEEPGRAM_API_KEY`.
+ * drives the no-prompt branch). `openai`/`groq` reuse the matching LLM key;
+ * `deepgram` always needs its own `DEEPGRAM_API_KEY`.
  */
 export const SUPPORTED_TRANSCRIPTION_PROVIDERS: readonly SupportedTranscriptionProvider[] = [
   { id: "auto", label: "Auto (keyless-first)", hint: "Local whisper, or reuse your agent's audio key (recommended)" },
@@ -498,7 +498,7 @@ export type SupportedTtsProvider = {
  * Keyless-first ordering: `edge` (Microsoft Edge — the recommended keyless
  * default) leads, and `local` (offline Piper — arrives in a later release)
  * trails; both OMIT `envKey` (absent from `TTS_PROVIDER_ENV_KEYS` → no prompt).
- * `openai` reuses `OPENAI_API_KEY` (CRED-01); `elevenlabs` needs
+ * `openai` reuses `OPENAI_API_KEY`; `elevenlabs` needs
  * `ELEVENLABS_API_KEY`.
  */
 export const SUPPORTED_TTS_PROVIDERS: readonly SupportedTtsProvider[] = [

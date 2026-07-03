@@ -141,10 +141,10 @@ export function runCacheBreakpointPhase(
   // 2 system blocks that didn't exist in the original params.
   const existingCount = countCacheBreakpoints(result);
   let slotsAvailable = 4 - existingCount;
-  // Tracks the message index where Fix E placed (or upgraded) the 1h
-  // anchor. Consumed by the recent-zone retention ternary below so the
-  // earlier breakpoint placed by placeCacheBreakpoints uses 1h instead
-  // of 5m — preventing the daemon.1.log:439 ordering violation at the
+  // Tracks the message index where the UNTRUSTED_ anchor placed (or
+  // upgraded) the 1h marker. Consumed by the recent-zone retention ternary
+  // below so the earlier breakpoint placed by placeCacheBreakpoints uses 1h
+  // instead of 5m — preventing a live-observed TTL ordering violation at the
   // source (the monotonic-ttl safety net remains as defense in depth).
   let eFixFiredAt: number | undefined;
 
@@ -208,7 +208,7 @@ export function runCacheBreakpointPhase(
     }
   }
 
-  // Fix E (log-review): turns carrying a large stable untrusted block
+  // UNTRUSTED_ anchor: turns carrying a large stable untrusted block
   // (e.g., link-understanding output ~32KB) need a 1h cache anchor —
   // the default 5m TTL gets evicted under Anthropic capacity pressure
   // and the entire ~32KB re-uploads on every turn. Scan the last few
@@ -224,10 +224,10 @@ export function runCacheBreakpointPhase(
       const content = Array.isArray(msg.content) ? msg.content as Array<Record<string, unknown>> : [];
       const hasUntrusted = content.some((b) => typeof b.text === "string" && (b.text as string).includes("<<<UNTRUSTED_"));
       if (!hasUntrusted) continue;
-      // Only anchor a LARGE untrusted block — the ~32KB link-understanding case this Fix exists
-      // for. A SMALL untrusted tool_result (e.g. an `echo` result) is cheap to re-upload and the
-      // SDK's last-user marker already covers it; anchoring it would waste a breakpoint slot that
-      // the lookback gap-bridge needs (cache C-FIX-2, 2026-06-18: small tool_results were stealing
+      // Only anchor a LARGE untrusted block — the ~32KB link-understanding case this anchor
+      // exists for. A SMALL untrusted tool_result (e.g. an `echo` result) is cheap to re-upload and
+      // the SDK's last-user marker already covers it; anchoring it would waste a breakpoint slot
+      // that the lookback gap-bridge needs (observed live: small tool_results were stealing
       // the slot, leaving the mid-conversation gap unbridged on alternating tool turns). The
       // delimiter-wrap security is independent of this cost anchor, so gating on size is safe.
       const EFIX_MIN_UNTRUSTED_CHARS = 16384; // ~4K tokens — clearly "large", well below ~32KB
@@ -267,12 +267,12 @@ export function runCacheBreakpointPhase(
       {
         minTokens,
         maxBreakpoints: inCooldown ? 1 : slotsAvailable,
-        // Recent zone defaults to 5m, but when Fix E placed a 1h anchor on the
-        // latest user message, any earlier breakpoint must also be >= 1h to
-        // satisfy Anthropic's monotonicity rule (tools->system->messages).
+        // Recent zone defaults to 5m, but when the UNTRUSTED_ anchor placed 1h
+        // on the latest user message, any earlier breakpoint must also be >= 1h
+        // to satisfy Anthropic's monotonicity rule (tools->system->messages).
         // Without this coordination, enforceMonotonicTtlOrdering catches the
-        // violation but logs a WARN — Fix 2 makes the placement intent correct
-        // at source so the safety net stays quiet in the common UNTRUSTED path.
+        // violation but logs a WARN — coordinating here makes the placement intent
+        // correct at source so the safety net stays quiet in the common UNTRUSTED path.
         retention: eFixFiredAt !== undefined ? "long" : "short",
         resolvedRetention: inCooldown ? "short" : messageRetention, // Force "short" during cooldown
         strategy: resolveBreakpointStrategy(config.cacheBreakpointStrategy, model.provider),
@@ -396,8 +396,8 @@ export function runCacheBreakpointPhase(
 
   // Safety-net sweep: enforce Anthropic's monotonic non-increasing TTL
   // invariant across tools->system->messages payload order. No-op when
-  // layout is already monotonic; load-bearing defense even when Fix 2
-  // (Fix-E-aware retention) correctly coordinates the source placement.
+  // layout is already monotonic; load-bearing defense even when the
+  // anchor-aware retention above correctly coordinates the source placement.
   // Logs WARN with errorKind:"internal" if any upgrade fires — that
   // indicates an upstream placement bug.
   enforceMonotonicTtlOrdering(result, logger);

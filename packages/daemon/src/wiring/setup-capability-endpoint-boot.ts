@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `constructCapabilityLayer` — the daemon-wide capability-lease construction +
- * ACTIVATION (Phase 211 ENDPOINT-01/03 → Phase 212 Plan 05 dormancy activation),
- * extracted from `daemon.ts`'s boot WITHOUT adding a net line to daemon.ts
- * (line-cap ≤ 3000, arch invariant — the daemon-side wiring all lives here).
+ * ACTIVATION, extracted from `daemon.ts`'s boot WITHOUT adding a net line to
+ * daemon.ts (line-cap ≤ 3000, arch invariant — the daemon-side wiring all lives here).
  *
  * Mirrors the credential broker's conditional construction (gated on
  * `executor.broker`): construct ONE daemon-wide `LeaseManager` + the loopback
@@ -12,12 +11,11 @@
  * (so deny-by-origin + requireCapability + the unknown-method `!handler` throw
  * all fire automatically).
  *
- * Phase 212 (the dormancy activation — Gap 3) flips the layer from constructed-
- * but-DORMANT to ACTIVE, all inside this helper so daemon.ts only KEEPS the
- * returned handle:
- *   1. The daemon-side `tool.invoke` executor (`createToolInvokeExecutor`, Plan
- *      02) is constructed HERE from the injected shipped cores (read/grep/find/
- *      ls/jq + web_search) + the agent workspace resolver + the Plan-03 ResultRef
+ * Activation flips the layer from constructed-but-DORMANT to ACTIVE, all inside
+ * this helper so daemon.ts only KEEPS the returned handle:
+ *   1. The daemon-side `tool.invoke` executor (`createToolInvokeExecutor`) is
+ *      constructed HERE from the injected shipped cores (read/grep/find/ls/jq +
+ *      web_search) + the agent workspace resolver + the ResultRef
  *      `materialize` writer, and injected into `createCapabilityEndpoint` via its
  *      deps — MIRRORING how the `LeaseManager` is constructed-and-injected. NOT a
  *      mutable setter on the handle: construction-time injection keeps the lease-
@@ -27,7 +25,7 @@
  *      socket; the lease is per-spawn) — the boot log now reports `active: true`.
  * The returned handle's `endpoint.stopSocket` is threaded into `setupShutdown`
  * (mirrors the broker teardown). The bwrap per-jail bind is the orchestrate
- * runner's (Plan 04) — this helper owns the daemon-wide socket lifecycle.
+ * runner's — this helper owns the daemon-wide socket lifecycle.
  *
  * @module
  */
@@ -49,9 +47,8 @@ import {
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createLeaseManager, type LeaseManager, type LeaseManagerDeps } from "@comis/infra";
 import { createBoundedAutonomy, type BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
-// Phase 217-05 (UNATT/BREAK/EVICT): the never-hang control plane the dispatch
-// chokepoint reads — the per-rootRunId denial breaker (BREAK-01/02), the evicted-
-// rootRunId set (EVICT-01/03), and the content-free escalate NotifyFn (UNATT-03).
+// The never-hang control plane the dispatch chokepoint reads — the per-rootRunId
+// denial breaker, the evicted-rootRunId set, and the content-free escalate NotifyFn.
 // All three are constructed here (alongside BoundedAutonomy) and held on the cap
 // handle so daemon.ts threads them onto the dispatch deps.
 import { createDenialBreaker, type DenialBreaker } from "../autonomy/denial-breaker.js";
@@ -75,8 +72,8 @@ export interface CapabilityWebSearchKeys {
 }
 
 /**
- * Build the `resolveRootRunId(sessionKey) → rootRunId` resolver (Phase 213-08,
- * BUDGET-01/02) over a late-bound budget holder + a session→rootRunId index. The
+ * Build the `resolveRootRunId(sessionKey) → rootRunId` resolver over a late-bound
+ * budget holder + a session→rootRunId index. The
  * resolver is a STABLE closure created EARLY (before setupAgents/setupSchedulers,
  * which hold it) and reads `holder.current` at call time — by the time a turn runs,
  * the cap layer has populated it.
@@ -85,7 +82,7 @@ export interface CapabilityWebSearchKeys {
  * mint a SYNTHETIC per-session root `root-session-<formattedKey>` and `registerRoot`
  * it on first use (via the holder). The synthetic fallback is what bounds a
  * TOP-LEVEL (non-spawned) self-spawning loop — the budget's token/wall-clock limbs
- * then key on a stable id for ANY run, not only orchestrate children (criterion #2).
+ * then key on a stable id for ANY run, not only orchestrate children.
  * A synthetic root has no real lease, so a synthetic leaseId is recorded (the
  * correlation index is content-free; the meter only needs the wall-clock anchor).
  * Idempotent: the same session resolves to the SAME id on every call.
@@ -118,12 +115,12 @@ export interface CapabilityLayerDeps {
   /** Wall-clock for lease TTLs + the bounded-autonomy budget/rate windows. */
   clock: ClockPort;
   /**
-   * Timer port for the bounded-autonomy call-rate limiter's TTL-evict timers
-   * (Phase 213 RATE-01). The daemon's TimerPort (`handle.timers`).
+   * Timer port for the bounded-autonomy call-rate limiter's TTL-evict timers.
+   * The daemon's TimerPort (`handle.timers`).
    */
   timers: TimerPort;
   /**
-   * The per-agent live cron-job count provider (Phase 213 RATE-02 count source).
+   * The per-agent live cron-job count provider.
    * Bound by daemon.ts to `getAgentCronScheduler(agentId).getJobs().length`. The
    * cap endpoint reads it THROUGH `boundedAutonomy.cronCount` for the `cronSelfMax`
    * cap. Optional — absent ⇒ `cronCount` returns 0 (fail-open on that one limb).
@@ -135,7 +132,7 @@ export interface CapabilityLayerDeps {
   daemonLogger: LoggingResult["daemonLogger"];
   /**
    * The skills-scoped logger threaded into the shipped executor cores (file
-   * builtins + web_search). Optional so the 211 boot-gate unit tests can construct
+   * builtins + web_search). Optional so the boot-gate unit tests can construct
    * the layer without activating the executor.
    */
   skillsLogger?: ComisLogger;
@@ -154,10 +151,10 @@ export interface CapabilityLayerDeps {
    */
   webSearchKeys?: CapabilityWebSearchKeys;
   /**
-   * Phase 213-08 (BUDGET-01/02): the daemon-wide LATE-BOUND per-root budget holder,
+   * The daemon-wide LATE-BOUND per-root budget holder,
    * created EARLY in daemon.ts (before setupAgents/setupSchedulers, which hold it)
    * and POPULATED here after `createBoundedAutonomy` with the narrow budget port.
-   * Optional — the 211 boot-gate unit tests omit it; the per-root reserve is then
+   * Optional — the boot-gate unit tests omit it; the per-root reserve is then
    * never wired (byte-identical).
    */
   boundedAutonomyHolder?: BoundedAutonomyBudgetHolder;
@@ -168,23 +165,23 @@ export interface CapabilityLayerDeps {
    */
   rootRunIdIndex?: Map<string, string>;
   /**
-   * Phase 213-08 (RATE-02): a daemon-supplied LeaseManager, built EARLY in daemon.ts
+   * A daemon-supplied LeaseManager, built EARLY in daemon.ts
    * (before setupSchedulers) so the cron-fire mint and this layer share the SAME
-   * instance. Optional — absent ⇒ this layer constructs its own (the 211 boot-gate
+   * instance. Optional — absent ⇒ this layer constructs its own (the boot-gate
    * path / older callers).
    */
   leaseManager?: LeaseManager;
   /**
-   * AUDIT-01 (Phase 215): the structural deps the socket per-cap audit reads —
+   * The structural deps the socket per-cap audit reads —
    * `eventBus` (for the audit:event + capability:audited emits) + `config.tenantId`.
    * daemon.ts passes the same `AppContainer` the dispatch sink holds (it is
-   * structurally assignable). Optional — the 211 boot-gate unit tests omit it, and
+   * structurally assignable). Optional — the boot-gate unit tests omit it, and
    * the socket then emits NO per-cap audit (the endpoint still validates/dispatches;
    * the in-process leg's audit at the dispatch closure is unaffected).
    */
   container?: EmitCapabilityAuditDeps["container"];
   /**
-   * Phase 216 (HIGH-1): the durable-run store — forwarded to the cap endpoint so
+   * The durable-run store — forwarded to the cap endpoint so
    * the jail leg allocates a monotonic `_outwardStepIndex` for an outward message
    * method. Optional; absent ⇒ the endpoint injects no index (pass-through). The
    * daemon builds the store EARLY (before this layer) and threads it here so the
@@ -198,39 +195,38 @@ export interface CapabilityLayerHandle {
   leaseManager: LeaseManager;
   endpoint: CapabilityEndpoint;
   /**
-   * The daemon-wide bounded-autonomy service (Phase 213) — the single chokepoint
-   * the spawn ceiling (CEIL-01), cap-endpoint rate limit + cron self-ownership
-   * (RATE-01/02), outward quota (QUOTA-01/02), and per-root budget meter
-   * (BUDGET-03) consult. Constructed alongside the LeaseManager; `destroy()` tears
-   * down its rate-limiter timers (threaded into setupShutdown).
+   * The daemon-wide bounded-autonomy service — the single chokepoint
+   * the spawn ceiling, cap-endpoint rate limit + cron self-ownership,
+   * outward quota, and per-root budget meter consult. Constructed alongside the
+   * LeaseManager; `destroy()` tears down its rate-limiter timers (threaded into setupShutdown).
    */
   boundedAutonomy: BoundedAutonomy;
   /** The cap socket path (under the data dir) — bound per jail by the orchestrate runner. */
   capSocketPath: string;
   /**
-   * The daemon-wide OutputGuard the lease mint registers each bearer in (Pitfall 1
-   * — ENDPOINT-03). `setup-tools.ts` reads it from the handle to build the
+   * The daemon-wide OutputGuard the lease mint registers each bearer in (Pitfall 1).
+   * `setup-tools.ts` reads it from the handle to build the
    * `CapabilityMintDeps`, so the bearer is added to the redaction set at mint.
    */
   outputGuard: OutputGuardPort;
   /**
-   * Phase 217-05 (BREAK-01/02): the daemon-wide per-rootRunId consecutive denial
+   * The daemon-wide per-rootRunId consecutive denial
    * breaker. The dispatch chokepoint calls `recordDenial` ONLY on a
    * CapabilityDeniedError floor-block and `recordAllow` on the allow branch; on
    * the Nth consecutive floor-block it trips → execution:aborted + killByRootRun.
-   * `denialBreakerN` is sourced from the resolved autonomy-bearing config (LOW-1).
+   * `denialBreakerN` is sourced from the resolved autonomy-bearing config.
    */
   denialBreaker: DenialBreaker;
   /**
-   * Phase 217-05 (EVICT-01/03): the daemon-wide evicted-rootRunId set. The
+   * The daemon-wide evicted-rootRunId set. The
    * `autonomy.evict` admin handler WRITES it (`mark`); the chokepoint READS it
    * (`isEvicted`) at the NEXT gate decision to demote the run's mode to `default`
    * mid-run. The SAME instance is threaded into createAutonomyHandlers via the
-   * `...deps` spread, activating the evict handler (Plan 04's cross-wave point).
+   * `...deps` spread, activating the evict handler.
    */
   evictRegistry: EvictRegistry;
   /**
-   * Phase 217-05 (UNATT-03): the content-free escalate NotifyFn. The chokepoint
+   * The content-free escalate NotifyFn. The chokepoint
    * fires it (NEVER awaited) on an unattended would-ask deny and on a breaker
    * trip — out-of-band + auditable (a WARN with ids/enums/hint, never a body).
    * Synchronous (void) so the deny re-throw is not blocked (the never-hang bar).
@@ -249,16 +245,16 @@ export interface CapabilityLayerResult {
    */
   capEndpointStop: (() => Promise<void>) | undefined;
   /**
-   * JAIL-03 host namespace preflight result (the unprivileged-userns +
+   * Host namespace preflight result (the unprivileged-userns +
    * `--unshare-net` probe, run once at boot). Fed to the SHIPPED degradeAutonomy
    * via emitAutonomyBootLog — downshift to `assistant` + a doctor WARN when the
    * host cannot build the jail (never a silent unjailed path). On non-Linux the
-   * probe honestly returns false. 211 only PRODUCES the boolean; the downshift
-   * stays in the shipped core fn.
+   * probe honestly returns false. This layer only PRODUCES the boolean; the
+   * downshift stays in the shipped core fn.
    */
   namespacePreflightOk: boolean;
   /**
-   * Phase 213-08 (BUDGET-01/02): the `resolveRootRunId(sessionKey)` resolver built
+   * The `resolveRootRunId(sessionKey)` resolver built
    * over the populated holder + the session→rootRunId index. `undefined` when no
    * autonomy agent (no cap layer). daemon.ts ALSO builds an equivalent resolver
    * early (over the SAME holder + index) for setupAgents, which runs before this
@@ -286,10 +282,10 @@ function buildWebSearchConfig(
 }
 
 /**
- * Construct the daemon-side `tool.invoke` executor (Plan 02) from the shipped
- * cores + the workspace resolver + the ResultRef store (Plan 05). Returns
+ * Construct the daemon-side `tool.invoke` executor from the shipped
+ * cores + the workspace resolver + the ResultRef store. Returns
  * `undefined` when the activation inputs (skillsLogger + workspaceDirs +
- * defaultWorkspaceDir) are not all supplied (the 211 boot-gate unit tests) — the
+ * defaultWorkspaceDir) are not all supplied (the boot-gate unit tests) — the
  * endpoint then has NO executor and an executor-route call throws a clear wiring
  * error (never a silent no-op).
  *
@@ -297,9 +293,9 @@ function buildWebSearchConfig(
  * call to the store's `(payload, toolName, ctx)`: the lease's `agentId` resolves
  * the offloading agent's workspace, so an over-threshold daemon-side return
  * (e.g. a large `web_fetch`) is written to THAT agent's `results/` and the jailed
- * script slices it in-jail via `jq`/`read` over the ref (REF-01/02). A per-call
+ * script slices it in-jail via `jq`/`read` over the ref. A per-call
  * `runId` scopes the on-disk basename; the orchestrate runner's `gcRun`/
- * `cleanupRun` reaps the agent's `results/` on its run end (REF-03).
+ * `cleanupRun` reaps the agent's `results/` on its run end.
  */
 function buildToolInvokeExecutor(
   deps: CapabilityLayerDeps,
@@ -311,8 +307,8 @@ function buildToolInvokeExecutor(
   const now = deps.clock.now;
   const resolveWorkspace = (agentId: string): string =>
     workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
-  // The shipped read/grep/find/ls/jq + web_search cores (skills) — the real cores
-  // Plan 02 left injected. Built ONCE (the web-search cache is factory-shared).
+  // The shipped read/grep/find/ls/jq + web_search cores (skills).
+  // Built ONCE (the web-search cache is factory-shared).
   const cores = createOrchestrateExecutorCores({
     logger: skillsLogger,
     webSearchConfig: buildWebSearchConfig(deps.webSearchKeys),
@@ -321,10 +317,10 @@ function buildToolInvokeExecutor(
     resolveWorkspace,
     fileExecutors: cores.fileExecutors,
     webSearch: cores.webSearch,
-    // Phase 213 (BUDGET-03): the real per-root meter for the FLAT web $ charge.
+    // The real per-root meter for the FLAT web $ charge.
     // The cost-bearing web pair (web_fetch/web_search) charges against the tree
     // root's budget — estUsd:0 here (the executor does not price the fetch; the
-    // limb that bites is the bridge's per-LLM-call reserve in Plan 08), but the
+    // limb that bites is the bridge's per-LLM-call reserve), but the
     // call IS metered (the meter increments / the wall-clock + token limbs still
     // gate it). A lease with no rootRunId (older/test wiring) skips the charge.
     budgetHook: (_estimate, lease) => {
@@ -332,7 +328,7 @@ function buildToolInvokeExecutor(
       boundedAutonomy.reserveBudget(lease.rootRunId, "_web", "_web", 0, 0);
     },
     // Over-threshold returns offload to the OFFLOADING agent's workspace
-    // results/ (REF-01) — the lease (threaded by the executor) gives the agentId.
+    // results/ — the lease (threaded by the executor) gives the agentId.
     materialize: async (payload, toolName, lease): Promise<ResultRef | undefined> => {
       const workspacePath = resolveWorkspace(lease.agentId);
       const runId = `tinvoke-${now().toString(36)}`;
@@ -353,8 +349,8 @@ function buildToolInvokeExecutor(
 /**
  * Construct the daemon-wide capability layer (gated on an autonomy-bearing
  * profile, mirroring how the broker is gated on `executor.broker`), ACTIVATE it
- * (inject the executor + start the 0600 socket — Phase 212 Gap 3), AND run the
- * JAIL-03 host namespace preflight once at boot. The cap handle is `undefined`
+ * (inject the executor + start the 0600 socket), AND run the
+ * host namespace preflight once at boot. The cap handle is `undefined`
  * when no agent is autonomy-bearing (so the lease layer + cap.sock are absent);
  * the preflight runs unconditionally (it is a host capability check).
  *
@@ -368,7 +364,7 @@ export async function constructCapabilityLayer(
   const preflight: NamespacePreflightResult = namespacePreflight();
   const { namespacePreflightOk } = preflight;
 
-  // Phase 213-08 (BUDGET-01/02): the rootRunId resolver over the late-bound holder
+  // The rootRunId resolver over the late-bound holder
   // + the session→rootRunId index. Built whenever a holder is supplied (daemon.ts
   // shares the SAME holder + index it threads into setupAgents early) — the resolver
   // is a stable closure that reads `holder.current` at call time.
@@ -388,16 +384,16 @@ export async function constructCapabilityLayer(
     return { capEndpointHandle: undefined, capEndpointStop: undefined, namespacePreflightOk };
   }
 
-  // Phase 213-08 (RATE-02): use the daemon-supplied LeaseManager when provided
+  // Use the daemon-supplied LeaseManager when provided
   // (built EARLY in daemon.ts so setupSchedulers' cron-fire mint shares the SAME
-  // instance — schedulers run before this layer), else construct one here (the 211
+  // instance — schedulers run before this layer), else construct one here (the
   // boot-gate path / older callers). ONE daemon-wide LeaseManager either way.
   const leaseManagerDeps: LeaseManagerDeps = { clock };
   const leaseManager = deps.leaseManager ?? createLeaseManager(leaseManagerDeps);
-  // Phase 213: construct the daemon-wide BoundedAutonomy service alongside the
+  // Construct the daemon-wide BoundedAutonomy service alongside the
   // LeaseManager (the construct-and-inject precedent). The cronJobCount provider
   // (daemon.ts binds it to the per-agent CronScheduler.getJobs().length) is the
-  // RATE-02 count source the cap endpoint reaches through `cronCount`.
+  // count source the cap endpoint reaches through `cronCount`.
   const boundedAutonomy = createBoundedAutonomy({
     clock,
     timers: deps.timers,
@@ -406,32 +402,32 @@ export async function constructCapabilityLayer(
     ...(deps.cronJobCount ? { cronJobCount: deps.cronJobCount } : {}),
     logger: daemonLogger,
   });
-  // Phase 217-05 (BREAK-01/02): the daemon-wide denial breaker, keyed per
+  // The daemon-wide denial breaker, keyed per
   // rootRunId. denialBreakerN is sourced from the resolved autonomy-bearing config
-  // (LOW-1 — NOT a non-existent `agents[defaultAgentId]` lookup; this file has no
+  // (NOT a non-existent `agents[defaultAgentId]` lookup; this file has no
   // defaultAgentId local). A single daemon-wide breaker is acceptable: it keys
   // per-rootRunId, mirroring the single daemon-wide LeaseManager + BoundedAutonomy.
   const denialBreaker = createDenialBreaker({
     denialBreakerN: autonomyBearingConfig.denialBreakerN,
     logger: daemonLogger,
   });
-  // Phase 217-05 (EVICT-01/03): the daemon-wide evicted-rootRunId set. The SAME
+  // The daemon-wide evicted-rootRunId set. The SAME
   // instance is read by the chokepoint (isEvicted → demote to "default") and
   // written by the autonomy.evict admin handler (mark) — wired via the dispatch
-  // deps spread (activating Plan 04's conditionally-registered handler).
+  // deps spread, activating the conditionally-registered evict handler.
   const evictRegistry = createEvictRegistry({ logger: daemonLogger });
-  // Phase 217-05 (UNATT-03): the content-free escalate NotifyFn. A synchronous
+  // The content-free escalate NotifyFn. A synchronous
   // WARN (ids/enums/hint only, NEVER a message body) — mirrors the durable-resume
   // notify (setup-durable-resume.ts). The chokepoint fires it fire-and-forget (the
   // deny still re-throws immediately so the run never hangs). No ApprovalGate is in
   // scope at this boot seam, so the WARN + the deny's existing audit emit together
-  // meet UNATT-03's out-of-band + auditable bar.
+  // meet the out-of-band + auditable bar.
   const escalate: NotifyFn = (opts) =>
     daemonLogger.warn(
       { kind: opts.kind, rootRunId: opts.rootRunId, hint: opts.hint, errorKind: "internal" as const },
       `Autonomy escalation: ${opts.reason}`,
     );
-  // Phase 213-08 (BUDGET-01/02): POPULATE the late-bound budget holder with the
+  // POPULATE the late-bound budget holder with the
   // narrow budget port now that the service exists — the seam the bridge reads
   // (the bridge + schedulers were built BEFORE this layer; they hold the holder
   // and read `current` at fire time). reserveBudget/registerRoot are bound to the
@@ -442,7 +438,7 @@ export async function constructCapabilityLayer(
         boundedAutonomy.reserveBudget(rootRunId, provider, model, estUsd, estTokens),
       registerRoot: (rootRunId, leaseId, parentLeaseId) =>
         boundedAutonomy.registerRoot(rootRunId, leaseId, parentLeaseId),
-      // KEYING-01: the bridge calls this once per turn to re-anchor an interactive
+      // The bridge calls this once per turn to re-anchor an interactive
       // session root's wall-clock + token limbs (a session root acquires no spawn
       // slot, so it would otherwise accumulate across the whole conversation and
       // falsely abort turns after wallClockMs). A no-op when a live spawn shares the
@@ -450,15 +446,15 @@ export async function constructCapabilityLayer(
       evictRootIfIdle: (rootRunId) => boundedAutonomy.evictRootIfIdle(rootRunId),
     };
   }
-  // The daemon-wide OutputGuard the mint registers each bearer in (Pitfall 1 —
-  // ENDPOINT-03). setup-tools reads it off the handle for the CapabilityMintDeps.
+  // The daemon-wide OutputGuard the mint registers each bearer in (Pitfall 1).
+  // setup-tools reads it off the handle for the CapabilityMintDeps.
   const outputGuard = createOutputGuard();
-  // The Plan-03 ResultRef store the executor offloads over-threshold returns to.
+  // The ResultRef store the executor offloads over-threshold returns to.
   const resultRefStore = createResultRefStore({ logger: deps.skillsLogger ?? daemonLogger });
   // The cap socket path lives under the data dir, mirroring broker.sock's
   // ephemeral lifecycle. The orchestrate runner binds it per jail; the daemon-
   // wide endpoint listens on it once (activated below).
-  // Phase 212 Gap 3: ACTIVATE the cap layer. A cap-socket setup failure (an
+  // ACTIVATE the cap layer. A cap-socket setup failure (an
   // unusable dataDir, or the unix socket cannot bind) must NOT crash the daemon
   // boot — autonomy is an add-on, so it degrades HONESTLY (no cap layer + a loud
   // WARN; the absent handle downshifts the surface) while the daemon keeps serving
@@ -470,11 +466,11 @@ export async function constructCapabilityLayer(
     // (NOT a mutable setter on a security boundary). The bounded-autonomy service
     // backs the executor's real budgetHook (the flat web charge).
     const toolInvokeExecutor = buildToolInvokeExecutor(deps, resultRefStore, boundedAutonomy);
-    // Thread the daemon logger so the socket boundary is observable (WR-02): a
+    // Thread the daemon logger so the socket boundary is observable: a
     // post-listen server error and per-connection errors are logged with the
     // canonical err/errorKind/hint rather than silently swallowed. The
     // boundedAutonomy service drives the endpoint's rate-limit + cron self-ownership
-    // (RATE-01/02) and the resolved autonomy config supplies cronSelfMax.
+    // and the resolved autonomy config supplies cronSelfMax.
     const endpoint = createCapabilityEndpoint({
       leaseManager,
       rpcCall,
@@ -482,23 +478,23 @@ export async function constructCapabilityLayer(
       toolInvokeExecutor,
       boundedAutonomy,
       autonomyConfig: autonomyBearingConfig,
-      // AUDIT-01 (215): the socket per-cap audit's bus + tenant scope. Absent in
-      // the 211 boot-gate tests ⇒ socket audit is a no-op (honest degrade).
+      // The socket per-cap audit's bus + tenant scope. Absent in
+      // the boot-gate tests ⇒ socket audit is a no-op (honest degrade).
       ...(deps.container ? { container: deps.container } : {}),
-      // Phase 216 (HIGH-1): the durable store — the jail leg allocates a monotonic
+      // The durable store — the jail leg allocates a monotonic
       // _outwardStepIndex for an outward message method. Absent ⇒ pass-through.
       ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
     });
-    // Step 2: ACTIVATE — start the daemon-wide 0600 socket ONCE. 211 left this
-    // DORMANT (no startSocket; active:false). Now the cap surface is LIVE: a jailed
-    // orchestrate child reaches the endpoint over the bound socket.
+    // Step 2: ACTIVATE — start the daemon-wide 0600 socket ONCE. Construction
+    // leaves it DORMANT (no startSocket; active:false). Now the cap surface is LIVE:
+    // a jailed orchestrate child reaches the endpoint over the bound socket.
     await endpoint.startSocket(capSocketPath);
     daemonLogger.info(
       { submodule: "capability-endpoint", capSocketPath, active: true },
       "Capability lease layer ACTIVE (0600 socket listening; executor wired; lease minted per spawn)",
     );
     return {
-      // Phase 217-05: the never-hang control plane (denialBreaker/evictRegistry/
+      // The never-hang control plane (denialBreaker/evictRegistry/
       // escalate) rides the handle so daemon.ts threads it onto the dispatch deps.
       capEndpointHandle: {
         leaseManager,
@@ -511,7 +507,7 @@ export async function constructCapabilityLayer(
         escalate,
       },
       // The cap-socket teardown ALSO tears down the bounded-autonomy rate-limiter
-      // timers (clean shutdown — RATE-01's TTL-evict timers).
+      // timers (clean shutdown — the TTL-evict timers).
       capEndpointStop: async () => {
         await endpoint.stopSocket();
         boundedAutonomy.destroy();

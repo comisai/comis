@@ -111,9 +111,9 @@ describe("tokenUsageEventToRow", () => {
     expect(tokenUsageEventToRow(payload).sessionKey).toBe("sk-test");
   });
 
-  // PERSIST-02/03 (Phase 176 Plan 04): the row-builder fills the 4 previously-
-  // dropped cost-correctness fields + pricing_state onto the row object.
-  it("PERSIST-02/03: threads warmupTurn/cacheEligible/costCorrection.delta/pendingCacheInvestmentUsd + pricingState onto the row", () => {
+  // The row-builder fills the 4 cost-correctness fields + pricing_state onto
+  // the row object.
+  it("threads warmupTurn/cacheEligible/costCorrection.delta/pendingCacheInvestmentUsd + pricingState onto the row", () => {
     const payload: EventMap["observability:token_usage"] = {
       timestamp: 1000,
       traceId: "trace-1",
@@ -141,11 +141,11 @@ describe("tokenUsageEventToRow", () => {
     // costCorrection on the row is the scalar DELTA (not the nested object).
     expect(row.costCorrection).toBe(0.01);
     expect(row.pendingCacheInvestmentUsd).toBe(0.02);
-    // pricing_state (PERSIST-03): a catalog-priced anthropic model → "priced".
+    // pricing_state: a catalog-priced anthropic model → "priced".
     expect(row.pricingState).toBe("priced");
   });
 
-  it("PERSIST-03: an unknown native model resolves pricingState 'unknown'; a gateway resolves 'free'", () => {
+  it("an unknown native model resolves pricingState 'unknown'; a gateway resolves 'free'", () => {
     const base = {
       timestamp: 1,
       traceId: "",
@@ -176,10 +176,10 @@ describe("tokenUsageEventToRow", () => {
     expect(free.pricingState).toBe("free");
   });
 
-  // COST-01 (Phase 179): the row-builder threads the distinct toolTag from the
+  // The row-builder threads the distinct toolTag from the
   // event onto the row so the write-path persists it to the tool_tag column.
   // Without this thread the column is always NULL in production (a silent stub).
-  it("COST-01: threads payload.toolTag onto the row (distinct tool names)", () => {
+  it("threads payload.toolTag onto the row (distinct tool names)", () => {
     const payload = {
       timestamp: 1000,
       traceId: "trace-1",
@@ -202,7 +202,7 @@ describe("tokenUsageEventToRow", () => {
     expect(tokenUsageEventToRow(payload).toolTag).toEqual(["bash", "read"]);
   });
 
-  it("COST-01: leaves toolTag undefined on the row when the event carries none (no-tool turn)", () => {
+  it("leaves toolTag undefined on the row when the event carries none (no-tool turn)", () => {
     const payload = {
       timestamp: 1,
       traceId: "",
@@ -224,7 +224,7 @@ describe("tokenUsageEventToRow", () => {
     expect(tokenUsageEventToRow(payload).toolTag).toBeUndefined();
   });
 
-  it("PERSIST-02: omits costCorrection.delta when the event carries no costCorrection (absence is the no-correction signal)", () => {
+  it("omits costCorrection.delta when the event carries no costCorrection (absence is the no-correction signal)", () => {
     const payload = {
       timestamp: 1,
       traceId: "",
@@ -360,7 +360,7 @@ describe("diagnosticEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// sessionSummaryEventToRow (F2 — per-session health rollup)
+// sessionSummaryEventToRow (per-session health rollup)
 // ---------------------------------------------------------------------------
 
 describe("sessionSummaryEventToRow", () => {
@@ -396,11 +396,11 @@ describe("sessionSummaryEventToRow", () => {
     expect(details.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
     expect(details.breakerTripCount).toBe(1);
     expect(details.turnCount).toBe(24);
-    // A1 carries topErrorKinds into the row; A2 carries source — both queryable
+    // topErrorKinds and source are carried into the row — both queryable
     // by the fleet aggregate without opening per-session _session-metadata.json.
     expect(details.topErrorKinds).toEqual({ dependency: 8 });
     expect(details.source).toBe("runtime");
-    // QT2/QT3: the named endReason cause is persisted into the row details so
+    // The named endReason cause is persisted into the row details so
     // obs.fleet.health can build degradedByCause from the rows alone.
     expect(details.endReason).toBe("context_exhausted");
   });
@@ -426,7 +426,7 @@ describe("sessionSummaryEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// dagDegradedEventToRow (I1 — LCD-divergence → health_signal)
+// dagDegradedEventToRow (LCD-divergence → health_signal)
 // ---------------------------------------------------------------------------
 
 describe("dagDegradedEventToRow", () => {
@@ -451,7 +451,7 @@ describe("dagDegradedEventToRow", () => {
 
     // details carries ONLY the closed-label signal + closed-union reason +
     // identifiers + a count — no message/summary text. Exactly
-    // {signal, reason, conversationId, durationMs} (WR-04 carries conversationId).
+    // {signal, reason, conversationId, durationMs}.
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details).toEqual({
       signal: "lcd_divergence",
@@ -476,14 +476,14 @@ describe("dagDegradedEventToRow", () => {
     }
   });
 
-  // IN-01: severity must track the reason. The `serialized_wait` member of the
+  // Severity must track the reason. The `serialized_wait` member of the
   // closed union is documented (events-messaging.ts) as the bounded-wait signal
   // — normal back-pressure, NOT a degrade. Stamping it `warning` would inflate
   // the fleet lens's degrade count with a benign event.
-  it("maps the benign session_rebase reason to severity info, not warning (W10)", () => {
-    // Phase 164 RR6: session_rebase = "continued after restart" — the comment on
-    // the union member itself says NOT a degradation. The live fleet showed 9
-    // warning-severity rebase rows (one per session start) as its TOP finding.
+  it("maps the benign session_rebase reason to severity info, not warning", () => {
+    // session_rebase = "continued after restart" — the comment on
+    // the union member itself says NOT a degradation. At warning severity it
+    // fires once per session start and dominates the fleet's findings.
     const row = dagDegradedEventToRow({
       conversationId: "c1",
       agentId: "agent-1",
@@ -534,11 +534,11 @@ describe("dagDegradedEventToRow", () => {
     }
   });
 
-  // WR-04: the payload carries `conversationId`. Today it is lossless only
+  // The payload carries `conversationId`. Today it is lossless only
   // because an internal LCD invariant couples it to `sessionKey`, but the most
   // security-relevant degrade (`fail_closed_rollover`) fires precisely on a
   // conversationId/sessionKey CONFLICT — so the row must carry conversationId
-  // (an identifier, not content — bounded-payload still holds) for the Phase-161
+  // (an identifier, not content — bounded-payload still holds) for the
   // fleet lens to join on, instead of silently dropping it.
   it("carries conversationId into details so a divergent identifier is recoverable", () => {
     const row = dagDegradedEventToRow({
@@ -560,7 +560,7 @@ describe("dagDegradedEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// healthBudgetExceededEventToRow (I1 — MCP/alert budget → health_signal)
+// healthBudgetExceededEventToRow (MCP/alert budget → health_signal)
 // ---------------------------------------------------------------------------
 
 describe("healthBudgetExceededEventToRow", () => {
@@ -587,7 +587,7 @@ describe("healthBudgetExceededEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// reflectFunnelEventToRow (OBS-3b — reflection funnel → learning_health)
+// reflectFunnelEventToRow (reflection funnel → learning_health)
 // ---------------------------------------------------------------------------
 
 describe("reflectFunnelEventToRow", () => {
@@ -618,13 +618,13 @@ describe("reflectFunnelEventToRow", () => {
     expect(d.admitted).toBe(1);
     expect(d.untrustedDrops).toBe(0);
     expect(d.sourceTrajectoryCount).toBe(2);
-    expect(d.distinctTopicKeys).toBe(1); // OBS-7 under-merge discriminator rides the persisted row
-    // INV-6 / H1: counts + the closed enum only — never a reflected doc body.
+    expect(d.distinctTopicKeys).toBe(1); // the under-merge discriminator rides the persisted row
+    // Counts + the closed enum only — never a reflected doc body.
     expect(row.details).not.toMatch(/procedure|markdown|##/);
   });
 });
 
-describe("lifecycleSweptEventToRow (OBS-2b — forget sweep → memory_lifecycle)", () => {
+describe("lifecycleSweptEventToRow (forget sweep → memory_lifecycle)", () => {
   it("maps a learning:lifecycle_swept payload to a memory_lifecycle row (info severity, content-free counts)", () => {
     const row = lifecycleSweptEventToRow({
       agentId: "default",
@@ -645,13 +645,13 @@ describe("lifecycleSweptEventToRow (OBS-2b — forget sweep → memory_lifecycle
     expect(d.scanned).toBe(6);
     expect(d.evicted).toBe(2);
     expect(d.demoted).toBe(1);
-    // INV-6 / H1: counts only — never a memory id/body.
+    // Counts only — never a memory id/body.
     expect(row.details).not.toMatch(/content|body|memory-[a-f0-9]/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// mcpReconnectFailedEventToRow (I1 — MCP reconnect churn → health_signal)
+// mcpReconnectFailedEventToRow (MCP reconnect churn → health_signal)
 // ---------------------------------------------------------------------------
 
 describe("mcpReconnectFailedEventToRow", () => {
@@ -682,11 +682,10 @@ describe("mcpReconnectFailedEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-01 / Phase 180 — script_zero_hit + summary_language_mismatch (the fleet
+// script_zero_hit + summary_language_mismatch (the fleet
 // path). Both are visibility-only signals → severity ALWAYS "warning" (no
 // gating, no benign allow-set like dag_degraded's). details carries closed
 // ScriptClass/lane enums + ids + counts ONLY — never query text / summary body.
-// RED: the two mappers do not exist yet (undefined import → not a function).
 // ---------------------------------------------------------------------------
 
 describe("scriptZeroHitEventToRow", () => {
@@ -778,7 +777,7 @@ describe("summaryLanguageMismatchEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// GENQ-01 — generationQualityEventToRow (the memory-generation fleet path).
+// generationQualityEventToRow (the memory-generation fleet path).
 // Visibility-only → severity ALWAYS "warning". details carries the closed
 // GenerationPass + ScriptClass enums + the three issue booleans ONLY — never the
 // source or generated body. Cron-job passes carry no sessionKey.
@@ -839,12 +838,12 @@ describe("generationQualityEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TELEM-01 (Plan 173-03) — pipelineAuthoredEventToRow (the fleet authoring path).
-// The GENQ-01 clone: a `pipeline:authored` event → a `health_signal` DiagnosticRow
+// pipelineAuthoredEventToRow (the fleet authoring path).
+// Like generationQualityEventToRow: a `pipeline:authored` event → a `health_signal` DiagnosticRow
 // with `signal:"pipeline_authoring"`. details carries closed enums + booleans ONLY
 // (action/tier/schemaValid/repaired) — NEVER a pipeline body, a type_config value,
 // a node task/label, or a graph (§2.7). severity is INFO for a valid author (so a
-// valid authoring does NOT inflate the fleet degrade count — A2) and WARNING for an
+// valid authoring does NOT inflate the fleet degrade count) and WARNING for an
 // invalid one (the operator-visible small-model miss).
 // ---------------------------------------------------------------------------
 
@@ -877,7 +876,7 @@ describe("pipelineAuthoredEventToRow", () => {
     });
   });
 
-  it("A2: maps a VALID author to severity:info (valid authorings do not inflate the fleet degrade count)", () => {
+  it("maps a VALID author to severity:info (valid authorings do not inflate the fleet degrade count)", () => {
     const row = pipelineAuthoredEventToRow({
       action: "execute",
       capabilityClass: "frontier",
@@ -919,13 +918,14 @@ describe("pipelineAuthoredEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ORCH-OBS (orchestration-observability) — three daemon-side orchestration events
+// Orchestration-observability — three daemon-side orchestration events
 // that were DARK (no fleet/trajectory surface): a fail-closed sandbox-downgrade
-// spawn refusal (P0-C), a dead-lettered sub-agent delivery (P0-B), and a per-node
-// token-budget breach (P0-A). Each maps to a `health_signal` DiagnosticRow (the
-// GENQ-01/TELEM-01 clone) carrying CLOSED enums/labels ONLY — never a path/host/
+// spawn refusal, a dead-lettered sub-agent delivery, and a per-node
+// token-budget breach. Each maps to a `health_signal` DiagnosticRow (the same
+// shape as the generation-quality and pipeline-authoring mappers) carrying CLOSED
+// enums/labels ONLY — never a path/host/
 // credential (sandbox), an announcement body/error (delivery), or a task/output
-// (budget). RED: the three mappers do not exist yet (undefined import).
+// (budget).
 // ---------------------------------------------------------------------------
 
 describe("sandboxDowngradeRefusedEventToRow", () => {
@@ -1055,12 +1055,12 @@ describe("nodeBudgetExceededEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FLEET-03 (Phase 220-01): the four typed autonomy/durable lifecycle events →
+// The four typed autonomy/durable lifecycle events →
 // content-free health_signal rows (obs-autonomy-rows.ts). Closed signal label +
 // closed reason enum / count + rootRunId ONLY — never a free-text reason / body.
 // ---------------------------------------------------------------------------
 
-describe("durableOrphanedEventToRow (FLEET-03)", () => {
+describe("durableOrphanedEventToRow", () => {
   it("maps a durable:orphaned payload to a warning health_signal row (closed signal + enum reason + rootRunId)", () => {
     const row = durableOrphanedEventToRow({
       rootRunId: "root-orphan",
@@ -1080,7 +1080,7 @@ describe("durableOrphanedEventToRow (FLEET-03)", () => {
     expect(details.rootRunId).toBe("root-orphan");
   });
 
-  it("CONTENT-FREE (T-220-01): the orphaned-row details carries the closed enum ONLY — no engine free-text substring", () => {
+  it("CONTENT-FREE: the orphaned-row details carries the closed enum ONLY — no engine free-text substring", () => {
     // Even if a caller somehow passed a free-ish reason, the EVENT type is the
     // closed enum; the row-builder must never echo any of the engine's free-text
     // orphan strings ("not resumable", "reconcile", "status=", "resume failed").
@@ -1107,7 +1107,7 @@ describe("durableOrphanedEventToRow (FLEET-03)", () => {
   });
 });
 
-describe("durableResumedEventToRow (FLEET-03)", () => {
+describe("durableResumedEventToRow", () => {
   it("maps a durable:resumed payload to an info health_signal row (stepIndex + rootRunId, no body)", () => {
     const row = durableResumedEventToRow({
       rootRunId: "root-resumed",
@@ -1129,7 +1129,7 @@ describe("durableResumedEventToRow (FLEET-03)", () => {
   });
 });
 
-describe("autonomyRevokedEventToRow (FLEET-03)", () => {
+describe("autonomyRevokedEventToRow", () => {
   it("maps an autonomy:revoked payload to a warning health_signal row (revoked count + rootRunId, no bearer/body)", () => {
     const row = autonomyRevokedEventToRow({
       rootRunId: "root-rev",
@@ -1151,7 +1151,7 @@ describe("autonomyRevokedEventToRow (FLEET-03)", () => {
   });
 });
 
-describe("autonomyKilledEventToRow (FLEET-03)", () => {
+describe("autonomyKilledEventToRow", () => {
   it("maps an autonomy:killed payload to a warning health_signal row (killed count + rootRunId, separable from revoke)", () => {
     const row = autonomyKilledEventToRow({
       rootRunId: "root-kill",
@@ -1173,7 +1173,7 @@ describe("autonomyKilledEventToRow (FLEET-03)", () => {
   });
 });
 
-describe("autonomyDenialBreakerEventToRow (FLEET-02, Phase 220-05)", () => {
+describe("autonomyDenialBreakerEventToRow", () => {
   it("maps an autonomy:denial_breaker_tripped payload to a warning health_signal row (count + rootRunId, no deny-reason body)", () => {
     const row = autonomyDenialBreakerEventToRow({
       rootRunId: "root-deny",
@@ -1235,7 +1235,7 @@ describe("setupObsPersistence", () => {
       insertDelivery: vi.fn(),
       insertDiagnostic: vi.fn(),
       insertChannelSnapshot: vi.fn(),
-      // AUDIT-01: the audit subscribers (incl. the sandbox_downgrade_refused
+      // The audit subscribers (incl. the sandbox_downgrade_refused
       // mirror) call insertAuditEvent; queryAuditEvents on the read side.
       insertAuditEvent: vi.fn(),
       queryAuditEvents: vi.fn(() => []),
@@ -1288,19 +1288,19 @@ describe("setupObsPersistence", () => {
     // Should have subscribed to both events
     expect(eventBus.on).toHaveBeenCalledWith("observability:token_usage", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("diagnostic:message_processed", expect.any(Function));
-    // F2: the third subscription — per-session health rollup.
+    // The third subscription — per-session health rollup.
     expect(eventBus.on).toHaveBeenCalledWith("session:summary", expect.any(Function));
-    // I1 (Phase 160): the 3 health_signal subscriptions — LCD divergence + MCP health.
+    // The 3 health_signal subscriptions — LCD divergence + MCP health.
     expect(eventBus.on).toHaveBeenCalledWith("context:dag_degraded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("health:budget_exceeded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("mcp:server:reconnect_failed", expect.any(Function));
-    // OBS-01 (Phase 180): the 2 multilingual health_signal subscriptions.
+    // The 2 multilingual health_signal subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("context:script_zero_hit", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("context:summary_language_mismatch", expect.any(Function));
-    // TELEM-01 (Plan 173-03): the pipeline-authoring health_signal subscription
-    // (beside the GENQ-01 .on).
+    // The pipeline-authoring health_signal subscription
+    // (beside the generation-quality .on).
     expect(eventBus.on).toHaveBeenCalledWith("pipeline:authored", expect.any(Function));
-    // ORCH-OBS: the three previously-dark daemon-side orchestration subscriptions.
+    // The three previously-dark daemon-side orchestration subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("security:sandbox_downgrade_refused", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_deadlettered", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:budget_exceeded", expect.any(Function));
@@ -1310,7 +1310,7 @@ describe("setupObsPersistence", () => {
     result.drainAll();
   });
 
-  it("I1: emitting each health-signal event pushes a category:health_signal row through the diagnostic buffer", () => {
+  it("emitting each health-signal event pushes a category:health_signal row through the diagnostic buffer", () => {
     const eventBus = createMockEventBus();
     const obsStore = createMockObsStore();
     const db = createMockDb();
@@ -1338,32 +1338,32 @@ describe("setupObsPersistence", () => {
     eventBus.emit("health:budget_exceeded", { kind: "dependency", count: 5, windowMs: 60_000, timestamp: 1001 });
     // c. MCP reconnect exhaustion (lastError must be dropped on the way to the row).
     eventBus.emit("mcp:server:reconnect_failed", { serverName: "srv", attempts: 3, lastError: "x".repeat(500), timestamp: 1002 });
-    // d. OBS-01: a non-Latin zero-hit search.
+    // d. A non-Latin zero-hit search.
     eventBus.emit("context:script_zero_hit", {
       conversationId: "conv-1", agentId: "a1", sessionKey: "sk-1", scriptClass: "hebrew", lane: "tri", timestamp: 1003,
     });
-    // e. OBS-01: a summary whose script diverged from its source.
+    // e. A summary whose script diverged from its source.
     eventBus.emit("context:summary_language_mismatch", {
       agentId: "a1", sessionKey: "sk-1", sourceScript: "hebrew", summaryScript: "latin", depth: 1, timestamp: 1004,
     });
-    // f. TELEM-01: a pipeline:authored signal (an invalid small-tier author).
+    // f. A pipeline:authored signal (an invalid small-tier author).
     eventBus.emit("pipeline:authored", {
       action: "define", capabilityClass: "small", schemaValid: false, repaired: false, sessionKey: "sk-1", timestamp: 1005,
     });
-    // g. ORCH-OBS: a fail-closed sandbox-downgrade spawn refusal.
+    // g. A fail-closed sandbox-downgrade spawn refusal.
     eventBus.emit("security:sandbox_downgrade_refused", {
       timestamp: 1006, parentAgentId: "researcher", childAgentId: "unconfined-child",
       violatedDimensions: ["exec"], parentPosture: { exec: "always" }, childPosture: { exec: "never" },
     });
-    // h. ORCH-OBS: a dead-lettered sub-agent delivery.
+    // h. A dead-lettered sub-agent delivery.
     eventBus.emit("subagent:delivery_deadlettered", {
       runId: "run-x", channelType: "telegram", attempt: 3, transient: true, timestamp: 1007,
     });
-    // i. ORCH-OBS: a per-node token-budget breach.
+    // i. A per-node token-budget breach.
     eventBus.emit("subagent:budget_exceeded", {
       graphId: "g", nodeId: "greedy", agentId: "researcher", tokenBudget: 5000, tokensUsed: 17770, capSource: "node", timestamp: 1008,
     });
-    // j-m. FLEET-03: the four autonomy/durable lifecycle signals.
+    // j-m. The four autonomy/durable lifecycle signals.
     eventBus.emit("durable:orphaned", { rootRunId: "root-1", reason: "not_resumable", timestamp: 1009 });
     eventBus.emit("durable:resumed", { rootRunId: "root-2", stepIndex: 3, timestamp: 1010 });
     eventBus.emit("autonomy:revoked", { rootRunId: "root-3", revoked: 2, timestamp: 1011 });
@@ -1396,13 +1396,13 @@ describe("setupObsPersistence", () => {
       "subagent:budget_exceeded",
       "subagent:delivery_deadlettered",
     ]);
-    // The FLEET-03 + FLEET-02 autonomy rows carry their closed signal labels.
+    // The autonomy rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "durable:orphaned")!.details ?? "{}").signal).toBe("durable_orphaned");
     expect(JSON.parse(healthRows.find((r) => r.message === "durable:resumed")!.details ?? "{}").signal).toBe("durable_resumed");
     expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:revoked")!.details ?? "{}").signal).toBe("autonomy_revoked");
     expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:killed")!.details ?? "{}").signal).toBe("autonomy_killed");
     expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:denial_breaker_tripped")!.details ?? "{}").signal).toBe("autonomy_denial_breaker");
-    // The orphaned row carries the closed enum reason, NEVER a free-text substring (T-220-01).
+    // The orphaned row carries the closed enum reason, NEVER a free-text substring.
     const orphanRow = healthRows.find((r) => r.message === "durable:orphaned")!;
     expect(orphanRow.details ?? "").not.toMatch(/not resumable|reconcile|status=/i);
     expect(JSON.parse(orphanRow.details ?? "{}").reason).toBe("not_resumable");
@@ -1467,7 +1467,7 @@ describe("setupObsPersistence", () => {
       }),
     );
     // The full event -> buffer -> insertDiagnostic path carries topErrorKinds +
-    // source into the persisted row's `details` JSON (A1/A2).
+    // source into the persisted row's `details` JSON.
     const insertedRow = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       details?: string;
     };
@@ -1709,14 +1709,14 @@ describe("setupObsPersistence", () => {
 });
 
 // ===========================================================================
-// AUDIT-01/02/04 — the audit sink (auditEventToRow + the 7 subscribers + the
+// The audit sink (auditEventToRow + the 7 subscribers + the
 // metadata scrub + the .audit() log). Uses a REAL in-memory store + a REAL
 // tmp-dir JSONL so the content-free + round-trip invariants are asserted
 // against actual persistence, not mocks.
 // ===========================================================================
 
 describe("auditEventToRow (the content-free audit row-builder)", () => {
-  it("scrubs the audit:event metadata free-map into refs (AUDIT-04) and never carries a planted value", () => {
+  it("scrubs the audit:event metadata free-map into refs and never carries a planted value", () => {
     const row = auditEventToRow(
       {
         timestamp: 1000,
@@ -1761,7 +1761,7 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
 
   it.each([
     ["secrets.get", "secret_access"],
-    // AUDIT-04 / M1: secret MUTATIONS derive to the secret_access security
+    // Secret MUTATIONS derive to the secret_access security
     // signal (previously fell through to the generic `audit` family / info).
     ["secrets.set", "secret_access"],
     ["secrets.delete", "secret_access"],
@@ -1781,7 +1781,7 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
     expect(row.kind).toBe(expectedKind);
   });
 
-  it("AUDIT-04 / M1: a secrets.delete persists as a security-signal kind (severity warning), not generic info", () => {
+  it("a secrets.delete persists as a security-signal kind (severity warning), not generic info", () => {
     // The emit sites now set kind explicitly; verify the row carries the
     // security-signal kind + the "warning" severity (not "audit"/"info"), so a
     // kind/severity-filtered audit query surfaces the secret mutation.
@@ -1806,14 +1806,14 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
   });
 });
 
-describe("AUDIT-01 / L1 — the security-audit.jsonl rotation fallback matches the schema default", () => {
+describe("the security-audit.jsonl rotation fallback matches the schema default", () => {
   it("the sink fallback (used when logRotation is omitted) equals LogRotationConfigSchema's 50 MB / 5 default — no drift", () => {
     // SOURCE OF TRUTH: LogRotationConfigSchema in
     // packages/core/src/config/schema-observability.ts
     //   maxSizeBytes default = 50 * 1024 * 1024 (52_428_800)
     //   maxFiles    default = 5
     // The sink previously fell back to 10 MB / 5 — a silent disagreement with
-    // the 50 MB schema default (the L1 review finding). Pin them aligned; if the
+    // the 50 MB schema default. Pin them aligned; if the
     // schema default changes, update these constants (and this test) together.
     expect(AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES).toBe(50 * 1024 * 1024);
     expect(AUDIT_JSONL_DEFAULT_MAX_SIZE_BYTES).toBe(52_428_800);
@@ -1907,7 +1907,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     expect(serialized).not.toMatch(/"value"/);
   });
 
-  it("Test 3: each AUDIT-02 security/critic/command event produces a row", () => {
+  it("each security/critic/command event produces a row", () => {
     const { deps, eventBus } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("security:injection_detected", { timestamp: 1, source: "user_input", patterns: ["p"], riskLevel: "high", agentId: "a1", sessionKey: "s" });
@@ -1929,7 +1929,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     expect(all.length).toBeGreaterThanOrEqual(6);
   });
 
-  it("Test 4 (AUDIT-04): a planted metadata value lands in NEITHER the row NOR the JSONL", () => {
+  it("a planted metadata value lands in NEITHER the row NOR the JSONL", () => {
     const { deps, eventBus } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("audit:event", {
@@ -1948,7 +1948,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     expect(jsonl.length).toBeGreaterThan(0);
   });
 
-  it("Test 4b (AUDIT-04 / H1): a no-prefix secret under the BENIGN `value` key never persists", () => {
+  it("a no-prefix secret under the BENIGN `value` key never persists", () => {
     // The config.patch leak shape — a 32-hex value the credential-keyed drop +
     // pattern redactor both miss. The sink digests `value` by construction.
     const { deps, eventBus } = realDeps();
@@ -1971,7 +1971,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     expect(jsonl, "the raw value must not reach security-audit.jsonl").not.toContain(HEX32);
   });
 
-  it("Test 4c (AUDIT-04 / H2): command:blocked drops the commandPrefix body from the durable row/JSONL", () => {
+  it("command:blocked drops the commandPrefix body from the durable row/JSONL", () => {
     const { deps, eventBus } = realDeps();
     const result = setupObsPersistence(deps as never);
     const SECRET_CMD = "mysql -uroot -pSup3rS3cretPlainPass --host internal-db.prod.corp app";
@@ -1996,7 +1996,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     }
   });
 
-  it("Test 5: the subscriber logs a scrubbed record via .audit() (level 35)", () => {
+  it("the subscriber logs a scrubbed record via .audit() (level 35)", () => {
     const { deps, eventBus, auditLines } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("audit:event", {
@@ -2011,7 +2011,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     expect(logged).not.toContain("sk-PLANTED-SECRET");
   });
 
-  it("Test 6 (decision #2): a tenant-less event persists tenant_id='' when no trace context; uses the trace tenant when present", () => {
+  it("a tenant-less event persists tenant_id='' when no trace context; uses the trace tenant when present", () => {
     // No trace context → system-scoped, never dropped.
     {
       const { deps, eventBus } = realDeps();
@@ -2053,7 +2053,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     result.drainAll();
   });
 
-  it("T-176-11: a JSONL append failure logs ERROR with hint+errorKind and NEVER drops the SQLite row", () => {
+  it("a JSONL append failure logs ERROR with hint+errorKind and NEVER drops the SQLite row", () => {
     // Make the <dataDir>/logs path UNWRITABLE by planting a FILE where the
     // logs DIR must be — ensureConfigAuditParentDir/appendRegularFile then fail,
     // exercising the try/catch branch.
@@ -2080,10 +2080,10 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
 });
 
 // ===========================================================================
-// AUDIT-03 regression — `.audit()` is a CUSTOM Pino level (35) registered ONLY
+// `.audit()` is a CUSTOM Pino level (35) registered ONLY
 // by the @comis/infra logger factory. A logger built WITHOUT that factory (a
-// test capture logger, a minimal Pino logger) lacks `.audit`. Phase 176-02/03
-// activated the dormant level-35 line at obs-audit-sink.ts:318 as
+// test capture logger, a minimal Pino logger) lacks `.audit`. The
+// level-35 line at obs-audit-sink.ts:318 calls
 // `logger?.audit(...)` — the `?.` guards a NULL logger but NOT a non-null
 // logger missing the `audit` method, so the subscriber threw
 // `TypeError: logger?.audit is not a function` for EVERY audit:event,
@@ -2092,7 +2092,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
 // it), never crash the audit subscriber.
 // ===========================================================================
 
-describe("wireAuditSink — a logger missing the custom .audit() level (AUDIT-03 regression)", () => {
+describe("wireAuditSink — a logger missing the custom .audit() level", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createObservabilityStore>;
   let dataDir: string;
@@ -2205,9 +2205,9 @@ describe("wireAuditSink — a logger missing the custom .audit() level (AUDIT-03
 });
 
 // ---------------------------------------------------------------------------
-// PERSIST-01/02/03 (Phase 176 Plan 04): the cache_break subscriber + the
+// The cache_break subscriber + the
 // tokenUsageEventToRow round-trip (real store, NOT a mock — proves the row-builder
-// here meets Plan 01's insertTokenUsageStmt write-path).
+// here meets the insertTokenUsageStmt write-path).
 // ---------------------------------------------------------------------------
 
 describe("setupObsPersistence — cache break + token-usage persistence (real store)", () => {
@@ -2274,7 +2274,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     db.close();
   });
 
-  it("Test 1 (PERSIST-01): emitting observability:cache_break persists a queryable cache_break row", () => {
+  it("emitting observability:cache_break persists a queryable cache_break row", () => {
     const { deps, eventBus } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:cache_break", makeCacheBreak({ reason: "tools_changed" }));
@@ -2288,7 +2288,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     expect(byReason.get("system_changed")).toBe(1);
   });
 
-  it("Test 2 (PERSIST-02): the 4 dropped token columns PERSIST end-to-end (real insert→read-back)", () => {
+  it("the 4 dropped token columns PERSIST end-to-end (real insert→read-back)", () => {
     const { deps, eventBus } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:token_usage", {
@@ -2311,7 +2311,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     expect(raw.pending_cache_investment_usd).toBe(0.02);
   });
 
-  it("Test 3 (PERSIST-03): pricing_state persists resolvePricingState(provider, model)", () => {
+  it("pricing_state persists resolvePricingState(provider, model)", () => {
     const { deps, eventBus } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:token_usage", {
@@ -2339,7 +2339,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     expect(byProvider.get("ollama")).toBe("free");
   });
 
-  it("Test 4 (A3): cache-break REUSES the diagnosticBuffer — emitting it does not add an audit row", () => {
+  it("cache-break REUSES the diagnosticBuffer — emitting it does not add an audit row", () => {
     const { deps, eventBus } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:cache_break", makeCacheBreak());
@@ -2357,7 +2357,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     result.drainAll();
   });
 
-  it("PERSIST-01: the cacheBreaks config flag gates the subscriber (opt-out)", () => {
+  it("the cacheBreaks config flag gates the subscriber (opt-out)", () => {
     const { deps, eventBus } = realDeps({ persistence: { cacheBreaks: false } });
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:cache_break", makeCacheBreak());

@@ -44,7 +44,7 @@ export type MemoryExportEntry = z.infer<typeof MemoryExportEntrySchema>;
  * Parse an unknown JSON value as a memory export envelope.
  * Fail-closed: any schemaVersion other than "comis-memory-export-v1" returns err().
  * No multi-version reader — z.literal enforces the single accepted version.
- * IN-01: cross-validates entryCount against entries.length — a mismatch is a
+ * Cross-validates entryCount against entries.length — a mismatch is a
  * data-integrity signal (crafted envelope) and is rejected rather than silently accepted.
  */
 export function parseMemoryExportEnvelope(raw: unknown): Result<MemoryExportEnvelope, z.ZodError | Error> {

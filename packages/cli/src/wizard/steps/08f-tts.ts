@@ -5,7 +5,7 @@
  * Presents a single-select of all supported TTS providers (edge / openai /
  * elevenlabs / local, mirroring core's `TtsConfigSchema` enum, keyless-first)
  * and collects the credential only when a keyed provider is chosen, reusing the
- * agent's MAIN provider key when it already supplies the matching one (CRED-01):
+ * agent's MAIN provider key when it already supplies the matching one:
  *
  *   - `edge`       — Microsoft Edge TTS: free, NO key, no prompt. The keyless
  *                    default (`initialValue`), matching the schema default.
@@ -18,7 +18,7 @@
  *
  * Written to `integrations.media.tts.provider`; the key flows through the same
  * managed-secrets path as the LLM key (step 10). This is the authoritative TTS
- * setup — the tool-providers step (08b) is now search-only, so the ElevenLabs /
+ * setup — the tool-providers step (08b) is search-only, so the ElevenLabs /
  * OpenAI key is collected here exactly once.
  *
  * @module
@@ -70,7 +70,7 @@ export const ttsStep: WizardStep = {
       return updateState(state, { ttsProvider: { provider } });
     }
 
-    // CRED-01 reuse: main provider already supplies the matching key (openai).
+    // Key reuse: main provider already supplies the matching key (openai).
     const mainProvidesKey =
       state.provider?.apiKey !== undefined &&
       state.provider.id !== undefined &&

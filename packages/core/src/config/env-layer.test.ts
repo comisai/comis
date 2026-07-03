@@ -57,7 +57,7 @@ describe("buildGatewayEnvLayer", () => {
     ).toEqual({ gateway: { host: "0.0.0.0" } });
   });
 
-  // env-layer.ts only handles gateway vars; COMIS_TRAJECTORY_DIR is also recognised.
+  // In addition to the gateway vars, env-layer.ts recognises COMIS_TRAJECTORY_DIR.
 
   it("projects COMIS_TRAJECTORY_DIR onto observability.trajectory.dirOverride", () => {
     expect(

@@ -544,14 +544,14 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // WT-01: the worktree request flag survives the spawn round-trip onto the
+  // The worktree request flag survives the spawn round-trip onto the
   // child session metadata, so executeSubAgent (which only sees the persisted
   // metadata, never SpawnParams) can read it and run the child in an isolated
   // git worktree. Without this thread the `spawn --worktree` flag is a silent
-  // no-op (the gap this plan closes — the contract field + the lifecycle module
-  // exist, but nothing carries the request to the runner that runs the child).
+  // no-op — the contract field and the lifecycle module exist, but nothing
+  // carries the request to the runner that runs the child.
   // -----------------------------------------------------------------------
-  it("persists the worktree request flag onto child session metadata (WT-01)", () => {
+  it("persists the worktree request flag onto child session metadata", () => {
     const runner = createSubAgentRunner(deps);
     runner.spawn({
       task: "worktree flag test",
@@ -567,7 +567,7 @@ describe("createSubAgentRunner", () => {
     expect(metadata.worktree).toBe(true);
   });
 
-  it("defaults the worktree metadata flag to false when not requested (WT-01)", () => {
+  it("defaults the worktree metadata flag to false when not requested", () => {
     const runner = createSubAgentRunner(deps);
     runner.spawn({
       task: "no worktree test",
@@ -1208,11 +1208,11 @@ describe("createSubAgentRunner", () => {
       30,
       undefined,
       undefined,  // graphOverrides (undefined for non-graph spawns)
-      undefined,  // tokenBudget (undefined when no per-spawn budget set — BUDGET-01)
+      undefined,  // tokenBudget (undefined when no per-spawn budget set)
     );
   });
 
-  // BUDGET-01: a per-spawn tokenBudget is threaded to executeAgent as the 7th
+  // A per-spawn tokenBudget is threaded to executeAgent as the 7th
   // arg, where the daemon wiring lands it on executionOverrides → the child's
   // BudgetGuard per-execution cap.
   it("tokenBudget is passed to executeAgent as the 7th argument when set on SpawnParams", async () => {
@@ -1723,7 +1723,7 @@ describe("createSubAgentRunner", () => {
     });
 
     // ---------------------------------------------------------------------
-    // Tree-wide spawn ceiling consult (CEIL-01). The injected
+    // Tree-wide spawn ceiling consult. The injected
     // checkSpawnCeiling is the SINGLE seam both session.spawn AND graph.*
     // (and the in-process agent loop) hit — it bounds a for(;;) spawn() tree-
     // wide where the per-caller depth/fanout gates cannot.
@@ -1788,15 +1788,16 @@ describe("createSubAgentRunner", () => {
       });
 
       // (rootRunId, depth, fanout): the caller's rootRunId rides through (NOT a
-      // fresh per-spawn id — RESEARCH Pitfall 1), depth is the current depth, and
-      // fanout is the active-children count (0 for the first child).
+      // fresh per-spawn id, which would silently under-count the tree), depth is
+      // the current depth, and fanout is the active-children count (0 for the
+      // first child).
       expect(checkSpawnCeiling).toHaveBeenCalledWith("root-stable-xyz", 1, 0);
     });
 
-    // WR-03 (213-REVIEW): the allowlist check is hoisted ABOVE the ceiling
+    // The allowlist check is hoisted ABOVE the ceiling
     // acquire, so a not-allowlisted spawn never reserves a slot it cannot
     // release (no run is created → no completion finally fires).
-    it("does NOT acquire a ceiling slot when the spawn is rejected by the allowlist (WR-03)", () => {
+    it("does NOT acquire a ceiling slot when the spawn is rejected by the allowlist", () => {
       const ceilingDeps = createLimitDeps();
       ceilingDeps.config.allowAgents = ["only-this-agent"];
       const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: true });
@@ -1819,10 +1820,10 @@ describe("createSubAgentRunner", () => {
       expect(releaseSpawnCeiling).not.toHaveBeenCalled();
     });
 
-    // CR-02 (213-REVIEW): every run that reserved a slot releases it 1:1 on its
+    // Every run that reserved a slot releases it 1:1 on its
     // terminal transition (the run-completion finally), so the per-root counter
     // does not monotonically leak.
-    it("releases the ceiling slot once on run completion (CR-02)", async () => {
+    it("releases the ceiling slot once on run completion", async () => {
       const ceilingDeps = createLimitDeps();
       // executeAgent resolves so the run reaches its completion finally.
       vi.mocked(ceilingDeps.executeAgent).mockResolvedValue({
@@ -1849,9 +1850,9 @@ describe("createSubAgentRunner", () => {
       expect(releaseSpawnCeiling).toHaveBeenCalledWith("root-rel");
     });
 
-    // CR-02: a killed run also releases (kill marks failed, then the underlying
+    // A killed run also releases (kill marks failed, then the underlying
     // executeAgent promise settles and fires the finally) — and only ONCE.
-    it("releases the ceiling slot exactly once even when the run is killed before settling (CR-02)", async () => {
+    it("releases the ceiling slot exactly once even when the run is killed before settling", async () => {
       const ceilingDeps = createLimitDeps();
       let resolveExec!: (v: unknown) => void;
       vi.mocked(ceilingDeps.executeAgent).mockReturnValue(
@@ -3088,13 +3089,13 @@ describe("classifyAbortReason", () => {
     expect(result.severity).toBe("actionable");
   });
 
-  // WR-3 (177-obs-loop): spend_exceeded -> budget (NOT the "unknown" + "check
-  // daemon logs" catch-all). A sub-agent killed by the dollars kill-switch was
+  // spend_exceeded -> budget (NOT the "unknown" + "check daemon logs"
+  // catch-all). A sub-agent killed by the dollars kill-switch must not be
   // classified category:"unknown" with a "check the daemon logs" hint (the
-  // default branch) — the exact wrong-way, non-actionable pointer the security
-  // review flagged. It must reuse the budget category with the actionable
-  // observability.spend.* hint emitSpendAbort already uses.
-  it("WR-3 maps spend_exceeded to the budget category with an actionable observability.spend.* hint", () => {
+  // default branch) — that is a wrong-way, non-actionable pointer. It must
+  // reuse the budget category with the actionable observability.spend.* hint
+  // emitSpendAbort already uses.
+  it("maps spend_exceeded to the budget category with an actionable observability.spend.* hint", () => {
     const result = classifyAbortReason("spend_exceeded");
     expect(result.category).toBe("budget");
     expect(result.severity).toBe("actionable");
@@ -3538,7 +3539,7 @@ describe("persistFailureRecord integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SUMREF-02: materializeFullOutput — the child's full output becomes a
+// materializeFullOutput — the child's full output becomes a
 // structured ResultRef (summary + handle) in the announcement, never the
 // full body. Real timers: the completion path awaits real fs/async ticks.
 // ---------------------------------------------------------------------------
@@ -3556,7 +3557,8 @@ describe("materializeFullOutput child-output ResultRef in completion path", () =
       error: vi.fn(),
       debug: vi.fn(),
     };
-    // The condenser produces the bounded summary (SUMREF-01); both run.
+    // The condenser produces the bounded summary; both it and the
+    // materializer run.
     localDeps.resultCondenser = {
       condense: vi.fn().mockResolvedValue({
         level: 1,
@@ -3601,7 +3603,7 @@ describe("materializeFullOutput child-output ResultRef in completion path", () =
 
     expect(localDeps.sendToChannel).toHaveBeenCalledTimes(1);
     const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
-    // SUMREF-01 summary is present...
+    // The condensed summary is present...
     expect(text).toContain("bounded summary");
     // ...AND the structured handle (ref + bytes + kind)...
     expect(text).toContain("results/r1.json");
@@ -3641,7 +3643,7 @@ describe("materializeFullOutput child-output ResultRef in completion path", () =
   });
 
   it("passes the child agentId in the ctx so the daemon targets the CHILD's jailed workspace", async () => {
-    // Security (T-218-08): the materialize target MUST be the child's own jailed
+    // Security: the materialize target MUST be the child's own jailed
     // workspace, never the lead's — the daemon resolves it from this agentId.
     const localDeps = makeMaterializeDeps();
     const materializeMock = vi.fn().mockResolvedValue({
@@ -4240,7 +4242,7 @@ describe("sub-agent-runner uses BackgroundSessionResolver for parent-session loo
   });
 
   // -------------------------------------------------------------------------
-  // WR-01: the runner must pass an onDelivered sink into deadLetterQueue.drain
+  // The runner must pass an onDelivered sink into deadLetterQueue.drain
   // so a DLQ-recovered announcement marks the shared deliveredKeys set —
   // otherwise a later failure sweep double-notifies the same run.
   // -------------------------------------------------------------------------
@@ -4284,7 +4286,7 @@ describe("sub-agent-runner uses BackgroundSessionResolver for parent-session loo
 });
 
 // ===========================================================================
-// Sandbox no-downgrade gate (SANDBOX-02, Phase 172 Plan 02)
+// Sandbox no-downgrade gate
 //
 // The fail-closed posture gate at the single spawn chokepoint: a spawned child
 // may never be LESS confined than its spawner. The load-bearing security
@@ -4382,7 +4384,7 @@ describe("sandbox no-downgrade gate", () => {
       expect.anything(),
     );
 
-    // SANDBOX-03: the typed refusal event fires (before the throw, at the same
+    // The typed refusal event fires (before the throw, at the same
     // point a run/session would otherwise be created) carrying both postures as
     // enum tuples + the violated dimension(s) + the parent/child ids — NO secrets.
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
@@ -4398,7 +4400,7 @@ describe("sandbox no-downgrade gate", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): the refusal is a
+  // The refusal is a
   // TYPED SandboxDowngradeError, so the daemon's classifyRpcError classifies it
   // warn/precondition — a fail-closed SECURITY refusal must not read as an
   // internal/error handler fault in a fleet health sweep.
@@ -4626,7 +4628,7 @@ describe("sandbox no-downgrade gate", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-02: make the fail-OPEN observable. When the gate is enabled but no
+  // Make the fail-OPEN observable. When the gate is enabled but no
   // resolver was injected, the gate is silently inert (a security control that
   // no-ops). Emit a one-time construction WARN so an operator sees the fail-open
   // in the logs — defense-in-depth alongside the daemon-wiring test.
@@ -4727,11 +4729,11 @@ describe("sandbox no-downgrade gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// rootRunId / parentLeaseId plumbing (CEIL-01 / REVOKE-03 foundation).
-// A tree-stable rootRunId is the key the unified semaphore (Plan 04) and the
-// kill-by-root primitive (Plan 06/07) consult. A child that mints a fresh id
-// escapes its parent's ceiling (RESEARCH Pitfall 1 — the silent under-count),
-// so the inheritance invariant (Test 3) is load-bearing.
+// rootRunId / parentLeaseId plumbing — the foundation for the tree-wide
+// ceiling and kill-by-root. A tree-stable rootRunId is the key the unified
+// semaphore and the kill-by-root primitive consult. A child that mints a
+// fresh id escapes its parent's ceiling (a silent under-count),
+// so the inheritance invariant below is load-bearing.
 // ---------------------------------------------------------------------------
 describe("createSubAgentRunner rootRunId/parentLeaseId tree plumbing", () => {
   beforeEach(() => {
@@ -4823,10 +4825,10 @@ describe("createSubAgentRunner rootRunId/parentLeaseId tree plumbing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// killByRootRun fans killRun over every run of a tree (REVOKE-03 foundation).
+// killByRootRun fans killRun over every run of a tree.
 // The per-run killRun aborts each SDK session; killByRootRun applies it to
 // every running/queued run sharing a rootRunId, filtering strictly so a
-// different tree is untouched (threat T-213-01-02).
+// different tree is untouched.
 // ---------------------------------------------------------------------------
 describe("createSubAgentRunner killByRootRun tree fan-out", () => {
   beforeEach(() => {
@@ -4887,15 +4889,15 @@ describe("createSubAgentRunner killByRootRun tree fan-out", () => {
 });
 
 // ---------------------------------------------------------------------------
-// COORD-03: the ~30s read-only progress fork lifecycle in the spawn path
+// The ~30s read-only progress fork lifecycle in the spawn path
 // ---------------------------------------------------------------------------
 //
 // The runner starts the read-only progress fork when a child run begins and
 // stops it on the run's terminal settle (the completion finally) so it never
-// outlives the child (T-218-15: no leaked timer). vi.useFakeTimers() drives the
+// outlives the child (no leaked timer). vi.useFakeTimers() drives the
 // injected clock/timers (testClock/testTimers delegate to the faked globals).
 
-describe("COORD-03 progress fork lifecycle (sub-agent-runner)", () => {
+describe("read-only progress fork lifecycle (sub-agent-runner)", () => {
   let deps: SubAgentRunnerDeps;
 
   beforeEach(() => {
@@ -4980,20 +4982,20 @@ describe("COORD-03 progress fork lifecycle (sub-agent-runner)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// COORD-03 security: window isolation is NOT escalation
+// Progress-fork security: window isolation is NOT escalation
 // ---------------------------------------------------------------------------
 //
 // Each fresh-window coordinator child inherits an ATTENUATED lease (parent ∩
-// requested — never broader, T-218-16) and writes to its OWN jailed workspace,
-// distinct from the lead's (T-218-17). The lease mint lives in daemon wiring
+// requested — never broader) and writes to its OWN jailed workspace,
+// distinct from the lead's. The lease mint lives in daemon wiring
 // (setup-broker-activation.ts via attenuateCaps); the runner consumes the
 // already-minted params.caps verbatim and NEVER broadens them. We assert the
 // invariant directly against the security primitives (the single source of
 // truth) plus a runner-level check that a spawn carries no cap outside the
 // parent set.
 
-describe("COORD-03 attenuated lease + own jailed workspace (no escalation)", () => {
-  it("attenuateCaps yields a subset of the parent caps — never broader (T-218-16)", () => {
+describe("coordinator-child attenuated lease + own jailed workspace (no escalation)", () => {
+  it("attenuateCaps yields a subset of the parent caps — never broader", () => {
     const parent: AgentCapability[] = ["orch:spawn", "orch:read", "orch:graph"];
     // A coordinator child requests a SUPERSET (incl. caps the parent lacks).
     const requested: AgentCapability[] = ["orch:read", "orch:write", "orch:spawn", "orch:cron"];
@@ -5019,7 +5021,7 @@ describe("COORD-03 attenuated lease + own jailed workspace (no escalation)", () 
     expect(childLease).toEqual(["orch:read"]); // intersection with a singleton parent
   });
 
-  it("each child resolves its OWN jailed workspace, distinct from the lead's (T-218-17)", () => {
+  it("each child resolves its OWN jailed workspace, distinct from the lead's", () => {
     const cfg: AgentConfig = {} as AgentConfig; // no explicit workspacePath → suffixed-by-agentId
     const dataDir = "/data/.comis";
     const leadWorkspace = resolveWorkspaceDir(cfg, "lead", dataDir);

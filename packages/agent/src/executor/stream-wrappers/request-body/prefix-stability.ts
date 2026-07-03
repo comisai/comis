@@ -95,8 +95,8 @@ function firstDivergentMessage(prev: number[] | undefined, curr: number[]): numb
 /**
  * Classify the cache-poison content carried by a divergent prefix message —
  * the known per-request-varying classes that destabilize the cached prefix.
- * Productizes the ad-hoc PREFIXDBG instrumentation used to root-cause C-FIX-3:
- * the next prefix-instability incident is diagnosable from this one WARN line.
+ * Productizes the ad-hoc instrumentation used to root-cause a live
+ * prefix-instability incident: the next one is diagnosable from this one WARN line.
  */
 function classifyPrefixMutation(
   msg: Record<string, unknown> | undefined,
@@ -106,13 +106,13 @@ function classifyPrefixMutation(
   if (!msg) return "unknown";
   const classes: string[] = [];
 
-  // Structural delta first (the cause C-FIX-3's content-pattern classifier missed):
+  // Structural delta first (a cause a content-pattern-only classifier misses):
   // a thinking block disappearing or content shrinking between turns means microcompaction
   // (clearStaleThinkingBlocks / clearStaleToolResults) mutated a CACHED message.
   const p = parseSig(prevSig); const c = parseSig(currSig);
   if (p && c) {
     // r1→r0 = the inline-recall block was stripped as a user message went historical
-    // (C-FIX-3) — a one-time transient-by-design transition. Classify it FIRST and on its
+    // — a one-time transient-by-design transition. Classify it FIRST and on its
     // own so the diagnostic can treat it as benign (it would otherwise read as content-cleared).
     if (p.r > c.r) return "inline-recall";
     if (p.t > c.t) classes.push("thinking-cleared");
@@ -134,8 +134,9 @@ function classifyPrefixMutation(
  * Run the prefix-stability diagnostic. Mutates the module-level
  * `sessionPrefixStability` map. Logs a WARN when a cached-region message mutates on
  * THRESHOLD+ calls within a recent WINDOW — catching both a persistent same-message
- * mutation and a once-per-turn mutation at a different message each turn (cache #C2),
- * across the FULL cached prefix (not just the previous fence region).
+ * mutation and a once-per-turn mutation at a different message each turn (the
+ * replay-thinking incident shape), across the FULL cached prefix (not just the
+ * previous fence region).
  */
 export function runPrefixStabilityDiagnostic(
   result: Record<string, unknown>,
@@ -148,18 +149,18 @@ export function runPrefixStabilityDiagnostic(
 
   const msgs = result.messages as Array<Record<string, unknown>>;
   const lastIdx = msgs.length - 1;
-  // FULL-array per-message hashes/sigs (NOT fence-limited). The old Case-A check only
-  // re-verified [0..prev.fence] and was blind to a mutation in the newly-promoted
-  // (prev.fence, fence] region — exactly where cache #C2's thinking-strip transition lived.
+  // FULL-array per-message hashes/sigs (NOT fence-limited). A check that only
+  // re-verifies [0..prev.fence] is blind to a mutation in the newly-promoted
+  // (prev.fence, fence] region — exactly where the replay-thinking strip transition lives.
   const fullHashes = hashEachMessage(msgs, lastIdx);
   const fullSigs = structEachMessage(msgs, lastIdx);
   const prev = sessionPrefixStability.get(config.sessionKey);
   const callCount = (prev?.callCount ?? 0) + 1;
 
   // Accumulate cached-region mutations over a WINDOW of recent calls rather than
-  // CONSECUTIVE calls. cache #C2 mutated a DIFFERENT historical assistant at each turn
-  // boundary while within-turn calls were clean; the old consecutive counter reset on
-  // every benign within-turn call, so a once-per-turn mutation never reached its threshold.
+  // CONSECUTIVE calls. The replay-thinking incident mutated a DIFFERENT historical assistant
+  // at each turn boundary while within-turn calls were clean; a consecutive counter resets on
+  // every benign within-turn call, so a once-per-turn mutation never reaches its threshold.
   const WINDOW = 10;
   const THRESHOLD = 3;
 
@@ -179,8 +180,8 @@ export function runPrefixStabilityDiagnostic(
     const pSig = prev.fullSigs?.[fd];
     const cSig = fullSigs[fd];
     const mutationClass = classifyPrefixMutation(msgs[fd], pSig, cSig);
-    // inline-recall is transient BY DESIGN — C-FIX-3 strips it from a user message the turn
-    // AFTER it carried the current turn's recall. That is a one-time transition per message,
+    // inline-recall is transient BY DESIGN — the history strip removes it from a user message
+    // the turn AFTER it carried the current turn's recall. That is a one-time transition per message,
     // not a recurring bug, so it must NOT accumulate toward the WARN.
     if (!mutationClass.includes("inline-recall")) {
       mutations = [...mutations, callCount];
@@ -203,11 +204,11 @@ export function runPrefixStabilityDiagnostic(
 
 /**
  * Emit the "Unstable prefix detected" WARN, naming the divergent prefix message and its
- * cache-poison class. Productized PREFIXDBG: an operator reading this one line knows WHICH
+ * cache-poison class. An operator reading this one line knows WHICH
  * message mutated and WHY (inline-recall / datetime-preamble / thinking-block / content-cleared),
  * instead of re-deriving it with ad-hoc logging. Fires on a windowed count of cached-region
  * mutations (not consecutive), so a ONCE-PER-TURN mutation at a different message each turn
- * (cache #C2) accumulates here instead of slipping past a consecutive counter.
+ * accumulates here instead of slipping past a consecutive counter.
  */
 function emitUnstableWarn(
   logger: ComisLogger,

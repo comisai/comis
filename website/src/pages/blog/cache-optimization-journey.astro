@@ -642,7 +642,7 @@ const publishDate = "April 11, 2026";
             <div>
               <h3 class="text-lg font-semibold text-white mb-2">8. Cross-validate with the Anthropic dashboard</h3>
               <p class="text-muted-light text-base leading-relaxed">
-                The dashboard tooltip shows the per-TTL cache write breakdown that your API responses don't (at least not in streaming mode). Our logs reported $2.56 total cost; Anthropic said $2.75. That 6.9% gap was the CACHE-21 workaround approximation error. The dashboard is truth. Your cost calculation is an estimate. Check them against each other.
+                The dashboard tooltip shows the per-TTL cache write breakdown that your API responses don't (at least not in streaming mode). Our logs reported $2.56 total cost; Anthropic said $2.75. That 6.9% gap was the approximation error in our cost-calculation workaround. The dashboard is truth. Your cost calculation is an estimate. Check them against each other.
               </p>
             </div>
           </div>
@@ -702,7 +702,7 @@ const publishDate = "April 11, 2026";
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            But then the second discovery: <strong class="text-white">cache refreshes don't change the TTL of existing entries</strong>. Content written at 5m stays at 5m even if subsequent requests send <code class="text-sm">ttl: "1h"</code>. The 1h only applies to the initial write. So the parent agent's cold start had to use 1h from the very first call - not 5m with a later escalation. One more line change: parent agents start at <code class="text-teal text-sm">configRetention</code> ("long") instead of "short". Sub-agents use mixed 5m/1h - the shared prefix inherits 1h from the first writer via CCPAT-03.
+            But then the second discovery: <strong class="text-white">cache refreshes don't change the TTL of existing entries</strong>. Content written at 5m stays at 5m even if subsequent requests send <code class="text-sm">ttl: "1h"</code>. The 1h only applies to the initial write. So the parent agent's cold start had to use 1h from the very first call - not 5m with a later escalation. One more line change: parent agents start at <code class="text-teal text-sm">configRetention</code> ("long") instead of "short". Sub-agents use mixed 5m/1h - the shared prefix inherits 1h from the first writer.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -738,7 +738,7 @@ const publishDate = "April 11, 2026";
           <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
             <p class="text-white font-semibold mb-2">Want to see the full implementation?</p>
             <p class="text-muted text-sm leading-relaxed">
-              Comis is open source. The cache fence system lives in <code class="text-teal text-xs">packages/agent/src/context-engine/</code> and <code class="text-teal text-xs">packages/agent/src/executor/pi-executor.ts</code>. The adaptive retention module is in <code class="text-teal text-xs">packages/agent/src/executor/adaptive-cache-retention.ts</code>. The TTL monotonicity fix is in <code class="text-teal text-xs">packages/agent/src/executor/stream-wrappers.ts</code> (search for <code class="text-teal text-xs">CACHE-23</code>). The stagger logic is in <code class="text-teal text-xs">packages/daemon/src/graph/graph-coordinator.ts</code>. See the <a href="/context-management" class="text-teal hover:text-teal-dark underline">full context management docs</a> for the complete picture.
+              Comis is open source. The cache fence system lives in <code class="text-teal text-xs">packages/agent/src/context-engine/</code> and <code class="text-teal text-xs">packages/agent/src/executor/pi-executor.ts</code>. The adaptive retention module is in <code class="text-teal text-xs">packages/agent/src/executor/adaptive-cache-retention.ts</code>. The TTL monotonicity fix is in <code class="text-teal text-xs">packages/agent/src/executor/stream-wrappers.ts</code>. The stagger logic is in <code class="text-teal text-xs">packages/daemon/src/graph/graph-coordinator.ts</code>. See the <a href="/context-management" class="text-teal hover:text-teal-dark underline">full context management docs</a> for the complete picture.
             </p>
           </div>
 
@@ -746,7 +746,7 @@ const publishDate = "April 11, 2026";
           <div class="bg-teal/5 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
             <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-3">Update - April 2026</p>
             <p class="text-muted-light text-base leading-relaxed mb-4">
-              The cache infrastructure continued to improve after this post was published. With the v65 prompt cache infrastructure work (cache break detection and attribution, Gemini explicit caching, sub-agent prefix sharing via CCPAT-03, and context engine resilience improvements), production numbers on the same Claude Opus 4.6 model now show:
+              The cache infrastructure continued to improve after this post was published. With the later prompt cache infrastructure work (cache break detection and attribution, Gemini explicit caching, sub-agent prefix sharing, and context engine resilience improvements), production numbers on the same Claude Opus 4.6 model now show:
             </p>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div class="text-center">

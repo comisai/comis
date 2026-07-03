@@ -59,7 +59,7 @@ describe("MemoryCausalStore — combined causal-edge store port", () => {
     );
   });
 
-  it("is exported from BOTH core barrels (ports/index.ts AND exports/ports.ts — the TS2724 lesson)", () => {
+  it("is exported from BOTH core barrels (a ports/index.ts-only export fails the consumer build with TS2724)", () => {
     expect(portsIndexSrc, "MemoryCausalStore must be re-exported from ports/index.ts").toMatch(
       /\bMemoryCausalStore\b/,
     );

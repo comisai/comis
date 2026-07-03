@@ -228,8 +228,8 @@ describe("config.patch", () => {
         result: string;
         event: string;
       };
-      // `source` is the fixed literal "config-io"; legacy
-      // call-site identity ("config-patch-rpc") moves to `callerSource`.
+      // `source` is the fixed literal "config-io"; the call-site
+      // identity ("config-patch-rpc") rides `callerSource`.
       // Discriminant is `event`, not `phase`.
       expect(record.source).toBe("config-io");
       expect(record.callerSource).toBe("config-patch-rpc");
@@ -268,11 +268,11 @@ describe("config.patch", () => {
     });
 
     it("rejected audit record carries the validator's errorMessage", async () => {
-      // Previously the `rejected` outcome swallowed the rejection reason — the
-      // persisted JSONL line only had `result: "rejected"` with no
-      // errorMessage, so operators had to grep daemon logs to find why a
-      // config.patch failed. Now the validator text rides through to
-      // the JSONL record's errorMessage field.
+      // The `rejected` outcome must carry the rejection reason: the validator
+      // text rides through to the JSONL record's errorMessage field. Without
+      // it, the persisted line would only say `result: "rejected"` and
+      // operators would have to grep daemon logs to find why a config.patch
+      // failed.
       vi.useRealTimers();
 
       const deps = makeDeps(tempConfig.configPath);
@@ -968,9 +968,9 @@ describe("config.patch env var reference validation", () => {
   });
 
   // The gateway-patch on integrations.mcp.servers is REJECTED
-  // before the env-ref validator runs. The env-validator logic itself is
-  // unchanged and still exercised by persistToConfig at the AppConfigSchema
-  // safeParse boundary. The tests below assert that the single-writer
+  // before the env-ref validator runs. The env-validator logic is still
+  // exercised by persistToConfig at the AppConfigSchema safeParse
+  // boundary. The tests below assert that the single-writer
   // guard supersedes the env-validator pathway for the gateway-patch
   // surface — the env-validator's behaviors are covered by unit tests on
   // `findUnresolvedEnvRefs` + the persistMcpServers integration tests.
@@ -1814,11 +1814,11 @@ describe("config.patch type coercion", () => {
 
   // -------------------------------------------------------------------------
   // config.patch on integrations.mcp.servers is REJECTED — the
-  // z.record(string,string) env + headers preservation behavior is now
+  // z.record(string,string) env + headers preservation behavior is
   // exercised on the persistToConfig writer path (covered by the
   // mcp-handlers tests). The coerceConfigValue + AppConfigSchema.safeParse
-  // logic that originally enforced the preservation invariant is unchanged
-  // and still runs inside persistToConfig.
+  // logic that enforces the preservation invariant runs inside
+  // persistToConfig.
   // -------------------------------------------------------------------------
   it("config.patch on integrations.mcp.servers is rejected (env z.record preservation moves to persistMcpServers)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, { GEMINI_API_KEY: "test-gemini-key" });
@@ -2070,8 +2070,8 @@ describe("config.patch credential guard", () => {
   it("succeeds when providers.entries.<id>.apiKeyName is in secretManager (Source A)", async () => {
     const deps = makeDeps(tempConfig.configPath);
     // Wire a provider entry whose apiKeyName resolves via the bootstrap's
-    // secretManager. Seed the env map explicitly — bootstrap no longer
-    // falls back to process.env, so the test seeds the SecretManager via
+    // secretManager. Seed the env map explicitly — bootstrap does not
+    // fall back to process.env, so the test seeds the SecretManager via
     // makeDepsWithEnv.
     const freshDeps = makeDepsWithEnv(tempConfig.configPath, { OR_KEY: "sk-or-v1-xxx" });
     (freshDeps.container.config as { providers: { entries: Record<string, unknown> } }).providers.entries["openrouter"] = {

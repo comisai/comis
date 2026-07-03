@@ -1,26 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `createToolInvokeExecutor` — the daemon-side executor for the
- * `{kind:"executor"}` tools (Gap 1; Phase 212 Plan 02): the in-process builtins
+ * `{kind:"executor"}` tools: the in-process builtins
  * `read`/`grep`/`find`/`ls`/`jq` (run under the agent's workspace) and the
  * daemon-side `web_search`/`web_fetch` (run on the daemon's network with the
  * DNS-pin — the jail stays `--unshare-net`).
  *
- * RED-first: written before `setup-tool-invoke-executor.ts` exists, so the
- * import fails and the suite is RED on pre-patch code.
- *
  * Security invariants tested:
- *   - WEB-02 (DNS-pin / TOCTOU): the autonomous web path resolves via
+ *   - DNS-pin / TOCTOU: the autonomous web path resolves via
  *     `validateUrl` then fetches via `fetchPinned(url, validated.ip)` — the
  *     connection is pinned to the PRE-VALIDATED IP (asserted by capturing the
  *     2nd arg to the mocked fetchPinned). NOT impit, NOT a re-resolving fetch.
  *   - honest-degrade: a `validateUrl` err returns an SSRF-blocked error shape
  *     and NEVER fetches.
- *   - WEB-01/A7 budget seam: a `budgetHook` is called before/around the fetch
- *     (no meter — that is Phase 213).
- *   - REF (materialize): an over-threshold return is offloaded to a ResultRef
+ *   - budget seam: a `budgetHook` is called before/around the fetch (no meter).
+ *   - ResultRef materialize: an over-threshold return is offloaded to a ResultRef
  *     via the injected `materialize` writer; an under-threshold return is inline.
- *   - READ-02 workspace scoping: the file builtins run under the agent's
+ *   - workspace scoping: the file builtins run under the agent's
  *     resolved workspace dir (the injected core receives the workspace ctx).
  *
  * @module
@@ -38,7 +34,7 @@ vi.mock("@comis/core", async (importOriginal) => {
 
 // Mock the @comis/skills/tools web primitives: fetchPinned (the DNS-pinned undici
 // fetch) + extractReadableContent (the fetch-free readability extractor). The
-// executor MUST use these on the autonomous path (WEB-02), so the test captures
+// executor MUST use these on the autonomous path, so the test captures
 // the IP fetchPinned is pinned to and the body handed to the extractor.
 const { fetchPinnedMock, extractMock } = vi.hoisted(() => ({
   fetchPinnedMock: vi.fn(),
@@ -98,7 +94,7 @@ beforeEach(() => {
   extractMock.mockResolvedValue({ text: "extracted readable text", title: "T" });
 });
 
-describe("createToolInvokeExecutor — web_fetch DNS-pin (WEB-02 / TOCTOU)", () => {
+describe("createToolInvokeExecutor — web_fetch DNS-pin (TOCTOU)", () => {
   it("resolves via validateUrl then fetches via fetchPinned PINNED to the validated IP", async () => {
     mockValidateUrl.mockResolvedValue({ ok: true, value: okUrl() });
     fetchPinnedMock.mockResolvedValue(htmlResponse("<html><body>hi</body></html>"));
@@ -127,7 +123,7 @@ describe("createToolInvokeExecutor — web_fetch DNS-pin (WEB-02 / TOCTOU)", () 
     expect(fetchPinnedMock).not.toHaveBeenCalled(); // honest-degrade: no fetch attempted
   });
 
-  it("calls the budgetHook seam around the web fetch (WEB-01/A7 — no meter)", async () => {
+  it("calls the budgetHook seam around the web fetch (no meter)", async () => {
     mockValidateUrl.mockResolvedValue({ ok: true, value: okUrl() });
     fetchPinnedMock.mockResolvedValue(htmlResponse("<html>ok</html>"));
     const budgetHook = vi.fn();
@@ -153,7 +149,7 @@ describe("createToolInvokeExecutor — web_fetch DNS-pin (WEB-02 / TOCTOU)", () 
   });
 });
 
-describe("createToolInvokeExecutor — ResultRef materialize (REF-01)", () => {
+describe("createToolInvokeExecutor — ResultRef materialize", () => {
   it("materializes an OVER-threshold web_fetch return to a ResultRef", async () => {
     mockValidateUrl.mockResolvedValue({ ok: true, value: okUrl() });
     fetchPinnedMock.mockResolvedValue(htmlResponse("<html>big</html>"));
@@ -192,14 +188,14 @@ describe("createToolInvokeExecutor — ResultRef materialize (REF-01)", () => {
     expect(result.text).toBe("small body"); // inline
   });
 
-  // WR-04: web_search must be SYMMETRIC with web_fetch — an over-threshold
+  // web_search must be SYMMETRIC with web_fetch — an over-threshold
   // search result has to be offloaded to a ResultRef, otherwise the generated
   // SDK's `wrapResultRef(await invoke("web_search", …))` decorates a NON-ref
   // (no `.ref` field) and the in-jail `.grep/.jq/.read` helpers call
   // `invoke("grep", { path: undefined })` → a missing-path error, AND a large
   // search result re-enters context inline. `RESULT_REF_THRESHOLDS.web_search`
   // (15 KB) already exists for exactly this.
-  it("materializes an OVER-threshold web_search return to a ResultRef (WR-04 — symmetric with web_fetch)", async () => {
+  it("materializes an OVER-threshold web_search return to a ResultRef (symmetric with web_fetch)", async () => {
     const ref = {
       ref: "results/ws-search.json",
       kind: "json" as const,
@@ -240,7 +236,7 @@ describe("createToolInvokeExecutor — ResultRef materialize (REF-01)", () => {
   });
 });
 
-describe("createToolInvokeExecutor — file builtins run workspace-scoped (READ-02)", () => {
+describe("createToolInvokeExecutor — file builtins run workspace-scoped", () => {
   it("dispatches read to the injected core under the agent's resolved workspace", async () => {
     const deps = makeDeps();
     const exec = createToolInvokeExecutor(deps);
@@ -264,7 +260,7 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped (READ-
     await exec("find", { glob: "*.ts" }, LEASE);
     await exec("ls", { dir: "." }, LEASE);
     await exec("jq", { ref: "results/x.jsonl", expr: ".[0]" }, LEASE);
-    // QRY-01/02 — the sql + jsonpath query cores route through the SAME
+    // The sql + jsonpath query cores route through the SAME
     // workspace-scoped file-builtin dispatch as jq (daemon-side, not RPC).
     await exec("sql", { path: "results/x.jsonl", query: "SELECT 1" }, LEASE);
     await exec("jsonpath", { path: "results/x.json", expr: "$.items[0]" }, LEASE);
@@ -275,7 +271,7 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped (READ-
     expect(deps.fileExecutors.jq).toHaveBeenCalledTimes(1);
     expect(deps.fileExecutors.sql).toHaveBeenCalledTimes(1);
     expect(deps.fileExecutors.jsonpath).toHaveBeenCalledTimes(1);
-    // The sql core received the agent's resolved workspace ctx (READ-02 scoping).
+    // The sql core received the agent's resolved workspace ctx (workspace scoping).
     const [, sqlCtx] = deps.fileExecutors.sql.mock.calls[0];
     expect((sqlCtx as { workspaceDir: string }).workspaceDir).toBe("/ws/agent-7");
   });

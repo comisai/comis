@@ -8,7 +8,7 @@ import { createAgentDriver } from "../graph/drivers/agent-driver.js";
 import { createDebateDriver } from "../graph/drivers/debate-driver.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 
-// CAP-03: the gated graph.define/execute/save/load/delete/cancel/deleteRun
+// The gated graph.define/execute/save/load/delete/cancel/deleteRun
 // handlers require an injected `_capabilities` (orch:graph) at their top.
 // Production supplies it via createAgentRpcCall (setup-tools-capabilities.ts);
 // these body-tests call the handlers directly, so wrap the bound record to
@@ -1195,7 +1195,7 @@ describe("graph-handlers", () => {
     });
 
     // Both-or-neither stays strict for the six real typed nodes; the redundant
-    // "agent" type is collapsed to a regular node before validation (Bug-1 / OR-01),
+    // "agent" type is collapsed to a regular node before validation,
     // so these rejection tests use a real typed-node shape.
     it("rejects nodes with type_id but missing type_config", async () => {
       await expect(

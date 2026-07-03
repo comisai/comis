@@ -260,12 +260,12 @@ describe("isImmutableConfigPath", () => {
     expect(isImmutableConfigPath("agents", "default.maxSteps")).toBe(false);
   });
 
-  // Bug A regression: persona is no longer a mutable override;
-  // it was a dead reference -- PerAgentConfigSchema is z.strictObject and has
-  // no `persona` field, so the override entry only leaked a misleading
-  // capability hint to LLMs. With the entry removed, the agents immutable
-  // prefix wins and these paths are now rejected.
-  it("rejects agents.default.persona (dead override removed)", () => {
+  // Regression lock: persona is NOT a mutable override --
+  // PerAgentConfigSchema is z.strictObject and has
+  // no `persona` field, so an override entry would only leak a misleading
+  // capability hint to LLMs. The agents immutable
+  // prefix wins and these paths are rejected.
+  it("rejects agents.default.persona (no such per-agent field; not a mutable override)", () => {
     expect(isImmutableConfigPath("agents", "default.persona")).toBe(true);
   });
 
@@ -278,10 +278,10 @@ describe("isImmutableConfigPath", () => {
     expect(isImmutableConfigPath("agents", "default.promptTimeout.retryPromptTimeoutMs")).toBe(false);
   });
 
-  // LAT-02 (Phase 177): the makespan-ceiling multiplier joins the promptTimeout
-  // runtime-tuning family. matchesOverridePattern entries are per-leaf, so the
-  // two sibling entries above do NOT cover the new key -- it needs its own line.
-  it("allows agents.*.promptTimeout.stallCeilingMultiplier (mutable override for makespan-ceiling tuning, LAT-02)", () => {
+  // The makespan-ceiling multiplier joins the promptTimeout runtime-tuning
+  // family. matchesOverridePattern entries are per-leaf, so the two sibling
+  // entries above do NOT cover this key -- it needs its own line.
+  it("allows agents.*.promptTimeout.stallCeilingMultiplier (mutable override for makespan-ceiling tuning)", () => {
     expect(isImmutableConfigPath("agents", "default.promptTimeout.stallCeilingMultiplier")).toBe(false);
   });
 
@@ -345,8 +345,9 @@ describe("isImmutableConfigPath", () => {
 
 describe("MUTABLE_CONFIG_OVERRIDES", () => {
   it("contains exactly 12 override patterns", () => {
-    // Bug A removed the dead "agents.*.persona" entry (12 -> 11); LAT-02
-    // (Phase 177) added agents.*.promptTimeout.stallCeilingMultiplier (11 -> 12).
+    // There is deliberately no "agents.*.persona" entry (see the regression
+    // block below); agents.*.promptTimeout.stallCeilingMultiplier counts
+    // alongside its two promptTimeout siblings.
     expect(MUTABLE_CONFIG_OVERRIDES).toHaveLength(12);
   });
 
@@ -364,8 +365,7 @@ describe("MUTABLE_CONFIG_OVERRIDES", () => {
 describe("matchesOverridePattern", () => {
   // Note: tests use agents.*.maxSteps as the wildcard fixture (a real entry in
   // MUTABLE_CONFIG_OVERRIDES). The function is generic; the pattern choice is
-  // illustrative only. (Previously these tests used agents.*.persona; that
-  // entry was removed in Bug A.)
+  // illustrative only.
   it("matches exact path to pattern", () => {
     expect(matchesOverridePattern("agents.default.maxSteps", "agents.*.maxSteps")).toBe(true);
   });
@@ -422,16 +422,17 @@ describe("getMutableOverridesForSection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bug A regression: dead "agents.*.persona" override removed.
-// PerAgentConfigSchema is z.strictObject and has no `persona` field, so the
-// override entry could never produce a successful patch -- it only leaked a
-// misleading capability hint to LLMs (formatRedirectHint emitted "you can
-// also patch agents.<id>.persona") which the LLM echoed back as
+// Regression lock: "agents.*.persona" must never be an override.
+// PerAgentConfigSchema is z.strictObject and has no `persona` field, so such
+// an override entry could never produce a successful patch -- it would only
+// leak a misleading capability hint to LLMs (formatRedirectHint would emit
+// "you can also patch agents.<id>.persona") which an LLM echoes back as
 // `persona:` in agents_manage.create config, triggering Zod
-// unrecognized_keys rejection (18 fleet-creation failures in production).
+// unrecognized_keys rejection (observed as repeated fleet-creation failures
+// in production).
 // ---------------------------------------------------------------------------
-describe("MUTABLE_CONFIG_OVERRIDES (regression: persona removed)", () => {
-  it("does NOT contain the dead 'agents.*.persona' override", () => {
+describe("MUTABLE_CONFIG_OVERRIDES (persona must stay absent)", () => {
+  it("does NOT contain an 'agents.*.persona' override", () => {
     expect(MUTABLE_CONFIG_OVERRIDES).not.toContain("agents.*.persona");
   });
 
@@ -494,7 +495,7 @@ describe("isImmutableConfigPath -- tooling root prefix", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D16 §8.1: executor section is OPERATOR-ONLY — broker anti-exfiltration
+// The executor section is OPERATOR-ONLY — broker anti-exfiltration
 // guard. An LLM-driven agent MUST NOT be able to self-configure
 // executor.broker.bindings to route credentials to an attacker-controlled host.
 // "executor" as a top-level prefix catches all three write paths:
@@ -526,7 +527,7 @@ describe("executor section is operator-only (broker anti-exfiltration guard)", (
 // config RELOAD (re-runs setupSingleAgent), NEVER by the agent's own
 // config.patch, which MUST reject. This locks the anti-self-escalation posture:
 // an agent cannot self-switch into DAG to widen its own ctx_* tool exposure
-// (the §8.1 force-include would otherwise be self-exploitable).
+// (the DAG-mode force-include of ctx_* tools would otherwise be self-exploitable).
 //
 // These are REGRESSION / BOUNDARY LOCKS (AGENTS.md §2.10): the boundary already
 // holds, so they are GREEN on arrival. They FAIL only if a future change

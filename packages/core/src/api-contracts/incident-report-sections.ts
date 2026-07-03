@@ -6,9 +6,9 @@
  * file-size cap (the obs-handlers fold-extraction discipline). These are the
  * self-contained, content-free sections the `obs.explain` normalizer folds from
  * the trajectory and the report/`IncidentSignals` both reference:
- *   - `IncidentContextBudgetSchema` (W3) — the per-LLM-call budget equation.
- *   - `IncidentPromptTimeoutSchema` (LAT-04) — the terminal prompt-timeout attribution.
- *   - `SpawnTreeNodeSchema` (TREE-01/02) — one node of the per-cap spawn tree.
+ *   - `IncidentContextBudgetSchema` — the per-LLM-call budget equation.
+ *   - `IncidentPromptTimeoutSchema` — the terminal prompt-timeout attribution.
+ *   - `SpawnTreeNodeSchema` — one node of the per-cap spawn tree.
  *
  * Barrel-only: external consumers import these from `"@comis/core"` (re-exported
  * by `incident-report.ts` → `observability.ts`), so the public surface is unchanged.
@@ -18,7 +18,7 @@
 import { z } from "zod";
 
 /**
- * W3 (obs-llm-troubleshooting): the per-LLM-call context budget equation,
+ * The per-LLM-call context budget equation,
  * extracted from the trajectory's `context.budget` records (last record wins —
  * the terminal fit check explains the end state). Carried on the report so a
  * `context_exhausted` abort is explainable with numbers (assembled vs window,
@@ -31,9 +31,9 @@ export const IncidentContextBudgetSchema = z.object({
   /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
   rawContextWindowTokens: z.number(),
   /** What clamped the window. The cap members are contextEngine.budget.* knob
-   *  names; "served" (KNOB-02) means the Ollama-served num_ctx bound the window
+   *  names; "served" means the Ollama-served num_ctx bound the window
    *  (knobs: OLLAMA_CONTEXT_LENGTH env / Modelfile PARAMETER num_ctx);
-   *  "capabilityClass" (WR-01) means the executor-side class cap from the
+   *  "capabilityClass" means the executor-side class cap from the
    *  operator's providers.entries.<id>.capabilities.capabilityClass pin bound
    *  — the pin is the lever (the budget knobs are inert on that branch). */
   windowCapSource: z.enum(["effectiveContextCapSmall", "effectiveContextCapNano", "served", "capabilityClass", "none"]),
@@ -57,7 +57,7 @@ export const IncidentContextBudgetSchema = z.object({
 export type IncidentContextBudget = z.infer<typeof IncidentContextBudgetSchema>;
 
 /**
- * E2 (obs-sweep package-delivery-20260628): one COMPACT per-turn budget-check entry — the cascade
+ * One COMPACT per-turn budget-check entry — the cascade
  * shape. `IncidentReport.contextBudget` keeps only the TERMINAL fit-check; a `context_exhausted`
  * abort needs the PROGRESSION (each turn's assembled-input growth + eviction + verdict) to see the
  * tightening toward exhaustion. The history folds these (dedup'd on transition, most-recent capped) so
@@ -75,13 +75,13 @@ export const IncidentContextBudgetHistoryEntrySchema = z.object({
 export type IncidentContextBudgetHistoryEntry = z.infer<typeof IncidentContextBudgetHistoryEntrySchema>;
 
 /**
- * LAT-04 (177): the terminal prompt-timeout attribution record — the LAST
+ * The terminal prompt-timeout attribution record — the LAST
  * `execution.prompt_timeout` trajectory row. Content-free: numbers + closed
  * enums + the pre-rendered config-KEY string (`bindingKnob` — knob NAME + ids
  * only, never values/bodies). Wholesale-validated by the signals normalizer
  * (the contextBudget discipline); a malformed/partial record is ignored
  * (forward-compatible). Signals-only — NOT on `IncidentReportSchema`
- * (mirroring the GBNF-02 `toolSchemaUnsupported` precedent: the heuristic
+ * (mirroring the `toolSchemaUnsupported` precedent: the heuristic
  * verdict carries what the operator needs).
  */
 export const IncidentPromptTimeoutSchema = z.object({
@@ -89,9 +89,9 @@ export const IncidentPromptTimeoutSchema = z.object({
   timeoutMs: z.number(),
   /** Elapsed wall-clock ms at kill. */
   durationMs: z.number().optional(),
-  /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path/pre-LAT-02 rows). */
+  /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path rows, or a row that omits it). */
   limit: z.enum(["stall", "makespan"]).optional(),
-  /** Binding resolution level (LAT-01 — the agent-side TimeoutSource union). */
+  /** Binding resolution level (the agent-side TimeoutSource union). */
   source: z.string().optional(),
   /** Pre-rendered config-key string from the agent-side source→knob table. */
   bindingKnob: z.string().optional(),
@@ -104,14 +104,14 @@ export const IncidentPromptTimeoutSchema = z.object({
 export type IncidentPromptTimeout = z.infer<typeof IncidentPromptTimeoutSchema>;
 
 /**
- * TREE-01/02 (215): one node of the root→children SPAWN TREE folded from a
+ * One node of the root→children SPAWN TREE folded from a
  * session's `capability.audited` records (one per `leaseId`) — the attenuated
  * `caps` held, the tool NAMES invoked, and any `CapabilityDeniedError` cap in
- * `denials` (TREE-02). `parentLeaseId` is the child→root edge (absent on the root
+ * `denials`. `parentLeaseId` is the child→root edge (absent on the root
  * and on the lease-less in-process path, which groups under its synthetic
- * `rootRunId`, G1); `budgetTokensUsed` is honest-optional (G3 — the live `whoami`
+ * `rootRunId`); `budgetTokensUsed` is honest-optional (the live `whoami`
  * owns remaining budget; this is post-mortem topology). Content-free (ids / caps
- * / tool-NAMES / denials ONLY, §2.7). Single source of truth for BOTH
+ * / tool-NAMES / denials ONLY). Single source of truth for BOTH
  * `IncidentReportSchema.spawnTree` and `IncidentSignals.spawnTree`.
  */
 export const SpawnTreeNodeSchema = z.object({

@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DAG durable-checkpoint serialization (Phase 216, Plan 11, DUR-01/DUR-02).
+ * DAG durable-checkpoint serialization.
  *
  * A graph (DAG) run is made durable at NODE-boundary granularity: at every node
  * transition the coordinator persists the node-completion state of its
  * {@link GraphExecutionSnapshot} into the durable run record's `spawn_tree`
- * column (a JSON array — Plan 02), keyed on the graph's tree-stable
- * `graphRootRunId` (Phase 213 CR-01). On a daemon restart the resume engine
- * re-enters ONLY the nodes that were NOT terminal at crash time.
+ * column (a JSON array), keyed on the graph's tree-stable `graphRootRunId`. On
+ * a daemon restart the resume engine re-enters ONLY the nodes that were NOT
+ * terminal at crash time.
  *
  * These two functions are the pure, I/O-free core of that mechanism:
  *   - {@link snapshotToSpawnTree} serializes a live snapshot to the DAG
- *     `{nodeId,status,runId?}[]` shape (the LOW-2 discriminator — object entries
- *     with a `status` field mark a DAG record vs a flat run's `string[]`, so a
- *     flat run never mis-routes to `resumeGraph`).
+ *     `{nodeId,status,runId?}[]` shape (the DAG-vs-flat discriminator — object
+ *     entries with a `status` field mark a DAG record vs a flat run's
+ *     `string[]`, so a flat run never mis-routes to `resumeGraph`).
  *   - {@link incompleteNodes} is the resume selector: the nodes whose status is
  *     NOT in {@link TERMINAL_NODE_STATES} — the frontier to re-run.
  *
- * NODE-BOUNDARY GRANULARITY (Open Question 3, RESOLVED): a node that was
- * mid-execution (`running`) at crash time is treated as incomplete and re-run
- * from its start; its outward sends are deduped by the ONCE ledger (a committed
- * `(rootRunId, stepIndex)` is a no-op — Plans 05/07), so re-running is
- * exactly-once-safe WITHOUT persisting intra-node LLM/tool state (out of scope).
+ * NODE-BOUNDARY GRANULARITY: a node that was mid-execution (`running`) at crash
+ * time is treated as incomplete and re-run from its start; its outward sends
+ * are deduped by the ONCE ledger (a committed `(rootRunId, stepIndex)` is a
+ * no-op), so re-running is exactly-once-safe WITHOUT persisting intra-node
+ * LLM/tool state (out of scope).
  *
  * @module
  */
@@ -89,11 +89,11 @@ export function incompleteNodes(spawnTree: ReadonlyArray<{ nodeId: string; statu
 }
 
 /**
- * The LOW-2 DAG-vs-flat discriminator (the resume engine's dispatch routing,
- * Plan 12). A DAG/graph run's `spawn_tree` entries are OBJECTS carrying a
+ * The DAG-vs-flat discriminator for the resume engine's dispatch routing.
+ * A DAG/graph run's `spawn_tree` entries are OBJECTS carrying a
  * `status` field (`{nodeId,status,runId?}` — the {@link snapshotToSpawnTree}
  * shape); a FLAT sub-agent run's `spawn_tree` is a plain `string[]` of node/lease
- * ids (Plan 01 `spawnTree: z.array(z.string())`). This is the EXPLICIT
+ * ids (the flat `spawnTree: z.array(z.string())` shape). This is the EXPLICIT
  * entry-has-`status` check — NOT a length or array-type heuristic — so the resume
  * engine routes to `coordinator.resumeGraph` IFF this returns true. A flat run
  * (string entries) can therefore NEVER mis-route to the graph resume, and a DAG

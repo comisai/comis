@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `setup-tools-autonomy` — the Phase-212 Gap-3 dormancy-activation tool wiring.
+ * `setup-tools-autonomy` — the dormancy-activation tool wiring.
  * Asserts `buildAutonomyToolWiring`: mints the per-spawn lease + registers the
- * bearer (Pitfall 1) + injects COMIS_CAP_LEASE/COMIS_ORCH_SOCKET for an autonomy
+ * bearer in OutputGuard + injects COMIS_CAP_LEASE/COMIS_ORCH_SOCKET for an autonomy
  * agent; assembles the orchestrate tool only with a handle + a sandbox; and
  * yields neither for a non-autonomy agent / no handle / no sandbox (no regression,
  * never an unjailed run).
@@ -40,7 +40,7 @@ function makeHandle(overrides: { mintBearer?: string; mintLeaseId?: string } = {
       revoke: vi.fn(),
     },
     endpoint: { handleCapCall: vi.fn(), startSocket: vi.fn(), stopSocket: vi.fn() },
-    // Phase 213: the bounded-autonomy service the wiring anchors the tree root in.
+    // The bounded-autonomy service the wiring anchors the tree root in.
     boundedAutonomy: { registerRoot: vi.fn() },
     capSocketPath: "/data/cap.sock",
     outputGuard: { scan: vi.fn(), registerSecret: vi.fn() },
@@ -78,7 +78,7 @@ describe("buildAutonomyToolWiring", () => {
     expect(brokerSpawnEnv?.placeholders?.COMIS_ORCH_SOCKET).toBe("/data/cap.sock");
   });
 
-  // Phase 213 (CEIL-01/BUDGET): the mint anchors the tree root in the bounded-
+  // The mint anchors the tree root in the bounded-
   // autonomy service with the SAME rootRunId the lease is minted with + the
   // freshly-minted leaseId (so the per-root budget wall-clock anchors).
   it("anchors the tree root in boundedAutonomy.registerRoot after the mint (root mints a fresh id)", () => {
@@ -93,9 +93,10 @@ describe("buildAutonomyToolWiring", () => {
     expect(leaseId).toBe("leaseid-1");
   });
 
-  // Tree-stable rootRunId (RESEARCH Pitfall 1): a sub-agent assembly INHERITS the
+  // Tree-stable rootRunId: a sub-agent assembly INHERITS the
   // caller's rootRunId rather than minting a fresh one — so the whole tree shares
-  // one id the semaphore/budget/kill key on. The mint + registerRoot use it.
+  // one id the semaphore/budget/kill key on (a fresh id per sub-agent would
+  // silently under-count the tree). The mint + registerRoot use it.
   it("INHERITS the caller's rootRunId (no fresh mint) when callerRootRunId is supplied", () => {
     const input = baseInput({ callerRootRunId: "root-parent-stable" });
     buildAutonomyToolWiring(input);
@@ -128,7 +129,7 @@ describe("buildAutonomyToolWiring", () => {
     expect(mockCreateOrchestrateTool).not.toHaveBeenCalled();
   });
 
-  // PROFILE-05 / JAIL-03 / JAIL-05 (live defect 2026-06-23): when the host
+  // Live defect, 2026-06-23: when the host
   // namespace preflight FAILED the jail cannot be built, so an autonomy-bearing
   // agent must genuinely degrade to `assistant` HERE — no orchestrate tool, no
   // lease mint — not merely in the boot WARN. Pre-patch, buildAutonomyToolWiring

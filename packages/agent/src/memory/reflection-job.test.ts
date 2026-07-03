@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Orchestration suite for {@link runReflection} (v2.31 Reflection engine,
- * Phase 223 Plan 04, REFLECT-01/03/04/05/06 + INV-2/INV-5).
+ * Orchestration suite for {@link runReflection}.
  *
  * Everything is MOCKED — the reflect LLM adapter, the outcome-signal port, and
  * the mental-model store are stubs we control; the injected source history is
  * plain data; the clock is fixed. The headline assertions are the SECURITY ones,
- * RED-tested BOTH directions:
- *   - Trusted-origin SELECT (INV-5/D-04): a trusted-origin success seeds a doc; an
+ * tested BOTH directions:
+ *   - Trusted-origin SELECT: a trusted-origin success seeds a doc; an
  *     UNTRUSTED-origin success seeds NOTHING (`store.admit` never called for it).
- *   - Corroboration (INV-2/D-05): ≥2 distinct (sessionId,sender) per topicKey →
+ *   - Corroboration: ≥2 distinct (sessionId,sender) per topicKey →
  *     a candidate doc; a single (session,sender) repeated N times → NO doc.
- *   - Empty-content guard (REFLECT-05): a failed/empty reflection → `store.admit`
+ *   - Empty-content guard: a failed/empty reflection → `store.admit`
  *     is NOT called (the prior doc survives), reason-coded `empty_reflection`.
- *   - Validate + idempotency (REFLECT-06): a poison body is rejected before admit;
+ *   - Validate + idempotency: a poison body is rejected before admit;
  *     a clean body admits at state-forced candidate/learned/proof=1; re-running on
  *     the SAME outcomes admits no duplicate (same deterministic id).
- *   - Delta-ops (REFLECT-04): an existing doc with a structuredBody refreshes via
+ *   - Delta-ops: an existing doc with a structuredBody refreshes via
  *     delta-ops, untargeted sections byte-identical; a new doc synthesizes fresh.
  */
 import { createHash } from "node:crypto";
@@ -50,8 +49,8 @@ function unknown(): ResolvedOutcome {
 /**
  * A source trajectory. `signature` drives the topicKey group-by; identical
  * signatures (after normalization) collide into one topic. `trustedOrigin`
- * defaults to true (the daemon derives it — Research A2). `sourceTrustExternal`
- * defaults to false — the per-memory source-trust axis (FOLD-04 axis 2); for a
+ * defaults to true (the daemon derives it). `sourceTrustExternal`
+ * defaults to false — the per-memory source-trust axis; for a
  * skill source the daemon always sets it false (skill sources are outcome
  * trajectories, not source memories), so the existing skill cases are unchanged.
  */
@@ -95,7 +94,7 @@ function makeDeps(
   const resolve = (over.outcomeSignal?.resolve as Mock) ?? vi.fn(async () => ok(success()));
   const get = (over.mentalModelStore?.get as Mock) ?? vi.fn(async () => ok(undefined));
   const admit = (over.mentalModelStore?.admit as Mock) ?? vi.fn(async () => ok({ id: "id-1", admitted: true }));
-  // Phase 225 FOLD-01: the bi-temporal supersede a profile/topic CORRECTION routes through.
+  // The bi-temporal supersede a profile/topic CORRECTION routes through.
   // `over.mentalModelStore.supersede` is `unknown` on the Pick<…,"get"|"admit"> type the skill
   // tests pass, so read it off the cast object — only profile/topic tests supply it.
   const supersede =
@@ -123,7 +122,7 @@ function makeDeps(
     agentId: "a1",
     tenantId: "t1",
     scope: SCOPE,
-    // Phase 225 FOLD seams — forwarded only when a test supplies them, so a skill
+    // Per-kind seams — forwarded only when a test supplies them, so a skill
     // run (the common case) stays at the engine's skill defaults.
     ...(over.kind !== undefined ? { kind: over.kind } : {}),
     ...(over.groupKey !== undefined ? { groupKey: over.groupKey } : {}),
@@ -132,8 +131,8 @@ function makeDeps(
     reflectionAdapter: { reflect },
     outcomeSignal: { resolve },
     // supersede is ALWAYS wired (production always injects it) — the engine routes a
-    // profile/topic CORRECTION through it but NEVER a skill (kind:skill stays admit-only,
-    // byte-identical with 223). So a skill test's admit assertions are unaffected.
+    // profile/topic CORRECTION through it but NEVER a skill (kind:skill stays
+    // admit-only). So a skill test's admit assertions are unaffected.
     mentalModelStore: { get, admit, supersede },
     clock: over.clock ?? { now: () => NOW },
     eventBus: over.eventBus ?? { emit: vi.fn() },
@@ -163,7 +162,7 @@ describe("classifyReflectOutcome (why a reflection run admitted nothing)", () =>
     expect(classifyReflectOutcome(base)).toBe("rejected_validation");
   });
 
-  // Phase 226 SIMPLIFY-04 (D5 salvage + the 225 WR-01 gap): the 2 new arms. Counts-only.
+  // The two specific-reason arms that out-rank the generic verdicts. Counts-only.
   it("untrusted_origin when SELECT kept nothing AND some success was dropped for untrusted origin", () => {
     // selected:0 with untrustedDrops>0 is the SPECIFIC "all successes were untrusted-origin"
     // reason — it OUT-RANKS the generic no_successes (a more diagnosable verdict).
@@ -173,7 +172,7 @@ describe("classifyReflectOutcome (why a reflection run admitted nothing)", () =>
     expect(classifyReflectOutcome({ ...base, selected: 0, untrustedDrops: 0 })).toBe("no_successes");
   });
   it("rejected_name_length when corroborated + non-empty but a name-length over-cap rejection occurred", () => {
-    // The 225 WR-01 gap: a name-length rejection is now reported as ITS OWN reason instead of
+    // A name-length rejection is reported as ITS OWN reason instead of
     // being mis-attributed to rejected_validation (a poison verdict).
     expect(classifyReflectOutcome({ ...base, nameLengthRejections: 1 })).toBe("rejected_name_length");
   });
@@ -183,10 +182,10 @@ describe("classifyReflectOutcome (why a reflection run admitted nothing)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// SELECT (REFLECT-01)
+// SELECT (fail-closed)
 // ---------------------------------------------------------------------------
 
-describe("runReflection — SELECT (REFLECT-01, fail-closed)", () => {
+describe("runReflection — SELECT (fail-closed success gate)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("keeps ONLY success >= minConfidence — failure/unknown/low-confidence are dropped", async () => {
@@ -253,10 +252,10 @@ describe("runReflection — SELECT (REFLECT-01, fail-closed)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Trusted-origin (INV-5 / D-04) — RED BOTH directions
+// Trusted-origin SELECT — tested BOTH directions
 // ---------------------------------------------------------------------------
 
-describe("runReflection — trusted-origin SELECT (INV-5/D-04, BOTH directions)", () => {
+describe("runReflection — trusted-origin SELECT (BOTH directions)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("a TRUSTED-origin success proceeds to a doc", async () => {
@@ -327,10 +326,10 @@ describe("runReflection — trusted-origin SELECT (INV-5/D-04, BOTH directions)"
 });
 
 // ---------------------------------------------------------------------------
-// Group-by + corroboration (INV-2 / D-05) — RED BOTH directions
+// Group-by + corroboration gate — tested BOTH directions
 // ---------------------------------------------------------------------------
 
-describe("runReflection — group-by topicKey + corroboration gate (INV-2/D-05, BOTH directions)", () => {
+describe("runReflection — group-by topicKey + corroboration gate (BOTH directions)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("≥2 distinct (sessionId,sender) on the SAME topicKey → one candidate doc admitted", async () => {
@@ -396,8 +395,8 @@ describe("runReflection — group-by topicKey + corroboration gate (INV-2/D-05, 
   it("distinctTopicKeys: under-merge (2 successes, 2 separate topics) vs corroborated (1 topic)", async () => {
     // UNDER-MERGE: 2 trusted successes from distinct senders but on DIFFERENT topics → 2 groups,
     // each cardinality 1 → uncorroborated. distinctTopicKeys:2 + maxTopicCardinality:1 is the
-    // discriminator that says "there WAS corroborating signal but it didn't merge" (the
-    // LLM-tag-fallback trigger) — distinct from a genuine single-source.
+    // discriminator that says "there WAS corroborating signal but it didn't merge" —
+    // distinct from a genuine single-source.
     const underMerge = await runReflection(
       makeDeps(
         [
@@ -468,10 +467,10 @@ describe("runReflection — group-by topicKey + corroboration gate (INV-2/D-05, 
 });
 
 // ---------------------------------------------------------------------------
-// Delta-ops vs fresh (REFLECT-04)
+// Delta-ops refresh vs fresh synth
 // ---------------------------------------------------------------------------
 
-describe("runReflection — delta-ops refresh vs fresh synth (REFLECT-04)", () => {
+describe("runReflection — delta-ops refresh vs fresh synth", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("an EXISTING doc with a structuredBody refreshes via delta-ops — untargeted sections byte-identical", async () => {
@@ -567,13 +566,13 @@ describe("runReflection — delta-ops refresh vs fresh synth (REFLECT-04)", () =
 });
 
 // ---------------------------------------------------------------------------
-// Profile-supersede routing (FOLD-01) — a profile/topic CORRECTION of an EXISTING
+// Profile-supersede routing — a profile/topic CORRECTION of an EXISTING
 // doc routes through store.supersede (bi-temporal history-append), NOT admit (the
 // destructive upsert). A NEW profile/topic doc still admits; a skill (any prior)
-// still admits — kind:skill is byte-identical with 223 (no supersede).
+// still admits — kind:skill never supersedes.
 // ---------------------------------------------------------------------------
 
-describe("runReflection — profile/topic supersede routing (FOLD-01)", () => {
+describe("runReflection — profile/topic supersede routing", () => {
   beforeEach(() => vi.clearAllMocks());
 
   const priorProfile = (): StructuredBody => ({
@@ -671,7 +670,7 @@ describe("runReflection — profile/topic supersede routing (FOLD-01)", () => {
     expect(supersede).not.toHaveBeenCalled();
   });
 
-  it("a SKILL correction of an EXISTING doc still ADMITs (kind:skill is byte-identical — never supersede)", async () => {
+  it("a SKILL correction of an EXISTING doc still ADMITs (kind:skill never routes through supersede)", async () => {
     const mocks: Partial<Mocks> = {};
     const prior = priorProfile();
     const get = vi.fn(async () => ok({ ...existingProfileDoc(prior), kind: "skill" as const, name: "skill-tk", topicKey: "tk" }));
@@ -729,10 +728,10 @@ describe("runReflection — profile/topic supersede routing (FOLD-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Empty-content guard (REFLECT-05)
+// Empty-content guard
 // ---------------------------------------------------------------------------
 
-describe("runReflection — empty-content guard (REFLECT-05)", () => {
+describe("runReflection — empty-content guard (prior doc survives)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("an LLM reflection returning {} → store.admit NOT called (the prior doc survives), recorded empty_reflection", async () => {
@@ -834,10 +833,10 @@ describe("runReflection — empty-content guard (REFLECT-05)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Validate + admit + idempotency (REFLECT-06)
+// Validate + admit + idempotency
 // ---------------------------------------------------------------------------
 
-describe("runReflection — validate-then-admit + idempotency (REFLECT-06)", () => {
+describe("runReflection — validate-then-admit + idempotency", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("a clean body admits at proofCount LOW (1), kind:skill, topicKey set, structuredBody populated; trust/state store-forced (not supplied)", async () => {
@@ -862,7 +861,7 @@ describe("runReflection — validate-then-admit + idempotency (REFLECT-06)", () 
     expect(admitArg.mutating).toBe(false);
     expect(typeof admitArg.topicKey).toBe("string");
     expect(admitArg.topicKey.length).toBeGreaterThan(0);
-    // WR-01: the doc name embeds the FULL topicKey (name↔topicKey bijective) — no
+    // The doc name embeds the FULL topicKey (name↔topicKey bijective) — no
     // 16-char truncation, so two near-colliding topicKeys can never share a name.
     expect(admitArg.name).toBe(`skill-${admitArg.topicKey}`);
     expect(admitArg.structuredBody.sections).toHaveLength(2);
@@ -925,7 +924,7 @@ describe("runReflection — validate-then-admit + idempotency (REFLECT-06)", () 
     expect(r2.value.admitted).toBe(0);
   });
 
-  it("does NOT emit any learning:skill_* event from the job (the daemon emits, Plan 05)", async () => {
+  it("does NOT emit any learning:skill_* event from the job (only the daemon emits them)", async () => {
     const emit = vi.fn();
     const deps = makeDeps(
       [
@@ -941,12 +940,10 @@ describe("runReflection — validate-then-admit + idempotency (REFLECT-06)", () 
 });
 
 // ===========================================================================
-// Phase 225 — the I7 FOLD: kind-generic engine (Test A), the FOLD-04 second
-// anti-poison axis (Test C, the load-bearing GAP-3), the session-origin axis
-// extended to the new kinds (Test B regression), and the rejected_validation
-// path for the new kinds (Test D). These are RED on the pre-patch engine — the
-// `kind`/`groupKey`/`prompt`/`sourceTrustExternal` seams do not exist yet, so
-// they compile-fail (the correct RED, Tests-First).
+// Kind-generic engine: kind threading across skill/profile/topic, the second
+// anti-poison axis (per-memory source-trust), the session-origin axis
+// extended to the profile/topic kinds, and the rejected_validation
+// path for those kinds.
 // ===========================================================================
 
 /**
@@ -956,7 +953,7 @@ describe("runReflection — validate-then-admit + idempotency (REFLECT-06)", () 
  */
 const ONE_GROUP = (): string => "the-one-group";
 
-describe("runReflection — Phase 225 FOLD: kind threading (Test A)", () => {
+describe("runReflection — kind threading across skill/profile/topic", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("kind:'profile' + a per-kind groupKey admits a doc named profile-<key> with admit kind:'profile'", async () => {
@@ -980,7 +977,7 @@ describe("runReflection — Phase 225 FOLD: kind threading (Test A)", () => {
     expect(mocks.admit).toHaveBeenCalledTimes(1);
     const admitArg = (mocks.admit as Mock).mock.calls[0][0];
     // The admit carries the THREADED kind, and the doc name embeds the kind prefix
-    // (so (tenant, agent, kind, name) stays unique across kinds — WR-01).
+    // (so (tenant, agent, kind, name) stays unique across kinds).
     expect(admitArg.kind).toBe("profile");
     expect(admitArg.name).toBe("profile-the-one-group");
   });
@@ -1027,18 +1024,18 @@ describe("runReflection — Phase 225 FOLD: kind threading (Test A)", () => {
 });
 
 // ===========================================================================
-// WR-01 (Phase 225 review): a profile groupKey is the RAW userId (NOT a hashed
+// A profile groupKey is the RAW userId (NOT a hashed
 // topicKey — `setup-channels-memory-crons-wire.ts` sets `groupKey: (t) => t.sender`).
 // An unbounded `profile-<rawUserId>` doc name can exceed MAX_DOC_NAME_LENGTH (120)
 // for a legitimate long sender id (a namespaced/email-channel address), at which
 // point `validateLearnedDocBody` rejects it AFTER the reflect call burned an LLM
 // call — and reports the silent drop as `rejected_validation` (a poison verdict),
-// not a name-length problem. The fix bounds the NAME (hash the group key into the
+// not a name-length problem. So the NAME is bounded (hash the group key into the
 // name when it would overflow) while KEEPING the raw userId on the `topicKey`
 // column so the `<user_profile>` read selector (`d.topicKey === userId`,
-// prompt-assembly.ts) still resolves. RED on the pre-patch unbounded name.
+// prompt-assembly.ts) still resolves.
 // ===========================================================================
-describe("runReflection — Phase 225 WR-01: a long-userId profile name is bounded (admitted, not rejected_validation)", () => {
+describe("runReflection — a long-userId profile name is bounded (admitted, not rejected_validation)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   // A legitimate long sender id (> MAX_DOC_NAME_LENGTH - "profile-".length = 112)
@@ -1083,10 +1080,10 @@ describe("runReflection — Phase 225 WR-01: a long-userId profile name is bound
   });
 });
 
-describe("runReflection — Phase 225 FOLD: FOLD-04 axis 1 (session origin) for profile/topic (Test B regression)", () => {
+describe("runReflection — anti-poison axis 1 (session origin) for profile/topic", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("an UNTRUSTED-origin source seeds NOTHING for kind:'profile' (the 223 INV-5 belt holds across kinds)", async () => {
+  it("an UNTRUSTED-origin source seeds NOTHING for kind:'profile' (the session-origin belt holds across kinds)", async () => {
     const mocks: Partial<Mocks> = {};
     const deps = makeDeps(
       [
@@ -1121,13 +1118,13 @@ describe("runReflection — Phase 225 FOLD: FOLD-04 axis 1 (session origin) for 
   });
 });
 
-describe("runReflection — Phase 225 FOLD-04 axis 2: per-memory source-trust (Test C, the load-bearing GAP-3)", () => {
+describe("runReflection — anti-poison axis 2: per-memory source-trust", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("an EXTERNAL-trust source riding a TRUSTED session seeds NOTHING — store.admit never called (both axes compose)", async () => {
     const mocks: Partial<Mocks> = {};
     // BOTH sources ride a trustedOrigin:true session (axis 1 passes) BUT carry the
-    // per-memory external source-trust marker (axis 2 must fail-close). Pitfall 2:
+    // per-memory external source-trust marker (axis 2 must fail-close):
     // a planted `external` memory can ride a trusted session — the second exclude
     // is what stops it. WOULD corroborate (2 distinct (session,sender)) if admitted.
     const deps = makeDeps(
@@ -1190,7 +1187,7 @@ describe("runReflection — Phase 225 FOLD-04 axis 2: per-memory source-trust (T
   });
 });
 
-describe("runReflection — Phase 225 FOLD: rejected_validation for profile/topic (Test D)", () => {
+describe("runReflection — rejected_validation for profile/topic", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("a kind:'profile' body carrying a CRITICAL poison pattern is rejected (admit never called, rejected_validation)", async () => {
@@ -1218,24 +1215,21 @@ describe("runReflection — Phase 225 FOLD: rejected_validation for profile/topi
 });
 
 // ===========================================================================
-// Phase 225 Plan 03 — the kind:topic fold (FOLD-02 + FOLD-03).
+// The kind:topic doc family.
 //
 //  - The ≥2-distinct (session,sender) GATE for kind:topic is the SAME skill gate
 //    (distinctSenderCardinality >= 2) — a single-(session,sender) topic yields NO
-//    doc (BOTH directions, mirroring the skill INV-2 cases).
-//  - The FOLD-03 topic content-EQUIVALENCE: the kind:topic doc reproduces the
-//    consolidation/reasoning observation generalization content equivalent-or-
-//    better. The oracle CAPTURES the pre-fold observation content (the
-//    `generalization`/`inductive` statements the consolidation+reasoning jobs would
-//    have written — lifted from memory-consolidation-job.test.ts's
-//    "alice prefers concise answers in general" generalization fixture) as the
+//    doc (BOTH directions, mirroring the skill anti-domination cases).
+//  - Topic content-EQUIVALENCE: the kind:topic doc is the observation recall
+//    medium, so it must carry the higher-order generalization + inductive-tendency
+//    content a corroborated cluster supports. The oracle CAPTURES that content as
+//    a fixed
 //    equivalence TARGET, then asserts the admitted kind:topic doc's body COVERS that
-//    generalization content (content-equivalence, NOT recall-path — per the resolved
-//    decision; ranked top-K is the documented future mitigation). The RED fires if
-//    the generalization content is dropped from the doc body.
+//    generalization content (content-equivalence, NOT recall-path).
+//    The assertion fails if the generalization content is dropped from the doc body.
 // ===========================================================================
 
-describe("runReflection — Phase 225 FOLD: kind:topic ≥2-distinct gate (FOLD-02, BOTH directions)", () => {
+describe("runReflection — kind:topic ≥2-distinct gate (BOTH directions)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("kind:'topic' with ≥2 distinct (session,sender) on one topic seeds a doc (the skill gate holds for topic)", async () => {
@@ -1262,7 +1256,7 @@ describe("runReflection — Phase 225 FOLD: kind:topic ≥2-distinct gate (FOLD-
   it("kind:'topic' with a SINGLE (session,sender) repeated N times seeds NO doc (cardinality 1, uncorroborated)", async () => {
     const mocks: Partial<Mocks> = {};
     // 5 sources, SAME topic group, SAME (session,sender) — an attacker repeating one
-    // observation N times must NOT corroborate a topic doc (the INV-2 anti-domination
+    // observation N times must NOT corroborate a topic doc (the anti-domination
     // gate, identical to skill — NOT the profile per-session interpretation).
     const trajectories = Array.from({ length: 5 }, (_, i) =>
       traj({ trajectoryId: `topic-dom-${i}`, sessionId: "sess-A", sender: "u1", signature: `cluster ${i}` }),
@@ -1285,28 +1279,25 @@ describe("runReflection — Phase 225 FOLD: kind:topic ≥2-distinct gate (FOLD-
   });
 });
 
-describe("runReflection — Phase 225 FOLD-03: kind:topic content-equivalence (the pre-fold observation oracle)", () => {
+describe("runReflection — kind:topic content-equivalence (the captured observation oracle)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   /**
-   * The CAPTURED pre-fold observation content — the equivalence TARGET. These are
-   * the higher-order generalization + inductive-tendency statements the OLD
-   * consolidation (`observationKind:"generalization"`) + reasoning
-   * (`observationKind:"inductive"`) jobs would have written as `memories` rows for a
-   * corroborated cluster (lifted from memory-consolidation-job.test.ts's
-   * "alice prefers concise answers in general" generalization fixture). The fold
-   * must reproduce THIS content in the kind:topic doc body (equivalent-or-better).
-   * We assert against this captured target, NEVER a snapshot of the new doc (which
-   * would false-green a regression that dropped the content).
+   * The CAPTURED observation content — the equivalence TARGET: the
+   * higher-order generalization + inductive-tendency statements a corroborated
+   * cluster jointly supports. The kind:topic doc
+   * must reproduce THIS content in its body (equivalent-or-better).
+   * We assert against this captured target, NEVER a snapshot of the produced doc
+   * (which would false-green a regression that dropped the content).
    */
   const PRE_FOLD_GENERALIZATION = "Alice prefers concise answers in general.";
   const PRE_FOLD_INDUCTIVE_TENDENCY = "Alice tends to ask follow-up questions before acting.";
 
-  it("the admitted kind:'topic' doc body covers the pre-fold generalization + inductive observation content (equivalent-or-better)", async () => {
+  it("the admitted kind:'topic' doc body covers the captured generalization + inductive observation content (equivalent-or-better)", async () => {
     const mocks: Partial<Mocks> = {};
-    // The mocked reflect returns a {sections} body covering the SAME generalization
-    // the consolidation+reasoning jobs produced — the topic doc IS the observation
-    // recall medium now (the design's one-store unification). The RED fires if the
+    // The mocked reflect returns a {sections} body covering the captured
+    // generalization content — the topic doc IS the observation
+    // recall medium (one store for all doc families). The assertion fails if the
     // engine drops/omits the generalization content from the admitted body.
     const reflect = vi.fn(async () =>
       ok({
@@ -1336,7 +1327,7 @@ describe("runReflection — Phase 225 FOLD-03: kind:topic content-equivalence (t
     // The admitted doc is a kind:topic Mental Model (the observation recall medium).
     expect(admitArg.kind).toBe("topic");
     // CONTENT-equivalence: the rendered body covers BOTH the captured generalization
-    // and the captured inductive tendency the pre-fold jobs would have produced.
+    // and the captured inductive tendency.
     expect(admitArg.body).toContain(PRE_FOLD_GENERALIZATION);
     expect(admitArg.body).toContain(PRE_FOLD_INDUCTIVE_TENDENCY);
     // The structured AST preserves the generalization section verbatim (no lossy drop).
@@ -1346,7 +1337,7 @@ describe("runReflection — Phase 225 FOLD-03: kind:topic content-equivalence (t
     expect(genSection?.body).toContain(PRE_FOLD_GENERALIZATION);
   });
 
-  it("a kind:'topic' reflection that DROPS the generalization content admits no equivalent doc (the RED-side guard)", async () => {
+  it("a kind:'topic' reflection that DROPS the generalization content admits no equivalent doc (negative direction)", async () => {
     const mocks: Partial<Mocks> = {};
     // The negative direction: a reflection that returns an EMPTY body (the
     // generalization content lost) → the empty-content guard skips the admit, so
@@ -1372,16 +1363,16 @@ describe("runReflection — Phase 225 FOLD-03: kind:topic content-equivalence (t
 });
 
 // ---------------------------------------------------------------------------
-// GROUP merge: differently-worded analogues corroborate (the under-merge fix). The
+// GROUP merge: differently-worded analogues corroborate. The
 // token-SET hash requires IDENTICAL token sets, so two genuinely-same-task successes
-// worded differently land on SEPARATE topicKeys → each group card 1 → `uncorroborated`,
-// admitted:0 (the clustering-dead symptom re-lived from the other direction). A
+// worded differently would land on SEPARATE topicKeys → each group card 1 → `uncorroborated`,
+// admitted:0 — the under-merge failure mode. A
 // deterministic, embedding-free token-overlap (Jaccard) merge of the groups unions the
 // analogues → card 2 → admit, WITHOUT over-merging genuinely-different tasks (low overlap stays separate).
 // ---------------------------------------------------------------------------
 describe("runReflection — analogous-signature merge (under-merge fix)", () => {
   // Same dispatch task worded two ways: share most content tokens, differ only in the
-  // unit/incident specifics. Pre-fix: 2 distinct token-SET hashes → maxCard 1 → uncorroborated.
+  // unit/incident specifics. Without the merge: 2 distinct token-SET hashes → maxCard 1 → uncorroborated.
   const SIG_FIRE = "dispatch the closest fire engine across the river during evening rush hour avoiding the bridge";
   const SIG_MEDIC = "dispatch the closest medic unit across the river during evening rush hour avoiding the bridge";
   // A genuinely-different task (low token overlap) — must NOT merge with the dispatch ones.

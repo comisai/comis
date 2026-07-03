@@ -179,10 +179,10 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
         }
       }
 
-      // CR-01: project the per-tool even-split (HG-01 aggregateToolCostByAgent) as
-      // `tools[]`. The persisted COST-01 `tool_tag` is the only honest source —
-      // surfaced here so the billing per-tool table renders REAL data instead of the
-      // permanent empty it showed before (the connective tissue COST-01 lacked).
+      // Project the per-tool even-split (aggregateToolCostByAgent) as
+      // `tools[]`. The persisted `tool_tag` is the only honest source —
+      // surfaced here so the billing per-tool table renders REAL data instead of
+      // a permanent empty.
       // Present-only when non-empty: an agent with no tagged rows omits the key
       // entirely (the view's narrower treats absent === empty), never a fabricated
       // empty-but-present array dressed as data. Content-free (tool names + numbers).

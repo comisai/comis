@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * iMessage AppendOnly renderer tests (§18.3 iMessage column).
+ * iMessage AppendOnly renderer tests.
  *
  * iMessage is send-only — it has no in-place edit and no delete, so it wires the
  * AppendOnly strategy: ONE opening status (the first non-trivial frame),
@@ -10,13 +10,13 @@
  * `classifyIMessageError` — the live adapter wraps send failures in
  * `new Error("Failed to send iMessage: …")` with no structured numeric code, so
  * the classifier defaults to `internal` and reads the error structurally ONLY
- * (never renders the `.message` as activity text — §19.3).
+ * (never renders the `.message` as activity text).
  * `makeIMessageRenderActions` maps `send` through it and guards the absent
  * `editMessage` / `deleteMessage`; `createIMessageActivityRenderer` wires the
  * `createAppendOnlyRenderer` (no duplicated state machine, NO timer/clock).
  *
  * Golden fixtures assert via readFixture + toEqual (NEVER an auto-writing
- * inline/file snapshot, which self-heals a wrong fixture — Pitfall 3).
+ * inline/file snapshot, which self-heals a wrong fixture).
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityRenderFrame, ActivityEvent, TurnOutcome, FinalDeliveryReceipt } from "@comis/core";
@@ -61,7 +61,7 @@ function okReceipt(deliveredAtMs: number): FinalDeliveryReceipt {
   return { ok: true, deliveredChunks: 1, lastChunkMessageId: "msg-final", deliveredAtMs };
 }
 
-// --- Task 1: classifyIMessageError + makeIMessageRenderActions -------------
+// --- classifyIMessageError + makeIMessageRenderActions ----------------------
 
 describe("classifyIMessageError (structural only, never the message string)", () => {
   it("maps an unknown bare Error to internal carrying the cause (iMessage has no numeric code)", () => {
@@ -147,9 +147,9 @@ describe("createIMessageActivityRenderer (AppendOnly wiring)", () => {
 
     const sends = fake.recorded.calls.filter((c) => c.op === "send");
     expect(sends).toHaveLength(1);
-    // [Rule 1 — bug fix, quick-260528-nsv] First frame's event line carries
-    // the running 🔧 marker; the post-once / no-spam invariant is the
-    // load-bearing assertion (`sends.length === 1`).
+    // The first frame's event line carries the running 🔧 marker; the
+    // post-once / no-spam invariant is the load-bearing assertion
+    // (`sends.length === 1`).
     expect(sends[0]).toEqual({ op: "send", id: "imsg-msg-0", text: "🔧 step 1" });
   });
 
@@ -187,7 +187,7 @@ describe("createIMessageActivityRenderer (AppendOnly wiring)", () => {
   });
 });
 
-// --- Task 2: 11 golden fixtures (S1-S7, S9-S12; no S8) ---------------------
+// --- 11 golden fixtures (S1-S7, S9-S12; no S8) ------------------------------
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeIMessageAdapter>): unknown {
@@ -226,7 +226,7 @@ function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
 
 const okFinal = (deliveredAtMs: number): FinalDeliveryReceipt => okReceipt(deliveredAtMs);
 
-describe("iMessage golden fixtures (§18.3 AppendOnly rows — readFixture + toEqual)", () => {
+describe("iMessage golden fixtures (AppendOnly rows — readFixture + toEqual)", () => {
   it("S1 trivial chat — zero renderer messages (kind:success trivial, no frame ever applied)", async () => {
     const log = await runScenario([], { kind: "success", trivial: true, delivery: okFinal(0) });
     expect(log).toEqual(readFixture("imessage", "S1"));

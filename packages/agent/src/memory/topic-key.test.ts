@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED stress test for {@link normalizeOpeningRequest} (Phase 223, REFLECT-02) —
- * the clustering-replacement guard. This is the milestone's concentrated risk: the
- * deterministic `topicKey` REPLACES embedding-cosine clustering. If two genuinely
+ * Stress test for {@link normalizeOpeningRequest} —
+ * the topicKey collision guard. This is the keyless approach's concentrated
+ * risk: if two genuinely
  * same-topic sessions worded DIFFERENTLY land on DIFFERENT keys, corroboration
- * never reaches >=2 distinct (session,sender) and `admitted:0` persists forever —
- * the exact failure embedding clustering had, now re-lived from the other direction.
+ * never reaches >=2 distinct (session,sender) and `admitted:0` persists forever.
  *
- * The four load-bearing properties this suite pins (D-01):
+ * The four load-bearing properties this suite pins:
  *  - SAME key for same-topic-differently-worded (order-insensitive token SET; the
  *    collision-maximizing decision — "deploy the app" and "app deploy please" MUST
  *    collide; a token-SEQUENCE hash does NOT).
@@ -16,7 +15,7 @@
  *    `[telegram] <id> (9:34 AM):` channel header are stripped BEFORE hashing, so the
  *    SAME request at a different time collides (raw-text clustering failed live
  *    2026-06-25 because the per-turn timestamp made identical requests differ).
- *  - Content-light (INV-6): the returned key is a sha256 hex, NEVER the raw
+ *  - Content-light: the returned key is a sha256 hex, NEVER the raw
  *    transcript — it must not leak `"deploy"` verbatim into telemetry.
  */
 import { describe, it, expect } from "vitest";
@@ -44,7 +43,7 @@ function withEnvelope(message: string, clockLabel: string): string {
   ].join("\n");
 }
 
-describe("normalizeOpeningRequest (Phase 223 — the clustering-replacement topicKey guard)", () => {
+describe("normalizeOpeningRequest (the topicKey collision guard)", () => {
   it("SAME key for the same topic worded differently (order-insensitive token set)", () => {
     // All three are "deploy the app to production"; "please"/"the"/"to" are stopwords,
     // word ORDER differs. A token-SET hash collapses them; a sequence hash would not.
@@ -84,7 +83,7 @@ describe("normalizeOpeningRequest (Phase 223 — the clustering-replacement topi
     expect(morning).toBe(bare);
   });
 
-  it("content-light (INV-6): the key is a hash, never the raw transcript", () => {
+  it("content-light: the key is a hash, never the raw transcript", () => {
     const key = normalizeOpeningRequest("deploy the app to production");
     expect(key.includes("deploy")).toBe(false);
     expect(key.includes("production")).toBe(false);
@@ -132,7 +131,7 @@ describe("openingRequestTokens", () => {
   });
 });
 
-describe("stemToken + morphological collapse (REFLECT-02b — the keyless semantic-matching slice)", () => {
+describe("stemToken + morphological collapse (the keyless semantic-matching slice)", () => {
   it("collapses verb inflections to one stem (deliver/delivered/delivering)", () => {
     expect(stemToken("delivering")).toBe("deliver");
     expect(stemToken("delivered")).toBe("deliver");
@@ -160,15 +159,15 @@ describe("stemToken + morphological collapse (REFLECT-02b — the keyless semant
     const stems = distinct.map(stemToken);
     expect(new Set(stems).size).toBe(distinct.length); // all still unique
   });
-  it("two genuinely-same-task openings worded with morphology variation now collide on ONE topicKey (the whole point)", () => {
-    // Pre-stemming these carried DIFFERENT token sets ({deliver,package} vs {delivering,packages}) and
-    // landed on separate topicKeys → never reached the corroboration gate. Now they collide.
+  it("two genuinely-same-task openings worded with morphology variation collide on ONE topicKey (the whole point)", () => {
+    // Without stemming these carry DIFFERENT token sets ({deliver,package} vs {delivering,packages}) and
+    // land on separate topicKeys → they would never reach the corroboration gate. Stemming makes them collide.
     const a = normalizeOpeningRequest("deliver the package");
     const b = normalizeOpeningRequest("delivering the packages");
     expect(a).toBe(b);
     expect(a.length).toBeGreaterThan(0);
   });
-  it("a behavioral reuse worded with morphology variation now CREDITS the skill", () => {
+  it("a behavioral reuse worded with morphology variation CREDITS the skill", () => {
     // Core stored from openings that said "deliver"/"package"/"office"; a reuse says the inflected forms.
     const core = openingRequestTokens("deliver the package to the office"); // ["deliver","office","package"]
     const surfaced = [{ name: "skill-deliver", topicTokens: core }];
@@ -238,7 +237,7 @@ describe("commonCoreTokens", () => {
 
 describe("topicMatchedSkillNames", () => {
   // A skill's stored topicTokens are the CORE (the shared procedure) — what commonCoreTokens yields.
-  const ROUTING_CORE = ["across", "avoid", "bridge", "dispatch", "evening", "river", "rush"]; // "avoid": commonCoreTokens stems "avoiding" (REFLECT-02b)
+  const ROUTING_CORE = ["across", "avoid", "bridge", "dispatch", "evening", "river", "rush"]; // "avoid": commonCoreTokens stems "avoiding"
   const surfaced = [
     { name: "skill-routing", topicTokens: ROUTING_CORE },
     { name: "skill-legacy", topicTokens: undefined }, // a legacy/seeded doc with no stored topic set
@@ -255,9 +254,9 @@ describe("topicMatchedSkillNames", () => {
 
   it("credits a behavioral reuse that covers ~half the core (synonym/framing variation) but NOT an unrelated/different-task turn", () => {
     // A 10-token behavioral core (a threat-hunting TTP). A genuine reuse worded with synonyms +
-    // different framing covers ~0.5 of it (live: incident-3 landed at exactly 0.50) — it MUST credit.
-    // An unrelated turn (~0) and a similar-but-DIFFERENT TTP (~0.2-0.3) must NOT. Pre-fix (threshold 0.6)
-    // the genuine reuse at 0.5 was MISSED → the learned skill never promoted on a real behavioral instance.
+    // different framing covers ~0.5 of it (observed live at exactly 0.50) — it MUST credit.
+    // An unrelated turn (~0) and a similar-but-DIFFERENT TTP (~0.2-0.3) must NOT. At a 0.6 threshold
+    // the genuine reuse at 0.5 would be MISSED → the learned skill never promotes on a real behavioral instance.
     const ttp = [
       { name: "skill-ttp", topicTokens: ["credential", "dwell", "weekend", "pivot", "psexec", "lateral", "lsass", "fileserver", "domainadmin", "contain"] },
     ];
@@ -292,7 +291,7 @@ describe("topicMatchedSkillNames", () => {
     const bigCore = [
       "lsass", "credential", "dump", "dwell", "weekend", "psexec", "pivot", "fileserver", "domainadmin", "stolen",
       "lateral", "movement", "campaign", "contain", "sequence", "offhours", "soc", "triage", "host", "verdict",
-      "artifact", "rotat", "record", "memory", "rely", "change", "week", "test", "account", "tool", // "artifact"/"rotat"/"tool": stemmed (REFLECT-02b)
+      "artifact", "rotat", "record", "memory", "rely", "change", "week", "test", "account", "tool", // "artifact"/"rotat"/"tool": stemmed forms
     ]; // 30 tokens
     const big = [{ name: "skill-ttp", topicTokens: bigCore }];
     // A SHORT triage turn: shares ~10 DISTINCTIVE behavioral tokens but only ~0.33 of the 30-token core —
@@ -306,13 +305,13 @@ describe("topicMatchedSkillNames", () => {
   });
 });
 
-// topicMatchScores (obs-sweep finding A): the OBSERVABILITY companion to topicMatchedSkillNames.
+// topicMatchScores: the OBSERVABILITY companion to topicMatchedSkillNames.
 // Returns a score PER surfaced skill (coverage + sharedCount + credited + hasTopicTokens) so the
 // reuse-attribution NEAR-MISSES — a surfaced skill that just missed the credit bar, or a legacy
 // doc with no topicTokens — become visible (a memory.skill_surfaced trajectory record), instead of
 // silently producing nothing. topicMatchedSkillNames is the credited subset of these scores.
 describe("topicMatchScores", () => {
-  const ROUTING_CORE = ["across", "avoid", "bridge", "dispatch", "evening", "river", "rush"]; // "avoid": commonCoreTokens stems "avoiding" (REFLECT-02b)
+  const ROUTING_CORE = ["across", "avoid", "bridge", "dispatch", "evening", "river", "rush"]; // "avoid": commonCoreTokens stems "avoiding"
   const surfaced = [
     { name: "skill-routing", topicTokens: ROUTING_CORE },
     { name: "skill-legacy", topicTokens: undefined }, // legacy/seeded doc with no stored topic set

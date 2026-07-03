@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeLineAdapter — a deterministic, clock-free `ChannelPort` test double for the
- * LINE AppendOnly renderer (§18.1 "fake adapter records every method call").
+ * LINE AppendOnly renderer; it records every method call.
  *
  * Mirrors `createFakeSignalAdapter` (the non-EditPlace template) but for the
  * AppendOnly shape:
- *   - mints `line-msg-N` ids (LINE's determinism source for byte-stable fixtures
- *     — Pitfall 2; clock-free, no wall-time call that would flap),
+ *   - mints `line-msg-N` ids (LINE's determinism source for byte-stable fixtures;
+ *     clock-free, no wall-time call that would flap),
  *   - records NO `silent` flag on `send` (LINE does not send the silent effect —
  *     AppendOnly posts a single plain opening status), and
  *   - OMITS `editMessage` / `deleteMessage` entirely. LINE is send-only; the live

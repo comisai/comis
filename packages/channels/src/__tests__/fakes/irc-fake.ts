@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeIrcAdapter — a deterministic, clock-free `ChannelPort` test double for the
- * IRC LinePerEvent renderer (§18.1 "fake adapter records every method call").
+ * IRC LinePerEvent renderer; it records every method call.
  *
  * Mirrors `createFakeSignalAdapter` (the non-EditPlace template) but for the
  * LinePerEvent shape:
@@ -9,7 +9,7 @@
  *     synthetic id `"sent"` for EVERY message (IRC has no standard message ids),
  *     which would collapse a multi-line call-log into indistinguishable rows. The
  *     fake mints per-call `irc-msg-0`, `irc-msg-1`, … instead so the byte-stable
- *     fixture reads unambiguously (Pitfall 2; clock-free, no wall-time call that
+ *     fixture reads unambiguously (clock-free, no wall-time call that
  *     would flap).
  *   - records NO `silent` flag on `send` (IRC has no rich effects — the
  *     LinePerEvent strategy posts one plain line per event), and

@@ -82,7 +82,7 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
   // runs once and registers the method under that scope. For multi-scope
   // contracts (none today; future-proof) the method registers separately
   // under each scope.
-  // ORIGIN-02 (v8 section 3.1): strip INTERNAL_FIELD_NAMES from external
+  // Strip INTERNAL_FIELD_NAMES from external
   // WS/REST caller params at BOTH branches before dispatch. External callers
   // must never be able to forge an `_X` control field; in particular, after
   // this strip the PRESENCE of `_agentId` is a sound, unforgeable agent-origin
@@ -91,13 +91,13 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
   // `_trustLevel` is never stripped. The in-process `createAgentRpcCall` path
   // (the legitimate `_agentId` injector) does NOT pass through here.
   for (const c of API_CONTRACTS_ORDERED) {
-    // CAP-03 (gateway leg): M1 (#236) capability-gated the orchestration RPCs
-    // (graph/skills/session.spawn/cron/message-mutate) on the injected
-    // `_capabilities`, but only the in-process agent leg (createAgentRpcCall) and
-    // the jailed-child lease inject it — this gateway leg never did, so every
-    // authenticated operator/dashboard call (and the integration suite) hit
+    // Capability-gated orchestration RPCs
+    // (graph/skills/session.spawn/cron/message-mutate) check the injected
+    // `_capabilities`. Only the in-process agent leg (createAgentRpcCall) and
+    // the jailed-child lease inject it — this gateway leg does not, so every
+    // authenticated operator/dashboard call would hit
     // `Capability denied: orch:*`. `_capabilities` is a stripped internal field
-    // (a client cannot forge it — see the ORIGIN-02 strip below), so inject the
+    // (a client cannot forge it — see the strip below), so inject the
     // method's REQUIRED orch cap server-side here, AFTER the strip. Grant exactly
     // the one cap the method needs (least-privilege), mirroring the agent leg; the
     // gateway boundary is already gated by the token scope, and the capability

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WhatsApp windowed EditPlace activity renderer (§7.2 / §18.2 row
- * "EditPlace"). Copies the Telegram canonical shape with a
- * baileys-specific classifier and the windowing semantics. Three parts:
+ * WhatsApp windowed EditPlace activity renderer. Copies the Telegram
+ * canonical shape with a baileys-specific classifier and the windowing
+ * semantics. Three parts:
  *
  *   1. `classifyWhatsAppError` — the single net-new piece of logic here. WhatsApp
  *      Business edit/delete is WINDOWED (~15 min); baileys offers NO numeric
@@ -16,7 +16,7 @@
  *      connected" Error → `{kind:"transient_network", cause}`. Everything else
  *      (5xx, connection 408/428, unknown) → `{kind:"internal", cause}`. The
  *      message text is consulted only to disambiguate; it is never rendered or
- *      logged (§19.3).
+ *      logged.
  *
  *   2. `makeWhatsAppRenderActions` — the `ActivityRenderActions` adapter. `send`
  *      posts a plain-text placeholder (WhatsApp has NO button surface —
@@ -123,7 +123,7 @@ export function makeWhatsAppRenderActions(
   adapter: ChannelPort,
   channelId: string,
 ): ActivityRenderActions {
-  /** Set once a window-expiry is seen — all further edits are dropped (§drop-on-not_supported). */
+  /** Set once a window-expiry is seen — all further edits are dropped. */
   let editsDropped = false;
 
   return {
@@ -192,7 +192,7 @@ export function createWhatsAppActivityRenderer(
     markers: deps.markers,
     // WhatsApp has no button surface (`buttons:"none"`), so an approval frame
     // appends the plain-text prompt ("Reply approve or deny …", with shortIds when
-    // >1 pending) to the placeholder (§6.4.6). A non-approval frame yields
+    // >1 pending) to the placeholder. A non-approval frame yields
     // "" (the placeholder text stays byte-identical).
     buildPrompt: buildApprovalPrompt,
   });

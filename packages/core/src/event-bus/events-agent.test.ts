@@ -414,11 +414,10 @@ describe("AgentEvents payload structure", () => {
     expect(received.nodesSkipped).toBe(1);
   });
 
-  it("graph:completed carries the COST-02 per-node corrected-$ cost ledger (nodeCost) as a typed optional field", () => {
-    // Type contract: nodeCost is part of EventMap["graph:completed"] (the IN-01
-    // nodeTokenSpend mold). This payload assignment would NOT compile on
-    // pre-patch code (excess-property error) — `tsc` is the RED signal for a
-    // type-only field (AGENTS.md §2.10). Content-free: nodeId → dollars only.
+  it("graph:completed carries the per-node corrected-$ cost ledger (nodeCost) as a typed optional field", () => {
+    // Type contract: nodeCost is part of EventMap["graph:completed"], shaped
+    // like nodeTokenSpend. The typed payload assignment pins the field at
+    // compile time. Content-free: nodeId → dollars only.
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["graph:completed"] = {
@@ -647,21 +646,20 @@ describe("Trajectory observability events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Agent Transparency — EventBus payload contract widening
+// Agent-transparency payload contracts for tool:* and model:* events.
 //
-// These cases pin the §16.11 amendment table for tool:* and model:* payloads.
-// Each fails to compile on the pre-patch event-bus types (RED proof):
-//   - tool:executed without toolCallId (now required) → tsc error
-//   - tool:executed with errorKind "badkind" (now closed ErrorKind union) → tsc error
-//   - tool:started with action/params → field does not exist on pre-patch type
-//   - model:* with agentId/sessionKey/traceId → fields do not exist on pre-patch type
+// These cases pin the payload contract at the type level:
+//   - tool:executed requires toolCallId
+//   - tool:executed constrains errorKind to the closed ErrorKind union
+//   - tool:started carries action + sanitised params
+//   - model:* events carry the turn-scoping ids (agentId/sessionKey/traceId)
 // ---------------------------------------------------------------------------
 
 describe("tool:* payload widening", () => {
   it("tool:executed requires toolCallId and accepts a closed-union errorKind", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
-    // errorKind is now the closed ErrorKind union — "precondition" is a member.
+    // errorKind is the closed ErrorKind union — "precondition" is a member.
     const payload: EventMap["tool:executed"] = {
       toolName: "mcp_manage",
       durationMs: 12,
@@ -693,7 +691,7 @@ describe("tool:* payload widening", () => {
     };
     void bad;
 
-    // @ts-expect-error - toolCallId is now required on tool:executed
+    // @ts-expect-error - toolCallId is required on tool:executed
     bus.emit("tool:executed", {
       toolName: "bash",
       durationMs: 1,
@@ -743,7 +741,7 @@ describe("tool:* payload widening", () => {
     expect(received.filtered[1]?.toolCallId).toBeUndefined();
   });
 
-  it("tool:timeout still accepts its existing shape (no-op widening)", () => {
+  it("tool:timeout accepts its full payload shape (agentId/traceId/toolCallId/timeoutMs)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["tool:timeout"] = {
@@ -847,11 +845,11 @@ describe("model:* turn-scoping", () => {
 // ---------------------------------------------------------------------------
 // Memory recall/rerank/entity-link observability events.
 //
-// Counts/booleans ONLY closed-union payloads. These fail to compile on the
-// pre-patch event-bus types (RED proof): EventMap has no "memory:recalled",
-// "memory:reranked", or "memory:entities_linked" key yet. The shape
-// assertions double as the no-body invariant (the type carries no content /
-// query text / entity-name field; a source-grep test below re-proves it).
+// Counts/booleans ONLY closed-union payloads. The typed payload assignments
+// pin the "memory:recalled", "memory:reranked", and "memory:entities_linked"
+// EventMap keys at compile time. The shape assertions double as the no-body
+// invariant (the type carries no content / query text / entity-name field;
+// a source-grep test below re-proves it).
 // ---------------------------------------------------------------------------
 
 describe("memory:* recall observability events", () => {
@@ -1016,9 +1014,9 @@ describe("memory:* recall observability events", () => {
 // ---------------------------------------------------------------------------
 // memory:recall_used recall-usage attribution event.
 //
-// Counts + memory IDS only. Fails to compile on the pre-patch event-bus types
-// (RED proof): EventMap has no "memory:recall_used" key yet. The shape
-// assertion doubles as the no-body invariant (the type carries no content /
+// Counts + memory IDS only. The typed payload assignment pins the
+// "memory:recall_used" EventMap key at compile time. The shape assertion
+// doubles as the no-body invariant (the type carries no content /
 // response / query field; the source-grep test below re-proves it).
 // ---------------------------------------------------------------------------
 
@@ -1124,17 +1122,17 @@ describe("memory:recall_used recall-usage attribution event", () => {
 // ---------------------------------------------------------------------------
 // The optional intent on memory:recall_used.
 //
-// Additive + forward-only: the payload gains an OPTIONAL `intent?: string` (the
-// deterministic classifyIntent bucket for the recall that produced these ids).
-// When present the daemon write-back records the per-intent bucket; when OMITTED
-// it records the GLOBAL bucket — byte-identical to the prior behaviour, so today's two emit
-// sites compile unchanged. The intent string is metadata (a closed-union
+// The payload carries an OPTIONAL `intent?: string` (the deterministic
+// classifyIntent bucket for the recall that produced these ids).
+// When present the daemon write-back records the per-intent bucket; when
+// OMITTED it records the GLOBAL bucket, so emit sites that never set it are
+// unaffected. The intent string is metadata (a closed-union
 // factual|temporal|preference|enumeration), NOT memory content — ids/counts/
 // intent ONLY ever cross the bus (AGENTS.md §2.7), never bodies/query/response.
 // ---------------------------------------------------------------------------
 
 describe("memory:recall_used optional intent (write bucket)", () => {
-  it("accepts a payload WITH intent:'temporal' AND one WITHOUT intent (additive/byte-identity)", () => {
+  it("accepts a payload WITH intent:'temporal' AND one WITHOUT intent (the field is optional)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
 
@@ -1156,8 +1154,8 @@ describe("memory:recall_used optional intent (write bucket)", () => {
     expect(r.intent).toBe("temporal");
     expectTypeOf(r.intent).toEqualTypeOf<string | undefined>();
 
-    // intent is OPTIONAL — omitting it is byte-identical to the prior behaviour (today's emit
-    // sites compile unchanged; the daemon write-back records the global bucket).
+    // intent is OPTIONAL — when omitted, the daemon write-back records the
+    // global bucket, and emit sites that never set it compile unchanged.
     const noIntent: EventMap["memory:recall_used"] = {
       agentId: "agent-1",
       traceId: "trace-recall-used-intent-002",
@@ -1208,7 +1206,7 @@ describe("memory:recall_used optional intent (write bucket)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEND-05 (Phase 177-01): the 3 counts-only observability:spend_* events.
+// The 3 counts-only observability:spend_* events.
 //
 // Content-free telemetry (AGENTS.md §2.7): dollar amounts ride as NUMBERS, the
 // scope as the closed SpendScopeKind enum ("agent"|"tenant"|"global"), and only
@@ -1379,8 +1377,8 @@ describe("observability:spend_* counts-only events", () => {
 
   it("SpendScopeKind is exported as a shared closed enum (agent|tenant|global)", () => {
     // The scope enum is a closed-union type that rides the wire (mirrors how
-    // AuditKind rides audit:event). The accumulator (Plan 02) and the abort
-    // wiring (Plan 03) import it. Source-grep proves the exported type alias.
+    // AuditKind rides audit:event). The spend accumulator and the abort
+    // wiring import it. Source-grep proves the exported type alias.
     const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
     const noComments = src
       .split(/\r?\n/)
@@ -1455,7 +1453,7 @@ describe("tool:install_detour_detected event type", () => {
 });
 
 // ---------------------------------------------------------------------------
-// subagent:budget_exceeded + enriched graph:node_updated (BUDGET-03).
+// subagent:budget_exceeded + enriched graph:node_updated.
 // Counts/ids-only event mirroring memory:consolidated; the hygiene pin keeps
 // task/output/body fields off the breach payload (AGENTS.md §2.7).
 // ---------------------------------------------------------------------------
@@ -1514,7 +1512,7 @@ describe("subagent:budget_exceeded event type", () => {
 });
 
 // ---------------------------------------------------------------------------
-// subagent:delivery_retried + subagent:delivery_deadlettered (DELIVERY-02/03).
+// subagent:delivery_retried + subagent:delivery_deadlettered.
 // Counts/ids-only events mirroring subagent:budget_exceeded — ids + attempt
 // count + a closed-union `transient` tag + timestamp ONLY. The hygiene pin
 // keeps announcement text / error strings / bodies off the payload (§2.7).
@@ -1614,7 +1612,7 @@ describe("subagent:delivery_deadlettered event type", () => {
   });
 });
 
-describe("graph:node_updated enriched with tokensUsed/cost (BUDGET-03)", () => {
+describe("graph:node_updated enriched with tokensUsed/cost", () => {
   it("carries optional tokensUsed and cost and a listener reads them", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -1650,7 +1648,7 @@ describe("graph:node_updated enriched with tokensUsed/cost (BUDGET-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// security:sandbox_downgrade_refused (SANDBOX-03). A fail-closed spawn refusal
+// security:sandbox_downgrade_refused. A fail-closed spawn refusal
 // emits this typed event carrying BOTH postures as enum tuples + the violated
 // dimensions + agent ids — labels only, NO secrets (no paths/hosts/uids-as-
 // values/credentials). Mirrors the security:injection_detected family shape and
@@ -1716,7 +1714,8 @@ describe("security:sandbox_downgrade_refused event type", () => {
 
   it("runtime payload exposes ONLY enum labels + ids + timestamp — every posture value is an allowed enum label and no key is secret-shaped", () => {
     // Runtime structural no-secrets assertion (the §2.7 discipline, mirroring
-    // the 170/171 events). Serialize the payload and assert (a) no key matches
+    // the sibling security:injection_detected / tool:install_detour_detected
+    // event assertions). Serialize the payload and assert (a) no key matches
     // a secret-shaped name, and (b) every posture value is one of the allowed
     // closed-union enum labels — never a path/host/uid value.
     const payload: EventMap["security:sandbox_downgrade_refused"] = {

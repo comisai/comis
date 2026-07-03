@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 — operator-opt-in DEFAULT-ON (per-agent `defaultChannelEnabled`)
+ * Operator-opt-in DEFAULT-ON (per-agent `defaultChannelEnabled`)
  * with per-channel opt-OUT.
  *
- * The shipped Day-0 posture is fail-CLOSED (every renderer off until explicitly
+ * The shipped default posture is fail-CLOSED (every renderer off until explicitly
  * enabled — see `default-off` + `absent-agent` guards). This adds the additive
  * operator control an operator sets to flip THEIR agent to default-ON: when
  * `activity.defaultChannelEnabled === true`, a renderer with NO explicit
@@ -116,7 +116,7 @@ async function framesForAgents(agents: AgentActivityConfigMap): Promise<number> 
   return n;
 }
 
-describe("§22.2 defaultChannelEnabled: operator opt-in to default-ON with per-channel opt-out", () => {
+describe("defaultChannelEnabled: operator opt-in to default-ON with per-channel opt-out", () => {
   it("renders for a renderer with NO explicit channels entry when defaultChannelEnabled is true", async () => {
     const agents: AgentActivityConfigMap = {
       default: { activity: { defaultChannelEnabled: true, channels: {} } },

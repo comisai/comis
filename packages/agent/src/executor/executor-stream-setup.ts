@@ -120,7 +120,7 @@ export interface StreamSetupParams {
   /**
    * ModelProfile resolved once per execution in pi-executor.ts.
    * Threaded into RequestBodyInjectorConfig so the factory and
-   * tool-deferral-injection use capability flags (L1/L2 — Phase 155-01)
+   * tool-deferral-injection use capability flags
    * instead of provider-string predicates.
    */
   modelProfile?: ModelProfile;
@@ -173,13 +173,13 @@ export interface StreamSetupResult {
   /** Shared mutable TTL split estimate, populated by requestBodyInjector,
    *  consumed by pi-event-bridge on turn_end for per-TTL cost calculation. */
   ttlSplit: TtlSplitEstimate;
-  /** Phase 166: mutable ref for assembled input tokens (set by lcd-assembler via onAssembledInputTokens).
+  /** Mutable ref for assembled input tokens (set by lcd-assembler via onAssembledInputTokens).
    *  Exposed so pi-executor.ts can wire the callback into setupContextEngine. */
   assembledInputTokensRef: { current: number };
-  /** Phase 166: mutable ref for effective window (set by lcd-assembler via onEffectiveWindow).
+  /** Mutable ref for effective window (set by lcd-assembler via onEffectiveWindow).
    *  Exposed so pi-executor.ts can wire the callback into setupContextEngine. */
   effectiveWindowRef: { current: number };
-  /** Phase 166 CR-02: mutable ref for reasoning-aware output headroom.
+  /** Mutable ref for reasoning-aware output headroom.
    *  Initialised to MIN_VISIBLE_OUTPUT_TOKENS (768). pi-executor.ts updates it via
    *  computeOutputHeadroom(reasoningStyle, thinkingLevel) in the onEffectiveWindow
    *  and onThinkingDownshifted callbacks so config-resolver always uses the REAL
@@ -188,13 +188,13 @@ export interface StreamSetupResult {
 }
 
 // ---------------------------------------------------------------------------
-// Offload callback (B2 / D7)
+// Offload callback
 // ---------------------------------------------------------------------------
 
 /** Minimal deps for the microcompaction offload callback. */
 export interface OffloadCallbackDeps {
   eventBus: import("@comis/core").TypedEventBus;
-  /** Injected wall-clock read — the callback timestamps via `clock.now()`, never the global clock (Pitfall 6). */
+  /** Injected wall-clock read — the callback timestamps via `clock.now()`, never the global clock. */
   clock: import("@comis/core").ClockPort;
   /** Existing cache-break side-effect (cacheBreakDetector.notifyContentModification). */
   onCacheBreak: () => void;
@@ -203,11 +203,11 @@ export interface OffloadCallbackDeps {
 /**
  * Build the 4-arg callback the microcompaction guard invokes on each offload.
  *
- * The guard holds no eventBus/clock (T-151-07) — it computes the payload
- * (already with a WORKSPACE-RELATIVE pointer, T-151-05) and passes it here.
+ * The guard holds no eventBus/clock — it computes the payload
+ * (already with a WORKSPACE-RELATIVE pointer) and passes it here.
  * This callback performs the two observable effects: it preserves the
  * existing cache-break notification and emits `tool:result_offloaded` so the
- * offload lands in the trajectory (Phase 153 `IncidentReport.offloads[]`
+ * offload lands in the trajectory (the `IncidentReport.offloads[]`
  * drill-down). Extracted as a pure factory so the emit shape is unit-testable
  * without standing up the full `setupStreamWrappers` dependency graph.
  */
@@ -221,7 +221,7 @@ export function buildOffloadCallback(
       toolCallId,
       originalChars,
       diskPathRel,
-      timestamp: deps.clock.now(), // injected clock, not the global one (Pitfall 6)
+      timestamp: deps.clock.now(), // injected clock, not the global one
     });
   };
 }
@@ -298,7 +298,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     ["file_ops", "Read specific line ranges instead of entire files"],
     ["memory_search", "Reduce limit parameter or narrow search query"],
   ]);
-  // v2.19: small/nano cap a single tool result far below the 50_000-char schema default
+  // small/nano cap a single tool result far below the 50_000-char schema default
   // so one oversized web_search/read result cannot blow the window (the live NVDA analysts
   // exhausted at assembled ~33-35K from 20-35K-char results). The scaffold returns a number
   // only when it wants to override; otherwise fall back to the operator/schema config value.
@@ -323,7 +323,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   // Shared TTL split estimate, populated by requestBodyInjector, consumed by bridge
   const ttlSplit: TtlSplitEstimate = { cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
 
-  // Phase 166 Fix 3: assembled input tokens + effective window set by lcd-assembler via callbacks,
+  // Assembled input tokens + effective window set by lcd-assembler via callbacks,
   // read lazily by configResolver at dispatch time (lazy evaluation — assembler runs AFTER wrapper chain is built).
   const assembledInputTokensRef = { current: 0 };
   const effectiveWindowRef = { current: Infinity };
@@ -334,7 +334,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   const capturedCacheRetention = getExecutionCacheRetention();
 
   // Wrapper chain order (outermost first):
-  // ttlGuard -> [L3] toolCallRepairWrapper -> validationErrorFormatter -> toolResultSizeBouncer ->
+  // ttlGuard -> toolCallRepairWrapper -> validationErrorFormatter -> toolResultSizeBouncer ->
   //   turnResultBudget -> configResolver -> requestBodyInjector (Anthropic) ->
   //   geminiCacheInjector (Google) -> [traceWriters]
 
@@ -362,7 +362,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       logger: deps.logger,
       clock: deps.clock,
     }),
-    // L3/S3 (Phase 155-02): shape-only tool-call JSON repair inserted BEFORE
+    // Shape-only tool-call JSON repair inserted BEFORE
     // validationErrorFormatter so near-miss args are repaired then re-validated
     // by the existing downstream gates (validateExecCommand for exec tools).
     // Irreparable args produce "Validation failed" prefix → PARAMETER_VALIDATION_TAGS
@@ -373,22 +373,22 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     turnBudgetWrapper,
     createConfigResolver(
       {
-        // L5/CR-01: when the operator has not set an explicit maxTokens override,
+        // When the operator has not set an explicit maxTokens override,
         // size the MAIN-path budget from the model profile's REAL maxOutputTokens.
         // resolveMainPathMaxOutputTokens returns the full profile budget for
         // non-reasoning models (NEVER the 512-token verdict reserve, which would
-        // truncate every visible answer — CR-01) and sizes UP for native-reasoning
+        // truncate every visible answer) and sizes UP for native-reasoning
         // profiles so reasoning_content cannot starve the answer. The critic path
         // keeps its own resolveMaxOutputTokens(verdict reserve) — do not reuse it
         // here. The operator's explicit config.maxTokens always takes precedence.
         maxTokens: config.maxTokens ?? (modelProfile
           ? resolveMainPathMaxOutputTokens(modelProfile)
           : undefined),
-        // Phase 166 Fix 3: dynamic max_tokens clamp via closure-ref getters.
+        // Dynamic max_tokens clamp via closure-ref getters.
         // The assembler sets these refs during transformContext (AFTER wrapper chain is built).
         // When the guard fires (assembled > 0 AND effectiveWindow < Infinity), config-resolver
         // clamps max_tokens per-dispatch. Frontier/mid: refs stay at defaults (0/Infinity) →
-        // guard never fires → static maxTokens path is byte-identical (CWF-02-H).
+        // guard never fires → static maxTokens path is byte-identical.
         getAssembledInputTokens: () => assembledInputTokensRef.current > 0
           ? assembledInputTokensRef.current
           : undefined,
@@ -438,7 +438,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
           ? (highestIdx: number) => onBreakpointsPlaced(highestIdx)
           : undefined,
         onPayloadForCacheDetection: (apiParams, model, headers) => {
-          // L1/L2: read supportsPromptCache flag from ModelProfile when present.
+          // Read the supportsPromptCache flag from ModelProfile when present.
           // Falls back to isAnthropicFamily for callers that do not yet thread modelProfile.
           if (modelProfile?.supportsPromptCache ?? isAnthropicFamily(model.provider)) {
             const stateInput = extractAnthropicPromptState(
@@ -485,7 +485,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         // The getter runs AFTER `onPayloadForCacheDetection` increments
         // the counter for this turn, so the gate sees the correct value.
         getCallCount: () => cacheBreakDetector.getCallCount(formattedKey),
-        // L1/L2 (Phase 155-01): thread ModelProfile flags so factory.ts and
+        // Thread ModelProfile flags so factory.ts and
         // tool-deferral-injection.ts use capability flags instead of
         // provider-string predicates. Optional so callers without a resolved
         // modelProfile (tests, secondary injectors) keep the existing fallback.
@@ -555,10 +555,10 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       const traceMaxSize = deps.tracingDefaults?.maxSize ?? "5m";
       const traceMaxFiles = deps.tracingDefaults?.maxFiles ?? 3;
 
-      // api-payload-trace remains under the legacy
-      // `agents.<name>.tracing.enabled` flag. The
-      // cache-trace artifact moved to `diagnostics.cacheTrace.enabled`
-      // and is gated by the sibling `if (cacheTrace)` block below.
+      // api-payload-trace is gated by the per-agent
+      // `agents.<name>.tracing.enabled` flag. The cache-trace artifact has
+      // its own gate — `diagnostics.cacheTrace.enabled` — handled by the
+      // sibling `if (cacheTrace)` block below.
       wrappers.push(
         createApiPayloadTraceWriter(
           { filePath: apiPayloadPath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles, clock: deps.clock },

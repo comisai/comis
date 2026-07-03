@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ActivityStrategy + selectStrategy (spec §7.2 / §4.4).
+ * ActivityStrategy + selectStrategy.
  *
  * Pure capability → strategy routing. The six "real" channel strategies are
  * derived from the declared `ChannelCapability` (edit / delete / buttons /
  * maxMessageChars). Two surfaces have no capability shape that distinguishes
  * them from a real channel — Echo (TestSink) overlaps text-only channels, and
  * ACP (Structured) carries no ChannelPlugin/capability at all (it is a
- * structured `SessionUpdate` stream, §7.1 row "ACP" = n/a). Those two route on
+ * structured `SessionUpdate` stream). Those two route on
  * the `channelType` signal the coordinator already holds on
  * `TurnActivityContext.channelType`.
  *
@@ -24,9 +24,9 @@ export type ActivityStrategy =
   | "Structured" // JSON SessionUpdate stream (ACP)
   | "TestSink"; // recorder (Echo)
 
-/** IRC's defining constraint — one short line per event under a 512-char cap (§7.1). */
+/** IRC's defining constraint — one short line per event under a 512-char cap. */
 const IRC_MAX_CHARS = 512;
-/** Email's defining trait — by far the largest cap; end-of-turn digest only (§7.1). */
+/** Email's defining trait — by far the largest cap; end-of-turn digest only. */
 const DIGEST_MIN_CHARS = 100_000;
 
 /**

@@ -124,20 +124,20 @@ vi.mock("node:os", async (importOriginal) => {
 import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, parseSkillLocationIndex, getSessionPromptSkillLocations, getSessionPromptMemoryInjected, clearSessionPromptMemoryInjected, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 // node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
-// GEN-03 source-grep chokepoint below.
+// sub-agent-language source-grep chokepoint below.
 import { readFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as nodeOs from "node:os";
 import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
-// Real (un-mocked) §7.3 guidance formatter — prompt-assembly pushes its block into
+// Real (un-mocked) temporal-guidance formatter — prompt-assembly pushes its block into
 // the prompt when >=2 memories are surfaced. It is FIXED guidance text, NOT a
 // retrieved memory, so it must NOT inflate retrieved-memory telemetry:
 // charsInjected / ragHits count retrieved memory only, never the guidance block.
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { createSpawnPacketBuilder } from "../spawn/spawn-packet-builder.js";
 // Fixture stub for the capability-index gate. Default returns `false` so
-// existing tests stay on the legacy gate-off path (byte-identical baseline).
+// existing tests stay on the gate-off path (byte-identical baseline).
 // Architecture-grep boundary forbids production-stub crossover both ways:
 // tests use the __test-helpers/ source path, never the production no-op
 // factory.
@@ -201,8 +201,8 @@ function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyPa
   if (!(merged.deps as Record<string, unknown>).toolCapabilityPort) {
     merged.deps = {
       ...merged.deps,
-      // The static-prompt branch on `isCapabilityIndexEnabled` was
-      // removed (only path emits the residual one-liner). The port stub
+      // The static prompt does not branch on `isCapabilityIndexEnabled`
+      // (the capability-index-on path is the only path). The port stub
       // is still required by downstream dynamic-preamble consumers that
       // honor the live gate.
       toolCapabilityPort: createCapabilityPortStub({ isCapabilityIndexEnabled: () => false }),
@@ -258,19 +258,19 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // WR-02 (2026-06-12 UC-4 live finding): the "sender-trust not injected
-  // in compact-secure" WARN fires ONCE PER AGENT, not once per prompt
-  // assembly. Trigger (small/nano compact-secure + senderTrustDisplayConfig
-  // disabled) is static per agent, so per-turn repetition is pure log noise.
+  // The "sender-trust not injected in compact-secure" WARN fires ONCE
+  // PER AGENT, not once per prompt assembly. Trigger (small/nano
+  // compact-secure + senderTrustDisplayConfig disabled) is static per
+  // agent, so per-turn repetition is pure log noise.
   // -----------------------------------------------------------------
-  it("WR-02: warns about disabled sender-trust ONCE per agent, not per assembly", async () => {
+  it("warns about disabled sender-trust ONCE per agent, not per assembly", async () => {
     clearWr02SenderTrustWarned();
     const logger = createMockLogger();
     const params = makeParams({
       agentId: "wr02-agent",
       // small capabilityClass + baseMode "full" → compact-secure promptMode
       modelProfile: { capabilityClass: "small" } as any,
-      // senderTrustDisplayConfig omitted → disabled → WR-02 trigger fires
+      // senderTrustDisplayConfig omitted → disabled → the sender-trust warn trigger fires
       logger,
     });
 
@@ -281,7 +281,7 @@ describe("assembleExecutionPrompt", () => {
     const wr02Calls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c: unknown[]) => typeof c[1] === "string" && (c[1] as string).includes("sender-trust not injected"),
     );
-    // Pre-fix: 3 (one per assembly). Post-fix: 1 (deduped per agent).
+    // Without the per-agent dedup this would be 3 (one per assembly).
     expect(wr02Calls.length).toBe(1);
   });
 
@@ -314,7 +314,7 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 3b. Degenerate-window compact-prompt fallback (2026-06-22)
+  // 3b. Degenerate-window compact-prompt fallback
   //
   // The user's hard requirement: the agent must NEVER context-exhaust, even when
   // the effective window is SMALLER than the system prompt itself (e.g. an 8K
@@ -364,7 +364,7 @@ describe("assembleExecutionPrompt", () => {
     expect(mockAssembleRichSystemPrompt.mock.calls[0][0].promptMode).toBe("full");
   });
 
-  it("does not re-assemble when no windowFitBudget is supplied (byte-identical to pre-fix)", async () => {
+  it("does not re-assemble when no windowFitBudget is supplied (window-agnostic baseline)", async () => {
     mockAssembleRichSystemPrompt.mockReturnValue("x".repeat(40));
     const params = makeParams(); // no windowFitBudget
     await assembleExecutionPrompt(params);
@@ -374,8 +374,8 @@ describe("assembleExecutionPrompt", () => {
   it("does not double-shrink a prompt already resolved to compact-secure (small-class, tiny window)", async () => {
     // small class → compact-secure already. Even a tiny window must not trigger a
     // SECOND compact-secure re-assembly (it's already the floor). Distinct agentId
-    // so this case's compact-secure WR-02 dedup never collides with other tests'
-    // shared wr02SenderTrustWarned state (the failing-otherwise interaction).
+    // so this case's compact-secure sender-trust-warn dedup never collides with other
+    // tests' shared wr02SenderTrustWarned state (the failing-otherwise interaction).
     mockAssembleRichSystemPrompt.mockReturnValue("x".repeat(40));
     const params = makeParams({
       agentId: "double-shrink-agent",
@@ -389,7 +389,7 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4. RAG retrieval via hybrid memory injector (Task 229)
+  // 4. RAG retrieval via hybrid memory injector
   // -----------------------------------------------------------------
   it("routes recall output to the hybrid memory injector when memoryPort and rag.enabled are set", async () => {
     const mockSearchResult = {
@@ -423,11 +423,11 @@ describe("assembleExecutionPrompt", () => {
   it("threads deps.tripleStore into createMemoryRecall so the graph-spread lane has its store", async () => {
     // Production-wiring regression guard for the LAST link of the chain:
     // PromptAssemblyParams.deps.tripleStore → createMemoryRecall's deps.tripleStore.
-    // RED on pre-patch code: the createMemoryRecall call object listed
+    // If the createMemoryRecall call object listed
     // entityStore/temporalStore/causalStore/usefulnessStore but NOT tripleStore,
-    // so the 6th graphSpread lane gate (`deps.tripleStore !== undefined`) was
-    // always false and spreadLane never ran — the lane dead even with the store
-    // injected and rag.lanes.graphSpread.enabled flipped on.
+    // the 6th graphSpread lane gate (`deps.tripleStore !== undefined`) would be
+    // always false and spreadLane would never run — the lane dead even with the
+    // store injected and rag.lanes.graphSpread.enabled flipped on.
     const memoryPort = {
       search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
       store: vi.fn(),
@@ -450,14 +450,15 @@ describe("assembleExecutionPrompt", () => {
     expect(recallDeps.tripleStore).toBe(tripleStore);
   });
 
-  it("threads deps.provenanceStore into createMemoryRecall so the DIST-03 provenance pass has its store (the built-but-not-wired guard, last link)", async () => {
-    // Production-wiring regression guard for the LAST link of the carry-in's
+  it("threads deps.provenanceStore into createMemoryRecall so the provenance down-weighting pass has its store (the built-but-not-wired guard, last link)", async () => {
+    // Production-wiring regression guard for the LAST link of the
     // 5-link composition chain: PromptAssemblyParams.deps.provenanceStore →
-    // createMemoryRecall's deps.provenanceStore. RED on pre-patch code: the
-    // createMemoryRecall deps object omitted provenanceStore, so the pass gate
-    // (`deps.provenanceStore != null`) was ALWAYS false in the live daemon — the
-    // DIST-03 down-weighting was BUILT but DORMANT (the milestone's #1 failure
-    // class). The store reaches here only when every prior link threads it.
+    // createMemoryRecall's deps.provenanceStore. If the
+    // createMemoryRecall deps object omitted provenanceStore, the pass gate
+    // (`deps.provenanceStore != null`) would be ALWAYS false in the live daemon —
+    // the provenance down-weighting BUILT but DORMANT (the classic
+    // built-but-not-wired failure). The store reaches here only when every
+    // prior link threads it.
     const memoryPort = {
       search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
       store: vi.fn(),
@@ -481,12 +482,12 @@ describe("assembleExecutionPrompt", () => {
     // Production-wiring regression guard for the LAST link of the chain:
     // PromptAssemblyParams.deps.embeddingStore → createMemoryRecall's deps.embeddingStore,
     // and config.rag.mmr / config.rag.queryUnderstanding → createMemoryRecall's config.
-    // RED on pre-patch code: the createMemoryRecall call object listed
+    // If the createMemoryRecall call object listed
     // entityStore/temporalStore/causalStore/tripleStore/usefulnessStore but NOT
-    // embeddingStore, and its config object omitted mmr + queryUnderstanding, so the
-    // MMR slot gate (`deps.embeddingStore !== undefined && cfg.mmr?.enabled`) was always
-    // false and the diversity re-rank never ran — a silent no-op even with the store
-    // injected and rag.mmr.enabled flipped on (the field-plumbing hazard).
+    // embeddingStore, and its config object omitted mmr + queryUnderstanding, the
+    // MMR slot gate (`deps.embeddingStore !== undefined && cfg.mmr?.enabled`) would be
+    // always false and the diversity re-rank would never run — a silent no-op even
+    // with the store injected and rag.mmr.enabled flipped on (the field-plumbing hazard).
     const memoryPort = {
       search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
       store: vi.fn(),
@@ -527,31 +528,22 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4a-ter. The deterministic apply overlay (buildScoringAlphas) at
-  // the recall `scoring:` arg, behind a gated tunedAlphaStore read.
-  //   - Default-OFF byte-identity: tuning off (or no store dep) ⇒
-  //     read() called 0 times AND the `scoring` arg is byte-identical to
-  //     config.rag.scoring (the static alphas pass unchanged). The spy mirrors
-  //     the feedback default-off / MMR readEmbeddings=0 pattern.
-  //   - Apply: tuning ON + a learned vector ⇒ the `scoring` arg carries the four
-  //     tuned non-trust alphas; read() runs ONCE scoped to (tenant, agent).
-  //   - Belt #2 (the ship-gate): under tuning ON with ANY learned vector, the
-  //     `scoring` arg's trust weight is byte-identical to config.rag.scoring's —
-  //     the learned vector can never raise trust (the overlay sources it from
-  //     config). The trust FILTER (memory-recall.ts:534-536) stays frozen — that
-  //     file is UNTOUCHED by this plan (asserted via the git-diff verify gate).
+  // 4a-ter. Recall scoring source: the `scoring:` arg into
+  // createMemoryRecall is exactly config.rag.scoring — no learned
+  // overlay, no tuned-alpha store read, even when such a store is
+  // wired and `onlineTuning` is flipped on.
   // -----------------------------------------------------------------
-  describe("recall scoring is fixed config.rag.scoring (RECALL-02/03 — the bandit overlay is deleted)", () => {
-    // Phase 224 (RECALL-02/03): the UCB online-tuning bandit + its tuned-alpha
-    // overlay are DELETED. Recall scoring now reverts to the fixed config.rag.scoring
-    // alphas (fused RRF + the existing cross-encoder reranker, no learned-weight write
-    // path). These tests are the INVERSE of the former "deterministic apply overlay"
-    // suite: the `scoring` arg into createMemoryRecall is exactly config.rag.scoring
-    // (object identity — NO buildScoringAlphas merge), and NO tunedAlphaStore read fires
-    // even when one is (legacy) wired. They FAIL on the pre-deletion overlay code, which
-    // wrapped scoring in buildScoringAlphas(...) and read the store behind an onlineTuning gate.
+  describe("recall scoring is fixed config.rag.scoring (no learned bandit overlay)", () => {
+    // There is NO UCB online-tuning bandit or tuned-alpha overlay. Recall
+    // scoring is the fixed config.rag.scoring alphas (fused RRF + the existing
+    // cross-encoder reranker, no learned-weight write path). These tests pin
+    // that: the `scoring` arg into createMemoryRecall is exactly
+    // config.rag.scoring (object identity — NO merge/clone), and NO
+    // tunedAlphaStore read fires even when one is wired. They FAIL on
+    // any overlay code that wraps scoring in a merged object or reads the
+    // store behind an onlineTuning gate.
 
-    /** The static config alphas — now the SOLE scoring source (no overlay). */
+    /** The static config alphas — the SOLE scoring source (no overlay). */
     const CONFIG_SCORING = {
       recencyAlpha: 0.2,
       temporalAlpha: 0.2,
@@ -561,9 +553,9 @@ describe("assembleExecutionPrompt", () => {
     };
 
     /** A learned-vector store spy: counts reads + returns a vector whose alphas DIFFER
-     *  from config — so a surviving overlay would visibly rewrite scoring (the RED signal).
-     *  Typed structurally: the TunedAlphaStore port was DELETED in Phase 224, so this is a
-     *  legacy-shape stub fed through `deps as any` to prove the read path is gone. */
+     *  from config — so any overlay would visibly rewrite scoring (a loud failure signal).
+     *  Typed structurally: there is no TunedAlphaStore port, so this is a
+     *  structural stub fed through `deps as any` to prove no read path exists. */
     function makeLearnedStore(): {
       store: { upsert: ReturnType<typeof vi.fn>; read: ReturnType<typeof vi.fn> };
       reads: () => number;
@@ -597,8 +589,9 @@ describe("assembleExecutionPrompt", () => {
     }
 
     /** Base rag config with the static scoring alphas. `onlineTuning` is set ON here so
-     *  these tests EXERCISE the (now-deleted) gated read+overlay path: pre-deletion the
-     *  store is read and the vector overlays scoring; post-deletion neither happens. */
+     *  these tests exercise the most overlay-favorable condition: with a gated
+     *  read+overlay in place the store would be read and the vector would overlay
+     *  scoring; with the fixed-alphas contract neither happens. */
     function tuningConfig() {
       return makeConfig({
         rag: {
@@ -625,11 +618,11 @@ describe("assembleExecutionPrompt", () => {
       return (mockCreateMemoryRecall.mock.calls[0][1] as { scoring: any }).scoring;
     }
 
-    it("scoring is the FIXED config alphas even with onlineTuning ON + a learned vector wired (FAILS on the surviving overlay)", async () => {
-      // The binding proof of the deletion. onlineTuning is ON and a learned store returning
-      // DIFFERENT alphas (0.91/0.82/0.73/0.64) is wired. Pre-deletion the overlay reads that
-      // vector and rewrites scoring to those values; post-deletion the read+overlay are gone,
-      // so scoring is the untouched config alphas (0.2/0.2/0.1/0.1/0.1). FAILS on pre-patch.
+    it("scoring is the FIXED config alphas even with onlineTuning ON + a learned vector wired (no overlay rewrite)", async () => {
+      // The binding proof. onlineTuning is ON and a learned store returning
+      // DIFFERENT alphas (0.91/0.82/0.73/0.64) is wired. An overlay would read that
+      // vector and rewrite scoring to those values; with no read+overlay path,
+      // scoring is the untouched config alphas (0.2/0.2/0.1/0.1/0.1).
       const learned = makeLearnedStore();
       const config = tuningConfig();
       await assembleExecutionPrompt(
@@ -638,7 +631,7 @@ describe("assembleExecutionPrompt", () => {
           deps: {
             workspaceDir: "/workspace",
             memoryPort: ragMemoryPort(),
-            // tunedAlphaStore is no longer a dep field post-deletion → cast through any.
+            // tunedAlphaStore is not a dep field → cast through any.
             tunedAlphaStore: learned.store,
           } as any,
           sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
@@ -649,11 +642,11 @@ describe("assembleExecutionPrompt", () => {
       expect(capturedScoring()).toEqual(CONFIG_SCORING);
     });
 
-    it("scoring is config.rag.scoring by OBJECT IDENTITY — the call site forwards the config ref, no overlay clone (FAILS on pre-patch)", async () => {
-      // Post-deletion the call site passes `config.rag.scoring` straight through, so the
-      // captured arg IS the same reference as the input config's rag.scoring. Pre-deletion,
-      // with onlineTuning ON + a learned vector, buildScoringAlphas BUILDS a NEW object
-      // (the four tuned alphas + config trust) — a different reference. FAILS on pre-patch.
+    it("scoring is config.rag.scoring by OBJECT IDENTITY — the call site forwards the config ref, no overlay clone", async () => {
+      // The call site passes `config.rag.scoring` straight through, so the
+      // captured arg IS the same reference as the input config's rag.scoring. Any
+      // overlay would BUILD a NEW merged object (tuned alphas + config trust) —
+      // a different reference — which this identity check rejects.
       const learned = makeLearnedStore();
       const config = tuningConfig();
       const configScoringRef = config.rag.scoring; // the exact reference the call site must forward
@@ -672,9 +665,9 @@ describe("assembleExecutionPrompt", () => {
       expect(capturedScoring()).toBe(configScoringRef);
     });
 
-    it("a wired tunedAlphaStore is NEVER read even with onlineTuning ON — the gated overlay read is gone (FAILS on pre-patch)", async () => {
-      // The deletion removes the read entirely. Pre-deletion, onlineTuning ON ⇒ the store is
-      // read once; post-deletion the read never fires. FAILS on the pre-patch read block.
+    it("a wired tunedAlphaStore is NEVER read even with onlineTuning ON — no gated overlay read exists", async () => {
+      // No read path exists: even with onlineTuning ON the store is never read.
+      // An overlay would read it once behind the gate; this pins reads === 0.
       const learned = makeLearnedStore();
       const config = tuningConfig();
       await assembleExecutionPrompt(
@@ -695,19 +688,17 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4a-bis. The LLM-free per-user-profile standing block (FOLD-01, Phase 225).
-  // The fold REWIRES the source: the <user_profile> block now reads from the
-  // mental-model store (`mentalModelStore.list(scope, "profile")` → buildProfileBlock),
-  // NOT the deleted userRepresentationStore. The per-user doc is selected by
-  // `topicKey === sessionKey.userId` (the profile groupKey is the userId; LearningScope
-  // carries only (tenant, agent), so the user axis lives in the doc's topicKey). The
-  // gate is the collapsed `learning.enabled` flag (Phase 226 / SIMPLIFY-05; was
-  // `learningSkills.enabled`, NOT the deleted `memoryUserRepresentation`) + the store
-  // dep. Binding proofs: default-OFF
+  // 4a-bis. The LLM-free per-user-profile standing block.
+  // The <user_profile> block reads from the mental-model store
+  // (`mentalModelStore.list(scope, "profile")` → buildProfileBlock). The
+  // per-user doc is selected by `topicKey === sessionKey.userId` (the profile
+  // groupKey is the userId; LearningScope carries only (tenant, agent), so the
+  // user axis lives in the doc's topicKey). The gate is the collapsed
+  // `learning.enabled` flag + the store dep. Binding proofs: default-OFF
   // byte-identity (no store dep ⇒ list() 0 times, byte-identical prompt), the cost
   // gate (knob off ⇒ list() 0 times), the standing block injects on a zero-recall turn
   // and with rag.enabled=false (it lives OUTSIDE the recall `if`), and the injection is
-  // LLM-free (a store.list + the pure formatter — never a model call). GAP-2 half-1: the
+  // LLM-free (a store.list + the pure formatter — never a model call). The
   // <user_profile> content is DISJOINT from <available_skills> (no double-surface).
   // -----------------------------------------------------------------
   describe("per-user-profile injection (LLM-free standing block, mental-model store)", () => {
@@ -992,12 +983,12 @@ describe("assembleExecutionPrompt", () => {
       expect(gateOff.systemPrompt).toEqual(baseline.systemPrompt);
     });
 
-    it("GAP-2 half-1: the <user_profile> content is DISJOINT from the <available_skills> source (no double-surface)", async () => {
+    it("the <user_profile> content is DISJOINT from the <available_skills> source (no double-surface)", async () => {
       // The profile facts surface ONCE — in the <user_profile> block — never ALSO in
       // the <available_skills> source (which prompt-assembly reads via the SEPARATE
       // getPromptSkillsXml seam). The two channels are disjoint by SOURCE: the profile
       // comes from mentalModelStore.list(scope,"profile"); the skills surface is
-      // daemon-materialized from list(scope,"skill") (kind-filtered — GAP-2 half-2). This
+      // daemon-materialized from list(scope,"skill") (kind-filtered). This
       // asserts the two sources never share content (the harness mocks the rich-prompt
       // assembler, so assert the disjointness at the source, not the assembled string).
       const skillsXml =
@@ -1083,15 +1074,9 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4a-ter. (The LLM-free channel-relationship standing-block tests were DELETED in
-  // Phase 226-04 with the rest of the social-modeling subsystem — the <channel_relationships>
-  // injection, the RelationshipStore port, the socialModeling gate are all gone. No alias, I1.)
-  // -----------------------------------------------------------------
-
-  // -----------------------------------------------------------------
   // 4b. memory:injected event emit
   // -----------------------------------------------------------------
-  it("STORES the memory-injection summary (hitCount/charsInjected/trustTags) for postExecution to emit — finding-A timing fix", async () => {
+  it("STORES the memory-injection summary (hitCount/charsInjected/trustTags) for postExecution to emit after the bridge subscribes", async () => {
     clearSessionPromptMemoryInjected(DEFAULT_SESSION_KEY);
     const mockSearchResults = [
       {
@@ -1123,21 +1108,21 @@ describe("assembleExecutionPrompt", () => {
     });
     await assembleExecutionPrompt(params);
 
-    // Finding A timing fix: assembly STORES the summary (it does NOT emit inline — the bridge
+    // Emit-timing contract: assembly STORES the summary (it does NOT emit inline — the bridge
     // isn't subscribed yet); postExecution emits memory:injected from the store after the bridge.
     const memoryEmit = emit.mock.calls.find((c: any[]) => c[0] === "memory:injected");
     expect(memoryEmit, "assembly must NOT emit memory:injected inline (pre-bridge — it would be lost)").toBeUndefined();
     const summary = getSessionPromptMemoryInjected(DEFAULT_SESSION_KEY);
     expect(summary, "the injection summary must be stored for postExecution to emit").toBeTruthy();
     expect(summary!.hitCount).toBe(2);
-    // ranked.length === 2 -> the §7.3 guidance block IS injected into the
+    // ranked.length === 2 -> the temporal-guidance block IS injected into the
     // prompt, but it is FIXED guidance text, NOT a retrieved memory. The
     // memory:injected telemetry must count retrieved memory ONLY (inline +
     // retrieved sections) and must NOT include the guidance-block length —
     // otherwise charsInjected disagrees with hitCount about what "injected"
     // means. Pin that charsInjected reflects ONLY the retrieved memory.
     const guidanceLen = buildTemporalGuidanceBlock(mockSearchResults as unknown as MemorySearchResult[])!.length;
-    expect(guidanceLen, "guard: the §7.3 block must be non-empty for this assertion to bite").toBeGreaterThan(0);
+    expect(guidanceLen, "guard: the guidance block must be non-empty for this assertion to bite").toBeGreaterThan(0);
     expect(summary!.charsInjected).toBe("[inline rag chunk]".length + "section body".length);
     // Consistency with hitCount: charsInjected must NOT carry the guidance block.
     expect(summary!.charsInjected).not.toBe(
@@ -1443,23 +1428,23 @@ describe("assembleExecutionPrompt", () => {
     const row = insertSystemPromptReport.mock.calls[0]![0];
     const parsed = JSON.parse(row.reportJson);
     // The persisted report MUST carry a memoryInjection block (not
-    // undefined) reflecting the RAG-sections-only injection. Today
-    // this fails because prompt-assembly's predicate is `inlineMemory
-    // ? { … } : undefined` — undefined inlineMemory drops the block
-    // entirely even when memorySections.length > 0.
+    // undefined) reflecting the RAG-sections-only injection. A predicate
+    // of `inlineMemory ? { … } : undefined` would drop the block
+    // entirely even when memorySections.length > 0 — this pins the
+    // sections-only branch.
     expect(parsed.memoryInjection).toBeDefined();
     expect(parsed.memoryInjection.ragHits).toBe(1);
     expect(parsed.memoryInjection.charsInjected).toBe(sectionBody.length);
     expect(parsed.memoryInjection.trustTags).toEqual([]);
   });
 
-  it("SystemPromptReport.memoryInjection excludes the §7.3 guidance block from ragHits/charsInjected", async () => {
-    // >=2 surfaced memories -> the §7.3 temporal-guidance block IS pushed into
+  it("SystemPromptReport.memoryInjection excludes the temporal-guidance block from ragHits/charsInjected", async () => {
+    // >=2 surfaced memories -> the temporal-guidance block IS pushed into
     // the prompt. The persisted report's ragHits/charsInjected must count the
     // RETRIEVED memory ONLY (the one inline + one section here), NOT the fixed
-    // guidance text. Pre-fix this over-counted: ragHits tallied the guidance
-    // block as a RAG hit (2 sections -> ragHits 3 incl. inline) and
-    // charsInjected included the block's length.
+    // guidance text. Counting the guidance block over-counts: ragHits tallies it
+    // as a RAG hit (2 sections -> ragHits 3 incl. inline) and
+    // charsInjected includes the block's length.
     const sectionBody = "RAG section body for report path";
     const ranked = [
       {
@@ -1493,7 +1478,7 @@ describe("assembleExecutionPrompt", () => {
     await assembleExecutionPrompt(params);
 
     const guidanceLen = buildTemporalGuidanceBlock(ranked as unknown as MemorySearchResult[])!.length;
-    expect(guidanceLen, "guard: the §7.3 block must be non-empty for this assertion to bite").toBeGreaterThan(0);
+    expect(guidanceLen, "guard: the guidance block must be non-empty for this assertion to bite").toBeGreaterThan(0);
 
     expect(insertSystemPromptReport).toHaveBeenCalledTimes(1);
     const parsed = JSON.parse(insertSystemPromptReport.mock.calls[0]![0].reportJson);
@@ -2087,16 +2072,16 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // WR-03: resolvePromptModeForProfile priority ladder (compact-secure wins
+  // resolvePromptModeForProfile priority ladder (compact-secure wins
   // over the cron/heartbeat → operational downgrade for small/nano).
   // -----------------------------------------------------------------
-  describe("WR-03: resolvePromptModeForProfile cron/heartbeat on small/nano", () => {
+  describe("resolvePromptModeForProfile cron/heartbeat on small/nano", () => {
     const smallProfile = { capabilityClass: "small" } as any;
     const nanoProfile = { capabilityClass: "nano" } as any;
     const frontierProfile = { capabilityClass: "frontier" } as any;
     const compactOn = { enabled: true };
 
-    it("small + cron + full → compact-secure (NOT operational) — keeps S1 hardening", () => {
+    it("small + cron + full → compact-secure (NOT operational) — keeps the anti-injection hardening", () => {
       expect(resolvePromptModeForProfile("full", "cron", smallProfile, compactOn)).toBe("compact-secure");
     });
 
@@ -2398,8 +2383,8 @@ describe("assembleExecutionPrompt", () => {
       expect(call.sessionKey).toBeUndefined();
     });
 
-    // WR-02: compact-secure + senderTrustDisplayConfig disabled → WARN log
-    it("WR-02: compact-secure active with senderTrustDisplayConfig disabled emits WARN log", async () => {
+    // compact-secure + senderTrustDisplayConfig disabled → WARN log
+    it("compact-secure active with senderTrustDisplayConfig disabled emits the sender-trust WARN log", async () => {
       // Trigger compact-secure mode: small capabilityClass + compactPrompt.enabled (default true).
       const smallProfile = {
         capabilityClass: "small",
@@ -2422,7 +2407,7 @@ describe("assembleExecutionPrompt", () => {
 
       await assembleExecutionPrompt(params);
 
-      // Must emit exactly the WR-02 WARN
+      // Must emit exactly the sender-trust WARN
       const warnCalls = (params.logger.warn as any).mock.calls;
       const wr02Warn = warnCalls.find(
         (c: any[]) => typeof c[1] === "string" && c[1].includes("S1: sender-trust not injected in compact-secure"),
@@ -2436,7 +2421,7 @@ describe("assembleExecutionPrompt", () => {
       });
     });
 
-    it("WR-02: compact-secure with senderTrustDisplayConfig.enabled=true does NOT emit the WR-02 WARN", async () => {
+    it("compact-secure with senderTrustDisplayConfig.enabled=true does NOT emit the sender-trust WARN", async () => {
       const smallProfile = {
         capabilityClass: "small",
         contextWindow: 32_000,
@@ -2870,9 +2855,9 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // Task 229: Hybrid memory injector -- inlineMemory
+  // Hybrid memory injector -- inlineMemory
   // -----------------------------------------------------------------
-  describe("Task 229: hybrid memory injector -- inlineMemory", () => {
+  describe("hybrid memory injector -- inlineMemory", () => {
     function makeSearchResult(content: string, score: number, trustLevel = "learned") {
       return {
         entry: {
@@ -3036,7 +3021,7 @@ describe("assembleExecutionPrompt", () => {
       expect(result1.dynamicPreamble).not.toContain("context-turn-2");
     });
 
-    it("hookResult.systemPrompt still replaces system prompt (backward compat)", async () => {
+    it("hookResult.systemPrompt still replaces system prompt (hook override contract)", async () => {
       const hookRunner = {
         runBeforeAgentStart: vi.fn().mockResolvedValue({ systemPrompt: "Completely replaced prompt" }),
       };
@@ -3567,7 +3552,7 @@ describe("CacheSafeParams", () => {
     expect(captured!.cacheRetention).toBeUndefined();
   });
 
-  // 4.2: CacheSafeParams versioned with toolHash
+  // CacheSafeParams is versioned with toolHash for staleness detection.
   it("includes cacheWriteTimestamp and toolHash in captured CacheSafeParams", async () => {
     const params = makeParams({
       config: makeConfig({ model: "claude-3-opus", provider: "anthropic", cacheRetention: "short" }),
@@ -3583,7 +3568,7 @@ describe("CacheSafeParams", () => {
     expect(captured!.toolHash).toBe("exec,read");
   });
 
-  it("refreshes CacheSafeParams when toolHash changes mid-session (4.2)", async () => {
+  it("refreshes CacheSafeParams when toolHash changes mid-session", async () => {
     // First turn with tools [read]
     const params1 = makeParams({
       config: makeConfig({ model: "claude-3-opus", provider: "anthropic", cacheRetention: "short" }),
@@ -3613,7 +3598,7 @@ describe("CacheSafeParams", () => {
     expect(second!.cacheWriteTimestamp).toBeTypeOf("number");
   });
 
-  it("does NOT refresh CacheSafeParams when toolHash is unchanged (4.2)", async () => {
+  it("does NOT refresh CacheSafeParams when toolHash is unchanged", async () => {
     // First turn
     const params1 = makeParams({
       config: makeConfig({ model: "claude-3-opus", provider: "anthropic", cacheRetention: "short" }),
@@ -3796,12 +3781,12 @@ describe("parent prefix reuse", () => {
     expect(result.inlineMemory).toBeUndefined();
   });
 
-  it("WR-06: populates the ATTR-01 skill-location index on the parent-cache reuse path", async () => {
+  it("populates the skill-location attribution index on the parent-cache reuse path", async () => {
     // The reuse path re-emits `## Available Skills\n${promptSkillsXml}` into the
     // dynamic preamble, so a learned-skill <location> is visible to the model —
-    // but pre-fix it never populated sessionPromptSkillLocations, so the bridge's
-    // getSessionPromptSkillLocations() returned undefined and skill-use
-    // attribution silently no-op'd for cache-reuse sub-agents (the dominant path).
+    // it must ALSO populate sessionPromptSkillLocations, else the bridge's
+    // getSessionPromptSkillLocations() returns undefined and skill-use
+    // attribution silently no-ops for cache-reuse sub-agents (the dominant path).
     const distinctKey = { agentId: "agent-attr-reuse", channelType: "telegram", channelId: "chat-attr" } as any;
     const formattedKey = formatSessionKey(distinctKey);
     clearSessionToolNameSnapshot(formattedKey);
@@ -3931,16 +3916,16 @@ describe("parent prefix reuse", () => {
     expect(result.systemPrompt).toBe("parent-frozen-prompt");
   });
 
-  // CR-01 (GEN-03): the sub-agent `### Language` directive must reach the role
+  // The sub-agent `### Language` directive must reach the role
   // section on the parent-cache reuse path — the DOMINANT runtime path for
-  // same-model sub-agents. Before the fix, only the full-assembly call site
-  // threaded `language`; the reuse-path call at prompt-assembly.ts:718 dropped
-  // it, so a Hebrew/Arabic/Russian sub-agent produced English output on its
+  // same-model sub-agents. If only the full-assembly call site
+  // threaded `language`, the reuse-path call would drop
+  // it and a Hebrew/Arabic/Russian sub-agent would produce English output on its
   // primary path. The leaf-level context-sections.test.ts masks this because it
   // exercises buildSubagentRoleSection directly. This probe goes through the
   // real assembleExecutionPrompt reuse path and asserts the language reaches the
   // role-section builder.
-  it("CR-01: threads spawnPacket.language into the role section on the parent-cache reuse path", async () => {
+  it("threads spawnPacket.language into the role section on the parent-cache reuse path", async () => {
     const spawnPacket = makeSpawnPacketWithCache();
     spawnPacket.language = "he";
     const params = makeParams({
@@ -3959,16 +3944,16 @@ describe("parent prefix reuse", () => {
     expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
 
     // The role-section builder must have received the inherited language so it
-    // can emit the `### Language` directive. RED on pre-fix code (the reuse-path
-    // call site omitted `language`).
+    // can emit the `### Language` directive (a reuse-path call site that
+    // omits `language` fails here).
     expect(mockBuildSubagentRoleSection).toHaveBeenCalledWith(
       expect.objectContaining({ language: "he" }),
     );
   });
 
-  // I1: the en/undefined language path on the reuse branch stays byte-identical
+  // The en/undefined language path on the reuse branch stays byte-identical
   // — no `language` key is fabricated, so the packet shape is unchanged.
-  it("CR-01/I1: passes language=undefined on the reuse path for an en (unset) spawnPacket", async () => {
+  it("passes language=undefined on the reuse path for an en (unset) spawnPacket", async () => {
     const params = makeParams({
       config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
       deps: {
@@ -3985,13 +3970,13 @@ describe("parent prefix reuse", () => {
     );
   });
 
-  // CR-01 chokepoint (mirrors the GEN-02 source-grep at
+  // Source-grep chokepoint (mirrors the degraded-reply source-grep at
   // executor-post-execution.test.ts): BOTH role-section feeds in
   // prompt-assembly.ts must thread `language: deps.spawnPacket.language`, so the
   // two consumers (the cache-reuse inline call and the full-assembly
   // subagentRole object) can never drift apart again. There are exactly two such
   // feeds; both must carry the language.
-  it("CR-01: source-grep — BOTH sub-agent role-section feeds thread language: deps.spawnPacket.language", () => {
+  it("source-grep — BOTH sub-agent role-section feeds thread language: deps.spawnPacket.language", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolvePath(here, "prompt-assembly.ts"), "utf-8");
     // Strip block + line comments so a comment mention cannot satisfy the gate.
@@ -4006,14 +3991,14 @@ describe("parent prefix reuse", () => {
     expect(matches.length).toBe(2);
   });
 
-  // WR-01 (DET-02 tier-2): USER.md's "Preferred language" must reach the
-  // degraded-reply resolver on the cache-reuse path too. Pre-fix, the reuse
-  // path hardcoded `userLanguage: undefined`, silently dropping tier-2 — a user
+  // Reply-language tier-2: USER.md's "Preferred language" must reach the
+  // degraded-reply resolver on the cache-reuse path too. If the reuse
+  // path hardcoded `userLanguage: undefined`, tier-2 would be silently dropped — a user
   // whose USER.md sets a preferred language but who sends a Latin-script message
-  // on a reuse turn would get an English degraded reply. The reuse path now
+  // on a reuse turn would get an English degraded reply. The reuse path
   // computes userLanguage from the same snapshot-aware bootstrap load + filter
   // dispatch as the full path.
-  it("WR-01: resolves USER.md preferred language (tier-2) on the parent-cache reuse path", async () => {
+  it("resolves USER.md preferred language (tier-2) on the parent-cache reuse path", async () => {
     mockLoadWorkspaceBootstrapFiles.mockResolvedValue([
       { name: "USER.md", content: "- **Preferred language:** Arabic" },
     ]);
@@ -4034,14 +4019,14 @@ describe("parent prefix reuse", () => {
     // Reuse path was taken.
     expect(result.systemPrompt).toBe("parent-frozen-prompt");
     expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
-    // Tier-2 is now carried on the reuse path (RED on pre-fix: undefined).
+    // Tier-2 is carried on the reuse path (a hardcoded-undefined reuse path fails here).
     expect(result.userLanguage).toBe("Arabic");
   });
 
-  // WR-01 / privacy: group-chat filtering strips USER.md, so tier-2 must be
+  // Privacy: group-chat filtering strips USER.md, so tier-2 must be
   // absent on a reuse turn in a group context (the resolver falls through to
   // tier-3 inbound script) — matching the full path's group-chat behavior.
-  it("WR-01: omits tier-2 on the reuse path in a group chat (USER.md stripped)", async () => {
+  it("omits tier-2 on the reuse path in a group chat (USER.md stripped)", async () => {
     mockLoadWorkspaceBootstrapFiles.mockResolvedValue([
       { name: "USER.md", content: "- **Preferred language:** Arabic" },
     ]);
@@ -4229,10 +4214,10 @@ describe("computeFeatureFlagHash", () => {
 
 describe("buildRecallTrace -- data-dir agreement with the reader", () => {
   it("resolves the recorder base from the configured dataDir so writer and reader agree", () => {
-    // The recorder used to hardcode os.homedir()/.comis as its base
-    // while the memory.recall_trace handler reads from the configured dataDir
-    // (deps.dataDir ?? ~/.comis). Under a non-default COMIS_DATA_DIR the writer
-    // and reader pointed at DIFFERENT files, so the diagnostic returned nothing.
+    // If the recorder hardcoded os.homedir()/.comis as its base while the
+    // memory.recall_trace handler reads from the configured dataDir
+    // (deps.dataDir ?? ~/.comis), a non-default COMIS_DATA_DIR would point the
+    // writer and reader at DIFFERENT files, so the diagnostic returns nothing.
     // The recorder must resolve its confinedBaseDir from the SAME data-dir
     // source the reader uses.
     const customDataDir = `${nodeOs.tmpdir()}/comis-wr02-${Math.random().toString(36).slice(2)}`;
@@ -4260,7 +4245,8 @@ describe("buildRecallTrace -- data-dir agreement with the reader", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SC2-budget: pinnedChars deducted from maxContextChars before injector.split
+// Pinned-budget accounting: pinnedChars deducted from maxContextChars before
+// injector.split.
 //
 // When rag.pinned.enabled=true, prompt-assembly computes the char length of the
 // pinned section (using formatMemorySection) and passes maxContextChars-pinnedChars
@@ -4268,7 +4254,7 @@ describe("buildRecallTrace -- data-dir agreement with the reader", () => {
 // DEFAULT-OFF: when pinned is disabled, injector.split receives the full budget.
 // ---------------------------------------------------------------------------
 
-describe("assembleExecutionPrompt — SC2-budget: pinnedChars deducted from maxContextChars", () => {
+describe("assembleExecutionPrompt — pinnedChars deducted from maxContextChars", () => {
   const PINNED_SECTION_CONTENT = "x".repeat(500); // 500-char pinned section
   const MAX_CONTEXT_CHARS = 4000;
 
@@ -4282,11 +4268,10 @@ describe("assembleExecutionPrompt — SC2-budget: pinnedChars deducted from maxC
   });
 
   it("pinnedChars are deducted from maxContextChars before passing to injector split", async () => {
-    // SC2-budget: formatMemorySection returns a 500-char pinned section.
+    // Budget accounting: formatMemorySection returns a 500-char pinned section.
     // injector.split must be called with MAX_CONTEXT_CHARS - 500 = 3500.
-    // Pre-patch (no budget accounting): injector.split called with full 4000.
-    // Post-patch: injector.split called with 3500.
-    // entry.pinned=true is required so the CR-03 fix identifies this as a real pin.
+    // Without pinned-budget accounting injector.split would get the full 4000.
+    // entry.pinned=true is required so the pinned-set filter identifies this as a real pin.
     const pinnedEntry = {
       entry: { id: "pinned-001", tenantId: "t", content: "pinned content", createdAt: Date.now(), tags: [], trustLevel: "system" as const, source: { channel: "test" }, pinned: true as const },
       score: 1.0,
@@ -4355,10 +4340,10 @@ describe("assembleExecutionPrompt — SC2-budget: pinnedChars deducted from maxC
   });
 });
 
-// CR-03: prompt-assembly budget split uses entry.pinned not positional slice
-// When 2 pins exist with cap=5, injector.split must receive the 0 FUSED entries
+// Prompt-assembly budget split uses entry.pinned, not a positional slice.
+// When 2 pins exist with cap=5, injector.split must receive the FUSED entries
 // (not the 5-item positional slice that includes fused entries as fake "pins").
-describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinned, not positional slice", () => {
+describe("assembleExecutionPrompt — pinnedSet identified by entry.pinned, not positional slice", () => {
   const MAX_CONTEXT_CHARS = 4000;
   const PINNED_SECTION_CHARS = 200;
 
@@ -4369,11 +4354,11 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
     mockCreateMemoryRecall.mockClear();
   });
 
-  it("CR-03: injector.split receives only fused entries (not pinned ones) when 2 pins < cap=5", async () => {
+  it("injector.split receives only fused entries (not pinned ones) when 2 pins < cap=5", async () => {
     // 2 pinned + 3 fused entries in recall. maxPinnedInjection=5 (cap > actual pins).
-    // Pre-patch: positional slice(0, 5) grabs all 5 entries as "pinnedSet" →
+    // A positional slice(0, 5) would grab all 5 entries as "pinnedSet" →
     //   injector.split receives [] (empty) → the 3 fused entries are DROPPED.
-    // Post-patch: entry.pinned===true identifies exactly 2 pins →
+    // The entry.pinned===true filter identifies exactly 2 pins →
     //   injector.split receives the 3 fused entries (none dropped).
     const pinnedEntry1 = {
       entry: { id: "pin-1", tenantId: "t", content: "pin one", createdAt: Date.now(), tags: [], trustLevel: "system" as const, source: { channel: "test" }, pinned: true as const },
@@ -4432,9 +4417,9 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
   });
 
   // -----------------------------------------------------------------
-  // R3 Small/nano count cap (153-03)
+  // Small/nano recall injection count/chars caps
   // -----------------------------------------------------------------
-  describe("R3 small/nano profile count/chars caps", () => {
+  describe("small/nano profile count/chars caps", () => {
     const SMALL_PROFILE = {
       capabilityClass: "small",
       contextWindow: 32_000,
@@ -4644,12 +4629,12 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
 });
 
 // ---------------------------------------------------------------------------
-// ATTR-01: parseSkillLocationIndex — parse the frozen <available_skills> XML
+// parseSkillLocationIndex — parse the frozen <available_skills> XML
 // (the exact processor.ts formatAvailableSkillsXml shape) into a
 // location→skillName Map, unescaping XML entities so the key matches the raw
 // read path.
 // ---------------------------------------------------------------------------
-describe("parseSkillLocationIndex (ATTR-01 frozen-XML location→skillName index)", () => {
+describe("parseSkillLocationIndex (frozen-XML location→skillName index)", () => {
   it("parses a two-<skill> block into the exact location→name map", () => {
     const xml =
       "<available_skills>\n" +
@@ -4694,16 +4679,16 @@ describe("parseSkillLocationIndex (ATTR-01 frozen-XML location→skillName index
     expect(parseSkillLocationIndex("<available_skills>\n</available_skills>").size).toBe(0);
   });
 
-  it("WR-02: an ABSOLUTE learned-skill <location> (mixed with a platform skill) is indexed → name, so a `read` of that path attributes", () => {
-    // The learned surface (mergeLearnedSkillsXml) now emits an ABSOLUTE materialized
+  it("an ABSOLUTE learned-skill <location> (mixed with a platform skill) is indexed → name, so a `read` of that path attributes", () => {
+    // The learned surface (mergeLearnedSkillsXml) emits an ABSOLUTE materialized
     // SKILL.md path for the learned <location> — the SAME absolute shape platform
     // skills use (metadata.path) and the read tool reports. A `read` whose path
-    // equals that absolute location must attribute the learned skill. Pre-WR-02 the
-    // learned location was workspace-RELATIVE (.learned-skills/deploy/SKILL.md),
-    // which (a) does NOT match an absolute read path and (b) is an inconsistent
+    // equals that absolute location must attribute the learned skill. A
+    // workspace-RELATIVE learned location (.learned-skills/deploy/SKILL.md)
+    // (a) does NOT match an absolute read path and (b) is an inconsistent
     // mixed-format block the model may "normalize", silently breaking attribution.
     const platformLoc = "/home/user/.comis/skills/build/SKILL.md";
-    const learnedLoc = "/home/user/workspace/.learned-skills/deploy/SKILL.md"; // absolute, as WR-02 emits
+    const learnedLoc = "/home/user/workspace/.learned-skills/deploy/SKILL.md"; // absolute, as the learned surface emits
     const xml =
       "<available_skills>\n" +
       "  <skill>\n" +

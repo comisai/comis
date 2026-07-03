@@ -3,7 +3,7 @@
 
 export { safePath, PathTraversalError } from "./safe-path.js";
 
-// JAIL-03 bind-mount validator (Phase 211) — pure denylist backstop reusing the
+// Bind-mount validator — pure denylist backstop reusing the
 // safe-path symlink-resolve-through-ancestors primitive.
 export { validateBindMount } from "./bind-mount-validator.js";
 
@@ -39,32 +39,32 @@ export type { ActionClassification } from "./action-classifier.js";
 export { AuditEventSchema, createAuditEvent, AUDIT_KINDS, kindIsSecuritySignal } from "./audit.js";
 export type { AuditEvent, AuditKind, CreateAuditEventParams } from "./audit.js";
 
-// Agent orchestration capabilities (Phase 210)
+// Agent orchestration capabilities
 export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError, attenuateCaps } from "./capability.js";
 export type { AgentCapability } from "./capability.js";
 
-// HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
+// HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth
 export { HANDLER_CAPABILITY_MAP } from "./handler-capability-map.js";
 export type { HandlerCapabilityClassification, GatedMethodName } from "./handler-capability-map.js";
-// SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception (CLI-01/02);
+// SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception;
 // the @comis/infra lease audience imports it so whoami/status reach the agent's
 // own self-scoped reads with any valid lease.
 export { SELF_SCOPED_AGENT_READS } from "./handler-capability-map.js";
 export type { SelfScopedAgentRead } from "./handler-capability-map.js";
 
-// CLI_SUBCOMMAND_MAP — the `comis-agent` subcommand→{tool|method} 1:1 table
-// (CLI-01, v8 §7). The @comis/skills comis-agent-cli dispatches over it; the
+// CLI_SUBCOMMAND_MAP — the `comis-agent` subcommand→{tool|method} 1:1 table.
+// The @comis/skills comis-agent-cli dispatches over it; the
 // cap is DERIVED from the cap-maps (never restated). `skill` + admin verbs are
-// excluded by design (denylisted orch:skill / CLI-03).
+// excluded by design (orch:skill is denylisted at the cap socket).
 export { CLI_SUBCOMMAND_MAP } from "./cli-subcommand-map.js";
 export type { CliCallTarget, CliSubcommand } from "./cli-subcommand-map.js";
 
 // TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP — the single source for the tool.invoke
-// surface (gate + lease audience + SDK codegen) (Phase 212, DISPATCH/READ)
+// surface (gate + lease audience + SDK codegen)
 export { TOOL_CAPABILITY_MAP, TOOL_ROUTE_MAP } from "./tool-capability-map.js";
 export type { ToolName, ToolRoute } from "./tool-capability-map.js";
 
-// ResultRef — minimal structured result-handle + its pure threshold/GC math (Phase 212, REF)
+// ResultRef — minimal structured result-handle + its pure threshold/GC math
 export {
   RESULT_REF_THRESHOLDS,
   DEFAULT_INLINE_THRESHOLD_BYTES,
@@ -115,10 +115,10 @@ export type { InputSecurityGuard, InputSecurityGuardResult, InputSecurityGuardCo
 export { validateMemoryWrite } from "./memory-write-validator.js";
 export type { MemoryWriteValidationResult } from "./memory-write-validator.js";
 
-// Learned-doc static scan (v2.31 Reflection) — the STATIC poison/secret scan an
-// advisory Mental Model doc receives (SKILL-02 / INV-3). Wraps validateMemoryWrite
+// Learned-doc static scan — the STATIC poison/secret scan an
+// advisory Mental Model doc receives. Wraps validateMemoryWrite
 // per-field; no scripts/tool-policy/dynamic surface. Consumed by the agent reflection
-// job (223-04) + the daemon reflect path (223-05).
+// job + the daemon reflect path.
 export { validateLearnedDocBody, MAX_DOC_NAME_LENGTH } from "./validate-learned-doc-body.js";
 export type { LearnedDocValidation, LearnedDocFinding } from "./validate-learned-doc-body.js";
 

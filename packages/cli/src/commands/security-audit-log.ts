@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `comis security audit-log` — operator CLI for the durable security-decision
- * audit (AUDIT-05, Phase 176 Plan 05). Reads `obs_audit_events` via the
+ * audit. Reads `obs_audit_events` via the
  * admin-scoped `obs.audit.query` RPC and prints the content-free rows as a
  * concise table or as JSON.
  *

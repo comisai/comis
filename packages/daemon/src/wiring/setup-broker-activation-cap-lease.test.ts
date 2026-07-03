@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `buildBrokerSpawnEnv` capability-lease mint+inject (ENDPOINT-03; Phase 211
- * Plan 06).
+ * `buildBrokerSpawnEnv` capability-lease mint+inject.
  *
  * Extends the broker-activation spawn-env construction so that, for an
  * autonomy-bearing agent, it ALSO mints an attenuated capability lease, registers
  * the bearer in OutputGuard (so it is never logged — Pitfall 1), and injects
  * `COMIS_CAP_LEASE` (the bearer) + `COMIS_ORCH_SOCKET` (the cap socket path) into
- * the `placeholders` slot (which `buildExecEnv` merges LAST — Open Q3 — so the
+ * the `placeholders` slot (which `buildExecEnv` merges LAST so the
  * daemon-injected vars survive the existing exec/terminal scrub, distinct from
- * the workspace-`.env` source the JAIL-04 COMIS_ block fail-closes).
+ * the workspace-`.env` source the COMIS_ block fail-closes).
  *
  * The lease vars must be injected for an autonomy-bearing agent EVEN WHEN no
  * broker is configured (the cap socket is independent of the HTTPS-proxy broker),
@@ -82,7 +81,7 @@ function createCapMint(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("buildBrokerSpawnEnv capability-lease mint+inject (ENDPOINT-03)", () => {
+describe("buildBrokerSpawnEnv capability-lease mint+inject", () => {
   // mint + inject — broker present: the env placeholders carry COMIS_CAP_LEASE
   // (the minted bearer) AND COMIS_ORCH_SOCKET (the cap socket path), alongside
   // the existing broker placeholders.
@@ -177,7 +176,7 @@ describe("buildBrokerSpawnEnv capability-lease mint+inject (ENDPOINT-03)", () =>
     expect(env).toBeUndefined();
   });
 
-  // source-distinct (Open Q3): the injected COMIS_CAP_LEASE rides the
+  // source-distinct: the injected COMIS_CAP_LEASE rides the
   // placeholders slot (merged LAST in buildExecEnv) — distinct from any
   // workspace-.env source. Assert it is IN placeholders specifically.
   it("places COMIS_CAP_LEASE in the placeholders slot (daemon source, merged last)", () => {

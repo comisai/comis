@@ -12,7 +12,7 @@ export default defineConfig({
       // within itself. Resolves to `dist/index.js` — `pnpm build` must run
       // before tests (existing convention; see CLAUDE.md).
       "@comis/core": resolve(__dirname, "./dist/index.js"),
-      // R0 parity test: secret-detection.test.ts imports getDefaultRedactPatterns
+      // Parity test: secret-detection.test.ts imports getDefaultRedactPatterns
       // from @comis/observability at test time only (test-file cross-import;
       // NOT a production core → observability edge). The architecture-graph.test.ts
       // checks package.json `dependencies` only, not devDependencies.

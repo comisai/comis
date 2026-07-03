@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the OpenAI Images transport (openai-images-transport.ts, PRV-01).
+ * Tests for the OpenAI Images transport (openai-images-transport.ts).
  *
  * The transport is a pi-ai `ImagesApiFunction` that constructs an `openai`
  * client from `options.apiKey` and calls `images.generate` (text->image) or
- * `images.edit` (when the context carries an `ImageContent` reference, IN-01),
+ * `images.edit` (when the context carries an `ImageContent` reference),
  * mapping `data[0].b64_json` -> `AssistantImages.output[0]`.
  *
  * Every test mocks the `openai` MODULE (`vi.mock("openai", ...)`) — NEVER a real
- * `OPENAI_API_KEY`, NEVER the network (RESEARCH "Deterministic CI test seam").
+ * `OPENAI_API_KEY`, NEVER the network.
  * The transport NEVER throws out: any miss (no key, SDK throw, empty data) ->
  * `stopReason:"error"` with an `errorMessage` the shipped `classifyImageError`
  * maps. GPT image models always return base64 -> `response_format` is NEVER set.
@@ -82,10 +82,10 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 1 — generate (text->image), PRV-01
+// Test 1 — generate (text->image)
 // ---------------------------------------------------------------------------
 
-describe("generateImagesOpenAI — generate (PRV-01)", () => {
+describe("generateImagesOpenAI — text-to-image generate", () => {
   it("calls images.generate with the default model and maps b64_json to output[0]", async () => {
     generate.mockResolvedValue({ data: [{ b64_json: PNG_B64 }] });
 
@@ -109,10 +109,10 @@ describe("generateImagesOpenAI — generate (PRV-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-04 — size threading: options.metadata.size → images.generate/edit size
+// size threading: options.metadata.size → images.generate/edit size
 // ---------------------------------------------------------------------------
 
-describe("generateImagesOpenAI — size threading (WR-04)", () => {
+describe("generateImagesOpenAI — size threading", () => {
   it("forwards options.metadata.size to images.generate (text->image)", async () => {
     generate.mockResolvedValue({ data: [{ b64_json: PNG_B64 }] });
 
@@ -142,10 +142,10 @@ describe("generateImagesOpenAI — size threading (WR-04)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 2 — edit (reference->image, IN-01 branch)
+// Test 2 — edit (reference->image branch)
 // ---------------------------------------------------------------------------
 
-describe("generateImagesOpenAI — edit branch (IN-01)", () => {
+describe("generateImagesOpenAI — edit branch", () => {
   it("calls images.edit (not generate) when the context carries an ImageContent", async () => {
     edit.mockResolvedValue({ data: [{ b64_json: PNG_B64 }] });
 

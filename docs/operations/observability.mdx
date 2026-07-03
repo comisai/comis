@@ -64,7 +64,7 @@ The bundle exporter reads `trace.metadata` to populate `metadata.json` and `trac
 
 ## 4. Bridge Mapping (66 entries)
 
-The trajectory bus-bridge maps 66 event types from the typed event bus to trajectory events (up from 18 previously — a ~3.7× coverage improvement).
+The trajectory bus-bridge maps 66 event types from the typed event bus to trajectory events.
 
 <Info>
 **Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a bridge count ≥ 45. Current count: 66.
@@ -146,9 +146,9 @@ The `MAX_TRAJECTORY_WRITERS = 100` constant is exported from `packages/observabi
 
 ## 6. Forensic INFO Promotions
 
-Seven forensic events that fire at most O(1) per turn are promoted from DEBUG to INFO so production daemons at `logLevel: info` retain the signal needed to diagnose the 2026-05-24 duplicate-adapter incident class.
+Seven forensic events that fire at most O(1) per turn are promoted from DEBUG to INFO so production daemons at `logLevel: info` retain the signal needed to diagnose the duplicate-adapter incident class.
 
-Before this change, `Message enqueued` was `level: 20` (DEBUG). A production daemon at `logLevel: info` would have silently discarded it — making the duplicate-enqueue symptom invisible without enabling debug logging first.
+At DEBUG, a production daemon at `logLevel: info` would silently discard a line like `Message enqueued` — making a duplicate-enqueue symptom invisible unless debug logging had been enabled before the incident.
 
 | Event | Source module | Carries |
 |---|---|---|
@@ -227,7 +227,7 @@ If you see a `handlersPerAdapter` WARN at boot, do not proceed to production. Th
 
 Every known pipeline stage emits at least one log line carrying `step: "<stage>"` — enforced by `test/architecture/pipeline-step-coverage.test.ts`.
 
-**Why it matters:** before this change, only 3% of `daemon.log` lines (15 of 480 sampled) carried a `step:` field. Filtering by pipeline stage required reading every log line. The target is ≥ 50% coverage.
+**Why it matters:** without `step:` discipline, filtering by pipeline stage requires reading every log line. The target is ≥ 50% of `daemon.log` lines carrying a `step:` field.
 
 The authoritative stage token map lives in `test/architecture/pipeline-step-coverage.test.ts` — consult it when adding new log call sites.
 
@@ -273,8 +273,8 @@ Three event kinds:
   "source": "runtime" }
 ```
 
-Every row carries two additive optional provenance fields (added on
-`schemaVersion: 1`, so older readers ignore them):
+Every row carries two optional provenance fields (readers that do not know
+them can safely ignore them):
 
 - `source` — `"runtime"` for production rows (shown above), `"test"` for rows
   written by a VITEST/`NODE_ENV=test` process, `"bench"` for harness-injected rows.
@@ -471,7 +471,7 @@ Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis
 
 ### 15.2 Recall & curation events
 
-Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping-66-entries): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. RECALL-01: a recall now shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). GENQ-01: a memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis fleet` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
+Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping-66-entries): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. A recall shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). A memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis fleet` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
 
 Every payload is **counts, booleans, and IDs only** — never query text, memory bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in recall-trace artifact above, not on the bus.
 
@@ -487,7 +487,7 @@ Every payload is **counts, booleans, and IDs only** — never query text, memory
 | `context:dag_expanded` | When an in-session expansion tool (`ctx_search`/`ctx_inspect`/`ctx_expand`) recovers compressed detail (DAG mode) | `conversationId`, `agentId`, `sessionKey`, `tool`, `recoveredCount`, `durationMs`, `timestamp` |
 | `context:mode_switched` | On an actual `pipeline`⇄`dag` engine direction change | `from`, `to`, `fullImport`, `importedCount`, `durationMs` |
 
-`memory:recalled.finalCount == 0` means recall returned nothing for that turn — a recall **miss**. When *every* recall in a **degraded** session missed (and no tool/context/breaker cause matched), `comis explain` root-causes it as `recall_miss` and points at the recall scope and (for non-Latin queries) the trigram-twin lanes. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:evicted` and `context:dag_compacted` both fire in DAG mode (the default engine) — `context:dag_compacted.durationMs` reports the real wall-clock of each compaction pass; `context:dag_expanded` reports an in-session zoom into the DAG (counts/`durationMs` only — never message or summary content). `context:mode_switched` fires only on a real engine-mode direction change and reports the one-time reconciliation `importedCount`; the mid-conversation `pipeline`⇄`dag` reconciliation that emits it lands in a later phase, so that one event is currently dormant.
+`memory:recalled.finalCount == 0` means recall returned nothing for that turn — a recall **miss**. When *every* recall in a **degraded** session missed (and no tool/context/breaker cause matched), `comis explain` root-causes it as `recall_miss` and points at the recall scope and (for non-Latin queries) the trigram-twin lanes. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:evicted` and `context:dag_compacted` both fire in DAG mode (the default engine) — `context:dag_compacted.durationMs` reports the real wall-clock of each compaction pass; `context:dag_expanded` reports an in-session zoom into the DAG (counts/`durationMs` only — never message or summary content). `context:mode_switched` fires only on a real engine-mode direction change and reports the one-time reconciliation `importedCount`; the mid-conversation `pipeline`⇄`dag` reconciliation that emits it is not yet implemented, so that one event is currently dormant.
 
 ### 15.3 No-silent-degradation signals (`errorKind` + `hint`)
 
@@ -575,10 +575,10 @@ jq 'select(.event | startswith("observability:spend_"))' ~/.comis/logs/daemon.lo
 
 ---
 
-## 17. Existing Tracking Surfaces (pre-existing, preserved for completeness)
+## 17. Additional Tracking Surfaces
 
 <Note>
-The following tracking surfaces predate the observability work above and continue to operate as before. They are referenced by the web dashboard at [/web-dashboard/observability](/web-dashboard/observability).
+The following tracking surfaces operate continuously alongside the diagnostics above. They are referenced by the web dashboard at [/web-dashboard/observability](/web-dashboard/observability).
 </Note>
 
 ### Token Tracking

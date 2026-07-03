@@ -156,12 +156,12 @@ describe("createContextWindowResolver", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CWF-03-G: override seam characterization — discovered served window beats
-  // catalog value (proves the globalOverride seam is viable for probe results)
+  // Override seam characterization — discovered served window beats catalog
+  // value (proves the globalOverride seam is viable for probe results)
   // -------------------------------------------------------------------------
 
-  describe("CWF-03-G: override seam (served window beats catalog)", () => {
-    it("globalOverride of 32768 beats catalog value of 131072 (CWF-03-G: override seam proof)", () => {
+  describe("override seam (served window beats catalog)", () => {
+    it("globalOverride of 32768 beats catalog value of 131072 (override seam proof)", () => {
       const catalog = makeCatalogWithEntry("ollama", "qwen3.6:35b", 131_072);
       const resolver = createContextWindowResolver({
         catalog,

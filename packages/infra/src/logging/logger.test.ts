@@ -324,9 +324,9 @@ describe("createLogger", () => {
       expect(levelValue).toBeLessThan(40);
     });
 
-    // AUDIT-03: the dormant `.audit()` level (35) must be callable through the
-    // PRODUCTION `createLogger` factory (the typed ComisLogger surface), not
-    // just the hand-rolled test pino above. Plan 03's audit subscriber calls
+    // The `.audit()` level (35) must be callable through the PRODUCTION
+    // `createLogger` factory (the typed ComisLogger surface), not just the
+    // hand-rolled test pino above. The audit subscriber calls
     // `logger.audit(scrubbedRecord, "…")`; this proves the production wrapper
     // routes it to level 35 end-to-end (captured via a file transport, the
     // proven in-file poll pattern, since createLogger owns its pino instance).
@@ -921,8 +921,7 @@ describe("log redaction — multi-target transport and err serializer", () => {
     // loaded runner the loop breaks the instant that one line lands while the
     // later `info` lines (including the env-ref line, logged LAST) are still in
     // the pipeline worker's buffer — and the `toContain(ENV_REF)` assertion then
-    // fails against a partial file. (Flaky-failed the v1.0.44 npm-publish
-    // release gate on 2026-07-01.) Poll until BOTH lines whose *presence* we
+    // fails against a partial file. Poll until BOTH lines whose *presence* we
     // assert (argsPreview, logged 3rd; env-ref, logged 4th/last) have flushed,
     // so all four records are on disk before we assert. The deadline backstops.
     const deadline = Date.now() + 8000;

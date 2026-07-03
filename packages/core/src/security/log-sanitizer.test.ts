@@ -132,10 +132,11 @@ describe("sanitizeLogString", () => {
   });
 
   describe("FAL API keys (<uuid>:<32hex>)", () => {
-    // CR-01 (Phase 192): a FAL FAL_KEY is shaped `<uuid>:<32+hex>`. The UUID half
+    // A FAL FAL_KEY is shaped `<uuid>:<32+hex>`. The UUID half
     // has hyphens (breaking a hex run) and the hex half is ~32 chars (< the 40-char
-    // HEX_SECRET_LONG floor), so it is NOT sk-/Bearer/AIza/long-hex — every prior
-    // pattern missed it, leaking a FAL credential echoed into a provider error body.
+    // HEX_SECRET_LONG floor), so it is NOT sk-/Bearer/AIza/long-hex — no other
+    // pattern catches it; without FAL_KEY, a FAL credential echoed into a
+    // provider error body would leak.
     it("redacts a FAL key (uuid:hex) defense-in-depth pattern", () => {
       const falKey = "b1946ac9-2c7f-4d3e-8a1b-9f8e7d6c5b4a:9f8e7d6c5b4a32109f8e7d6c5b4a3210";
       const input = `FAL submit rejected key=${falKey}`;
@@ -322,14 +323,13 @@ describe("sanitizeLogString", () => {
 });
 
 // ---------------------------------------------------------------------------
-// redactErrorMessage — the SEC-01 free-text error/diagnostic scrubber.
+// redactErrorMessage — the free-text error/diagnostic scrubber.
 //
-// Relocated from @comis/skills (media-adapter-shared.ts) to @comis/core/security
-// in Phase 197 Plan 02 so BOTH @comis/skills (its 6 adapter callers + sanitizeApiError)
-// AND @comis/channels (the voice-out pipeline WARN branches) can depend on a SINGLE
-// source — @comis/channels deliberately does NOT import @comis/skills (structural-typing
-// boundary), so the primitive had to move DOWN to core. The redaction SEMANTICS are
-// unchanged — these asserts pin the exact behavior the skills tests previously relied on.
+// It lives in @comis/core/security so BOTH @comis/skills (its 6 adapter callers +
+// sanitizeApiError) AND @comis/channels (the voice-out pipeline WARN branches) can
+// depend on a SINGLE source — @comis/channels deliberately does NOT import
+// @comis/skills (structural-typing boundary), so the primitive lives DOWN in core.
+// These asserts pin the exact redaction behavior every caller relies on.
 // ---------------------------------------------------------------------------
 describe("redactErrorMessage", () => {
   it("strips URLs, the Bearer scheme, Authorization marker, and a long token", () => {
@@ -368,11 +368,11 @@ describe("redactErrorMessage", () => {
     expect(result).toContain("[REDACTED]");
   });
 
-  // WR-03: the scheme stripping must not mangle benign prose, and must not leave
+  // The scheme stripping must not mangle benign prose, and must not leave
   // an orphaned double-space where a real credential was redacted.
   it("does NOT mangle prose that merely mentions 'bearer'/'authorization' (no following credential)", () => {
     // No credential-length token follows the scheme words → they are prose and
-    // must survive verbatim (the pre-fix non-anchored deletion mutilated them).
+    // must survive verbatim (a non-anchored deletion would mutilate them).
     const prose = "the bearer of bad news; authorization is required for this step";
     expect(redactErrorMessage(prose)).toBe(prose);
     const prose2 = "a Bearer token format hint was returned";
@@ -386,8 +386,8 @@ describe("redactErrorMessage", () => {
     expect(result).not.toContain("Authorization:");
     expect(result).not.toContain("sk-abc123def456ghi789jkl012mno345pqr678");
     expect(result).toContain("[REDACTED]");
-    // The pre-fix code left a leading double-space ("  sk... rejected"); the
-    // scheme + token now collapse into one [REDACTED] with single spacing.
+    // The scheme + token must collapse into one [REDACTED] with single spacing —
+    // never an orphaned leading double-space ("  sk... rejected").
     expect(result).not.toMatch(/ {2,}/);
     expect(result).toBe("[REDACTED] rejected");
   });

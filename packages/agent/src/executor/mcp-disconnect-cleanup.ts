@@ -3,8 +3,7 @@
  * MCP disconnect cleanup: wires mcp:server:disconnected and
  * mcp:server:tools_changed events to discovery tracker cleanup.
  *
- * Separate from session-snapshot-cleanup.ts to maintain single responsibility
- * Kept separate to maintain single responsibility.
+ * Kept separate from session-snapshot-cleanup.ts to maintain single responsibility.
  *
  * @module
  */

@@ -92,7 +92,7 @@ describe("createToolCallRepairWrapper", () => {
     );
   });
 
-  it("S3 adversarial: repairs shape but preserves malicious value unchanged", () => {
+  it("adversarial input: repairs shape but preserves malicious value unchanged", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     const wrappedFn = wrapper(base);
 
@@ -139,7 +139,7 @@ describe("createToolCallRepairWrapper", () => {
     );
   });
 
-  it("WR-04: irreparable branch replaces the assistant block's string args with an empty object (well-formed)", () => {
+  it("irreparable branch replaces the assistant block's string args with an empty object (well-formed)", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     const wrappedFn = wrapper(base);
 
@@ -158,7 +158,7 @@ describe("createToolCallRepairWrapper", () => {
     expect(outBlock.arguments).toEqual({});
   });
 
-  it("WR-04 idempotency: a second pass over the wrapper output injects NO duplicate synthetic toolResult", () => {
+  it("idempotency: a second pass over the wrapper output injects NO duplicate synthetic toolResult", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
 
     const toolCall = makeToolCall("exec", "not json at all <<<" as any);
@@ -186,7 +186,7 @@ describe("createToolCallRepairWrapper", () => {
     expect(secondOut.messages.length).toBe(firstOut.messages.length);
   });
 
-  it("WR-04 de-dup: irreparable args with a pre-existing toolResult for that id inject NO new synthetic result", () => {
+  it("de-dup: irreparable args with a pre-existing toolResult for that id inject NO new synthetic result", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     const wrappedFn = wrapper(base);
 
@@ -216,8 +216,8 @@ describe("createToolCallRepairWrapper", () => {
     expect(wrapper.name).toBe("toolCallRepairWrapper");
   });
 
-  // SA10-c: legit empty-args string '{}' MUST NOT be flagged irreparable
-  it("SA10-c: legit empty-args string '{}' passes through as parsed {} (NOT flagged irreparable)", () => {
+  // Legit empty-args string '{}' MUST NOT be flagged irreparable
+  it("legit empty-args string '{}' passes through as parsed {} (NOT flagged irreparable)", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     const wrappedFn = wrapper(base);
 
@@ -238,8 +238,8 @@ describe("createToolCallRepairWrapper", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  // SA10-d: empty string rawArgs MUST NOT be flagged irreparable
-  it("SA10-d: empty string rawArgs passes through as parsed {} (NOT flagged irreparable)", () => {
+  // Empty string rawArgs MUST NOT be flagged irreparable
+  it("empty string rawArgs passes through as parsed {} (NOT flagged irreparable)", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     const wrappedFn = wrapper(base);
 
@@ -260,8 +260,8 @@ describe("createToolCallRepairWrapper", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  // SA10-e: valid JSON string MUST be parsed to the same object as JSON.parse (byte-identical)
-  it("SA10-e: valid JSON string arg parsed to object byte-identical to JSON.parse", () => {
+  // Valid JSON string MUST be parsed to the same object as JSON.parse (byte-identical)
+  it("valid JSON string arg parsed to object byte-identical to JSON.parse", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     const wrappedFn = wrapper(base);
 

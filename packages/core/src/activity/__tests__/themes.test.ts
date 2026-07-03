@@ -3,11 +3,11 @@
  * Tests for the activity theme tier.
  *
  * Two contracts under test:
- *   - Task 1 (label-spec.ts): `ActivityTheme` gains an OPTIONAL `markers` tier
+ *   - label-spec.ts: `ActivityTheme` carries an OPTIONAL `markers` tier
  *     ({@link ActivityStatusMarkers}). A theme that omits markers still
- *     type-checks and `resolveLabelSpec` is byte-for-byte unchanged — markers
+ *     type-checks and markers never perturb `resolveLabelSpec` output — markers
  *     are a parallel advisory tier, NOT part of the label-merge.
- *   - Task 2 (themes/index.ts + the four bundles): exactly four named themes
+ *   - themes/index.ts + the four bundles: exactly four named themes
  *     (`default`, `terminal-minimal`, `playful`, `ascii`) resolve via
  *     `themeForName(name)`; their marker sets are pairwise distinct; the ascii
  *     bundle is provably emoji-free; the playful bundle provably carries emoji.
@@ -33,7 +33,7 @@ const ALL_THEME_NAMES: readonly ThemeName[] = [
   "ascii",
 ];
 
-describe("ActivityTheme.markers — optional advisory tier (Task 1)", () => {
+describe("ActivityTheme.markers — optional advisory tier", () => {
   it("exposes the exact marker strings a theme supplies", () => {
     const markers: ActivityStatusMarkers = {
       success: "X",
@@ -68,7 +68,7 @@ describe("ActivityTheme.markers — optional advisory tier (Task 1)", () => {
   });
 });
 
-describe("themeForName — the four bundled themes (Task 2)", () => {
+describe("themeForName — the four bundled themes", () => {
   it("resolves every theme name to a bundle carrying markers", () => {
     for (const name of ALL_THEME_NAMES) {
       const theme = themeForName(name);

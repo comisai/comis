@@ -237,10 +237,10 @@ export function createPiExecutor(
       );
       const activeStepCounter = executionOverrides?.stepCounter ?? deps.stepCounter;
       activeStepCounter.reset();
-      // BUDGET-01: a per-spawn tokenBudget becomes THIS execution's effective
+      // A per-spawn tokenBudget becomes THIS execution's effective
       // per-execution cap (min(config.perExecution, cap)); undefined ⇒ no cap
       // override, byte-identical to the no-budget path.
-      // CR-01: resetExecution returns an EXECUTION-LOCAL window owning this run's
+      // resetExecution returns an EXECUTION-LOCAL window owning this run's
       // per-execution total + cap. Thread it (not the shared per-agent guard)
       // into the before-tool-call guard and the event bridge so two concurrent
       // same-agent executions never clobber each other's per-execution budget.
@@ -249,7 +249,7 @@ export function createPiExecutor(
       // 4. Resolve model using ModelRegistry
       //    Apply per-node model override from ExecutionOverrides and normalize shortcuts before registry lookup
       const normalizedPrimary = normalizeModelId(config.provider, config.model);
-      // WR-02: track the provider key (config providers.entries space) the
+      // Track the provider key (config providers.entries space) the
       // EXECUTING model resolves to — the agent's primary by default, the
       // override provider when a per-execution model override resolves below.
       // The served-window gate compares against THIS key rather than
@@ -298,7 +298,7 @@ export function createPiExecutor(
           }
           if (overrideResolved) {
             resolvedModel = overrideResolved;
-            resolvedProviderKey = overrideProvider; // WR-02: the execution now runs on the override's provider
+            resolvedProviderKey = overrideProvider; // the execution now runs on the override's provider
             deps.logger.info(
               { defaultModel: config.model, overrideModel: executionOverrides.model },
               "Model override applied from execution overrides",
@@ -323,17 +323,18 @@ export function createPiExecutor(
       if (alsCtx && resolvedModel) {
         (alsCtx as Record<string, unknown>).resolvedModel = `${resolvedModel.provider}:${resolvedModel.id}`;
       }
-      // R4 (132-03): populate the turn's agentId onto the LIVE RequestContext so
-      // the in-session ctx_* tools scope LCD reads by THIS agent per-call (WR-02).
+      // Populate the turn's agentId onto the LIVE RequestContext so
+      // the in-session ctx_* tools scope LCD reads by THIS agent per-call.
       // The agentId arrives as a positional execute() arg (not in the context set
       // at the channel/RPC boundary); mirror the resolvedModel mutation above. The
       // tools read `tryGetContext().agentId` — a wiring-time closure would be
-      // unsafe when one wiring serves multiple agents (the exact WR-02 threat).
+      // unsafe when one wiring serves multiple agents (the exact cross-agent
+      // scoping threat this guards against).
       if (alsCtx && agentId) {
         (alsCtx as Record<string, unknown>).agentId = agentId;
       }
-      // GEN-03 (181-04): tag the resolved reply language on ALS for the sub-agent leg
-      // (DET-02 config+inbound order; set only when non-en so the en path is untouched, I1).
+      // Tag the resolved reply language on ALS for the sub-agent leg
+      // (config-then-inbound resolution order; set only when non-en so the en path is untouched).
       if (alsCtx) {
         const lang = resolveReplyLanguage({ inboundText: msg.text ?? "", configLanguage: config.language });
         if (lang !== "en") (alsCtx as Record<string, unknown>).resolvedLanguage = lang;
@@ -341,7 +342,7 @@ export function createPiExecutor(
 
       // Derive compat config via normalizeModelCompat (xAI + GBNF auto-detection;
       // providerType/comisCompat resolved per-execution because model overrides
-      // can switch providers — GBNF-01).
+      // can switch providers).
       const modelCompat = resolvedModel ? normalizeModelCompat({
         provider: resolvedModel.provider,
         id: resolvedModel.id,
@@ -349,27 +350,27 @@ export function createPiExecutor(
         comisCompat: deps.getModelCompat?.(resolvedModel.provider, resolvedModel.id),
       }) : undefined;
 
-      // Resolve ModelProfile once per execution (K1: resolve-once, thread everywhere).
+      // Resolve ModelProfile once per execution (resolve-once, thread everywhere).
       // Must be after executionOverrides.model override (above) so the profile reflects
       // the actual resolved model. Added to RunSessionLockedContext (per-execution record,
       // NOT PiExecutorDeps which is long-lived across multiple execute() calls).
-      // CR-02: resolvedModel.input is ("text"|"image")[] — assignable to readonly string[]
+      // resolvedModel.input is ("text"|"image")[] — assignable to readonly string[]
       // without a cast now that resolveModelProfile accepts readonly string[] | undefined.
-      // Q3: wire operator capabilityClass override from providers.entries.<id>.capabilities.capabilityClass.
+      // Wire operator capabilityClass override from providers.entries.<id>.capabilities.capabilityClass.
       // deps.providerCapabilities is already populated by setup-agents-runtime.ts from
       // container.config.providers?.entries?.[resolved.provider]?.capabilities.
       // When set, this overrides the provider-family heuristic (ollama → "small" etc.)
       // and lets operators pin a specific capabilityClass in config (e.g., to treat a
       // large quantized ollama model as "mid" for context budget + security purposes).
 
-      // CWF-03: Reconcile effective context window before resolveModelProfile.
+      // Reconcile effective context window before resolveModelProfile.
       // capabilityCap is derived from deps.providerCapabilities?.capabilityClass (pre-resolver,
       // config-side value) — NOT from modelProfile.capabilityClass, which does not exist yet
       // (resolveModelProfile is what creates it). Using modelProfile here would be circular.
-      // CR-01 fix: when no explicit capabilityClass is present (e.g. plain anthropic/openai
+      // When no explicit capabilityClass is present (e.g. plain anthropic/openai
       // provider with no providers.entries block), treat the cap as Infinity (no constraint).
       // Only apply a class-derived cap when the operator explicitly set capabilityClass.
-      // Cross-provider stress enabler (2026-06-22): the AGENT-level pin
+      // Cross-provider stress enabler: the AGENT-level pin
       // (agents.<id>.capabilityClass) takes precedence over the PROVIDER-level
       // value (providers.entries.<id>.capabilities.capabilityClass), so an operator
       // can force a small-window nano/small treatment on a large-window model
@@ -381,12 +382,11 @@ export function createPiExecutor(
       const capabilityCap = explicitClass != null
         ? (DEFAULT_EFFECTIVE_CAP_BY_CLASS[explicitClass] ?? Infinity)
         : Infinity;
-      // WR-02 (Phase 176 review): the probed served window binds ONLY
+      // The probed served window binds ONLY
       // executions on the provider it was probed from. deps.servedContextWindow
       // is bound once at construction to the agent's PRIMARY provider, but
       // executionOverrides.model can switch providers per-execution (graph
-      // per-node models, subagent spawns — the GBNF-01 resolver-form
-      // precedent). On mismatch: no served clamp AND no served attribution —
+      // per-node models, subagent spawns). On mismatch: no served clamp AND no served attribution —
       // otherwise an Ollama-primary agent's 8K num_ctx would silently crush an
       // override model on another provider and the diagnostics would assert
       // "Ollama serves only 8192" for a model Ollama does not serve.
@@ -400,7 +400,7 @@ export function createPiExecutor(
         served: servedWindow,
         capabilityCap,
       });
-      // KNOB-02 (Phase 176): the window provenance is BORN here — the TRUE
+      // The window provenance is BORN here — the TRUE
       // configured window before resolveModelProfile below overwrites
       // profile.contextWindow with the reconciled value. Threaded along the
       // modelProfile chain into BOTH computeTokenBudgetForProfile call sites
@@ -420,7 +420,7 @@ export function createPiExecutor(
           capabilityCap,
           submodule: "context-window-reconcile",
         }, "Context window reconciled (served or capability cap bound)");
-        // KNOB-02: promote the FIRST reconcile of a session to INFO — the
+        // Promote the FIRST reconcile of a session to INFO — the
         // reconcile is load-bearing diagnostic evidence (which window actually
         // bound, and why) and must not depend on logLevel=debug having been set
         // before the incident. The bounded session latch keeps it to exactly
@@ -522,11 +522,11 @@ interface RunSessionLockedContext {
   readonly resolvedModel: ReturnType<ModelRegistry["find"]> | undefined;
   readonly modelCompat: ReturnType<typeof normalizeModelCompat> | undefined;
   readonly modelProfile: ModelProfile;
-  /** KNOB-02: served/capability window provenance built at the reconcile above —
+  /** Served/capability window provenance built at the reconcile above —
    *  threaded as a sibling of modelProfile into both budget call sites. */
   readonly windowProvenance: WindowProvenance;
   readonly activeStepCounter: StepCounter;
-  /** CR-01: the per-execution budget window for THIS run — threaded into the
+  /** The per-execution budget window for THIS run — threaded into the
    *  before-tool-call guard and the event bridge instead of the shared per-agent
    *  guard, so concurrent same-agent executions never share the per-execution cap/total. */
   readonly budgetWindow: ExecutionBudgetWindow;
@@ -549,9 +549,9 @@ async function runSessionLocked(
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
   } = ctx;
-  // WT-01: the per-run workspace jail. A `spawn --worktree` child runs in an
+  // The per-run workspace jail. A `spawn --worktree` child runs in an
   // isolated git worktree (executionOverrides.workspaceDir, confined under the
-  // agent's own jailed workspace, T-219-11), so the SDK session cwd + the
+  // agent's own jailed workspace), so the SDK session cwd + the
   // resource-loader / context-engine / command-handler workspace root all use it
   // — exec/read/write/edit resolve inside the worktree. Absent ⇒ deps.workspaceDir
   // (the agent's shared workspace — byte-identical to today's path).
@@ -616,7 +616,7 @@ async function runSessionLocked(
     setDeliveredGuides(formattedKeyForGuides, deliveredGuides);
   }
 
-  // Detect onboarding state for post-execution completion check (WT-01: the
+  // Detect onboarding state for post-execution completion check (the
   // worktree is the child's actual working tree, so onboarding state reflects it).
   const isOnboarding = await detectOnboardingState(effectiveWorkspaceDir);
 
@@ -714,7 +714,7 @@ async function runSessionLocked(
     // a hardcoded ~/.comis: a custom-dataDir install keeps its session files —
     // and their co-located trajectory files — under that root, so a ~/.comis
     // base would silently reject every write while the pointer still advertises
-    // the file (the 260611 session-index bug class). See resolveTrajectoryConfinedBase.
+    // the file. See resolveTrajectoryConfinedBase.
     const trajectoryConfinedBase = resolveTrajectoryConfinedBase(
       deps.trajectoryConfig?.dir,
       deps.dataDir,
@@ -734,7 +734,7 @@ async function runSessionLocked(
       agentId: agentId ?? config.name,
       sessionId: formattedKey,
       sessionKey: formattedKey,
-      // WT-01: record the run's ACTUAL working tree (the worktree when present)
+      // Record the run's ACTUAL working tree (the worktree when present)
       // so the trajectory reflects where exec/read/write ran, not the shared dir.
       workspaceDir: effectiveWorkspaceDir,
       // Pointer-file sidecar. createTrajectoryRecorder
@@ -795,7 +795,8 @@ async function runSessionLocked(
     } else {
       // Legacy per-turn path. flushAndClose still runs in this execute's
       // finally; seq resets between turns and session.started/ended
-      // fires per turn (deviations E + F). Kept for tests and callers
+      // fires per turn (both break the session-trajectory invariants the
+      // registry guarantees). Kept for tests and callers
       // that haven't wired the registry yet.
       trajectoryRecorder = createTrajectoryRecorder(trajectoryInit);
       if (trajectoryRecorder !== null) {
@@ -828,12 +829,12 @@ async function runSessionLocked(
         deps.cacheTraceConfig.filePath === undefined
           ? safePath(os.homedir(), ".comis")
           : undefined;
-      // §7.2 envelope cluster — wire the contextual fields reachable
+      // Envelope cluster — wire the contextual fields reachable
       // from this site without widening the Deps interface. `runId`
       // and `modelApi` are intentionally OMITTED: neither is threaded
       // into the executor's scope today (runId has no producer; the
       // pi-ai Model interface does not expose an `api` discriminator).
-      // A follow-up plan can widen Deps when those values become
+      // A follow-up change can widen Deps when those values become
       // available; the optional cluster contract is "wire what's
       // reachable, omit cleanly otherwise".
       cacheTrace = createCacheTrace({
@@ -891,7 +892,7 @@ async function runSessionLocked(
     maxSendsPerExecution: deps.maxSendsPerExecution ?? 3,
   });
 
-  // Per-execution turn-loop detector (FIX #2): dedup idempotent reads + break a
+  // Per-execution turn-loop detector: dedup idempotent reads + break a
   // runaway repeating-tool loop early. Closure-local, one per run.
   const turnLoopDetector = createTurnLoopDetector();
 
@@ -908,7 +909,7 @@ async function runSessionLocked(
   // inject the full ToolDefinitions into the live agentic loop tools array so the LLM can
   // call them in the same turn (not just the next message).
   session.agent.afterToolCall = async (callCtx) => {
-    // FIX #2: populate the loop detector cache on EVERY tool result (before the
+    // Populate the loop detector cache on EVERY tool result (before the
     // discovery early-return) so normal reads fill it; mutations clear it.
     turnLoopDetector.recordCall(callCtx.toolCall.name, callCtx.args, callCtx.result);
 
@@ -1029,11 +1030,11 @@ async function runSessionLocked(
   // accessible at runtime. Same pattern as streamFn override above.
   const ceSetup = setupContextEngine({
     config, deps: frozenDeps, formattedKey, sessionKey: formattedKey,
-    // R4 (132-03): the dag assembler's LCD read scope tenant — the SAME source
+    // The dag assembler's LCD read scope tenant — the SAME source
     // executor-post-execution uses for the ingest scope (deps.tenantId ?? the
-    // session key's tenant), so read + write scopes agree (WR-02).
+    // session key's tenant), so read + write scopes agree.
     tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
-    // DAG-CRIT-1: the dag assembler's LCD read scope agentId — the SAME
+    // The dag assembler's LCD read scope agentId — the SAME
     // `effectiveAgentId = agentId ?? "default"` expression executor-post-execution
     // uses for the LCD ingest WRITE scope, so the read scope == the write scope and
     // the assembler stops failing closed (the positional turn agentId never reaches
@@ -1048,24 +1049,24 @@ async function runSessionLocked(
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,
-    modelProfile,  // already in scope: resolved once per execution in step 4 (the resolveModelProfile call after the CWF-03 reconcile); consumed by assembleTools' profile budget (step 5, "System token estimate")
-    // KNOB-02: served/capability window provenance for the lcd-assembler's budget
+    modelProfile,  // already in scope: resolved once per execution in step 4 (the resolveModelProfile call after the context-window reconcile); consumed by assembleTools' profile budget (step 5, "System token estimate")
+    // Served/capability window provenance for the lcd-assembler's budget
     // (the second computeTokenBudgetForProfile call site) — sibling of modelProfile.
     windowProvenance,
-    // Phase 166 T-S4: thread security-pin markers so the dag eviction never drops canary/security context.
+    // Thread security-pin markers so the dag eviction never drops canary/security context.
     // contentDelimiter defaults to "" (fail-closed: isSecurityRelevantMessage with empty contentDelimiter
-    // only matches on canaryToken — defense-in-depth; a real delimiter is injected by Plan 04).
+    // only matches on canaryToken — defense-in-depth).
     securityPinMarkers: frozenDeps.canaryToken
       ? { canaryToken: frozenDeps.canaryToken, contentDelimiter: "" }
       : undefined,
-    // Phase 166 Fix 3 (Plan 04): thread assembled-input + effective-window tokens so
-    // config-resolver can clamp max_tokens per-dispatch (CWF-02).
+    // Thread assembled-input + effective-window tokens so
+    // config-resolver can clamp max_tokens per-dispatch.
     onAssembledInputTokens: (tokens: number) => {
       streamSetup.assembledInputTokensRef.current = tokens;
     },
     onEffectiveWindow: (windowTokens: number) => {
       streamSetup.effectiveWindowRef.current = windowTokens;
-      // CR-02 (Phase 166): also update outputHeadroomRef so config-resolver uses the
+      // Also update outputHeadroomRef so config-resolver uses the
       // REAL floor for this dispatch (not the stale MIN_VISIBLE_OUTPUT_TOKENS=768).
       // Re-derive from the current thinking level + model reasoning style so the
       // headroom always tracks the live values at the moment the pre-flight fires.
@@ -1074,15 +1075,15 @@ async function runSessionLocked(
       streamSetup.outputHeadroomRef.current = computeOutputHeadroom(rsStyle, tLevel);
     },
     getThinkingLevel: () => config.thinkingLevel ?? undefined,
-    // Phase 166 Fix 3: thinking-effort governor — down-shifts session.setThinkingLevel
+    // Thinking-effort governor — down-shifts session.setThinkingLevel
     // before the LLM call when the context engine detects the window is too tight.
-    // Gated by config.thinking.downshiftOnTightWindow (D-05 discretion).
+    // Gated by config.thinking.downshiftOnTightWindow.
     // Pattern from executor-command-handlers.ts:98 — try/catch with WARN + errorKind.
     // A bare empty catch is PROHIBITED (AGENTS.md §2.2): silent swallow means thinking
     // is never reduced — the exact failure mode the governor must prevent.
     onThinkingDownshifted: config.thinking?.downshiftOnTightWindow !== false
       ? (level: string) => {
-          // CR-02 (Phase 166): update outputHeadroomRef with the POST-DOWNSHIFT headroom
+          // Update outputHeadroomRef with the POST-DOWNSHIFT headroom
           // so config-resolver clamps max_tokens to the REDUCED thinking reserve after
           // the governor fires. This must happen BEFORE session.setThinkingLevel so the
           // headroom tracks the final level that will be used for this dispatch.
@@ -1135,18 +1136,18 @@ async function runSessionLocked(
     (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;
   }
 
-  // DEPTH-03 (Plan 174-03): bootstrap crash-recovery sweep. Runs ONCE per session —
+  // Bootstrap crash-recovery sweep. Runs ONCE per session —
   // after the context engine is wired, BEFORE the first turn's afterTurn ingest — so a
   // mid-turn crash gap (messages written to the JSONL trajectory but never ingested into
   // the durable LCD store because the daemon was killed before afterTurn) is
-  // continue-appended EXACTLY ONCE. WR-02 (Plan 174-04): gated on the existing
-  // `isFirstMessageInSession` signal (truly run-once) — turns 2+ were already idempotent
+  // continue-appended EXACTLY ONCE. Gated on the existing
+  // `isFirstMessageInSession` signal (truly run-once) — turns 2+ are already idempotent
   // via the durable cursor, so skipping them removes per-turn LCD single-flight overhead.
-  // Extracted to `maybeRunBootstrapSweep` (state-first helper, IN-01) to keep the in-lock
+  // Extracted to `maybeRunBootstrapSweep` (state-first helper) to keep the in-lock
   // body from accreting another wiring block; the recovery itself (the EXISTING
   // ingestTurnGuarded path + the shouldRunLcdStorePasses dag gate) lives in
   // `bootstrapLcdSweep`. The scope is built exactly as the afterTurn block does so read
-  // scope == write scope (DAG-CRIT-1 / WR-02): conversationId === sessionKey ===
+  // scope == write scope: conversationId === sessionKey ===
   // formattedKey, agentId === `agentId ?? "default"`. The JSONL-loaded live array is the
   // same ref executor-post-execution reads at the afterTurn site (typed unknown on
   // AgentSession — no public SDK type for it).
@@ -1323,7 +1324,7 @@ async function runSessionLocked(
   const executionId = randomUUID();
   // Budget trajectory warning: shared mutable ref between bridge (writer) and prompt runner (reader)
   const budgetWarningRef = { current: false };
-  // LAT-02 (177-03): deltas (text + thinking) reset the stall budget — ALWAYS-
+  // Deltas (text + thinking) reset the stall budget — ALWAYS-
   // defined (the bridge presence-gates on deps.onDelta), live-ref
   // (currentResetTimer is assigned later at onResetTimer), throttled ~1/s.
   const onDeltaWithStallReset = createDeltaResetComposer({}, {
@@ -1333,12 +1334,12 @@ async function runSessionLocked(
   });
   const bridge = createPiEventBridge({
     eventBus: deps.eventBus,
-    // CR-01: this run's execution-local window (NOT the shared per-agent guard),
+    // This run's execution-local window (NOT the shared per-agent guard),
     // so recordUsage / the turn-end budget check are scoped to THIS execution.
     budgetGuard: budgetWindow,
     costTracker: deps.costTracker,
-    // Phase 177: the daemon-wide spend accumulator REFERENCE (Pitfall 4 — the
-    // per-agent guards read the SAME instance) + its scope/config. The scope's
+    // The daemon-wide spend accumulator REFERENCE (the per-agent guards read
+    // the SAME instance) + its scope/config. The scope's
     // tenant is read directly off the structured SessionKey (it already carries
     // tenantId; the formatted-string parser is only needed on the bus path). When
     // spendAccumulator is absent the bridge's spend path is a no-op.
@@ -1349,7 +1350,7 @@ async function runSessionLocked(
           spendScope: { tenantId: sessionKey.tenantId ?? "default", agentId: agentId ?? "default" },
         }
       : {}),
-    // Phase 213-08 (BUDGET-01/02): thread the late-bound per-root budget holder +
+    // Thread the late-bound per-root budget holder +
     // the run's rootRunId resolver into the bridge — the SAME daemon-wide-REF,
     // absent ⇒ no-op pattern as spendAccumulator. The bridge sibling's the per-root
     // reserve next to checkSpendCeiling so a self-spawning loop (incl. a zero-price
@@ -1373,8 +1374,7 @@ async function runSessionLocked(
     logger: deps.logger,
     // Resolved daemon data dir — the bridge's session-index writer
     // (appendSessionIndexEntry) otherwise falls back to the REAL ~/.comis,
-    // diverging from config.dataDir / COMIS_DATA_DIR installs (260611
-    // live-fire: 166 blocked test-guard writes per MEM suite run).
+    // diverging from config.dataDir / COMIS_DATA_DIR installs.
     dataDir: deps.dataDir,
     // Thread the operator $HOME so the bridge's tool:started/tool:executed
     // params compact $HOME→~ for ALL bus consumers (delivery-tracer, trajectory
@@ -1405,7 +1405,7 @@ async function runSessionLocked(
     },
     providerHealth: deps.providerHealth,
     onToolExecutionEnd: () => { currentResetTimer?.(); },
-    // RECORD-01 (v2.28 260621): when the configured model is unregistered, pi
+    // When the configured model is unregistered, pi
     // falls back to its own default model object (e.g. gemini-*); record the
     // CONFIGURED model so token_usage/cost are not mislabeled. See observedModelId.
     getCurrentModel: () => observedModelId(resolvedModel, session.model?.id, config.model),
@@ -1524,7 +1524,7 @@ async function runSessionLocked(
     nodeId: executionOverrides?.nodeId,
     // Pass sub-agent's active tool groups for "Tool X not found" enrichment
     activeToolGroups: executionOverrides?.activeToolGroups,
-    // F-13: the assembled tool names, so a "Tool X not found" error can suggest the
+    // The assembled tool names, so a "Tool X not found" error can suggest the
     // closest real tool when a small model hallucinates a name (e.g. an mcp__-prefixed
     // guess for a builtin). Names only — no schemas/secrets.
     allToolNames: mergedCustomTools.map((t) => t.name),
@@ -1693,7 +1693,7 @@ async function runSessionLocked(
       deps: {
         eventBus: deps.eventBus,
         logger: deps.logger,
-        // CR-01: this run's execution-local window (precheck + envelope snapshot).
+        // This run's execution-local window (precheck + envelope snapshot).
         budgetGuard: budgetWindow,
         costTracker: deps.costTracker,
         authRotation: deps.authRotation,
@@ -1706,7 +1706,7 @@ async function runSessionLocked(
         canaryToken: deps.canaryToken,
         clock: deps.clock,
         timers: deps.timers,
-        // ISSUE #2: the canonical system-tokens estimate the pre-flight throws on, so
+        // The canonical system-tokens estimate the pre-flight throws on, so
         // wrapEnvelope can size the tight-window residual and drop the heavy
         // tool-discovery preamble before it overflows (same S → no drift).
         getSystemTokensEstimate: () => cachedSystemTokensEstimate,
@@ -1756,10 +1756,10 @@ async function runSessionLocked(
     await postExecution({
       result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
       recalledMemories,
-      // ATTR-02: read the per-turn skill-use carrier the bridge wrote (ATTR-01)
+      // Read the per-turn skill-use carrier the bridge wrote
       // back into postExecution, which emits the memory:skill_used write-back.
       usedSkillIds: [...bridge.getUsedSkillIds()],
-      userMdLanguage: userLanguage, // DET-02 tier-2 (consumed by the degraded-reply resolver, 181-03)
+      userMdLanguage: userLanguage, // consumed by the degraded-reply resolver
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,
@@ -1773,19 +1773,19 @@ async function runSessionLocked(
         eventBus: deps.eventBus,
         logger: deps.logger,
         memoryPort: deps.memoryPort,
-        // Phase 128 dag-mode afterTurn ingest write-path (A1). Both the store
+        // The dag-mode afterTurn ingest write-path. Both the store
         // and tenantId thread through so postExecution's ingest scope has a
-        // real tenant (T-128-08); absent ⇒ ingest skipped cleanly.
+        // real tenant; absent ⇒ ingest skipped cleanly.
         contextStore: deps.contextStore,
         tenantId: deps.tenantId,
-        // Phase 129 (C1): the leaf-summarizer deps getter sourced from the
+        // The leaf-summarizer deps getter sourced from the
         // context-engine setup's shared compaction-model chain. Present ⇒ the
         // afterTurn leaf pass fires live over threshold (gated additionally on
         // deps.contextStore inside postExecution); absent ⇒ the pass is gated off.
         getSummarizerDeps: ceSetup?.getSummarizerDeps,
         activeRunRegistry: deps.activeRunRegistry,
         embeddingEnqueue: deps.embeddingEnqueue,
-        // WT-01: the post-execution / context-engine workspace root is the run's
+        // The post-execution / context-engine workspace root is the run's
         // actual working tree (the worktree when present).
         workspaceDir: effectiveWorkspaceDir,
         clock: deps.clock,

@@ -5,19 +5,19 @@ import { resolveImageProvider } from "./resolve-image-provider.js";
 /**
  * resolveImageProvider is a PURE priority resolver (no I/O) for image-generation
  * provider selection. Purity is preserved by injecting a `credsAvailable`
- * predicate (a boolean closure the daemon supplies in Plan 03/04) and an
+ * predicate (a boolean closure the daemon supplies) and an
  * optional `onSkip` callback — the resolver never touches SecretManager,
  * OAuthTokenManager, process.env, or the network.
  *
- * Covers RES-02 (auto follow-main + explicit override + model override),
- * RES-03 (honest-unavailable with errorKind + a knob-naming hint), and RES-04
- * (fallbackChain consulted only after follow-main, each skip reported).
+ * Covers auto follow-main + explicit override + model override,
+ * honest-unavailable with errorKind + a knob-naming hint, and the
+ * fallbackChain (consulted only after follow-main, each skip reported).
  */
 describe("resolveImageProvider", () => {
   const ALL_CREDS = (): boolean => true;
   const NO_CREDS = (): boolean => false;
 
-  it("follows the main provider when provider is auto and creds are available (RES-02)", () => {
+  it("follows the main provider when provider is auto and creds are available", () => {
     const sel = resolveImageProvider({ provider: "auto" }, "openrouter", ALL_CREDS);
     expect(sel).toEqual({
       ok: true,
@@ -28,7 +28,7 @@ describe("resolveImageProvider", () => {
     });
   });
 
-  it("lets an explicit non-auto provider override an image-incapable main (RES-02)", () => {
+  it("lets an explicit non-auto provider override an image-incapable main", () => {
     const sel = resolveImageProvider({ provider: "openrouter" }, "anthropic", ALL_CREDS);
     expect(sel.ok).toBe(true);
     if (sel.ok) {
@@ -37,7 +37,7 @@ describe("resolveImageProvider", () => {
     }
   });
 
-  it("lets a config model override the per-provider default model (RES-02)", () => {
+  it("lets a config model override the per-provider default model", () => {
     const sel = resolveImageProvider(
       { provider: "auto", model: "custom/model" },
       "openrouter",
@@ -49,7 +49,7 @@ describe("resolveImageProvider", () => {
     }
   });
 
-  it("returns unsupported_provider with a knob-naming hint for an incapable main (RES-03)", () => {
+  it("returns unsupported_provider with a knob-naming hint for an incapable main", () => {
     const sel = resolveImageProvider({ provider: "auto" }, "anthropic", ALL_CREDS);
     expect(sel.ok).toBe(false);
     if (!sel.ok) {
@@ -58,7 +58,7 @@ describe("resolveImageProvider", () => {
     }
   });
 
-  it("returns auth_required with a hint naming the knob when creds are absent (RES-03)", () => {
+  it("returns auth_required with a hint naming the knob when creds are absent", () => {
     const sel = resolveImageProvider({ provider: "auto" }, "openrouter", NO_CREDS);
     expect(sel.ok).toBe(false);
     if (!sel.ok) {
@@ -67,7 +67,7 @@ describe("resolveImageProvider", () => {
     }
   });
 
-  it("consults the fallback chain only after follow-main fails, reporting the skip (RES-04)", () => {
+  it("consults the fallback chain only after follow-main fails, reporting the skip", () => {
     const onSkip = vi.fn();
     const sel = resolveImageProvider(
       { provider: "auto", fallbackChain: ["openrouter"] },
@@ -85,7 +85,7 @@ describe("resolveImageProvider", () => {
     expect(onSkip.mock.calls[0]?.[0]).toContain("anthropic");
   });
 
-  it("reports each skipped fallback entry with a reason before succeeding (RES-04)", () => {
+  it("reports each skipped fallback entry with a reason before succeeding", () => {
     const onSkip = vi.fn();
     const sel = resolveImageProvider(
       { provider: "auto", fallbackChain: ["anthropic", "openrouter"] },
@@ -103,7 +103,7 @@ describe("resolveImageProvider", () => {
     expect(reasons.some((r) => r.includes("anthropic"))).toBe(true);
   });
 
-  it("returns ok false when the default empty fallback chain is exhausted (RES-04)", () => {
+  it("returns ok false when the default empty fallback chain is exhausted", () => {
     const sel = resolveImageProvider({ provider: "auto" }, "anthropic", NO_CREDS);
     expect(sel.ok).toBe(false);
   });

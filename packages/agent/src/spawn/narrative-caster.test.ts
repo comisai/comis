@@ -169,7 +169,7 @@ describe("NarrativeCaster", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SUMREF-02: when a materialized ResultRef handle is supplied, the tagged
+  // When a materialized ResultRef handle is supplied, the tagged
   // AND untagged formats embed the structured handle (ref + bytes + kind) as
   // the drill-in target instead of the bare condenser diskPath, so the lead's
   // window grows by a summary + a handle (the longevity invariant).

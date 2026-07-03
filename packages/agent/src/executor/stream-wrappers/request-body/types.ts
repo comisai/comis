@@ -155,7 +155,7 @@ export interface RequestBodyInjectorConfig {
   /**
    * ModelProfile resolved for this execution. Carries supportsPromptCache,
    * supportsServerToolSearch, and other capability flags resolved once
-   * per execution in pi-executor.ts (L1/L2 routing — Phase 155-01).
+   * per execution in pi-executor.ts (L1/L2 routing).
    *
    * When present: supportsPromptCache drives cache-breakpoint placement
    * (factory.ts needsCacheBreakpoints); supportsServerToolSearch drives

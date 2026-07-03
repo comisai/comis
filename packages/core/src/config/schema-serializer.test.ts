@@ -74,7 +74,6 @@ describe("getConfigSections", () => {
     expect(sections).toContain("scheduler");
     expect(sections).toContain("integrations");
     expect(sections).toContain("monitoring");
-    // New config sections
     expect(sections).toContain("browser");
     expect(sections).toContain("models");
     expect(sections).toContain("providers");
@@ -84,7 +83,7 @@ describe("getConfigSections", () => {
     expect(sections).toContain("tooling");
     // diagnostics scaffold
     expect(sections).toContain("diagnostics");
-    // orchestration authoring gate (Phase 174, gated-off)
+    // orchestration authoring gate (gated-off by default)
     expect(sections).toContain("orchestration");
   });
 });

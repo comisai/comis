@@ -355,14 +355,14 @@ describe("MCP RPC Handlers", () => {
   //   per-server params ?? per-server persisted ?? global config ?? (transport default in ticker)
   //
   // Cases:
-  //   KA-GBL-01: global keepaliveIntervalMs is forwarded to manager.connect
-  //              when neither params nor persisted entry supply a per-server value
-  //   KA-GBL-02 (invariant guard): per-server param wins over global
-  //   KA-GBL-03 (invariant guard): per-server persisted entry wins over global when
-  //              no caller param is supplied
+  //   - global keepaliveIntervalMs is forwarded to manager.connect
+  //     when neither params nor persisted entry supply a per-server value
+  //   - invariant guard: per-server param wins over global
+  //   - invariant guard: per-server persisted entry wins over global when
+  //     no caller param is supplied
   // -------------------------------------------------------------------------
   describe("mcp.connect global keepaliveIntervalMs override", () => {
-    it("KA-GBL-01: forwards global integrations.mcp.keepaliveIntervalMs to McpServerConfig when no per-server override", async () => {
+    it("forwards global integrations.mcp.keepaliveIntervalMs to McpServerConfig when no per-server override", async () => {
       // When code resolves only `params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs`
       // — the global tier is absent — manager.connect receives keepaliveIntervalMs: undefined, not 60_000.
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-global", [])));
@@ -394,7 +394,7 @@ describe("MCP RPC Handlers", () => {
       );
     });
 
-    it("KA-GBL-02 (invariant guard): per-server param keeps priority over global keepaliveIntervalMs", async () => {
+    it("invariant guard: per-server param keeps priority over global keepaliveIntervalMs", async () => {
       // Invariant: per-server param must beat the global tier.
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-param-wins", [])));
       const handlers = createMcpHandlers({
@@ -425,7 +425,7 @@ describe("MCP RPC Handlers", () => {
       );
     });
 
-    it("KA-GBL-03 (invariant guard): per-server persisted entry wins over global keepaliveIntervalMs", async () => {
+    it("invariant guard: per-server persisted entry wins over global keepaliveIntervalMs", async () => {
       // Invariant: persisted per-server entry must beat the global tier.
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-persisted-wins", [])));
       const handlers = createMcpHandlers({
@@ -1113,9 +1113,9 @@ describe("MCP RPC Handlers", () => {
       expect(manager.connect).not.toHaveBeenCalled();
     });
 
-    // Test I — strict tightening: same env block, secret present → passes
+    // Strict tightening: same env block, secret present → passes
     // through and calls manager.connect as before.
-    it("Test I — accepts and connects when ${VAR} resolves", async () => {
+    it("accepts and connects when ${VAR} resolves", async () => {
       const sm = createSecretManager({ FINNHUB_API_KEY: "abc123" });
       (manager.connect as any).mockResolvedValue(ok(makeConnection("finnhub", [makeTool("quote")])));
 
@@ -1142,9 +1142,9 @@ describe("MCP RPC Handlers", () => {
       expect(result.status).toBe("connected");
     });
 
-    // Test J — params with no env block: validator is a no-op, existing
+    // Params with no env block: validator is a no-op, existing
     // connect behavior preserved (e.g., stdio servers without secrets).
-    it("Test J — passes through when params have no env block", async () => {
+    it("passes through when params have no env block", async () => {
       const sm = createSecretManager({});
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
 
@@ -1164,15 +1164,15 @@ describe("MCP RPC Handlers", () => {
       expect(manager.connect).toHaveBeenCalled();
     });
 
-    // Test K — defensive: secretManager unwired (legacy/test setup) → check
-    // is skipped, existing behavior preserved. Production always wires it.
-    it("Test K — skips validator entirely when secretManager is undefined", async () => {
+    // Defensive: secretManager unwired (test setups omit it) → check
+    // is skipped, the connect proceeds. Production always wires it.
+    it("skips validator entirely when secretManager is undefined", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("legacy", [])));
 
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
         logger: makeLogger(),
-        // secretManager intentionally omitted — simulates legacy/test wiring.
+        // secretManager intentionally omitted — simulates deps wired without one.
       });
 
       await handlers["mcp.connect"]({
@@ -1182,13 +1182,13 @@ describe("MCP RPC Handlers", () => {
         env: { SOME_VAR: "${SOME_VAR}" },
       });
 
-      // No throw, manager.connect was called (legacy behavior preserved).
+      // No throw, manager.connect was called (the check is skipped when unwired).
       expect(manager.connect).toHaveBeenCalled();
     });
 
-    // Test L — 3+ unresolved vars: error lists 3 alphabetically + (+N more).
+    // 3+ unresolved vars: error lists 3 alphabetically + (+N more).
     // Identical wording to config.patch via shared formatMissingEnvRefError.
-    it("Test L — caps 4 missing vars to first 3 alphabetically with (+1 more)", async () => {
+    it("caps 4 missing vars to first 3 alphabetically with (+1 more)", async () => {
       const sm = createSecretManager({});
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
@@ -1339,7 +1339,7 @@ describe("MCP RPC Handlers", () => {
     // needs_oauth_login, the server entry MUST be persisted with auth:"oauth"
     // BEFORE the structured throw so the next mcp_login finds it.
     //
-    // Observed 2026-05-28 in daemon.1.log (L417/L440 sequence): connect →
+    // Observed live failure sequence without the persist: connect →
     // [needs_oauth_login] hint → mcp_login → "MCP server not found".
     it("persists the entry with auth:'oauth' BEFORE throwing when params.auth==='oauth' and manager returns needs_oauth_login", async () => {
       const needsOAuthErr = Object.assign(
@@ -1393,7 +1393,7 @@ describe("MCP RPC Handlers", () => {
       expect(servers[0]).toMatchObject({ name: "higgsfield", auth: "oauth" });
     });
 
-    // Fix 4. The agent's mcp_manage(connect,
+    // The agent's mcp_manage(connect,
     // auth:"oauth") on a fresh server SHOULD NOT call manager.connect at all
     // (the SDK's DCR would fail with "at least one redirect_uri is required"
     // because Comis only populates clientMetadata.redirect_uris when
@@ -1402,11 +1402,11 @@ describe("MCP RPC Handlers", () => {
     // needs_oauth_login so the agent calls mcp_login(server_name) which DOES
     // start the loopback and provides a real redirect URI.
     //
-    // Observed 2026-05-28 daemon.1.log:380 — Higgsfield install with the
-    // first three fixes deployed surfaced the readable DCR error but the
-    // entry never persisted (manager.connect threw a generic ServerError,
-    // not needs_oauth_login → Fix 2's persist branch skipped), so the
-    // subsequent mcp_login(higgsfield) at L425 returned "MCP server not found".
+    // Observed live: without the short-circuit, a fresh install surfaced the
+    // readable DCR error but the entry never persisted (manager.connect threw
+    // a generic ServerError, not needs_oauth_login → the post-fail persist
+    // branch was skipped), so the subsequent mcp_login returned "MCP server
+    // not found".
     it("short-circuits manager.connect when params.auth==='oauth' AND no token exists yet (persists + throws needs_oauth_login)", async () => {
       const fakeTokenStore = {
         // Production tokens() reads ~/.comis/mcp-tokens/<server>.json and returns
@@ -2113,10 +2113,10 @@ describe("MCP RPC Handlers", () => {
   // mcp.oauth_login precondition check (entry.auth !== "oauth") later rejects
   // with "not configured for OAuth".
   //
-  // The RED tests below FAIL on HEAD because mcp-handlers.ts currently does
-  // NOT pass params.auth to buildPersistedMcpEntry — the comment at line 343
-  // explicitly says "No explicit pass-through needed", which is wrong for
-  // the first-install case.
+  // These tests guard the regression where mcp-handlers.ts does NOT pass
+  // params.auth to buildPersistedMcpEntry — auth:"oauth" must be explicitly
+  // threaded through for the first-install case (there is no persisted entry
+  // to inherit it from).
   // -------------------------------------------------------------------------
   describe("mcp.connect first-install auth:oauth promotion", () => {
     it("stores auth:oauth on the persisted entry when params.auth='oauth' on first install (no prior persistedEntry)", async () => {
@@ -2484,7 +2484,7 @@ describe("MCP RPC Handlers", () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("x", [])));
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
 
-      // Override params + no stored connection → falls through to legacy
+      // Override params + no stored connection → falls through to the
       // fallback-reconnect-as-connect path; does NOT throw the override error.
       const result = await handlers["mcp.reconnect"]({
         server_name: "x",
@@ -2895,8 +2895,8 @@ describe("MCP RPC Handlers", () => {
   //
   // The processHeaderCredentials helper (from mcp-header-credential.ts) must
   // be called in BOTH mcp.connect and mcp.test BEFORE McpConnectContract /
-  // McpTestContract parse. The canonical case is the Higgsfield incident:
-  // an inline OAuth bearer in Authorization must be refused with
+  // McpTestContract parse. The canonical case: an inline OAuth bearer in
+  // an Authorization header must be refused with
   // [use_oauth_login]. Tests fail if the handler does not call
   // processHeaderCredentials.
   // -------------------------------------------------------------------------
@@ -3337,7 +3337,7 @@ describe("gateway-patch single-writer guard (cross-test from mcp-handlers test f
       { tryConsume: () => ({ allowed: true, retryAfterMs: 0 }) } as any,
     );
 
-    // Path-format variant (legacy).
+    // Dotted-path variant (the sibling test below covers the section/key shape).
     await expect(
       handlers["config.patch"]!({
         path: "integrations.mcp.servers",

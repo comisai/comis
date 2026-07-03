@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for resolveMemoryOpsStrategy — R6 capability-routed memory operations.
+ * Tests for resolveMemoryOpsStrategy — capability-routed memory operations.
  *
  * Pure-function routing: frontier/mid → "capable"; small/nano → "abstain"
  * unless a capableModelOverride is set.
@@ -19,11 +19,11 @@ describe("resolveMemoryOpsStrategy", () => {
     expect(resolveMemoryOpsStrategy("mid")).toBe("capable");
   });
 
-  it("returns abstain for small without a capable override (T-153-fabricate mitigation)", () => {
+  it("returns abstain for small without a capable override (fabrication mitigation)", () => {
     expect(resolveMemoryOpsStrategy("small")).toBe("abstain");
   });
 
-  it("returns abstain for nano without a capable override (T-153-fabricate mitigation)", () => {
+  it("returns abstain for nano without a capable override (fabrication mitigation)", () => {
     expect(resolveMemoryOpsStrategy("nano")).toBe("abstain");
   });
 

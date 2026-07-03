@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for NodeCaManager.
- * RED-first TDD: all tests must fail before implementation lands.
  * @module
  */
 import "reflect-metadata"; // MUST be first import — before @peculiar/x509 loads via ca-manager.ts
@@ -186,7 +185,7 @@ describe("NodeCaManager — In-process TLS handshake", () => {
   });
 });
 
-// ── RED tests — code-review findings ─────────────────────────────────────────
+// ── Regression tests: partial-write recovery and concurrent init ─────────────
 
 describe("partial-write recovery: key file must not be corrupted by append", () => {
   it("key-exists-but-cert-missing state: next init regenerates a single valid key (no double-PEM append)", async () => {

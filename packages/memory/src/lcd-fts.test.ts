@@ -173,7 +173,7 @@ function ftsDbReturning(rowsByScope: {
   }) as unknown as Database.Database;
 }
 
-describe("lcd-fts — FTS path degrades a corrupt hit PER ROW, not all-or-nothing (WR-01)", () => {
+describe("lcd-fts — FTS path degrades a corrupt hit PER ROW, not all-or-nothing", () => {
   it("searchLcdImpl returns the valid FTS hits and skips only the corrupt row instead of nulling every hit", () => {
     // One valid summary hit + one schema-violating row (snippet NULL — the
     // strict LcdSearchHitRowSchema requires a string). The all-or-nothing
@@ -188,8 +188,8 @@ describe("lcd-fts — FTS path degrades a corrupt hit PER ROW, not all-or-nothin
 
     const { hits } = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
 
-    // The good row survives the bad sibling (WR-01: one bad row must not poison
-    // the whole result set).
+    // The good row survives the bad sibling: one bad row must not poison the
+    // whole result set.
     expect(hits.map((h) => h.refId)).toContain("s-good");
     expect(hits.some((h) => h.refId === "s-bad")).toBe(false);
   });
@@ -235,7 +235,7 @@ function likeDbReturning(rowsByScope: {
   }) as unknown as Database.Database;
 }
 
-describe("lcd-fts — LIKE fallback degrades a corrupt hit PER ROW, not all-or-nothing (WR-02)", () => {
+describe("lcd-fts — LIKE fallback degrades a corrupt hit PER ROW, not all-or-nothing", () => {
   it("searchLcdImpl LIKE summaries fallback keeps the valid hit and skips only the corrupt row (no undefined snippet leaks)", () => {
     // One valid summary hit + one schema-violating row (snippet NULL — a drifted/
     // corrupt column the typed write path cannot produce). The pre-patch LIKE
@@ -278,7 +278,7 @@ describe("lcd-fts — LIKE fallback degrades a corrupt hit PER ROW, not all-or-n
   });
 });
 
-describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)", () => {
+describe("lcd-fts — scope=both merges fairly across the two FTS tables", () => {
   it("searchLcdImpl both keeps representation from each table instead of dropping a whole table by raw BM25", () => {
     // BM25 ranks are corpus-relative — NOT comparable across two FTS indexes.
     // Here the (single) summary's rank (-0.5) is numerically LARGER than both
@@ -340,18 +340,17 @@ describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// lcd-fts — R4 cross-agent search isolation (the Phase-131 WR-02 close)
+// lcd-fts — cross-agent search isolation within a shared conversation
 // ───────────────────────────────────────────────────────────────────────────
 // Two agents (agent-a, agent-b) share ONE conversation_id (formatSessionKey omits
 // agentId). searchLcd must filter the FTS MATCH path AND the LIKE fallback by
 // agent_id so agent A never recovers agent B's hits within the shared
-// conversation (Pitfall 3 — BOTH paths must filter, not just the base-table
-// reads). These tests pass the NEW agent-scoped signature
-// (`searchLcdImpl(db, conversationId, agentId, query, opts)`) and MUST fail on the
-// pre-patch tree (the signature does not compile, and neither path filters
-// agent_id). The FTS path uses a real FTS5 db; the LIKE path uses a base-tables-
-// only db (the documented FTS-absent fallback shape).
-describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
+// conversation — BOTH paths must filter, not just the base-table reads. These
+// tests pass the agent-scoped signature
+// (`searchLcdImpl(db, conversationId, agentId, query, opts)`). The FTS path uses
+// a real FTS5 db; the LIKE path uses a base-tables-only db (the FTS-absent
+// fallback shape).
+describe("lcd-fts — cross-agent search isolation within a shared conversation", () => {
   /**
    * A full LCD schema db (FTS5 present) seeded with one summary per agent under
    * the SAME conversation, both matching the SAME term. The summaries-FTS path
@@ -388,8 +387,8 @@ describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
   });
 
   it("searchLcd via the LIKE fallback scoped to agent A does not return agent B's hits within a shared conversation", () => {
-    // Base-tables-only db forces the LIKE fallback (no FTS vtables). Pitfall 3:
-    // the fallback MUST filter agent_id too, not just the FTS path.
+    // Base-tables-only db forces the LIKE fallback (no FTS vtables): the
+    // fallback MUST filter agent_id too, not just the FTS path.
     const db = baseTablesOnlyDb();
     const insert = db.prepare(`
       INSERT INTO lcd_summaries
@@ -427,17 +426,17 @@ describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// EFF-03 → OBS-01: the zero-hit signal, generalized from CJK to every script
+// The zero-hit signal, generalized from CJK to every script
 // ───────────────────────────────────────────────────────────────────────────
 // searchLcdImpl returns the LcdSearchResult wrapper with cjkZeroHit DERIVED from
-// the new scriptZeroHit (= scriptZeroHit === "cjk"). The standalone
-// hasCjkCodepoints export is DELETED (Plan 180-05): its corpus now gates the
-// dominantScript-based detection — re-asserted in the "dominantScript preserves
-// the hasCjkCodepoints corpus verdicts" block below. The cjkZeroHit cases below
-// keep proving the derived boolean still fires for PURE-CJK queries; the mixed
-// Latin-dominant case moved BY DESIGN (any-codepoint → dominant-script).
+// scriptZeroHit (= scriptZeroHit === "cjk"). There is no standalone
+// hasCjkCodepoints export: its corpus gates the dominantScript-based detection —
+// re-asserted in the "dominantScript preserves the hasCjkCodepoints corpus
+// verdicts" block below. The cjkZeroHit cases below keep proving the derived
+// boolean still fires for PURE-CJK queries; the mixed Latin-dominant case signals
+// by dominant script, not by any single codepoint.
 
-describe("EFF-03-T-1 — CJK query with zero FTS hits returns cjkZeroHit=true", () => {
+describe("CJK query with zero FTS hits returns cjkZeroHit=true", () => {
   it("searchLcdImpl returns cjkZeroHit=true when query has CJK codepoints and hits is empty", () => {
     // Seed with English-only messages — no CJK content.
     const db = baseTablesOnlyDb();
@@ -464,7 +463,7 @@ describe("EFF-03-T-1 — CJK query with zero FTS hits returns cjkZeroHit=true", 
   });
 });
 
-describe("EFF-03-T-2 — CJK query WITH matching hits returns cjkZeroHit=false", () => {
+describe("CJK query WITH matching hits returns cjkZeroHit=false", () => {
   it("searchLcdImpl returns cjkZeroHit=false when hits is non-empty even with CJK query", () => {
     // Seed with CJK content so the LIKE fallback can match.
     const db = baseTablesOnlyDb();
@@ -482,7 +481,7 @@ describe("EFF-03-T-2 — CJK query WITH matching hits returns cjkZeroHit=false",
   });
 });
 
-describe("EFF-03-T-3 — Non-CJK query returns cjkZeroHit=false regardless of hit count", () => {
+describe("Non-CJK query returns cjkZeroHit=false regardless of hit count", () => {
   it("searchLcdImpl returns cjkZeroHit=false for a Latin-only query with zero hits", () => {
     // Empty db — no matches expected, but query is Latin-only.
     const db = baseTablesOnlyDb();
@@ -508,12 +507,11 @@ describe("EFF-03-T-3 — Non-CJK query returns cjkZeroHit=false regardless of hi
   });
 });
 
-describe("EFF-03-T-4 — mixed-script zero-hit signals by DOMINANT script (the by-design change)", () => {
-  it("a LATIN-dominant mixed query does NOT fire cjkZeroHit (was any-codepoint, now dominant-script)", () => {
-    // BY DESIGN (Plan 180-05): detection moved from "any CJK codepoint" to
-    // dominantScript. "hello 你好" is 5 Latin / 2 CJK = CJK share 0.286 < the 0.30
-    // threshold → dominant latin → NOT a CJK lane gap. The old any-codepoint test
-    // asserted true here; the new semantics route/signal by the dominant script.
+describe("mixed-script zero-hit signals by DOMINANT script", () => {
+  it("a LATIN-dominant mixed query does NOT fire cjkZeroHit (signal follows the dominant script)", () => {
+    // Detection is by dominantScript, not by "any CJK codepoint": "hello 你好" is
+    // 5 Latin / 2 CJK = CJK share 0.286 < the 0.30 threshold → dominant latin →
+    // NOT a CJK lane gap. Routing and the signal follow the dominant script.
     const db = baseTablesOnlyDb();
     const result = searchLcdImpl(db, "conv-a", "a", "hello 你好", { limit: 10, scope: "summaries" });
     expect(result.hits).toHaveLength(0);
@@ -572,21 +570,13 @@ describe("schema-lcd — boot-safety when FTS5 is uncompiled", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FTS-01 / OBS-01 (Plan 180-05): LCD script routing — twin MATCH lane, the
-// bounded normalized-scan floor, isTriAvailable probe, safeAll signal-purity
-// reshape, and the LcdSearchResult widening (scriptZeroHit/lane/matchErrored/
-// scanCapped).
+// LCD script routing — the twin MATCH lane, the bounded normalized-scan floor,
+// the isTriAvailable probe, the safeAll signal-purity reshape, and the
+// LcdSearchResult fields (scriptZeroHit/lane/matchErrored/scanCapped).
 //
-// These pins MUST fail on the pre-patch tree: searchLcdImpl currently has a
-// PLACEHOLDER body (always lane "word", never routes non-Latin to the trigram
-// twins, no scan floor, no script-aware scriptZeroHit). The word-lane + R4 +
-// WR + cjkZeroHit-corpus suites above stay GREEN (the placeholder keeps the
-// Latin path byte-identical).
-//
-// All non-Latin strings are assembled from String.fromCodePoint (the WR-01
-// boundary-codepoint discipline) so they survive shell/editor round-trips
-// intact — a live probe showed inline Arabic/Hebrew glyphs get mangled, which
-// would silently desync a stored row from its query (180-01 SUMMARY issue).
+// All non-Latin strings are assembled from String.fromCodePoint so they survive
+// shell/editor round-trips intact — inline Arabic/Hebrew glyphs can get mangled,
+// which would silently desync a stored row from its query.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Hebrew ──────────────────────────────────────────────────────────────────
@@ -596,7 +586,7 @@ const HE_SEFARIM = String.fromCodePoint(0x5e1, 0x5e4, 0x5e8, 0x5d9, 0x5dd); // �
 const HE_MELACHIM = String.fromCodePoint(0x5de, 0x5dc, 0x5db, 0x5d9, 0x5dd); // מלכים ("kings")
 const HE_MELECH = String.fromCodePoint(0x5de, 0x5dc, 0x5da); // מלך ("king", final kaf)
 const HE_GAM = String.fromCodePoint(0x5d2, 0x5dd); // גם ("also") — 2 codepoints → below the trigram floor
-// ── Cyrillic (suffixing — Option B OR-of-trigrams) ───────────────────────────
+// ── Cyrillic (suffixing — OR-of-trigrams) ────────────────────────────────────
 const RU_KNIGI = String.fromCodePoint(0x43a, 0x43d, 0x438, 0x433, 0x438); // книги ("books")
 const RU_KNIGA = String.fromCodePoint(0x43a, 0x43d, 0x438, 0x433, 0x430); // книга ("book")
 // ── CJK ──────────────────────────────────────────────────────────────────────
@@ -611,8 +601,8 @@ const AR_KITAB = String.fromCodePoint(0x643, 0x62a, 0x627, 0x628); // كتاب (
  * ensureLcdTables which calls ensureTrigramTwins as its last statement). This is
  * the routing-matrix harness: the twins exist and isTriAvailable verdicts true,
  * so a non-Latin query routes to the trigram lane. Twin rows are inserted with
- * NORMALIZED content via raw SQL (this plan does NOT depend on 180-04's populate;
- * the twins store normalizeForSearch(content) per FTS-02).
+ * NORMALIZED content via raw SQL (independent of the write-path populate;
+ * the twins store normalizeForSearch(content)).
  */
 function lcdDbWithTwins(): Database.Database {
   const db = new Database(":memory:");
@@ -621,7 +611,7 @@ function lcdDbWithTwins(): Database.Database {
   return db;
 }
 
-/** Insert a NORMALIZED message-twin row (the FTS-02 stored shape). `content` is
+/** Insert a NORMALIZED message-twin row (the normalized stored shape). `content` is
  *  pre-normalized by the caller to mirror the real TS-side write path. */
 function seedMessageTwin(
   db: Database.Database,
@@ -632,7 +622,7 @@ function seedMessageTwin(
   ).run(args.content, args.conversationId ?? "conv-a", args.agentId ?? "agent-a", args.messageId);
 }
 
-/** Insert a NORMALIZED summary-twin row (the FTS-02 stored shape). */
+/** Insert a NORMALIZED summary-twin row (the normalized stored shape). */
 function seedSummaryTwin(
   db: Database.Database,
   args: { content: string; conversationId?: string; agentId?: string; summaryId: string },
@@ -672,7 +662,7 @@ function seedBaseSummary(
   `).run(args.id, args.conversationId ?? "conv-a", args.agentId ?? "agent-a", args.content, args.createdAt);
 }
 
-describe("lcd-fts (180-05) — word lane stays byte-identical for all-Latin (I1)", () => {
+describe("lcd-fts — word lane stays byte-identical for all-Latin", () => {
   it("routes an all-Latin query to the word lane and feeds searchViaFts the ORIGINAL query string", () => {
     const db = lcdDbWithTwins();
     // Seed the WORD-lane FTS (not the twins) so a real word-FTS hit comes back.
@@ -694,7 +684,7 @@ describe("lcd-fts (180-05) — word lane stays byte-identical for all-Latin (I1)
   it("a word-lane query intercepted at prepare receives the ORIGINAL string (never a normalized copy)", () => {
     // Source-shape pin: intercept the word-FTS MATCH and capture the bound query
     // arg. The word lane must pass `query` (the ORIGINAL parameter) through — NOT
-    // a normalizeForSearch copy (I1 byte-identical SQL + bound params).
+    // a normalizeForSearch copy (byte-identical SQL + bound params).
     const real = new Database(":memory:");
     real.pragma("foreign_keys = ON");
     ensureLcdTables(real);
@@ -726,7 +716,7 @@ describe("lcd-fts (180-05) — word lane stays byte-identical for all-Latin (I1)
   });
 });
 
-describe("lcd-fts (180-05) — trigram lane: query-time normalization symmetry (I7)", () => {
+describe("lcd-fts — trigram lane: query-time normalization symmetry", () => {
   it("a Hebrew query finds a normalized stored Hebrew message through the trigram twin", () => {
     const db = lcdDbWithTwins();
     seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
@@ -745,8 +735,8 @@ describe("lcd-fts (180-05) — trigram lane: query-time normalization symmetry (
     expect(result.hits.map((h) => h.refId)).toContain("m1");
   });
 
-  it("a Russian query finds a stored suffixing inflection via Option B OR-of-trigrams (книга → книги)", () => {
-    // The OQ-1 Option B end-to-end pin: книга is NOT a substring of книги, so a
+  it("a Russian query finds a stored suffixing inflection via OR-of-trigrams (книга → книги)", () => {
+    // The OR-of-trigrams end-to-end pin: книга is NOT a substring of книги, so a
     // whole-quoted token misses; the OR-of-trigrams group matches it.
     const db = lcdDbWithTwins();
     seedMessageTwin(db, { content: normalizeForSearch(RU_KNIGI), messageId: "m1" });
@@ -793,7 +783,7 @@ describe("lcd-fts (180-05) — trigram lane: query-time normalization symmetry (
   });
 });
 
-describe("lcd-fts (180-05) — opts.scope is honored on the trigram lane (the relevance-eviction contract)", () => {
+describe("lcd-fts — opts.scope is honored on the trigram lane (the relevance-eviction contract)", () => {
   it("scope 'messages' returns ONLY the message-twin hit, never the summary twin", () => {
     const db = lcdDbWithTwins();
     seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
@@ -840,7 +830,7 @@ describe("lcd-fts (180-05) — opts.scope is honored on the trigram lane (the re
   });
 });
 
-describe("lcd-fts (180-05) — the bounded normalized-scan floor (all-short / trigram-absent)", () => {
+describe("lcd-fts — the bounded normalized-scan floor (all-short / trigram-absent)", () => {
   it("an all-short non-Latin query routes to the scan floor and finds rows by normalized substring", () => {
     const db = lcdDbWithTwins();
     // גם (2 cp) is below the trigram floor → route lane "scan". The scan floor reads
@@ -874,7 +864,7 @@ describe("lcd-fts (180-05) — the bounded normalized-scan floor (all-short / tr
     expect(result.hits.some((h) => h.refId === "m1")).toBe(false);
   });
 
-  it("the scan floor is R4-scoped — agent A never scans agent B's row (both directions)", () => {
+  it("the scan floor is agent-scoped — agent A never scans agent B's row (both directions)", () => {
     const db = lcdDbWithTwins();
     seedBaseSummary(db, { id: "s-a", content: `${HE_SEFARIM} ${HE_GAM}`, createdAt: 1, agentId: "agent-a" });
     seedBaseSummary(db, { id: "s-b", content: `${HE_SEFARIM} ${HE_GAM}`, createdAt: 2, agentId: "agent-b" });
@@ -931,8 +921,8 @@ describe("lcd-fts (180-05) — the bounded normalized-scan floor (all-short / tr
     expect(result.hits.map((h) => h.refId)).toContain("m1");
   });
 
-  it("a multi-part message hit returns a SINGLE representative part's metadata as the snippet, not every part concatenated (WR-03)", () => {
-    // WR-03 egress-parity pin: the scan-floor message branch used to return
+  it("a multi-part message hit returns a SINGLE representative part's metadata as the snippet, not every part concatenated", () => {
+    // Egress-parity pin: the scan-floor message branch used to return
     // group_concat(p.metadata) — the metadata JSON of EVERY part of the message —
     // as the snippet, diverging from searchViaLike (one matched part) and the FTS
     // lane (the content column). The concatenated snippet egresses materially more
@@ -967,7 +957,7 @@ describe("lcd-fts (180-05) — the bounded normalized-scan floor (all-short / tr
   });
 });
 
-describe("lcd-fts (180-05) — FTS5-absent host: Latin queries keep the LIKE floor (lane word)", () => {
+describe("lcd-fts — FTS5-absent host: Latin queries keep the LIKE floor (lane word)", () => {
   it("an all-Latin query on a base-tables-only db uses the LIKE floor and reports lane 'word'", () => {
     const db = baseTablesOnlyDb();
     db.prepare(`
@@ -983,7 +973,7 @@ describe("lcd-fts (180-05) — FTS5-absent host: Latin queries keep the LIKE flo
   });
 });
 
-describe("lcd-fts (180-05) — R4 cross-agent isolation on the trigram MATCH lane (both directions)", () => {
+describe("lcd-fts — cross-agent isolation on the trigram MATCH lane (both directions)", () => {
   it("agent A's twin MATCH returns only agent A's row; agent B's returns only agent B's", () => {
     const db = lcdDbWithTwins();
     seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), agentId: "agent-a", messageId: "m-a" });
@@ -1000,12 +990,12 @@ describe("lcd-fts (180-05) — R4 cross-agent isolation on the trigram MATCH lan
   });
 });
 
-describe("lcd-fts (180-05) — OBS-01 signal purity: an errored zero-result is NOT a lane gap", () => {
+describe("lcd-fts — signal purity: an errored zero-result is NOT a lane gap", () => {
   it("a swallowed MATCH error sets matchErrored=true and leaves scriptZeroHit UNDEFINED", () => {
     // Cache isTriAvailable=true (a clean probe), THEN drop the twin tables so the
     // scoped MATCH throws and safeAll swallows it to []. The zero result is an
     // ERROR, not a true lane gap: matchErrored must be true and scriptZeroHit must
-    // stay undefined (the OBS-01 emit at the tool boundary gates on !matchErrored).
+    // stay undefined (the signal emit at the tool boundary gates on !matchErrored).
     const db = lcdDbWithTwins();
     seedMessageTwin(db, { content: normalizeForSearch(HE_HASEFARIM), messageId: "m1" });
     // Prime the isTriAvailable WeakMap with a CLEAN true verdict (twins present).
@@ -1032,7 +1022,7 @@ describe("lcd-fts (180-05) — OBS-01 signal purity: an errored zero-result is N
   });
 });
 
-describe("lcd-fts (180-05) — LcdSearchResult widening: cjkZeroHit derives from scriptZeroHit", () => {
+describe("lcd-fts — LcdSearchResult: cjkZeroHit derives from scriptZeroHit", () => {
   it("a clean CJK zero-hit sets scriptZeroHit='cjk' AND the derived cjkZeroHit=true", () => {
     const db = lcdDbWithTwins();
     seedMessageTwin(db, { content: normalizeForSearch("hello world"), messageId: "m1" });
@@ -1065,14 +1055,14 @@ describe("lcd-fts (180-05) — LcdSearchResult widening: cjkZeroHit derives from
   });
 });
 
-// The :439-483 hasCjkCodepoints corpus (above) is the SUPERSET gate for the new
-// dominantScript-based detection. Mixed-string semantics moved from
-// "any CJK codepoint" to "dominant script" BY DESIGN — but that corpus is
-// single-script per case, so EVERY verdict is preserved. This re-asserts the
-// load-bearing ones against dominantScript directly (the detection's new basis):
+// The hasCjkCodepoints corpus (above) is the SUPERSET gate for the
+// dominantScript-based detection. Mixed-string semantics classify by "dominant
+// script", not "any CJK codepoint" — but that corpus is single-script per case,
+// so EVERY verdict is preserved. This re-asserts the load-bearing ones against
+// dominantScript directly (the detection's basis):
 // 你好/こんにちは/カタカナ/안녕하세요 → cjk; hello/café/"" → latin; the boundary
 // codepoints (Yi U+A000, Hangul-Jamo U+1100 → NOT cjk; U+F900 → cjk).
-describe("lcd-fts (180-05) — dominantScript preserves the hasCjkCodepoints corpus verdicts", () => {
+describe("lcd-fts — dominantScript preserves the hasCjkCodepoints corpus verdicts", () => {
   it("classifies every CJK corpus string as the cjk dominant script", () => {
     expect(dominantScript("你好")).toBe("cjk");
     expect(dominantScript(String.fromCodePoint(0x3053, 0x3093, 0x306b, 0x3061, 0x306f))).toBe("cjk"); // こんにちは

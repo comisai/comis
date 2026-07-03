@@ -317,7 +317,7 @@ describe("deliverOutboundMedia", () => {
     );
   });
 
-  it("works without sendOptions (backward compat)", async () => {
+  it("delivers without sendOptions — sendAttachment receives undefined options", async () => {
     const deps = createMockDeps(); // no sendOptions
     vi.mocked(deps.fetchUrl).mockResolvedValueOnce(ok({
       buffer: Buffer.from("img-data"),

@@ -84,37 +84,37 @@ const cacheZones = [
 const cacheFenceMechanisms = [
   {
     name: "Cache Fence Index",
-    code: "CACHE-20",
+    code: "FENCE",
     desc: "Tracks the highest cache breakpoint position from each LLM call. On the next turn, context engine layers skip all messages at or below this index - preventing modifications that would invalidate the cached prefix.",
     impact: "Eliminated 36K+ tokens of unnecessary cache invalidation per pipeline turn",
   },
   {
     name: "Trim Offset Translation",
-    code: "CACHE-20",
+    code: "FENCE",
     desc: "The history window trims 100+ messages from the front of the session, shifting all indices. The fence index is stored in pre-trim space and correctly adjusted after trimming so protection survives across turns.",
     impact: "Fixed fence being zeroed out by 97-120 message trims",
   },
   {
     name: "Sub-Agent Spawn Staggering",
-    code: "CACHE-21",
+    code: "STAGGER",
     desc: "Concurrent sub-agents in a pipeline wave are staggered by 4 seconds. The first sub-agent populates the shared cache prefix (system prompt + tools), then siblings read it instead of each paying the write cost.",
     impact: "49K avg cache reads on sub-agent first turn (shared prefix)",
   },
   {
     name: "Adaptive Cold-Start Retention",
-    code: "CACHE-23",
+    code: "TTL",
     desc: "Parent agents write at 1h TTL from the first call so the system prompt survives pipeline gaps (>5m). Sub-agents inherit mixed 5m/1h TTLs - shared prefix blocks use the first writer's TTL, conversation-specific content uses 5m. Cache refreshes don't upgrade TTL, so the initial write determines the cache lifetime.",
     impact: "Eliminates re-writes per pipeline gap, so the cache survives across waves at steady state.",
   },
   {
     name: "TTL Monotonicity Enforcement",
-    code: "CACHE-23",
+    code: "TTL",
     desc: "Anthropic's API requires cache breakpoint TTLs to be non-increasing (system >= tools >= messages). The SDK sets system to 5m, but tool breakpoints escalate to 1h. Comis upgrades system block TTLs in the onPayload hook to satisfy the constraint, preventing silent downgrades.",
     impact: "Unlocked 1h cache writes for the first time. Without this, all 1h TTLs were silently downgraded to 5m.",
   },
   {
     name: "Breakpoint Threshold Tuning",
-    code: "CACHE-20/23",
+    code: "TUNING",
     desc: "Sub-agents use 512-token minimum for breakpoint placement. Parent agents use 1,024 tokens (lowered from 4,096). Enables message-level cache breakpoints in conversational exchanges where individual messages are 500-2000 tokens.",
     impact: "Sub-agent cache ratio improved from 3.0x to 4.7x. Parent agent gained 1 message breakpoint per call (was 0).",
   },
@@ -327,7 +327,7 @@ const realExample = {
         <div class="mt-8 bg-navy rounded-xl border border-teal/15 p-6">
           <p class="text-white font-semibold mb-2">Six categories kept out of the system prompt</p>
           <p class="text-muted text-sm leading-relaxed">
-            Date/time, inbound message metadata, channel context, RAG memory results, active skill content, and sender trust entries. Each would invalidate the entire cache prefix if left inline (CACHE-01 through CACHE-06).
+            Date/time, inbound message metadata, channel context, RAG memory results, active skill content, and sender trust entries. Each would invalidate the entire cache prefix if left inline.
           </p>
         </div>
       </div>

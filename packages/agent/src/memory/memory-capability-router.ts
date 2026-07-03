@@ -2,16 +2,15 @@
 /**
  * Capability-routed memory operations strategy resolver.
  *
- * R6: for low-capabilityClass models (small/nano), routes to "abstain" rather
+ * For low-capabilityClass models (small/nano), routes to "abstain" rather
  * than allowing potentially-fabricated LLM memory operations (dialectic
- * synthesis, extraction, consolidation). frontier/mid: returns "capable"
- * (unchanged behavior, byte-identical to today).
+ * synthesis, extraction, consolidation). frontier/mid: returns "capable".
  *
  * Fail-closed: small/nano without an explicit capableModelOverride → "abstain"
  * (the safe floor). The override exists so operators can inject a stronger cheap
  * model for the memory pipeline independently of the main agent model.
  *
- * T-153-fabricate mitigation: a weak model passed a synthesis/extraction task
+ * Fabrication mitigation: a weak model passed a synthesis/extraction task
  * will fabricate citations. Routing to "abstain" prevents fabricated triples/
  * citations from entering trusted storage.
  *
@@ -32,7 +31,7 @@ export type MemoryOpsStrategy = "capable" | "abstain";
  * produce grounded, citation-accurate synthesis/extraction output).
  *
  * Returns "abstain" for small/nano without a capable-model override
- * (T-153-fabricate mitigation: prevent fabricated citations/triples from
+ * (fabrication mitigation: prevent fabricated citations/triples from
  * entering trusted storage). An operator can configure a stronger cheap model
  * for the memory pipeline via the `hasCapableModelOverride` flag.
  *
@@ -53,6 +52,6 @@ export function resolveMemoryOpsStrategy(
     return "capable";
   }
   // small or nano without a capable-model override: abstain hard.
-  // Prevents T-153-fabricate: weak model fabricates citations/triples.
+  // Prevents fabrication: a weak model fabricates citations/triples.
   return "abstain";
 }

@@ -10,7 +10,7 @@
  * leading-`{...}`-object extraction AND a regex fallback because the judge --
  * instructed to emit `{ "correct": bool, "reasoning" }` but free-text by nature --
  * also emits a JSON object followed by trailing commentary, `correct: yes`,
- * fenced JSON, or a `correct=no` token (Pitfall 1). The
+ * fenced JSON, or a `correct=no` token. The
  * order is:
  *   1. strip markdown code fences via `stripCodeFences` -- broadens the analog's
  *      lowercase-`json`-only regex to remove ANY `[a-zA-Z]*` language tag,

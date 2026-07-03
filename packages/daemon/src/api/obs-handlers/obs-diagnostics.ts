@@ -45,9 +45,9 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     // obs.diagnostics — dual-source: historical SQLite + in-memory
     // -----------------------------------------------------------------------
     [ObsDiagnosticsContract.method]: async (rawParams) => {
-      // No admin gate: obs.diagnostics is intentionally rpc-scoped (OBS-SELF-DEAD,
-      // observability.ts) so an agent's obs_query can self-diagnose its OWN sessions
-      // (the prior admin gate defeated that — it is in-process, not admin-trust).
+      // No admin gate: obs.diagnostics is intentionally rpc-scoped
+      // so an agent's obs_query can self-diagnose its OWN sessions
+      // (an admin gate would defeat that — the caller is in-process, not admin-trust).
       // Read-only, scrubbed digests on a single-tenant daemon; any authenticated
       // (rpc-or-higher) caller may read. Authn/scope is enforced at the gateway token
       // layer, and deny-by-origin is intentionally NOT applied (see
@@ -169,7 +169,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
         throw new AuthorizationError("Admin access required for channel activity");
       }
 
-      // Bespoke pre-Zod guard preserves the legacy error message
+      // Bespoke pre-Zod guard preserves the exact error message
       // ("Invalid request: channelId parameter is required").
       const channelIdRaw = rawParams.channelId as string | undefined;
       if (!channelIdRaw) throw new Error("Invalid request: channelId parameter is required");

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * F-OBS-2 (30uc-20260624): `extractWebResultMetadata` — the CONTENT-FREE
+ * `extractWebResultMetadata` — the CONTENT-FREE
  * web_search / web_fetch grounding summary threaded onto the trajectory
  * `tool.result` so a "grounded in fetched results" predicate is verifiable from
  * `comis explain` without a DEBUG daemon-log grep. Pins: count + source HOSTS
@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { extractWebResultMetadata } from "./pi-event-bridge.js";
 
-describe("extractWebResultMetadata (F-OBS-2)", () => {
+describe("extractWebResultMetadata (content-free grounding summary)", () => {
   it("summarizes a web_search result as {resultCount, sorted unique hosts} from the `.details` payload", () => {
     const result = {
       content: [{ type: "text", text: "…" }],

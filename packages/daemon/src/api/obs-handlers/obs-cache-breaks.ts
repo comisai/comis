@@ -2,17 +2,17 @@
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
  * `obs.cacheBreaks.byReason` RPC handler — the read surface onto the cache-break
- * rate by reason + the $-lost SUM (WEBUI-02, Phase 179 Plan 04). The SIBLING of
+ * rate by reason + the $-lost SUM. The SIBLING of
  * `obs-audit.ts`: a bounded, admin-gated, content-free GROUP BY over the existing
- * `category:'cache_break'` `obs_diagnostics` index (PERSIST-01, 176). The
- * Cache Health view (179-07) consumes it.
+ * `category:'cache_break'` `obs_diagnostics` index. The
+ * web UI's Cache Health view consumes it.
  *
- * H1 dual-layer admin gate (cloned verbatim from `obs-audit.ts`): the contract is
+ * Dual-layer admin gate (cloned verbatim from `obs-audit.ts`): the contract is
  * `scopes:["admin"]` (gateway-router primary) AND the handler re-checks
  * `_trustLevel === "admin"` (defense-in-depth). `stripInternalFields` runs BEFORE
  * the contract parse so `_trustLevel` can never be smuggled into the parsed params.
  *
- * Content-free (T-179-11): the rows are exactly the GROUP BY projection — a closed
+ * Content-free: the rows are exactly the GROUP BY projection — a closed
  * cache-break `reason` label + a `count` + the summed `estCostUsd` ($-lost). No
  * message/body/query/secret crosses the boundary — structural, not a runtime filter.
  *
@@ -28,7 +28,7 @@ import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 
 /**
- * Bind the `obs.cacheBreaks.byReason` handler — the H1 admin gate + strip-before-
+ * Bind the `obs.cacheBreaks.byReason` handler — the admin gate + strip-before-
  * parse + the `queryCacheBreaksByReason` read. COMPUTED-KEY form
  * (`[ObsCacheBreaksByReasonContract.method]`) is MANDATORY — the parity gates
  * recognize only the computed key (the `obs-audit.ts` precedent).
@@ -39,7 +39,7 @@ import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 export function bindObsCacheBreaksHandlers(deps: ObsHandlerDeps): Record<string, RpcHandler> {
   return {
     [ObsCacheBreaksByReasonContract.method]: async (rawParams) => {
-      // H1: admin check (defense-in-depth; gateway-router is the primary gate).
+      // Admin check (defense-in-depth; gateway-router is the primary gate).
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
       if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 

@@ -3,16 +3,13 @@ import { describe, it, expect } from "vitest";
 import { ChannelCapabilitySchema } from "./channel-capability.js";
 
 // ---------------------------------------------------------------------------
-// Agent Transparency — ChannelCapability feature widening
+// ChannelCapability feature flags
 //
-// §16.2 / §16.11: ChannelFeaturesSchema gains `typing` (default false),
-// `threads` (default false), and `buttons` (closed enum, default "none") so
+// ChannelFeaturesSchema declares `typing` (default false), `threads`
+// (default false), and `buttons` (closed enum, default "none") so
 // selectStrategy() and renderers don't have to guess what a plugin supports.
-// Defaults exist only as a safety net for *new* plugins (§19.5) — the 10
-// in-tree plugins declare the values explicitly in a later phase.
-//
-// These cases fail on the pre-patch schema (the parsed `features` object lacks
-// typing/threads/buttons) — RED proof.
+// Defaults exist only as a safety net for *new* plugins — the 10
+// in-tree plugins declare the values explicitly.
 // ---------------------------------------------------------------------------
 
 describe("ChannelCapability feature flags", () => {

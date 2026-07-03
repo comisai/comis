@@ -8,14 +8,14 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * (the cause→effect links between memories, and the one-hop lane that surfaces
  * memories causally connected to the seed hits).
  *
- * This is a NEW port — it deliberately does NOT widen the security-reviewed
- * `MemoryPort` (store/search/delete). Per design §3.2 that surface is never
+ * This is a deliberately separate port — it does NOT widen the security-reviewed
+ * `MemoryPort` (store/search/delete). That surface is never
  * widened for agent use; new capabilities arrive as their own segregated port
- * (the same pattern as `MemoryEntityStore` §6.3, `MemoryTemporalStore` and
+ * (the same pattern as `MemoryEntityStore`, `MemoryTemporalStore` and
  * `MemoryUsefulnessStore`). The sole adapter is in @comis/memory (it owns the
  * `db` handle and runs all SQL over the additive `memory_causal_edges` table);
- * the agent-side write path (memory-review-job, Wave 2) and read path
- * (memory-recall, Wave 3) consume this port TYPE from @comis/core — they cannot
+ * the agent-side write path (memory-review-job) and read path
+ * (memory-recall) consume this port TYPE from @comis/core — they cannot
  * import @comis/memory (the agent↛memory build cut). No new authority is granted
  * beyond link/read within the caller's own (tenant, agent) scope.
  *
@@ -36,8 +36,9 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * DB, not a nicety: an edge written under one (tenant, agent) must NEVER be
  * returned for another scope by memory-id coincidence.
  *
- * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} — the isolation
- * fields are NOT re-declared (the 15× per-port repetition the collapse kills).
+ * Unified onto the canonical {@link LearningScope} — the isolation
+ * fields are NOT re-declared here (one canonical definition instead of a
+ * per-port copy).
  * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope` and
  * re-narrows the injected clock `now` to REQUIRED (the `linkCausal` write path).
  */

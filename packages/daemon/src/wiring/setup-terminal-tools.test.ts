@@ -13,7 +13,7 @@
  * IMPLEMENTED factories the wiring constructs with `sharedDeps` (they receive the
  * per-agent registry), so they no longer reject `not_implemented` — they delegate
  * to the registry (which, with no live session, degrades to a resolved gone-shape,
- * never a throw). Phase 124-06 promotes `status` too — it is now a real,
+ * never a throw). `status` is likewise a real,
  * classifier-backed, owner-scoped tool wired with `sharedDeps`, so the terminal-driver
  * subsystem has no remaining deferred-reject tool.
  *
@@ -97,8 +97,8 @@ describe("wireTerminalTools — daemon composition root", () => {
     // The four interaction tools now reach the injected registry. With no live
     // session the registry degrades to a resolved gone-shape (the
     // degrade-not-hang posture) — they RESOLVE, they do NOT throw not_implemented.
-    // (Pre-GREEN the wiring passed no-arg stubs, so this asserts the sharedDeps
-    // injection: a no-arg factory would have no registry to delegate to.)
+    // This asserts the sharedDeps injection: a no-arg factory would have no
+    // registry to delegate to.
     const interaction = ["terminal_session_send_text", "terminal_session_send_key", "terminal_session_resize", "terminal_session_wait"];
     for (const name of interaction) {
       const tool = tools.find((t) => t.name === name);
@@ -126,14 +126,14 @@ describe("wireTerminalTools — daemon composition root", () => {
     expect(result.details).toHaveProperty("cursor");
   });
 
-  it("status is IMPLEMENTED (124-06): it delegates to the per-agent registry and RESOLVES the not-found status view for an absent session (no not_implemented throw)", async () => {
+  it("status is IMPLEMENTED: it delegates to the per-agent registry and RESOLVES the not-found status view for an absent session (no not_implemented throw)", async () => {
     const tools: ToolLike[] = [];
     const registries = new Map<string, TerminalSessionRegistry>();
     wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
 
     const status = tools.find((t) => t.name === "terminal_session_status");
     expect(status).toBeDefined();
-    // 124-06: status is a real, classifier-backed, owner-scoped tool wired with
+    // status is a real, classifier-backed, owner-scoped tool wired with
     // sharedDeps. With an empty allow-set + no live session, registry.status degrades
     // to the not-found view (owner-scoped, never another owner's state) — it RESOLVES,
     // it does NOT throw not_implemented (a no-arg stub could not reach the registry).
@@ -365,20 +365,16 @@ describe("buildTerminalReaperHooks — the daemon eviction audit", () => {
 });
 
 // ===========================================================================
-// 124-09 Task 1 (the keystone, TR-11 / SEC-11/12 / OPS-04) — the fd3 onTerminalEvent
-// emit hook RE-PUBLISHES each worker event frame onto the daemon TypedEventBus.
-// buildTerminalEventHook(agentId, deps) returns an `onTerminalEvent` closure (the
-// 3rd emit-hook site, mirroring buildTerminalReaperHooks/onSpawnFailed): switch on
-// frame.event, build the redaction-safe typed payload (inject agentId + timestamp,
-// copy ONLY the structural fields from frame.payload), emit on deps.eventBus, log
-// §2.7. The worker frame carries NO screen text (124-05) and the hook copies only
-// the structural fields — so screen text physically cannot cross the bus (T-124-25).
-//
-// RED on pre-patch: buildTerminalEventHook does not exist (the import fails); the
-// registry's onTerminalEvent dep is unbound, so a worker fd3 frame emits nothing.
+// The fd3 onTerminalEvent emit hook RE-PUBLISHES each worker event frame onto
+// the daemon TypedEventBus. buildTerminalEventHook(agentId, deps) returns an
+// `onTerminalEvent` closure (mirroring buildTerminalReaperHooks/onSpawnFailed):
+// switch on frame.event, build the redaction-safe typed payload (inject agentId +
+// timestamp, copy ONLY the structural fields from frame.payload), emit on
+// deps.eventBus, log. The worker frame carries NO screen text and the hook copies
+// only the structural fields — so screen text physically cannot cross the bus.
 // ===========================================================================
 
-describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEventBus (Task 1, TR-11)", () => {
+describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEventBus", () => {
   function makeEventDeps() {
     const emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
     const eventBus = {
@@ -414,11 +410,11 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
       agentId: "agent-a",
       state: "awaiting-input",
       reason: "settled_cursor_parked",
-      // CLASS-02: the classifier confidence rides the re-published event.
+      // The classifier confidence rides the re-published event.
       confidence: "high",
     });
     expect(typeof ev!.payload.timestamp).toBe("number");
-    // §2.7: a wake is an INFO completion-style line (step-tagged) — now carrying confidence.
+    // A wake is an INFO completion-style line (step-tagged) — now carrying confidence.
     expect(skillsLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "s-1", confidence: "high", step: "terminal_input_needed" }),
       expect.any(String),
@@ -455,7 +451,7 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
       sessionId: "s-2",
       agentId: "agent-a",
       noProgressMs: 45_000,
-      // CLASS-02: stuck now re-publishes the classifier reason + confidence.
+      // stuck re-publishes the classifier reason + confidence.
       reason: "no_progress",
       confidence: "medium",
     });
@@ -482,7 +478,7 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     expect(stuck!.payload.reason).toBe("no_progress");
   });
 
-  it("an out-of-enum confidence on the (untrusted) frame falls back to 'medium' — never propagates raw (T-163-11)", () => {
+  it("an out-of-enum confidence on the (untrusted) frame falls back to 'medium' — never propagates raw", () => {
     const { deps, emitted } = makeEventDeps();
     const hook = buildTerminalEventHook("agent-a", deps as never);
 
@@ -507,10 +503,10 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     expect(ev!.payload).toMatchObject({ sessionId: "s-3", agentId: "agent-a", state: "exited" });
   });
 
-  it("MR-02: a worker-crash session_state(lost) frame re-publishes onto the bus → drives onSessionGone reclaim", () => {
+  it("a worker-crash session_state(lost) frame re-publishes onto the bus → drives onSessionGone reclaim", () => {
     // The supervisor's crash path (terminal-worker-supervisor.ts) emits exactly this frame
     // shape per running session; this hook re-publishes it onto the bus, where onSessionGone
-    // (setup-terminal-wake.ts) reclaims the per-session drive-state. Closes the MR-02 chain.
+    // (setup-terminal-wake.ts) reclaims the per-session drive-state.
     const { deps, emitted } = makeEventDeps();
     const hook = buildTerminalEventHook("agent-a", deps as never);
 
@@ -530,14 +526,14 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     const ev = emitted.find((e) => e.event === "terminal:escalated");
     expect(ev).toBeDefined();
     expect(ev!.payload).toMatchObject({ sessionId: "s-4", agentId: "agent-a", reason: "auth_login" });
-    // §2.7: an escalation is a WARN carrying hint + errorKind.
+    // An escalation is a WARN carrying hint + errorKind.
     expect(skillsLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "s-4", errorKind: expect.any(String) }),
       expect.any(String),
     );
   });
 
-  it("the re-published payload is redaction-safe: a screen field on the frame payload NEVER crosses the bus (T-124-25)", () => {
+  it("the re-published payload is redaction-safe: a screen field on the frame payload NEVER crosses the bus", () => {
     const { deps, emitted } = makeEventDeps();
     const hook = buildTerminalEventHook("agent-a", deps as never);
 
@@ -560,7 +556,7 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     expect(ev!.payload).not.toHaveProperty("screen");
     expect(ev!.payload).not.toHaveProperty("text");
     expect(ev!.payload).not.toHaveProperty("payload");
-    // The re-published key-set: structural fields + confidence (CLASS-02), no leak field.
+    // The re-published key-set: structural fields + confidence, no leak field.
     expect(Object.keys(ev!.payload).sort()).toEqual([
       "agentId",
       "confidence",
@@ -582,18 +578,15 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
 });
 
 // ===========================================================================
-// 124-09 Task 3 (THE WR-01 CLOSURE, TR-06/OPS-06, T-124-28) — buildTerminalSharedDeps
-// POPULATES the allow-set from the threaded operator config (was `const allowEntries =
-// []`). When populated, allowEntries[0].limits feeds createSessionCaps so the per-session
-// caps go LIVE; the mapped scope/approveOnCreate/limits/backend/autoAnswer/hintPatterns
-// flow toward the worker + the wake-FSM (the "consume the parsed-not-consumed config" step).
-//
-// RED on pre-patch: TerminalWiringDeps has no `config` field; buildTerminalSharedDeps
-// hardcodes `allowEntries = []`, so a threaded config is ignored (the allow-set stays
-// empty + every create still fail-closes).
+// buildTerminalSharedDeps POPULATES the allow-set from the threaded operator
+// config. When populated, allowEntries[0].limits feeds createSessionCaps so the
+// per-session caps go LIVE; the mapped scope/approveOnCreate/limits/backend/
+// autoAnswer/hintPatterns flow toward the worker + the wake-FSM. When no config is
+// threaded, buildTerminalSharedDeps yields an empty allow-set and every create
+// fail-closes.
 // ===========================================================================
 
-describe("buildTerminalSharedDeps — the WR-01 closure: populate the allow-set from config (Task 3)", () => {
+describe("buildTerminalSharedDeps — populate the allow-set from config", () => {
   /** A parsed TerminalDriverConfig with one allow entry carrying limits + backend. */
   function makeConfig(): TerminalAllowEntry["scope"] extends never ? never : Record<string, unknown> {
     return {
@@ -638,16 +631,15 @@ describe("buildTerminalSharedDeps — the WR-01 closure: populate the allow-set 
     // The allow-set is now populated from the threaded config (was always []).
     expect(shared.allowEntries).toHaveLength(1);
     expect(shared.allowEntries[0]!.id).toBe("claude-code");
-    // The operator scope survived the daemon-boundary map (SEC-02, no silent drop).
+    // The operator scope survived the daemon-boundary map (no silent drop).
     expect(shared.allowEntries[0]!.scope.filesystem).toBe("home");
     expect(shared.allowEntries[0]!.limits).toMatchObject({ maxInteractions: 200 });
   });
 
-  it("FINDING-B/DUR-01: threads config.drive.durable → sharedDeps.durable; DEFAULT-ON (tmux is the default backend), explicit opt-out respected", () => {
-    // Live VPS 2026-06-16: drive.durable was parsed but NEVER threaded to the create tool (Finding B,
-    // fixed). The tmux backend was then made driveable (the node-pty `attach` rework) + survive-a-restart
-    // (KillMode=process + data-dir socket), so the durable/tmux path is now the DEFAULT working setup —
-    // the runtime fallback flipped `?? false` → `?? true`. Explicit `durable:false` still opts out to pty.
+  it("threads config.drive.durable → sharedDeps.durable; DEFAULT-ON (tmux is the default backend), explicit opt-out respected", () => {
+    // The tmux backend is driveable (the node-pty `attach` path) + survives a restart
+    // (KillMode=process + data-dir socket), so the durable/tmux path is the DEFAULT working
+    // setup — the runtime fallback is `?? true`. Explicit `durable:false` opts out to pty.
     const registries = new Map<string, TerminalSessionRegistry>();
     const durableDeps = { ...makeDepsWithConfig(), config: { ...makeConfig(), drive: { durable: true } } };
     expect(buildTerminalSharedDeps(registries, "agent-a", durableDeps as never).durable, "drive.durable:true → true").toBe(true);

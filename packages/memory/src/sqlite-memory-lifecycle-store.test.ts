@@ -19,7 +19,7 @@
  * is a full-eviction mis-implementation; the GREEN is the no-op sweep. Live
  * eviction is the deferred operator step.
  *
- * ## The load-bearing security boundary (the §5.2 invariant)
+ * ## The load-bearing security boundary
  *
  * Comis runs many agents and many tenants in ONE DB. Every adapter statement —
  * the candidate SELECT, any read — filters on `(tenant_id, agent_id)`. A sweep

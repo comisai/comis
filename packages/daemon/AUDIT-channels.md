@@ -28,9 +28,9 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | workspaceDirs | required | — | packages/daemon/src/api/types.ts:172 |
 | logger | required | — | packages/daemon/src/api/types.ts:173 |
 | persistDeps | optional | channel.start / channel.stop runtime state changes are NOT persisted to config.yaml; reverts on next daemon restart (in-memory only) | packages/daemon/src/api/types.ts:174 |
-| boundedAutonomy | optional | the Phase-213 outward quota (QUOTA-01/02) is inert — message.send/reply/react are NOT gated on origin/grant/per-hour/volume (the cap gate + authorizeChannelAccess still apply); wired only when an autonomy-bearing agent is configured | packages/daemon/src/api/types.ts:287 |
-| resolveRootRunId | optional | message.send/reply/react cannot derive the outward-ledger idempotency key (rootRunId) from the caller session, so the Phase-216 exactly-once wrap is a pass-through (same resolver as SessionsApiDeps.resolveRootRunId; already spread into the flat dispatch deps) | packages/daemon/src/api/types.ts:288 |
-| outwardLedger | optional | the Phase-216 three-state outward-send ledger (ONCE-01/02/04) is absent, so message.send/reply/react do NOT get the exactly-once wrap — deliverToChannel runs unwrapped exactly as before (older / non-autonomy daemon); the quota gate is unaffected | packages/daemon/src/api/types.ts:290 |
+| boundedAutonomy | optional | the bounded-autonomy outward quota is inert — message.send/reply/react are NOT gated on origin/grant/per-hour/volume (the cap gate + authorizeChannelAccess still apply); wired only when an autonomy-bearing agent is configured | packages/daemon/src/api/types.ts:287 |
+| resolveRootRunId | optional | message.send/reply/react cannot derive the outward-ledger idempotency key (rootRunId) from the caller session, so the exactly-once outward-send wrap is a pass-through (same resolver as SessionsApiDeps.resolveRootRunId; already spread into the flat dispatch deps) | packages/daemon/src/api/types.ts:288 |
+| outwardLedger | optional | the three-state outward-send ledger is absent, so message.send/reply/react do NOT get the exactly-once wrap — deliverToChannel runs unwrapped (a non-autonomy daemon); the quota gate is unaffected | packages/daemon/src/api/types.ts:290 |
 
 ## Removed Fields (stale-fallback — deleted)
 

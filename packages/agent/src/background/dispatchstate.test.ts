@@ -93,8 +93,8 @@ function buildOrigin(overrides: Partial<BackgroundTaskOrigin> = {}): BackgroundT
 }
 
 // Dynamic loader for the dispatcher module. The import-with-undefined
-// pattern ensures the test suite reaches its assertions even when the
-// module does not yet exist.
+// pattern ensures the test suite reaches its assertions and fails
+// meaningfully even if the module fails to resolve.
 async function loadDispatchTypes(): Promise<
   | {
       // 3-state typed enum.

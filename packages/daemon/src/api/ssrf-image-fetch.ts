@@ -3,7 +3,7 @@
 // caller's `@allow-throw` boundary (image-handlers / media-handlers) and
 // converted to a JSON-RPC error response by rpc-dispatch.ts.
 /**
- * Shared DNS-pinned, SSRF-safe image byte fetch (CR-01).
+ * Shared DNS-pinned, SSRF-safe image byte fetch.
  *
  * Closes the DNS-rebinding time-of-check/time-of-use (TOCTOU) SSRF gap that a
  * bare `fetch(url, { redirect: "error" })` leaves open: `validateUrl` resolves

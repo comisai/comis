@@ -27,7 +27,7 @@ const memoryConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false,
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall-related config keys nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,
@@ -282,12 +282,12 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(only?.score).toBeLessThanOrEqual(1);
     });
 
-    // CR-01 (lane gap): the entity associative lane hydrates a full memory row that
-    // flows straight into createMemoryRecall → the prompt with NO downstream
-    // evicted_at re-validation. A soft-evicted shared-entity memory MUST be excluded
-    // here exactly as on the adapter's recall paths; the inspect/asOf raw read still
+    // The entity associative lane hydrates a full memory row that flows straight
+    // into createMemoryRecall → the prompt with NO downstream evicted_at
+    // re-validation. A soft-evicted shared-entity memory MUST be excluded here
+    // exactly as on the adapter's recall paths; the inspect/asOf raw read still
     // resolves it (soft eviction is reversible).
-    it("CR-01: a soft-evicted shared-entity memory is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
+    it("a soft-evicted shared-entity memory is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
       const m1 = await seedMemory({ id: "m1", content: "seed body" });
       const m2 = await seedMemory({ id: "m2", content: "shared but evicted" });
       await store.resolveAndLink(m1, "Shared Co", SCOPE_A);

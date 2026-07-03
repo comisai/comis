@@ -32,16 +32,16 @@ import {
 import type { ComputeDailyResetNextRun } from "@comis/core";
 
 /**
- * OBS-2/6b (hindsight-reflection-20260626): record a completed `__REFLECT__` run to the firing
+ * Record a completed `__REFLECT__` run to the firing
  * agent's execution tracker, so `cron.runs jobName "Reflection"` surfaces the reflection funnel
  * VERDICT (the admissionOutcome + counts) AND the run is POLLABLE — instead of a daemon.log grep.
  *
  * WHY here (not the cron executeJob path): the reflect sentinel is a fire-and-forget `system_event`,
  * so executeJob cannot await the ~22s reflection to record its result. Instead we fold the per-run
- * record off the content-free `reflect:funnel` event (OBS-1 put the full funnel on it). `jobId` mirrors
+ * record off the content-free `reflect:funnel` event (which carries the full funnel). `jobId` mirrors
  * the reflect cron's id (`reflect-<agentId>`) so `resolveJobByName(scheduler,"Reflection")` resolves to
- * this history. Content-free: the summary is the closed admissionOutcome enum + counts ONLY (INV-6 —
- * never a doc body). `durationMs` is 0 (the event carries no duration; the verdict + ts are the value).
+ * this history. Content-free: the summary is the closed admissionOutcome enum + counts ONLY —
+ * never a doc body. `durationMs` is 0 (the event carries no duration; the verdict + ts are the value).
  */
 export async function recordReflectFunnelRun(
   tracker: ExecutionTracker | undefined,
@@ -58,7 +58,7 @@ export async function recordReflectFunnelRun(
   nowMs: number,
 ): Promise<void> {
   if (tracker === undefined) return; // unknown/unregistered agent → no-op (never throws)
-  // OBS-7: `topics=N` (distinctTopicKeys) + maxCard makes under-merge readable on `cron.runs`:
+  // `topics=N` (distinctTopicKeys) + maxCard makes under-merge readable on `cron.runs`:
   // admitted=0 with topics>1 & maxCard=1 = successes that didn't merge (vs topics=1 maxCard>=2 = corroborated).
   const summary =
     `reflect: outcome=${funnel.admissionOutcome} admitted=${funnel.admitted}` +
@@ -68,12 +68,12 @@ export async function recordReflectFunnelRun(
 }
 
 /**
- * OBS-2b (reflect-obs-20260627): record a completed `__MEMORY_LIFECYCLE__` sweep to the firing agent's
+ * Record a completed `__MEMORY_LIFECYCLE__` sweep to the firing agent's
  * execution tracker, so `cron.runs jobName "Memory lifecycle"` surfaces the sweep result (scanned/
  * evicted/demoted/promoted) — instead of a `db.mjs` `evicted_at` poll. The parity recorder for the
  * forget half of learning (reflection has recordReflectFunnelRun). `jobId` mirrors the lifecycle cron's
  * id (`memory-lifecycle-<agentId>`) so `resolveJobByName(scheduler,"Memory lifecycle")` resolves to this
- * history. Content-free: counts ONLY (INV-6). Recorded off the content-free `learning:lifecycle_swept`
+ * history. Content-free: counts ONLY. Recorded off the content-free `learning:lifecycle_swept`
  * event (the sentinel is fire-and-forget, so executeJob can't await the sweep). `durationMs` is 0 (the
  * event carries no duration; the counts + ts are the value).
  */
@@ -146,11 +146,11 @@ export async function setupSchedulers(deps: {
   clock: ClockPort;
   /** Timer scheduling. Threaded into SessionResetScheduler. */
   timers: TimerPort;
-  /** Phase 213-08 (RATE-02): the credential-broker lease manager. With the holder, a
+  /** The credential-broker lease manager. With the holder, a
    *  cron-FIRED agent_turn run mints a fresh attenuated lease at the fire site.
-   *  Optional — absent ⇒ no mint (byte-identical to the pre-213 unbounded cron). */
+   *  Optional — absent ⇒ no mint (byte-identical to an unbounded cron). */
   leaseManager?: LeaseManager;
-  /** Phase 213-08 (RATE-02): the daemon-wide LATE-BOUND per-root budget holder. The
+  /** The daemon-wide LATE-BOUND per-root budget holder. The
    *  schedulers are built BEFORE the cap layer that populates `current`, so the mint
    *  reads `holder.current` at FIRE time; registerRoot anchors the cron run. Optional
    *  — absent / `current` undefined ⇒ no mint. */
@@ -160,12 +160,11 @@ export async function setupSchedulers(deps: {
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
-  // Master cost-feature kill switch (opt-out posture; renamed from memory.costFeatures.enabled to
-  // memory.enabled in Phase 226). When the operator sets memory.enabled:false, EVERY LLM
+  // Master cost-feature kill switch (opt-out posture; the config key is memory.enabled).
+  // When the operator sets memory.enabled:false, EVERY LLM
   // cost-bearing memory cron is force-disabled at its registration site below — regardless of the
   // agent's own per-feature opt-in. The gated set: memoryReview, memoryUsefulnessJudge, the
-  // __REFLECT__ reflection cron. NOT gated: the $0 keyless memoryLifecycle sweep. (The
-  // socialModeling cron was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
+  // __REFLECT__ reflection cron. NOT gated: the $0 keyless memoryLifecycle sweep.
   // Default true (schema default) ⇒ byte-identical registration. Read defensively (`!== false`) so an
   // unexpectedly-absent block fails OPEN to the prior behavior rather than silently disabling features.
   const costFeaturesEnabled = container.config.memory?.enabled !== false;
@@ -288,13 +287,13 @@ export async function setupSchedulers(deps: {
             ? new Promise<{ status: "ok" | "error"; error?: string }>((resolve) => { deferredResolve = resolve; })
             : undefined;
 
-          // Phase 213-08 (RATE-02): a cron-FIRED agent_turn run mints a FRESH lease
+          // A cron-FIRED agent_turn run mints a FRESH lease
           // scoped to the JOB's agentId + the agent's RESOLVED caps (NOT operator/
           // system) + a fresh root-cron-* id (a new root, no parentLeaseId), then
           // registerRoot anchors it. STRICTLY gated on agent_turn (system_event memory
           // crons do NOT mint). Best-effort: absent leaseManager/holder → skip (byte-
-          // identical to pre-213 unbounded cron); a mint throw is WARN-logged + job STILL runs.
-          // WR-04 (213-REVIEW): the cron-fired run dispatches via `scheduler:job_result` (not `runner.spawn`), so it deliberately does NOT consult CEIL-01. Cron fan-out is already triple-bounded — `cron.maxConcurrentRuns` (caps simultaneous fires, `cron-scheduler.ts:99`), the per-root budget this mint anchors (token+wall-clock), and `cronSelfMax` (caps self-owned job count). A cron-spawned sub-agent is still CEIL-01-bound via session.spawn→resolveRootRunId (a distinct per-session root; correlating it to this `root-cron-*` is a future enhancement, not an M1 gap).
+          // identical to an unbounded cron); a mint throw is WARN-logged + job STILL runs.
+          // The cron-fired run dispatches via `scheduler:job_result` (not `runner.spawn`), so it deliberately does NOT consult the session-spawn concurrency ceiling. Cron fan-out is already triple-bounded — `cron.maxConcurrentRuns` (caps simultaneous fires, `cron-scheduler.ts:99`), the per-root budget this mint anchors (token+wall-clock), and `cronSelfMax` (caps self-owned job count). A cron-spawned sub-agent is still ceiling-bound via session.spawn→resolveRootRunId (a distinct per-session root; correlating it to this `root-cron-*` is a future enhancement).
           const capLayer = boundedAutonomyHolder?.current;
           if (isAgentTurn && leaseManager && capLayer) {
             try {

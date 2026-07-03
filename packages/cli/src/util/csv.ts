@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * A pure RFC4180 CSV serializer (COST-03, Phase 179 WS6).
+ * A pure RFC4180 CSV serializer.
  *
- * Greenfield — the repo had no CSV module (the `join(",")` hits elsewhere are
- * list-formatting, not CSV). Zero-dependency by design: the only escaping rule is
+ * Zero-dependency by design: the only escaping rule is
  * RFC4180 §2.6/§2.7 — a field containing a comma, a double-quote, or a line break
  * (CR or LF) is enclosed in double-quotes, and each embedded double-quote is
  * doubled. Records are joined with CRLF (§2.1).
@@ -11,7 +10,8 @@
  * CONTENT-FREE BY CONSTRUCTION: `toCsv` projects ONLY the explicit `columns`
  * allowlist — it NEVER reflects arbitrary object keys (`Object.keys(row)`). A
  * source row may carry a body/secret/query field, but unless that key is named in
- * `columns` it can never reach the CSV (the export threat T-179-07). The caller
+ * `columns` it can never reach the CSV — the export cannot exfiltrate message
+ * bodies or secrets. The caller
  * passes the cost-bucket + pricing-coverage column set; nothing else is emitted.
  *
  * @module

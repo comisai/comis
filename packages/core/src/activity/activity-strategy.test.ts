@@ -3,9 +3,9 @@
  * selectStrategy routing tests.
  *
  * Capability fixtures are the ground-truth feature/limits shapes declared by
- * the 10 in-tree `*-plugin.ts` files (spec §7.1 capability matrix) — verified
+ * the 10 in-tree `*-plugin.ts` files — verified
  * against the live plugin sources. ACP carries no ChannelPlugin/capability, so
- * its "Structured" routing rides on the channelType signal (§7.2).
+ * its "Structured" routing rides on the channelType signal.
  */
 import { describe, it, expect } from "vitest";
 import type { ChannelCapability } from "../domain/channel-capability.js";
@@ -30,7 +30,7 @@ function cap(features: Partial<Features>, maxMessageChars: number): ChannelCapab
   };
 }
 
-// Ground-truth fixtures (edit / delete / buttons / attachments / maxChars per §7.1 + live plugins).
+// Ground-truth fixtures (edit / delete / buttons / attachments / maxChars per the live plugins).
 const TELEGRAM = cap({ editMessages: true, deleteMessages: true, attachments: true, buttons: "inline" }, 4096);
 const DISCORD = cap({ editMessages: true, deleteMessages: true, attachments: true, buttons: "components" }, 2000);
 const SLACK = cap({ editMessages: true, deleteMessages: true, attachments: true, buttons: "blockkit" }, 4000);

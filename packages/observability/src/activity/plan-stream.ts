@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * plan-stream — derives plan-update events from the Silent Execution Planner
- * (SEP) without introducing a new tool (spec §16.7).
+ * (SEP) without introducing a new tool.
  *
  * SEP is the canonical plan-state source. The bus already emits
  * `sep:plan_extracted` whenever the agent extracts a plan, and the live
@@ -11,8 +11,8 @@
  *     and emits a {@link PlanUpdate} whose entries map from `ExecutionPlan.steps`.
  *   - subscribes `tool:executed` → re-reads the plan and re-emits, so checkbox
  *     transitions (derived by SEP via `PlanStep.completedBy`) surface as the
- *     tools complete. `completedBy: undefined` ⇒ "no completions yet" (§16.7).
- *   - registers NO new plan-state tool (the reviewer's blocking finding); SEP
+ *     tools complete. `completedBy: undefined` ⇒ "no completions yet".
+ *   - registers NO new plan-state tool; SEP
  *     remains the single source of truth.
  *
  * Mirrors the cache-trace `event-bus-bridge.ts` subscription-bag idiom: a
@@ -74,7 +74,7 @@ export interface PlanStream {
 }
 
 /**
- * Create the SEP plan-stream. NO new tool is registered (§16.7).
+ * Create the SEP plan-stream. NO new tool is registered.
  */
 export function createPlanStream(deps: CreatePlanStreamDeps): PlanStream {
   return {
@@ -87,7 +87,7 @@ export function createPlanStream(deps: CreatePlanStreamDeps): PlanStream {
       const emitFromPlan = (agentId: string, sessionKey: string): void => {
         const plan = deps.executionPlanPort.getCurrentPlan();
         if (plan === undefined || !plan.active) {
-          // SEP inactive for this turn — nothing to project (§16.7).
+          // SEP inactive for this turn — nothing to project.
           return;
         }
         const update = projectPlan(plan, agentId, sessionKey);
@@ -155,7 +155,7 @@ function projectPlan(
     index: step.index,
     description: step.description,
     status: step.status,
-    // completedBy undefined ⇒ no completions yet (§16.7); the authoritative
+    // completedBy undefined ⇒ no completions yet; the authoritative
     // "done" signal is the SEP-maintained status.
     completed: step.status === "done",
   }));

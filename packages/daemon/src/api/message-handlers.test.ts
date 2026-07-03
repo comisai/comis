@@ -10,7 +10,7 @@ import { ok, err } from "@comis/shared";
 import type { ChannelPort, AttachmentPayload, ChannelPluginPort, ChannelCapability, DeliveryService } from "@comis/core";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 
-// CAP-03 / 210-GAP §3.5: the orch:message-gated handlers are message.send/
+// The orch:message-gated handlers are message.send/
 // reply/react ONLY (the genuinely-outward send subset). They require an injected
 // _capabilities (production supplies it via createAgentRpcCall). Wrap the bound
 // record so these body-tests reach the handler BODY, not the gate. message.edit/
@@ -487,8 +487,8 @@ describe("capability guard", () => {
 // ---------------------------------------------------------------------------
 // Cross-channel authorization confinement.
 //
-// Security regression for the v2.20 review finding: the per-method channel
-// guard read the dispatcher field `_originChannelId`, which is NEVER injected
+// Security regression: the per-method channel
+// guard once read the dispatcher field `_originChannelId`, which is NEVER injected
 // (the agent rpc bridge injects `_callerChannelId` from DeliveryOrigin). With
 // the wrong field name, `authorizeChannelAccess(undefined, target, undefined)`
 // always hit the "no origin -> allow (daemon-initiated)" branch, so a
@@ -729,7 +729,7 @@ describe("inboundMessageIdResolver integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 213 QUOTA-01/02: the outward irreversible-action gate. Every agent-
+// The outward irreversible-action gate. Every agent-
 // initiated orch:message send (message.send/reply/react) is gated on the bounded-
 // autonomy outward quota AFTER authorizeChannelAccess, BEFORE deliver — origin-
 // only + per-target grant + per-hour + volume. A daemon-initiated send (no agent
@@ -752,7 +752,7 @@ function makeOutwardStub(tryOutward: BoundedAutonomy["tryOutward"]): BoundedAuto
   };
 }
 
-describe("outward quota gate (QUOTA-01/02)", () => {
+describe("outward quota gate", () => {
   let workspaceDir: string;
 
   beforeEach(() => {
@@ -763,7 +763,7 @@ describe("outward quota gate (QUOTA-01/02)", () => {
     rmSync(workspaceDir, { recursive: true, force: true });
   });
 
-  it("allows an origin send within quota, then denies before deliver when tryOutward returns per_hour (QUOTA-01)", async () => {
+  it("allows an origin send within quota, then denies before deliver when tryOutward returns per_hour", async () => {
     const deps = createMockDeps(workspaceDir);
     const tryOutward = vi.fn().mockReturnValue(ok(undefined));
     deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
@@ -788,7 +788,7 @@ describe("outward quota gate (QUOTA-01/02)", () => {
     expect(deliver).toHaveBeenCalledTimes(1); // NOT called a second time
   });
 
-  it("denies a send to a new (non-origin) target when tryOutward returns no_grant (QUOTA-01)", async () => {
+  it("denies a send to a new (non-origin) target when tryOutward returns no_grant", async () => {
     const deps = createMockDeps(workspaceDir);
     const tryOutward = vi.fn().mockReturnValue(err({ reason: "no_grant" }));
     deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
@@ -810,7 +810,7 @@ describe("outward quota gate (QUOTA-01/02)", () => {
     expect(isOrigin).toBe(true);
   });
 
-  it("derives the tryOutward volume from text.length and denies on a volume trip (QUOTA-02)", async () => {
+  it("derives the tryOutward volume from text.length and denies on a volume trip", async () => {
     const deps = createMockDeps(workspaceDir);
     const tryOutward = vi.fn().mockReturnValue(err({ reason: "volume" }));
     deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
@@ -829,7 +829,7 @@ describe("outward quota gate (QUOTA-01/02)", () => {
     expect(volume).toBe(big.length);
   });
 
-  it("gates message.reply AND message.react through tryOutward, not just send (QUOTA-01)", async () => {
+  it("gates message.reply AND message.react through tryOutward, not just send", async () => {
     const deps = createMockDeps(workspaceDir);
     // reactions enabled so message.react reaches the quota gate (not the cap guard).
     deps.channelPlugins = new Map([["telegram", createMockPlugin({
@@ -857,7 +857,7 @@ describe("outward quota gate (QUOTA-01/02)", () => {
     expect(tryOutward).toHaveBeenCalledTimes(2);
   });
 
-  it("counts a message.react as ONE volume unit regardless of emoji length (IN-01)", async () => {
+  it("counts a message.react as ONE volume unit regardless of emoji length", async () => {
     const deps = createMockDeps(workspaceDir);
     deps.channelPlugins = new Map([["telegram", createMockPlugin({
       reactions: true, editMessages: false, deleteMessages: false, fetchHistory: false, attachments: false,
@@ -866,8 +866,8 @@ describe("outward quota gate (QUOTA-01/02)", () => {
     deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
     const handlers = createMessageHandlers(deps);
 
-    // A multi-codepoint emoji (ZWJ sequence) whose .length is > 1 — pre-fix this
-    // would have passed emoji.length (here 7) as the volume; now it must be 1.
+    // A multi-codepoint emoji (ZWJ sequence) whose .length is > 1 — passing
+    // emoji.length (here 7) as the volume would be wrong; it must be 1.
     await handlers["message.react"]({
       channel_type: "telegram", channel_id: "ch-A", emoji: "👨‍👩‍👧", message_id: "m1",
       _agentId: "agent-1", _callerChannelId: "ch-A",

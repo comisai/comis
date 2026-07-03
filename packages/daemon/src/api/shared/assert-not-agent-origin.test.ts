@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ORIGIN-01 deny-by-origin helper unit tests.
+ * Deny-by-origin guard unit tests.
  *
- * Trust-tiered (30uc-20260624 decision): an ADMIN-trust agent origin is ALLOWED
+ * Trust-tiered: an ADMIN-trust agent origin is ALLOWED
  * through (it inherits the admin user's control-plane privileges — the operator's
  * explicit senderTrustMap grant); a NON-admin agent origin (guest/user/unset) is
  * DENIED (the confused-deputy floor) with exactly one content-free audited denial.
@@ -38,8 +38,8 @@ function makeDeps(): {
   return { deps, capturedAuditEvents };
 }
 
-describe("assertNotAgentOrigin (ORIGIN-01 deny-by-origin)", () => {
-  it("ORIGIN-01-S1: ALLOWS an _agentId-carrying call when _trustLevel is admin (the admin user's agent inherits admin)", () => {
+describe("assertNotAgentOrigin (deny-by-origin guard)", () => {
+  it("ALLOWS an _agentId-carrying call when _trustLevel is admin (the admin user's agent inherits admin)", () => {
     const { deps, capturedAuditEvents } = makeDeps();
     // The agent acts for an admin-trust user (the operator's senderTrustMap grant)
     // → it inherits admin control-plane access. The admin handler re-checks the
@@ -50,7 +50,7 @@ describe("assertNotAgentOrigin (ORIGIN-01 deny-by-origin)", () => {
     expect(capturedAuditEvents).toHaveLength(0);
   });
 
-  it("ORIGIN-01-S1b: THROWS on an _agentId-carrying call when _trustLevel is NON-admin (user/guest/unset — the confused-deputy floor)", () => {
+  it("THROWS on an _agentId-carrying call when _trustLevel is NON-admin (user/guest/unset — the confused-deputy floor)", () => {
     for (const trust of ["user", "guest", undefined] as const) {
       const { deps } = makeDeps();
       expect(() =>
@@ -64,7 +64,7 @@ describe("assertNotAgentOrigin (ORIGIN-01 deny-by-origin)", () => {
     }
   });
 
-  it("ORIGIN-01-S2: a NON-admin agent denial emits exactly one content-free audit:event (capability_denied/denied/actionType=method)", () => {
+  it("a NON-admin agent denial emits exactly one content-free audit:event (capability_denied/denied/actionType=method)", () => {
     const { deps, capturedAuditEvents } = makeDeps();
     try {
       assertNotAgentOrigin({ _agentId: "forged-agent", _trustLevel: "user" }, deps, "secrets.get");
@@ -86,7 +86,7 @@ describe("assertNotAgentOrigin (ORIGIN-01 deny-by-origin)", () => {
     expect(metaJson).not.toContain("forged-agent");
   });
 
-  it("ORIGIN-01-S3: a legitimate operator call (no _agentId) does NOT throw and emits NO audit event", () => {
+  it("a legitimate operator call (no _agentId) does NOT throw and emits NO audit event", () => {
     const { deps, capturedAuditEvents } = makeDeps();
     expect(() =>
       assertNotAgentOrigin({ _trustLevel: "admin", name: "DB_URL" }, deps, "secrets.get"),
@@ -94,7 +94,7 @@ describe("assertNotAgentOrigin (ORIGIN-01 deny-by-origin)", () => {
     expect(capturedAuditEvents).toHaveLength(0);
   });
 
-  it("ORIGIN-01-S4: the thrown error (non-admin agent) names the method but does NOT leak param values", () => {
+  it("the thrown error (non-admin agent) names the method but does NOT leak param values", () => {
     const { deps } = makeDeps();
     let caught: unknown;
     try {

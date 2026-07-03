@@ -186,6 +186,3 @@ describe("createValidationErrorFormatter", () => {
     expect(reformattedText).not.toContain("Validation failed for tool");
   });
 });
-
-// ---------------------------------------------------------------------------
-// CACHEABLE_BLOCK_TYPES

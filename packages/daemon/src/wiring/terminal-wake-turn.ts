@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The §4.4 woken-turn driver (124-09 Task 2; TR-07 / SEC-11 / SEC-12 / OPS-04) — the
- * function the wake-FSM (124-07) calls as `wakeOneTurn(sessionId, owner)`. It runs the
- * spec §4.4 turn for ONE woken frame:
+ * The woken-turn driver — the function the wake-FSM calls as
+ * `wakeOneTurn(sessionId, owner)`. It runs the turn for ONE woken frame:
  *
- *   session_status (124-06) → read the screen (124-06 registry.read) →
- *   decideAutoAnswer (124-04, safe-only) →
+ *   session_status → read the screen (registry.read) →
+ *   decideAutoAnswer (safe-only) →
  *     • on `answer`  : run the loop-guard; if a repeat → escalate `loop_detected`,
  *                      else send the canned keystroke via the registry send path +
  *                      audit (`terminal:auto_answered` + a redacted §2.7 keystroke log +
  *                      the redaction-safe `terminal:keystroke` summary).
  *     • on `escalate`: send NOTHING; emit `terminal:escalated` + fire the NotifyFn chain
- *                      (subagent→parent→human, §4.7).
+ *                      (subagent→parent→human).
  *
  * Extracted from `setup-terminal-wake.ts` so that file stays well under the 800-line
  * architecture cap and the turn logic is unit-testable as a seam.
@@ -64,13 +63,13 @@ export type WokenTurnEscalationReason =
   | "no_safe_match";
 
 /**
- * The user-facing escalation message (§4.7) — short, ACTIONABLE, and REDACTION-SAFE: built from
+ * The user-facing escalation message — short, ACTIONABLE, and REDACTION-SAFE: built from
  * ONLY the sessionId + the structural `reason`, NEVER the screen (which is attacker-influenceable).
- * The live Telegram drive (2026-06-16) escalated with the bare `Terminal session X needs a human:
- * <reason>.` — the user could not tell what was wanted or how to unblock the drive. This states the
- * reason in plain words AND tells the user they can REPLY to drive the session (the agent relays
- * their reply to it) or "stop" to end it, and that they can ask to see the screen on demand (the
- * read tool wraps + redacts it — the screen is never pushed proactively).
+ * A bare `Terminal session X needs a human: <reason>.` leaves the user unable to tell what was
+ * wanted or how to unblock the drive; this states the reason in plain words AND tells the user they
+ * can REPLY to drive the session (the agent relays their reply to it) or "stop" to end it, and that
+ * they can ask to see the screen on demand (the read tool wraps + redacts it — the screen is never
+ * pushed proactively).
  */
 export function buildEscalationMessage(sessionId: string, reason: WokenTurnEscalationReason): string {
   const why: Record<WokenTurnEscalationReason, string> = {
@@ -107,7 +106,7 @@ export interface WokenTurnBus {
   ): unknown;
 }
 
-/** A NotifyFn that routes an escalation to a human (§4.7). Optional; absent ⇒ bus-only audit. */
+/** A NotifyFn that routes an escalation to a human. Optional; absent ⇒ bus-only audit. */
 export type WokenTurnNotify = (opts: {
   agentId: string;
   message: string;
@@ -117,7 +116,7 @@ export type WokenTurnNotify = (opts: {
 
 /**
  * The minimal per-session journal store the woken-turn driver reads+updates for a PROMOTED
- * drive (DRIVE-01 / 164-06). A thin wrapper over the daemon-side closure-local
+ * drive. A thin wrapper over the daemon-side closure-local
  * `Map<sessionId, DriveJournal>` holder (setupTerminalWake), keyed by the BARE sessionId.
  * Injected so the driver stays unit-testable with a fake; the daemon owns the holder
  * (the in-memory state + its onSessionGone reclaim).
@@ -131,41 +130,39 @@ export interface DriveJournalStore {
 
 /** The injected dependencies for the woken-turn driver. */
 export interface WokenTurnDriverDeps {
-  /** Per-agent registry resolver (the P4 owner-scoped registry). */
+  /** Per-agent registry resolver (the owner-scoped registry). */
   registries: ReadonlyMap<string, TerminalSessionRegistry>;
   /** Per-agent attention config (operator allow-entry derived). Absent ⇒ the turn escalates `no_safe_match`. */
   getTerminalAttentionConfig: (agentId: string) => TerminalAttentionConfig | undefined;
-  /** The shared loop-guard (124-04) — closure-local ring keyed per session. */
+  /** The shared loop-guard — closure-local ring keyed per session. */
   loopGuard: LoopGuard;
   /** The narrow audit bus. */
   eventBus: WokenTurnBus;
-  /** The human-escalation NotifyFn (§4.7). Optional. */
+  /** The human-escalation NotifyFn. Optional. */
   notify?: WokenTurnNotify;
   /**
-   * DRIVE-01 (164-06): the bounded content-free journal store — the PROMOTED drive's
-   * cross-wake memory. Optional; absent ⇒ no journal (the today's-path/unpromoted behavior is
-   * byte-identical, I1). The driver engages it ONLY when the wake owner is drive-scoped.
+   * The bounded content-free journal store — the PROMOTED drive's cross-wake memory. Optional;
+   * absent ⇒ no journal (the unpromoted behavior is byte-identical). The driver engages it ONLY
+   * when the wake owner is drive-scoped.
    */
   journal?: DriveJournalStore;
   /**
-   * MR-01 (DRIVE-01 / §7.1.6): resolve the wall-clock ms a session's drive STARTED (the
-   * first promoted wake), so the journal's `elapsedMs = nowMs() - driveStartMs(sessionId)`
-   * is the cumulative drive duration the resume substrate + a `comis explain` need — NOT a
-   * per-turn delta. Optional + defensive: absent (or returning a non-finite/future value) ⇒
-   * the driver falls back to this turn's start, yielding a sane non-negative `elapsedMs`
-   * (never a throw, never a negative). The daemon owns the per-session start map
-   * (setupTerminalWake), mirroring the journal-holder lifecycle. Returns `undefined` for an
-   * as-yet-unstamped session (the driver then falls back to the turn's own start).
+   * Resolve the wall-clock ms a session's drive STARTED (the first promoted wake), so the
+   * journal's `elapsedMs = nowMs() - driveStartMs(sessionId)` is the cumulative drive duration
+   * the resume substrate + a `comis explain` need — NOT a per-turn delta. Optional + defensive:
+   * absent (or returning a non-finite/future value) ⇒ the driver falls back to this turn's start,
+   * yielding a sane non-negative `elapsedMs` (never a throw, never a negative). The daemon owns
+   * the per-session start map (setupTerminalWake), mirroring the journal-holder lifecycle. Returns
+   * `undefined` for an as-yet-unstamped session (the driver then falls back to the turn's own start).
    */
   driveStartMs?: (sessionId: string) => number | undefined;
   /**
-   * ENDURE-01 (165-07): the operator per-drive spend ceiling (`drive.maxCostUsd`), or `null`
-   * for uncapped (the default — preserves today's behavior, I1). On each PROMOTED turn the
-   * driver runs the pure `checkSpendCeiling(journal.costUsd, maxCostUsd)` over the journal's
-   * HONEST run-total cost (I6 — never a fabricated cost) and, on a breach, escalates with the
-   * figure + STOPS the turn (never a silent overspend). The daemon (165-07 Task 4) threads
-   * `config.drive?.maxCostUsd ?? null`; absent/`null` ⇒ no spend check (I1). An unpromoted
-   * turn has no drive journal so the ceiling is inert there regardless.
+   * The operator per-drive spend ceiling (`drive.maxCostUsd`), or `null` for uncapped (the
+   * default). On each PROMOTED turn the driver runs the pure
+   * `checkSpendCeiling(journal.costUsd, maxCostUsd)` over the journal's HONEST run-total cost
+   * (never a fabricated cost) and, on a breach, escalates with the figure + STOPS the turn (never
+   * a silent overspend). The daemon threads `config.drive?.maxCostUsd ?? null`; absent/`null` ⇒ no
+   * spend check. An unpromoted turn has no drive journal so the ceiling is inert there regardless.
    */
   maxCostUsd?: number | null;
   /** Injected clock (no raw global). */
@@ -175,7 +172,7 @@ export interface WokenTurnDriverDeps {
 
 /**
  * Build the `wakeOneTurn(sessionId, owner)` driver the wake-FSM calls. The returned
- * function runs the §4.4 turn for one frame; it never throws (a failure is logged + the
+ * function runs the turn for one frame; it never throws (a failure is logged + the
  * frame stays unanswered, so a fresh `input_needed` re-wakes — the FSM's contract).
  */
 export function buildWokenTurnDriver(
@@ -183,25 +180,25 @@ export function buildWokenTurnDriver(
 ): (sessionId: string, owner: PersistedWakeOwner) => Promise<void> {
   const log = deps.logger.child({ submodule: "terminal-wake-turn" });
 
-  // DUR-02 / I10 (165-07): the closure-local "first turn this daemon LIFE" marker — the
-  // discriminator for the resume-no-re-answer guard. The driver is built once per daemon life
-  // (setupTerminalWake); this Set resets on restart (a new daemon = a new closure). A session
-  // NOT yet in this Set is on its FIRST turn this life: if its journal came back from disk
-  // with prior answeredPrompts (a RESUMED drive — the in-memory loop-guard ring is cold
-  // post-restart), an already-answered matched pattern is SKIPPED rather than re-sent (resume,
-  // don't re-answer). After the first turn the session is "seen" and the LIVE path governs
-  // repeats via the loop-guard (SEC-11) — so the live MR-01 accumulation is unchanged (I1).
+  // The closure-local "first turn this daemon LIFE" marker — the discriminator for the
+  // resume-no-re-answer guard. The driver is built once per daemon life (setupTerminalWake);
+  // this Set resets on restart (a new daemon = a new closure). A session NOT yet in this Set is
+  // on its FIRST turn this life: if its journal came back from disk with prior answeredPrompts (a
+  // RESUMED drive — the in-memory loop-guard ring is cold post-restart), an already-answered
+  // matched pattern is SKIPPED rather than re-sent (resume, don't re-answer). After the first turn
+  // the session is "seen" and the LIVE path governs repeats via the loop-guard — so the live
+  // answeredPrompts accumulation is unchanged.
   const resumedFirstTurnSeen = new Set<string>();
 
-  // HI-01 (165-REVIEW): the closure-local "spend ceiling already breached" marker — the
-  // dedupe that breaks the re-escalation STORM. Pre-fix a breach escalated + returned but left
-  // the drive alive + promoted, so the next fd3 wake / backstop tick re-breached + re-escalated
-  // forever. A breached session is recorded here so a SINGLE breach yields a SINGLE escalate +
-  // a SINGLE stop (the registry evict below) — never one escalate per wake. Mirrors
-  // resumedFirstTurnSeen's lifecycle (closure-local, reset on restart).
+  // The closure-local "spend ceiling already breached" marker — the dedupe that breaks the
+  // re-escalation STORM. Without it a breach would escalate + return but leave the drive alive +
+  // promoted, so the next fd3 wake / backstop tick re-breaches + re-escalates forever. A breached
+  // session is recorded here so a SINGLE breach yields a SINGLE escalate + a SINGLE stop (the
+  // registry evict below) — never one escalate per wake. Mirrors resumedFirstTurnSeen's lifecycle
+  // (closure-local, reset on restart).
   const breachedSessions = new Set<string>();
 
-  /** Emit the escalation audit + route the NotifyFn chain (§4.7). Never the prompt text. */
+  /** Emit the escalation audit + route the NotifyFn chain. Never the prompt text. */
   async function escalate(sessionId: string, owner: PersistedWakeOwner, reason: WokenTurnEscalationReason): Promise<void> {
     deps.eventBus.emit("terminal:escalated", { sessionId, agentId: owner.agentId, reason, timestamp: deps.nowMs() });
     log.warn(
@@ -209,7 +206,7 @@ export function buildWokenTurnDriver(
       "terminal woken turn escalated",
     );
     if (deps.notify) {
-      // §4.7: a short, redaction-safe, ACTIONABLE human message — the structural reason + how to
+      // A short, redaction-safe, ACTIONABLE human message — the structural reason + how to
       // respond, NEVER the screen (built by buildEscalationMessage from sessionId + reason only).
       await deps.notify({
         agentId: owner.agentId,
@@ -230,44 +227,43 @@ export function buildWokenTurnDriver(
       );
       return;
     }
-    // DRIVE-01 (164-06) — the registry-owner STRIP (the load-bearing fix). The registry
-    // resolves a session by its STAMPED owner (`sessionKey:""` for the forcing case); a
-    // promoted drive's wake owner carries `drive:<id>` (the FSM/journal/conversation
-    // attribution key, from setup-terminal-wake.ts). registryOwnerFor strips that scope back
-    // so `status`/`read`/`sendText` resolve the LIVE session (the same allowId/scope/jail —
-    // I5: WHERE not WHAT), never the not-found `alive:false` view (the I9-class strand,
-    // T-164-19/T-164-23). The drive: scope is used ONLY for the journal keying + the
-    // promoted-gate below — never as the registry-authorization owner.
-    // ISSUE-3 (live VPS 2026-06-16): recover the session's STAMPED owner — the worker→event
-    // re-publish drops the (userId, sessionKey) identity (setup-terminal-tools.ts emits agentId
-    // only), so `owner` is (realAgentId, "") and a channel/API drive (stamped under
-    // (userId, nonEmptyKey)) would degrade to the not-found view on every status/read/sendText.
-    // registry.getOwner is the daemon's trusted recovery seam; registryOwnerFor(owner) is the
-    // fallback for the forcing use case (sessionKey:"") and a registry double without getOwner.
+    // The registry-owner STRIP (the load-bearing fix). The registry resolves a session by its
+    // STAMPED owner (`sessionKey:""` for the forcing case); a promoted drive's wake owner carries
+    // `drive:<id>` (the FSM/journal/conversation attribution key, from setup-terminal-wake.ts).
+    // registryOwnerFor strips that scope back so `status`/`read`/`sendText` resolve the LIVE
+    // session (the same allowId/scope/jail — WHERE not WHAT), never the not-found `alive:false`
+    // strand. The drive: scope is used ONLY for the journal keying + the promoted-gate below —
+    // never as the registry-authorization owner.
+    // Recover the session's STAMPED owner — the worker→event re-publish drops the
+    // (userId, sessionKey) identity (setup-terminal-tools.ts emits agentId only), so `owner` is
+    // (realAgentId, "") and a channel/API drive (stamped under (userId, nonEmptyKey)) would
+    // degrade to the not-found view on every status/read/sendText. registry.getOwner is the
+    // daemon's trusted recovery seam; registryOwnerFor(owner) is the fallback for the forcing use
+    // case (sessionKey:"") and a registry double without getOwner.
     const ownerObj = registry.getOwner?.(sessionId) ?? registryOwnerFor(owner);
-    // IN-03: derive `promoted` from the SAME total accessor the registry-owner strip uses
-    // (isDriveScoped), not a raw `owner.sessionKey.startsWith(...)` — uniform defensiveness
-    // (a degenerate owner narrows to unpromoted, never a TypeError that strands the turn).
+    // Derive `promoted` from the SAME total accessor the registry-owner strip uses (isDriveScoped),
+    // not a raw `owner.sessionKey.startsWith(...)` — uniform defensiveness (a degenerate owner
+    // narrows to unpromoted, never a TypeError that strands the turn).
     const promoted = isDriveScoped(owner);
 
-    // ENDURE-01 (165-07) / HI-01 (165-REVIEW): the SPEND CEILING — checked FIRST on a promoted
-    // turn so a breach pre-empts any further work (no status/read/answer). Reads the journal's
-    // HONEST run-total costUsd (I6 — never a fabricated cost; it is 0 at the canned-keystroke
-    // seam today) and runs the pure checkSpendCeiling over the operator ceiling.
+    // The SPEND CEILING — checked FIRST on a promoted turn so a breach pre-empts any further work
+    // (no status/read/answer). Reads the journal's HONEST run-total costUsd (never a fabricated
+    // cost; it is 0 at the canned-keystroke seam) and runs the pure checkSpendCeiling over the
+    // operator ceiling.
     if (promoted && deps.journal) {
-      // HI-01: a session already breached this life is STOPPED — return immediately (no
-      // re-escalate, no re-work). This is the dedupe that breaks the re-escalation storm (the
-      // stop below should already have evicted it, but a concurrent in-flight wake is caught here).
+      // A session already breached this life is STOPPED — return immediately (no re-escalate, no
+      // re-work). This is the dedupe that breaks the re-escalation storm (the stop below should
+      // already have evicted it, but a concurrent in-flight wake is caught here).
       if (breachedSessions.has(sessionId)) return;
       const costUsd = deps.journal.get(sessionId)?.costUsd ?? 0;
       if (checkSpendCeiling(costUsd, deps.maxCostUsd ?? null)) {
         breachedSessions.add(sessionId); // record FIRST so a re-entrant wake cannot double-escalate.
         // Escalate ONCE. The structural escalation reuses the existing escalate() path;
-        // `no_safe_match` is the closest reason in the SHIPPED terminal:escalated enum (widening
-        // it pairs with the future spend producer — 165-REVIEW LO-02); the SPEND specifics ride
-        // the dedicated §2.7 WARN below (the authoritative breach record from logs+events).
+        // `no_safe_match` is the closest reason in the terminal:escalated enum; the SPEND
+        // specifics ride the dedicated §2.7 WARN below (the authoritative breach record from
+        // logs+events).
         await escalate(sessionId, owner, "no_safe_match");
-        // HI-01: actually STOP the drive, not just the turn — evict via the registry so the
+        // Actually STOP the drive, not just the turn — evict via the registry so the
         // descriptor + journal lifecycle + the holder's de-promote run (terminal:session_evicted
         // → onSessionGone). Without this the next wake re-breaches forever. `max_interactions` is
         // the closest EvictReason (a deliberate cap-stop); the spend figure rides the WARN.
@@ -280,7 +276,7 @@ export function buildWokenTurnDriver(
       }
     }
 
-    // (1) session_status — the §4.4 turn start (owner-scoped; the classifier perception).
+    // (1) session_status — the turn start (owner-scoped; the classifier perception).
     const status = await registry.status(sessionId, ownerObj);
 
     // (2) read the screen (owner-scoped; redacted + wrapped as untrusted at the tool layer —
@@ -288,8 +284,8 @@ export function buildWokenTurnDriver(
     const view = await registry.read(sessionId, ownerObj, { format: "text" });
     const screen = view.screen ?? "";
 
-    // MR-01 (DRIVE-01 / §7.1.6): the cumulative drive duration the journal records as
-    // `elapsedMs` — `now - the drive's first-promoted-wake start`. Defensive: a missing
+    // The cumulative drive duration the journal records as `elapsedMs` — `now - the drive's
+    // first-promoted-wake start`. Defensive: a missing
     // accessor, or a non-finite / future start (a degenerate / late-stamped value), falls
     // back to THIS turn's start so elapsedMs is always a sane non-negative number, never a
     // throw and never negative (the journal field is content-free — a duration, not content).
@@ -299,21 +295,20 @@ export function buildWokenTurnDriver(
       return Math.max(0, deps.nowMs() - base);
     };
 
-    // DRIVE-01 (164-06) + MR-01: the bounded content-free journal — the PROMOTED drive's
-    // cross-wake memory. recordJournal reads-or-inits the per-session journal, sets the redacted
-    // lastScreenDigest (I3) + lastClassification + the cumulative elapsedMs (MR-01), bumps
-    // interactions, appends a content-free step tag for the action taken (never a keystroke),
-    // and — on a delivered safe answer (`answeredPatternIndex` present) — appends the
-    // content-free matched-pattern identity to answeredPrompts (MR-01: the "resume without
-    // re-answering" dedup substrate; a `pattern:<index>` id, NEVER the prompt text — I3). Gated
-    // on `promoted` (an unpromoted turn touches no journal — I1) + a present store. Wrapped
-    // never-throw: a journal fault logs (step:journal_update) + the turn still completes (the
-    // FSM contract).
+    // The bounded content-free journal — the PROMOTED drive's cross-wake memory. recordJournal
+    // reads-or-inits the per-session journal, sets the redacted lastScreenDigest +
+    // lastClassification + the cumulative elapsedMs, bumps interactions, appends a content-free
+    // step tag for the action taken (never a keystroke), and — on a delivered safe answer
+    // (`answeredPatternIndex` present) — appends the content-free matched-pattern identity to
+    // answeredPrompts (the "resume without re-answering" dedup substrate; a `pattern:<index>` id,
+    // NEVER the prompt text). Gated on `promoted` (an unpromoted turn touches no journal) + a
+    // present store. Wrapped never-throw: a journal fault logs (step:journal_update) + the turn
+    // still completes (the FSM contract).
     //
     // costUsd is deliberately left at 0 here: the woken-turn auto-answer is a CANNED keystroke
     // (no LLM completion), so there is no spend signal at this seam. The field stays reserved
-    // for a seam that has one (a future LLM-in-the-loop drive turn / Phase 165 spend ceiling);
-    // until then 0 is the honest value (I6 — never a fabricated cost).
+    // for a seam that has one (a future LLM-in-the-loop drive turn); until then 0 is the honest
+    // value (never a fabricated cost).
     const recordJournal = (
       stepTag: "answered" | "escalated" | "waited" | "loop",
       answeredKey?: string,
@@ -333,10 +328,10 @@ export function buildWokenTurnDriver(
           elapsedMs: computeElapsedMs(),
         });
         const withStep = appendStep(updated, stepTag);
-        // MR-01: a delivered safe answer records WHICH prompt it answered (a content-free, source-
+        // A delivered safe answer records WHICH prompt it answered (a content-free, source-
         // namespaced id — `pattern:<i>` for a hintPattern, `dialog:<i>` for a profile dialog, so the
-        // two index spaces never alias in the resume-dedup, review M1), so a resumed drive can skip
-        // an already-answered prompt. The skills journal clamps + caps this opaquely (I3/I7).
+        // two index spaces never alias in the resume-dedup), so a resumed drive can skip an
+        // already-answered prompt. The skills journal clamps + caps this opaquely.
         const next = answeredKey !== undefined ? appendAnswered(withStep, answeredKey) : withStep;
         deps.journal.set(sessionId, next);
       } catch (err) {
@@ -355,11 +350,10 @@ export function buildWokenTurnDriver(
       await escalate(sessionId, owner, "no_safe_match");
       return;
     }
-    // DIALOG-01 (v2.26): resolve the session's read-side platform profile by its operator-declared
-    // allowId (from the status view; INV-3, never content-sniffed) and feed its dialogs to the
-    // safe-only policy. A profile PROPOSES a safe answer; decideAutoAnswer DISPOSES — a destructive
-    // dialog escalates, and the escalate-always veto still wins. No profile / no allowId ⇒ exactly
-    // today's hintPattern-only behavior.
+    // Resolve the session's read-side platform profile by its operator-declared allowId (from the
+    // status view; never content-sniffed) and feed its dialogs to the safe-only policy. A profile
+    // PROPOSES a safe answer; decideAutoAnswer DISPOSES — a destructive dialog escalates, and the
+    // escalate-always veto still wins. No profile / no allowId ⇒ plain hintPattern-only behavior.
     const profile = status.allowId !== undefined ? getPlatformProfile(status.allowId) : undefined;
     const decision = decideAutoAnswer(cfg.autoAnswer, screen, cfg.hintPatterns, profile?.dialogs);
 
@@ -375,7 +369,7 @@ export function buildWokenTurnDriver(
       return;
     }
 
-    // The content-free, SOURCE-NAMESPACED resume-dedup id (review M1): `dialog:<i>` for a profile
+    // The content-free, SOURCE-NAMESPACED resume-dedup id: `dialog:<i>` for a profile
     // dialog answer, `pattern:<i>` for a hintPattern answer — so the two index spaces never alias
     // in answeredPrompts (a hint-0 answer can't shadow a dialog-0 prompt across a restart).
     const answeredKey =
@@ -383,7 +377,7 @@ export function buildWokenTurnDriver(
         ? `dialog:${decision.matchedPatternIndex}`
         : `pattern:${decision.matchedPatternIndex}`;
 
-    // (4) loop-guard (SEC-11) — a re-rendered (normalized) prompt seen again → escalate
+    // (4) loop-guard — a re-rendered (normalized) prompt seen again → escalate
     //     loop_detected BEFORE answering, so a tight auto-answer loop can never run.
     const loop = deps.loopGuard.observe(sessionId, screen);
     if (loop.repeat) {
@@ -396,15 +390,15 @@ export function buildWokenTurnDriver(
       return;
     }
 
-    // (4.5) DUR-02 / I10 (165-07): the RESUME-no-re-answer guard. On the FIRST turn this
-    // daemon life for a promoted session, if its journal came back from disk having ALREADY
-    // answered this matched pattern (the loop-guard ring is cold post-restart, so step 4 cannot
-    // catch it), SKIP the re-send — a resumed drive must not re-answer a prompt it answered
-    // before the crash (resume, don't re-answer). Pattern-specific (a different answered pattern
-    // does not block the current one) + content-free (a `pattern:<idx>` id, never the text, I3).
-    // A LIVE drive (journal accumulated THIS life) is governed by the loop-guard above, NOT this
-    // guard — so its repeat-answer accumulation is unchanged (I1). The "seen" mark flips AFTER
-    // this check so the guard fires at most once per session per life (the resume moment only).
+    // (4.5) The RESUME-no-re-answer guard. On the FIRST turn this daemon life for a promoted
+    // session, if its journal came back from disk having ALREADY answered this matched pattern
+    // (the loop-guard ring is cold post-restart, so step 4 cannot catch it), SKIP the re-send — a
+    // resumed drive must not re-answer a prompt it answered before the crash (resume, don't
+    // re-answer). Pattern-specific (a different answered pattern does not block the current one) +
+    // content-free (a `pattern:<idx>` id, never the text). A LIVE drive (journal accumulated THIS
+    // life) is governed by the loop-guard above, NOT this guard — so its repeat-answer accumulation
+    // is unchanged. The "seen" mark flips AFTER this check so the guard fires at most once per
+    // session per life (the resume moment only).
     const firstTurnThisLife = promoted && !resumedFirstTurnSeen.has(sessionId);
     if (promoted) resumedFirstTurnSeen.add(sessionId);
     if (firstTurnThisLife && deps.journal) {
@@ -423,17 +417,17 @@ export function buildWokenTurnDriver(
     // (5) answer — send the canned keystroke via the registry send path + AUDIT every send.
     const text = decision.keys.join("");
     const sent = await registry.sendText(sessionId, ownerObj, { text });
-    // WR-05: the audit MUST reflect actual delivery. A degraded send (wedged worker /
-    // dropped tmux send-keys — `delivered` falsy) is audited `outcome:"rejected"` and
-    // does NOT emit `terminal:auto_answered` (nothing was answered); a delivered send is
-    // `attempted` + `auto_answered`. So a keystroke that hit nothing is never logged as
-    // a successful answer (§2.7: the failure is reconstructable from logs+events alone).
+    // The audit MUST reflect actual delivery. A degraded send (wedged worker / dropped tmux
+    // send-keys — `delivered` falsy) is audited `outcome:"rejected"` and does NOT emit
+    // `terminal:auto_answered` (nothing was answered); a delivered send is `attempted` +
+    // `auto_answered`. So a keystroke that hit nothing is never logged as a successful answer
+    // (§2.7: the failure is reconstructable from logs+events alone).
     const delivered = sent.delivered === true;
     auditAnswer(deps, sessionId, owner.agentId, text, decision.matchedPatternIndex, decision.source, decision.keys.length, delivered);
-    // DRIVE-01 (164-06) + MR-01: record the cross-wake-memory step — `answered` on a delivered
-    // safe auto-answer (also appending the content-free matched-pattern id to answeredPrompts,
-    // the resume dedup substrate), `waited` when the send did not land (the FSM will re-wake on
-    // a fresh frame, and nothing was actually answered → no answeredPrompts entry, WR-05 parity).
+    // Record the cross-wake-memory step — `answered` on a delivered safe auto-answer (also
+    // appending the content-free matched-pattern id to answeredPrompts, the resume dedup
+    // substrate), `waited` when the send did not land (the FSM will re-wake on a fresh frame, and
+    // nothing was actually answered → no answeredPrompts entry, in parity with the audit).
     recordJournal(delivered ? "answered" : "waited", delivered ? answeredKey : undefined);
     if (delivered) {
       log.info(
@@ -450,7 +444,7 @@ export function buildWokenTurnDriver(
 }
 
 /**
- * Audit one auto-answer (SEC-12 / T-124-27 / WR-05): emit a redacted §2.7 keystroke DEBUG
+ * Audit one auto-answer: emit a redacted §2.7 keystroke DEBUG
  * log (`scrubSecretsFromText`) + the redaction-safe `terminal:keystroke` summary (the same
  * shape `enforceSendCapsThenAudit` produces — `redactions` + `byteLength`, never the
  * payload), both tagged with the actual delivery `outcome` (`attempted` when the registry
@@ -466,8 +460,8 @@ function auditAnswer(
   agentId: string,
   payload: string,
   matchedPatternIndex: number,
-  /** WHICH allowlist authorized the keystroke — a profile dialog vs an operator hintPattern (review L1
-   *  provenance; content-free). */
+  /** WHICH allowlist authorized the keystroke — a profile dialog vs an operator hintPattern
+   *  (provenance; content-free). */
   source: "hint" | "dialog",
   keystrokeCount: number,
   delivered: boolean,
@@ -488,7 +482,7 @@ function auditAnswer(
     outcome,
     timestamp,
   });
-  // A not-delivered send did not answer the prompt — do not claim an auto-answer (WR-05).
+  // A not-delivered send did not answer the prompt — do not claim an auto-answer.
   if (delivered) {
     deps.eventBus.emit("terminal:auto_answered", { sessionId, agentId, matchedPatternIndex, source, keystrokeCount, timestamp });
   }

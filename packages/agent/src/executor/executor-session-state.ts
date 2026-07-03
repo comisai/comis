@@ -149,10 +149,10 @@ export function clearSessionDeliveredGuides(sessionKey: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Session-scoped context-window-reconcile INFO latch (KNOB-02 / Phase 176)
+// Session-scoped context-window-reconcile INFO latch
 // ---------------------------------------------------------------------------
 
-/** KNOB-02: once-per-session latch for the context-window-reconcile INFO line.
+/** Once-per-session latch for the context-window-reconcile INFO line.
  *  The reconcile runs every execute(), but load-bearing evidence must not be
  *  DEBUG-only (troubleshooting doctrine) — pi-executor promotes the first
  *  reconcile of a session to INFO and latches here so subsequent turns stay
@@ -293,7 +293,7 @@ export function clearSessionBreakpointIndex(sessionKey: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Session-scoped reactive tool-schema strip state (GBNF-02 / 175-REVIEW CR-02)
+// Session-scoped reactive tool-schema strip state
 // ---------------------------------------------------------------------------
 
 /**
@@ -302,7 +302,7 @@ export function clearSessionBreakpointIndex(sessionKey: string): void {
  * roles:
  *
  *   - once-gate: a second grammar-400 in the same session is terminal — the
- *     single repair attempt already ran (T-175-14);
+ *     single repair attempt already ran;
  *   - next-turn constraint memory: per-turn assembly re-applies the strip
  *     AFTER provider normalization (`applyPersistedReactiveStrip` in
  *     executor-tool-pipeline.ts), so a heal survives the snapshot→normalize
@@ -322,7 +322,8 @@ export function isReactiveSchemaStripArmed(sessionKey: string): boolean {
   return sessionReactiveSchemaStrip.get(sessionKey) === true;
 }
 
-/** Arm the per-session strip (set BEFORE the retry fires — T-175-14). */
+/** Arm the per-session strip (set BEFORE the retry fires, so a crash mid-retry
+ *  still counts as the one consumed attempt). */
 export function armReactiveSchemaStrip(sessionKey: string): void {
   sessionReactiveSchemaStrip.set(sessionKey, true);
 }

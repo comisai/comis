@@ -6,13 +6,13 @@ import type { Result } from "@comis/shared";
  * re-rank — a bulk, (tenant, agent)-scoped read of the embedding VECTORS
  * for an already-ranked candidate id set, so the agent-side `mmrRerank` can run
  * `λ·rel − (1−λ)·maxCosineToSelected` over the candidates' ACTUAL embeddings (not
- * a lexical proxy — the locked decision #3).
+ * a lexical proxy).
  *
- * This is a NEW port — it deliberately does NOT widen the security-reviewed
- * `MemoryPort` (store/search/delete). Per design §3.2 that surface is never
+ * This is a deliberately separate port — it does NOT widen the security-reviewed
+ * `MemoryPort` (store/search/delete). That surface is never
  * widened for agent use; new capabilities arrive as their own segregated port
  * (the same pattern as `MemoryUsefulnessStore` / `MemoryTemporalStore` /
- * `MemoryConsolidationStore` §6.5). The sole adapter is in
+ * `MemoryConsolidationStore`). The sole adapter is in
  * @comis/memory (it owns the `db` handle and runs all SQL); the agent read path
  * (recall MMR) consumes this port TYPE from @comis/core — it cannot import
  * @comis/memory (the agent↛memory build cut). No new authority is granted beyond
@@ -30,7 +30,7 @@ export interface MemoryEmbeddingStore {
    * ABSENT from the map (→ MMR treats it as having no diversity signal; < 2
    * embedded candidates → MMR no-ops, byte-identical recall).
    *
-   * Scope is the load-bearing SQL isolation (V4 access control, §5.2). Because
+   * Scope is the load-bearing SQL access-control isolation. Because
    * this returns the raw VECTORS for a caller-supplied id set (not non-identifying
    * distance scalars), the adapter MUST filter `tenant_id = ? AND agent_id = ?`
    * (JOINing `memories`) — a vector under one (tenant, agent) must NEVER be

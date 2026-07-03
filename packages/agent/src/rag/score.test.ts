@@ -3,16 +3,16 @@
  * Tests for score() — multiplicative recency/temporal/proof/trust boosts
  * plus the equal-relevance trust tie-break.
  *
- * Load-bearing RED-first assertions:
+ * Load-bearing assertions:
  * - alphas all 0 → no boost, order + scores unchanged
  * - recencyAlpha>0 → newer createdAt sorts first at equal base
  * - trustAlpha>0 → system > learned > external at equal base
  * - at EXACTLY equal final score, system > learned > external (deterministic tie-break)
  * - temporal seam: occurredAt absent → factor 1.0 even at temporalAlpha=1.0 (no reorder)
- * - proof seam FILLED: proofCount drives a log-curve boost (higher proofCount
+ * - proof seam: proofCount drives a log-curve boost (higher proofCount
  *   out-ranks lower at equal base/trust), modulated by an explicit half-life decay over
  *   the observation's `confidence` × event-age (a stale observation's boost fades toward
- *   neutral). The absent-case contract STAYS: proofCount AND confidence absent → factor
+ *   neutral). The absent-case contract: proofCount AND confidence absent → factor
  *   1.0 even at proofAlpha=1.0 (a raw memory is never reordered — no-reorder-when-absent).
  *
  * `nowMs` is injected (deps.clock.now()), never Date.now().
@@ -154,7 +154,7 @@ describe("score — boosts + trust tie-break", () => {
     expect(out[0]?.score ?? 0).toBeGreaterThan(out[1]?.score ?? 0);
   });
 
-  it("clamps a future occurredAt to proximity 1.0 (no negative-age blow-up, Pitfall 3)", () => {
+  it("clamps a future occurredAt to proximity 1.0 (no negative-age blow-up)", () => {
     // A future event date clamps to ageDays=0 → proximity 1.0, same as a NOW-dated
     // event. It must not exceed the present-dated factor, and must never be NaN/negative.
     const future = makeResult("future", { base: 0.5, occurredAt: NOW + 10 * DAY_MS });
@@ -188,10 +188,10 @@ describe("score — boosts + trust tie-break", () => {
   });
 
   it("keeps the proof+decay factor at 1.0 when proofCount AND confidence are absent, even at proofAlpha=1.0", () => {
-    // RED 3 — the no-reorder-when-absent CONTRACT (a raw memory). With proofCount AND
+    // The no-reorder-when-absent CONTRACT (a raw memory). With proofCount AND
     // confidence both absent, proofNorm is neutral (0.5) and the decay multiplier is 1.0,
     // so the combined proof factor is EXACTLY 1.0 even at the maximal proofAlpha — order
-    // and scores are unchanged vs the all-zero-alpha baseline. This MUST stay green.
+    // and scores are unchanged vs the all-zero-alpha baseline. This must never regress.
     const first = makeResult("first", { base: 0.5 });
     const second = makeResult("second", { base: 0.5 });
     const out = score([first, second], { ...ZERO_ALPHAS, proofAlpha: 1.0 }, NOW);
@@ -200,11 +200,10 @@ describe("score — boosts + trust tie-break", () => {
     expect(out[1]?.score).toBeCloseTo(0.5, 10);
   });
 
-  it("ranks a higher proofCount above a lower one at equal base and trust (proof boost FILLED)", () => {
-    // RED 1 — the proof seam is FILLED. Equal base/createdAt/trust; only proofCount differs.
-    // A well-corroborated observation (proofCount=100) must strictly out-rank a weakly
-    // corroborated one (proofCount=2) once the log curve is live. Today both are neutral
-    // 0.5 → equal score → no reorder (this FAILS RED).
+  it("ranks a higher proofCount above a lower one at equal base and trust (proof boost live)", () => {
+    // Equal base/createdAt/trust; only proofCount differs. A well-corroborated
+    // observation (proofCount=100) must strictly out-rank a weakly corroborated
+    // one (proofCount=2) under the log curve.
     const strong = makeResult("strong", { base: 0.5, proofCount: 100 });
     const weak = makeResult("weak", { base: 0.5, proofCount: 2 });
     const out = score([weak, strong], { ...ZERO_ALPHAS, proofAlpha: 0.1 }, NOW);
@@ -214,7 +213,7 @@ describe("score — boosts + trust tie-break", () => {
   });
 
   it("grows proofNorm monotonically from ~0.5 at proofCount=1 toward 1.0 as corroboration rises", () => {
-    // RED 1 (curve shape) — proofNorm = clamp(0.5 + log(proofCount)/10, 0, 1). At
+    // Curve shape — proofNorm = clamp(0.5 + log(proofCount)/10, 0, 1). At
     // proofCount=1, log(1)=0 → exactly 0.5 (neutral, identical to a raw memory). As
     // proofCount climbs the boost is strictly increasing and never exceeds 1.0. We probe
     // the curve THROUGH score(): with base/trust equal and proofAlpha fixed, a higher
@@ -237,10 +236,9 @@ describe("score — boosts + trust tie-break", () => {
   });
 
   it("decays a stale observation's proof boost below a fresh one of equal confidence (half-life)", () => {
-    // RED 2 — half-life confidence decay. Equal base/trust/proofCount/confidence; only
+    // Half-life confidence decay. Equal base/trust/proofCount/confidence; only
     // the EVENT age (occurredAt) differs. The fresh observation's decayed confidence is
-    // larger, so its proof boost is larger → it scores strictly higher. Today there is no
-    // confidence factor, so the two are equal (FAILS RED).
+    // larger, so its proof boost is larger → it scores strictly higher.
     const HALF_LIFE_DAYS = 30;
     const fresh = makeResult("fresh", {
       base: 0.5,
@@ -261,7 +259,7 @@ describe("score — boosts + trust tie-break", () => {
   });
 
   it("halves the confidence contribution to the proof boost at exactly one half-life of age", () => {
-    // RED 2 (half-life proof) — at exactly one half-life, the decayed confidence is half
+    // At exactly one half-life, the decayed confidence is half
     // of its age-0 value, so the ABOVE-NEUTRAL portion of the proof boost is halved.
     //   decayedProof = 0.5 + (proofNorm - 0.5) * (confidence * 0.5^(age/halfLife))
     //   proofFactor  = 1 + proofAlpha * (decayedProof - 0.5)
@@ -280,8 +278,8 @@ describe("score — boosts + trust tie-break", () => {
     expect(freshGap).toBeGreaterThan(0); // a fresh, well-corroborated observation IS boosted
   });
 
-  it("reads proofCount as a typed MemoryEntry field (no `as unknown` cast in the SUT, RED 4)", () => {
-    // RED 4 (typed read) — proofCount/confidence are typed optionals on MemoryEntry now.
+  it("reads proofCount as a typed MemoryEntry field (no `as unknown` cast in the SUT)", () => {
+    // Typed read — proofCount/confidence are typed optionals on MemoryEntry.
     // A typed MemoryEntry carrying proofCount must drive the boost without any per-field
     // cast in score.ts. We pass a value typed THROUGH MemorySearchResult["entry"] (no
     // `as unknown` here on the field) and prove score() reads it.
@@ -438,7 +436,7 @@ describe("scoreWithBreakdown — usefulnessFactor (the 5th bounded factor)", () 
     // The headline neutral-when-absent CONTRACT (a memory with no usefulness signal). With
     // usefulnessById undefined the centered sub-signal is 0.5 → factor exactly 1.0 even at
     // the maximal alpha — the boosted score equals the no-usefulness baseline and the
-    // breakdown.usefulness field is 1.0. This MUST stay green (the default-off guarantee).
+    // breakdown.usefulness field is 1.0. This must never regress (the default-off guarantee).
     const input = [makeResult("u", { base: 0.5, trustLevel: "learned", createdAt: NOW })];
     const alphas: ScoringAlphas = { ...ZERO_ALPHAS, usefulnessAlpha: 1.0 };
     // No 4th arg → usefulnessById undefined.
@@ -500,7 +498,7 @@ describe("scoreWithBreakdown — usefulnessFactor (the 5th bounded factor)", () 
     expect(b.usefulness).toBeCloseTo(1.0, 10);
   });
 
-  it("BOUNDED (Pitfall 5): a high-base + high-trust memory still out-ranks a low-base 'proven-useful' one at the DEFAULT alphas", () => {
+  it("BOUNDED: a high-base + high-trust memory still out-ranks a low-base 'proven-useful' one at the DEFAULT alphas", () => {
     // The regression analog: feedback cannot overturn trust-first / a real relevance gap.
     // - `relevant`: high base (0.9) + system trust, NO usefulness signal.
     // - `proven`:   low base (0.5) + learned trust, used-rate 1.0 (maximally proven-useful).
@@ -592,14 +590,14 @@ describe("scoreWithBreakdown — usefulnessFactor (the 5th bounded factor)", () 
 // LLM-free, deterministic, pure over the injected nowMs (never Date.now).
 // ---------------------------------------------------------------------------
 describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", () => {
-  // Default decay alpha at the same small magnitude as trust/proof (Pitfall 2 — the bounded
+  // Default decay alpha at the same small magnitude as trust/proof (the bounded
   // factor cannot overturn trust-first). The byte-identity gate is INDEPENDENT of this value.
   const FORGET_ALPHAS: ScoringAlphas = { ...ZERO_ALPHAS, forgetAlpha: 0.1 };
 
-  it("Test A — default-OFF byte-identity: forget.enabled=false ⇒ score + ordering byte-identical to pre-patch (forgetFactor exactly 1.0)", () => {
+  it("default-OFF byte-identity: forget.enabled=false ⇒ score + ordering byte-identical to a no-forget-config run (forgetFactor exactly 1.0)", () => {
     // An aged, enriched, typed memory: every other signal live. With forget OFF the boosted
     // score + the breakdown.forget field must be byte-identical to a run with NO forget config
-    // (the pre-patch shape) — forgetFactor is forced to EXACTLY 1.0 regardless of age/type/imp.
+    // at all — forgetFactor is forced to EXACTLY 1.0 regardless of age/type/imp.
     const alphas: ScoringAlphas = {
       recencyAlpha: 0.2,
       temporalAlpha: 0.2,
@@ -619,7 +617,7 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
         memoryType: "episodic",
       }),
     ];
-    // Pre-patch shape: no forget config arg at all.
+    // Reference shape: no forget config arg at all.
     const prePatch = scoreWithBreakdown(input, alphas, NOW);
     // Forget explicitly OFF.
     const forgetOff = scoreWithBreakdown(input, alphas, NOW, undefined, { enabled: false });
@@ -628,10 +626,10 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
     expect(forgetOff.map((r) => r.entry.id)).toEqual(prePatch.map((r) => r.entry.id));
   });
 
-  it("Test B — on-at-neutral byte-identity: a LEGACY/neutral row (no type → parity β; no enrichment; event-age 0) with forget ON scores byte-identical to pre-patch (fadeMemFactor exactly 1.0)", () => {
+  it("on-at-neutral byte-identity: a LEGACY/neutral row (no type → parity β; no enrichment; event-age 0) with forget ON scores byte-identical to a no-forget-config run (fadeMemFactor exactly 1.0)", () => {
     // The on-at-neutral proof: at event-age 0 the FadeMem factor `0.5 + 0.5·exp(0) = 1.0`
     // EXACTLY (independent of λ/β/imp — the neutral point in time), so a legacy row's boosted
-    // score with forget ON equals the pre-patch score. No memoryType → parity β; no
+    // score with forget ON equals the no-forget-config score. No memoryType → parity β; no
     // proofCount/confidence/usefulness → neutral imp; createdAt === NOW (occurredAt absent → Δt 0).
     const alphas: ScoringAlphas = {
       recencyAlpha: 0.2,
@@ -648,7 +646,7 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
     expect(forgetOn[0]?.score).toBe(prePatch[0]?.score); // byte-identical boosted score
   });
 
-  it("Test B' — fadeMemFactor evaluates to EXACTLY 1.0 at event-age 0 (the neutral-in-time point), any type/imp", () => {
+  it("fadeMemFactor evaluates to EXACTLY 1.0 at event-age 0 (the neutral-in-time point), any type/imp", () => {
     // Direct proof of the neutral point the on-at-neutral byte-identity rests on. A fresh
     // row (createdAt === NOW, no occurredAt) → Δt 0 → exp(0)=1 → 0.5+0.5 = 1.0 EXACTLY,
     // for BOTH a durable and an ephemeral type, and for an enriched (high-imp) row.
@@ -664,8 +662,8 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
     ).toBe(1);
   });
 
-  it("Test C — per-type β + decay direction: an OLD low-importance EPHEMERAL (β=1.2) has a fadeMemFactor STRICTLY LESS THAN a FRESH durable (β=0.8) under a fixed nowMs", () => {
-    // The deterministic FadeMem effect (FAILS pre-patch — no decay exists). Old episodic
+  it("per-type β + decay direction: an OLD low-importance EPHEMERAL (β=1.2) has a fadeMemFactor STRICTLY LESS THAN a FRESH durable (β=0.8) under a fixed nowMs", () => {
+    // The deterministic FadeMem effect. Old episodic
     // (60-day event-age, β=1.2, low imp) decays sharply; fresh semantic (1-day, β=0.8) barely.
     const oldEphemeral = makeResult("oldEph", {
       createdAt: NOW - 60 * DAY_MS,
@@ -699,10 +697,10 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
     );
   });
 
-  it("Test D — importance modulates λ: a HIGH-importance memory decays SLOWER (larger fadeMemFactor) than a neutral one at the same event-age + type", () => {
+  it("importance modulates λ: a HIGH-importance memory decays SLOWER (larger fadeMemFactor) than a neutral one at the same event-age + type", () => {
     // λ = λ_base·exp(−μ·imp): higher imp → smaller λ → slower decay → larger factor. Same
     // 60-day event-age + same type; only the imp signals differ (high proof + system trust +
-    // high used-rate vs none). FAILS pre-patch (no decay, no imp). Pass base+usefulness so
+    // high used-rate vs none). Pass base+usefulness so
     // importance() sees the same call-site signals score.ts threads in.
     const age = NOW - 60 * DAY_MS;
     const high = makeResult("hi", {
@@ -723,7 +721,7 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
     expect(fHigh).toBeGreaterThan(fNeutral);
   });
 
-  it("Test E — injected clock + future-clamp: a future-dated event (negative age) clamps Δt to 0 → factor at maximum 1.0; uses the passed nowMs (no Date.now)", () => {
+  it("injected clock + future-clamp: a future-dated event (negative age) clamps Δt to 0 → factor at maximum 1.0; uses the passed nowMs (no Date.now)", () => {
     // A future occurredAt → max(0, …) clamps Δt to 0 → exp(0)=1 → factor 1.0, no negative-age
     // blow-up / NaN. And the factor is computed from the PASSED nowMs: shifting nowMs forward
     // (older relative age) strictly lowers the factor for the same entry — proving it reads the
@@ -747,7 +745,7 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
     expect(atLater).toBeLessThan(atNow); // older relative to a later nowMs → more decay
   });
 
-  it("Test F — consolidationBoost is bounded ∈ [0,1] ≥ v, saturating (each access boosts less), capped at v→1", () => {
+  it("consolidationBoost is bounded ∈ [0,1] ≥ v, saturating (each access boosts less), capped at v→1", () => {
     // v⁺ = v + Δv·(1−v)·exp(−n/N): bounded in [0,1], never below v, each successive access
     // (larger n) adds LESS, and at v→1 the (1−v) cap drives the boost → ~0.
     const v = 0.4;
@@ -767,7 +765,7 @@ describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", ()
     expect(nearOne - 0.999).toBeLessThan(0.01); // tiny boost left near the cap
   });
 
-  it("Test G — trust-first preserved (Pitfall 2): at forgetAlpha == trustAlpha a fresh-but-external memory does NOT outrank a stale-but-system one; decay RANKS, never GATES (no result dropped)", () => {
+  it("trust-first preserved: at forgetAlpha == trustAlpha a fresh-but-external memory does NOT outrank a stale-but-system one; decay RANKS, never GATES (no result dropped)", () => {
     // The bounded factor ∈ [0.5,1] at a small alpha cannot overturn the trust factor. A stale
     // system memory (decayed) must still outrank a fresh external one. And BOTH results survive
     // (decay never drops a result — only the trust filter gates, upstream).
@@ -871,24 +869,23 @@ function uMapForForget(id: string, sig: UsefulnessSignal): ReadonlyMap<string, U
 }
 
 // ---------------------------------------------------------------------------
-// OBS-02 (Verified Learning WS3): the ScoreBreakdown surfaces the OUTCOME-attributed
+// The ScoreBreakdown surfaces the OUTCOME-attributed
 // usefulness contribution as a DISTINCT, inspectable annotation (`usefulnessOutcomeShare`)
 // so `comis explain` can show how much of a memory's rank came from the learned recall-
 // utility / outcome feedback, separate from the lexical relevance base. It is an ANNOTATION,
 // NOT a new multiplicand — it does NOT enter `final`, so the multiplicative invariant
 // `final === base × recency × temporal × proof × trust × usefulness × forget` stays
 // byte-identical and every golden score above is unchanged. Counts-only / a derived share —
-// never a raw alpha value (T-200-23: the breakdown carries a normalized factor share, not the
+// never a raw alpha value (the breakdown carries a normalized factor share, not the
 // tuned alpha).
 // ---------------------------------------------------------------------------
-describe("scoreWithBreakdown — usefulnessOutcomeShare (OBS-02 outcome-usefulness annotation)", () => {
+describe("scoreWithBreakdown — usefulnessOutcomeShare (outcome-usefulness annotation)", () => {
   /** Build a usefulnessById map carrying a single signal for `id`. */
   function uMap(id: string, sig: UsefulnessSignal): ReadonlyMap<string, UsefulnessSignal> {
     return new Map([[id, sig]]);
   }
 
   it("exposes usefulnessOutcomeShare as a distinct breakdown field (the outcome-attributed contribution)", () => {
-    // OBS-02 RED — the field does NOT exist on HEAD (ScoreBreakdown has no usefulnessOutcomeShare).
     // A memory carrying an outcome-attributed usefulness signal surfaces a NON-ZERO share that is
     // distinguished from the lexical relevance base.
     const input = [makeResult("o", { base: 0.5, trustLevel: "learned", createdAt: NOW })];

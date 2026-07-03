@@ -231,9 +231,10 @@ describe("installMicrocompactionGuard", () => {
     const largeResult = createToolResult("bash", 10_000, "call-offloaded");
     sm.appendMessage(largeResult);
 
-    // B2: the callback carries (toolName, originalChars, toolCallId, diskPathRel).
+    // The callback carries (toolName, originalChars, toolCallId, diskPathRel).
     // diskPathRel is WORKSPACE-RELATIVE (sessionDir-relative) — `tool-results/<id>.json`,
-    // never the absolute host path (residency; T-151-05). sessionDir == tempDir here,
+    // never the absolute host path (which would leak the host filesystem layout).
+    // sessionDir == tempDir here,
     // so relative(tempDir, <tempDir>/tool-results/call-offloaded.json) == that suffix.
     expect(onOffloaded).toHaveBeenCalledTimes(1);
     expect(onOffloaded).toHaveBeenCalledWith("bash", 10_000, "call-offloaded", "tool-results/call-offloaded.json");
@@ -282,11 +283,11 @@ describe("installMicrocompactionGuard", () => {
   });
 
   it("does NOT fire onOffloaded when the disk write fails (no phantom pointer in the trajectory)", () => {
-    // WR-151-04: saveToDisk is best-effort — writeRegularFile returns err (and
+    // saveToDisk is best-effort — writeRegularFile returns err (and
     // writes nothing) when the target escapes the confinement base. Forcing a
     // confinement rejection (dataDir that does NOT contain sessionDir) means the
-    // file is never created, yet onOffloaded currently fires with a workspace-
-    // relative pointer at a non-existent file. The trajectory's
+    // file is never created; firing onOffloaded anyway would record a workspace-
+    // relative pointer at a non-existent file, and the trajectory's
     // IncidentReport.offloads[] drill-down would then fail to open it. The
     // offload event must only be emitted on a SUCCESSFUL write.
     const sm = createMockSessionManager(tempDir);
@@ -310,7 +311,7 @@ describe("installMicrocompactionGuard", () => {
   });
 
   it("does NOT fire onOffloaded when the disk write fails on the hard-cap path", () => {
-    // WR-151-04: same invariant on the hard-cap (>100K) branch, which has its
+    // Same invariant on the hard-cap (>100K) branch, which has its
     // own saveToDisk + onOffloaded call site.
     const sm = createMockSessionManager(tempDir);
     const onOffloaded = vi.fn();
@@ -481,25 +482,12 @@ describe("content preview in offloaded tool results", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
-    // Use MCP tool with 15K threshold. Content of 1800 chars is below default
-    // 8K threshold, so use a large-enough content that exceeds MCP threshold
-    // but where tail would overlap with head (content.length <= head + tail).
-    // Actually simpler: the content must exceed the tool threshold to trigger offload.
-    // PREVIEW_HEAD_CHARS (1500) + PREVIEW_TAIL_CHARS (500) = 2000.
-    // Content at 1900 chars is under default 8K threshold.
-    // Use file_read (15K threshold): we need content > 15K but <= head + tail.
-    // That's impossible since head+tail = 2000.
-    // Solution: use bash tool (8K threshold), content > 8K but <= head+tail.
-    // That's also impossible since 8K > 2K.
-    // The tail is empty when content length <= head + tail. For any offloaded content
-    // (>8K for bash), the content is always > 2K, so tail would always be present...
-    // UNLESS the content is between head (1500) and head+tail (2000), which is < 8K.
-    // In practice: tail is always present for offloaded results since content > 8K > 2K.
-    // The extractPreview logic still handles it, but we test it through a smaller result.
-    // We test the extractPreview logic indirectly by verifying multi-block content.
-    // For practical verification: if content is 8100 chars (just over threshold),
-    // 8100 > 1500 + 500 = 2000, so tail WOULD be present.
-    // Let's verify that with 1800 char content under the threshold it doesn't offload.
+    // The tail section is omitted only when content length <= PREVIEW_HEAD_CHARS +
+    // PREVIEW_TAIL_CHARS (2000 chars), but every offload threshold (8K/15K) is well
+    // above 2000 — so any offloaded reference always carries a tail, and the empty-tail
+    // branch of extractPreview is only reachable for content that never offloads.
+    // Verify the boundary from that side: 1800-char content stays under the 8K bash
+    // threshold and must pass through unmodified (no offload, no preview at all).
     const content = "x".repeat(1800);
     const result = createToolResult("bash", content.length, "call-short");
     result.content = [{ type: "text", text: content }];
@@ -554,7 +542,7 @@ describe("content preview in offloaded tool results", () => {
     expect(readToolIdx).toBeLessThan(headIdx);
   });
 
-  it("no longer produces old format with 'The agent's analysis'", () => {
+  it("the inline reference carries no 'The agent's analysis' narration line", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
@@ -580,7 +568,7 @@ describe("content preview in offloaded tool results", () => {
     expect(referenceText.startsWith("[Tool result offloaded to disk:")).toBe(true);
   });
 
-  it("hard-cap path also uses new preview format with hasMore=true", () => {
+  it("hard-cap path also uses the head/tail preview format with hasMore=true", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 

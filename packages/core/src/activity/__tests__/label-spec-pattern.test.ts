@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the MCP pattern catch-all in resolveLabelSpec (L79).
+ * Tests for the MCP pattern catch-all in resolveLabelSpec.
  *
  * MCP tools are discovered at runtime — they have no co-located source file in
- * this monorepo to register a label spec on. Before this patch, resolveLabelSpec
- * fell through to humanizeToolName, which translates `_` → ` ` but leaves the
- * `__` between the `mcp` prefix and the server name (becomes a double space) and
- * the `--` between the server name and the method (left as a literal `--`) — so
- * `mcp__yfinance--get_stock_price` rendered as `mcp  yfinance--get stock price`
- * in the scaffold (live-daemon evidence: `~/.comis/logs/daemon.1.log` instance
- * `4423563b` at 12:05:54.607).
+ * this monorepo to register a label spec on. Without the catch-all,
+ * resolveLabelSpec falls through to humanizeToolName, which translates `_` →
+ * ` ` but leaves the `__` between the `mcp` prefix and the server name
+ * (becomes a double space) and the `--` between the server name and the method
+ * (left as a literal `--`) — so `mcp__yfinance--get_stock_price` would render
+ * as `mcp  yfinance--get stock price` in the scaffold.
  *
  * The pattern `^mcp__<server>--<method>$` synthesizes
  * `using <server> · <method humanized>` as a Layer 2.5 fallback — fires ONLY
  * when no spec is registered for the tool name, preserving Layer 2 (registered)
  * and Layer 3 (theme) precedence above it.
  *
- * Resolution precedence post-patch: theme > registered > pattern > semantic
- * fallback.
+ * Resolution precedence: theme > registered > pattern > semantic fallback.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import {
@@ -31,11 +29,11 @@ beforeEach(() => {
   _clearActivityLabelSpecsForTest();
 });
 
-describe("resolveLabelSpec — MCP pattern catch-all (L79)", () => {
+describe("resolveLabelSpec — MCP pattern catch-all", () => {
   it("synthesizes 'using <server> · <method>' for mcp__<server>--<method> (yfinance get_stock_price)", () => {
-    // Pre-patch: humanizeToolName yields `"mcp  yfinance--get stock price"`
-    // (double space from `__`, literal `--` preserved). Post-patch: the pattern
-    // hook matches and synthesizes the clean form.
+    // Without the pattern hook, humanizeToolName yields
+    // `"mcp  yfinance--get stock price"` (double space from `__`, literal `--`
+    // preserved). The pattern hook matches first and synthesizes the clean form.
     const resolved = resolveLabelSpec("mcp__yfinance--get_stock_price");
 
     expect(resolved.semanticPhase).toBe("tool");

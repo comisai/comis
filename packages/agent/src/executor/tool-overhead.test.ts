@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for toolDefOverheadChars — the shared tool-schema char-overhead reduce
- * (FLOOR-01 / I8 extraction from executor-tool-assembly.ts).
+ * (extracted from executor-tool-assembly.ts).
  *
- * The function is ALSO identity-pinned from viable-floor.test.ts (FLOOR-01-13);
+ * The function is ALSO identity-pinned from viable-floor.test.ts;
  * this co-located neighbor pins the arithmetic directly (coverage-gate
  * file-neighbor invariant for packages/agent/src/executor/).
  */
@@ -29,7 +29,7 @@ describe("toolDefOverheadChars", () => {
     expect(toolDefOverheadChars([])).toBe(0);
   });
 
-  // ROOT-CAUSE context-exhaustion fix (2026-06-22 VPS gpt-5.3-codex): auto-discovery
+  // ROOT-CAUSE context-exhaustion fix (observed live with gpt-5.3-codex): auto-discovery
   // STUBS are stripped from the wire by createStubFilterInjector, so they cost ~0 on
   // the request and MUST NOT inflate the system-token estimate. Counting them made the
   // pre-flight see ~13.7K (all-65-tools size) and FALSE-exhaust an 8192 window after the

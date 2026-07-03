@@ -4,11 +4,8 @@
  * (`prompt:*`, `session:*`, `memory:injected`, `tool:timeout`) consumed by the
  * trajectory event-bus bridge.
  *
- * Extracted from `events-agent.ts` (which crossed the file-size cap) into its
- * own domain interface, composed into `EventMap` (events.ts) exactly like the
- * other domain groups (AgentEvents / ChannelEvents / TerminalEvents / …). No
- * behavior change — the event names + payload shapes are byte-identical to
- * their prior declarations in `AgentEvents`.
+ * A standalone domain interface, composed into `EventMap` (events.ts) exactly
+ * like the other domain groups (AgentEvents / ChannelEvents / TerminalEvents / …).
  *
  * Subscribed via @comis/observability/trajectory/event-bus-bridge.ts. Each is
  * emitted at a single canonical site and consumed via the EventBus rather than
@@ -80,19 +77,19 @@ export interface TrajectoryEvents {
 
   /**
    * Per-session health rollup emitted once at agent-end. Emit site:
-   * packages/agent/src/executor/executor-post-execution.ts (D5/F2).
+   * packages/agent/src/executor/executor-post-execution.ts.
    *
    * `topErrorKinds` (keys ⊂ the closed `ErrorKind` union, capped at 3) and
    * `source` (provenance enum, mirroring the session-index SSOT) are carried
    * onto the event so they land in the persisted `obs_diagnostics` row and the
-   * fleet aggregate (`aggregateSessionsInWindow`, Phase 159 A1/A2) can read them
+   * fleet aggregate (`aggregateSessionsInWindow`) can read them
    * without opening per-session `_session-metadata.json` files. Production emits
    * the constant `source: "runtime"`; tests inject `"test"` / `"bench"`.
    *
    * `endReason` is the SAME mapped `SessionMetadata.sessionEnd.endReason` the
    * chokepoint derives ONCE via `END_REASON_MAP` (executor-post-execution.ts) and
    * co-persists onto `sessionEnd`. Carrying it here threads the NAMED degradation
-   * cause (e.g. `context_exhausted` / `output_starved`, the Glass Box degradation
+   * cause (e.g. `context_exhausted` / `output_starved`, the named degradation
    * detectors) into the persisted row so `obs.fleet.health` can aggregate
    * `degradedByCause` from the rows alone — never opening per-session metadata. It
    * is a closed-set label (the endReason union), never free text.
@@ -120,7 +117,7 @@ export interface TrajectoryEvents {
    *
    * Emit site: `packages/agent/src/executor/prompt-assembly.ts`, after the
    * hybrid split. `charsInjected`/`hitCount` count RETRIEVED memory only
-   * (inline + retrieved sections); the §7.3 temporal-guidance block is fixed
+   * (inline + retrieved sections); the temporal-guidance block is fixed
    * guidance text and is deliberately NOT tallied here.
    */
   "memory:injected": {

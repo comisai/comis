@@ -52,7 +52,7 @@ export interface BudgetSnapshot {
 /**
  * Execution-local view of a budget guard returned by {@link BudgetGuard.resetExecution}.
  *
- * CR-01: the per-execution dimension (the running `total` and the effective cap)
+ * The per-execution dimension (the running `total` and the effective cap)
  * is owned by THIS handle, not by the shared per-agent guard. Two concurrent
  * executions of the same agentId therefore get two independent windows and can
  * never clobber each other's cap or accrued spend. The per-hour/per-day rolling
@@ -87,8 +87,8 @@ export interface BudgetGuard {
    * execution-local {@link ExecutionBudgetWindow} that OWNS this run's running
    * total + effective cap — the caller threads it into checkBudget/recordUsage
    * so concurrent executions of the same agent never share the per-execution
-   * dimension (CR-01). checkBudget enforces min(config.perExecution, cap): a
-   * child can only TIGHTEN, never RAISE, its per-execution budget (BUDGET-01).
+   * dimension. checkBudget enforces min(config.perExecution, cap): a
+   * child can only TIGHTEN, never RAISE, its per-execution budget.
    *
    * Calling resetExecution also re-points the guard's OWN checkBudget/recordUsage/
    * getSnapshot at the freshly-created window, preserving the legacy single-execution
@@ -133,7 +133,7 @@ export function createBudgetGuard(
 ): BudgetGuard {
   // SHARED per-agent state: the rolling per-hour/per-day windows and the
   // last-estimate latch. These legitimately stay shared across every execution
-  // of this agent (CR-01: only the per-EXECUTION dimension must be local).
+  // of this agent (only the per-EXECUTION dimension must be local).
   let lastEstimate = 0;
   const entries: WindowEntry[] = [];
 
@@ -170,7 +170,7 @@ export function createBudgetGuard(
   }
 
   /**
-   * Create an execution-local window. CR-01: `executionTotal` and
+   * Create an execution-local window. `executionTotal` and
    * `effectiveExecutionCap` are closed over by THIS window only — never shared
    * across concurrent executions — while the rolling-window reads/writes
    * (`entries`/`sumWindow`) and the estimate latch stay on the shared guard.
@@ -263,7 +263,7 @@ export function createBudgetGuard(
     },
 
     resetExecution(cap?: number): ExecutionBudgetWindow {
-      // CR-01: a FRESH execution-local window each reset. The returned handle
+      // A FRESH execution-local window each reset. The returned handle
       // is what concurrent callers thread through checkBudget/recordUsage so
       // they never share the per-execution total/cap. The guard's own legacy
       // methods follow the most-recent window (sequential-caller compatibility).
@@ -278,7 +278,7 @@ export function createBudgetGuard(
 }
 
 // ---------------------------------------------------------------------------
-// Spend ceiling gate (Phase 177-03 — the dollars kill-switch enforcement READ)
+// Spend ceiling gate — the dollars kill-switch enforcement READ
 // ---------------------------------------------------------------------------
 
 /**
@@ -290,7 +290,7 @@ export function createBudgetGuard(
  *  - `free`        — a local/gateway-`free` model: NEVER trips a ceiling
  *                    (no false-DoS of local-first deployments).
  *  - `unpriceable` — a native-provider `unknown`-priced model that burned tokens
- *                    (the ffe11736 danger): the bridge ALWAYS emits
+ *                    (real spend with no price to meter it): the bridge ALWAYS emits
  *                    `observability:spend_unpriceable` (fail LOUD); whether it
  *                    aborts is gated on `onUnknownPricing`+`action` at the bridge.
  *  - `exceeded`    — a ceiling breach: the bridge routes it through the single
@@ -365,7 +365,8 @@ export function checkSpendCeiling(
   //    entirely so a local-first deployment can never be falsely DoSed.
   if (state === "free") return ok({ kind: "free" });
 
-  // 3. Native-provider unknown + actually burned tokens → the ffe11736 danger.
+  // 3. Native-provider unknown + actually burned tokens → real spend that no
+  //    ceiling can meter.
   //    Surface the unpriceable signal ALWAYS (fail LOUD — the bridge emits
   //    observability:spend_unpriceable regardless of action); the bridge gates
   //    the abort on onUnknownPricing+action. NOT fail-open: we surface, we do

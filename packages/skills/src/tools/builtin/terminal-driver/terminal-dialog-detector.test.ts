@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the pure structural full-screen-dialog predicate
- * (terminal-dialog-detector.ts) — CLASS-01, design §4 Phase A / §7.1.3.
- *
- * RED-first: `terminal-dialog-detector.ts` does not exist when this file is first
- * committed — the import fails, every case is RED. The production module turns
- * them GREEN.
+ * Unit tests for the pure structural full-screen-dialog predicate
+ * (terminal-dialog-detector.ts).
  *
  * `detectsFullScreenDialog(snapshot, hintPatterns?)` is a PURE structural test over
  * the rendered grid rows. It fires `true` ONLY on a STRONG structural cue — a
@@ -17,7 +13,7 @@
  *
  * The predicate is intentionally STRUCTURE-only (CLI-agnostic, NOT a per-CLI pattern
  * table): `hintPatterns` REINFORCE a borderline selector match but can NEVER satisfy
- * structure on their own (T-124-06 — a CLI cannot phish a keystroke by rendering a
+ * structure on their own (a CLI cannot phish a keystroke by rendering a
  * fake cue on prose). Caller (classifyFrame) gates on `diffEmpty` + `!isCursorParked`,
  * so this branch is reached precisely when the cursor is NOT parked — the documented
  * claude-2.1.x shape: a prompt block ABOVE, the cursor on a blank input line BELOW.
@@ -244,7 +240,7 @@ describe("detectsFullScreenDialog — Test 6: degenerate grids yield false and n
 });
 
 // ---------------------------------------------------------------------------
-// Test 7 — hintPatterns reinforce-only (I8 / T-124-06): a hint reinforces a
+// Test 7 — hintPatterns reinforce-only: a hint reinforces a
 // borderline selector but NEVER forces true on prose with no structural cue.
 // ---------------------------------------------------------------------------
 
@@ -274,11 +270,11 @@ describe("detectsFullScreenDialog — Test 7: hintPatterns reinforce a borderlin
 });
 
 // ---------------------------------------------------------------------------
-// Test 8 — THE MR-01 NEGATIVE SPACE: generation OUTPUT that structurally resembles a
+// THE NEGATIVE SPACE: generation OUTPUT that structurally resembles a
 // dialog but is NOT one (a markdown table, a single pipe-bounded line, a numbered prose
 // list, a `(y/n)`/`[y/n]` token buried mid-sentence). A coding CLI routinely renders
-// these in a *completed* response; the over-broad pre-fix predicate fired `true` on
-// them (`| col | col |` matched ASCII_BORDER, an unanchored `(y/n)` matched SELECTOR
+// these in a *completed* response; an over-broad predicate would fire `true` on
+// them (`| col | col |` matching ASCII_BORDER, an unanchored `(y/n)` matching SELECTOR
 // anywhere on the line). The tightened predicate must read them as PROSE (false) — a
 // `|`-bounded row is a border ONLY when it is predominantly border-fill (a real
 // `+---+`/`| --- |` box), a `(y/n)`/`[y/n]` token is a selector ONLY as a STANDALONE
@@ -286,7 +282,7 @@ describe("detectsFullScreenDialog — Test 7: hintPatterns reinforce a borderlin
 // trailing structure (no prose continues below the last option).
 // ---------------------------------------------------------------------------
 
-describe("detectsFullScreenDialog — Test 8: generation output that resembles a dialog is NOT one (MR-01 negative space)", () => {
+describe("detectsFullScreenDialog — generation output that resembles a dialog is NOT one (the negative space)", () => {
   it("does NOT fire on a MARKDOWN TABLE in generation prose (| col | col | is output, not dialog chrome)", () => {
     // A markdown table's pipe rows have NO `+---+` border and carry PROSE between the
     // pipes — not predominantly-border fill — so the tightened ASCII_BORDER must reject

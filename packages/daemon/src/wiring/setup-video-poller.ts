@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Background video poller (Phase 189 / Plan 02 — JOB-02 / JOB-03, the
- * milestone's durability keystone).
+ * Background video poller — the durability keystone for long video renders.
  *
  * This is the two-phase crash-safe delivery queue (`setup-delivery.ts`
  * `setupDeliveryQueue`) RETYPED for an EXTERNAL-provider poll. A long video
@@ -13,15 +12,15 @@
  *   1. `createVideoPoller(...)` returns `{ track, startAndResume, shutdown }`
  *      IMMEDIATELY — before `setupChannels` exists. `track(record)` may be called
  *      from the handler once a job is submitted; it takes the FULL in-memory
- *      `VideoJobRecord` the handler already has (WR-02/WR-06 — no `listPending`
+ *      `VideoJobRecord` the handler already has (no `listPending`
  *      scan, and the insert-failure path still delivers in-memory, never orphans).
  *   2. `startAndResume()` is called AFTER `setupChannels` populates the channel
  *      registry (so `sendAttachment` works outside a turn): it reloads
  *      `store.listPending()` and resumes each, then arms the low-frequency outer
  *      sweeper (single-tick gate + `.unref()`).
- *   3. `shutdown()` aborts in-flight loops/downloads (WR-05) + clears the sweeper.
+ *   3. `shutdown()` aborts in-flight loops/downloads + clears the sweeper.
  *
- * REDELIVERY BOUND (CR-01): a row whose channel delivery keeps failing is
+ * REDELIVERY BOUND: a row whose channel delivery keeps failing is
  * re-driven by the sweeper every `pollIntervalMs`; without a bound that re-poll +
  * re-download (up to 200 MB) + re-send repeats forever, and the cost was being
  * re-recorded each pass. The poller now (a) bumps the persisted `deliver_attempts`
@@ -31,8 +30,8 @@
  * and (c) checks the `markFailed` Result (a failed terminal write is logged at
  * ERROR, with the attempt bound as the backstop).
  *
- * THE PER-JOB POLL IS THE SHIPPED `pollUntilDone` (I5) — `@comis/core` authored
- * it in 188 EXPRESSLY for this reuse; this file does NOT re-author a second loop
+ * THE PER-JOB POLL IS THE SHIPPED `pollUntilDone` — `@comis/core` authored
+ * it EXPRESSLY for this reuse; this file does NOT re-author a second loop
  * (zero raw `setTimeout`/`while`-poll). The genuinely-NEW outer code is the
  * lifecycle: which jobs to poll, the resume scan, and the sweeper.
  *
@@ -43,18 +42,17 @@
  *      media mirroring is deferred).
  *   3. explicit off-turn `traceId`: the poller tick runs in a FRESH context with
  *      NO ALS frame, so the Pino mixin won't auto-inject `traceId`. It is read
- *      from the persisted job row and put ON every log object (I8 / Pitfall 5).
+ *      from the persisted job row and put ON every log object.
  *   4. at-least-once announce: `markDone` is the LAST step — AFTER delivery — so
  *      a `pending` row on restart re-runs poll→fetch→deliver→markDone. A crash
  *      AFTER deliver but BEFORE the `markDone` write yields ONE bounded duplicate
- *      (T-189-08, accepted: announce-on-complete is "deliver the clip", not
- *      exactly-once).
+ *      (accepted: announce-on-complete is "deliver the clip", not exactly-once).
  *
  * SECURITY: delivery targets ONLY the recorded `channelType`/`channelId`/`agentId`
- * from the job row (T-189-06 — never a silent default, never another agent's
- * channel). The off-turn log lines carry `{ traceId, jobId, errorKind, hint,
- * costUsd }` only — never a key/token (T-189-05; the boot-bound adapter holds the
- * credential, the poller never re-reads it).
+ * from the job row (never a silent default, never another agent's channel). The
+ * off-turn log lines carry `{ traceId, jobId, errorKind, hint, costUsd }` only —
+ * never a key/token (the boot-bound adapter holds the credential, the poller never
+ * re-reads it).
  *
  * @module
  */
@@ -79,7 +77,7 @@ import type { ComisLogger } from "@comis/infra";
 import type { SessionTrajectoryHandleRegistry, TrajectoryEventType } from "@comis/observability";
 import type { AppContainer } from "@comis/core";
 import { resolveVideoSizeLimit, buildOversizedDegradeMessage } from "./video-delivery-limits.js";
-// SEC-03 (Phase 192): scrub a raw provider/channel error before it rides a log line.
+// Scrub a raw provider/channel error before it rides a log line.
 import { makeRedactErr } from "./video-log-redaction.js";
 import { defaultVideoPollerTimerPort } from "./setup-video-poller-timer.js";
 
@@ -90,7 +88,7 @@ import { defaultVideoPollerTimerPort } from "./setup-video-poller-timer.js";
 /** The two-phase background poller (mirrors `DeliveryQueueResult`). */
 export interface VideoPoller {
   /**
-   * Hand a freshly-submitted job to the poller. WR-02/WR-06: the caller passes
+   * Hand a freshly-submitted job to the poller. The caller passes
    * the FULL in-memory `VideoJobRecord` it already has at submit (jobId +
    * routing + traceId + estimate), so the poller starts the loop directly WITHOUT
    * an `O(pending)` `listPending()` scan and WITHOUT depending on the row being
@@ -103,7 +101,7 @@ export interface VideoPoller {
    */
   track(record: VideoJobRecord): void;
   /**
-   * RESTART RESUME (JOB-03): reload `listPending()` + resume each, then arm the
+   * RESTART RESUME: reload `listPending()` + resume each, then arm the
    * outer sweeper. Call AFTER `setupChannels` (the channel registry is now
    * populated so `sendAttachment` reaches a live adapter outside a turn).
    */
@@ -112,7 +110,7 @@ export interface VideoPoller {
   shutdown(): void;
 }
 
-/** Persist getter — the per-agent `persistVideo` from the bundle (DEL-01). */
+/** Persist getter — the per-agent `persistVideo` from the bundle. */
 type PersistVideo = (
   agentId: string,
   buffer: Buffer,
@@ -122,16 +120,16 @@ type PersistVideo = (
 export interface VideoPollerDeps {
   store: VideoJobStore;
   provider: VideoGenerationPort;
-  /** DEL-01: per-agent persist getter (videos/). */
+  /** Per-agent persist getter (videos/). */
   persist: PersistVideo;
-  /** SEC-02 reconcile: record the actual cost on done. Optional (count-only). */
+  /** Reconcile: record the actual cost on done. Optional (count-only). */
   costLimiter?: { record(agentId: string, cost: number): void };
   /** The announce path — resolve a channel adapter by type (live reference).
-   *  DEL-03: widened to also expose `sendMessage` (a REQUIRED ChannelPort method,
+   *  Widened to also expose `sendMessage` (a REQUIRED ChannelPort method,
    *  present on every adapter) so the oversized-degrade link/notice can be sent
    *  without an attachment. The runtime objects ARE full ChannelPorts (the
    *  main-helpers `resolveAttachmentAdapter` runtime-narrow note); `sendAttachment`
-   *  stays optional (IRC omits it — the DEL-02 capability gate). */
+   *  stays optional (IRC omits it — the capability gate). */
   getChannelAdapter: (
     channelType: string,
   ) => Pick<ChannelPort, "sendAttachment" | "sendMessage"> | undefined;
@@ -144,20 +142,20 @@ export interface VideoPollerDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Injectable clock for the per-job deadline (default: `systemNowMs`). */
   nowMs?: () => number;
-  /** OBS-04 (Phase 192): the per-session trajectory recorder registry. On the
+  /** The per-session trajectory recorder registry. On the
    *  terminal done/fail branches the poller BEST-EFFORT live-emits
    *  video.generated/delivered/failed via getRecorder(record.sessionKey) — the
-   *  OFF-TURN key read from the ROW (the poller tick has NO ALS frame; MUST-DIFFER
-   *  3). Optional + no-op when absent OR when the recorder is gone (session
-   *  closed / daemon restarted) — the OFFLINE assembler (Plan 02) is the binding
-   *  reconstruction oracle; the live emit captures the common fast-render case. */
+   *  OFF-TURN key read from the ROW (the poller tick has NO ALS frame). Optional +
+   *  no-op when absent OR when the recorder is gone (session closed / daemon
+   *  restarted) — the OFFLINE assembler is the binding reconstruction oracle; the
+   *  live emit captures the common fast-render case. */
   trajectoryRegistry?: SessionTrajectoryHandleRegistry;
-  /** OBS-03 (Phase 192): the typed event bus for the off-turn synthetic
+  /** The typed event bus for the off-turn synthetic
    *  `observability:token_usage` cost route (the cost rollup is emitted from the
-   *  poller's done branch — Plan 02 adds the emit). Threaded here now so the
-   *  wiring lands in one place. Optional → no-op when absent. */
+   *  poller's done branch). Threaded here so the wiring lands in one place.
+   *  Optional → no-op when absent. */
   eventBus?: AppContainer["eventBus"];
-  /** DEL-03 (Phase 192): optional operator override for the per-channelType video
+  /** Optional operator override for the per-channelType video
    *  upload limit (the media-compressor `maxVideoBytes` knob). When set it WINS
    *  over the per-channel constant in `resolveVideoSizeLimit`; when absent each
    *  channel's documented limit applies (the honest default). Not a field on the
@@ -165,9 +163,9 @@ export interface VideoPollerDeps {
    *  MediaCompressionConfig); injected here so a future config wire-up threads it
    *  in one place without a schema change. */
   maxVideoBytes?: number;
-  /** SEC-03 (Phase 192 / CR-01): the RESOLVED video creds (GOOGLE_API_KEY /
+  /** The RESOLVED video creds (GOOGLE_API_KEY /
    *  XAI_API_KEY / FAL_KEY / Grok bearer), bound for EXACT-MATCH scrub of every
-   *  off-turn log surface (the v2.20 knownSecrets precedent — catches the FAL
+   *  off-turn log surface (the knownSecrets precedent — catches the FAL
    *  `uuid:hex` shape + any future shape). Absent → pattern scrub only (no crash). */
   videoSecrets?: readonly string[];
 }
@@ -178,7 +176,7 @@ export interface VideoPollerDeps {
 
 /**
  * The per-job `pollUntilDone` snapshot. `state` drives the loop; `errorKind`/`hint`
- * are the WR-01 classified failure detail an adapter threads onto the terminal
+ * are the classified failure detail an adapter threads onto the terminal
  * `failed` snapshot (absent for FAL / a thrown poll). Carried through the loop so
  * the failed branch persists/logs the specific kind+hint, not empty_response.
  */
@@ -205,18 +203,18 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
   const sleep = deps.sleep;
   const nowMs = deps.nowMs ?? systemNowMs;
   const trajectoryRegistry = deps.trajectoryRegistry;
-  // SEC-03 (CR-01): bind resolved video secrets ONCE; every off-turn redactErr below scrubs them.
+  // Bind resolved video secrets ONCE; every off-turn redactErr below scrubs them.
   const redactErr = makeRedactErr(deps.videoSecrets ?? []);
 
   /**
-   * OBS-04 (Phase 192): BEST-EFFORT off-turn trajectory record. Resolves the
+   * BEST-EFFORT off-turn trajectory record. Resolves the
    * per-session recorder by the ROW's `sessionKey` (the off-turn key — there is
-   * NO ALS frame in the poller tick; MUST-DIFFER 3) and records a content-free
-   * video.* event. NO-OP when there is no sessionKey (a pre-192 / in-flight row),
+   * NO ALS frame in the poller tick) and records a content-free
+   * video.* event. NO-OP when there is no sessionKey (a row lacking one / in-flight),
    * no registry (a boot mode without one), or no recorder (the session closed or
    * the daemon restarted — the common off-turn case). The §2.7 log lines fire
-   * regardless; the OFFLINE assembler (Plan 02) is the BINDING reconstruction
-   * oracle, so a no-op here is correct, never a crash. Content-free (T-192-01):
+   * regardless; the OFFLINE assembler is the BINDING reconstruction
+   * oracle, so a no-op here is correct, never a crash. Content-free:
    * ids/labels/counts/costUsd/outcome/errorKind/booleans ONLY — never the bytes,
    * a credential, the keyed-download-URL, or a raw provider message.
    */
@@ -235,7 +233,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       ? config.maxConcurrentJobs
       : undefined;
 
-  // CR-01: the redelivery bound. A row whose delivery keeps failing is dead-
+  // The redelivery bound. A row whose delivery keeps failing is dead-
   // lettered to `failed` once `deliver_attempts` exceeds this, so the sweeper
   // stops re-polling + re-downloading it every pollIntervalMs forever. Defaulted
   // defensively (the config schema defaults it to 5, but a hand-built test config
@@ -248,20 +246,20 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
   let sweepInterval: TimerHandle | undefined;
   let sweeping: Promise<void> | null = null;
   let stopped = false;
-  // WR-05: a shutdown abort so an in-flight fetchResult download (up to the
+  // A shutdown abort so an in-flight fetchResult download (up to the
   // adapter's 120s timeout) aborts promptly on SIGTERM rather than racing
   // db.close() with a late markDone/markFailed write.
   const shutdownAbort = new AbortController();
 
   /** Map a `pollUntilDone` failed/timeout outcome to a domain errorKind. The
    *  failed→empty_response fallback applies ONLY when the adapter did not classify
-   *  the failure on the poll snapshot (WR-01 carries the specific kind otherwise). */
+   *  the failure on the poll snapshot (the specific kind is carried otherwise). */
   function classifyOutcome(kind: "failed" | "timeout"): VideoErrorKind {
     return kind === "timeout" ? "job_timeout" : "empty_response";
   }
 
   /**
-   * Handle a channel delivery failure under the CR-01 redelivery bound. The row
+   * Handle a channel delivery failure under the redelivery bound. The row
    * stays `pending` (at-least-once retry) UNLESS the bumped `deliver_attempts`
    * reaches `maxDeliveryAttempts`, at which point the job is dead-lettered to
    * `failed` so the sweeper stops re-polling + re-downloading it forever. A
@@ -274,7 +272,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     const attempts = attempt.ok ? attempt.value : 0;
     // attempts > 0 means a real persisted row; >= max → dead-letter (terminal).
     if (attempts > 0 && attempts >= maxDeliveryAttempts) {
-      // WR-02 (Phase 192): the render SUCCEEDED; only off-turn channel delivery
+      // The render SUCCEEDED; only off-turn channel delivery
       // exhausted its retries. Dead-letter with the DELIVERY-specific
       // `delivery_failed` kind (NOT the render kind `empty_response`) so the
       // trajectory `video.failed` → `IncidentReport.videoGenerated.errorKind` and
@@ -311,7 +309,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         channelType: record.channelType,
         attempts,
         maxDeliveryAttempts,
-        // SEC-03: a channel delivery error can echo a token/URL — scrub it.
+        // A channel delivery error can echo a token/URL — scrub it.
         ...redactErr(cause),
         errorKind: "network" as const,
         hint:
@@ -323,7 +321,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     );
   }
 
-  /** The completion tail (moved from the 188 handler :306-394, hardened by CR-01). */
+  /** The completion tail: fetch the render, persist, deliver, then markDone + reconcile cost. */
   async function completeJob(record: VideoJobRecord, startMs: number): Promise<void> {
     const fetched = await provider.fetchResult(
       { jobId: record.jobId, provider: record.provider, model: record.model ?? "" },
@@ -337,8 +335,8 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     const mimeType = out.mimeType;
     const ext = extForMime(mimeType);
 
-    // DEL-01 persist BEFORE any delivery decision (the fetch already happened).
-    // CR-01/WR-03: cost is NOT recorded here — it rides the terminal markDone, so
+    // Persist BEFORE any delivery decision (the fetch already happened).
+    // Cost is NOT recorded here — it rides the terminal markDone, so
     // a persist failure (no deliverable artifact) never charges the limiter and a
     // retried completeJob never double-counts.
     const persisted = await persist(record.agentId, out.buffer, { mediaKind: "video", mimeType });
@@ -351,26 +349,26 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       return;
     }
 
-    // DEL-02 capability-gated direct delivery to the RECORDED channel only
-    // (T-189-06; never a channel-name list — sendAttachment is optional on
-    // ChannelPort, omitted by IRC). MUST-DIFFER 2: the attachment send, not text.
-    // OBS-04 (Phase 192): track whether the clip was actually attached so the
+    // Capability-gated direct delivery to the RECORDED channel only
+    // (never a channel-name list — sendAttachment is optional on
+    // ChannelPort, omitted by IRC). Use the attachment send, not text.
+    // Track whether the clip was actually attached so the
     // off-turn video.delivered record below carries an honest `delivered` flag
     // (false on the IRC persisted-only degrade or when no channel was recorded).
     let delivered = false;
     if (record.channelType && record.channelId) {
       const adapter = getChannelAdapter(record.channelType);
-      // DEL-03: per-channelType upload-size check at the DELIVERY site. A clip
+      // Per-channelType upload-size check at the DELIVERY site. A clip
       // over the channel's documented limit is NEVER silently dropped and is
-      // NEVER routed through the media-compressor `compressAttachments` (the
-      // v2.23 silent-drop anti-pattern — Pitfall 5). The limit is per-channelType
+      // NEVER routed through the media-compressor `compressAttachments` (which
+      // would silently drop it). The limit is per-channelType
       // (resolveVideoSizeLimit), overridable via deps.maxVideoBytes. `oversized`
       // is only meaningful when the persisted size is known.
       const limit = resolveVideoSizeLimit(record.channelType, deps.maxVideoBytes);
       const oversized =
         persisted.value.sizeBytes !== undefined && persisted.value.sizeBytes > limit;
       if (adapter && typeof adapter.sendAttachment === "function" && oversized) {
-        // DEL-03 oversized-degrade: do NOT call sendAttachment. Send a link/notice
+        // Oversized-degrade: do NOT call sendAttachment. Send a link/notice
         // via sendMessage (a REQUIRED ChannelPort method on every adapter). The
         // clip IS persisted, so markDone still holds below (at-least-once parity
         // with the IRC branch). delivered stays false — the off-turn
@@ -385,9 +383,9 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         });
         const sendMessage = adapter.sendMessage.bind(adapter);
         const noticeResult = await sendMessage(record.channelId, degrade.text);
-        // OBS-01 / §2.7: a content-free INFO names the degrade (ids/labels/counts
+        // §2.7: a content-free INFO names the degrade (ids/labels/counts
         // only — never the bytes, a credential, or the keyed-download-URL). The
-        // policy (link|notice) is recorded so DOC-01 + the fleet lens can see it.
+        // policy (link|notice) is recorded so the fleet lens can see it.
         logger.info(
           {
             traceId: record.traceId,
@@ -416,7 +414,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
               traceId: record.traceId,
               jobId: record.jobId,
               channelType: record.channelType,
-              // SEC-03: a channel send error can echo a token/URL — scrub it.
+              // A channel send error can echo a token/URL — scrub it.
               ...redactErr(noticeResult.error),
               errorKind: "platform" as const,
               hint:
@@ -439,16 +437,16 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
           ...(out.durationSecs !== undefined ? { durationSecs: out.durationSecs } : {}),
         });
         if (!sendResult.ok) {
-          // CR-01: bound the redelivery. Do NOT markDone (MUST-DIFFER 4); either
+          // Bound the redelivery. Do NOT markDone; either
           // stay pending (bounded retry) or dead-letter to `failed`.
           await handleDeliveryFailure(record, sendResult.error);
           return;
         }
         delivered = true;
       } else {
-        // DEL-02 IRC degrade: the adapter cannot attach. The clip IS persisted,
-        // so the at-least-once contract still marks done (parity with the 188
-        // handler's IRC branch). Logged as a notice, never a throw.
+        // IRC degrade: the adapter cannot attach. The clip IS persisted,
+        // so the at-least-once contract still marks done. Logged as a notice,
+        // never a throw.
         logger.info(
           { traceId: record.traceId, jobId: record.jobId, channelType: record.channelType, mediaPath: persisted.value.filePath, step: "video_poll_deliver_skipped", hint: "Channel cannot attach media (no sendAttachment); the clip is saved to the agent workspace" },
           "Video poller: channel cannot attach; persisted-only",
@@ -456,9 +454,9 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       }
     }
 
-    // MUST-DIFFER 4: markDone LAST — AFTER delivery (at-least-once A2). A crash
+    // markDone LAST — AFTER delivery (at-least-once). A crash
     // between the send above and this write yields ONE bounded restart-duplicate
-    // (T-189-08, accepted) — never infinite redelivery (markDone flips the row
+    // (accepted) — never infinite redelivery (markDone flips the row
     // out of `pending`).
     const done = await store.markDone(record.jobId, {
       mediaPath: persisted.value.filePath,
@@ -472,20 +470,20 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       return;
     }
 
-    // SEC-02 reconcile to the ACTUAL cost — recorded EXACTLY ONCE, here, only on
-    // the terminal successful delivery (CR-01/WR-03). markDone flipped the row out
+    // Reconcile to the ACTUAL cost — recorded EXACTLY ONCE, here, only on
+    // the terminal successful delivery. markDone flipped the row out
     // of `pending`, so a retried completeJob can never reach this line twice for
     // one render → no phantom per-hour USD inflation.
     const reconciledCostUsd = out.costUsd ?? record.estimatedCostUsd ?? 0;
     costLimiter?.record(record.agentId, reconciledCostUsd);
 
-    // OBS-03 (Phase 192): the off-turn synthetic `observability:token_usage` cost
-    // route (the SAME route images use, image-handlers.ts:342) — emitted RIGHT
+    // The off-turn synthetic `observability:token_usage` cost
+    // route (the SAME route images use in image-handlers.ts) — emitted RIGHT
     // AFTER the reconcile, EXACTLY ONCE per render (markDone already flipped the
-    // row out of pending → can't repeat, Pitfall 3), gated `> 0`. Routing is read
-    // from the persisted ROW not ALS (no off-turn ALS frame — MUST-DIFFER 3); 0
-    // tokens (subscribers SUM cost.total, token-tracker guards `> 0` — A3/T-192-05);
-    // FAL/Veo `?? estimate` (Pitfall 4) so the rollup + the reconstruction agree.
+    // row out of pending → can't repeat), gated `> 0`. Routing is read
+    // from the persisted ROW not ALS (no off-turn ALS frame); 0
+    // tokens (subscribers SUM cost.total, the token-tracker guards `> 0`);
+    // FAL/Veo `?? estimate` (no per-call actual) so the rollup + the reconstruction agree.
     if (deps.eventBus && reconciledCostUsd > 0) {
       deps.eventBus.emit("observability:token_usage", {
         timestamp: systemNowMs(),
@@ -508,10 +506,10 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       });
     }
 
-    // OBS-04 (Phase 192): BEST-EFFORT off-turn live emit — video.generated (the
-    // cost-carry: costUsd ?? estimate, FAL has no actual — Pitfall 4) THEN
+    // BEST-EFFORT off-turn live emit — video.generated (the
+    // cost-carry: costUsd ?? estimate, FAL has no actual) THEN
     // video.delivered. Resolved by the ROW's sessionKey (off-turn, no ALS); a
-    // no-op when the recorder is gone (the OFFLINE assembler in Plan 02 is the
+    // no-op when the recorder is gone (the OFFLINE assembler is the
     // binding oracle). After markDone so it never fires for a non-terminal pass.
     emitTrajectory(record, "video.generated", {
       provider: record.provider,
@@ -527,12 +525,12 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       emitTrajectory(record, "video.delivered", { channelType: record.channelType, delivered });
     }
 
-    // OBS-01 / I8 obs floor: the INFO completion line with the FULL field set.
-    // MUST-DIFFER 3 — traceId is read from the row and put ON the object (the bg
+    // The INFO completion line with the FULL field set.
+    // traceId is read from the row and put ON the object (the bg
     // ctx has no ALS frame). `costUsd` is the RECONCILED cost (actual ?? estimate)
     // so the completion line agrees with the cost rollup + the reconstruction
-    // (FAL/Veo have no per-call actual — Pitfall 4). mimeType + durationSecs ride
-    // it where derivable from the fetched `out` (OBS-01 completeness).
+    // (FAL/Veo have no per-call actual). mimeType + durationSecs ride
+    // it where derivable from the fetched `out`.
     logger.info(
       {
         traceId: record.traceId,
@@ -554,8 +552,8 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
   /**
    * markFailed + a §2.7 WARN with errorKind + hint + the off-turn traceId.
    *
-   * WR-02: `classifiedHint` is the adapter's actionable hint when the failure was
-   * classified at poll time (WR-01); when present it is BOTH logged AND persisted
+   * `classifiedHint` is the adapter's actionable hint when the failure was
+   * classified at poll time; when present it is BOTH logged AND persisted
    * to `last_error` (so `video.status` returns the actionable string, not the bare
    * enum token). When absent, a generic kind-based hint is computed and persisted —
    * still actionable text, never the raw kind token. The hint never carries a
@@ -572,11 +570,11 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       (kind === "job_timeout"
         ? "The render exceeded integrations.media.videoGeneration.timeoutMs; raise it or retry."
         : "The provider returned no usable result; retry or adjust the prompt.");
-    // CR-01: do NOT discard the store Result. A failed terminal write leaves the
+    // Do NOT discard the store Result. A failed terminal write leaves the
     // row `pending`; the sweeper will retry it, but the redelivery bound
     // (deliver_attempts / maxDeliveryAttempts) is the backstop so even a
     // persistent markFailed-write failure converges. Log it at ERROR so the
-    // stranded row is diagnosable from daemon.log by jobId/traceId. WR-02: persist
+    // stranded row is diagnosable from daemon.log by jobId/traceId. Persist
     // the actionable `hint` as last_error (not the bare `kind`).
     const failed = await store.markFailed(record.jobId, kind, hint);
     if (!failed.ok) {
@@ -604,38 +602,38 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         errorKind: VIDEO_ERR_TO_LOG[kind],
         videoErrorKind: kind,
         hint: sanitizeLogString(hint),
-        // SEC-03: `cause` is the RAW provider error (fetchResult/delivery) whose
+        // `cause` is the RAW provider error (fetchResult/delivery) whose
         // message can echo a key/bearer/the Veo keyed-download-URL — scrub it.
         ...(cause ? redactErr(cause) : {}),
         step: "video_poll_failed",
       },
       "Video poller: render failed",
     );
-    // OBS-04 (Phase 192): BEST-EFFORT off-turn live emit of video.failed beside
+    // BEST-EFFORT off-turn live emit of video.failed beside
     // the WARN (trajectory-only — the WARN is the §2.7 line). The DOMAIN kind
     // rides the trajectory payload; the closed log union (VIDEO_ERR_TO_LOG) +
     // the hint/cause ride the WARN, never the trajectory. No-op when the recorder
-    // is gone (the OFFLINE assembler is the binding oracle). SEC-03: no secret —
+    // is gone (the OFFLINE assembler is the binding oracle). No secret —
     // only the typed kind + the provider id.
     emitTrajectory(record, "video.failed", { errorKind: kind, provider: record.provider });
   }
 
   /**
-   * The per-job loop: the SHIPPED `pollUntilDone` (I5 — REUSED, not re-authored).
+   * The per-job loop: the SHIPPED `pollUntilDone` (REUSED, not re-authored).
    * On done → the completion tail; on failed/timeout → markFailed + WARN. The
    * jobId is ALWAYS removed from the in-flight set in the finally.
    */
   async function runJob(record: VideoJobRecord): Promise<void> {
     const startMs = nowMs();
     try {
-      // WR-04: lost-update guard. The in-memory `inFlight` set dedups within this
+      // Lost-update guard. The in-memory `inFlight` set dedups within this
       // process, but the sweeper rebuilds records from a `listPending()` SNAPSHOT,
       // so a row that was transitioned to terminal between the snapshot and now
       // (a racing completion, or — defensively — a second daemon on the shared db)
       // must not be re-fetched + re-delivered. Re-read the authoritative row
       // state: bail if it EXISTS and is no longer `pending`. A NOT-FOUND row
       // (`ok(undefined)`) is the handler's insert-failure in-memory job — proceed
-      // and drive it from the in-memory `record` (WR-02), never re-read again.
+      // and drive it from the in-memory `record`, never re-read again.
       const current = await store.get(record.jobId, record.agentId);
       if (current.ok && current.value && current.value.state !== "pending") {
         logger.debug(
@@ -645,7 +643,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         return;
       }
       if (stopped) return; // shutdown raced the re-read — do not deliver
-      // WR-01: carry the adapter's classified errorKind+hint off the poll snapshot
+      // Carry the adapter's classified errorKind+hint off the poll snapshot
       // (a Veo operation.error / Grok status:failed|expired classifies at poll time)
       // so a terminal failure is persisted/logged with its SPECIFIC kind, not the
       // generic empty_response. A failed poll Result (a thrown HTTP error) carries
@@ -667,7 +665,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         isFailed: (s) => s.state === "failed",
         deadline: createPollDeadline(config.timeoutMs, nowMs),
         pollIntervalMs: config.pollIntervalMs,
-        // WR-05: a shutdown aborts the poll loop promptly (pollUntilDone returns
+        // A shutdown aborts the poll loop promptly (pollUntilDone returns
         // `timeout` on `signal.aborted`); the `stopped` guard below then bails
         // before any delivery.
         signal: shutdownAbort.signal,
@@ -677,7 +675,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       if (outcome.kind === "done") {
         await completeJob(record, startMs);
       } else if (outcome.kind === "failed" && outcome.status.errorKind !== undefined) {
-        // WR-01/WR-02: the adapter classified this terminal failure — persist its
+        // The adapter classified this terminal failure — persist its
         // specific kind + actionable hint (not the generic empty_response).
         await markFailed(record, outcome.status.errorKind, undefined, outcome.status.hint);
       } else {
@@ -697,9 +695,9 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       return;
     }
     inFlight.add(record.jobId);
-    // WR-01: route the suppressed rejection through the Pino logger (off-turn, no
+    // Route the suppressed rejection through the Pino logger (off-turn, no
     // ALS frame), NOT console.debug — so a throw escaping runJob is reconstructable
-    // from daemon.log / `comis fleet` / `comis explain` (I8 / §2.7).
+    // from daemon.log / `comis fleet` / `comis explain` (§2.7).
     suppressError(runJob(record), "video poller per-job loop", (m) =>
       logger.debug({ step: "video_poll_suppressed" }, m),
     );
@@ -707,7 +705,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
 
   /**
    * `track(record)`: start the per-job loop DIRECTLY from the in-memory record
-   * the handler already has (WR-02/WR-06 — no `listPending()` scan, no dependence
+   * the handler already has (no `listPending()` scan, no dependence
    * on the row being observably `pending` at this instant). The handler calls this
    * on a successful submit; on an insert-FAILURE it still calls it so the rendered
    * clip is delivered in-memory rather than silently orphaned (the persisted-row
@@ -734,7 +732,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
 
   /** Step 1 of the two-phase boot: reload pending + resume, then arm the sweeper. */
   async function startAndResume(): Promise<void> {
-    // RESTART RESUME (JOB-03): runs UNCONDITIONALLY (a pending row from a prior
+    // RESTART RESUME: runs UNCONDITIONALLY (a pending row from a prior
     // crash must resume regardless of policy).
     const pending = await store.listPending();
     if (!pending.ok) {
@@ -755,7 +753,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
       sweeping = runOneSweep().finally(() => {
         sweeping = null;
       });
-      // WR-01: Pino-route the suppressed sweep-tick rejection (off-turn).
+      // Pino-route the suppressed sweep-tick rejection (off-turn).
       suppressError(sweeping, "video poller sweep tick", (m) =>
         logger.debug({ step: "video_poll_suppressed" }, m),
       );
@@ -765,7 +763,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
 
   function shutdown(): void {
     stopped = true;
-    // WR-05: abort any in-flight poll loop + fetchResult download so a mid-render
+    // Abort any in-flight poll loop + fetchResult download so a mid-render
     // job stops promptly on SIGTERM rather than landing a markDone/markFailed
     // write after db.close(). The `stopped` guard prevents a post-shutdown
     // delivery; the abort just makes the in-flight download return faster.

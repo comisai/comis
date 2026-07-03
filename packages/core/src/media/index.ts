@@ -18,7 +18,7 @@ export type {
   VisionPathSelection,
   VisionPathInput,
 } from "./resolve-vision-path.js";
-// Video generation (v2.24 Phase 188) — the video twins of the image symbols above.
+// Video generation — the video twins of the image symbols above.
 export { VIDEO_CAPABILITY } from "./video-capability.js";
 export { VIDEO_ERR_TO_LOG, VideoGenError } from "./video-error.js";
 export type { VideoErrorKind } from "./video-error.js";
@@ -28,16 +28,15 @@ export type {
   VideoGenSelectionConfig,
 } from "./resolve-video-provider.js";
 export { estimateVideoCostUsd, VIDEO_PRICING } from "./video-pricing.js";
-// CAP-02 per-model capability matrix — export the ACCESSORS + types only; the
-// raw VIDEO_MODELS const stays intra-core (public-export-consumers gate). Plan
-// 02 (handler) / Plan 03 (tool) import these from @comis/core (the package-root
-// barrel — there is no ./media subpath); the cross-package consumers land in
-// Wave 2, so the dead-export gate goes green at the Wave-2/phase gate.
+// Per-model video-capability matrix — export the ACCESSORS + types only; the
+// raw VIDEO_MODELS const stays intra-core (public-export-consumers gate). The
+// daemon video handler and the video-generate tool import these from
+// @comis/core (the package-root barrel — there is no ./media subpath).
 export { listVideoModelCaps, supportedModes, snapDuration } from "./video-models.js";
 export type { VideoModelCaps, VideoDurations } from "./video-models.js";
-// Keyless voice (v2.25 Phase 193) — the STT/TTS twins of the image/video
-// symbols above. The daemon setup-audio-provider.ts (Plan 03) is the
-// cross-package consumer of the resolvers + the capability map + the error bridge.
+// Keyless voice — the STT/TTS twins of the image/video symbols above. The
+// daemon setup-audio-provider.ts is the cross-package consumer of the
+// resolvers + the capability map + the error bridge.
 export { VOICE_KEYLESS, MAIN_PROVIDER_AUDIO } from "./voice-capability.js";
 export { STT_ERR_TO_LOG } from "./voice-error.js";
 export type { SttErrorKind } from "./voice-error.js";

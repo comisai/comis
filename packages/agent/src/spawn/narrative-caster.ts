@@ -42,12 +42,12 @@ export interface CastParams {
   /** Sub-agent session key for reference. */
   sessionKey: string;
   /**
-   * Phase 218 (SUMREF-02): the child's full output materialized to its jailed
-   * workspace as a structured handle. When present, the "Full result" line
-   * becomes the drill-in handle (ref + bytes + kind) the lead queries on demand
+   * The child's full output materialized to its jailed workspace as a
+   * structured handle. When present, the "Full result" line becomes the
+   * drill-in handle (ref + bytes + kind) the lead queries on demand
    * (read/grep/jq), instead of the bare condenser diskPath — so the lead's
    * window grows by a summary + a handle, never the megabyte body. Absent ⇒ the
-   * line falls back to `condensedResult.diskPath` (today's behavior).
+   * line falls back to `condensedResult.diskPath`.
    */
   resultRef?: ResultRef;
 }
@@ -87,7 +87,7 @@ const LEVEL_NAMES: Record<number, string> = {
  *
  * The returned `cast()` method is pure synchronous string formatting.
  * When `config.enabled` is false, output falls back to the untagged
- * `[System Message]` format matching legacy `buildAnnouncementMessage`.
+ * `[System Message]` format produced by `buildAnnouncementMessage`.
  */
 export function createNarrativeCaster(config: NarrativeCasterConfig) {
   return {
@@ -117,15 +117,15 @@ function truncateLabel(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Full-result drill-in line (SUMREF-02)
+// Full-result drill-in line
 // ---------------------------------------------------------------------------
 
 /**
  * The "Full result" announcement line. When a materialized {@link ResultRef}
  * handle is present, the lead drills into it on demand (read/grep/jq) so only a
  * summary + a handle enter its window (the longevity invariant); otherwise the
- * bare condenser `diskPath` is used (today's behavior — no store/handle, so the
- * on-disk condensed result IS the pointer). Kept byte-aligned with the runner's
+ * bare condenser `diskPath` is used (no store/handle, so the on-disk
+ * condensed result IS the pointer). Kept byte-aligned with the runner's
  * buildAnnouncementMessage body so both announcement paths agree.
  */
 function formatFullResultLine(diskPath: string, resultRef?: ResultRef): string {
@@ -216,8 +216,8 @@ function formatTaggedResult(params: CastParams, tagPrefix: string): string {
     `Ratio: ${condensedResult.compressionRatio.toFixed(2)}`,
   );
 
-  // 12. Full result drill-in (the structured ResultRef handle when present —
-  // SUMREF-02 — else the condenser diskPath).
+  // 12. Full result drill-in (the structured ResultRef handle when present,
+  // else the condenser diskPath).
   sections.push(formatFullResultLine(condensedResult.diskPath, resultRef));
 
   // 13. Session line

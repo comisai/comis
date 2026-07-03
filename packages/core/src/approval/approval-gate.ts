@@ -115,7 +115,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   /**
    * Secondary index: minted `shortId → requestId`. Lets the InteractiveCallbackRouter
    * resolve an attacker-supplied shortId to a server-side requestId/sessionKey.
-   * INVARIANT (Pitfall 4): mutated symmetrically with `pendingMap` at EVERY
+   * INVARIANT: mutated symmetrically with `pendingMap` at EVERY
    * set/delete/clear site — a stale entry would defeat replay rejection, since the
    * pending-table removal IS the router's replay guard.
    */
@@ -175,17 +175,18 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     } else {
       // Denial path: differentiate by approvedBy source
       if (approvedBy === "system:shutdown") {
-        // Shutdown denials do NOT clear approval cache (locked decision: mechanical, not user intent)
-        // Also do NOT populate denial cache (existing behavior preserved)
+        // Shutdown denials do NOT clear the approval cache — they are mechanical,
+        // not user intent. They also do NOT populate the denial cache.
       } else if (approvedBy === "system:timeout") {
-        // Timeout-denials DO clear approval cache (locked decision: stale cached approval)
+        // Timeout-denials DO clear the approval cache: a cached approval is stale
+        // once its follow-up request times out.
         approvalCache.delete(cacheKey);
-        // Timeout denials do NOT populate denial cache (existing behavior preserved)
+        // Timeout denials do NOT populate the denial cache.
       } else {
-        // Explicit user denial (/deny command)
-        // Populate denial cache (existing behavior)
+        // Explicit user denial (/deny command): populate the denial cache.
         denialCache.set(cacheKey, { requestId, approved, approvedBy, reason, resolvedAt: deps.clock.now() });
-        // Mutual invalidation: denial clears stale approval for exact key (locked decision: denial always wins)
+        // Mutual invalidation: denial clears the stale approval for the exact key
+        // (denial always wins).
         approvalCache.delete(cacheKey);
       }
     }
@@ -212,7 +213,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       batchFollowers.delete(batchKey);
     }
 
-    // Remove from pending map AND the secondary index atomically (Pitfall 4).
+    // Remove from pending map AND the secondary index atomically.
     // Covers the explicit approve/deny path AND the timeout path (the timer calls
     // resolveApproval), so this single site keeps shortIdIndex free of stale entries.
     pendingMap.delete(requestId);
@@ -224,7 +225,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   ): Promise<ApprovalResolution> {
     const cacheKey = `${req.sessionKey}::${req.action}`;
 
-    // Check approval cache BEFORE denial cache (locked decision: recent approval overrides older denial)
+    // Check approval cache BEFORE denial cache: a recent approval overrides an older denial.
     const ttlMs = deps.getBatchApprovalTtlMs?.() ?? 30_000;
     if (ttlMs > 0) {
       const cachedApproval = approvalCache.get(cacheKey);
@@ -276,7 +277,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     }
 
     const requestId = randomUUID();
-    // Mint the callback-safe short id (§6.4.1). The gate is the sole minter;
+    // Mint the callback-safe short id. The gate is the sole minter;
     // callers never supply it (it is Omit-ted from the requestApproval input).
     const shortId = mintApprovalShortId();
     const timeoutMs = deps.getTimeoutMs();

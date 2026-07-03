@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slack EditPlace renderer tests (§18.2 EditPlace rows).
+ * Slack EditPlace renderer tests.
  *
  * The single net-new piece of logic is `classifySlackError` — it reads the
  * STRUCTURAL Slack-Bolt error field `e.data.error` (and `e.cause?.data?.error`),
@@ -12,16 +12,16 @@
  * `chat.delete` on success (the required delete-on-success op) fires after
  * `deliveredAtMs` — proven by the delete-on-success test.
  *
- * S8 approval: the renderer now paints signed Block Kit
- * `actions` (each element's callback value = the §6.4.2 wire string) and opens a
- * thread (thread_ts) for a subagent expand. The earlier negative assertion is
- * FLIPPED to a positive one (`buildApprovalButtons`/`signCallbackData` present);
- * the behavioural proof lives in slack-activity.approval.test.ts /
+ * Approval frames: the renderer paints signed Block Kit
+ * `actions` (each element's callback value is the signed callback wire string)
+ * and opens a thread (thread_ts) for a subagent expand. The wiring is asserted
+ * positively (`buildApprovalButtons`/`signCallbackData` present); the
+ * behavioural proof lives in slack-activity.approval.test.ts /
  * slack-activity.subagent.test.ts.
  *
  * Time discipline: every test drives the injected FakeTimers/FakeClock — no raw
  * setTimeout/Date.now. Golden fixtures assert via readFixture + toEqual (NEVER
- * toMatchSnapshot — auto-write self-heals, Pitfall 3).
+ * toMatchSnapshot — snapshot auto-write silently self-heals a regression).
  */
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
@@ -80,7 +80,7 @@ function receiptAt(deliveredAtMs: number): FinalDeliveryReceipt {
   return { ok: true, deliveredChunks: 1, lastChunkMessageId: "msg-final", deliveredAtMs };
 }
 
-// --- Task 2: classifySlackError (structural e.data.error) -------------------
+// --- classifySlackError (structural e.data.error) ----------------------------
 
 describe("classifySlackError (structural data.error, never the message string)", () => {
   it("maps a ratelimited error to rate_limited with retryAfter*1000", () => {
@@ -138,7 +138,7 @@ describe("classifySlackError (structural data.error, never the message string)",
   });
 });
 
-// --- Task 2: makeSlackRenderActions (Result discipline, guards) -------------
+// --- makeSlackRenderActions (Result discipline, guards) ----------------------
 
 describe("makeSlackRenderActions (Result discipline, optional-method guards)", () => {
   it("sends the placeholder and records the created message id", async () => {
@@ -197,7 +197,7 @@ describe("makeSlackRenderActions (Result discipline, optional-method guards)", (
   });
 });
 
-// --- Task 2: createSlackActivityRenderer + chat.delete on success -----------
+// --- createSlackActivityRenderer + chat.delete on success --------------------
 
 describe("createSlackActivityRenderer (EditPlace wiring + chat.delete on success)", () => {
   it("returns an EditPlace renderer that can edit and delete", () => {
@@ -259,15 +259,14 @@ describe("createSlackActivityRenderer (EditPlace wiring + chat.delete on success
   });
 });
 
-// --- Task 2: S8 Block Kit approval UI (signed callback wiring) ---------------
+// --- S8 Block Kit approval UI (signed callback wiring) -----------------------
 
 describe("Slack Block Kit approval UI (signed callback wiring)", () => {
-  it("FLIPPED (§17.3): the renderer NOW wires the signed Block Kit approval UI", () => {
-    // An earlier revision forbade callback_data/signing in this file (the Block
-    // Kit actions were a deferral shell). Slack now paints signed Block Kit
-    // action elements: the renderer references `buildApprovalButtons` and threads
-    // the injected `signCallbackData` through to each action's callback value —
-    // see slack-activity.approval.test.ts for the behavioural proof.
+  it("wires the signed Block Kit approval UI through buildApprovalButtons/signCallbackData", () => {
+    // Slack paints signed Block Kit action elements: the renderer references
+    // `buildApprovalButtons` and threads the injected `signCallbackData` through
+    // to each action's callback value — see slack-activity.approval.test.ts for
+    // the behavioural proof.
     const here = dirname(fileURLToPath(import.meta.url));
     const src = fs.readFileSync(`${here}/../slack-activity.ts`, "utf8");
     expect(src).toMatch(/buildApprovalButtons/);
@@ -284,7 +283,7 @@ describe("Slack Block Kit approval UI (signed callback wiring)", () => {
   });
 });
 
-// --- Task 3: 11 golden fixtures (S1-S7, S9-S12; no S8) ----------------------
+// --- 11 golden fixtures (S1-S7, S9-S12; no S8) -------------------------------
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeSlackAdapter>): unknown {
@@ -305,7 +304,7 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeSlackAdapter();
-  // Omit `clock` so the §8.5 "(running N s)" elapsed fallback is skipped and
+  // Omit `clock` so the "(running N s)" elapsed fallback is skipped and
   // committed fixtures stay byte-stable. Strategy-level tests in
   // edit-place.test.ts inject a clock and assert the elapsed text — that is the
   // live-production wiring contract.
@@ -333,7 +332,7 @@ function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
 
 const okReceipt = (deliveredAtMs: number): FinalDeliveryReceipt => receiptAt(deliveredAtMs);
 
-describe("Slack golden fixtures (§18.2 EditPlace rows — readFixture + toEqual)", () => {
+describe("Slack golden fixtures (EditPlace scenarios — readFixture + toEqual)", () => {
   it("S1 trivial chat — zero renderer messages", async () => {
     await runScenario("S1", [], { kind: "success", trivial: true, delivery: okReceipt(0) }, 0);
   });

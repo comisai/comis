@@ -159,7 +159,7 @@ export async function handleCodexOAuth(
     return state;
   }
 
-  // Inline helpNote -- AUTH_METHOD_PROVIDERS no longer has an openai entry,
+  // Inline helpNote -- AUTH_METHOD_PROVIDERS has no openai entry,
   // so we cannot pull the note from the map. Keep the wording user-facing
   // and explicit about what the picker will do.
   prompter.note(

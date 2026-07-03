@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-04 offline reconstruction test (Phase 192, THE binding OBS-04 oracle).
+ * Video offline reconstruction test (THE binding reconstruction oracle).
  *
  * Drives the FROZEN `assembleIncidentReportFromSources` pipeline (the same
  * function `comis explain` runs) against an in-memory fixture trajectory
  * containing the `video.*` records the daemon handler (in-turn) + background
  * poller (off-turn) direct-emit — proving a VIDEO turn is reconstructable from
  * observability WITHOUT a live daemon (CLAUDE.md: live `comis explain` =
- * operator-UAT). Mirrors `vision-obs-reconstruct.test.ts` (187) +
- * `image-obs-reconstruct.test.ts` (186) — with the KEY DIFFERENCE the image/
+ * operator-UAT). Mirrors `vision-obs-reconstruct.test.ts` +
+ * `image-obs-reconstruct.test.ts` — with the KEY DIFFERENCE the image/
  * vision twins lack: a BACKGROUND-COMPLETION sequence.
  *
- * THE binding assertion (Pitfall 1): the assembler reconstructs a video turn —
+ * THE binding assertion: the assembler reconstructs a video turn —
  * INCLUDING a job that completed in the off-turn background poller AFTER the
  * originating turn ended. The in-turn `video.requested`/`video.submitted`
  * records reach the persisted trajectory while the recorder is alive (low seq);
@@ -37,7 +37,7 @@ const DATA_DIR = "/tmp/video-obs-reconstruct";
  *  `traceSchema: "comis-trajectory"` EVENT shape `toIncidentSignals` reads,
  *  keyed on `type` with the content-free payload under `data`). All records
  *  carry the SAME sessionKey + traceId — the in-turn submit and the off-turn
- *  completion belong to one session (the OBS-04 stitch). */
+ *  completion belong to one session (the background-completion stitch). */
 function trajectoryRecord(
   type: string,
   data: Record<string, unknown>,
@@ -61,7 +61,7 @@ function trajectoryRecord(
 
 /** A reader whose readSessionRecords returns the supplied trajectory records.
  *  The other three sources are empty — a video turn carries no executor
- *  `sessionEnd` rollup (Pitfall 2 — the video RPC + poller run in the daemon
+ *  `sessionEnd` rollup (the video RPC + poller run in the daemon
  *  context, not the executor). */
 function makeVideoFixtureReader(records: Array<Record<string, unknown>>): IncidentSourceReader {
   return {
@@ -79,7 +79,7 @@ async function assemble(records: Array<Record<string, unknown>>): Promise<Incide
   })) as IncidentReport;
 }
 
-describe("OBS-04 offline reconstruction — comis explain surfaces a video turn", () => {
+describe("video offline reconstruction — comis explain surfaces a video turn", () => {
   it("in-turn-only success: reconstructs provider/jobId/costUsd/outcome/delivered from a fully in-turn sequence", async () => {
     const report = await assemble([
       trajectoryRecord("video.requested", { provider: "veo", mainProvider: "google" }, 1),
@@ -92,8 +92,8 @@ describe("OBS-04 offline reconstruction — comis explain surfaces a video turn"
       trajectoryRecord("video.delivered", { channelType: "telegram", delivered: true }, 4),
     ]);
 
-    // The OBS-04 binding bar: the video turn is reconstructable from the
-    // trajectory (Route a) via a dedicated additive `videoGenerated` block.
+    // The binding bar: the video turn is reconstructable from the
+    // trajectory alone via a dedicated additive `videoGenerated` block.
     expect(report.videoGenerated).toBeDefined();
     expect(report.videoGenerated?.provider).toBe("veo");
     expect(report.videoGenerated?.jobId).toBe("job-fast");
@@ -103,7 +103,7 @@ describe("OBS-04 offline reconstruction — comis explain surfaces a video turn"
     expect(report.videoGenerated?.delivered).toBe(true);
   });
 
-  it("BACKGROUND-COMPLETION (the headline OBS-04 win): submit on-turn (low seq) + completion off-turn (high seq) stitched by jobId/traceId on one sessionKey", async () => {
+  it("BACKGROUND-COMPLETION: submit on-turn (low seq) + completion off-turn (high seq) stitched by jobId/traceId on one sessionKey", async () => {
     // The submit records are written IN-TURN (recorder alive) at seq 1-2; the
     // turn then ENDS; the background poller completes the render OFF-TURN and the
     // generated/delivered records arrive at a much HIGHER seq range (10-11). The
@@ -130,7 +130,7 @@ describe("OBS-04 offline reconstruction — comis explain surfaces a video turn"
     // record (seq 10) — this is the stitch that ties the later completion back.
     expect(report.videoGenerated?.jobId).toBe("job-x");
     // FAL/Veo carry the estimate (no per-call actual) — estimatedCostUsd rides
-    // the block (Pitfall 4: ?? estimate). The block has a cost either way.
+    // the block (the fold falls back to the estimate). The block has a cost either way.
     expect(report.videoGenerated?.estimatedCostUsd).toBeCloseTo(0.9, 4);
     expect(report.videoGenerated?.outcome).toBe("ok");
     expect(report.videoGenerated?.delivered).toBe(true);

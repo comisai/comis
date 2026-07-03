@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI entry point — errors propagate to the Commander error handler.
 /**
- * OBS-02 (Phase 198): OFFLINE outcome-learning telemetry for `comis memory
- * learning`.
+ * OFFLINE outcome-learning telemetry for `comis memory learning`.
  *
  * The outcome ledger (`outcome_events`) lives in the local `~/.comis/memory.db`,
  * so a coverage read must not require a live gateway — the CLI reads the table
  * directly (the same offline-disk discipline `offline-obs.ts` uses for
  * `comis explain`/`fleet`). The CLI cannot import `@comis/agent`/`@comis/skills`
  * (closed graph) and the in-process daemon coverage gauge is not yet a queryable
- * RPC (Plan 04 "Known Stub"), so the offline `@comis/memory` read is the
+ * RPC, so the offline `@comis/memory` read is the
  * sanctioned path — CLI→@comis/memory + better-sqlite3 are already allowed edges.
  *
- * COUNTS/IDS ONLY (T-198-27): the aggregates are pure COUNT(*) / COUNT(DISTINCT
+ * COUNTS/IDS ONLY: the aggregates are pure COUNT(*) / COUNT(DISTINCT
  * trajectory_id) / GROUP BY over the closed-enum `outcome`/`source` columns + the
  * `(tenant_id, agent_id)` scope — never a body, a confidence value, or a
  * recalled/skill id (the ledger stores no
- * bodies by construction; SEC-01). The db is opened in WAL mode (concurrent with
+ * bodies by construction). The db is opened in WAL mode (concurrent with
  * a live daemon) and ONLY when the file already exists — the offline read never
  * creates it; a missing/unreadable store soft-fails to `undefined` so the command
  * prints an honest "no outcome events" message instead of a misleading empty table.
@@ -40,13 +39,13 @@ export interface LearningAgentStats {
   coverage: number;
   /** Row counts per closed-enum outcome. */
   outcomes: Record<string, number>;
-  /** Distinct trajectories carrying a signal of each closed-enum source (WR-03). */
+  /** Distinct trajectories carrying a signal of each closed-enum source. */
   sources: Record<string, number>;
 }
 
 /** The whole-ledger outcome-learning telemetry (counts only). */
 export interface LearningStats {
-  /** Total distinct-trajectory signals across all sources (NOT raw rows; WR-03). */
+  /** Total distinct-trajectory signals across all sources (NOT raw rows). */
   totalRows: number;
   totalTrajectories: number;
   totalResolved: number;
@@ -79,7 +78,7 @@ export function readLearningStatsOffline(dataDir: string): LearningStats | undef
   let db: ReturnType<typeof openSqliteDatabase> | undefined;
   try {
     db = openSqliteDatabase({ dbPath, initSchema: () => undefined });
-    // A store whose outcome_events table is absent (an old/reset db) → honest empty.
+    // A store whose outcome_events table is absent (a reset or partially-initialized db) → honest empty.
     const present = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='outcome_events'")
       .get();
@@ -101,9 +100,9 @@ export function readLearningStatsOffline(dataDir: string): LearningStats | undef
         "SELECT tenant_id, agent_id, outcome AS key, COUNT(*) AS n FROM outcome_events GROUP BY tenant_id, agent_id, outcome",
       )
       .all() as EnumRow[];
-    // Per-source volume is counted as DISTINCT trajectories (WR-03), so the figure
+    // Per-source volume is counted as DISTINCT trajectories, so the figure
     // reads as "trajectories carrying a <source> signal" rather than raw rows — a
-    // single trajectory with several same-source rows (the WR-02 per-node residual,
+    // single trajectory with several same-source rows (per-node residual rows,
     // or any future multi-row source) does not inflate it. `totalRows` (the headline)
     // is the sum of these per-source distinct-trajectory counts.
     const bySource = db

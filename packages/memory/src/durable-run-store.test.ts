@@ -7,11 +7,11 @@ import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { createSqliteDurableRunStore } from "./durable-run-store.js";
 import type { DurableRunPort } from "@comis/core";
 
-// The Phase-216 durable checkpoint store — the SQLite-backed DurableRunPort the
-// resume engine scans on boot (DUR-01/DUR-02/DUR-03). Modeled on the production
-// crash-safe video-job store (video-job-store.test.ts): an in-memory :memory:
-// db, ensureDurableRunTable to create the table, then the frozen factory with an
-// INJECTED fake clock so updated_at_ms / created_at_ms are deterministic.
+// The durable checkpoint store — the SQLite-backed DurableRunPort the resume
+// engine scans on boot. Modeled on the crash-safe video-job store
+// (video-job-store.test.ts): an in-memory :memory: db, ensureDurableRunTable to
+// create the table, then the frozen factory with an INJECTED fake clock so
+// updated_at_ms / created_at_ms are deterministic.
 
 describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   let db: Database.Database;
@@ -19,7 +19,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   let now: number;
   const nowMs = () => now;
 
-  /** Build a minimal DUR-01 checkpoint record (defaults to a healthy running run). */
+  /** Build a minimal checkpoint record (defaults to a healthy running run). */
   function makeRecord(overrides: Partial<DurableRunRecord> = {}): DurableRunRecord {
     return {
       rootRunId: "run-root-1",
@@ -37,15 +37,15 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
 
   beforeEach(() => {
     db = new Database(":memory:");
-    // The store's own setup uses ensureDurableRunTable directly so the RED has
-    // its table dependency even before the initSchema wiring (Task 3) lands.
+    // Create the table directly via ensureDurableRunTable rather than the full
+    // initSchema wiring, so these tests depend only on the durable_runs DDL.
     ensureDurableRunTable(db);
     now = 1_700_000_000_000;
     store = createSqliteDurableRunStore(db, { nowMs });
   });
 
   // -----------------------------------------------------------------------
-  // upsertCheckpoint + getByRootRun round-trip (DUR-01)
+  // upsertCheckpoint + getByRootRun round-trip
   // -----------------------------------------------------------------------
 
   describe("upsertCheckpoint + getByRootRun round-trip", () => {
@@ -73,11 +73,11 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect(r.cronOrigin).toBeNull();
       expect(r.status).toBe("running");
       expect(r.lastHeartbeatAt).toBe(1_700_000_001_000);
-      // A never-allocated run surfaces the -1 sentinel (NEW-5).
+      // A never-allocated run surfaces the -1 sentinel.
       expect(r.stepIndex).toBe(-1);
     });
 
-    it("round-trips a non-null cronOrigin and a DAG spawnTree shape (LOW-2 discriminator)", async () => {
+    it("round-trips a non-null cronOrigin and a DAG (object-entry) spawnTree shape without coercing it", async () => {
       const rec = makeRecord({
         rootRunId: "run-dag",
         cronOrigin: "cron-nightly",
@@ -110,7 +110,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Idempotent upsert on the PK (DUR-01)
+  // Idempotent upsert on the PK
   // -----------------------------------------------------------------------
 
   describe("idempotent upsert", () => {
@@ -132,7 +132,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // listResumable — only status='running' (DUR-02)
+  // listResumable — only status='running'
   // -----------------------------------------------------------------------
 
   describe("listResumable", () => {
@@ -153,10 +153,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // invalidateForRevoke — revoked never resumable (DUR-03)
+  // invalidateForRevoke — revoked never resumable
   // -----------------------------------------------------------------------
 
-  describe("invalidateForRevoke (DUR-03)", () => {
+  describe("invalidateForRevoke", () => {
     it("flips status to 'revoked' and removes the run from listResumable", async () => {
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-revoke", status: "running" }));
 
@@ -206,7 +206,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // touchHeartbeat (HB-01)
+  // touchHeartbeat
   // -----------------------------------------------------------------------
 
   describe("touchHeartbeat", () => {
@@ -233,10 +233,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // allocateOutwardStep — atomic monotonic counter (HIGH-1 / ONCE-02)
+  // allocateOutwardStep — atomic monotonic counter
   // -----------------------------------------------------------------------
 
-  describe("allocateOutwardStep (HIGH-1 monotonic counter)", () => {
+  describe("allocateOutwardStep (atomic monotonic counter)", () => {
     it("returns 0 then 1 then 2 — strictly monotonic, two calls never return the same index", async () => {
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-step", status: "running" }));
 
@@ -272,8 +272,8 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       }
     });
 
-    // NEW-1 REGRESSION — a checkpoint between two sends must NOT reset the counter.
-    it("NEW-1: upsertCheckpoint between two allocations does NOT clobber the counter (allocate→0, checkpoint, allocate→1)", async () => {
+    // Regression: a checkpoint between two sends must NOT reset the counter.
+    it("upsertCheckpoint between two allocations does NOT clobber the counter (allocate→0, checkpoint, allocate→1)", async () => {
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-new1", status: "running" }));
 
       const first = await store.allocateOutwardStep("r-new1");
@@ -288,16 +288,16 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
 
       const second = await store.allocateOutwardStep("r-new1");
       expect(second.ok).toBe(true);
-      // The exact NEW-1 bug: a clobbering checkpoint would make this 0 again.
+      // The bug guarded here: a clobbering checkpoint would make this 0 again.
       if (second.ok) expect(second.value).toBe(1);
     });
   });
 
   // -----------------------------------------------------------------------
-  // NEW-5 — a never-sent run round-trips with stepIndex -1 and parses ok
+  // A never-sent run round-trips with stepIndex -1 and parses ok
   // -----------------------------------------------------------------------
 
-  describe("NEW-5 never-sent sentinel", () => {
+  describe("never-sent run stepIndex sentinel", () => {
     it("a checkpointed-but-never-sent run surfaces stepIndex -1 and parseDurableRunRecord accepts it", async () => {
       // upsertCheckpoint a fresh run; allocateOutwardStep is NEVER called.
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-never-sent", status: "running" }));
@@ -313,13 +313,12 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // FLEET-03 (Phase 220-01): countByStatus(sinceMs) — crash-surviving windowed
-  // status counts read DIRECTLY from durable_runs (the row IS the durability; an
-  // in-process event can be lost across a hard crash). Counts ONLY rows with
-  // updated_at_ms >= sinceMs.
+  // countByStatus(sinceMs) — crash-surviving windowed status counts read
+  // DIRECTLY from durable_runs (the row IS the durability; an in-process event
+  // can be lost across a hard crash). Counts ONLY rows with updated_at_ms >= sinceMs.
   // -----------------------------------------------------------------------
 
-  describe("countByStatus (FLEET-03 windowed status counts)", () => {
+  describe("countByStatus (windowed status counts)", () => {
     it("returns per-status counts read directly from the table (orphaned/revoked/running/completed)", async () => {
       // All writes stamp updated_at_ms at `now` (the injected clock) = the beforeEach value.
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-run-1", status: "running" }));
@@ -363,10 +362,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Corrupt-row degrade — every read returns Result, never throws (T-216-08)
+  // Corrupt-row degrade — every read returns Result, never throws
   // -----------------------------------------------------------------------
 
-  describe("corrupt-row degrade (T-216-08)", () => {
+  describe("corrupt-row degrade to Result.err (no throw)", () => {
     it("a corrupt caps JSON degrades getByRootRun to err (JSON parse guard, no throw)", async () => {
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-bad-json", status: "running" }));
       // Hand-corrupt the caps JSON column to non-parseable text.
@@ -392,10 +391,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Threat T-216-05: the persisted row carries NO secret column.
+  // Security: the persisted row carries NO secret column.
   // -----------------------------------------------------------------------
 
-  describe("no-secret schema invariant (T-216-05)", () => {
+  describe("no-secret schema invariant", () => {
     it("durable_runs has no key/token/secret/bearer/password column", () => {
       const cols = db.prepare("PRAGMA table_info(durable_runs)").all() as Array<{ name: string }>;
       const names = cols.map((c) => c.name.toLowerCase());
@@ -499,10 +498,10 @@ describe("createSqliteDurableRunStore — store-error resilience (every method r
 });
 
 // ===========================================================================
-// Task 3 (real-layout wiring): initSchema — NOT ensureDurableRunTable directly
-// — MUST create durable_runs on the boot path (Pitfall 5: defined-but-unwired).
+// The real boot path: initSchema — NOT ensureDurableRunTable directly — MUST
+// create durable_runs, so the table cannot be defined-but-unwired.
 // ===========================================================================
-describe("initSchema wires durable_runs (Pitfall 5)", () => {
+describe("initSchema wires durable_runs on the boot path", () => {
   it("creates the durable_runs table on a fresh db via the real initSchema", () => {
     const db = new Database(":memory:");
     initSchema(db, 384);

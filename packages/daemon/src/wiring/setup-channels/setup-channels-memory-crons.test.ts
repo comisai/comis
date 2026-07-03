@@ -145,9 +145,9 @@ describe("handleMemoryCronSentinel", () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 
-  // Phase 225 FOLD §3.2 + Phase 226-04: the standalone __MEMORY_CONSOLIDATION__ /
+  // The standalone __MEMORY_CONSOLIDATION__ /
   // __MEMORY_REASONING__ / __USER_REPRESENTATION__ intercepts were REMOVED (their work folds
-  // into __REFLECT__), and __SOCIAL_MODELING__ was DELETED in 226-04 with the rest of the
+  // into __REFLECT__), and __SOCIAL_MODELING__ was DELETED with the rest of the
   // social-modeling subsystem (its scheduler registration is gone too). A stray sentinel must
   // NO LONGER be handled here — it falls through (the WIRE leaf does not handle it either, so
   // `handled` is false) and the consolidation/reasoning/user-rep/relationship jobs are NEVER invoked.
@@ -170,12 +170,12 @@ describe("handleMemoryCronSentinel", () => {
   );
 });
 
-// (The __ONLINE_TUNING__ sentinel tests were removed in Phase 224 — the UCB recall bandit
+// (The __ONLINE_TUNING__ sentinel tests were removed — the UCB recall bandit
 // + its cron were deleted; recall scoring is the fixed config.rag.scoring alphas.)
 
 // ---------------------------------------------------------------------------
 // (The __SOCIAL_MODELING__ sentinel describe block — the offline directional relationship
-//  builder dispatch — was DELETED in Phase 226-04 with the rest of the social-modeling
+//  builder dispatch — was DELETED with the rest of the social-modeling
 //  subsystem. The 'no longer handled' assertion above now covers __SOCIAL_MODELING__.)
 // ---------------------------------------------------------------------------
 
@@ -214,7 +214,7 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
     expect(scope.tenantId).toBe("tenant-a");
     expect(scope.agentId).toBe("agent-1");
     expect(scope.now).toBe(1_000);
-    // The Pitfall-3 on-path DORMANT proof: even when enabled the sweep mutates 0 rows.
+    // The on-path DORMANT proof: even when enabled the sweep mutates 0 rows.
     const report = await sweep.mock.results[0].value;
     expect(report.value).toEqual({ scanned: 5, promoted: 0, demoted: 0, evicted: 0 });
     expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
@@ -256,19 +256,19 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
   });
 
   // -------------------------------------------------------------------------
-  // FORGET-06 (Phase 200 Plan 06): the daemon emits learning:memory_demoted /
+  // The daemon emits learning:memory_demoted /
   // learning:memory_evicted (COUNTS ONLY) from the real sweep report, and threads the
   // learningForgetting eviction policy into runLifecycleSweep's per-call scope so the
   // store activates eviction. The store itself emits nothing (counts-only convention).
   // -------------------------------------------------------------------------
-  it("FORGET-06: emits learning:memory_demoted + learning:memory_evicted (counts only) from the sweep report", async () => {
+  it("emits learning:memory_demoted + learning:memory_evicted (counts only) from the sweep report", async () => {
     const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 9, promoted: 0, demoted: 2, evicted: 3 } }));
     const ctx = makeCtx({
       agents: {
         "agent-1": {
           name: "Agent 1",
           memoryLifecycle: { enabled: true },
-          // Phase 226: the collapsed learning block gates eviction (the deleted strengthThreshold/
+          // The collapsed learning block gates eviction (the deleted strengthThreshold/
           // failurePenalty decay knobs are gone; learning.enabled drives evictionEnabled).
           learning: { enabled: true },
         },
@@ -284,8 +284,8 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
     expect(Object.keys(evictPayload).sort()).toEqual(["agentId", "count", "timestamp"]);
   });
 
-  it("FORGET-06: threads the collapsed learning.forget policy (evictionEnabled + failureEvictionFloor) into the sweep scope", async () => {
-    // Phase 226 (POST-224-02): the FadeMem strength-decay disjunct + its strengthThreshold/
+  it("threads the collapsed learning.forget policy (evictionEnabled + failureEvictionFloor) into the sweep scope", async () => {
+    // The FadeMem strength-decay disjunct + its strengthThreshold/
     // failurePenalty knobs are deleted; the former learningForgetting block collapsed into
     // learning.forget. The override threads the master gate (learning.enabled → evictionEnabled)
     // + the corroborated-failure floor (learning.forget.failureEvictionFloor — the reachable path).
@@ -326,11 +326,11 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
   });
 
   // -------------------------------------------------------------------------
-  // DELETE (Phase 226 SIMPLIFY-03): the __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__
+  // The __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__
   // dormant crons are GONE. handleMemoryCronSentinel delegates to the wire file at its
   // fall-through, and neither sentinel is recognized anymore → the whole chain returns false
-  // (the caller delivers the system_event normally — the T-226-08 benign no-op for a persisted
-  // stale job row). The FORGET-02 recordUsage reward write (setup-learning.ts) is a SEPARATE
+  // (the caller delivers the system_event normally — the benign no-op for a persisted
+  // stale job row). The recordUsage reward write (setup-learning.ts) is a SEPARATE
   // seam and is untouched; the TripleStorePort graphSpread recall lane survives (the JOB went).
   // -------------------------------------------------------------------------
   it("the deleted __USEFULNESS_JUDGE__ sentinel is unhandled → returns false (falls through)", async () => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `readSessionIndexWindow` tests — the A3 multi-day session-index aggregate.
+ * `readSessionIndexWindow` tests — the multi-day session-index aggregate.
  *
  * A REAL on-disk-layout test (AGENTS §2.10): the §2.10 rule exists because a
  * fixture-only test ("inject a clean array of records") proves the LOGIC but
@@ -12,7 +12,7 @@
  * injected reader, no fixture array.
  *
  * The tmp dataDir is always under `os.tmpdir()` (NEVER the real `~/.comis` —
- * the Phase-155 no-prod-datadir hygiene; here the test writes the JSONL files
+ * the no-prod-datadir test hygiene; here the test writes the JSONL files
  * directly rather than via `appendSessionIndexEntry`, so the tmp dir is the
  * isolation, not the write-guard).
  *
@@ -44,7 +44,7 @@ function dayKeyForMs(ms: number): string {
 }
 
 /** Build a session_started JSONL object. `ts` (epoch ms) overrides the row
- *  timestamp — used to place a row inside/outside an hours-window (F-OBS-1b). */
+ *  timestamp — used to place a row inside/outside an hours-window. */
 function startedRow(
   overrides: {
     agentId: string;
@@ -297,7 +297,7 @@ describe("readSessionIndexWindow", () => {
     expect(excluded.tokenTotal).toBe(0);
 
     // Opt-in: synthetic included — proves the filter is not a no-op. nowMs is
-    // the explicit window upper bound (the 3rd positional arg post-WR-01).
+    // the explicit window upper bound (the 3rd positional arg).
     const included = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS, systemNowMs(), { includeSynthetic: true });
     expect(included.activeAgents).toEqual(["agent-real", "agent-synthetic"]);
     expect(included.activeChannels).toEqual(["discord:999", "telegram:111"]);
@@ -400,11 +400,11 @@ describe("readSessionIndexWindow", () => {
     expect(result.daysMissing).toBe(1); // yesterday is in-window but absent
   });
 
-  it("windows activeChannels/activeAgents to [sinceMs..nowMs] WITHIN a day-file, not whole-day (F-OBS-1b)", () => {
-    // The bug (30uc-20260624): a `--since 1h` window opens today's WHOLE-day
-    // session-index file and counted EVERY session_started channel/agent in it,
-    // regardless of row ts — so a 1-session window reported 39 channels + a
-    // prior-run agent. Row-ts must be windowed, not just the day-key.
+  it("windows activeChannels/activeAgents to [sinceMs..nowMs] WITHIN a day-file, not whole-day", () => {
+    // The failure mode: a `--since 1h` window opens today's WHOLE-day
+    // session-index file and counts EVERY session_started channel/agent in it,
+    // regardless of row ts — so a 1-session window reports dozens of channels +
+    // a prior-run agent. Row-ts must be windowed, not just the day-key.
     const now = systemNowMs();
     const within = now - 30 * 60 * 1000; // 30 min ago — inside a 1h window
     const stale = now - 5 * 60 * 60 * 1000; // 5h ago — same day-file, OUTSIDE a 1h window
@@ -431,18 +431,18 @@ describe("readSessionIndexWindow", () => {
     expect(result.daysRead).toBe(1);
   });
 
-  it("uses the INJECTED nowMs as the window upper bound, not real Date.now() (WR-01 determinism seam)", () => {
-    // WR-01: the day-key window upper bound must be the injected `nowMs`, so a
+  it("uses the INJECTED nowMs as the window upper bound, not real Date.now() (determinism seam)", () => {
+    // The day-key window upper bound must be the injected `nowMs`, so a
     // single clock instant flows through the whole fleet assembly. We key the
     // day-file to a FIXED historical instant and pass that same instant as
     // `nowMs`; the reader must resolve the window to that historical day and
-    // read the file. Pre-fix the reader called its own systemNowMs() (real
-    // today) → it iterated real-today's day-key and missed the historical file
-    // (daysRead 0). This FAILS on the pre-patch signature/code.
+    // read the file. A reader that called its own systemNowMs() (real
+    // today) would iterate real-today's day-key and miss the historical file
+    // (daysRead 0).
     const fixedNow = Date.UTC(2020, 0, 2, 9, 0, 0); // 2020-01-02T09:00:00Z
     const fixedDayKey = dayKeyForMs(fixedNow); // "2020-01-02"
-    // Stamp the ROW ts to the fixed instant too (F-OBS-1b windows by row-ts, not
-    // just day-key) — an hour before nowMs so both rows sit inside the window.
+    // Stamp the ROW ts to the fixed instant too (the reader windows by row-ts,
+    // not just day-key) — an hour before nowMs so both rows sit inside the window.
     const rowTs = fixedNow - 60 * 60 * 1000;
     const dataDir = makeDataDirWithDayFiles([
       {

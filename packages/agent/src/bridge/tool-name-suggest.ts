@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Recover a hallucinated tool name to the closest REAL tool (F-13, live 2026-06-12).
+ * Recover a hallucinated tool name to the closest REAL tool (live incident 2026-06-12).
  *
  * Small models routinely guess a wrong tool name — most often by mimicking the MCP
  * naming convention (`mcp__<server>--<verb>`) for a BUILTIN tool, e.g. emitting

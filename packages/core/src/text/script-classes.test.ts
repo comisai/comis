@@ -9,9 +9,9 @@ import {
 } from "./script-classes.js";
 
 // ---------------------------------------------------------------------------
-// SCRIPT-01 — Unicode script classifier (SCRIPT_CLASSES table + pure functions)
+// Unicode script classifier (SCRIPT_CLASSES table + pure functions)
 //
-// Pins the table semantics BEFORE any consumer exists: first-match-wins row
+// Pins the table semantics at the source: first-match-wins row
 // ordering (mark rows precede letter rows), neutral-ASCII exclusion,
 // surrogate-pair iteration, UTF-16-unit share weighting, and the
 // hasCjkCodepoints fixture corpus as a SUPERSET gate (the existing
@@ -19,10 +19,7 @@ import {
 // documented gap ranges: Ext-B U+20000–2A6DF and CJK Symbols U+3000–303F).
 //
 // Boundary codepoints are built with String.fromCodePoint(...) — never literal
-// glyphs — so the boundaries are auditable (the lcd-fts WR-01 convention).
-//
-// Pre-patch: stub module (SCRIPT_CLASSES = [], functions throw) — every case
-// below fails until Task 2 implements the table + functions. RED proof.
+// glyphs — so the boundaries are auditable (the lcd-fts convention).
 // ---------------------------------------------------------------------------
 
 /** Test mirror of hasCjkCodepoints semantics, expressed over the new
@@ -64,7 +61,7 @@ describe("classifyCodepoint — single-codepoint verdicts across all table rows"
     expect(classifyCodepoint(0xf900)).toBe("cjk"); // Compatibility Ideographs
   });
 
-  it("keeps Yi (0xA000) and Hangul Jamo (0x1100) OUT of cjk — the WR-01 over-match guards", () => {
+  it("keeps Yi (0xA000) and Hangul Jamo (0x1100) OUT of cjk — the over-match guards", () => {
     expect(classifyCodepoint(0xa000)).toBe("other"); // Yi Syllable — NOT cjk
     expect(classifyCodepoint(0x1100)).toBe("other"); // Hangul Jamo lead consonant — NOT cjk
   });
@@ -113,7 +110,7 @@ describe("hasCjkCodepoints corpus superset — every cjk-vs-non-cjk verdict hold
     expect(scriptShares("").size).toBe(0);
   });
 
-  it("keeps a Yi Syllable (U+A000) out of cjk — WR-01 over-match guard ported", () => {
+  it("keeps a Yi Syllable (U+A000) out of cjk — the over-match guard", () => {
     expect(hasCjkClass(String.fromCodePoint(0xa000))).toBe(false);
   });
 
@@ -156,7 +153,7 @@ describe("scriptShares — neutral exclusion and normalized share values", () =>
     expect(shares.size).toBe(1);
   });
 
-  it("splits the design fixture 5/11 hebrew vs 6/11 latin with shares summing to 1", () => {
+  it("splits the mixed-script fixture 5/11 hebrew vs 6/11 latin with shares summing to 1", () => {
     // "ספר על docker": 5 Hebrew letters + 6 Latin letters + 2 neutral spaces.
     const shares = scriptShares("ספר על docker");
     expect(shares.get("hebrew")).toBeCloseTo(5 / 11, 5);
@@ -168,8 +165,8 @@ describe("scriptShares — neutral exclusion and normalized share values", () =>
 });
 
 describe("dominantScript — non-Latin preference at >= 0.30 total non-Latin share", () => {
-  it("returns hebrew for the design success fixture despite latin holding the plain argmax", () => {
-    // THE design fixture: 5 Hebrew vs 6 Latin units — plain argmax and
+  it("returns hebrew for the mixed Hebrew+tool-name fixture despite latin holding the plain argmax", () => {
+    // THE pinned fixture: 5 Hebrew vs 6 Latin units — plain argmax and
     // strict-majority would both return "latin", which is WRONG. A Hebrew
     // utterance naming an English tool is Hebrew (non-Latin share 5/11 >= 0.30).
     expect(dominantScript("ספר על docker")).toBe("hebrew");
@@ -206,7 +203,7 @@ describe("SCRIPT_CLASSES table invariants — factors, ordering, fallback row", 
     }
   });
 
-  it("locks the latin row tokenFactor to exactly 1.0 — the I1 byte-identity pin", () => {
+  it("locks the latin row tokenFactor to exactly 1.0 — the Latin byte-identity pin", () => {
     const latin = SCRIPT_CLASSES.find((row) => row.class === "latin");
     expect(latin).toBeDefined();
     expect(latin?.tokenFactor).toBe(1.0);
@@ -220,7 +217,7 @@ describe("SCRIPT_CLASSES table invariants — factors, ordering, fallback row", 
   });
 
   it("orders hebrew and arabic MARKS rows before their letter rows with the LOWER factor", () => {
-    // I3 "ambiguous takes the lower factor" realized as first-match-wins
+    // "Ambiguous takes the lower factor" realized as first-match-wins
     // ordering: the combining-marks row must precede the broad letters row.
     for (const cls of ["hebrew", "arabic"] as const) {
       const rows = SCRIPT_CLASSES.filter((row) => row.class === cls);

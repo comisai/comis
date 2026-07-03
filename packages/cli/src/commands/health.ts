@@ -106,7 +106,7 @@ function buildHealthContext(configPaths: string[]): DoctorContext {
 /**
  * Build a human-readable footer for the health summary line.
  *
- * Mirrors the pre-fusion behavior:
+ * Output contract:
  *   - "All checks passed" when no fail/warn findings exist
  *   - "{total} issue(s) found ({n} error(s), {n} warning(s))" otherwise
  */
@@ -169,14 +169,13 @@ export function registerHealthCommand(program: Command): void {
           json(filtered);
         } else {
           const findings = mapHealthFindings(filtered);
-          // Pre-fusion `renderHealthTable` emitted ONLY the footer line —
-          // either "All checks passed" (green) or "N issues found (X errors,
-          // Y warnings)". There was NO leading "N checks, X fail, Y warn"
-          // preamble. Suppress the preamble by passing total=0 and empty
-          // counts; the renderer's `summaryParts()` then yields no entries
-          // and `emitSummary()` only emits the footer. This also means the
-          // pre-vs-post-filter `total`/`counts` mismatch is moot once no
-          // preamble renders.
+          // `comis health` emits ONLY the footer line — either "All checks
+          // passed" (green) or "N issues found (X errors, Y warnings)" —
+          // with NO leading "N checks, X fail, Y warn" preamble. Suppress
+          // the preamble by passing total=0 and empty counts; the renderer's
+          // `summaryParts()` then yields no entries and `emitSummary()` only
+          // emits the footer. This also means the pre-vs-post-filter
+          // `total`/`counts` mismatch is moot once no preamble renders.
           const summary = {
             total: 0,
             counts: {},

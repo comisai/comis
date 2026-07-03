@@ -17,7 +17,7 @@ import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 
 const MAX_DIFF_FILES = 50;
 
-/** DIFF-CONTENT: Maximum chars per category (system, tools) for snapshot content before diffing. */
+/** Maximum chars per category (system, tools) for snapshot content before diffing. */
 const MAX_SNAPSHOT_CHARS = 50_000;
 
 /**
@@ -54,13 +54,13 @@ export interface CacheBreakDiffPayload {
   agentId: string;
   sessionKey: string;
   timestamp: number;
-  /** DIFF-CONTENT: Serialized previous system prompt content (for diff generation). Capped at 50K chars. */
+  /** Serialized previous system prompt content (for diff generation). Capped at 50K chars. */
   previousSystem?: string;
-  /** DIFF-CONTENT: Serialized current system prompt content (for diff generation). Capped at 50K chars. */
+  /** Serialized current system prompt content (for diff generation). Capped at 50K chars. */
   currentSystem?: string;
-  /** DIFF-CONTENT: Serialized previous tools JSON (for diff generation). Capped at 50K chars. */
+  /** Serialized previous tools JSON (for diff generation). Capped at 50K chars. */
   previousTools?: string;
-  /** DIFF-CONTENT: Serialized current tools JSON (for diff generation). Capped at 50K chars. */
+  /** Serialized current tools JSON (for diff generation). Capped at 50K chars. */
   currentTools?: string;
   /** Effort value from detection pipeline for downstream analytics. */
   effortValue?: string;
@@ -138,7 +138,8 @@ export function createCacheBreakDiffWriter(
     try {
       if (!dirEnsured) {
         // Route through the shared fs-safe substrate so
-        // `~/.comis/cache-breaks/` honors the §1.4 `0o700` invariant.
+        // `~/.comis/cache-breaks/` honors the owner-only `0o700`
+        // directory-mode invariant for artifacts under `~/.comis/`.
         // Failure is non-fatal — log + skip this event so the detection
         // flow upstream stays unaffected (existing fault-tolerance
         // contract: I/O errors are never propagated).
@@ -212,7 +213,7 @@ export function createCacheBreakDiffWriter(
           metadataChanged: event.changes.metadataChanged,
           headersChanged: event.changes.headersChanged,
           extraBodyChanged: event.changes.extraBodyChanged,
-          // New attribution fields (use ?? false for backward compat with older payloads)
+          // Optional attribution fields default to false when absent from the payload
           effortChanged: event.changes.effortChanged ?? false,
           cacheControlChanged: event.changes.cacheControlChanged ?? false,
         },
@@ -257,7 +258,7 @@ export function createCacheBreakDiffWriter(
       };
 
       // Route the JSON write through the fs-safe substrate
-      // so each cache-break diff file lands at mode `0o600` per §1.4.
+      // so each cache-break diff file lands at owner-only mode `0o600`.
       // Failure is non-fatal — log + continue to attempt the .diff
       // sibling so a partial-write at the JSON layer does not block the
       // unified-diff artifact.
@@ -277,11 +278,11 @@ export function createCacheBreakDiffWriter(
         );
       }
 
-      // DIFF-CONTENT: Generate unified diff file alongside JSON
+      // Generate unified diff file alongside JSON
       const diffSections: string[] = [];
 
       // Generate diffs for ANY break event that has serialized content available
-      // (not just system/tools changes). Effort, retention, header changes etc. now also
+      // (not just system/tools changes). Effort, retention, header changes etc. also
       // produce diffs when content was materialized by the lazy getter.
       const hasAnyContent =
         event.previousSystem !== undefined || event.currentSystem !== undefined ||

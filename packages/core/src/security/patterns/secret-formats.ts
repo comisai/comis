@@ -4,7 +4,7 @@
  *
  * Detects API keys, tokens, private keys, and connection strings
  * in LLM output to prevent accidental secret leakage.
- * Originally from output-guard.ts.
+ * Consumed by output-guard.ts.
  *
  * @module secret-formats
  */

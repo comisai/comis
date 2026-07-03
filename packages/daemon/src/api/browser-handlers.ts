@@ -14,7 +14,8 @@
  * `packages/core/src/api-contracts/workspace.ts` (the workspace umbrella
  * file groups all 5 handlers that share the `WorkspaceApiDeps` slice).
  * The dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (pitfall 6).
+ * `stripInternalFields` BEFORE `contract.request.parse(...)` — internal
+ * fields are never modeled in the contract schema.
  * The handler resolves `_agentId` from the RAW params BEFORE stripping
  * (the agent identity lives on the internals object, never on the
  * user-facing request).
@@ -42,10 +43,9 @@ import {
 
 import type { RpcHandler } from "./types.js";
 
-// Re-aliased from the cluster slice in api/types.ts.
+// Aliased from the cluster slice in api/types.ts.
 // Single source of truth: WorkspaceApiDeps (shared with workspace, approval,
-// mcp, skill, notification handlers). Handler bodies and call sites
-// remain unchanged across the re-alias.
+// mcp, skill, notification handlers).
 import type { WorkspaceApiDeps as BrowserHandlerDeps } from "./types.js";
 export type { BrowserHandlerDeps };
 

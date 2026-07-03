@@ -1,31 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// GEN-02 — the en/he/ar/ru phrase table + tag-driven selectors for the
+// The en/he/ar/ru phrase table + tag-driven selectors for the
 // deterministic degraded replies a failed turn shows the end user.
 //
 // These tests assert that:
-//   - en byte-identical (I1, the keystone): the en-path selectors reproduce
+//   - en byte-identical (the keystone): the en-path selectors reproduce
 //     TODAY's literals — proven by importing the LIVE builders from
 //     degraded-reply.ts and asserting equality across the
 //     {cause x capabilityClass x traceId} matrix.
 //   - Per-language snapshots pin the authored he/ar/ru translations.
-//   - I5 (verbatim across languages): the knob path, the (0 = uncapped) hint,
+//   - Verbatim across languages: the knob path, the (0 = uncapped) hint,
 //     the (incident <traceId>) ref, and the warning marker are interpolated
 //     verbatim and never translated.
 //   - cap-knob x cause variants mirror the live nested advice branching.
 //   - Fallback contract: an unknown language returns the en string; never throws.
-//   - I2 (gate-blocking security): NO phrase-table string contains a bidi
+//   - Gate-blocking security: NO phrase-table string contains a bidi
 //     control codepoint. The BIDI regex is built from NUMERIC codepoints via
 //     String.fromCodePoint (see :47-51) — never a literal bidi glyph and never
 //     a \u escape in this source. \u escapes round-trip back into literal
-//     glyphs in some tools, which is exactly the Trojan-Source hazard I2 exists
-//     to stop, so numeric construction is the deliberate, required approach.
+//     glyphs in some tools, which is exactly the Trojan-Source hazard this
+//     guard exists to stop, so numeric construction is the deliberate, required approach.
 //
 // AUTHORING NOTE: this file NEVER pastes a raw bidi codepoint or the warning
 // glyph, and NEVER uses \u escapes for them. Both the warning marker
 // (String.fromCodePoint(0x26A0, 0xFE0F)) and the bidi set (the cp() helper at
 // :47, also String.fromCodePoint) are built from numeric codepoints only. Do
-// NOT "simplify" the BIDI regex back to \u escapes — that reintroduces I2.
+// NOT "simplify" the BIDI regex back to \u escapes — that reintroduces the
+// Trojan-Source hazard.
 
 import { describe, it, expect } from "vitest";
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
@@ -44,9 +45,9 @@ import {
 // The warning marker (U+26A0 U+FE0F) — referenced via codepoints, NEVER pasted.
 const WARNING_MARKER = String.fromCodePoint(0x26a0, 0xfe0f);
 
-// The I2 bidi-control set (canonical, invisible-chars.ts:37-38). Built from
+// The bidi-control set (canonical, invisible-chars.ts:37-38). Built from
 // NUMERIC codepoints via String.fromCodePoint so this source NEVER contains a
-// raw bidi glyph (the Trojan-Source hazard I2 exists to stop). The matched set:
+// raw bidi glyph (the Trojan-Source hazard this guard exists to stop). The matched set:
 // LRM (U+200E), RLM (U+200F), ALM (U+061C), embeddings/overrides (U+202A-U+202E),
 // isolates (U+2066-U+2069).
 const cp = (n: number): string => String.fromCodePoint(n);
@@ -69,14 +70,14 @@ const EN_MATRIX: ReadonlyArray<{
   // extra coverage: no-cause + frontier (no knob), traceId only
   { cause: undefined, capabilityClass: "frontier", traceId: "tid-3" },
   { cause: "oversized_history_message", capabilityClass: undefined, traceId: undefined },
-  // 2026-06-22 root-cause fix: fixed_overhead_exceeds_window, both with a cap
+  // fixed_overhead_exceeds_window, both with a cap
   // knob (small) and without (frontier — no class cap), so the snapshots pin the
   // fixed-overhead advice in every language.
   { cause: "fixed_overhead_exceeds_window", capabilityClass: "small", traceId: "tid-4" },
   { cause: "fixed_overhead_exceeds_window", capabilityClass: undefined, traceId: undefined },
 ];
 
-describe("degraded-reply-i18n — en selectors are byte-identical to the live builders (I1)", () => {
+describe("degraded-reply-i18n — en selectors are byte-identical to the live builders", () => {
   it("selectContextExhaustedReply('en', opts) equals buildContextExhaustedReply(opts) across the matrix", () => {
     for (const opts of EN_MATRIX) {
       const live = buildContextExhaustedReply(opts);
@@ -96,16 +97,16 @@ describe("degraded-reply-i18n — en selectors are byte-identical to the live bu
     );
   });
 
-  // WR-03: the equality assertions above are NECESSARY but not SUFFICIENT as an
-  // I1 oracle. After 181-03, buildContextExhaustedReply (degraded-reply.ts)
+  // The equality assertions above are NECESSARY but not SUFFICIENT as a
+  // byte-identity oracle: buildContextExhaustedReply (degraded-reply.ts)
   // DELEGATES to selectContextExhaustedReply("en", …) — both sides resolve to
   // the SAME `en` row, so `selected === live` is tautological and would stay
-  // green even if the `en` row drifted away from the historical literals. Anchor
-  // the en row against HARDCODED literals (copied from the pre-181 builders,
-  // matching the sibling literal pins at degraded-reply.test.ts:144/:274) so
+  // green even if the `en` row drifted away from the canonical literals. Anchor
+  // the en row against HARDCODED literals (matching the sibling literal pins in
+  // degraded-reply.test.ts) so
   // en-row byte-identity is guarded independently of the builder delegation —
   // not via a round-trip through the same code path.
-  it("WR-03: DEGRADED_REPLY_TABLE.en pins the historical English literals (independent I1 anchor)", () => {
+  it("DEGRADED_REPLY_TABLE.en pins the canonical English literals (independent byte-identity anchor)", () => {
     expect(DEGRADED_REPLY_TABLE.en.contextExhaustedBase).toBe(
       "I was unable to process your request — the context window was exhausted " +
         "before the model could run. ",
@@ -164,7 +165,7 @@ describe("degraded-reply-i18n — per-language snapshots pin the authored transl
   }
 });
 
-describe("degraded-reply-i18n — I5 verbatim interpolation across languages", () => {
+describe("degraded-reply-i18n — verbatim interpolation across languages", () => {
   for (const lang of ["he", "ar", "ru"] as const) {
     it(`${lang}: the small-class context-exhausted reply names the cap knob + (0 = uncapped) verbatim`, () => {
       const reply = selectContextExhaustedReply(lang, { capabilityClass: "small" });
@@ -203,7 +204,7 @@ describe("degraded-reply-i18n — cap-knob x cause variants mirror the live nest
         capabilityClass: "small",
         cause: "aggregate",
       });
-      // Both name the knob (I5)…
+      // Both name the knob verbatim…
       expect(history).toContain("contextEngine.budget.effectiveContextCapSmall");
       expect(dflt).toContain("contextEngine.budget.effectiveContextCapSmall");
       // …but the two advice forms differ (history vs default).
@@ -221,7 +222,7 @@ describe("degraded-reply-i18n — cap-knob x cause variants mirror the live nest
     });
   }
 
-  // 2026-06-22 root-cause fix: the fixed-overhead reply must NOT tell the user to
+  // The fixed-overhead reply must NOT tell the user to
   // shorten/split their message — message size is irrelevant when the system
   // prompt + tools alone overflow. It must point at the window / tools / a larger
   // model. en assertions (the single source; other languages snapshot-pinned).
@@ -269,7 +270,7 @@ describe("degraded-reply-i18n — fallback contract (unknown language maps to En
   });
 });
 
-describe("degraded-reply-i18n — I2 no bidi control in any phrase-table string (gate-blocking)", () => {
+describe("degraded-reply-i18n — no bidi control in any phrase-table string (gate-blocking)", () => {
   it("every string value in the table (all languages, all keys) is free of bidi controls", () => {
     const offenders: string[] = [];
     const walk = (node: unknown, path: string): void => {

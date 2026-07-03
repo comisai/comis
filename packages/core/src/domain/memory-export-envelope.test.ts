@@ -79,15 +79,12 @@ describe("MemoryExportEnvelopeSchema — DoS cap enforcement", () => {
 });
 
 // ---------------------------------------------------------------------------
-// IN-01: entryCount must equal entries.length — mismatch is a data-integrity signal
-// RED: parseMemoryExportEnvelope returns ok even when entryCount disagrees with array length.
-// GREEN: parseMemoryExportEnvelope returns err when entryCount !== entries.length.
+// entryCount must equal entries.length — a mismatch is a data-integrity signal
+// (crafted envelope) and parseMemoryExportEnvelope must return err, not ok.
 // ---------------------------------------------------------------------------
 
-describe("parseMemoryExportEnvelope — entryCount cross-validation (IN-01)", () => {
+describe("parseMemoryExportEnvelope — entryCount cross-validation", () => {
   it("returns err when entryCount is greater than entries.length", () => {
-    // RED: current implementation returns ok(env) without checking count.
-    // GREEN: returns err with mismatch message.
     const result = parseMemoryExportEnvelope({ ...VALID_ENVELOPE, entryCount: 999 });
     expect(result.ok).toBe(false);
     if (!result.ok) {

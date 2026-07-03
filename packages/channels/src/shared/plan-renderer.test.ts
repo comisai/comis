@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * plan-renderer tests (§8.3 plan-state checkboxes).
+ * plan-renderer tests (plan-state checkboxes).
  *
  * `renderPlan(snapshot)` is a pure function that maps a PlanSnapshot's steps to
  * deterministic checkbox text. An empty plan renders the empty string.

@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Image-provider SELECTION (RES-02/RES-03/CRED-01).
+ * Image-provider SELECTION.
  *
  * `createImageProviderSelector` returns a lazy getter (read-on-use at boot —
  * mirrors `createImageGenProviderFactory` in setup-media.ts) that, per the
  * resolved config + the agent's main provider, decides between:
- *   - the Plan-03 pi-image-adapter (provider:"auto" / pi-ai-backed providers),
- *     following the main provider via the Plan-01 `resolveImageProvider` and
+ *   - the pi-image-adapter (provider:"auto" / pi-ai-backed providers),
+ *     following the main provider via `resolveImageProvider` and
  *     resolving the key from the SAME `SecretManager` the main provider uses
- *     (CRED-01 — no image-specific secret); or
+ *     (no image-specific secret); or
  *   - the relegated skills adapter (explicit `fal`/`openai`, additive legacy
  *     path); or
  *   - an honest-unavailable port (carrying the knob-naming hint) for an
- *     image-incapable main (RES-03) — NEVER a misroute to a different paid
+ *     image-incapable main — NEVER a misroute to a different paid
  *     provider, NEVER silence.
  *
  * The selector NEVER reads the raw environment (creds via `SecretManager`
- * only) and NEVER re-derives selection in the handler (RES-01 keystone: one
+ * only) and NEVER re-derives selection in the handler (one
  * source of truth — `resolveImageProvider`).
  *
  * Placement: `@comis/daemon` (pi-ai is a daemon dep, not a skills one). Kept in
@@ -48,7 +48,7 @@ import { GOOGLE_IMAGE_MODEL } from "../api/google-images-transport.js";
 
 /**
  * A port whose `execute()` always returns a classified `ImageGenError` Result
- * err — the RES-03 honest-unavailable carrier. The agent gets a hint (naming
+ * err — the honest-unavailable carrier. The agent gets a hint (naming
  * the binding config knob), not silence. `isAvailable()` is `false` so callers
  * that probe it know it cannot serve.
  */
@@ -77,21 +77,21 @@ export function makeUnavailableImagePort(
  * config + `secretManager` on use; in practice the daemon invokes it ONCE at
  * boot (`daemon.ts` `getImageGenProvider()`), and the handler then holds that
  * boot-built adapter instance — so key rotation requires a daemon restart to
- * take effect (NOT live per-request; IN-01 183-REVIEW). Returns `undefined`
+ * take effect (NOT live per-request). Returns `undefined`
  * only when image generation is unconfigured (`imageGenConfig` absent) — an
- * image-incapable main yields an unavailable PORT (RES-03), never `undefined`,
+ * image-incapable main yields an unavailable PORT, never `undefined`,
  * so the handler is still constructed and surfaces the hint.
  */
 export function createImageProviderSelector(deps: {
   imageGenConfig: ImageGenerationConfig | undefined;
   secretManager: SecretManager;
-  /** Resolved at boot for the DEFAULT agent (the common case for Phase 183). */
+  /** Resolved at boot for the DEFAULT agent (the common case). */
   mainProviderId: string;
   /** The existing skills fal/openai getter (createImageGenGetter). */
   legacyGetter: () => ImageGenerationPort | undefined;
   logger: ComisLogger;
   /**
-   * The DEFAULT agent's OAuthTokenManager (184). The codex credential is OAuth,
+   * The DEFAULT agent's OAuthTokenManager. The codex credential is OAuth,
    * not a SecretManager env key — so codex availability + the per-call bearer
    * resolve through this manager, NOT `resolveImageApiKey`. Surfaced from
    * setupAgents → buildImageGenBundle (the composition-root threading gap).
@@ -128,20 +128,20 @@ export function createImageProviderSelector(deps: {
     if (!cfg) return undefined;
 
     // Explicit fal → the relegated skills adapter (additive legacy path,
-    // CFG-01 back-compat). 185 FOLD: `openai` is NO LONGER a legacy provider —
-    // it now resolves via the resolver path below (IMAGE_CAPABILITY["openai"] =
-    // "openai-images") → the Task-2 selector branch (the registered transport),
-    // eliminating the second parallel openai surface (design §5).
+    // back-compat). `openai` is NOT a legacy provider — it resolves via the
+    // resolver path below (IMAGE_CAPABILITY["openai"] = "openai-images") → the
+    // selector branch for the registered transport, so there is no second
+    // parallel openai surface.
     if (cfg.provider === "fal") {
       return deps.legacyGetter();
     }
 
     // auto / openrouter / openai-codex / google → the pi-ai path via the
-    // Plan-01 resolver (one source of truth; creds via SecretManager closure).
+    // resolver (one source of truth; creds via SecretManager closure).
     const sel = resolveImageProvider(
       cfg,
       deps.mainProviderId,
-      // CRED-01: codex availability is the OAuth credential (the bearer is
+      // Codex availability is the OAuth credential (the bearer is
       // OAuth, not a SecretManager env key) — so a Codex-only agent with NO
       // FAL_KEY/OPENAI_API_KEY resolves available. The AUTHORITATIVE gate is the
       // store-aware `codexCredentialsAvailable` flag, pre-resolved by the async
@@ -159,7 +159,7 @@ export function createImageProviderSelector(deps: {
             deps.oauthManager?.hasCredentials("openai-codex") ??
             false)
           : resolveImageApiKey(imagesApi, deps.secretManager) !== undefined,
-      // WR-04 (183-REVIEW): the once-per-resolution follow-main skip is the
+      // The once-per-resolution follow-main skip is the
       // load-bearing "why did images go unavailable" evidence — promote it to
       // INFO so it is visible at the default log level (§2.7). Per-fallback-
       // entry skips stay DEBUG (they only matter when a chain is configured).
@@ -170,13 +170,13 @@ export function createImageProviderSelector(deps: {
     );
 
     if (!sel.ok) {
-      // RES-03 honest-unavailable: a port that surfaces the err (handler hint).
+      // Honest-unavailable: a port that surfaces the err (handler hint).
       return makeUnavailableImagePort(sel.errorKind, sel.hint, deps.logger);
     }
 
-    // 184: the Codex (ChatGPT-login) per-call-bearer adapter. Keyed EXACTLY on
-    // the codex images api — `openai-images`/`google-images` fall through to the
-    // not-yet-wired guard below (they land in 185, no scope creep).
+    // The Codex (ChatGPT-login) per-call-bearer adapter. Keyed EXACTLY on
+    // the codex images api — `openai-images`/`google-images` are handled by
+    // their own branch below.
     if (sel.imagesApi === "openai-codex-images") {
       // By construction `sel.imagesApi === "openai-codex-images"` is `ok` only
       // when credsAvailable returned true, which requires a present manager
@@ -209,16 +209,15 @@ export function createImageProviderSelector(deps: {
       });
     }
 
-    // 185 (PRV-01/02 — the WIRING KEYSTONE): the openai / google native
-    // transports (registered in registerComisImageProviders()). UNLIKE codex,
-    // their credential is a STATIC env key (OPENAI_API_KEY / GOOGLE_API_KEY via
-    // the FIXED resolveImageApiKey — CRED-01), resolved once at boot — so the
-    // generic createPiImageAdapter (which does the generateImages dispatch +
-    // mapping) is the right adapter, NOT a per-call-bearer one. The hand-built
-    // ImagesModel literal carries the api/provider/default-id; sel.model (the
-    // tool/config override) wins over the default when present (IN-02). Keyed
-    // EXACTLY on these two apis — every other api still falls through to the
-    // honest-unavailable guard below (no misroute).
+    // The openai / google native transports (registered in
+    // registerComisImageProviders()). UNLIKE codex, their credential is a
+    // STATIC env key (OPENAI_API_KEY / GOOGLE_API_KEY via resolveImageApiKey),
+    // resolved once at boot — so the generic createPiImageAdapter (which does
+    // the generateImages dispatch + mapping) is the right adapter, NOT a
+    // per-call-bearer one. The hand-built ImagesModel literal carries the
+    // api/provider/default-id; sel.model (the tool/config override) wins over
+    // the default when present. Keyed EXACTLY on these two apis — every other
+    // api still falls through to the honest-unavailable guard below (no misroute).
     if (sel.imagesApi === "openai-images" || sel.imagesApi === "google-images") {
       const apiKey = resolveImageApiKey(sel.imagesApi, deps.secretManager);
       const model = sel.imagesApi === "openai-images" ? OPENAI_IMAGE_MODEL : GOOGLE_IMAGE_MODEL;
@@ -230,10 +229,9 @@ export function createImageProviderSelector(deps: {
       });
     }
 
-    // Phase 183 wires the built-in openrouter catalog; 184/185 wired
-    // codex/openai/google above. Any REMAINING custom transport lands in a later
-    // phase — until then, surface an honest-unavailable naming the opt-in path
-    // (not a misroute).
+    // The built-in openrouter catalog is wired below; codex/openai/google are
+    // wired above. Any REMAINING custom transport is not yet wired — surface an
+    // honest-unavailable naming the opt-in path (not a misroute).
     if (sel.imagesApi !== "openrouter-images") {
       return makeUnavailableImagePort(
         "unsupported_provider",
@@ -251,7 +249,7 @@ export function createImageProviderSelector(deps: {
       apiKey,
       timeoutMs: cfg.timeoutMs,
       // maxRetries omitted — the adapter's `maxRetries ?? 1` default is the
-      // single source of truth (IN-02 183-REVIEW: avoid a duplicated magic 1).
+      // single source of truth (avoid a duplicated magic 1).
       logger: deps.logger,
     });
   };
@@ -264,9 +262,9 @@ export function createImageProviderSelector(deps: {
  * constraint, which a runtime `string` cannot satisfy — so look the id up in
  * the catalog (`getImageModels`) and fall back to the first catalog model when
  * the requested id is not present. The built-in openrouter catalog always has
- * at least one model (Phase 183 default `black-forest-labs/flux.2-pro`).
+ * at least one model (default `black-forest-labs/flux.2-pro`).
  *
- * WR-02 (183-REVIEW): when the configured/tool model is NOT in the catalog the
+ * When the configured/tool model is NOT in the catalog the
  * fallback would otherwise be a SILENT misroute — the operator's explicit
  * choice discarded with no signal. Emit a WARN naming the unresolved id, the
  * fallback, the binding knob, and an `errorKind` so the substitution is

@@ -8,23 +8,24 @@
  * the 500-line `obs-handlers/*` subdir cap. PURE: no LLM, no I/O, no globals — same
  * signals ⇒ same verdict forever.
  *
- * Live webhook-claude-gsd-snake-20260702 (EVICT-01): an autonomous webhook-driven
- * `claude` drive was doing real work when the terminal reaper idle-evicted it — the
- * `worker.idleTtlMs` cap fired because a backgrounded drive's `lastActivity` does not
- * advance on a quiet compile (the ENDURE-01 pitfall) and the LINGER-01 keep-alive did
- * not hold. The drive died mid-task. `comis explain` reported `endReason:success` (the
- * turn that OPENED the drive returned fine) → a NULL verdict, so the reaper kill was
- * INVISIBLE: it took a hand-correlation of the daemon WARN `terminal session evicted`
- * timestamp against the last activity to see it. The PRODUCING-01 fix keeps a *producing*
- * drive alive; THIS verdict is that fix's observability completion — if PRODUCING-01 ever
- * regresses (a producing drive idle-reaped again), `explain` names it in one call.
+ * The failure mode this verdict makes visible: an autonomous webhook-driven drive
+ * doing real work is idle-evicted by the terminal reaper — the `worker.idleTtlMs`
+ * cap fires because a backgrounded drive's `lastActivity` does not advance on a
+ * quiet compile, and the producing keep-alive did not hold. The drive dies mid-task
+ * while `comis explain` reports `endReason:success` (the turn that OPENED the drive
+ * returned fine) → a NULL verdict, so the reaper kill stays INVISIBLE without
+ * hand-correlating the daemon WARN `terminal session evicted` timestamp against the
+ * last activity. The keep-alive keeps a *producing* drive alive; THIS verdict is
+ * that mechanism's observability completion — if the keep-alive ever regresses (a
+ * producing drive idle-reaped again), `explain` names it in one call.
  *
  * Keyed on the bridged `terminalDriveEvicted` signal (folded from the
  * `terminal.session_evicted` trajectory record). Fires ONLY on the two "cut-short" caps:
  *   - `idle`      — the idle-TTL reap (the acute autonomous-drive-stranding case). Only
  *                   fires when the reaper's `!isBusy` gate passed, i.e. the drive was
  *                   genuinely quiet — but a drive that HAD been producing (derived
- *                   `wasProducing`) going quiet-then-reaped is the PRODUCING-01 canary.
+ *                   `wasProducing`) going quiet-then-reaped is the keep-alive
+ *                   regression canary.
  *   - `wall_clock`— the total-lifetime cap (a long build hit its ceiling mid-work).
  * It deliberately does NOT fire on `max_sessions` (LRU eviction of the IDLEST session to
  * make room — incidental resource pressure, not a drive-cut-short cause) or
@@ -72,7 +73,7 @@ export const terminalDriveEvictedVerdict = (s: IncidentSignals): TerminalDriveVe
   const knob = CAP_KNOB[ev.reason] ?? "the reaper cap";
   const producingClause = ev.wasProducing
     ? "The drive HAD been producing (a `producing` drive_promoted preceded the eviction) — so it was cut short WHILE working. " +
-      "The PRODUCING-01 keep-alive (checkLiveness freezes a producing drive's idle clock) is exactly what should have held it alive; " +
+      "The producing keep-alive (checkLiveness freezes a producing drive's idle clock) is exactly what should have held it alive; " +
       "an idle-reap here is its regression canary."
     : "The drive never crossed the producing boundary (no `producing` promotion) — so this is the expected TTL/lifetime cleanup of a quiet, unattended drive that never got going.";
 
@@ -84,9 +85,9 @@ export const terminalDriveEvictedVerdict = (s: IncidentSignals): TerminalDriveVe
       "In an UNATTENDED (webhook/cron) drive this ends the autonomous session with no human to resume it.",
     suggestedNextSteps: [
       ev.wasProducing
-        ? `confirm the PRODUCING-01 keep-alive held for this drive (checkLiveness must NOT freeze — and thus must keep alive — a producing drive); if it was idle-reaped while producing, that is a regression`
+        ? `confirm the producing keep-alive held for this drive (checkLiveness must NOT freeze — and thus must keep alive — a producing drive); if it was idle-reaped while producing, that is a regression`
         : `if the drive still had work, raise ${knob} or deliver the task so the drive stays busy (the reaper's !isBusy idle-gate spares an actively-busy drive)`,
-      `inspect ${knob} against the drive's real work cadence — a backgrounded drive's lastActivity does not advance on a quiet compile (the ENDURE-01 pitfall)`,
+      `inspect ${knob} against the drive's real work cadence — a backgrounded drive's lastActivity does not advance on a quiet compile`,
       "obs.explain depth=full for the terminal_session_* + terminal.drive_promoted + terminal.session_evicted sequence",
     ],
   };

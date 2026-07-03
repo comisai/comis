@@ -238,7 +238,7 @@ The **React** column above is the *outbound* capability — whether the agent ca
 
 ## Inbound reactions: corroborating learning signal
 
-Comis previously only **sent** reactions (the `react` action above, plus the `removeReaction` lifecycle). As of v2.26 it also **captures** reactions that other people add to the agent's **own outbound messages** — turning a 👍 / 👎 into a lightweight, corroborating outcome signal for [Verified Learning](/reference/config-yaml#learning-outcome-agents-learningoutcome).
+Beyond **sending** reactions (the `react` action above, plus the `removeReaction` lifecycle), Comis also **captures** reactions that other people add to the agent's **own outbound messages** — turning a 👍 / 👎 into a lightweight, corroborating outcome signal for [Verified Learning](/reference/config-yaml#learning-outcome-agents-learningoutcome).
 
 This is **off by default** and only does anything when `learningOutcome.enabled` is set for the agent (and the master `memory.enabled` switch is on). When enabled, a reaction is matched against the agent's `reactionMap` (`👍`/`✅` → success, `👎`/`❌` → failure by default) and recorded through the `reaction` source. It is strictly a **corroborating** signal: it can only weight an outcome the deterministic tool/pipeline signal already resolved, never override it. The captured event carries ids / emoji / counts only — never a message body or a sender display name. See the [`learningOutcome`](/reference/config-yaml#learning-outcome-agents-learningoutcome) config for the trust-weighting and rate-limit behavior.
 

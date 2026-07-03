@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Outcome-signal (Verified Learning WS1) write-back wiring.
+ * Outcome-signal write-back wiring.
  *
  * The composition-root glue between the deterministic completion bus events
  * (`tool:executed`, `graph:completed`, `diagnostic:message_processed`) and the
@@ -10,14 +10,15 @@
  * `wireMemoryUsefulness`. The resolve→consume chain is shared by the DAG
  * (`graph:completed`) AND single-agent (`diagnostic:message_processed`) seams and
  * runs at most ONCE per trajectory (resolve() is a pure read; both events can fire
- * for one DAG turn). Counts + ids + closed-enums ONLY cross the bus (§2.7 / SEC-01).
+ * for one DAG turn). Counts + ids + closed-enums ONLY cross the bus — never
+ * memory bodies or user content.
  *
  * BYTE-IDENTITY GATE: every handler's FIRST statement is the
  * `learningOutcomeEnabled(agentId)` short-circuit — default config observes/resolves/
  * emits NOTHING (the recall/score hot path is byte-identical). Fire-and-forget /
  * non-fatal: a failing observe/resolve warns and continues, never throwing out of the
  * handler or blocking the turn. An `unknown` resolved outcome derives no learning
- * (fail-closed, OUTCOME-05) and is NOT counted as resolved coverage.
+ * (fail-closed) and is NOT counted as resolved coverage.
  *
  * @module
  */
@@ -42,9 +43,9 @@ import {
   CORROBORATION_MIN_INDEPENDENT,
   MAX_TRACKED_FAILURE_MEMORIES,
 } from "./setup-learning-corroboration.js";
-// OUTCOME-04 judge fallback lives in its own leaf (no cycle: setup-learning → judge only).
+// The LLM outcome-judge fallback lives in its own leaf (no cycle: setup-learning → judge only).
 import { maybeUpgradeWithJudge, type OutcomeJudge, type JudgeScope } from "./setup-learning-judge.js";
-// SURFACE-04/05/06 skill promote/demote loop lives in its own leaf (no cycle: it imports
+// The skill promote/demote loop lives in its own leaf (no cycle: it imports
 // failureCorroborated from setup-learning-corroboration.ts, nothing from here).
 import { applySkillOutcomeTransitions } from "./setup-learning-skill-transitions.js";
 // Re-export for the existing importers (setup-learning.test.ts) — moved to the leaf
@@ -58,8 +59,8 @@ export interface LearningOutcomeWiringDeps {
   /** The sole @comis/memory adapter for the outcome port (the observe/resolve target). */
   outcomeStore: OutcomeSignalPort;
   /**
-   * The sole @comis/memory recall-utility adapter (the reward/failure write target,
-   * RANK-01/FORGET-02). The daemon is the ONLY place holding BOTH this AND
+   * The sole @comis/memory recall-utility adapter (the reward/failure write target).
+   * The daemon is the ONLY place holding BOTH this AND
    * `OutcomeSignalPort.resolve()` — the agent↛memory build cut means the agent
    * never imports the store (closed graph). Injected from setup-memory.ts where it
    * is already constructed.
@@ -67,52 +68,52 @@ export interface LearningOutcomeWiringDeps {
   usefulnessStore: MemoryUsefulnessStore;
   /** Injected clock for `observedAt` — the deterministic time source (no ambient wall clock). */
   clock: ClockPort;
-  /** Structured logger for the OBS-01 INFO completion line + the non-fatal failure WARN. */
+  /** Structured logger for the INFO completion line + the non-fatal failure WARN. */
   logger: ComisLogger;
   /**
    * Per-agent effective enable: true ONLY when the agent has `learning.enabled`
-   * (Phase 226 / M-1 — the ONE collapsed learning flag) AND the master
-   * `memory.enabled` switch is on. With `memory.enabled:false` → the subscriber is a no-op.
+   * (the ONE collapsed learning flag) AND the master `memory.enabled` switch is on.
+   * With `memory.enabled:false` → the subscriber is a no-op.
    */
   learningOutcomeEnabled: (agentId: string) => boolean;
   /**
-   * Per-agent reward-write enable (RANK-01): true ONLY when the agent has
+   * Per-agent reward-write enable: true ONLY when the agent has
    * `learning.enabled` AND the master `memory.enabled` switch is on. Gates the
-   * SUCCESS→`recordUsage` positive-reward write (STAYS wired behind the one flag — M-1).
+   * SUCCESS→`recordUsage` positive-reward write (wired behind the one collapsed flag).
    */
   learningTuningEnabled: (agentId: string) => boolean;
   /**
-   * Per-agent failure-accrual enable (FORGET-02): true ONLY when the agent has
+   * Per-agent failure-accrual enable: true ONLY when the agent has
    * `learning.enabled` AND the master `memory.enabled` switch is on. Gates the
-   * FAILURE/CORRECTED→`recordFailure` accrual (itself corroboration-gated, FORGET-03;
-   * STAYS wired behind the one flag — M-1).
+   * FAILURE/CORRECTED→`recordFailure` accrual (itself corroboration-gated;
+   * wired behind the one collapsed flag).
    */
   learningForgettingEnabled: (agentId: string) => boolean;
   /**
-   * The sole @comis/memory learned-skill adapter (the SURFACE-04/05 promote/demote
+   * The sole @comis/memory learned-skill adapter (the promote/demote
    * write target). The daemon is the ONLY place holding BOTH this AND
-   * `OutcomeSignalPort.resolve()` (the agent↛memory cut). OPTIONAL — when absent (a
-   * pre-Plan-05 caller, or learning disabled) the promote/demote loop is a no-op
+   * `OutcomeSignalPort.resolve()` (the agent↛memory cut). OPTIONAL — when absent
+   * (e.g. learning disabled) the promote/demote loop is a no-op
    * (byte-identical). Injected from setup-memory.ts where it is already constructed.
    */
   learnedSkillStore?: MentalModelStorePort;
   /**
-   * Per-agent learned-skill promote/demote enable (SURFACE-04/05): true ONLY when the
-   * agent has `learning.enabled` (M-1 — the ONE collapsed flag) AND the master
-   * `memory.enabled` switch is on. Gates the entire promote/demote loop (STAYS wired
+   * Per-agent learned-skill promote/demote enable: true ONLY when the
+   * agent has `learning.enabled` (the ONE collapsed flag) AND the master
+   * `memory.enabled` switch is on. Gates the entire promote/demote loop (wired
    * behind the one flag). With `memory.enabled:false` → no promote/demote/emit (byte-identical).
    */
   learningSkillsEnabled?: (agentId: string) => boolean;
   /**
-   * Per-agent promote threshold (the candidate→active transition crosses it — now
+   * Per-agent promote threshold (the candidate→active transition crosses it —
    * `learning.reflect.promoteAtProofCount`, schema default 3). Passed verbatim into
-   * `learnedSkillStore.promote(id, scope, threshold)` (the Plan 02 D2 store-side CASE gate).
+   * `learnedSkillStore.promote(id, scope, threshold)` (the store-side CASE gate).
    */
   learningSkillsPromoteAt?: (agentId: string) => number;
   /**
-   * WR-01: refresh a given agent's learned-skill SURFACE cache after a promote/demote
+   * Refresh a given agent's learned-skill SURFACE cache after a promote/demote
    * actually moved a row, so the NEXT session's prompt-skills freeze captures the new
-   * active set (SURFACE-03 next-SESSION pickup — never a mid-session mutation of an
+   * active set (next-SESSION pickup — never a mid-session mutation of an
    * already-frozen snapshot). The per-agent surface caches live in setup-agents-runtime
    * and are reached via a shared registry; this closure looks the agent's cache up and
    * fires its async refresh fire-and-forget. OPTIONAL — absent (no registry threaded, or
@@ -120,12 +121,12 @@ export interface LearningOutcomeWiringDeps {
    */
   refreshLearnedSkillSurface?: (agentId: string) => void;
   /**
-   * OUTCOME-04 conversational-breadth fallback (built in the setup-learning-judge leaf):
+   * Conversational-breadth fallback (built in the setup-learning-judge leaf):
    * the cost-gated LLM outcome-judge seam, invoked ONLY when the deterministic resolve fused
    * to `unknown` AND {@link learningOutcomeJudgeEnabled} is on — i.e. a CONVERSATIONAL turn
    * with no tool/pipeline signal. Returns the verdict's `outcome` + the CODE-capped reward
-   * (≤ 0.7) the daemon `observe()`s as a `source:"judge"` row. OPTIONAL — absent (a pre-judge
-   * caller, or the judge disabled for every agent) ⇒ the upgrade path is never entered
+   * (≤ 0.7) the daemon `observe()`s as a `source:"judge"` row. OPTIONAL — absent (no judge
+   * wired, or the judge disabled for every agent) ⇒ the upgrade path is never entered
    * (byte-identical). These three fields ARE the {@link JudgeUpgradeDeps} structural subset.
    */
   outcomeJudge?: OutcomeJudge;
@@ -140,7 +141,7 @@ const DETERMINISTIC_CONFIDENCE = 0.9;
 /** Slightly lower confidence for a content/detector-classified (non-transport) tool failure. */
 const CLASSIFIED_FAILURE_CONFIDENCE = 0.8;
 /**
- * ATTR-02: confidence for a pure skill-attribution row (memory:skill_used → observe).
+ * Confidence for a pure skill-attribution row (memory:skill_used → observe).
  * LOW + paired with `outcome:"unknown"` so the row NEVER wins resolve() fusion — it
  * carries the `used_skill_ids` column only, asserting no outcome verdict.
  */
@@ -160,7 +161,7 @@ interface OutcomeScope {
  * processed all carry agentId/traceId/sessionKey); ALS is the fallback (graph:completed
  * carries only graphId). Returns `undefined` when neither source yields an agentId AND a
  * trajectory identity (caller skips). Tenant defaults to "default" only when absent; the
- * agentId is NEVER collapsed across agents (cross-agent isolation, T-198-16).
+ * agentId is NEVER collapsed across agents (cross-agent isolation).
  */
 function resolveScope(payload: {
   agentId?: string;
@@ -203,16 +204,16 @@ function observeNonFatal(
       outcome,
       source,
       confidence,
-      // ATTR-02: thread the per-turn used-skill ids onto observe() so the
+      // Thread the per-turn used-skill ids onto observe() so the
       // used_skill_ids COLUMN is written; resolve() union-dedups across rows. Omitted
-      // (the tool/pipeline paths) ⇒ the column stays NULL, byte-identical to pre-ATTR-02.
+      // (the tool/pipeline paths) ⇒ the column stays NULL — no behavior change for those paths.
       ...(usedSkillIds !== undefined && usedSkillIds.length > 0 ? { usedSkillIds: [...usedSkillIds] } : {}),
-      // OUTCOME-06 / RANK-01 (live 2026-06-18): thread the per-turn recalled+used memory
+      // Thread the per-turn recalled+used memory
       // ids onto observe() so the recalled_ids COLUMN is written; resolve() union-dedups
       // them onto `verdict.recalledIds`, which is what the outcome-gated reward seam keys
       // on (success→recordUsage, failure/corrected→recordFailure → failure_count). Omitted
-      // (tool/pipeline/skill paths) ⇒ NULL, byte-identical. Without this carrier the
-      // outcome-gated recall reward was DORMANT (recalledIds always empty).
+      // (tool/pipeline/skill paths) ⇒ NULL. Without this carrier the outcome-gated
+      // recall reward would be dormant (recalledIds always empty).
       ...(recalledIds !== undefined && recalledIds.length > 0 ? { recalledIds: [...recalledIds] } : {}),
       observedAt: deps.clock.now(),
     })
@@ -243,9 +244,9 @@ function observeNonFatal(
     });
 }
 
-// FORGET-03 corroboration gate (failureCorroborated + its constants) lives in
+// The failure-corroboration gate (failureCorroborated + its constants) lives in
 // ./setup-learning-corroboration.js (imported + re-exported above) — extracted to keep
-// this file under the 800-line cap; the gate logic is byte-identical.
+// this file under the 800-line cap; the gate logic is unchanged.
 
 /**
  * Run one usefulness-store reward/failure write, fire-and-forget / non-fatal.
@@ -286,13 +287,13 @@ function recordNonFatal(
     });
 }
 
-// SURFACE-04/05/06: the learned-skill promote/demote loop (applySkillOutcomeTransitions
+// The learned-skill promote/demote loop (applySkillOutcomeTransitions
 // + runSkillTransition + skillGaugeKey + SkillOutcomeDeps) lives in the
 // setup-learning-skill-transitions.ts leaf (imported above) to keep this file under the
 // 800-line cap. It imports `failureCorroborated` from setup-learning-corroboration.ts
 // directly (no back-import here → no cycle).
 
-// OUTCOME-04: `maybeUpgradeWithJudge` (the unknown→judge upgrade) lives in the
+// `maybeUpgradeWithJudge` (the unknown→judge upgrade) lives in the
 // setup-learning-judge.ts leaf (imported above) to keep this file under the 800-line cap.
 
 /**
@@ -301,52 +302,53 @@ function recordNonFatal(
  *
  * Wiring:
  *  - `tool:executed`               → observe a `tool` outcome (`success===false`→failure).
- *  - `memory:skill_used`           → observe the ATTR-02 used-skill ids (attribution row).
+ *  - `memory:skill_used`           → observe the per-turn used-skill ids (attribution row).
  *  - `graph:completed` (DAG)       → observe a `pipeline` outcome, then the shared
  *                                    resolve→consume chain. (`graph:driver_lifecycle`
- *                                    is NOT observed — per-node, floods the ledger; WR-02.)
- *  - `diagnostic:message_processed` → the single-agent turn's resolve→consume (CR; the
+ *                                    is NOT observed — per-node, floods the ledger.)
+ *  - `diagnostic:message_processed` → the single-agent turn's resolve→consume (the
  *                                    common turn never fires graph:completed).
  *
- * The shared chain resolves the fused verdict, runs RANK/FORGET/SURFACE consumers,
+ * The shared chain resolves the fused verdict, runs the reward/forgetting/skill consumers,
  * emits `learning:outcome_observed` (counts/ids only), updates the fail-closed coverage
- * gauge (`resolved` counts only a non-`unknown` outcome, T-198-18), and runs at most
+ * gauge (`resolved` counts only a non-`unknown` outcome), and runs at most
  * ONCE per trajectory (a DAG turn fires BOTH completion events).
  */
 export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // Daemon-lifetime coverage gauge (resets on restart). Counts only.
   let total = 0;
   let resolved = 0;
-  // FORGET-03 corroboration tally: memoryId → the DISTINCT sessions that failed it
+  // Failure-corroboration tally: memoryId → the DISTINCT sessions that failed it
   // (within this subscriber's lifetime). A NON-deterministic failure accrues
   // `failure_count` only once this reaches ≥2 distinct sessions; a deterministic
   // failure (tool/pipeline) bypasses it. Mirrors the coverage gauge's in-process
   // counters (resets on restart) — counts/ids only, never bodies.
   const failureCorroborationTally = new Map<string, Set<string>>();
-  // SURFACE-05: a SECOND, independent daemon-lifetime corroboration tally for the
+  // A SECOND, independent daemon-lifetime corroboration tally for the
   // learned-SKILL demote path (skillId → DISTINCT failing sessions). Kept separate
   // from the memory tally above so the two write paths never alias an id. Reuses the
   // SAME failureCorroborated() gate (≥2 distinct-session OR 1 deterministic).
   const skillFailureCorroborationTally = new Map<string, Set<string>>();
-  // SURFACE-05: the in-process, daemon-lifetime decay-aware trend (the WHEN-to-demote
+  // The in-process, daemon-lifetime decay-aware trend (the WHEN-to-demote
   // decision). A corroborated failure demotes ONLY when the trend reaches WEAKENING —
-  // so a single induced failure on a well-reused procedure does NOT archive it. WR-05:
-  // its keys are scope-qualified (tenant+agent+name) by the caller (skillGaugeKey).
+  // so a single induced failure on a well-reused procedure does NOT archive it.
+  // Its keys are scope-qualified (tenant+agent+name) by the caller (skillGaugeKey).
   const skillTrend = createSkillTrendTracker();
-  // WR-01: the per-agent surface-cache refresh closure (looked up from the shared
+  // The per-agent surface-cache refresh closure (looked up from the shared
   // registry threaded via deps) — fired after a REAL promote/demote so the next
   // session sees the new active set. Undefined ⇒ no refresh (byte-identical).
   const refreshSurface = deps.refreshLearnedSkillSurface;
-  // CR (idempotency): the per-trajectory resolve-dedup set (see setup-learning-dedup.ts).
+  // Idempotency: the per-trajectory resolve-dedup set (see setup-learning-dedup.ts).
   const resolvedTrajectories = new Set<string>();
 
   /**
-   * CR: the SHARED resolve→consume chain called by BOTH the `graph:completed` (DAG)
+   * The SHARED resolve→consume chain called by BOTH the `graph:completed` (DAG)
    * and `diagnostic:message_processed` (single-agent turn) handlers — factored out so
    * the reward/forget-accrual/skill-transition logic is NOT duplicated. Runs AT MOST
    * ONCE per trajectory ({@link markTrajectoryResolved}). The caller resolves the scope
-   * from its own source (graph: ALS; diagnostic: the payload, mirroring 199 CR-02) and,
-   * for the DAG path, observes the pipeline row FIRST. Non-fatal — never throws.
+   * from its own source (graph: ALS; diagnostic: the payload, which carries the ids
+   * because the emit happens outside the ALS context) and, for the DAG path, observes
+   * the pipeline row FIRST. Non-fatal — never throws.
    */
   function resolveAndConsume(scope: OutcomeScope, resolveStart: number): void {
     // Dedup FIRST (synchronous check-and-mark before the async resolve) so a
@@ -367,7 +369,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           );
           return;
         }
-        // OUTCOME-04: an `unknown` deterministic verdict (a CONVERSATIONAL turn with no
+        // An `unknown` deterministic verdict (a CONVERSATIONAL turn with no
         // tool/pipeline signal) gets ONE cheap-model judge pass as the fallback source;
         // a non-`unknown` verdict is returned unchanged (the judge never runs). The
         // dedup already ran at the top — this is the SAME chain (no second chain).
@@ -375,14 +377,14 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         // Fail-closed coverage: an `unknown` verdict is NOT counted as resolved.
         if (verdict.outcome !== "unknown") resolved += 1;
 
-        // ---- RANK-01 / FORGET-02 reward/failure write (the agent↛memory cut: the
+        // ---- Reward/failure write (the agent↛memory cut: the
         // daemon holds BOTH this verdict AND the usefulness adapter). intent OMITTED →
         // the global '' bucket; an `unknown` verdict writes NOTHING (fail-closed). ----
         let failureAccrued = 0;
         if (verdict.outcome === "success") {
           if (deps.learningTuningEnabled(scope.agentId) && verdict.recalledIds.length > 0) {
             const rewardScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
-            // IN-01: ONE batched reward write for ALL recalled ids (the store loops in
+            // ONE batched reward write for ALL recalled ids (the store loops in
             // one transaction); the FAILURE branch below stays per-id (gated per memory).
             recordNonFatal(deps, scope.agentId, "reward", () =>
               deps.usefulnessStore.recordUsage(verdict.recalledIds, [], rewardScope),
@@ -392,7 +394,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           if (deps.learningForgettingEnabled(scope.agentId)) {
             const failScope = { tenantId: scope.tenantId, agentId: scope.agentId, now: deps.clock.now() };
             for (const mid of verdict.recalledIds) {
-              // FORGET-03 gate: accrue ONLY when corroborated (≥2 independent sessions
+              // Corroboration gate: accrue ONLY when corroborated (≥2 independent sessions
               // OR 1 deterministic source); past it the accrual is UNCONDITIONAL (no
               // daemon-side proof/trust read — the eviction exemption is store-side).
               if (failureCorroborated(mid, scope.sessionId, verdict.sources, failureCorroborationTally)) {
@@ -405,11 +407,11 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           }
         }
 
-        // ---- SURFACE-04/05/06 learned-SKILL promote/demote: iterate the ATTR-02
+        // ---- Learned-SKILL promote/demote: iterate the attributed
         // verdict.usedSkillIds — `success` PROMOTES each; a corroborated failure
         // DEMOTES only when the decay-aware trend reaches WEAKENING (anti-induced).
         // Gated default-OFF / no-store ⇒ byte-identical. AWAITS the store to read
-        // rows-changed so a 0-row write does NOT inflate the counters (CR-01). ----
+        // rows-changed so a 0-row write does NOT inflate the counters. ----
         if (
           deps.learnedSkillStore !== undefined &&
           deps.learningSkillsEnabled?.(scope.agentId) === true
@@ -437,7 +439,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         // When corroborated failures accrued (failure_count++) this resolve, emit the
         // eviction-causation precursor (count only, bridged for comis explain) so "why did/didn't
         // this memory evict" has an event trail — not just a DB column that changes over time. The
-        // accrual is already FORGET-03 corroboration-gated above.
+        // accrual is already corroboration-gated above.
         if (failureAccrued > 0) {
           deps.eventBus.emit("learning:memory_failure_attributed", {
             agentId: scope.agentId,
@@ -446,7 +448,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           });
         }
 
-        // OBS-01/02: one INFO completion line per resolve with durationMs + the
+        // One INFO completion line per resolve with durationMs + the
         // running coverage gauge + the corroborating `sources` (counts/ids only).
         deps.logger.info(
           {
@@ -460,7 +462,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           },
           "Outcome resolved for trajectory",
         );
-        // OBS-01 DEBUG: the corroboration outcome (counts only) so the gate decision is
+        // DEBUG: the corroboration outcome (counts only) so the gate decision is
         // reconstructable — recalled vs accrued. Never alpha values / memory bodies.
         deps.logger.debug(
           {
@@ -486,7 +488,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
       });
   }
 
-  // ---- Deterministic tool signal (the only source that ships ACTIVE, OUTCOME-03) ----
+  // ---- Deterministic tool signal (the only source that ships ACTIVE) ----
   deps.eventBus.on("tool:executed", (p) => {
     // Byte-identity short-circuit (default OFF) — observe NOTHING.
     const agentId = p.agentId ?? tryGetContext()?.agentId;
@@ -508,8 +510,8 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     void observeNonFatal(deps, scope, outcome, "tool", confidence);
   });
 
-  // ---- ATTR-02 skill-use attribution write-back (the loop-close, Plan 07) ----
-  // The agent emits `memory:skill_used` (Plan 03) after a turn whose `read` matched a
+  // ---- Skill-use attribution write-back ----
+  // The agent emits `memory:skill_used` after a turn whose `read` matched a
   // frozen learned-skill `<location>` — the per-turn used-skill ids (counts/ids only,
   // the memory:recall_used precedent). The daemon is the ONLY place holding BOTH the
   // bus AND the @comis/memory store (the agent↛memory cut), so the daemon does the
@@ -534,13 +536,13 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, p.usedSkillIds);
   });
 
-  // ---- OUTCOME-06 / RANK-01 recall-use attribution write-back (live 2026-06-18) ----
+  // ---- Recall-use attribution write-back ----
   // The executor emits `memory:recall_used` after a turn (executor-post-execution.ts) with
   // the recalled+used memory ids. wireMemoryUsefulness consumes it for the CORROBORATING
-  // usage feed (used_count) — but nothing wrote those ids onto the OUTCOME ledger, so
-  // `verdict.recalledIds` was ALWAYS empty and the PRIMARY outcome-gated reward seam
-  // (resolve → success:recordUsage / failure:recordFailure→failure_count) was DORMANT.
-  // Mirror the ATTR-02 skill-use carrier: a neutral `explicit`/`unknown` row (NEVER wins
+  // usage feed (used_count) — but without this handler nothing writes those ids onto the
+  // OUTCOME ledger, so `verdict.recalledIds` stays empty and the PRIMARY outcome-gated
+  // reward seam (resolve → success:recordUsage / failure:recordFailure→failure_count) is
+  // dormant. Mirror the skill-use carrier: a neutral `explicit`/`unknown` row (NEVER wins
   // resolve() fusion — the deterministic tool/pipeline rows outrank it) that carries the
   // recalled ids so the recalled_ids COLUMN is written and resolve() union-dedups them.
   // Default-OFF via `learningOutcomeEnabled` (byte-identical when off); a non-empty
@@ -554,9 +556,9 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, undefined, p.usedIds);
   });
 
-  // NB: `graph:driver_lifecycle` is intentionally NOT subscribed (WR-02) — it is
+  // NB: `graph:driver_lifecycle` is intentionally NOT subscribed — it is
   // PER NODE, so observing it floods the ledger with O(nodes) `pipeline` rows and
-  // amplifies the WR-01 fusion non-determinism. `graph:completed` is the SINGLE
+  // makes the resolve() fusion order-dependent. `graph:completed` is the SINGLE
   // trajectory-level pipeline signal.
 
   // ---- DAG pipeline signal: observe the pipeline row FIRST (visible to the resolve),
@@ -578,13 +580,13 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     );
   });
 
-  // ---- CR: single-agent turn completion → resolve via the per-turn PAYLOAD ----
-  // graph:completed fires ONLY for DAG runs, so a single-agent turn never resolved —
-  // its tool:executed + memory:skill_used rows (keyed on traceId) went unresolved.
-  // diagnostic:message_processed fires once per turn for single-agent turns too
-  // (execution-pipeline.ts) and carries agentId/sessionKey/traceId on its PAYLOAD — so
-  // resolve keys off the payload NOT the ALS (the emit is outside runWithContext;
-  // mirrors 199 CR-02). The trajectoryId is the payload traceId = the SAME key the
+  // ---- Single-agent turn completion → resolve via the per-turn PAYLOAD ----
+  // graph:completed fires ONLY for DAG runs, so without this handler a single-agent turn
+  // never resolves — its tool:executed + memory:skill_used rows (keyed on traceId) go
+  // unresolved. diagnostic:message_processed fires once per turn for single-agent turns
+  // too (execution-pipeline.ts) and carries agentId/sessionKey/traceId on its PAYLOAD — so
+  // resolve keys off the payload NOT the ALS (the emit is outside runWithContext).
+  // The trajectoryId is the payload traceId = the SAME key the
   // tool/skill observe() wrote, so resolve finds the rows. NO pipeline observe; an
   // absent traceId → skip (fail-closed); the dedup makes a both-events DAG turn resolve once.
   deps.eventBus.on("diagnostic:message_processed", (p) => {
@@ -594,15 +596,14 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     resolveAndConsume(scope, deps.clock.now());
   });
 
-  // ---- SURFACE-ADMIT (live-2026-06-18): refresh the per-agent surface the MOMENT a
+  // ---- Refresh the per-agent surface the MOMENT a
   // reflection run ADMITS a doc. Without this a freshly-admitted candidate stays invisible
   // until the next daemon boot — and promotion is USE-gated (the agent must SEE the skill to
   // use it), so the post-promote/demote refresh can NEVER fire: a second-order deadlock that
   // leaves a learned skill permanently dormant on a long-running daemon. `reflect:admitted.count`
-  // IS the admitted count (events-learning.ts emits v.admitted; RENAMED from
-  // learning:skill_synthesized in Phase 226). NOT gated by learningOutcomeEnabled (this is a
-  // SKILLS signal); refreshSurface is undefined when no registry is wired ⇒ byte-identical no-op.
-  // Mirrors the post-promote/demote refresh. ----
+  // IS the admitted count (events-learning.ts emits v.admitted). NOT gated by
+  // learningOutcomeEnabled (this is a SKILLS signal); refreshSurface is undefined when no
+  // registry is wired ⇒ byte-identical no-op. Mirrors the post-promote/demote refresh. ----
   deps.eventBus.on("reflect:admitted", (p) => {
     if (p.count > 0) refreshSurface?.(p.agentId);
   });
@@ -627,7 +628,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
       // One INFO line per correction that credits ≥1 skill — the re-resolve is OTHERWISE silent until
       // the 3rd corroborated correction actually demotes (anti-flap), so a single real correction
       // couldn't be confirmed live. Counts/ids only — the skill COUNT, never the procedure body/id-list
-      // (the §2.7 / SEC-01 firewall). Rare + load-bearing (a user correction feeding the demote gate is
+      // (memory bodies never reach the logs). Rare + load-bearing (a user correction feeding the demote gate is
       // the acute signal), so INFO (not DEBUG) — diagnosability must not depend on logLevel:debug having
       // been set before the incident.
       deps.logger.info(
@@ -668,16 +669,15 @@ export interface SetupLearningOutcomeDeps {
   eventBus: TypedEventBus;
   outcomeStore: OutcomeSignalPort;
   /**
-   * The recall-utility usefulness adapter (RANK-01/FORGET-02 reward/failure write
+   * The recall-utility usefulness adapter (the reward/failure write
    * target). Already constructed in setup-memory.ts; threaded through here so the
    * agent never imports the store (closed graph).
    */
   usefulnessStore: MemoryUsefulnessStore;
   /**
-   * The learned-skill adapter (SURFACE-04/05 promote/demote write target). Already
+   * The learned-skill adapter (the promote/demote write target). Already
    * constructed in setup-memory.ts; threaded through here so the agent never imports
-   * the store (closed graph). Folded onto the existing call so setup-memory.ts stays
-   * net-zero on lines.
+   * the store (closed graph).
    */
   learnedSkillStore: MentalModelStorePort;
   clock: ClockPort;
@@ -685,7 +685,7 @@ export interface SetupLearningOutcomeDeps {
   /** The parsed app config — the source of the master cost switch + per-agent flag. */
   config: AppConfig;
   /**
-   * WR-01: the shared per-agent learned-skill SURFACE registry (created in daemon.ts,
+   * The shared per-agent learned-skill SURFACE registry (created in daemon.ts,
    * also threaded into setupAgents where each agent registers its refresh closure). The
    * resolve-seam promote/demote loop calls `refresh(agentId)` on it after a real
    * transition so the next session sees the new active set. OPTIONAL — absent ⇒ no
@@ -693,7 +693,7 @@ export interface SetupLearningOutcomeDeps {
    */
   learnedSkillSurfaceRegistry?: import("./setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry;
   /**
-   * OUTCOME-04: the cost-gated LLM outcome-judge fallback (built in the setup-learning-judge
+   * The cost-gated LLM outcome-judge fallback (built in the setup-learning-judge
    * leaf via `buildOutcomeJudgeWiring`, called from setup-memory.ts). OPTIONAL — when absent
    * (no agent has the judge on / no cheap-model key) the upgrade path is never entered.
    */
@@ -708,14 +708,12 @@ export interface SetupLearningOutcomeDeps {
  * Composition helper: compute the per-agent BYTE-IDENTITY enable gates from the
  * parsed config and stand up {@link wireLearningOutcome}.
  *
- * Every gate force-disables on the master cost switch
- * (`memory.enabled !== false` — renamed from costFeatures.enabled in Phase 226,
- * OUTCOME-09) AND requires the agent's own learning flag. Phase 226 / M-1 COLLAPSED
- * the four former per-feature flags (learningOutcome / learningTuning / learningForgetting /
- * learningSkills `.enabled`) into the ONE `learning.enabled` gate — the RANK-01 reward,
- * FORGET-02 accrual, and SURFACE-04 promote/demote WRITES all STAY wired, just behind the
- * single flag. With `memory.enabled:false` every gate is `false` for every agent → the
- * subscriber observes/resolves/emits/writes NOTHING → ranking/recall/replies are byte-identical.
+ * Every gate force-disables on the master cost switch (`memory.enabled !== false`)
+ * AND requires the agent's own learning flag. The ONE `learning.enabled` gate covers
+ * all four learning writes (outcome observe/resolve, reward, forgetting accrual, skill
+ * promote/demote) — there is deliberately no per-feature split. With
+ * `memory.enabled:false` every gate is `false` for every agent → the subscriber
+ * observes/resolves/emits/writes NOTHING → ranking/recall/replies are byte-identical.
  */
 export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void {
   // Master cost kill-switch: read defensively (`!== false`) so an absent block
@@ -724,10 +722,9 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
   // Hoist the typed agents map once (mirrors setup-schedulers.ts:107) so the per-agent
   // lookup is a bracket access on a known Record (not a dynamic optional-chain sink).
   const agents = deps.config.agents ?? {};
-  // M-1 (Phase 226): the single collapsed learning gate. The four reward/promote WRITES that
-  // were independently gated (each default-ON behind costFeatures) now share this one flag
-  // (default-ON `learning.enabled` under default-ON `memory.enabled`) — net enablement matches
-  // the prior opt-out posture; the per-feature split is gone by design (D-01).
+  // The single collapsed learning gate: the four reward/promote WRITES all share this
+  // one flag (`learning.enabled` under default-ON `memory.enabled`) — the per-feature
+  // split is deliberately absent.
   const learningEnabled = (agentId: string): boolean =>
     costFeaturesEnabled && agents[agentId]?.learning?.enabled === true;
   wireLearningOutcome({
@@ -737,20 +734,20 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
     learnedSkillStore: deps.learnedSkillStore,
     clock: deps.clock,
     logger: deps.logger,
-    learningOutcomeEnabled: learningEnabled, // the observe/resolve/emit subscriber (Phase 198)
-    learningTuningEnabled: learningEnabled, // RANK-01 SUCCESS→reward write — STAYS wired
-    learningForgettingEnabled: learningEnabled, // FORGET-02 FAILURE→failure_count accrual — STAYS wired
-    // SURFACE-04/05: the learned-skill promote/demote gate — STAYS wired behind the one flag +
-    // the per-agent promote threshold now reads learning.reflect.promoteAtProofCount.
+    learningOutcomeEnabled: learningEnabled, // the observe/resolve/emit subscriber
+    learningTuningEnabled: learningEnabled, // SUCCESS→reward write
+    learningForgettingEnabled: learningEnabled, // FAILURE→failure_count accrual
+    // The learned-skill promote/demote gate — behind the one flag; the per-agent
+    // promote threshold reads learning.reflect.promoteAtProofCount.
     learningSkillsEnabled: learningEnabled,
     learningSkillsPromoteAt: (agentId: string): number =>
       agents[agentId]?.learning?.reflect?.promoteAtProofCount ?? 3,
-    // WR-01: route a post-transition re-refresh to the agent's surface cache (a no-op
+    // Route a post-transition re-refresh to the agent's surface cache (a no-op
     // for an unregistered/default-off agent). Undefined registry ⇒ undefined closure.
     refreshLearnedSkillSurface: deps.learnedSkillSurfaceRegistry
       ? (agentId: string): void => deps.learnedSkillSurfaceRegistry!.refresh(agentId)
       : undefined,
-    // OUTCOME-04: the conversational-breadth LLM-judge fallback (built in setup-memory via
+    // The conversational-breadth LLM-judge fallback (built in setup-memory via
     // buildOutcomeJudgeWiring). Absent ⇒ the upgrade path is never entered (byte-identical).
     outcomeJudge: deps.outcomeJudge,
     learningOutcomeJudgeEnabled: deps.learningOutcomeJudgeEnabled,

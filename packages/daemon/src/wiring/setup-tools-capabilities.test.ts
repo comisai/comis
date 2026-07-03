@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Neighbor test for makeCreateAgentRpcCall (extracted from setup-tools.ts,
- * Phase 210 CAP-03 file-size cap). Asserts the agent-scoped rpcCall builder
+ * Neighbor test for makeCreateAgentRpcCall (extracted from setup-tools.ts
+ * for the file-size cap). Asserts the agent-scoped rpcCall builder
  * injects _agentId + the resolved _capabilities (from resolveAutonomy) plus the
  * caller's session/delivery/channel context into every forwarded RPC call, and
  * resolves a zero-config agent through the default-agent fallback.
@@ -44,7 +44,7 @@ vi.mock("@comis/core", () => ({
       mode: profileToMode[profile] ?? "accept-reversible",
     };
   }),
-  // PROFILE-05/JAIL-03: buildAutonomyToolWiring (loaded via the setup-tools chain)
+  // buildAutonomyToolWiring (loaded via the setup-tools chain)
   // degrades the resolved posture via degradeAutonomy before gating orchestrate.
   // This seam never passes namespacePreflightOk (→ defaults true → no-op), so a
   // pass-through is faithful; the real fn is unit-tested in schema-agent-autonomy.test.ts.
@@ -77,7 +77,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
   });
 
   // -------------------------------------------------------------------------
-  // ORIGIN-01 trust-tier (30uc-20260624): the in-process leg re-injects the run's
+  // Trust-tier re-injection: the in-process leg re-injects the run's
   // REAL per-message trust from the framework ALS as a forgery-proof _trustLevel —
   // the deny-by-origin chokepoint reads it to let an ADMIN-trust agent reach admin
   // methods (and deny a guest/user one). Injected AFTER `...params` so a tool- or
@@ -117,10 +117,10 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
   });
 
   // -------------------------------------------------------------------------
-  // Phase 217 (UNATT-01 / EVICT-02): the in-process leg injects the trusted
+  // The in-process leg injects the trusted
   // _autonomyMode from the SAME resolveAutonomy call that yields _capabilities.
-  // This is the forgery-proof channel the Wave-2 chokepoint reads to learn the
-  // run's mode (a forged inbound value is stripped by INTERNAL_FIELD_NAMES first).
+  // This is the forgery-proof channel the unattended-mode chokepoint reads to learn
+  // the run's mode (a forged inbound value is stripped by INTERNAL_FIELD_NAMES first).
   // -------------------------------------------------------------------------
 
   it("injects _autonomyMode:'unattended' for an agent whose autonomy resolves the unattended mode", async () => {
@@ -160,7 +160,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
 
   it("sources _autonomyMode and _capabilities from ONE resolve call (a zero-config agent gets the standard default mode)", async () => {
     // A zero-config agent (no autonomy block) resolves to the standard posture for
-    // BOTH caps and mode — one source of truth, no divergence (T-217-11).
+    // BOTH caps and mode — one source of truth, no divergence.
     currentCtx = undefined;
     const rpcCall = vi.fn(async () => "ok");
     const create = makeCreateAgentRpcCall({
@@ -223,7 +223,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
   });
 
   // -------------------------------------------------------------------------
-  // Phase 216 (HIGH-1 / NEW-4): the in-process leg allocates a monotonic
+  // The in-process leg allocates a monotonic
   // _outwardStepIndex for an OUTWARD message method. Without it, an in-process
   // agent-loop message.send is an un-ledgered pass-through and a second send in
   // one run would collide on (rootRunId, 0) and be silently dropped.
@@ -246,7 +246,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     };
   }
 
-  it("NEW-4: an in-process-leg outward send (with a sessionKey) gets a real _outwardStepIndex (not absent → not a silent pass-through)", async () => {
+  it("an in-process-leg outward send (with a sessionKey) gets a real _outwardStepIndex (not absent → not a silent pass-through)", async () => {
     currentCtx = { sessionKey: "tenant-x:chan-y:user-z" };
     const rpcCall = vi.fn(async () => "ok");
     const { durableRuns } = makeAllocStore();
@@ -265,7 +265,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     expect(durableRuns.allocateOutwardStep).toHaveBeenCalledWith("root-IP");
   });
 
-  it("HIGH-1: two distinct outward sends in one run get _outwardStepIndex 0 then 1 (NOT 0,0)", async () => {
+  it("two distinct outward sends in one run get _outwardStepIndex 0 then 1 (NOT 0,0)", async () => {
     currentCtx = { sessionKey: "tenant-x:chan-y:user-z" };
     const rpcCall = vi.fn(async () => "ok");
     const { durableRuns } = makeAllocStore();
@@ -305,7 +305,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     expect(durableRuns.allocateOutwardStep).not.toHaveBeenCalled();
   });
 
-  it("is a pass-through (no index) when no durableRuns store is wired (byte-identical pre-216)", async () => {
+  it("is a pass-through (no index) when no durableRuns store is wired (the default install)", async () => {
     currentCtx = { sessionKey: "tenant-x:chan-y:user-z" };
     const rpcCall = vi.fn(async () => "ok");
     // No durableRuns / resolveRootRunId — the default install.

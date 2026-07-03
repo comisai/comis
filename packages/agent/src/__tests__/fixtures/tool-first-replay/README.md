@@ -1,6 +1,6 @@
 # Tool-First Replay Fixture
 
-Reproduces the v1 failure mode (model installs `pip install market-data-lib` despite a connected `finance-data` MCP server) so downstream tests can drive red tests against a deterministic, provider-neutral surface.
+Reproduces the tool-first failure mode (model installs `pip install market-data-lib` despite a connected `finance-data` MCP server) so downstream regression tests can run against a deterministic, provider-neutral surface.
 
 ## Canonical test invocation
 
@@ -16,13 +16,13 @@ For unit-test loops on this package only:
 pnpm --filter @comis/agent build && pnpm --filter @comis/agent test
 ```
 
-> WARNING: repeating because CLAUDE.md repeats it twice and we paid for skipping it before: integration tests run against `dist/`, not `src/`. If a test passes after editing only `src/`, you forgot `pnpm build`.
+> WARNING: worth repeating: integration tests run against `dist/`, not `src/`. If a test passes after editing only `src/`, you forgot `pnpm build`.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `messages.json` | pi-ai `Message[]` log of the v1 failure scenario. |
+| `messages.json` | pi-ai `Message[]` log of the recorded failure scenario. |
 | `tooling-config.yaml` | Operator YAML (`finance-data` MCP hint with `replacesPackages`). |
 | `stub-mcp-server.ts` | Programmatic 10-tool stub with `setConnected(bool)` toggle. |
 | `fixture.test.ts` | Smoke test asserting fixture loads cleanly + invariants. |

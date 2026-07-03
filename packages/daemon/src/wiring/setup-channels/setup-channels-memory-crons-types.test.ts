@@ -19,8 +19,8 @@ describe("memory-cron sentinel shared types", () => {
     >();
   });
 
-  it("MemoryCronContext exposes the usefulnessStore (WIRE-02 write) + tripleStore (WIRE-01 write)", () => {
-    // The two stores the WS7-wired sentinels drive must be present on the context the
+  it("MemoryCronContext exposes the usefulnessStore + tripleStore write surfaces", () => {
+    // The two stores the wired sentinels drive must be present on the context the
     // dispatcher passes (optional — injected from setup-memory; absent → clean error).
     expectTypeOf<MemoryCronContext>().toHaveProperty("usefulnessStore");
     expectTypeOf<MemoryCronContext>().toHaveProperty("tripleStore");

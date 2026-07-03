@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Read-time contradiction guidance (design §7.3). A PURE formatter
- * over {@link MemorySearchResult}[] that returns the design-§7.3 guidance block — a FIXED
+ * Read-time contradiction guidance. A PURE formatter
+ * over {@link MemorySearchResult}[] that returns the contradiction-guidance block — a FIXED
  * constant string — iff >=2 memories are surfaced for a query, else `undefined`.
  *
  * The block is INJECTED TEXT that tells the agent HOW to resolve a surfaced contradiction
@@ -57,7 +57,7 @@ const TEMPORAL_GUIDANCE = `## Using these memories over time
 - The current believed value of a contested fact is the higher-trust one; an older superseded value is not deleted — it still exists as history (the value that was believed true as of a past time) but it is not the current answer.`;
 
 /**
- * The baseline (Option A, RESEARCH.md Open Q5 RESOLVED): the co-retrieved recall set
+ * The baseline topic gate: the co-retrieved recall set
  * IS the "same topic" signal — all results were surfaced for the same query, so >=2 of them
  * means there is a contradiction worth guiding the LLM about. A later iteration TIGHTENS this seam
  * with resolved-entity overlap (two memories that share a resolved entity), once the entity
@@ -68,7 +68,7 @@ function sharesTopic(results: MemorySearchResult[]): boolean {
 }
 
 /**
- * Build the read-time §7.3 contradiction guidance block. Returns the FIXED block string when
+ * Build the read-time contradiction guidance block. Returns the FIXED block string when
  * `sharesTopic(results)` holds (>=2 surfaced memories, the conflict gate), else
  * `undefined` (no block — nothing to disambiguate). Pure and non-mutating: it reads only
  * `results.length` and never touches the entries (no content echo).

@@ -300,7 +300,7 @@ function createMockDeps(opts?: {
 }
 
 // ---------------------------------------------------------------------------
-// Tests: Task 1 — init, commit, checkDirty, auto-reinit, best-effort
+// Tests: init, commit, checkDirty, auto-reinit, best-effort
 // ---------------------------------------------------------------------------
 
 describe("config/git-manager", () => {
@@ -362,10 +362,10 @@ describe("config/git-manager", () => {
     });
 
     it("creates its own nested repo when configDir lives inside an unrelated parent repo", async () => {
-      // Regression: prior code probed with `git status`, which walks
-      // ancestors and silently treated the parent project's .git as ours.
-      // Result: agents.create / agents.delete during integration tests
-      // committed to the project's main branch. configDir is /test/config;
+      // Probing with `git status` would walk ancestors and silently treat
+      // the parent project's .git as ours — agents.create / agents.delete
+      // would then commit to the surrounding project's branch. The probe
+      // must exact-match the toplevel instead. configDir is /test/config;
       // simulate a parent repo at /test by reporting that as toplevel.
       const { deps, calls } = createMockDeps({ toplevel: "/test" });
 
@@ -759,7 +759,7 @@ describe("config/git-manager", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Tests: Task 2 — history, diff, rollback
+  // Tests: history, diff, rollback
   // -----------------------------------------------------------------------
 
   describe("history()", () => {

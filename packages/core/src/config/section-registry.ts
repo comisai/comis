@@ -80,9 +80,9 @@ export interface ManagedSectionRedirect {
    * fields fit in < 20 lines of hint text. Verified against the tool's
    * TypeBox parameter schema as of this commit.
    *
-   * Bug B: production trace c7b91328 showed the agent burning
-   * ~30s × 4 LLM calls re-loading the agents_manage schema after an
-   * immutable-path rejection. Surfacing the fragment inline closes that
+   * Without the inline fragment, an agent hitting an immutable-path
+   * rejection has been observed burning ~30s × 4 LLM calls re-loading the
+   * agents_manage schema. Surfacing the fragment inline closes that
    * round-trip tax.
    */
   schemaFragment?: {
@@ -140,11 +140,11 @@ export interface SectionRegistryEntry {
  *   autoReplyEngine, sendPolicy, embedding, envelope, tooling, orchestration.
  * The 7 fieldMetadata-only entries (plugins → envelope) are inserted between
  * `diagnostics` and `tooling` so both filtered subsequences are stable.
- * `orchestration` (both views, gated-off Phase 174) is appended last after
+ * `orchestration` (both views, gated-off by default) is appended last after
  * `tooling`, so it extends both subsequences consistently with insertion order.
  */
 export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = Object.freeze({
-  // The 11 common (both views) at the head — matches both legacy orders up to index 9, then diagnostics at index 10.
+  // The 11 common (both views) at the head — both filtered subsequences share indexes 0-9, then diagnostics at index 10.
   agents: {
     schema: PerAgentConfigSchema,
     schemaSerializable: true,
@@ -307,11 +307,11 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
   },
   envelope: { schema: EnvelopeConfigSchema, schemaSerializable: false, fieldMetadataVisible: true },
 
-  // Tooling is the last entry in BOTH legacy orderings — placed before
-  // orchestration so both filtered subsequences keep it adjacent to the tail.
+  // Tooling sits at the tail of BOTH filtered subsequences — placed before
+  // orchestration so each keeps it adjacent to the tail.
   tooling: { schema: ToolingConfigSchema, schemaSerializable: true, fieldMetadataVisible: true },
 
-  // Orchestration authoring gate (Phase 174 / v2.27 P2). Both views (like
+  // Orchestration authoring gate. Both views (like
   // tooling/approvals); plain boolean flags, so NO managedRedirect (it carries
   // no managed write surface). Appended last so it extends BOTH the
   // schemaSerializable and fieldMetadataVisible subsequences consistently.
@@ -328,8 +328,8 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
  * then sorted longest-prefix-first.
  *
  * Order here is irrelevant; managed-sections.ts performs the longest-prefix
- * sort. We list them in the same order as the legacy managed-sections.ts
- * for git-blame friendliness.
+ * sort. The listing order is arbitrary and kept stable for git-blame
+ * friendliness.
  */
 const SUB_PATH_MANAGED_REDIRECTS_LITERAL: readonly ManagedSectionRedirect[] = [
   {

@@ -27,17 +27,17 @@ export interface CompactionLayerDeps {
   getApiKey: () => Promise<string>;
   /** Optional: resolved override model + apiKey for cheaper compaction.
    *  When provided, compaction uses this model instead of the session model.
-   *  INT-W1: `servedWindow` is the provider-served window binding THIS override
+   *  `servedWindow` is the provider-served window binding THIS override
    *  model, provider-gated at the wiring site (executor-context-engine-setup)
-   *  against the Phase-176 `servedContextWindow` pair — see the identical
+   *  against the probed `servedContextWindow` pair — see the identical
    *  fields on `LeafSummarizerDeps` (lcd-leaf-summarizer.ts). */
   overrideModel?: { model: unknown; getApiKey: () => Promise<string>; servedWindow?: number };
-  /** INT-W1: the provider-served window binding the PRIMARY (session) model —
+  /** The provider-served window binding the PRIMARY (session) model —
    *  `windowProvenance.served`, already provider-gated by the executor
-   *  reconcile (WR-02). Consumed by the Step-4 model read in llm-compaction:
+   *  reconcile. Consumed by the Step-4 model read in llm-compaction:
    *  the served value is selected in the SAME branch that selects the
    *  summarizer model, so clamp and call always agree. Absent ⇒ configured
-   *  window governs (byte-identical pre-INT-W1 behavior). */
+   *  window governs. */
   primaryServedWindow?: number;
   /** Optional callback for reporting compaction stats. */
   onCompacted?: (stats: { fallbackLevel: 1 | 2 | 3; attempts: number; originalMessages: number; keptMessages: number }) => void;
@@ -47,7 +47,7 @@ export interface CompactionLayerDeps {
   /** Optional getter for the API-grounded token anchor.
    *  When provided, compaction threshold check uses anchor + delta instead of pure char estimation. */
   getTokenAnchor?: () => TokenAnchor | null;
-  /** Optional event bus for emitting context:compaction_routed (C4/S4). */
+  /** Optional event bus for emitting context:compaction_routed. */
   eventBus?: TypedEventBus;
   /** Optional agent id for context:compaction_routed event payload. */
   agentId?: string;

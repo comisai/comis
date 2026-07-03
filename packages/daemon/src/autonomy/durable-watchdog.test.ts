@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the durable watchdog (HB-01 / DUR-04): the pure lapsed-heartbeat
- * detector. RED-first — `detectStaleRuns` (and the two default constants) do not
- * exist yet, so this file fails to import before the patch.
+ * Tests for the durable watchdog: the pure lapsed-heartbeat detector.
  *
- * The load-bearing properties (Pitfall 4 — a too-tight threshold caused premature
- * failover + duplicate delivery, the ANNOUNCE_PARENT_TIMEOUT_MS 30s lesson):
+ * The load-bearing properties (a too-tight threshold causes premature failover +
+ * duplicate delivery — the ANNOUNCE_PARENT_TIMEOUT_MS 30s lesson):
  *   - only RUNNING runs past a STRICT staleHeartbeatMs threshold are flagged;
  *   - a fresh heartbeat is never a false-positive failover;
  *   - the boundary is exclusive (strict `<`);
@@ -39,7 +37,7 @@ function run(
   };
 }
 
-describe("detectStaleRuns (HB-01)", () => {
+describe("detectStaleRuns lapsed-heartbeat detection", () => {
   const NOW = 1_000_000;
   const STALE_MS = 120_000;
 

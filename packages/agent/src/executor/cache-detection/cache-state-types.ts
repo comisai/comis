@@ -90,17 +90,17 @@ export interface CacheBreakEvent {
   agentId: string;
   sessionKey: string;
   timestamp: number;
-  /** DIFF-CONTENT: Serialized previous system prompt content for diff generation. */
+  /** Serialized previous system prompt content for diff generation. */
   previousSystem?: string;
-  /** DIFF-CONTENT: Serialized current system prompt content for diff generation. */
+  /** Serialized current system prompt content for diff generation. */
   currentSystem?: string;
-  /** DIFF-CONTENT: Serialized previous tools JSON for diff generation. */
+  /** Serialized previous tools JSON for diff generation. */
   previousTools?: string;
-  /** DIFF-CONTENT: Serialized current tools JSON for diff generation. */
+  /** Serialized current tools JSON for diff generation. */
   currentTools?: string;
   /** Effort value from detection pipeline for downstream consumers (diff writer, analytics). */
   effortValue?: string;
-  /** W4: Number of message blocks in the conversation. Set for lookback window detection. */
+  /** Number of message blocks in the conversation. Set for lookback window detection. */
   conversationBlockCount?: number;
   /** Breakpoint budget context at time of cache break. */
   breakpointBudget?: {
@@ -153,7 +153,7 @@ export interface CheckCacheBreakInput {
   lastResponseElapsedMs?: number;
   /** When true, API returned an error (400/429/500). Do not treat zero usage as cache break. */
   apiError?: boolean;
-  /** W4: Number of message blocks in the conversation. Used for lookback window detection. */
+  /** Number of message blocks in the conversation. Used for lookback window detection. */
   messageBlockCount?: number;
 }
 
@@ -162,7 +162,7 @@ export interface CacheBreakDetector {
   checkResponseForCacheBreak(input: CheckCacheBreakInput): CacheBreakEvent | null;
   notifyCompaction(sessionKey: string): void;
   notifyTtlExpiry(sessionKey: string): void;
-  /** G-09: Notify that content was intentionally modified (observation masking or microcompaction).
+  /** Notify that content was intentionally modified (observation masking or microcompaction).
    *  Must be called BEFORE the next checkResponseForCacheBreak(). */
   notifyContentModification(sessionKey: string): void;
   /** Alias a compaction session key to its parent session's DetectorState.

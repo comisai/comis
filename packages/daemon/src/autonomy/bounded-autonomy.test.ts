@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for the `createBoundedAutonomy` composite (Phase 213-06).
+ * Contract for the `createBoundedAutonomy` composite.
  *
- * The single chokepoint (RESEARCH §Pattern-1): ONE typed service that composes
- * the five mechanism modules built in Plans 04/05 —
- *   - the per-`rootRunId` spawn semaphore (CEIL-01, `createRootRunSemaphore`),
- *   - the per-`rootRunId` $/token/wall-clock budget meter (BUDGET-01/02/03,
- *     `createPerRootBudget`),
+ * The single chokepoint: ONE typed service that composes
+ * the five mechanism modules —
+ *   - the per-`rootRunId` spawn semaphore (`createRootRunSemaphore`),
+ *   - the per-`rootRunId` $/token/wall-clock budget meter
+ *     (`createPerRootBudget`),
  *   - the per-key sliding-window call-rate limiter + connection-churn cap
- *     (RATE-01, `createCallRateLimiter`),
- *   - the outward quota (QUOTA-01/02, `createOutwardQuota`),
+ *     (`createCallRateLimiter`),
+ *   - the outward quota (`createOutwardQuota`),
  * plus the `registerRoot` rootRunId↔leaseId correlation index and the
- * `cronCount` delegate (the named RATE-02 count source the cap endpoint reaches
+ * `cronCount` delegate (the named cron-cap count source the cap endpoint reaches
  * THROUGH this service — it has no cron store of its own).
  *
  * Every numeric cap is sourced from a single `ResolvedAutonomy` (no hard-coded
  * numbers); the service NEVER throws (it composes Result/union-returning
- * modules); all time is the injected `ClockPort`/`TimerPort` (no Date.now). The
- * Phase-215 audit reads every bound decision from here.
+ * modules); all time is the injected `ClockPort`/`TimerPort` (no Date.now).
+ * Every bound decision is auditable from this one seam.
  *
  * @module
  */
@@ -46,7 +46,7 @@ const FREE_MODEL = "llama3";
 /**
  * A minimal LeaseManager stub. The composite holds the LeaseManager for the
  * registerRoot correlation seam (and the later cascade) but its build-time
- * behavior under test does not drive it; the daemon revoke/kill RPC (Task 2)
+ * behavior under test does not drive it; the daemon revoke/kill RPC
  * is the path that calls the revoke fan-outs.
  */
 function fakeLeaseManager(): LeaseManager {
@@ -88,7 +88,7 @@ function makeService(
   return { clock, timers, config, service };
 }
 
-describe("createBoundedAutonomy — the single composite chokepoint (213-06)", () => {
+describe("createBoundedAutonomy — the single composite chokepoint", () => {
   // -------------------------------------------------------------------------
   // Test 1: composes the 5 mechanisms + exposes the typed surface
   // -------------------------------------------------------------------------
@@ -198,12 +198,12 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
-  // Test 3b (WR-01, 213-REVIEW): perSocketCallsPerSec is a DISTINCT limit from
+  // Test 3b: perSocketCallsPerSec is a DISTINCT limit from
   // perRootCallsPerSec — a single socket exceeding its own per-socket cap is
-  // denied even while well under the per-root cap. Pre-fix, tryCall applied the
-  // per-ROOT limiter to BOTH keys, so perSocketCallsPerSec was dead config.
+  // denied even while well under the per-root cap. If tryCall applied the
+  // per-ROOT limiter to BOTH keys, perSocketCallsPerSec would be dead config.
   // -------------------------------------------------------------------------
-  it("enforces perSocketCallsPerSec independently of perRootCallsPerSec (WR-01)", () => {
+  it("enforces perSocketCallsPerSec independently of perRootCallsPerSec", () => {
     const config: ResolvedAutonomy = {
       ...resolveAutonomy(),
       // Socket cap (2) STRICTLY below the root cap (10) so the socket limit is
@@ -230,10 +230,10 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
-  // Test 3c (WR-01): the per-ROOT cap still binds the whole tree's aggregate
+  // Test 3c: the per-ROOT cap still binds the whole tree's aggregate
   // across many sockets — each socket under its own cap, but the root cap trips.
   // -------------------------------------------------------------------------
-  it("the per-root cap binds the aggregate across sockets even when each socket is under its socket cap (WR-01)", () => {
+  it("the per-root cap binds the aggregate across sockets even when each socket is under its socket cap", () => {
     const config: ResolvedAutonomy = {
       ...resolveAutonomy(),
       // Root cap (3) BELOW socket cap (10): the root is the binding bound across
@@ -254,12 +254,12 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
-  // Test 3d (WR-05): releaseSpawn to zero evicts ALL per-root state at the
+  // Test 3d: releaseSpawn to zero evicts ALL per-root state at the
   // composite — the semaphore slot, the budget token/wall-clock anchor, AND the
   // leaseId correlation index — so a storm of completed roots does not grow any
   // sibling map without bound.
   // -------------------------------------------------------------------------
-  it("releaseSpawn to zero evicts the per-root budget + lease-index state at the composite (WR-05)", () => {
+  it("releaseSpawn to zero evicts the per-root budget + lease-index state at the composite", () => {
     const config: ResolvedAutonomy = {
       ...resolveAutonomy(),
       spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
@@ -288,17 +288,17 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
-  // Test 3e (KEYING-01): the per-turn re-anchor for an interactive SESSION root.
+  // Test 3e: the per-turn re-anchor for an interactive SESSION root.
   // A `root-session-*` root acquires NO spawn slot, so releaseSpawn → evictRoot
   // NEVER fires for it; its wall-clock + token anchors accumulate across the
   // WHOLE conversation, and a session alive > wallClockMs falsely aborts every
-  // subsequent turn (live finding 2026-06-24: elapsedMs 2052386 > capMs 1800000).
+  // subsequent turn (observed live: elapsedMs 2052386 > capMs 1800000).
   // `evictRootIfIdle` re-anchors an IDLE root at the turn boundary (next turn
   // measures from its own start) but is a NO-OP on a root with a LIVE spawn — so
   // the genuine runaway-TREE backstop is preserved. The $ aggregate is untouched
   // either way (evictRoot does not prune the $ accumulator → session spend cap).
   // -------------------------------------------------------------------------
-  it("evictRootIfIdle re-anchors an IDLE session root per turn (KEYING-01) but preserves a LIVE spawn's wall-clock backstop", () => {
+  it("evictRootIfIdle re-anchors an IDLE session root per turn but preserves a LIVE spawn's wall-clock backstop", () => {
     const config: ResolvedAutonomy = {
       ...resolveAutonomy(),
       spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
@@ -348,7 +348,7 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
-  // Test 5: cronCount delegates to the injected provider (the RATE-02 source)
+  // Test 5: cronCount delegates to the injected provider (the cron-cap count source)
   // -------------------------------------------------------------------------
   it("cronCount delegates to the injected cronJobCount provider, and returns 0 when no provider is wired", () => {
     // With a provider: the count comes THROUGH the service from the provider.
@@ -367,13 +367,13 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
-  // Test 6 (INTRO-01, Phase 215-02): snapshot(rootRunId, agentId, channelId)
-  // composes the two Task-1 per-module remaining() accessors + leaseIdsForRoot
+  // Test 6: snapshot(rootRunId, agentId, channelId)
+  // composes the two per-module remaining() accessors + leaseIdsForRoot
   // into the read surface `capabilities.introspect`/`whoami` reports. It is a
-  // PURE read (no gate mutation, T-215-05) and delegates — the composite already
+  // PURE read (no gate mutation) and delegates — the composite already
   // holds the budget + quota sub-modules.
   // -------------------------------------------------------------------------
-  it("snapshot() composes the per-root budget remaining + outward-quota remaining + leaseIds for the root (INTRO-01)", () => {
+  it("snapshot() composes the per-root budget remaining + outward-quota remaining + leaseIds for the root", () => {
     const config: ResolvedAutonomy = {
       ...resolveAutonomy(),
       budget: { aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 },
@@ -407,7 +407,7 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
     service.destroy();
   });
 
-  it("snapshot() is a PURE read — it does not mutate any gate (a subsequent reserve/send behaves as if snapshot was never called) (T-215-05)", () => {
+  it("snapshot() is a PURE read — it does not mutate any gate (a subsequent reserve/send behaves as if snapshot was never called)", () => {
     const config: ResolvedAutonomy = {
       ...resolveAutonomy(),
       budget: { aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 },

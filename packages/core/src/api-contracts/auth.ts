@@ -119,7 +119,7 @@ export const AuthLogoutContract = defineContract({
  * Carries a completed OAuthProfile (token-bearing) from the CLI to the daemon.
  * The daemon persists through the OAuthCredentialStorePort (file or encrypted,
  * selected by security.storage). Response is token-free — access/refresh/accountId
- * NEVER appear in the response. See §8.1 of DESIGN-credential-storage-modes.md.
+ * NEVER appear in the response (token values must not transit back over the wire).
  *
  * Residency: Zod response.parse() strips any accidentally-added fields because
  * the schema is closed (no .passthrough()). Dev-mode canary in the handler calls
@@ -158,12 +158,12 @@ export const AuthSetContract = defineContract({
  * Auth-domain contract array. Registered into
  * `API_CONTRACTS_ORDERED` by `packages/core/src/api-contracts/index.ts`.
  *
- * AUTH_CONTRACTS grows 2 → 3 with `AuthSetContract`. The bidirectional
- * architecture test (`test/architecture/api-contracts-bidirectional.test.ts`)
- * enforces handler–contract count parity automatically.
+ * The bidirectional architecture test
+ * (`test/architecture/api-contracts-bidirectional.test.ts`) enforces
+ * handler–contract count parity automatically.
  */
 export const AUTH_CONTRACTS = [
   AuthListContract,
   AuthLogoutContract,
-  AuthSetContract, // AUTH_CONTRACTS grows 2 → 3
+  AuthSetContract,
 ] as const;

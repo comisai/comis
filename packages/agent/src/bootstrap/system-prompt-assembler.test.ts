@@ -223,10 +223,11 @@ describe("buildRuntimeMetadataSection -- new fields", () => {
     expect(joined).toContain("default_model=claude-sonnet");
   });
 
-  it("excludes channel field (relocated to dynamic preamble)", () => {
+  it("excludes channel field (channel rides the dynamic preamble)", () => {
     const info: RuntimeInfo = { channel: "telegram" };
     const lines = buildRuntimeMetadataSection(info, false);
-    // channel-only info produces empty result since channel is no longer rendered
+    // channel-only info produces an empty result: channel is not rendered here
+    // (it rides the dynamic preamble instead)
     expect(lines).toEqual([]);
   });
 
@@ -423,9 +424,9 @@ describe("buildSafetySection", () => {
 });
 
 describe("buildToolingSection", () => {
-  // buildToolingSection unconditionally emits the residual one-liner. The
-  // legacy `## Available Tools` flat block + the static-prompt
-  // capability-index gate parameter have been removed.
+  // buildToolingSection unconditionally emits only a one-liner pointing at the
+  // per-turn `## Capabilities` block. There is NO static `## Available Tools`
+  // flat block and no static-prompt capability-index gate parameter.
 
   it("emits the residual one-liner pointing at the per-turn ## Capabilities block", () => {
     const lines = buildToolingSection(["read", "edit", "web_search"], "large");
@@ -435,7 +436,7 @@ describe("buildToolingSection", () => {
     expect(joined).toContain("authoritative for parameter shapes");
   });
 
-  it("does NOT emit the deleted legacy `## Available Tools` block", () => {
+  it("does NOT emit a static `## Available Tools` flat block", () => {
     const lines = buildToolingSection(["read", "edit", "web_search"], "large");
     const joined = lines.join("\n");
 
@@ -655,9 +656,8 @@ describe("assembleRichSystemPrompt -- coding tools integration", () => {
       toolNames: ["read", "edit", "write", "grep", "find", "ls", "web_search"],
     });
 
-    // The tooling block is the residual one-liner pointing at the per-turn
-    // `## Capabilities` block. The legacy `- name: summary` flat-block
-    // format was removed.
+    // The tooling block is only a one-liner pointing at the per-turn
+    // `## Capabilities` block — never a `- name: summary` flat-block listing.
     expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).not.toContain("- read: Read files, images, and PDFs with pagination");
     // No separate coding tools section
@@ -1154,14 +1154,14 @@ describe("assembleRichSystemPrompt — channelContext integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("assembleRichSystemPrompt -- toolSummaries integration", () => {
-  it("toolSummaries no longer flow into the tooling section (legacy flat block deleted)", () => {
+  it("toolSummaries do not flow into the tooling section (no static flat block)", () => {
     const result = assembleRichSystemPrompt({
       promptMode: "full",
       toolNames: ["read", "my_mcp_tool"],
       toolSummaries: { my_mcp_tool: "Custom MCP tool" },
     });
 
-    // Per-tool summaries are no longer rendered in the static prompt; they
+    // Per-tool summaries are not rendered in the static prompt; they
     // belong in the per-turn `## Capabilities` block via the dynamic preamble.
     expect(result).not.toContain("- read: Read files, images, and PDFs with pagination");
     expect(result).not.toContain("- my_mcp_tool: Custom MCP tool");
@@ -1599,8 +1599,8 @@ describe("assembleRichSystemPrompt -- inbound metadata integration", () => {
     flags: { isGroup: true },
   };
 
-  // Inbound metadata relocated to user-message preamble (prompt-assembly.ts).
-  // The assembler no longer includes these sections in the system prompt.
+  // Inbound metadata rides the user-message preamble (prompt-assembly.ts).
+  // The assembler never includes these sections in the system prompt.
 
   it("full mode excludes inbound metadata section even when inboundMeta provided", () => {
     const result = assembleRichSystemPrompt({
@@ -1916,7 +1916,7 @@ describe("buildPrivilegedToolsSection", () => {
 // ---------------------------------------------------------------------------
 // buildToolingSection — privileged tool descriptions
 //
-// Per-tool summaries (e.g. "Manage full agent fleet") are no longer rendered
+// Per-tool summaries (e.g. "Manage full agent fleet") are not rendered
 // in the static tooling section. Tool-level descriptions live in the
 // per-turn `## Capabilities` block via the dynamic preamble, and in the
 // `## Privileged Tools & Approval Gate` section when admin tools are
@@ -2427,26 +2427,22 @@ describe("Snapshot regression: operational prompt trim delta", () => {
 });
 
 // ---------------------------------------------------------------------------
-// compact-secure promptMode — C2/S1 security invariants
+// compact-secure promptMode — security invariants
 // ---------------------------------------------------------------------------
-// S1 RED gate: these tests assert that the compact-secure prompt NEVER drops
-// the safety core. They are the primary security guard against the S1 trap
-// (buildSafetySection(isMinimal=true) → []).
-//
-// Per AGENTS.md §2.6, RED+GREEN are combined in plan 152-03 because the
-// PromptMode union does not contain "compact-secure" until types.ts is patched
-// in the same plan; the pre-patch code cannot compile the tests.
+// These tests assert that the compact-secure prompt NEVER drops the safety
+// core. They are the primary security guard against the trap of calling
+// buildSafetySection(isMinimal=true), which returns [].
 
-describe("compact-secure promptMode — C2/S1 security invariants", () => {
+describe("compact-secure promptMode — security invariants", () => {
   const senderTrustEntries = [{ senderId: "u1", trustLevel: "trusted", displayId: "u1" }];
 
-  it("minimal mode DROPS safety section (confirms the S1 trap exists)", () => {
+  it("minimal mode DROPS safety section (the trap compact-secure must avoid)", () => {
     const prompt = assembleRichSystemPrompt({ promptMode: "minimal" });
     expect(prompt).not.toContain("## Safety");
   });
 
   it("compact-secure ALWAYS contains ## Safety (never uses buildSafetySection(true))", () => {
-    // S1: this is the load-bearing RED test — FAILS until implementation lands
+    // The load-bearing security guard: compact-secure must always retain the full safety core.
     const prompt = assembleRichSystemPrompt({
       promptMode: "compact-secure",
       toolNames: ["exec", "read", "memory_search"],
@@ -2488,7 +2484,7 @@ describe("compact-secure promptMode — C2/S1 security invariants", () => {
   });
 
   it("compact-secure with securityLevel=locked contains mandatory sandbox restriction line", () => {
-    // W6: assert the SPECIFIC lockdown phrase, not just locked.length > standard.length
+    // Assert the SPECIFIC lockdown phrase, not just locked.length > standard.length
     // The line is emitted by buildLockdownReinforcement() when securityLevel="locked"
     const locked = assembleRichSystemPrompt({
       promptMode: "compact-secure",
@@ -2530,10 +2526,10 @@ describe("compact-secure promptMode — C2/S1 security invariants", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-03: mode-aware cache block boundaries in assembleRichSystemPromptBlocks
+// Mode-aware cache block boundaries in assembleRichSystemPromptBlocks
 // ---------------------------------------------------------------------------
 
-describe("WR-03: computeBlockBoundaries — mode-aware cache block split", () => {
+describe("computeBlockBoundaries — mode-aware cache block split", () => {
   // Static IDs: identity, persona. Attribution IDs: safety, language.
   // In full mode: [identity, persona, safety, language, ...] → staticEnd=2, attributionEnd=4
   // In compact-secure: [identity, safety, language, ...] (persona excluded) → staticEnd=1, attributionEnd=3
@@ -2565,9 +2561,9 @@ describe("WR-03: computeBlockBoundaries — mode-aware cache block split", () =>
   });
 
   it("compact-secure: safety section lands in attribution block (not staticPrefix)", () => {
-    // This is the primary WR-03 regression guard: with the old fixed-count code,
-    // safety was mis-classified into staticPrefix. With mode-aware boundaries,
-    // safety must always be in attribution.
+    // The primary regression guard for mode-aware boundaries: fixed 2+2 counts
+    // would mis-classify safety into staticPrefix in compact-secure mode (persona
+    // is excluded there). Safety must always be in attribution.
     const blocks = assembleRichSystemPromptBlocks({
       promptMode: "compact-secure",
       toolNames: ["exec", "read"],
@@ -2601,7 +2597,8 @@ describe("WR-03: computeBlockBoundaries — mode-aware cache block split", () =>
       promptMode: "full",
       toolNames: ["exec"],
     });
-    // With mode-aware boundaries, full mode behavior is byte-identical to old behavior.
+    // In full mode the boundaries still enclose identity+persona / safety+language,
+    // so safety lands in attribution, never in staticPrefix.
     expect(blocks.staticPrefix).not.toContain("## Safety");
     expect(blocks.attribution).toContain("## Safety");
   });

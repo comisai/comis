@@ -68,21 +68,20 @@ export interface SessionBootstrapResult {
 }
 
 /**
- * The merged per-execution timeout (LAT-01): values + binding provenance.
+ * The merged per-execution timeout: values + binding provenance.
  * `source`/`operationType` feed knob-named hints (timeout-knob.ts) and the
  * execution:prompt_timeout payload. This is THE one effectiveTimeout shape —
  * RunSessionLockedContext and RunPromptParams alias it (three inline copies
- * unified). 177-03 extends this with stallCeilingMultiplier (LAT-02 makespan
- * threading).
+ * unified). `stallCeilingMultiplier` threads the makespan ceiling through the
+ * same shape.
  */
 export interface EffectiveTimeout {
   promptTimeoutMs: number;
   retryPromptTimeoutMs: number;
   /**
-   * LAT-02 (177-03): makespan = promptTimeoutMs × stallCeilingMultiplier —
-   * R-1 non-optional wherever stall semantics apply (177-01 DECISION). The
-   * ceiling is DERIVED at the race call site (model-retry), never a
-   * standalone ms knob.
+   * makespan = promptTimeoutMs × stallCeilingMultiplier — non-optional
+   * wherever stall semantics apply. The ceiling is DERIVED at the race call
+   * site (model-retry), never a standalone ms knob.
    */
   stallCeilingMultiplier: number;
   source: TimeoutSource;
@@ -210,10 +209,10 @@ export function decodeExecutionOverrides(
   const operationDefaultTimeout = overrides?.operationType
     ? operationDefaults[overrides.operationType]
     : undefined;
-  // LAT-01 binding provenance (Critical Finding 1): a present override CARRIES
+  // Binding provenance: a present override CARRIES
   // the source its producer labeled — the cron producer materializes
   // promptTimeout unconditionally, so re-deriving here would call every cron
-  // timeout "explicit". An unlabeled override (legacy producer shape) IS
+  // timeout "explicit". An override whose producer set no source label IS
   // explicit by the caller; otherwise the level that binds labels itself.
   const overrideMs = overrides?.promptTimeout?.promptTimeoutMs;
   const source: TimeoutSource =
@@ -230,8 +229,8 @@ export function decodeExecutionOverrides(
     retryPromptTimeoutMs:
       overrides?.promptTimeout?.retryPromptTimeoutMs
       ?? config.promptTimeout.retryPromptTimeoutMs,
-    // LAT-02: the schema's .default(10) guarantees presence post-parse; the
-    // `?? 10` covers hand-built configs (tests/legacy carriers) that bypass
+    // The schema's .default(10) guarantees presence post-parse; the
+    // `?? 10` covers hand-built configs (e.g. test fixtures) that bypass
     // the zod parse.
     stallCeilingMultiplier: config.promptTimeout.stallCeilingMultiplier ?? 10,
     source,

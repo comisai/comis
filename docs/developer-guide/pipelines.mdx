@@ -652,7 +652,7 @@ const researchPipeline: ExecutionGraph = {
 This pipeline creates a three-stage sequential workflow: gather -> analyze -> write. Each node runs with a dedicated agent, and outputs flow downstream via `{{nodeId.result}}` templates in task text. The `fail-fast` strategy ensures the pipeline stops quickly if any stage fails, and the budget limits prevent runaway costs.
 
 <Tip>
-Graphs saved before v49.0 that used `inputFrom` are automatically migrated on load -- the `graph.load` RPC strips any `inputFrom` or `inputMapping` fields from persisted graph definitions. Update your saved graphs to use the `{{nodeId.result}}` pattern directly for best results.
+`inputFrom` and `inputMapping` are not part of the graph schema -- the `graph.load` RPC strips those fields from persisted graph definitions on load. Use the `{{nodeId.result}}` pattern in task text to flow outputs downstream.
 </Tip>
 
 <CardGroup cols={2}>

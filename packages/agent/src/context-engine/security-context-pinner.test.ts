@@ -13,7 +13,7 @@ function msg(text: string) {
   return { role: "user", content: text };
 }
 
-describe("isSecurityRelevantMessage — S4", () => {
+describe("isSecurityRelevantMessage — security context pinning", () => {
   describe("fail-closed: uncertain/empty → pin", () => {
     it("empty string content → true (pin)", () => {
       expect(isSecurityRelevantMessage(msg(""), MARKERS)).toBe(true);
@@ -52,10 +52,10 @@ describe("isSecurityRelevantMessage — S4", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // WR-01: sender-trust prefix detection
+  // Sender-trust prefix detection
   // ---------------------------------------------------------------------------
 
-  describe("WR-01: sender-trust prefix detection", () => {
+  describe("sender-trust prefix detection", () => {
     const markersWithSenderTrust: SecurityPinMarkers = {
       canaryToken: "CANARY_abc123def456",
       contentDelimiter: "UNTRUSTED_BEGIN_7f3a9c",

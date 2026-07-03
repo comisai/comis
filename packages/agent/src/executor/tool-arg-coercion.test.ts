@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for per-field stringified-JSON tool-argument coercion (F-3, live 2026-06-12).
+ * Tests for per-field stringified-JSON tool-argument coercion.
  * Use-case descriptions name the observable behavior; pure-function tests, no SDK.
  * @module
  */

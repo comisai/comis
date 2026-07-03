@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram EditPlace activity renderer (§7.2 / §18.2 row "EditPlace").
+ * Telegram EditPlace activity renderer.
  *
  * This is the canonical reference the other 3 EditPlace channels (Discord,
  * Slack, WhatsApp) copy. It has three parts:
@@ -10,9 +10,9 @@
  *      `parameters.retry_after`, and `description` ONLY to disambiguate the
  *      message-not-found case) to choose one of the closed `ActivityRenderError`
  *      variants. It NEVER parses the generic "Failed to…" string the live
- *      adapter wraps the error in (D-Q1) — the adapter attaches the original
+ *      adapter wraps the error in — the adapter attaches the original
  *      GrammyError as `error.cause`, which the classifier reads structurally.
- *      §19.3: the `description` selects the variant only; it is never
+ *      The `description` selects the variant only; it is never
  *      rendered or logged as activity text.
  *
  *   2. `makeTelegramRenderActions` — the `ActivityRenderActions` adapter. `send`
@@ -123,7 +123,7 @@ export function makeTelegramRenderActions(
   let retryHandle: TimerHandle | undefined;
   /** Consecutive retry attempts; caps the backoff so a sustained 429 cannot loop forever. */
   let retryAttempts = 0;
-  /** Set once a message-not-found is seen — all further edits are dropped (§drop-on-not_supported). */
+  /** Set once a message-not-found is seen — all further edits are dropped (drop-on-not_supported policy). */
   let editsDropped = false;
 
   function cancelRetry(): void {
@@ -238,7 +238,7 @@ function omitOverBudgetButtons(rows: RichButton[][]): RichButton[][] {
  *
  * `signCallbackData` is the secret-bound signer injected at the composition root:
  * the renderer CONSUMES it to build the signed inline keyboard and never
- * imports the orchestrator package (Pitfall 5). When omitted, an
+ * imports the orchestrator package. When omitted, an
  * approval frame degrades to a button-less text prompt.
  */
 export function createTelegramActivityRenderer(

@@ -2,14 +2,14 @@
 /**
  * label-spec — the activity {@link LabelSpec} type plus the module-level
  * registry ({@link registerActivityLabelSpec}) and the theme-merge resolver
- * ({@link resolveLabelSpec}) (spec §6.1/§6.2).
+ * ({@link resolveLabelSpec}).
  *
  * The registry mirrors the verified `core/tool-metadata.ts` idiom: a
  * module-level `Map` keyed by tool name, written via spread-merge so different
  * sources can register different fields for the same tool incrementally.
  *
  * Resolution precedence is **theme-override > registered spec > semantic
- * fallback** (spec §6.2), applied as a deep merge: each layer's defined fields
+ * fallback**, applied as a deep merge: each layer's defined fields
  * win and undefined fields inherit, so a theme that overrides only the label
  * preserves the registered detail/detailKeys. A theme cannot remove the
  * allowlist — it can only add/replace fields.
@@ -24,7 +24,7 @@ import { classifySemanticPhase, type SemanticPhase } from "./semantic-classifier
 
 /**
  * A resolved activity label spec — the shape {@link import("./template-engine.js").applyTemplate}
- * consumes (spec §6.1 / §10.1). `label`/`detail` are `{key}`-placeholder
+ * consumes. `label`/`detail` are `{key}`-placeholder
  * templates; `detailKeys` is the param-key allowlist the template engine
  * enforces (every other params key is dropped at the gate).
  */
@@ -52,7 +52,7 @@ export interface LabelSpec {
 
 /**
  * Per-action label fields. A registered spec may declare a default
- * (tool-level) label and/or per-action overrides (spec §6.1 `actions` block).
+ * (tool-level) label and/or per-action overrides (the `actions` block).
  */
 export interface ActionLabelSpec {
   /** Label template for this action (e.g. `configuring MCP server \`{name}\``). */
@@ -71,7 +71,7 @@ export interface ActionLabelSpec {
 }
 
 /**
- * The shape passed to {@link registerActivityLabelSpec} (spec §6.1). All fields
+ * The shape passed to {@link registerActivityLabelSpec}. All fields
  * optional except none — a registration supplies a `semanticPhase` and/or
  * tool-level label fields and/or an `actions` map. Co-located with each tool's
  * definition (not central config).
@@ -94,7 +94,7 @@ export interface RegisteredLabelSpec extends ActionLabelSpec {
  *
  * All four fields are REQUIRED within this type: a theme that opts into markers
  * supplies the full set (no partial-marker ambiguity). The field on
- * {@link ActivityTheme} that carries this is itself optional (no-BC: additive).
+ * {@link ActivityTheme} that carries this is itself optional (purely additive).
  */
 export interface ActivityStatusMarkers {
   /** Marker for a completed/successful event (default theme: "✓"). */
@@ -106,19 +106,19 @@ export interface ActivityStatusMarkers {
   /** Marker for an in-flight/running event (default theme: e.g. a wrench). */
   readonly running: string;
   /**
-   * SPEC-§9 — separator between an event label and its
+   * Separator between an event label and its
    * coalesced-group count (e.g. `reading config ×3`). Defaults to `"×"` U+00D7
    * for the default/playful/terminal-minimal themes; the ascii theme overrides
    * to `"x"` (lowercase Latin) so the strict ASCII-parity test
    * (`packages/channels/src/shared/strategies/ascii-parity.test.ts`,
-   * `/[^\x00-\x7F]/`) passes — SPEC-§8.9. Optional for forward-compatibility:
+   * `/[^\x00-\x7F]/`) passes. Optional for forward-compatibility:
    * a custom theme that omits this field falls back to the default `"×"`.
    */
   readonly surrogateSeparator?: string;
 }
 
 /**
- * An operator activity theme (spec §6.2). Rebrands per-tool labels without
+ * An operator activity theme. Rebrands per-tool labels without
  * touching code via `agents.<id>.activity.theme`. A theme override deep-merges
  * ON TOP of the registered spec / semantic fallback — overridden fields win,
  * the rest inherit. It can add or replace fields but cannot strip the allowlist.
@@ -197,7 +197,7 @@ export function _clearActivityLabelSpecsForTest(): void {
 /**
  * Resolve the effective {@link LabelSpec} for a tool (and optionally an action),
  * applying the precedence **theme-override > registered > pattern catch-all
- * (L79) > semantic fallback** (spec §6.2) as a deep, per-field merge.
+ * > semantic fallback** as a deep, per-field merge.
  *
  * The pattern catch-all (Layer 2.5; see {@link tryPatternSpec}) only fires when
  * no spec is registered for the tool name, so an explicit
@@ -235,7 +235,7 @@ export function resolveLabelSpec(toolName: string, opts: ResolveLabelOptions = {
       }
     }
   } else {
-    // Layer 2.5 — pattern catch-all (L79). Only fires when no spec is
+    // Layer 2.5 — pattern catch-all. Only fires when no spec is
     // explicitly registered, so Layer 2 still wins. Theme override (Layer 3)
     // still deep-merges on top.
     const pattern = tryPatternSpec(toolName);
@@ -314,7 +314,7 @@ function humanizeToolName(toolName: string): string {
 }
 
 /**
- * L79 — Pattern catch-all for dynamically-discovered tool names that have no
+ * Pattern catch-all for dynamically-discovered tool names that have no
  * co-located source file to register a label spec on (e.g. MCP tools, which
  * are discovered at runtime). Currently matches `^mcp__<server>--<method>$`
  * and synthesizes a clean `using <server> · <method humanized>` label.

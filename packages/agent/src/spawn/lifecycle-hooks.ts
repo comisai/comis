@@ -158,11 +158,9 @@ export function createLifecycleHooks(deps: LifecycleHooksDeps) {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive a subagent context engine config from parent config + subagent overrides.
- * Derive context engine config for a subagent from the parent's config.
- * Subagent inherits parent pipeline settings via spread copy (parent not mutated).
- *
- * Config inheritance.
+ * Derive a subagent context engine config from the parent's config.
+ * The subagent inherits the parent pipeline settings via spread copy
+ * (the parent config is not mutated).
  *
  * NOTE: autoCompactThreshold (0.95) is NOT mapped here. Its relationship to the
  * context engine's COMPACTION_TRIGGER_PERCENT constant is unclear.

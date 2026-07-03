@@ -6,7 +6,7 @@
 // endpoint forwards to the jailed client, NOT thrown.
 /**
  * `createToolInvokeExecutor` — the daemon-side executor for the
- * `{kind:"executor"}` tools of the `tool.invoke` surface (Gap 1; v8 §6.2/§6.3).
+ * `{kind:"executor"}` tools of the `tool.invoke` surface.
  *
  * The cap-mapped tool surface has two route kinds (`TOOL_ROUTE_MAP`):
  *   - `{kind:"rpc"}` — `memory_*`/`extract_document`/`session_*` map to existing
@@ -21,25 +21,25 @@
  * Two execution classes:
  *   - FILE builtins (`read`/`grep`/`find`/`ls`/`jq`/`sql`/`jsonpath`): run under
  *     the agent's resolved workspace dir (NOT the host root). The actual builtin
- *     cores are INJECTED (DI, AGENTS.md §2.4) — Plan 05's wiring supplies the
- *     shipped `createComisReadTool`/grep/find/ls cores + the QRY sql/jsonpath
+ *     cores are INJECTED (DI, AGENTS.md §2.4) — the daemon's boot wiring supplies
+ *     the shipped `createComisReadTool`/grep/find/ls cores + the sql/jsonpath
  *     DuckDB cores; the executor passes the args plus a workspace ctx. The jail is
  *     for the orchestrate script; these are the daemon servicing a read for it, so
  *     they run daemon-side but workspace-scoped.
  *   - WEB (`web_search`/`web_fetch`): run on the DAEMON's network with the
- *     DNS-PIN (WEB-02). `validateUrl` resolves+classifies the host, then
+ *     DNS-PIN. `validateUrl` resolves+classifies the host, then
  *     `fetchPinned(url, validated.ip)` pins the undici connection to the
  *     pre-validated IP — closing the DNS-rebind/TOCTOU window that the in-process
  *     `web-fetch-tool.ts` (which re-resolves DNS at connect time) leaves open.
  *     The autonomous path is undici+pinned (it forgoes the in-process tool's
- *     Chrome-TLS-fingerprinting fetcher; v8 §6.3 mandates the pin for the
+ *     Chrome-TLS-fingerprinting fetcher; the pin is mandatory for the
  *     unattended path). The in-process web-fetch tool is UNTOUCHED.
  *
  * High-volume returns over the per-tool threshold (`shouldMaterialize`) are
- * offloaded to a `ResultRef` via the injected `materialize` writer (Plan 03's
- * result-ref-store) — only the handle re-enters context (REF-01). A `budgetHook`
- * seam is called around the cost-bearing web fetch (WEB-01/A7) — Phase 213 wires
- * the meter; here it is a no-op callback.
+ * offloaded to a `ResultRef` via the injected `materialize` writer (the
+ * result-ref-store) — only the handle re-enters context. A `budgetHook`
+ * seam is called around the cost-bearing web fetch — the boot wiring supplies
+ * the real meter; here it is a no-op callback.
  *
  * @module
  */
@@ -53,7 +53,7 @@ export interface ToolInvokeLease {
   agentId: string;
   caps: readonly string[];
   /**
-   * The tree-stable run identity (CEIL-01/BUDGET). Threaded so the Phase-213
+   * The tree-stable run identity. Threaded so the
    * `budgetHook` can charge the cost-bearing web call against the right root-run
    * meter (`boundedAutonomy.reserveBudget(rootRunId, …)`). Optional so the
    * deny-matrix / executor unit tests can construct a lease without it (the
@@ -81,12 +81,12 @@ export type WebSearchExecutor = (
 ) => Promise<unknown>;
 
 /**
- * A budget seam called before a cost-bearing tool runs (WEB-01/A7). Phase 213
- * wires it to the real per-root meter for the FLAT web $ charge: it carries the
- * `lease` (Pitfall 2 — the bare `{tool, bytes?}` has no run identity) so the boot
+ * A budget seam called before a cost-bearing tool runs. The boot wiring
+ * binds it to the real per-root meter for the FLAT web $ charge: it carries the
+ * `lease` (the bare `{tool, bytes?}` has no run identity) so the boot
  * hook can charge against `lease.rootRunId` via `boundedAutonomy.reserveBudget`.
  * SCOPE: this hook owns ONLY the flat web limb; the LLM token/wall-clock limbs of
- * a self-spawning loop ride the bridge's per-LLM-call reserve (Plan 08), NOT here.
+ * a self-spawning loop ride the bridge's per-LLM-call reserve, NOT here.
  */
 export type BudgetHook = (
   estimate: { tool: string; bytes?: number },
@@ -94,14 +94,14 @@ export type BudgetHook = (
 ) => void;
 
 /**
- * The injected ResultRef writer (Plan 03's `result-ref-store`). Called when a
+ * The injected ResultRef writer (the `result-ref-store`). Called when a
  * return is over the per-tool threshold; writes the payload to the offloading
  * AGENT's workspace `results/` dir and returns the handle, or `undefined` if it
  * declined. The `lease` is threaded so the writer can resolve the correct
- * per-agent workspace (Plan 05 — the store's MaterializeContext needs the
+ * per-agent workspace (the store's MaterializeContext needs the
  * workspace path; without the lease the daemon-side writer could not know WHICH
  * agent's `results/` to write to, so the in-jail `jq`/`read` slice over the ref
- * would target the wrong dir — REF-01/02 would be unreachable).
+ * would target the wrong dir).
  */
 export type MaterializeWriter = (
   payload: string,
@@ -113,27 +113,27 @@ export type MaterializeWriter = (
 export interface ToolInvokeExecutorDeps {
   /** Resolve the agent's workspace root dir (the file builtins run under it). */
   resolveWorkspace: (agentId: string) => string;
-  /** The injected file-builtin cores (Gap 1 — the in-process builtins). */
+  /** The injected file-builtin cores (the in-process builtins). */
   fileExecutors: {
     read: FileExecutor;
     grep: FileExecutor;
     find: FileExecutor;
     ls: FileExecutor;
     jq: FileExecutor;
-    /** QRY-01: DuckDB SQL over a ResultRef (daemon-side, hardened). */
+    /** DuckDB SQL over a ResultRef (daemon-side, hardened). */
     sql: FileExecutor;
-    /** QRY-02: JSONPath via DuckDB json_extract over a ResultRef (no eval lib). */
+    /** JSONPath via DuckDB json_extract over a ResultRef (no eval lib). */
     jsonpath: FileExecutor;
   };
   /** The injected daemon-side web-search core. */
   webSearch: WebSearchExecutor;
-  /** The Phase-213 budget seam (no-op in M1). */
+  /** The budget seam for cost-bearing web calls (optional; absent ⇒ no-op). */
   budgetHook?: BudgetHook;
-  /** The Plan-03 ResultRef writer (over-threshold returns offload to it). */
+  /** The ResultRef writer (over-threshold returns offload to it). */
   materialize?: MaterializeWriter;
   /** Web-fetch timeout in ms (default 30s). */
   webTimeoutMs?: number;
-  /** Daemon logger for boundary observability (§2.7). */
+  /** Daemon logger for boundary observability (AGENTS.md §2.7). */
   logger?: ComisLogger;
 }
 
@@ -162,7 +162,7 @@ export function createToolInvokeExecutor(
   const webTimeoutMs = deps.webTimeoutMs ?? DEFAULT_WEB_TIMEOUT_MS;
 
   /**
-   * The autonomous web fetch (WEB-02): validateUrl → fetchPinned(url, validated.ip)
+   * The autonomous web fetch: validateUrl → fetchPinned(url, validated.ip)
    * → extract → over-threshold materialize. Pinned undici, NOT the re-resolving
    * in-process fetcher.
    */
@@ -191,7 +191,7 @@ export function createToolInvokeExecutor(
       return errorResult(`SSRF blocked: ${validated.error.message}`);
     }
 
-    // WEB-01/A7: budget seam BEFORE the cost-bearing fetch (Phase 213 meters the
+    // Budget seam BEFORE the cost-bearing fetch (the wired meter charges the
     // flat web charge against lease.rootRunId).
     deps.budgetHook?.({ tool: "web_fetch" }, lease);
 
@@ -238,7 +238,7 @@ export function createToolInvokeExecutor(
     }
 
     // step 4: over-threshold → materialize to a ResultRef (only the handle
-    // re-enters context — REF-01); under-threshold → inline.
+    // re-enters context); under-threshold → inline.
     const byteCount = Buffer.byteLength(text, "utf8");
     if (deps.materialize && shouldMaterialize("web_fetch", byteCount)) {
       log?.debug(
@@ -287,13 +287,13 @@ export function createToolInvokeExecutor(
       case "web_search": {
         const started = systemNowMs();
         // The daemon-side search core is injected and pinned the same way as
-        // web_fetch (Plan 05 wires it). Budget seam before the cost-bearing call
-        // (the flat web charge against lease.rootRunId — Phase 213).
+        // web_fetch (the boot wiring supplies it). Budget seam before the
+        // cost-bearing call (the flat web charge against lease.rootRunId).
         deps.budgetHook?.({ tool: "web_search" }, lease);
         log?.debug({ step: "web-search", toolName: "web_search" }, "tool.invoke web_search dispatching");
         const result = await deps.webSearch(args, { agentId: lease.agentId });
 
-        // WR-04: symmetric with web_fetch — offload an over-threshold result to
+        // Symmetric with web_fetch — offload an over-threshold result to
         // a ResultRef so the generated SDK's `wrapResultRef(web_search)` decorates
         // a REAL ref (its `.grep/.jq/.read` helpers resolve `path: ref.ref`) and a
         // large search result never re-enters context inline.

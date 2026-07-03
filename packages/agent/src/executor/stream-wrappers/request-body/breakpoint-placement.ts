@@ -83,11 +83,11 @@ export function placeSingleBreakpoint(
 /**
  * Place cache breakpoints at strategic positions within the messages array.
  *
- * Budget = 4 − system − SDK-auto(last message) = 2 Comis message markers (cache C-FIX-4):
+ * Budget = 4 − system − SDK-auto(last message) = 2 Comis message markers:
  * - Semi-stable ANCHOR: a FIXED early boundary — the compaction summary if present, else the
- *   2nd user message (cache C-FIX-10). Pinned (never moves) so it is cached once and never
- *   re-written. A cheap durable fallback; superseded the drifting 50%-token/C-FIX-2b anchor
- *   whose movement churn became the dominant waste once #C2/#C4 removed the recurring drops.
+ *   2nd user message. Pinned (never moves) so it is cached once and never
+ *   re-written. A cheap durable fallback; a fixed anchor beats a drifting one (e.g. a
+ *   50%-token split) because every anchor move re-writes the whole [0..anchor] prefix.
  * - RECENT: the second-to-last user message, adjacent to the SDK's last-message marker; the
  *   load-bearing marker whose fresh write caches the whole growing prefix.
  *
@@ -111,10 +111,10 @@ export function placeCacheBreakpoints(
   let placed = 0;
   // Anthropic honors at most 4 cache_control breakpoints. TWO are already consumed outside
   // this function: the SYSTEM/tools prefix marker AND the SDK's auto-marker on the LAST message
-  // (the tail). So Comis may place at most 2 message markers — placing 3 pushed the total to 5,
-  // and Anthropic SILENTLY DROPPED the tail-reaching markers, freezing the cache at the early
-  // markers and re-writing the entire growing suffix every turn (O(N²); cache C-FIX-4, 2026-06-18,
-  // confirmed live: single-tail marker read 54961→142941). Budget = 4 − system − SDK = 2.
+  // (the tail). So Comis may place at most 2 message markers — placing 3 pushes the total to 5,
+  // and Anthropic SILENTLY DROPS the tail-reaching markers, freezing the cache at the early
+  // markers and re-writing the entire growing suffix every turn (O(N²); confirmed
+  // live: single-tail marker read 54961→142941). Budget = 4 − system − SDK = 2.
   const remaining = Math.min(maxBreakpoints, 2);
 
   // Find the second-to-last user message for breakpoint #3
@@ -151,15 +151,15 @@ export function placeCacheBreakpoints(
   // Uses content-aware char/token ratio: structured content (tool results,
   // tool use JSON) tokenizes at ~3 chars/token; natural language at ~4.
   //
-  // Deliberately UNFACTORED (TOK-01): this measure feeds only cache-marker
+  // Deliberately UNFACTORED (flat-by-design): this measure feeds only cache-marker
   // PLACEMENT — the relative 50% cumulative split (factor approximately
   // cancels: same measure in numerator and denominator) and the absolute
   // `>= minTokens` minimum-cacheable gates, where a dense-script under-count
   // merely skips/defers a breakpoint (cache efficiency, never budget/fit;
   // an over-placed marker on a too-small segment is equally a provider
   // no-op). Factoring it would shift WHERE markers land for dense scripts —
-  // a live-measurable cache-behavior change deferred to the multilingual
-  // milestone's later phases (Phase 181 candidate), not a correctness fix.
+  // a live-measurable cache-behavior change deliberately deferred, not a
+  // correctness fix.
   function estimateTokensInRange(start: number, end: number): number {
     let tokens = 0;
     for (let i = start; i <= end && i < messages.length; i++) {
@@ -173,19 +173,19 @@ export function placeCacheBreakpoints(
       const ratio = isStructured ? CHARS_PER_TOKEN_RATIO_STRUCTURED : CHARS_PER_TOKEN_RATIO;
 
       if (typeof content === "string") {
-        // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring (TOK-01)
+        // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring
         tokens += Math.ceil(content.length / ratio);
       } else if (Array.isArray(content)) {
         for (const block of content) {
           if (typeof block.text === "string") {
-            // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring (TOK-01)
+            // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring
             tokens += Math.ceil(block.text.length / ratio);
           }
           // tool_result blocks nest text inside block.content[]
           if (Array.isArray(block.content)) {
             for (const inner of block.content) {
               if (typeof inner.text === "string") {
-                // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring (TOK-01)
+                // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring
                 tokens += Math.ceil(inner.text.length / ratio);
               }
             }
@@ -198,16 +198,16 @@ export function placeCacheBreakpoints(
 
   // Semi-stable anchor: a STABLE early boundary cached ONCE as a durable fallback.
   //
-  // cache C-FIX-10 (2026-06-19): this SUPERSEDES the C-FIX-2b "latest user ≤ block W" + 50%-token
-  // anchor. Those provided a LARGE fallback for the recurring read-drops of the pre-#C2/#C4 era,
-  // but the anchor MOVED — the 50%-token point drifted, and there was a one-time 50%→pinned regime
-  // jump when the conversation crossed the ~20-block lookback threshold — and EVERY move re-writes
-  // [0..anchor]. Once #C2 (replay-thinking) + #C4 (inline-recall) eliminated the recurring drops,
-  // that big moving anchor became pure overhead. A FIXED anchor that never re-writes wins (live A/B,
-  // 2 rounds, identical coding+recall session: cache-WRITE −~20%, READ +~3%). The recent + SDK
-  // markers carry the bulk; the anchor is just a cheap, never-rewritten fallback. Prefer a
-  // compaction summary (a natural stable boundary); otherwise pin to the 2nd user message — a FIXED
-  // position (the conversation is append-only, so it never moves turn-to-turn).
+  // The anchor is deliberately FIXED, never a moving boundary (e.g. a 50%-cumulative-token
+  // split): a moving anchor drifts turn-to-turn — plus a one-time regime jump when the
+  // conversation crosses the ~20-block lookback threshold — and EVERY move re-writes
+  // [0..anchor]. With the replay-thinking and inline-recall strips eliminating recurring
+  // cached-prefix drops, a big moving anchor is pure overhead. A FIXED anchor that never
+  // re-writes wins (live A/B, 2 rounds, identical coding+recall session: cache-WRITE −~20%,
+  // READ +~3%). The recent + SDK markers carry the bulk; the anchor is just a cheap,
+  // never-rewritten fallback. Prefer a compaction summary (a natural stable boundary);
+  // otherwise pin to the 2nd user message — a FIXED position (the conversation is
+  // append-only, so it never moves turn-to-turn).
   let semiStableIdx = -1;
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i] as any;
@@ -234,7 +234,7 @@ export function placeCacheBreakpoints(
   }
 
   // Breakpoint #1 (semi-stable anchor): a stable early boundary (compaction summary or the
-  // C-FIX-2b-anchored ≤window-block position). Caches [0..semiStable] as a durable fallback.
+  // pinned 2nd-user-message position). Caches [0..semiStable] as a durable fallback.
   if (semiStableIdx >= 0 && placed < remaining) {
     const tokensToPoint = estimateTokensInRange(0, semiStableIdx);
     if (tokensToPoint >= minTokens) {
@@ -247,8 +247,8 @@ export function placeCacheBreakpoints(
   // ADJACENT to the SDK's last-message marker. This is the load-bearing marker: its fresh write
   // caches [0..recent] (the WHOLE prefix — a fresh write does not need a nearby prior breakpoint),
   // and it chains the SDK tail marker + the previous turn's cache (≤window apart) so the cached
-  // prefix advances with the conversation. cache C-FIX-4 (2026-06-18): this was previously placed
-  // AFTER the bridge and dropped when the budget filled, stranding the tail → O(N²) re-writes.
+  // prefix advances with the conversation. Placement priority is load-bearing: if this marker
+  // loses the budget race to earlier candidates, the tail is stranded → O(N²) re-writes.
   if (secondToLastUserIdx >= 0 && placed < remaining) {
     const startFrom = semiStableIdx >= 0 ? semiStableIdx + 1 : 0;
     const tokensInRange = estimateTokensInRange(startFrom, secondToLastUserIdx);
@@ -268,13 +268,13 @@ export function placeCacheBreakpoints(
     }
   }
 
-  // NOTE (cache C-FIX-4, 2026-06-18): the former mid-point + lookback-gap-bridge breakpoints were
-  // REMOVED. They were added (C-FIX-2) to keep every inter-marker gap ≤ the 20-block window, but
-  // live evidence disproved the premise: a fresh cache write at a breakpoint caches the WHOLE prefix
-  // up to it regardless of distance from the prior breakpoint, so the gap does NOT cause a miss.
-  // What DID cause the freeze was placing too many markers (semi-stable + bridge + recent = 3),
-  // which — with the system marker and the SDK's auto-marker on the last message — exceeded
-  // Anthropic's 4-breakpoint limit, so the tail-reaching markers were silently dropped. Capping
+  // NOTE: there are deliberately NO mid-point / lookback-gap-bridge breakpoints. Keeping every
+  // inter-marker gap ≤ the 20-block window sounds necessary, but live evidence disproves the
+  // premise: a fresh cache write at a breakpoint caches the WHOLE prefix up to it regardless of
+  // distance from the prior breakpoint, so the gap does NOT cause a miss.
+  // What DOES cause a cache freeze is placing too many markers (semi-stable + bridge + recent = 3),
+  // which — with the system marker and the SDK's auto-marker on the last message — exceeds
+  // Anthropic's 4-breakpoint limit, so the tail-reaching markers are silently dropped. Capping
   // Comis to 2 (anchor + recent) keeps the total at 4 and lets the recent marker reach the tail.
 
   return placed;

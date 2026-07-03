@@ -8,8 +8,8 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // Mock the @comis/observability fs-safe substrate so the structural
 // tests (ensureContainedDir-call recorded, file-write recorded, rotation
-// pruning, fault-tolerance contract on EPERM, etc.) keep their existing
-// call-recording shape after the fs-safe migration. The mocked
+// pruning, fault-tolerance contract on EPERM, etc.) keep a
+// call-recording shape over the substrate seam. The mocked
 // `ensureContainedDir` and `writeRegularFile` return Result.ok by
 // default; the fault-tolerance test flips them to Result.err to drive
 // the existing logger.warn assertion.
@@ -773,7 +773,7 @@ describe("cache-break-diff-writer", () => {
       expect(jsonCall).toBeDefined();
       const content = JSON.parse(contentOf(jsonCall!));
 
-      // New fields present in JSON output
+      // Effort attribution fields present in JSON output
       expect(content.effortValue).toBe('{"type":"enabled","budget_tokens":4096}');
       expect(content.attribution.effortChanged).toBe(true);
       expect(content.attribution.cacheControlChanged).toBe(false);
@@ -860,8 +860,9 @@ describe("cache-break-diff-writer", () => {
 // ---------------------------------------------------------------------------
 // Mode-invariant tests (tmpdir-scoped, real fs).
 //
-// Every migrated writer ships a co-located test that drives the real
-// fs-safe substrate end-to-end and asserts the §1.4 dir-mode `0o700` +
+// Every writer routed through the fs-safe substrate ships a co-located
+// test that drives the real substrate end-to-end and asserts the
+// owner-only dir-mode `0o700` +
 // file-mode `0o600` invariants on every newly-written artifact. These
 // tests route through the SAME mocks as the structural tests above,
 // but the mocks delegate to the REAL substrate implementations
@@ -869,7 +870,7 @@ describe("cache-break-diff-writer", () => {
 // Tests run against a tmpdir scoped per-test.
 // ---------------------------------------------------------------------------
 
-describe("cache-break-diff-writer honors §1.4 mode invariants", () => {
+describe("cache-break-diff-writer honors owner-only file mode invariants", () => {
   let baseDir: string;
   let outputDir: string;
 

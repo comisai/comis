@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * STREAM-02: the `'later'`-priority between-turns queue (later-queue.ts).
+ * The `'later'`-priority between-turns queue (later-queue.ts).
  *
  * Proves the queue:
  *   - DEFERS a `'later'` item: it is NOT executed inline during the current
@@ -9,16 +9,14 @@
  *   - PUSH-COMPLETES (announce-on-done): when a deferred item finishes, it fires
  *     the injected `onComplete` callback — the parent is NOTIFIED rather than
  *     POLLING. No repeated poll calls happen while the item is pending
- *     (T-221-STREAM-02: no token-burn poll loop);
+ *     (no token-burn poll loop);
  *   - NEVER blocks shutdown: every scheduled timer is `.unref()`'d and the
  *     handle is cancelable, so a pending `'later'` item never holds the event
- *     loop (T-221-STREAM-03);
+ *     loop;
  *   - RESPECTS priority: a `'later'` item runs AFTER in-turn (`'now'`) work.
  *
- * RED before the module existed: `createLaterQueue` is unresolved.
- *
  * Driven entirely by the injected ClockPort + TimerPort fakes (the
- * coordinator-progress-fork announce-on-done pattern, Q-STREAM-1 spike) — no
+ * coordinator-progress-fork announce-on-done pattern) — no
  * setTimeout/Date.now global (the globals.test.ts arch-gate).
  *
  * @module
@@ -28,7 +26,7 @@ import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createLaterQueue } from "./later-queue.js";
 
-describe("createLaterQueue (STREAM-02 'later'-priority between-turns queue)", () => {
+describe("createLaterQueue ('later'-priority between-turns queue)", () => {
   it("defers a 'later' item: it does NOT run inline this turn, only after the between-turns delay", () => {
     const timers = createFakeTimers(0);
     const clock = createFakeClock(0);
@@ -149,7 +147,7 @@ describe("createLaterQueue (STREAM-02 'later'-priority between-turns queue)", ()
     expect(announcement.result).toBe("now-result");
   });
 
-  it("WR-03: a throwing 'now' item is ISOLATED — enqueue does not throw, and the failure is announced", () => {
+  it("a throwing 'now' item is ISOLATED — enqueue does not throw, and the failure is announced", () => {
     const timers = createFakeTimers(0);
     const clock = createFakeClock(0);
     const onComplete = vi.fn();
@@ -169,7 +167,7 @@ describe("createLaterQueue (STREAM-02 'later'-priority between-turns queue)", ()
     expect(c.result).toBeUndefined();
   });
 
-  it("WR-03: a throwing 'later' item is ISOLATED — the timer does not throw, and a completion (with error) is still announced", () => {
+  it("a throwing 'later' item is ISOLATED — the timer does not throw, and a completion (with error) is still announced", () => {
     const timers = createFakeTimers(0);
     const clock = createFakeClock(0);
     const onComplete = vi.fn();
@@ -193,7 +191,7 @@ describe("createLaterQueue (STREAM-02 'later'-priority between-turns queue)", ()
     expect(queue.pendingCount()).toBe(0);
   });
 
-  it("WR-03: a successful item still announces a result with NO error (the error channel is optional)", () => {
+  it("a successful item still announces a result with NO error (the error channel is optional)", () => {
     const timers = createFakeTimers(0);
     const clock = createFakeClock(0);
     const onComplete = vi.fn();

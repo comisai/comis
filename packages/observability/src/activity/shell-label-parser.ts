@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * shell-label-parser — deterministic OpenClaw `summarizeKnownExec()` port
- * (spec §6.3 / §13.1).
+ * shell-label-parser — a deterministic summarizer for known shell exec commands.
  *
  * `bash`/`exec`/`shell` tool calls carry a free-form command string. This pure
  * parser turns it into a concise human label so the activity stream can render

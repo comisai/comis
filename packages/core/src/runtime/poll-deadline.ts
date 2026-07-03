@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Shared bounded-poll helper (DIVERGENCE 5).
+ * Shared bounded-poll helper.
  *
  * There is no other bounded-poll utility in the repo. It is authored in
- * `@comis/core/runtime` — NOT in `@comis/skills` — so Phase 189's daemon
+ * `@comis/core/runtime` — NOT in `@comis/skills` — so the daemon's
  * background poller imports it without a package-boundary violation (it needs
  * the SAME loop the inline `execute()` baseline uses, byte-for-byte). The
  * `@comis/skills` FAL adapter consumes it in `execute()`.
@@ -16,7 +16,8 @@
  * The helper is deliberately PROVIDER-AGNOSTIC: it returns a `PollOutcome`
  * discriminator (`done` / `failed` / `timeout`) and constructs no domain error.
  * The FAL adapter maps `{ kind: "timeout" }` onto a `VideoErrorKind:"job_timeout"`
- * Result carrying the loggable jobId — keeping this loop reusable by Phase 189.
+ * Result carrying the loggable jobId — keeping this loop reusable by the
+ * daemon's background poller.
  *
  * @module
  */
@@ -57,7 +58,7 @@ export type PollOutcome<S> =
 
 /**
  * Bounded poll loop. Calls `poll()` until `isDone(status)` (→ done),
- * `isFailed(status)` (→ failed short-circuit, VPORT-02), or the deadline
+ * `isFailed(status)` (→ failed short-circuit — no further polls), or the deadline
  * (→ timeout). Sleeps `pollIntervalMs` (clamped to the remaining budget) between
  * attempts. Inject `nowMs` (via the `deadline`) and `sleep` for fake-timer
  * tests. Honors `signal?.aborted` (returns `timeout` so the caller surfaces a

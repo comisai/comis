@@ -42,7 +42,7 @@ const PLATFORMS_NEEDING_IR_RENDER = new Set([
  *
  * For platforms in `PLATFORMS_NEEDING_IR_RENDER`, parses the text through
  * the Markdown IR pipeline and renders to the target format. For all other
- * platforms (discord, slack, gateway, echo, unknown), returns text unchanged.
+ * platforms (discord, gateway, echo, unknown), returns text unchanged.
  *
  * @param text - The markdown text to convert
  * @param channelType - Target platform identifier (e.g. "telegram", "discord")

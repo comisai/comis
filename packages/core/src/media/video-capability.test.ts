@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { VIDEO_CAPABILITY } from "./video-capability.js";
 
 /**
- * CAP-01: VIDEO_CAPABILITY is the single source of truth for "which resolved
+ * VIDEO_CAPABILITY is the single source of truth for "which resolved
  * main provider has a video API, via which backend + default video model".
  * Keys are RESOLVED-provider ids only (never the config selection enum) — a
  * provider absent from the map is video-incapable (undefined ⇒ honest-unavailable).
@@ -32,12 +32,12 @@ describe("VIDEO_CAPABILITY", () => {
     });
   });
 
-  it("resolves openai and anthropic to undefined as video-incapable providers (CAP-01)", () => {
+  it("resolves openai and anthropic to undefined as video-incapable providers", () => {
     expect(VIDEO_CAPABILITY["openai"]).toBeUndefined();
     expect(VIDEO_CAPABILITY["anthropic"]).toBeUndefined();
   });
 
-  it("resolves openai-codex and groq to undefined as video-incapable providers (CAP-01)", () => {
+  it("resolves openai-codex and groq to undefined as video-incapable providers", () => {
     expect(VIDEO_CAPABILITY["openai-codex"]).toBeUndefined();
     expect(VIDEO_CAPABILITY["groq"]).toBeUndefined();
   });

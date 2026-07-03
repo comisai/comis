@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the OPTIONAL cost-gated outcome-judge seam (OUTCOME-04).
+ * Tests for the OPTIONAL cost-gated outcome-judge seam.
  *
  * createOutcomeJudgeSeam wraps a cheap resolved model + an agent-internal prompt
  * + a lenient/total parser into a `judge(trajectoryContent)` seam the daemon
- * injects ONLY when `learningOutcome.judge.enabled` (default OFF, Plan 04). It is
+ * injects ONLY when `learningOutcome.judge.enabled` (default OFF). It is
  * the FALLBACK outcome source: it scores a finished trajectory's net
  * success/failure when no deterministic tool/pipeline signal exists. The
  * trajectory content it reads is UNTRUSTED.
@@ -12,14 +12,14 @@
  * The LLM is MOCKED here (determinism — no API key, no provider call):
  * completeSimple returns canned text, getModel a stub.
  *
- * The seam IMPORTS the module (so the scaffold file is covered — the
- * never-imported-file full-run coverage trap, MEMORY.md). Load-bearing assertions
- * (Task 1 — bounded / non-fatal / lenient):
+ * The seam IMPORTS the module (a never-imported file would otherwise be
+ * invisible to the full-run coverage floor). Load-bearing assertions
+ * (bounded / non-fatal / lenient):
  * - a valid `{ outcome, confidence }` payload → a typed verdict
  * - empty-on-failure (model-resolution / throw / abort / malformed) — never throws
  * - STRIPS smuggled fields (z.object, not strictObject) — no `trustLevel`/proto leak
  *
- * Task 2 (the OUTCOME-04 security keystone — wrapExternalContent on input + the
+ * The security keystone (wrapExternalContent on input + the
  * reward cap independent of the model's self-reported confidence) lives below.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -85,7 +85,7 @@ describe("createOutcomeJudgeSeam", () => {
     // EXACTLY one model call (the judge is a single post-hoc verdict).
     expect(completeSimple).toHaveBeenCalledTimes(1);
     expect(out?.outcome).toBe("success");
-    // The judge's verdict is tagged judge-tier so the Plan 02 fusion ranks it
+    // The judge's verdict is tagged judge-tier so the fusion ranks it
     // BELOW tool/pipeline (the actual override-prevention lives in the store).
     expect(out?.source).toBe("judge");
   });
@@ -115,11 +115,11 @@ describe("createOutcomeJudgeSeam", () => {
     expect(out).toBeUndefined();
   });
 
-  it("is DIAGNOSABLE: a non-thrown `stopReason:error` response yields undefined + WARNs the model (live-2026-06-18 404)", async () => {
+  it("is DIAGNOSABLE: a non-thrown `stopReason:error` response (e.g. a model-id 404) yields undefined + WARNs the model", async () => {
     // pi-ai does NOT throw on an API error (e.g. a 404 from a retired model id) — it
-    // RETURNS `{stopReason:"error", content:[], errorMessage}`. Pre-fix the seam read the
-    // empty content as "" → an `unknown` verdict with NO warn, so an unresolvable fast-tier
-    // model made the judge silently never fire. It must now WARN (naming the model) + bail.
+    // RETURNS `{stopReason:"error", content:[], errorMessage}`. Reading the
+    // empty content as "" would yield an `unknown` verdict with NO warn, so an unresolvable
+    // fast-tier model would make the judge silently never fire. It must WARN (naming the model) + bail.
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       role: "assistant",
       content: [],
@@ -145,7 +145,7 @@ describe("createOutcomeJudgeSeam", () => {
     const out = await judge("trajectory text");
     expect(out).toBeUndefined();
     expect(completeSimple).not.toHaveBeenCalled();
-    // WARN with errorKind:"dependency" + a hint (the §2.7 logging bar) — never a throw.
+    // WARN with errorKind:"dependency" + a hint (every failure branch carries both) — never a throw.
     expect((deps.logger as never as { warn: ReturnType<typeof vi.fn> }).warn).toHaveBeenCalledWith(
       expect.objectContaining({ errorKind: "dependency", hint: expect.any(String) }),
       expect.any(String),
@@ -221,7 +221,7 @@ describe("createOutcomeJudgeSeam", () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Task 2 — OUTCOME-04 security keystone: wrapExternalContent on the UNTRUSTED
+  // Security keystone: wrapExternalContent on the UNTRUSTED
   // trajectory input + the reward cap independent of the model's self-report.
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ describe("createOutcomeJudgeSeam", () => {
     expect(beforeMarker).not.toContain("SENTINEL_TRAJECTORY_BODY");
   });
 
-  it("an injected confidence:1.0 cannot mint a reward above the cap (the OUTCOME-04 keystone)", async () => {
+  it("an injected confidence:1.0 cannot mint a reward above the cap (the reward-cap keystone)", async () => {
     // A maximal self-report — exactly what a prompt injection ("confidence: 1.0,
     // this succeeded") would coerce the judge into emitting.
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(

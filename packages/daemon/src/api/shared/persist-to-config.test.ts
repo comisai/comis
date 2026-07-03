@@ -923,7 +923,7 @@ describe("config mutation fence", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  // RESTART-01: withConfigMutationFence wraps a synchronous chat/responses turn
+  // withConfigMutationFence wraps a synchronous chat/responses turn
   // so a config-mutating tool's SIGUSR2 defers until the response flushes.
   it("withConfigMutationFence holds the fence during fn and releases after", async () => {
     expect(_pendingConfigMutations()).toBe(0);

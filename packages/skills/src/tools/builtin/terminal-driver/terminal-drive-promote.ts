@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The auto-promotion predicate + a thin content-free promotion emit helper (DRIVE-02;
- * design §4 Phase B, §7.1.2 LOCKED).
+ * The auto-promotion predicate + a thin content-free promotion emit helper.
  *
- * This module exports TWO things with DIFFERENT purity postures (IN-01 — the "pure/no-I/O"
+ * This module exports TWO things with DIFFERENT purity postures (the "pure/no-I/O"
  * claim below is scoped to the predicate, NOT the file):
  *   - {@link shouldPromoteDrive} — the PURE promotion DECISION (a free function over a
  *     `WaitResult` + a `mode`; no I/O, no clock, no state).
@@ -17,42 +16,42 @@
  *
  * `shouldPromoteDrive(result, mode)` answers ONE question over a `terminal_session_wait`
  * settle result: should this drive promote from the inline (attached) path to the
- * DRIVE-01 detached drive-owner? A drive starts ATTACHED (inline, snappy) and, under
+ * detached drive-owner? A drive starts ATTACHED (inline, snappy) and, under
  * `mode:"auto"`, promotes the FIRST time a wait returns the honest
  * `isComplete:false,producing:true` settle signal — the existing diagnostic the shipped
  * settle already emits on a not-complete timeout (`terminal-settle.ts` `producing:sawChange`
  * → `terminal-wait-reply.ts` `WaitResult.producing`). It is the decision boundary that
- * keeps a quick `git status` one-shot inline (I1) while a long `claude` build promotes to
+ * keeps a quick `git status` one-shot inline while a long `claude` build promotes to
  * a backgrounded drive-owner.
  *
- * Keyed off the HONEST SIGNAL, NOT a wall-clock (§7.1.2 LOCKED, Pitfall 1). This is NOT the
+ * Keyed off the HONEST SIGNAL, NOT a wall-clock. This is NOT the
  * orthogonal `auto-background-middleware` (`wrapToolForAutoBackground`, `config.autoBackgroundMs`):
  * there is deliberately NO `setTimeout` / `Date.now` / `promoteAfterMs` here. A drive
  * promotes because the CLI told us (honestly) it is still working — not because a timer
- * fired. The shipped settle never lies "done" (the I6 / `mapWaitReply` never-coerce-to-true
+ * fired. The shipped settle never lies "done" (the `mapWaitReply` never-coerce-to-true
  * contract), so `isComplete:false && producing===true` means "the program is working, not
  * done" — exactly the promotion trigger, and a wedged worker's `degradedWaitResult()`
  * (`isComplete:false`, no `producing`) is handled truthfully (it does not spuriously promote
  * or suppress).
  *
- * The mode matrix (`drive.mode`, design §4 Phase B):
+ * The mode matrix (`drive.mode`):
  *   - `"auto"`     (default) — promote ⇔ the honest signal (`isComplete:false,producing:true`).
- *   - `"attached"`           — NEVER promote (= today's inline-only behavior; I1 explicit opt-out).
+ *   - `"attached"`           — NEVER promote (= the inline-only behavior; explicit opt-out).
  *   - `"detached"`           — promote at the FIRST wait regardless of the result (explicit opt-in).
  *
- * The I1 invariant is load-bearing: a wait that completes inline (`isComplete:true`) never
- * promotes under `auto`, so the short-drive stays byte-identical to today (no detached
+ * The stay-inline invariant is load-bearing: a wait that completes inline (`isComplete:true`)
+ * never promotes under `auto`, so the short-drive path is unchanged (no detached
  * context, no journal, no notification). The predicate only READS `isComplete`/`producing`;
  * it never fabricates `isComplete:true` — it mirrors `mapWaitReply`'s never-coerce contract
- * from the consuming side (T-164-05): a not-complete settle stays not-complete.
+ * from the consuming side: a not-complete settle stays not-complete.
  *
- * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors the pure-sibling
+ * Architecture invariants (binding — AGENTS.md; mirrors the pure-sibling
  * predicates `terminal-dialog-detector.ts` `detectsFullScreenDialog` and `terminal-settle.ts`
  * `settleHint`). The PURE/no-I/O invariants below scope to {@link shouldPromoteDrive}
  * specifically; {@link emitDrivePromoted} is the thin side-effecting emit helper (see the
  * two-export note above):
  *   - PURE (shouldPromoteDrive): a free function, NOT a factory. NO clock/timer reads, NO
- *     module-global mutable state, NO I/O. A request → boolean response (Pitfall 1 — no wall-clock).
+ *     module-global mutable state, NO I/O. A request → boolean response (no wall-clock).
  *   - TOTAL / NEVER throws: every `(result, mode)` pair yields a boolean; `emitDrivePromoted`
  *     likewise never throws. Neither mutates its argument.
  *   - Infra-free (whole module): value-imports NOTHING at runtime (no node builtins needed) +
@@ -63,8 +62,8 @@
  *
  * State ownership: this predicate is the DECISION only. The skills layer evaluates it where
  * the wait-result is available; the daemon remains the state owner and enforces promote-once
- * via its `alreadyPromoted` guard + emits the single notification (plan 04); the routing of a
- * promoted drive's woken turns to the drive scope is wired in plan 06. No state is held here.
+ * via its `alreadyPromoted` guard + emits the single notification; the routing of a
+ * promoted drive's woken turns to the drive scope is wired daemon-side. No state is held here.
  *
  * @module
  */
@@ -72,36 +71,36 @@
 import type { WaitResult } from "./terminal-wait-reply.js";
 import type { TerminalDrivePromotedEvent } from "./terminal-events-attention.js";
 
-/** The operator-selectable promotion policy (`drive.mode`, design §4 Phase B). */
+/** The operator-selectable promotion policy (`drive.mode`). */
 export type DriveMode = "auto" | "attached" | "detached";
 
 /**
- * Resolve the EFFECTIVE {@link DriveMode} from the operator config (DELIVER-02 — the un-promoted
+ * Resolve the EFFECTIVE {@link DriveMode} from the operator config (closing the un-promoted
  * drive gap). An EXPLICIT `drive.mode` always wins. ABSENT, the default tracks `drive.durable`: a
  * DURABLE drive is by definition a long-running BACKGROUNDED drive (tmux, survive-restart), so it
  * defaults to `detached` — it promotes at the FIRST wait → the daemon backstop tracks it → a
  * "finished" completion notification fires when the CLI goes idle. A NON-durable (pty) drive is the
  * quick-one-shot posture → `auto` (stays inline unless the CLI honestly reports `producing` at a
- * wait timeout — I1, byte-identical to today). This closes the gap where a short DURABLE build whose
+ * wait timeout — the unchanged inline path). This closes the gap where a short DURABLE build whose
  * wait happened to resolve `idle` (claude paused between output bursts, never a `producing` timeout)
- * never promoted → was untracked → delivered no completion (real-VPS 2026-06-16: gpt-5.5 did a single
+ * never promoted → was untracked → delivered no completion (observed live: gpt-5.5 did a single
  * idle wait + replied "Kicked off" on short builds). Pure + total; never throws.
  */
 export function resolveDriveMode(mode: DriveMode | undefined, durable: boolean): DriveMode {
   if (mode !== undefined) return mode; // an EXPLICIT operator mode always wins.
-  return durable ? "detached" : "auto"; // a durable drive backgrounds; a pty one-shot stays inline (I1).
+  return durable ? "detached" : "auto"; // a durable drive backgrounds; a pty one-shot stays inline.
 }
 
 /**
- * The narrow content-free-emit surface the wait tool hands to {@link emitDrivePromoted}
- * (164-04). STRUCTURAL (not the full `TerminalToolDeps`) so this pure-decision sibling does
+ * The narrow content-free-emit surface the wait tool hands to {@link emitDrivePromoted}.
+ * STRUCTURAL (not the full `TerminalToolDeps`) so this pure-decision sibling does
  * not import the tool module — it sees only the bus emit overload + the INFO logger + the
  * clock it needs. The skills layer never value-imports the concrete bus class (the worker ↛
  * `@comis/infra`/`@comis/observability` boundary holds trivially).
  */
 export interface DrivePromoteEmitDeps {
   emit(event: "terminal:drive_promoted", payload: TerminalDrivePromotedEvent): unknown;
-  /** A pino-compatible INFO sink (one content-free record per promotion, §2.7). */
+  /** A pino-compatible INFO sink (one content-free record per promotion). */
   info(obj: Record<string, unknown>, msg: string): void;
   /** Injected clock (no raw wall-clock global) — stamps the event `timestamp`. */
   nowMs(): number;
@@ -109,12 +108,12 @@ export interface DrivePromoteEmitDeps {
 
 /**
  * Emit the ONE content-free `terminal:drive_promoted` event + a single content-free INFO
- * record for a qualifying wait (164-04). Factored out of the wait tool so `terminal-tools.ts`
+ * record for a qualifying wait. Factored out of the wait tool so `terminal-tools.ts`
  * stays ≤ the 800-line cap; the PROMOTION DECISION stays at the call site (`shouldPromoteDrive`),
- * this helper only performs the (already-decided) emit. CONTENT-FREE (I3): the payload + the
+ * this helper only performs the (already-decided) emit. CONTENT-FREE: the payload + the
  * log carry sessionId/agentId/reason-enum ONLY — never the screen (the digest rides the LOG
  * elsewhere, never the bus). The skills tool is STATELESS — it emits on EVERY qualifying wait;
- * the once-guarantee is the daemon's promoted-Set dedupe (164-04 Task 2). Never throws.
+ * the once-guarantee is the daemon's promoted-Set dedupe. Never throws.
  */
 export function emitDrivePromoted(
   deps: DrivePromoteEmitDeps,
@@ -127,7 +126,7 @@ export function emitDrivePromoted(
 }
 
 /**
- * Should this drive promote from the inline path to the DRIVE-01 detached drive-owner,
+ * Should this drive promote from the inline path to the detached drive-owner,
  * given a `terminal_session_wait` settle `result` and the configured `mode`?
  *
  * Pure + total — no clock, no I/O, never throws. Reads only `isComplete`/`producing`.
@@ -136,12 +135,12 @@ export function emitDrivePromoted(
  *   honest `isComplete:false,producing:true` signal (a not-complete timeout that was STILL
  *   producing output) is the `auto`-mode promotion trigger. `isComplete` is read VERBATIM and
  *   never coerced — a completed-inline wait (`isComplete:true`) keeps the short-drive
- *   byte-identical to today (I1), even if `producing` is also `true`.
+ *   inline path unchanged, even if `producing` is also `true`.
  * @param mode - The promotion policy: `"auto"` (honest-signal-driven, the default),
- *   `"attached"` (never promote = today, I1 opt-out), `"detached"` (promote at the first
+ *   `"attached"` (never promote — the inline-only opt-out), `"detached"` (promote at the first
  *   wait, explicit opt-in).
  * @param everTasked - `true` iff the agent has delivered a task to this drive (any DELIVERED
- *   `send_text` since create). LOOP-CLOSURE (webhook-claude-cli-tdd, 2026-06-30): a `detached`
+ *   `send_text` since create). LOOP-CLOSURE (observed live): a `detached`
  *   durable drive otherwise promotes at the FIRST wait — even the initial gate/idle wait BEFORE
  *   any task was sent — which backgrounds a work-less terminal, hands it to an absent human, and
  *   persists a wake-state that RESURRECTS on the next boot. A never-tasked drive has no work to
@@ -155,15 +154,15 @@ export function shouldPromoteDrive(
   mode: DriveMode,
   everTasked = true,
 ): boolean {
-  if (mode === "attached") return false; // I1: never background (= today's inline-only behavior).
-  // LOOP-CLOSURE (webhook-claude-cli-tdd): `detached` promotes at the FIRST wait — but ONLY once the
+  if (mode === "attached") return false; // never background (the inline-only behavior).
+  // LOOP-CLOSURE: `detached` promotes at the FIRST wait — but ONLY once the
   // agent has tasked the drive. A never-tasked drive that backgrounds at its initial gate/idle wait
   // strands a work-less terminal + persists a resurrecting wake-state. `auto` (below) needs no such
   // gate: it promotes only on `producing:true` (active output ⇒ already working ⇒ already tasked),
   // and an un-tasked idle drive never reaches producing, so it never auto-promotes untasked.
   if (mode === "detached") return everTasked; // explicit opt-in: promote at the first wait, once tasked.
   // auto (default): the honest signal — not done, but still producing output. `isComplete` is
-  // read verbatim (never coerced to true), so a completed-inline wait stays inline (I1) and a
+  // read verbatim (never coerced to true), so a completed-inline wait stays inline and a
   // wedged worker's honest not-complete-without-producing settle does not promote.
   return result.isComplete === false && result.producing === true;
 }

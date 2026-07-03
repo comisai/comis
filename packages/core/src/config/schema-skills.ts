@@ -110,8 +110,8 @@ const ToolDiscoverySchema = z.strictObject({
    *  BM25 scores are normalized to [0, 1] before this floor applies,
    *  matching the semantics of minHybridScore. A value of 0.8 means
    *  "return only tools scoring >= 80% of the top match". Values > 1.0 fail
-   *  validation at config load (stale raw-score overrides would produce zero
-   *  matches under the new normalized semantics; fail-fast surfaces the
+   *  validation at config load (a raw-score override above 1.0 would produce
+   *  zero matches under the normalized semantics; fail-fast surfaces the
    *  error immediately). */
   minBm25Score: z.number().min(0).max(1).default(0.8),
   /** Minimum combined score (0..1 normalized) for hybrid mode. Default 0.35. */
@@ -119,28 +119,28 @@ const ToolDiscoverySchema = z.strictObject({
 });
 
 /**
- * One allowlist entry for the interactive terminal driver (spec §6).
+ * One allowlist entry for the interactive terminal driver.
  *
  * `z.strictObject` at EVERY level: unknown/typo'd keys throw at config load
  * rather than being silently dropped, so an operator-declared restriction is
  * always actually parsed. The `allow` list is operator config only —
- * never agent-extensible. The whole spec §6 shape is modelled now even though
- * the initial worker consumes only a subset (`match` + `scope`); later work
- * consumes the rest, and the full allow-set must round-trip.
+ * never agent-extensible. The whole entry shape is modelled even though
+ * the worker consumes only a subset (`match` + `scope`); the full allow-set
+ * must round-trip regardless.
  *
  * `~/.comis` is NOT represented here — it is an always-on, non-configurable
- * carve-out (§3.4), deliberately not an operator-dialable field.
+ * carve-out, deliberately not an operator-dialable field.
  */
 const TerminalAllowEntrySchema = z.strictObject({
   /** Stable entry id the agent passes to terminal_session_create as `allowId`. */
   id: z.string().min(1),
-  /** Canonical-binary match (§3.2): operator absolute path, optional argv-prefix + content hash pin. */
+  /** Canonical-binary match: operator absolute path, optional argv-prefix + content hash pin. */
   match: z.strictObject({
     path: z.string(),
     argsPrefix: z.array(z.string()).optional(),
     hash: z.string().optional(),
   }),
-  /** Least-privilege sandbox scope materialized per session (the full matrix lands later). */
+  /** Least-privilege sandbox scope materialized per session (not every scope dimension is materialized yet). */
   scope: z.strictObject({
     filesystem: z.enum(["workspace", "listed-paths", "home", "full"]).default("workspace"),
     paths: z.array(z.string()).optional(),
@@ -149,9 +149,9 @@ const TerminalAllowEntrySchema = z.strictObject({
     credentialPaths: z.array(z.string()).default([]),
     uid: z.enum(["dedicated", "daemon"]).default("dedicated"),
   }),
-  /** Auto-answer policy for safe interaction prompts (§4.5). */
+  /** Auto-answer policy for safe interaction prompts. */
   autoAnswer: z.enum(["none", "safe-only", "all"]).default("safe-only"),
-  /** Optional safe-pattern allowlist feeding the interaction classifier (§4.5). */
+  /** Optional safe-pattern allowlist feeding the interaction classifier. */
   hintPatterns: z.array(z.string()).optional(),
   /** Explicit operator risk acknowledgement — `acknowledgedRisk` must be literal true. */
   consent: z.strictObject({
@@ -160,13 +160,13 @@ const TerminalAllowEntrySchema = z.strictObject({
   }),
   /**
    * Per-entry resource caps (all optional). `wallClockMs` / `maxInteractions` are the
-   * ENDURANCE-DIALABLE caps (ENDURE-01): each is `.int().optional()`, so `undefined` ⇒
-   * NO cap (today's behavior, I1) and an operator dials it to a 40h+ horizon. They stay
+   * endurance-dialable caps: each is `.int().optional()`, so `undefined` ⇒
+   * NO cap and an operator dials it to a 40h+ horizon. They stay
    * cap-only knobs with NO `.default()` on purpose — adding a default would impose a cap
-   * where there is none today (I1). The high-default + reaper-exclusion + cap-named
-   * `failed` reason are the daemon's runtime concern (165-08's reaper wiring), not a
-   * schema default. A cap eviction names the cap that fired (I9 — never evicted for
-   * duration/quietness alone).
+   * where the contract is "absent means uncapped". The high-default + reaper-exclusion +
+   * cap-named `failed` reason are the daemon's runtime concern (the reaper wiring), not a
+   * schema default. A cap eviction names the cap that fired — a session is never evicted
+   * for duration/quietness alone.
    */
   limits: z
     .strictObject({
@@ -178,9 +178,9 @@ const TerminalAllowEntrySchema = z.strictObject({
     .optional(),
   /** Require operator approval at session_create for this entry. */
   approveOnCreate: z.boolean().optional(),
-  /** PTY backend; tmux is required for long-run mode (§4.6). */
+  /** PTY backend; tmux is required for long-run mode. */
   backend: z.enum(["spawn", "tmux"]).optional(),
-  /** Optional hardening tier (§3.9). */
+  /** Optional hardening tier. */
   hardening: z.enum(["none", "broker-decoy"]).default("none"),
   /** Broker-decoy binding (only meaningful when hardening = "broker-decoy"). */
   brokerDecoy: z
@@ -193,7 +193,7 @@ const TerminalAllowEntrySchema = z.strictObject({
 });
 
 /**
- * Closed configuration schema for the interactive terminal driver (spec §6).
+ * Closed configuration schema for the interactive terminal driver.
  *
  * Operator-dialable, never agent-dialable. Closed by construction (every level
  * is `z.strictObject`) so unknown/typo'd keys are rejected at config load —
@@ -209,12 +209,12 @@ export const TerminalDriverConfigSchema = z.strictObject({
     maxConcurrentAttentionTurns: z.number().int(),
     /**
      * The operator-dialable cgroup `TasksMax` ceiling bounding the concurrent-session
-     * subprocess footprint vs. the systemd `TasksMax` (OPS-05; T-124-22). The tmux
-     * backend (124-08) makes a worker's named sessions outlive the worker, so N
+     * subprocess footprint vs. the systemd `TasksMax`. The tmux
+     * backend makes a worker's named sessions outlive the worker, so N
      * memory-hungry sessions share one cgroup; this bounds the fork footprint so an
      * unbounded fan-out cannot OOM/fork-starve the daemon. Absent ⇒ bounded by
      * `maxSessions` alone (no extra ceiling). Optional + positive — adding it keeps the
-     * `worker` block a `strictObject` (an unknown/typo'd worker key still rejects, OPS-02).
+     * `worker` block a `strictObject` (an unknown/typo'd worker key still rejects).
      */
     tasksMax: z.number().int().positive().optional(),
   }),
@@ -227,36 +227,36 @@ export const TerminalDriverConfigSchema = z.strictObject({
   redactSecrets: z.boolean(),
   audit: z.strictObject({ enabled: z.boolean() }),
   /**
-   * Autonomous-drive policy (v2.24, additive — design §4 "Config surface"). OPTIONAL +
-   * `strictObject`: a config with NO `drive` block is byte-identical to today (I1). Phase 164
-   * introduced `mode` (DRIVE-02) + `readMode` (READ-01); Phase 165 (165-05) adds the three
-   * endurance/durability fields `durable` (DUR-01) / `heartbeatMs` (LIVE-01) / `maxCostUsd`
-   * (ENDURE-01); Phase 166 (166-02) COMPLETES this SAME block with the two user-facing
-   * notification fields `notify` (NOTIFY-01) / `heartbeatNotifyMs` (NOTIFY-02, §7.1.4). The
-   * optional-block + per-field-`.default(...)` discipline lets each phase's additions stay
-   * independent (an unknown/typo'd `drive.*` key still rejects, OPS-02). The per-field defaults
-   * preserve today's effective behavior — `mode:"auto"` only promotes a genuinely-long drive;
-   * `readMode:"digest"` is already the tool's effective default; `durable:false` /
-   * `heartbeatMs:90_000` / `maxCostUsd:null` are inert. §7.1.5 LOCKED: `durable:true` is
+   * Autonomous-drive policy. OPTIONAL + `strictObject`: the block is purely
+   * additive — a config with NO `drive` block parses cleanly and yields the inert
+   * baseline behavior. The block carries
+   * the promotion mode (`mode`) + default wake-read shape (`readMode`), the three
+   * endurance/durability fields (`durable` / `heartbeatMs` / `maxCostUsd`), and the two
+   * user-facing notification fields (`notify` / `heartbeatNotifyMs`). The
+   * optional-block + per-field-`.default(...)` discipline keeps each field's addition
+   * independent (an unknown/typo'd `drive.*` key still rejects). The per-field defaults
+   * preserve the inert baseline — `mode:"auto"` only promotes a genuinely-long drive;
+   * `readMode:"digest"` is already the tool's effective default; `heartbeatMs:90_000` /
+   * `maxCostUsd:null` are inert. LOCKED: `durable:true` is
    * ACCEPTED at config-validation even on a tmux-less host (tmux availability is a RUNTIME
    * property — degrade + WARN, never a config-time hard-require). Changing/adding a default
    * regenerates the `section-registry-parity` snapshot (a validate-only gate).
    */
   drive: z
     .strictObject({
-      /** Auto-promote (default) / never (= today's inline behavior) / always-at-first-wait (DRIVE-02). */
+      /** Auto-promote (default) / never promote (the inline drive) / always promote at first wait. */
       mode: z.enum(["auto", "attached", "detached"]).default("auto"),
-      /** Default wake-read shape (READ-01): a bounded digest / only changed rows / the whole bounded screen. */
+      /** Default wake-read shape: a bounded digest / only changed rows / the whole bounded screen. */
       readMode: z.enum(["digest", "diff", "full"]).default("digest"),
       /**
-       * DUR-01 — make the drive DURABLE: launch the driven CLI inside a detached
+       * Make the drive DURABLE: launch the driven CLI inside a detached
        * tmux server (implying `backend:"tmux"` at runtime) so a worker/daemon exit
        * leaves it running, and re-attach (never restart, never double-drive) on
-       * daemon restart. DEFAULT `true` (2026-06-16): the tmux backend is now both
-       * DRIVEABLE (the node-pty `attach` rework — streams + accepts input) and
-       * SURVIVE-A-RESTART (the deployed unit ships `KillMode=process` + the data-dir
+       * daemon restart. DEFAULT `true`: the tmux backend is both
+       * DRIVEABLE (the node-pty `attach` path — streams + accepts input) and
+       * SURVIVES-A-RESTART (the deployed unit ships `KillMode=process` + the data-dir
        * tmux socket), so it is the default working setup; set `durable:false` to opt
-       * out to the non-durable pty drive. §7.1.5 LOCKED: `durable:true` is ACCEPTED
+       * out to the non-durable pty drive. LOCKED: `durable:true` is ACCEPTED
        * HERE even on a tmux-less host — tmux availability is a RUNTIME property; an
        * unavailable/failed re-attach degrades to a non-durable drive + a logged WARN
        * (and an honest `failed` on a subsequent restart), NOT a config-validation
@@ -266,42 +266,42 @@ export const TerminalDriverConfigSchema = z.strictObject({
        */
       durable: z.boolean().default(true),
       /**
-       * LIVE-01 — the INTERNAL coarse liveness-backstop interval (ms). A safety net
-       * UNDER the event-driven wake (I2): on a tick with NO intervening transition it
+       * The INTERNAL coarse liveness-backstop interval (ms). A safety net
+       * UNDER the event-driven wake: on a tick with NO intervening transition it
        * performs a SINGLE liveness check and synthesizes `stuck` only when genuinely
-       * hung — a legitimately-busy long compile/test is busy, NOT `stuck` (I9). NEVER
+       * hung — a legitimately-busy long compile/test is busy, NOT `stuck`. NEVER
        * a hot-path poll (no per-tick screen read). Default 90_000 (90s). This is the
-       * internal liveness tick, NOT the user-facing progress heartbeat (Phase 166).
+       * internal liveness tick, NOT the user-facing progress heartbeat
+       * (`heartbeatNotifyMs` below).
        */
       heartbeatMs: z.number().int().positive().default(90_000),
       /**
-       * ENDURE-01 — an optional per-drive SPEND CEILING (USD) over the whole run.
+       * An optional per-drive SPEND CEILING (USD) over the whole run.
        * On breach the drive escalates/stops — never silent overspend. `null` (default)
-       * = uncapped, preserving today's behavior (I1). Carries no privilege/path/
-       * credential (I5) — it bounds cost only.
+       * = uncapped. Carries no privilege/path/credential — it bounds cost only.
        */
       maxCostUsd: z.number().nullable().default(null),
       /**
-       * NOTIFY-01 — which terminal-outcome notifications reach the USER: `terminal`
+       * Which terminal-outcome notifications reach the USER: `terminal`
        * (default) = `done`/`needs-you`/`failed` only; `all` = RESERVED for a future
        * per-wake debug stream and **currently behaves exactly like `terminal`** (the
-       * per-wake notification is not yet implemented — WR-02); `none` = non-escalation
-       * suppressed. I4: an escalation STILL fires under `none` (a needs-you IS a terminal
-       * notification) — `notify` NEVER weakens SEC-12 escalate-always / SEC-11 loop-guard,
-       * it only gates the uninteresting middle. Default `terminal` preserves the
-       * conservative spam-free posture. Carries no privilege/path/credential (I5) — a
-       * policy knob only.
+       * per-wake notification is not yet implemented); `none` = non-escalation
+       * suppressed. An escalation STILL fires under `none` (a needs-you IS a terminal
+       * notification) — `notify` NEVER weakens the escalate-always guarantee or the
+       * interaction loop-guard, it only gates the uninteresting middle. Default
+       * `terminal` preserves the conservative spam-free posture. Carries no
+       * privilege/path/credential — a policy knob only.
        */
       notify: z.enum(["terminal", "all", "none"]).default("terminal"),
       /**
-       * NOTIFY-02 (§7.1.4) — the user-facing progress-heartbeat cadence (ms) for a
-       * PROMOTED long drive: a coarse, content-free one-liner from the journal (I3) so a
-       * 40h drive is not 40h of silence. `0` = terminal-only (no heartbeat; today's
-       * behavior). Default 3_600_000 (1h) — a spam-free coarse cadence. `.int().nonnegative()`
+       * The user-facing progress-heartbeat cadence (ms) for a
+       * PROMOTED long drive: a coarse, content-free one-liner from the journal so a
+       * 40h drive is not 40h of silence. `0` = terminal-only (no heartbeat).
+       * Default 3_600_000 (1h) — a spam-free coarse cadence. `.int().nonnegative()`
        * (NOT `.positive()`) BECAUSE `0` is the meaningful "terminal-only" value — this is
        * DISTINCT from `heartbeatMs` (the INTERNAL liveness backstop above, `.positive()`,
-       * NOT a user message). A short (unpromoted) drive emits none (I1). Carries no
-       * privilege/path/credential (I5) — a cadence knob only.
+       * NOT a user message). A short (unpromoted) drive emits none. Carries no
+       * privilege/path/credential — a cadence knob only.
        */
       heartbeatNotifyMs: z.number().int().nonnegative().default(3_600_000),
     })
@@ -312,7 +312,7 @@ export const TerminalDriverConfigSchema = z.strictObject({
 export type TerminalDriverConfig = z.infer<typeof TerminalDriverConfigSchema>;
 
 /**
- * A single parsed terminal allow entry (spec §6). The daemon wiring
+ * A single parsed terminal allow entry. The daemon wiring
  * (`setup-terminal-tools.ts:mapAllowEntry`) maps this onto the skills-side
  * `AllowEntryLike`, threading `{id, match, scope}` so the operator-declared scope
  * reaches the worker. Scope sub-fields are already default-applied by the
@@ -351,13 +351,13 @@ export const SkillsConfigSchema = z.strictObject({
     watchDebounceMs: z.number().int().min(100).max(5000).default(400),
 
     /**
-     * Interactive terminal driver (v2.11) — the operator allowlist + worker caps + scope
-     * matrix (spec §6). OPTIONAL + fail-closed by construction: when absent (the default),
+     * Interactive terminal driver — the operator allowlist + worker caps + scope
+     * matrix. OPTIONAL + fail-closed by construction: when absent (the default),
      * the daemon wires an EMPTY allow-set (every `terminal_session_create` rejects before
-     * any spawn) and NO reaper. P5/Phase 124 threads this into the daemon's
+     * any spawn) and NO reaper. The daemon threads this into its
      * `TerminalWiringDeps` so the allow-set populates (per-session caps go live) and
      * `worker.{maxSessions,idleTtlMs,stuckMs}` feed the reaper. The whole shape is a closed
-     * `z.strictObject` (OPS-02): an unknown/typo'd terminal key rejects at config load.
+     * `z.strictObject`: an unknown/typo'd terminal key rejects at config load.
      */
     terminal: TerminalDriverConfigSchema.optional(),
   });

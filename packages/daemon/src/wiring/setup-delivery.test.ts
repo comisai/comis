@@ -923,7 +923,7 @@ describe("setupDeliveryQueue", () => {
     });
   });
 
-  describe("recordOutboundMessage capture (REACT-02: agent-authored outbound → trajectory map)", () => {
+  describe("recordOutboundMessage capture (agent-authored outbound → trajectory map)", () => {
     it("calls recordOutboundMessage with the platform messageId + trajectory scope on a successful ack (non-null traceId)", async () => {
       const { drainDeliveryQueue } = await import("./setup-delivery.js");
       const entry = makeEntry({
@@ -1003,7 +1003,7 @@ describe("setupDeliveryQueue", () => {
       expect(recordOutboundMessage).not.toHaveBeenCalled();
     });
 
-    it("CR-01: records a NON-'default' agentId from optionsJson (real agent, never the tenantId fallback)", async () => {
+    it("records a NON-'default' agentId from optionsJson (real agent, never the tenantId fallback)", async () => {
       const { drainDeliveryQueue } = await import("./setup-delivery.js");
       // The enqueue (delivery-service.ts) persists the request-context agentId
       // into optionsJson. A multi-agent daemon's agent (mldag) differs from the
@@ -1041,10 +1041,10 @@ describe("setupDeliveryQueue", () => {
       });
     });
 
-    it("CR-01 fail-closed: an outbound whose optionsJson carries NO agentId is NOT mapped (never falls back to the tenantId)", async () => {
+    it("fail-closed: an outbound whose optionsJson carries NO agentId is NOT mapped (never falls back to the tenantId)", async () => {
       const { drainDeliveryQueue } = await import("./setup-delivery.js");
       // optionsJson without agentId (e.g. a pre-executor/non-agent send). The
-      // REACT-02 keystone is fail-closed: rather than mis-attribute under the
+      // capture is fail-closed: rather than mis-attribute under the
       // tenantId, the drain skips the mapping entirely.
       const entry = makeEntry({
         id: "e1",

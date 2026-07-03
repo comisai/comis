@@ -15,11 +15,11 @@
  *     no user-controlled fields are used in the path.
  *   - `confinedBaseDir: dataDir` ensures the writer stays inside dataDir for
  *     both production (`~/.comis`) and test (os.tmpdir() subtree) contexts.
- *   - D9 test-process write-guard: under VITEST/NODE_ENV=test, a write whose
- *     dataDir resolves under the real `~/.comis` THROWS (stops the Phase-149-02
- *     leak class — a test run silently polluting production telemetry). Test
- *     writes to a tmp dir are allowed and stamped `source:"test"`/`synthetic:true`
- *     so harness rows are self-identifying + excluded from obs.* by default.
+ *   - Test-process write-guard: under VITEST/NODE_ENV=test, a write whose
+ *     dataDir resolves under the real `~/.comis` THROWS (stops a test run from
+ *     silently polluting production telemetry). Test writes to a tmp dir are
+ *     allowed and stamped `source:"test"`/`synthetic:true` so harness rows are
+ *     self-identifying + excluded from obs.* by default.
  *   - QueuedFileWriter delegates to appendRegularFile which enforces
  *     O_NOFOLLOW + fchmod 0o600.
  *   - `maxQueuedBytes: 1MB` caps in-flight bytes; write() returns "dropped"
@@ -62,23 +62,23 @@ export function appendSessionIndexEntry(
   dataDir: string,
   record: SessionIndexEvent,
 ): QueuedFileWriteResult {
-  // D9 test-process write-guard. A VITEST/NODE_ENV=test run is untrusted w.r.t.
+  // Test-process write-guard. A VITEST/NODE_ENV=test run is untrusted w.r.t.
   // the production telemetry dir — it must NEVER write real session-index rows
-  // under the operator's ~/.comis (the Phase-149-02 leak class). systemGetEnv is
-  // the sanctioned env accessor (a function call); a raw env-object PropAccess is
-  // flagged by the globals gate since append.ts is NOT in BOOTSTRAP_PATH_PATTERNS.
+  // under the operator's ~/.comis. systemGetEnv is the sanctioned env accessor
+  // (a function call); a raw env-object PropAccess is flagged by the globals gate
+  // since append.ts is NOT in BOOTSTRAP_PATH_PATTERNS.
   const isTest =
     systemGetEnv("VITEST") === "true" || systemGetEnv("NODE_ENV") === "test";
   if (isTest) {
     const realComisDir = safePath(os.homedir(), ".comis");
     if (dataDir === realComisDir || dataDir.startsWith(realComisDir + "/")) {
-      // @allow-throw: deliberate D9 test-hygiene safety guard. This throw fires
+      // @allow-throw: deliberate test-hygiene safety guard. This throw fires
       // ONLY under VITEST/NODE_ENV=test when a test process targets the real
-      // ~/.comis — a fail-loud tripwire for the Phase-149-02 leak class (a test
-      // run silently polluting the operator's production telemetry). It is NOT a
-      // production control-flow path (production never sets VITEST/NODE_ENV=test),
-      // is caught nowhere downstream by design (it must surface the offending
-      // test, not be swallowed), and its presence is statically locked by
+      // ~/.comis — a fail-loud tripwire against a test run silently polluting the
+      // operator's production telemetry. It is NOT a production control-flow path
+      // (production never sets VITEST/NODE_ENV=test), is caught nowhere downstream
+      // by design (it must surface the offending test, not be swallowed), and its
+      // presence is statically locked by
       // test/architecture/no-prod-datadir-in-tests.test.ts.
       throw new Error(
         `appendSessionIndexEntry: a test process (VITEST/NODE_ENV=test) must not write ` +
@@ -86,7 +86,7 @@ export function appendSessionIndexEntry(
       );
     }
     // Stamp test-origin so harness rows are self-identifying + excluded from
-    // obs.* by default (D9). Local re-bind — the caller's object is not mutated.
+    // obs.* by default. Local re-bind — the caller's object is not mutated.
     record = { ...record, source: "test" as const, synthetic: true };
   }
 

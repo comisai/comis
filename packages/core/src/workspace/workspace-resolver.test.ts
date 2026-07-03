@@ -100,14 +100,13 @@ describe("workspace-resolver", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 260611 live-fire fix: resolveWorkspaceDir hardcoded ~/.comis as the base —
-// the FOURTH face of the dataDir split-brain. Isolated test daemons (temp
-// COMIS_DATA_DIR) created workspace-<agentId> dirs inside the PRODUCTION
-// ~/.comis (21 leaked dirs observed), and because the path is shared across
-// daemon instances, a later run RESUMED an earlier run's degraded session
-// JSONL (the silent-LLM-failure cascade in the MEM-04 live tests). The
-// resolver now takes an optional baseDataDir (precedence: explicit
-// config.workspacePath > baseDataDir > ~/.comis).
+// resolveWorkspaceDir must root workspaces under the ACTIVE data dir, never a
+// hardcoded ~/.comis. With a hardcoded base, isolated test daemons (temp
+// COMIS_DATA_DIR) create workspace-<agentId> dirs inside the PRODUCTION
+// ~/.comis, and because the path is then shared across daemon instances, a
+// later run RESUMES an earlier run's degraded session JSONL (a silent-LLM-
+// failure cascade). The resolver therefore takes an optional baseDataDir
+// (precedence: explicit config.workspacePath > baseDataDir > ~/.comis).
 // ---------------------------------------------------------------------------
 
 describe("resolveWorkspaceDir — baseDataDir override (dataDir-rooted workspaces)", () => {

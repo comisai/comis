@@ -5,7 +5,7 @@ import { err, ok, type Result } from "@comis/shared";
 /**
  * Signed interactive-approval callback primitive.
  *
- * Wire format (spec §6.4.2): `v1.<choice>.<shortId>.<hmac>` where
+ * Wire format: `v1.<choice>.<shortId>.<hmac>` where
  * - `choice` ∈ {approve|deny|details}
  * - `shortId` = 12 base62 chars (minted by `mintApprovalShortId`)
  * - `hmac` = first 16 base64url chars of `HMAC-SHA256(secret, "<choice>.<shortId>")`
@@ -13,7 +13,7 @@ import { err, ok, type Result } from "@comis/shared";
  * The HMAC is computed over `(choice, shortId)` ONLY — never `sessionKey`. The
  * verifier has the choice and shortId from the wire string and the secret from
  * the daemon, so it can recompute and compare; signing the (un-transmitted)
- * sessionKey would make verification impossible (§6.4 reviewer finding).
+ * sessionKey would make verification impossible.
  *
  * Worst case `v1.approve.<12>.<16>` = 40 bytes, under the 64-byte Telegram
  * callback_data budget.
@@ -36,7 +36,7 @@ const SHORT_ID_RE = /^[0-9A-Za-z]{12}$/;
 /** Strict wire-format matcher: `v1.<choice>.<shortId(12 base62)>.<hmac(16 base64url)>`. */
 const CALLBACK_RE = /^v1\.(approve|deny|details)\.([0-9A-Za-z]{12})\.([A-Za-z0-9_-]{16})$/;
 
-/** Fallible render outcomes (closed union per §6.4.4). */
+/** Fallible render outcomes (closed union). */
 export type CallbackRenderError = { kind: "invalid_choice" } | { kind: "invalid_short_id" };
 
 /** A successfully-parsed callback string, pre-verification. */

@@ -2,12 +2,12 @@
 /**
  * Tests for store-flag.ts predicates.
  *
- * `usesResponsesInputApi` gates the cache #C4-OAI recall-defer prefix stabilizer across ALL
+ * `usesResponsesInputApi` gates the recall-defer prefix stabilizer across ALL
  * OpenAI Responses-family providers — native openai (`openai-responses`), Azure
  * (`azure-openai-responses`), and codex (`openai-codex-responses`/`provider:"openai-codex"`).
- * The bug it fixes: the defer was gated `provider === "openai-codex"` only, so switching the
- * agent to the native `openai` provider (gpt-5.5 → api `openai-responses`) left the defer OFF
- * and the per-turn inline-recall poisoned the auto-cached prefix again (5 floor-collapses live).
+ * The bug it prevents: gating the defer on `provider === "openai-codex"` alone leaves the
+ * native `openai` provider (gpt-5.5 → api `openai-responses`) with the defer OFF, so the
+ * per-turn inline-recall poisons the auto-cached prefix (5 floor-collapses observed live).
  *
  * @module
  */
@@ -26,7 +26,7 @@ describe("isResponsesApiProvider (service_tier/store injection scope)", () => {
   });
 });
 
-describe("usesResponsesInputApi (recall-defer stabilizer scope) — cache #C4-OAI gate", () => {
+describe("usesResponsesInputApi (recall-defer stabilizer scope)", () => {
   it("is true for native openai Responses API (the regression: gpt-5.5 -> openai-responses)", () => {
     expect(usesResponsesInputApi({ api: "openai-responses", provider: "openai" })).toBe(true);
   });

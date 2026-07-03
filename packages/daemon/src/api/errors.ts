@@ -7,10 +7,10 @@
  * validation failures) log at `warn` instead of `error` — keeping the
  * operator's alerting posture meaningful.
  *
- * Pre-Fix C, every handler `throw`ed bare `Error` and the dispatcher
- * matched on message substrings to pick an errorKind, defaulting all
+ * Throw these instead of bare `Error`: with only bare errors the dispatcher
+ * must match on message substrings to pick an errorKind, defaulting all
  * unmatched cases to `error`/`internal` and triggering operator alerts
- * for routine "wrong session state" calls (see ~/.comis/logs/ analysis).
+ * for routine "wrong session state" calls.
  *
  * @module
  */
@@ -33,13 +33,13 @@ export class ValidationError extends Error {
 
 /**
  * Caller lacks the admin TRUST this control-plane method requires (an operator on a
- * non-admin token, or using the wrong route). OBS-10 (reflect-obs-20260627): an EXPECTED
+ * non-admin token, or using the wrong route). This is an EXPECTED
  * authorization denial — NOT an internal/handler fault. `classifyRpcError` maps it to
  * `errorKind:"auth"`, `level:"warn"` so an operator's wrong-trust call (e.g. obs.explain over
  * a non-admin token) does NOT read as a fleet ERROR / trip operator alerts (the denial itself
- * is correct + the gate still fired; only the LOG classification changes). Replaces the bare
- * `throw new Error("Admin access required …")` the dispatcher mis-classified as internal/error
- * (the deleted substring-fallback — typed errors are the sanctioned path).
+ * is correct + the gate still fired; only the LOG classification changes). Throw this typed
+ * error rather than a bare `Error("Admin access required …")`, which the dispatcher would
+ * mis-classify as internal/error — typed errors are the sanctioned path.
  */
 export class AuthorizationError extends Error {
   constructor(message: string) {

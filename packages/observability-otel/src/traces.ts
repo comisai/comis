@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-01 / OTEL-03 — per-turn / tool / graph span emission.
+ * Per-turn / tool / graph span emission.
  *
- * Comis's `RequestContext.traceId` is a UUID, NOT an OTel 16-byte trace id
- * (Pitfall 4): the OTel SDK manages real trace/span ids; the Comis UUID rides as
+ * Comis's `RequestContext.traceId` is a UUID, NOT an OTel 16-byte trace id:
+ * the OTel SDK manages real trace/span ids; the Comis UUID rides as
  * the `comis.trace_id` span ATTRIBUTE (and as the Prometheus exemplar value
- * source where supported — it is not on 0.219.0). The drill-down (E7) keys on the
+ * source where supported — it is not on 0.219.0). The drill-down keys on the
  * Comis `traceId` (what `obs.explain` accepts), not the OTel trace id.
  *
- * Content-free posture (E3): the 3 GenAI content span attributes
+ * Content-free posture: the 3 GenAI content span attributes
  * (`gen_ai.input.messages` / `gen_ai.output.messages` / `gen_ai.system_instructions`)
  * are spec-`Opt-In` → OMITTED entirely unless `captureContent:true`. Even when
  * captured, Comis emits a CONTENT-FREE structural summary (message roles +
@@ -16,8 +16,8 @@
  * through `redactAttributes` (`sanitizeForPersistence` at the boundary) so a
  * planted secret in a stray field cannot reach an attribute. This is the honest
  * content-free realization: `captureContent` toggles the PRESENCE of the
- * structural attrs, not the egress of user content (decision #8 / E3 — the raw
- * body never leaves the daemon). The `genaiSemconv` flag selects the attribute
+ * structural attrs, not the egress of user content — the raw
+ * body never leaves the daemon. The `genaiSemconv` flag selects the attribute
  * NAMESPACE (latest `gen_ai.provider.name` vs the pre-stable `gen_ai.system`).
  *
  * @module
@@ -94,7 +94,7 @@ const CONTENT_BODY_KEYS = new Set(["content", "text", "parts", "message", "body"
 /**
  * Reduce a message list to a CONTENT-FREE structural summary: the role of each
  * message + the count. NEVER the `content` body. The summary is then routed
- * through `redactAttributes` (E3) so a planted secret in a stray non-content
+ * through `redactAttributes` so a planted secret in a stray non-content
  * field cannot survive, and serialised. Returns undefined when there is nothing
  * structural to emit.
  */
@@ -127,7 +127,7 @@ function systemInstructionSummary(value: unknown): string | undefined {
  */
 export function emitTurnSpan(tracer: Tracer, args: TurnSpanArgs): void {
   const span = tracer.startSpan(`${args.operation} ${args.model}`);
-  // The Comis UUID as an attribute (NOT the OTel trace id — Pitfall 4).
+  // The Comis UUID as an attribute (NOT the OTel trace id).
   if (args.comisTraceId !== undefined) {
     span.setAttribute("comis.trace_id", args.comisTraceId);
   }
@@ -139,7 +139,7 @@ export function emitTurnSpan(tracer: Tracer, args: TurnSpanArgs): void {
 
   // The 3 content attrs — spec Opt-In; OMITTED unless captureContent. Even when
   // captured, Comis emits a CONTENT-FREE structural summary (roles + counts),
-  // never the raw body, re-redacted at the boundary (E3). A planted secret or a
+  // never the raw body, re-redacted at the boundary. A planted secret or a
   // message body cannot reach an attribute.
   if (args.captureContent === true) {
     const input = contentFreeMessageSummary(args.inputMessages);

@@ -4,13 +4,13 @@
  * inter-judge |A-B| survival fold that
  * decides whether a headline number is "stable" (safe to drive a decision).
  *
- * WHY THIS MODULE EXISTS: the cross-judge spread was hand-arithmetic'd per
- * category in `benchmarks/results/2026-05-31-j1-baseline/cross-judge-spread.md`
+ * WHY THIS MODULE EXISTS: the cross-judge spread must never be hand-arithmetic'd
+ * per category
  * (Tolerance: a category SURVIVES if |A-B| <= 5.0 points; per-category n=20 ->
- * binomial SE ~ 10-11pt). This module replaces that manual arithmetic with a
+ * binomial SE ~ 10-11pt). This module is a
  * tested, reproducible fold over >=2 committed judge manifests. A headline
- * number is trusted ONLY if it survives -- single-session-preference did NOT
- * survive in the j1 baseline (30 vs 45 = 15pt) and must NOT headline.
+ * number is trusted ONLY if it survives -- e.g. a single-session-preference
+ * reading of 30 vs 45 (= 15pt) does NOT survive and must NOT headline.
  *
  * UNGATED, default-CI: pure deterministic numeric fold (no LLM, no I/O, no
  * clock, no env); imports `cross-judge-spread.ts` so it is never a 0%-coverage
@@ -50,7 +50,7 @@ describe("computeCrossJudgeSpread -- per-category inter-judge |A-B| survival fol
     });
   });
 
-  it("Test 2: a 15pt gap does NOT survive (single-session-preference 30 vs 45 -> the j1-baseline non-survival case)", () => {
+  it("Test 2: a 15pt gap does NOT survive (single-session-preference 30 vs 45 -> the non-survival case)", () => {
     const out = computeCrossJudgeSpread(
       { "single-session-preference": 30 },
       { "single-session-preference": 45 },

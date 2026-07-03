@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Audio-provider SELECTION (RES-01/02/04/05, STEER-01/02, CRED-01) — the daemon
- * selector that threads the Plan-01 pure resolvers
+ * Audio-provider SELECTION — the daemon
+ * selector that threads the pure resolvers
  * (`resolveTranscriptionProvider`/`resolveTtsProvider`) + the injected
  * `audioKeyAvailable` closure (a lookup over `SecretManager`) + the
  * `localEngineAvailable`/`edgeAvailable` seams, and returns the discriminated
@@ -15,7 +15,7 @@
  * → 401 is NEVER reached for a Codex/OAuth-only (or any keyless) main. This is
  * THE headline keyless-first / OAuth-steering fix.
  *
- * Purity by injection (the RES-01 keystone): the resolver stays pure; the daemon
+ * Purity by injection is the keystone: the resolver stays pure; the daemon
  * supplies `audioKeyAvailable` as a closure over `SecretManager` (NOT process.env —
  * the globals gate; setup-media/main-helpers are not sanctioned process.env roots).
  * There is NO codex branch in the predicate — `MAIN_PROVIDER_AUDIO["openai-codex"]`
@@ -24,7 +24,7 @@
  * Placement: `@comis/daemon`. Kept in a dedicated file (NOT folded into
  * setup-media.ts) so the skills-only setup-media module gains no `@comis/core`
  * media-resolver import edge — mirroring `setup-image-provider.ts`'s rationale.
- * `localEngineAvailable` is the Phase 194 seam — `buildAudioResolverDeps` now runs
+ * `localEngineAvailable` is the local-engine seam — `buildAudioResolverDeps` runs
  * the one-shot `detectLocalSttEngine` boot probe and passes the captured boolean
  * (a reachable `transcription.local.baseUrl` OR the importable in-process whisper
  * engine + ffmpeg). `edgeAvailable` is the keyless TTS rung (the daemon passes
@@ -84,11 +84,11 @@ export function createAudioProviderSelector(deps: {
   transcriptionConfig: AudioSttConfig;
   ttsConfig: AudioTtsConfig;
   secretManager: SecretManager;
-  /** Resolved at boot for the DEFAULT agent (the common case for Phase 193). */
+  /** Resolved at boot for the DEFAULT agent (the common case). */
   mainProviderId: string;
   /**
-   * The Phase 194 seam: TRUE once the local whisper engine is wired. FALSE in
-   * 193, so `auto` STT honest-degrades to unavailable (no engine yet).
+   * The local-engine seam: TRUE once the local whisper engine is wired. When
+   * FALSE, `auto` STT honest-degrades to unavailable (no engine yet).
    */
   localEngineAvailable?: () => boolean;
   /**
@@ -100,13 +100,13 @@ export function createAudioProviderSelector(deps: {
   /**
    * The injected key-presence predicate (purity keystone). When omitted the
    * selector builds the default `SecretManager`-backed closure below. There is
-   * NO codex branch — codex has no audio env key (Pattern 3 / Pitfall 2).
+   * NO codex branch — codex has no audio env key.
    */
   audioKeyAvailable?: (provider: string) => boolean;
 }): {
   resolveStt: () => ReturnType<typeof resolveTranscriptionProvider>;
   resolveTts: () => ReturnType<typeof resolveTtsProvider>;
-  /** OBS-03 (196): the skip reasons collected during the LAST `resolveStt()` /
+  /** The skip reasons collected during the LAST `resolveStt()` /
    *  `resolveTts()` call (the same closed rung-list the logging closures emit).
    *  The boot caller (`setupMedia`) reads these AFTER resolving and threads them
    *  onto the handler's `media.stt.requested`/`media.tts.requested` trajectory
@@ -117,7 +117,7 @@ export function createAudioProviderSelector(deps: {
 } {
   const localEngineAvailable = deps.localEngineAvailable ?? (() => false);
   const edgeAvailable = deps.edgeAvailable ?? (() => true);
-  // OBS-03 (196): accumulate the skip reasons emitted during resolution so the
+  // Accumulate the skip reasons emitted during resolution so the
   // boot caller can thread them onto the handler emit (the producer already rides
   // them on *:requested — this captures them at the daemon resolution site). Reset
   // at the head of each resolve so a re-resolution does not accrue stale reasons.
@@ -127,7 +127,7 @@ export function createAudioProviderSelector(deps: {
   // The key-presence predicate: a closure over SecretManager (NEVER process.env).
   // Mirrors setup-image-provider.ts's credsAvailable, minus the codex branch —
   // MAIN_PROVIDER_AUDIO["openai-codex"] is undefined so the resolver never calls
-  // this with "openai-codex" (Pitfall 2: the maps diverge from the image one).
+  // this with "openai-codex" (the audio maps diverge from the image one).
   const audioKeyAvailable =
     deps.audioKeyAvailable ??
     ((provider: string) => {
@@ -141,8 +141,7 @@ export function createAudioProviderSelector(deps: {
         // FAIL-CLOSED (an unmapped provider can never be reported keyed), but
         // emit a DEBUG breadcrumb (provider id + step only — NEVER a secret) so
         // the next "why is voice unavailable for <provider>" diagnosis is one
-        // grep, not a forensic hunt (IN-02; the program's built-but-not-wired
-        // history).
+        // grep, not a forensic hunt.
         deps.logger.debug({ provider, step: "audio_env_key_missing" }, "no AUDIO_ENV_KEY mapping for provider");
         return false;
       }
@@ -197,23 +196,23 @@ export function createAudioProviderSelector(deps: {
 }
 
 /**
- * Boot-composition shim (Phase 193 + 194): build the keyless-first audio selector
+ * Boot-composition shim: build the keyless-first audio selector
  * from the boot container + the DEFAULT agent id, resolving `mainProviderId` via
  * the SAME `resolveAgentMainProvider` accessor the image/video/vision paths use
- * (I4 lockstep). Extracted here (NOT inlined in daemon.ts) so the composition root
+ * (lockstep). Extracted here (NOT inlined in daemon.ts) so the composition root
  * stays under its 3000-line cap — the daemon `await`s this once at boot and threads
  * the result into setupMedia.
  *
- * Phase 194 (LOCAL-02/03): this runs the one-shot `detectLocalSttEngine` boot probe
+ * This runs the one-shot `detectLocalSttEngine` boot probe
  * ONCE (mirroring `detectFfmpeg` — never throws, never downloads a model), logs
  * availability exactly once at INFO (`step: stt_local_probe`), and CAPTURES the
  * boolean as the synchronous `localEngineAvailable: () => probe.available` predicate
  * the pure resolver consumes (Pitfall 4 — NO per-resolution I/O). The probe is true
  * when a configured `transcription.local.baseUrl` server is reachable OR the
  * in-process whisper engine is importable AND ffmpeg is present; otherwise the
- * `auto`/`local` STT rung honest-degrades to unavailable (the Phase-193 behavior).
+ * `auto`/`local` STT rung honest-degrades to unavailable.
  * A local server that comes up AFTER boot needs a daemon restart to be picked up
- * (the boolean is captured once; Open Question Q3 — acceptable). The
+ * (the boolean is captured once — acceptable). The
  * audio-wiring-guard pins the real probe + the absence of the hardcoded `() => false`.
  *
  * `detectEngine` is an injected test seam (defaults to the real
@@ -232,7 +231,7 @@ export async function buildAudioResolverDeps(
   // private egress, keep the cloud-metadata deny) BEFORE threading it into the
   // probe. A rejected URL is dropped (the probe receives `undefined` so it does
   // NOT treat a bad/unconfigured URL as a reachable server); the rejection is
-  // logged host/step-only — NEVER the URL (it may carry creds; T-194-11). This
+  // logged host/step-only — NEVER the URL (it may carry creds). This
   // is the same guard the probe runs at the fetch site — applying it here too
   // keeps a bad URL from even reaching the probe.
   const configuredBaseUrl = media.transcription.local?.baseUrl;
@@ -242,7 +241,7 @@ export async function buildAudioResolverDeps(
     if (guard.ok) {
       guardedBaseUrl = configuredBaseUrl;
     } else {
-      // Host/step-only breadcrumb — the rejected URL is NEVER logged (T-194-11).
+      // Host/step-only breadcrumb — the rejected URL is NEVER logged.
       logger.warn(
         { step: "stt_local_baseurl_rejected" },
         "configured transcription.local.baseUrl rejected by the SSRF guard (not a loopback or explicitly-allowed local host) — ignoring it",
@@ -256,9 +255,9 @@ export async function buildAudioResolverDeps(
     baseUrl: guardedBaseUrl,
     ffmpegAvailable: ffmpegCaps.ffmpegAvailable,
   });
-  // LOCAL-02: availability is the load-bearing "why is keyless STT (un)available"
+  // Availability is the load-bearing "why is keyless STT (un)available"
   // evidence — log it ONCE at INFO at the default level. `mode` is the mechanism
-  // (baseUrl/in-process/none), NEVER the URL or a secret (T-194-11).
+  // (baseUrl/in-process/none), NEVER the URL or a secret.
   logger.info(
     { available: probe.available, mode: probe.mode, step: "stt_local_probe" },
     "local STT engine availability",

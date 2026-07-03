@@ -90,14 +90,14 @@ export interface McpOauthHandlerDeps extends WorkspaceApiDeps {
   readonly openUrl?: (url: string) => void;
   /**
    * Push a short completion message back to the operator's channel after a
-   * headless OAuth login successfully connects the MCP server (Fix 9). Fixes
-   * 4 + 6 + 8 land the connection asynchronously: the RPC returns
+   * headless OAuth login successfully connects the MCP server. The headless
+   * login flow lands the connection asynchronously: the RPC returns
    * `headless_hint` immediately, the operator authorizes in their browser,
    * and the daemon-side background task completes the token exchange + the
    * `manager.connect`. There is no path that wakes the agent at the moment
    * of completion, so without this hook the agent stays silent until the
-   * operator explicitly asks "is it connected?" (observed 2026-05-28 against
-   * the live Higgsfield install — 27 tools discovered, agent silent).
+   * operator explicitly asks "is it connected?" (observed against a live
+   * install — 27 tools discovered, agent silent).
    *
    * Wired by `rpc-dispatch.ts` to
    * `deliveryService.deliverToChannel(adaptersByType[channelType], …)` —
@@ -150,7 +150,7 @@ export function createMcpOauthHandlers(
   // actionable storage-mode error (this module is `// @allow-throw:` —
   // rpc-dispatch.ts:306-321 converts it to a JSON-RPC error) instead of silently
   // downgrading to a plaintext `mcp-tokens/` write that the mode-selected
-  // manager would never read back (the split-brain this fix removes).
+  // manager would never read back (a writer/reader split-brain).
   const resolveTokenStore = (): TokenStore => {
     const store = deps.createTokenStore?.();
     if (store === undefined) {
@@ -164,13 +164,13 @@ export function createMcpOauthHandlers(
 
   return {
     [McpOauthLoginContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guard — produces the legacy "Missing required parameter:
+      // Bespoke pre-Zod guard — produces the user-friendly "Missing required parameter:
       // server_name" UX. The contract's `.min(1)` is defense-in-depth.
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
 
       // Capture the operator's channel target BEFORE stripping internals so
-      // the headless background completion (Fix 9) can push a notification
+      // the headless background completion can push a notification
       // back to the same chat that initiated this login. The dispatcher
       // injects `_deliveryTarget` on every agent-initiated RPC at
       // `setup-tools.ts:289-303`; CLI-initiated `comis mcp login` calls
@@ -214,7 +214,7 @@ export function createMcpOauthHandlers(
       // the loopback callback + saveTokens; it NEVER throws. The daemon
       // openUrl is a no-op — the CLI opens the returned authUrl.
       //
-      // Fix 6: on the headless path, runOauthLogin returns immediately with
+      // On the headless path, runOauthLogin returns immediately with
       // status:"headless_hint" while a background task keeps the loopback
       // alive and awaits the operator's redirect. When the redirect arrives
       // and tokens are persisted, that background task fires `onAuthorized`
@@ -222,12 +222,12 @@ export function createMcpOauthHandlers(
       // additional RPC. The non-headless path still returns "authorized"
       // synchronously and the post-call branch below handles the reconnect.
       //
-      // Fix 8: the hook calls manager.connect (NOT reconnect). Fix 4 in
+      // The hook calls manager.connect (NOT reconnect). The connect handler in
       // mcp-handlers.ts short-circuits the initial manager.connect when
       // params.auth==="oauth" AND no token exists yet, so state.serverConfigs
       // is empty at the moment OAuth completes. manager.reconnect throws
       // "no stored config -- use connect() instead" against an empty map;
-      // we build the McpServerConfig from the persisted entry (Fix 4
+      // we build the McpServerConfig from the persisted entry (the short-circuit
       // wrote it to container.config.integrations.mcp.servers + disk) and
       // hand it straight to manager.connect, which threads through
       // prepareOAuthProvider and reads the now-valid tokens from the store.
@@ -296,10 +296,10 @@ export function createMcpOauthHandlers(
             // background try/catch which logs a fallback WARN.
             throw new Error(connectResult.error.message);
           }
-          // Fix 9: push a short completion message back to the operator's
+          // Push a short completion message back to the operator's
           // channel. Without this the agent stays silent until the operator
-          // asks "is X connected?" (observed 2026-05-28: 27 Higgsfield
-          // tools discovered, agent silent). Skip cleanly when the login
+          // asks "is X connected?" (observed live: 27 tools discovered,
+          // agent silent). Skip cleanly when the login
           // came in without a channel target (CLI-initiated) OR when the
           // notify hook is unwired (test harnesses). A notification failure
           // does NOT roll back the persisted tokens or the live connection
@@ -381,7 +381,7 @@ export function createMcpOauthHandlers(
     },
 
     [McpOauthLogoutContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guard — produces the legacy "Missing required parameter:
+      // Bespoke pre-Zod guard — produces the user-friendly "Missing required parameter:
       // server_name" UX. The contract's `.min(1)` is defense-in-depth.
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");

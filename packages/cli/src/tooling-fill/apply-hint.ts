@@ -89,7 +89,7 @@ export interface HintFields {
  *          "mcp"/"skills" after a runtime cast-around;
  *          err({kind:"doc-corrupt"}) if doc.contents is null/undefined.
  *
- * Failure paths leave the doc unmutated (verified in tests 8-9).
+ * Failure paths leave the doc unmutated.
  */
 export function setHintFields(
   doc: Document,
@@ -122,7 +122,7 @@ export function setHintFields(
 
   // hasIn returns false if any segment of the path is missing — covers both
   // "the hint name doesn't exist under capabilityHints" and "capabilityHints
-  // (or the parent map) doesn't exist at all" (test cases 8 + 9).
+  // (or the parent map) doesn't exist at all".
   if (!doc.hasIn(hintPath)) {
     return err({
       kind: "hint-not-found",

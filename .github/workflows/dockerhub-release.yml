@@ -94,7 +94,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Merge per-platform digests into a multi-arch manifest — default variant
-  # Tags: 1.0.19 · 1.0 · latest
+  # Tags: X.Y.Z · X.Y · latest
   # ---------------------------------------------------------------------------
   merge-default:
     runs-on: ubuntu-latest
@@ -132,7 +132,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Merge per-platform digests into a multi-arch manifest — slim variant
-  # Tags: 1.0.19-slim · 1.0-slim · latest-slim
+  # Tags: X.Y.Z-slim · X.Y-slim · latest-slim
   # ---------------------------------------------------------------------------
   merge-slim:
     runs-on: ubuntu-latest
@@ -172,7 +172,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Build and push web dashboard image (multi-arch, single buildx step)
-  # Tags: 1.0.19 · 1.0 · latest
+  # Tags: X.Y.Z · X.Y · latest
   # ---------------------------------------------------------------------------
   build-web:
     runs-on: ubuntu-latest

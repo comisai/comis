@@ -3,30 +3,26 @@ import { describe, expect, it } from "vitest";
 import { normalizeForSearch as f } from "./normalize-search.js";
 
 // ---------------------------------------------------------------------------
-// FTS-02 — normalizeForSearch: the ONE per-script search-text fold.
+// normalizeForSearch: the ONE per-script search-text fold.
 //
-// Pins the fold pipeline BEFORE its consumers exist (plans 180-04..180-07 import
-// THIS symbol for both index-side and query-side normalization — the symmetry
-// is load-bearing; RESEARCH Pitfall 5).
+// Pins the fold pipeline at its source (every consumer imports THIS symbol for
+// both index-side and query-side normalization — the symmetry is load-bearing).
 //
-// Pipeline (RESEARCH Pattern 2 / Code Example 3 — live-verified this session):
+// Pipeline:
 //   (1) NFKC  (2) toLowerCase  (3) per-script fold table (Hebrew marks+finals
 //   +flanked-quote-delete, Arabic harakat/tatweel/hamza/digit folds, ё→е).
 //   NFKD appears NOWHERE (it decomposes ё and destroys Devanagari/Thai marks).
 //
-// EQUIVALENCE convention (RESEARCH Pitfall 6): the criteria's `≡` means co-match
+// EQUIVALENCE convention: `≡` means co-match
 // THROUGH the function — equivalence is asserted as f(left) === f(right), NEVER
 // f(left) === <a-literal-glyph>. The finals fold applies on BOTH sides (`f("שלום")`
-// is `"שלומ"`, NOT `"שלום"`). The single probe-pinned literal-RHS case (`f("מלך")`
+// is `"שלומ"`, NOT `"שלום"`). The single literal-RHS pin (`f("מלך")`
 // is `"מלכ"`) is written as a `.toBe(...)` assertion, not an equivalence between
 // two function calls.
 //
 // Boundary / invisible codepoints are built with String.fromCodePoint(...) —
-// never pasted glyphs — so every boundary is auditable (the lcd-fts WR-01
-// convention; also avoids the JS string-terminator hazard for ASCII " / ').
-//
-// Pre-patch: stub module (normalizeForSearch throws) — every case below fails
-// with "not implemented" until Task 2 implements the pipeline. RED proof.
+// never pasted glyphs — so every boundary is auditable (and the JS
+// string-terminator hazard for ASCII " / ' is avoided).
 // ---------------------------------------------------------------------------
 
 // Hebrew letters used to assemble flanked-quote acronyms without pasting an
@@ -51,13 +47,13 @@ const RIGHT_SQUOTE = String.fromCodePoint(0x2019); // ’
 const LEFT_DQUOTE = String.fromCodePoint(0x201c); // “
 const RIGHT_DQUOTE = String.fromCodePoint(0x201d); // ”
 
-describe("FTS-02 normalizeForSearch — Hebrew niqqud + finals + flanked quotes", () => {
+describe("normalizeForSearch — Hebrew niqqud + finals + flanked quotes", () => {
   it("strips niqqud: pointed שָׁלוֹם folds to the same as bare שלום", () => {
     // שָׁלוֹם (with niqqud) ≡ שלום
     expect(f("שָׁלוֹם")).toBe(f("שלום"));
   });
 
-  it("folds final letters: f('מלך') is the literal 'מלכ' (the one probe-pinned RHS)", () => {
+  it("folds final letters: f('מלך') is the literal 'מלכ' (the one literal-RHS pin)", () => {
     // מלך (final kaf) → מלכ (medial kaf). The lone literal-RHS pin.
     expect(f("מלך")).toBe("מלכ");
   });
@@ -98,7 +94,7 @@ describe("FTS-02 normalizeForSearch — Hebrew niqqud + finals + flanked quotes"
   });
 });
 
-describe("FTS-02 normalizeForSearch — NFKC-then-strip ordering + presentation forms", () => {
+describe("normalizeForSearch — NFKC-then-strip ordering + presentation forms", () => {
   it("strips the COMBINING dagesh that NFKC emits from a pointed presentation form", () => {
     // U+FB2A = shin with shin-dot (presentation form). NFKC → ש + combining
     // points; the mark strip (running AFTER NFKC) removes them → bare ש.
@@ -114,7 +110,7 @@ describe("FTS-02 normalizeForSearch — NFKC-then-strip ordering + presentation 
   });
 });
 
-describe("FTS-02 normalizeForSearch — Arabic folds", () => {
+describe("normalizeForSearch — Arabic folds", () => {
   it("folds every hamza-carrier to bare alef: f('أحمد') === f('احمد')", () => {
     expect(f("أحمد")).toBe(f("احمد"));
   });
@@ -150,7 +146,7 @@ describe("FTS-02 normalizeForSearch — Arabic folds", () => {
   });
 });
 
-describe("FTS-02 normalizeForSearch — Cyrillic ё fold (and й preserved)", () => {
+describe("normalizeForSearch — Cyrillic ё fold (and й preserved)", () => {
   it("maps ё to е so f('ёлка') matches f('елка')", () => {
     expect(f("ёлка")).toBe(f("елка"));
   });
@@ -166,7 +162,7 @@ describe("FTS-02 normalizeForSearch — Cyrillic ё fold (and й preserved)", ()
   });
 });
 
-describe("FTS-02 normalizeForSearch — idempotency over the length-shifting edges", () => {
+describe("normalizeForSearch — idempotency over the length-shifting edges", () => {
   const edgeCorpus: Array<[string, string]> = [
     ["İ (lowercases to i + combining dot U+0307)", String.fromCodePoint(0x0130)],
     ["U+FDFA (NFKC expands 1→18 chars incl. spaces + a ى the fold maps)", String.fromCodePoint(0xfdfa)],
@@ -195,7 +191,7 @@ describe("FTS-02 normalizeForSearch — idempotency over the length-shifting edg
   });
 });
 
-describe("FTS-02 normalizeForSearch — pass-through scripts + ASCII (I1)", () => {
+describe("normalizeForSearch — pass-through scripts + ASCII", () => {
   it("leaves Devanagari matras intact (NFKC-stable, fold-free)", () => {
     const namaste = "नमस्ते"; // नमस्ते — matras must survive (no Mn strip)
     expect(f(namaste)).toBe(namaste.normalize("NFKC").toLowerCase());
@@ -206,7 +202,7 @@ describe("FTS-02 normalizeForSearch — pass-through scripts + ASCII (I1)", () =
     expect(f(sawatdi)).toBe(sawatdi.normalize("NFKC").toLowerCase());
   });
 
-  it("leaves pure-ASCII unchanged EXCEPT lowercase (I1)", () => {
+  it("leaves pure-ASCII unchanged EXCEPT lowercase", () => {
     expect(f("Docker Compose v2")).toBe("docker compose v2");
     expect(f("abc-123_xyz")).toBe("abc-123_xyz");
   });
@@ -224,7 +220,7 @@ describe("FTS-02 normalizeForSearch — pass-through scripts + ASCII (I1)", () =
   });
 });
 
-describe("FTS-02 normalizeForSearch — co-match property (the scan-floor shape)", () => {
+describe("normalizeForSearch — co-match property (the scan-floor shape)", () => {
   // f(stored).includes(f(query)) — the substring relation the scan floor relies on.
   const pairs: Array<[string, string, string]> = [
     ["Hebrew הספרים ⊇ ספר", "הספרים", "ספר"],

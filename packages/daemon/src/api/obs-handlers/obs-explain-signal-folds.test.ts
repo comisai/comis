@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-02 (Phase 201, P2 Skills shadow): the EXTENDED learning fold —
- * `skillsUsed` / `skillFailures` / `synthesisAbstained` are now POPULATED from
- * the session's skill trajectory records (Phase 198 shipped them hardcoded
- * empty/false; P2 folds them).
+ * The EXTENDED learning fold —
+ * `skillsUsed` / `skillFailures` / `synthesisAbstained` are POPULATED from
+ * the session's skill trajectory records.
  *
  * Tests the fold reductions directly (the same unit-level discipline the
  * voice/GBNF folds use) so a record-shape regression is caught at the fold, not
  * only via the `toIncidentSignals` integration path. Content-free by
  * construction: every populated value is a skill id (skillName) or a boolean —
- * never a procedure body/script (SEC-01 / T-201-43).
+ * never a procedure body/script.
  *
  * @module
  */
@@ -27,7 +26,7 @@ import {
   buildLearningSignal,
 } from "./obs-explain-signal-folds.js";
 
-describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills)", () => {
+describe("obs-explain-signal-folds — EXTENDED learning fold", () => {
   it("an absent learning block (no records at all) ⇒ undefined (no regression)", () => {
     expect(buildLearningSignal(emptyLearningFold())).toBeUndefined();
   });
@@ -44,8 +43,8 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.outcomeResolved).toBe(false);
   });
 
-  it("IMP-3: a memory.skill_used record ⇒ usedSkillIds join skillsUsed (inline-surfaced reuse is no longer invisible)", () => {
-    // package-delivery-20260628 (PD-OBS-1): a reuse via INLINE skill-surfacing credits the skill via
+  it("a memory.skill_used record ⇒ usedSkillIds join skillsUsed (inline-surfaced reuse is not invisible)", () => {
+    // Live finding: a reuse via INLINE skill-surfacing credits the skill via
     // memory:skill_used → outcome_events.used_skill_ids (DB), NOT via an explicit prompt_invoked file
     // read — so explain's skillsUsed (which only folded skill.prompt_invoked) was [] while
     // skillsPromoted>0 (internally inconsistent; the credit needed a DB hand-join to see). Bridging
@@ -58,7 +57,7 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect([...(sig!.skillsUsed)].sort()).toEqual(["skill-abc", "skill-def"]);
   });
 
-  it("IMP-3: a non-array / non-string usedSkillIds is dropped (SEC-01 — ids only, never a smuggled body)", () => {
+  it("a non-array / non-string usedSkillIds is dropped (ids only, never a smuggled body)", () => {
     const state = emptyLearningFold();
     accumulateSkillUsedRecord(state, { usedSkillIds: "not-an-array" });
     accumulateSkillUsedRecord(state, { usedSkillIds: [123, "skill-ok", { body: "leak" }] });
@@ -66,8 +65,8 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig ? [...sig.skillsUsed] : []).toEqual(["skill-ok"]);
   });
 
-  // Finding A (obs-sweep package-delivery-20260628): surfaced-but-uncredited reuse near-misses.
-  it("finding A: skill_surfaced folds UNCREDITED scores into skillsSurfacedButUncredited (credited ones excluded)", () => {
+  // Surfaced-but-uncredited reuse near-misses.
+  it("skill_surfaced folds UNCREDITED scores into skillsSurfacedButUncredited (credited ones excluded)", () => {
     const state = emptyLearningFold();
     // A credited record co-occurs (so the learning block exists — count>0); the census carries one near-miss.
     accumulateSkillUsedRecord(state, { usedSkillIds: ["skill-credited"], usedCount: 1 });
@@ -84,7 +83,7 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.skillsSurfacedButUncredited).toEqual([{ name: "skill-nearmiss", coverage: 0.45 }]);
   });
 
-  it("finding A: skill_surfaced does NOT build a learning block on its own (no count bump → no verdict perturbation)", () => {
+  it("skill_surfaced does NOT build a learning block on its own (no count bump → no verdict perturbation)", () => {
     const state = emptyLearningFold();
     accumulateSkillSurfacedRecord(state, {
       scores: [{ name: "skill-nearmiss", coverage: 0.3, sharedCount: 3, credited: false, hasTopicTokens: true }],
@@ -93,7 +92,7 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(buildLearningSignal(state)).toBeUndefined();
   });
 
-  it("finding A: keeps the BEST coverage across turns + drops non-string names (SEC-01)", () => {
+  it("keeps the BEST surfaced coverage across turns + drops non-string names", () => {
     const state = emptyLearningFold();
     accumulateSkillUsedRecord(state, { usedSkillIds: ["x"], usedCount: 1 }); // build the block
     accumulateSkillSurfacedRecord(state, { scores: [{ name: "skill-a", coverage: 0.3, sharedCount: 3, credited: false }] });
@@ -103,7 +102,7 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.skillsSurfacedButUncredited).toEqual([{ name: "skill-a", coverage: 0.48 }]);
   });
 
-  it("OBS-4: the reuse→promote chain surfaces — skill.prompt_invoked + learning.skill_promoted ⇒ skillsUsed + skillsPromoted", () => {
+  it("the reuse→promote chain surfaces — skill.prompt_invoked + learning.skill_promoted ⇒ skillsUsed + skillsPromoted", () => {
     const state = emptyLearningFold();
     accumulateSkillInvokedRecord(state, { skillName: "mail-sort-procedure" });
     accumulateSkillTransitionRecord(state, { count: 1 }, "promoted");
@@ -115,41 +114,41 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.skillsDemoted).toBeUndefined();
   });
 
-  it("OBS-4b: a learning.memory_failure_attributed record ⇒ failuresAttributed count (eviction precursor); non-numeric → 0", () => {
+  it("a learning.memory_failure_attributed record ⇒ failuresAttributed count (eviction precursor); non-numeric → 0", () => {
     const state = emptyLearningFold();
     accumulateMemoryFailureRecord(state, { count: 2 });
-    accumulateMemoryFailureRecord(state, { count: "bogus" }); // non-numeric → +0 (SEC-01)
+    accumulateMemoryFailureRecord(state, { count: "bogus" }); // non-numeric → +0 (never trust the record shape)
     const sig = buildLearningSignal(state);
     expect(sig).toBeDefined();
     expect(sig!.failuresAttributed).toBe(2);
   });
 
-  it("OBS-4b: failuresAttributed is additive — omitted when none accrued (no schema bloat)", () => {
+  it("failuresAttributed is additive — omitted when none accrued (no schema bloat)", () => {
     const state = emptyLearningFold();
     accumulateLearningRecord(state, { outcome: "success", source: "tool" });
     const sig = buildLearningSignal(state);
     expect(sig!.failuresAttributed).toBeUndefined();
   });
 
-  it("OBS-4: a learning.skill_demoted record ⇒ skillsDemoted count; a non-numeric count reads as 0", () => {
+  it("a learning.skill_demoted record ⇒ skillsDemoted count; a non-numeric count reads as 0", () => {
     const state = emptyLearningFold();
     accumulateSkillTransitionRecord(state, { count: 2 }, "demoted");
-    accumulateSkillTransitionRecord(state, { count: "bogus" }, "demoted"); // non-numeric → +0 (SEC-01)
+    accumulateSkillTransitionRecord(state, { count: "bogus" }, "demoted"); // non-numeric → +0 (never trust the record shape)
     const sig = buildLearningSignal(state);
     expect(sig!.skillsDemoted).toBe(2);
     expect(sig!.skillsPromoted).toBeUndefined();
   });
 
-  it("finding C: a demoted record folds demotedSkillNames into skillsDemotedNames (which skill, not just count)", () => {
+  it("a demoted record folds demotedSkillNames into skillsDemotedNames (which skill, not just count)", () => {
     const state = emptyLearningFold();
     accumulateSkillTransitionRecord(state, { count: 2, demotedSkillNames: ["skill-a", "skill-b"], triggerTrajectoryId: "t1" }, "demoted");
-    accumulateSkillTransitionRecord(state, { count: 1, demotedSkillNames: ["skill-a", 123, { body: "leak" }] }, "demoted"); // dedup + drop non-strings (SEC-01)
+    accumulateSkillTransitionRecord(state, { count: 1, demotedSkillNames: ["skill-a", 123, { body: "leak" }] }, "demoted"); // dedup + drop non-strings (ids only, never a body)
     const sig = buildLearningSignal(state);
     expect(sig!.skillsDemoted).toBe(3);
     expect([...(sig!.skillsDemotedNames ?? [])].sort()).toEqual(["skill-a", "skill-b"]);
   });
 
-  it("finding C: skillsDemotedNames is omitted when a demote carried no names (count-only legacy record)", () => {
+  it("skillsDemotedNames is omitted when a demote carried no names (count-only record)", () => {
     const state = emptyLearningFold();
     accumulateSkillTransitionRecord(state, { count: 1 }, "demoted");
     const sig = buildLearningSignal(state);
@@ -192,7 +191,7 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.skillFailures).toEqual([]);
   });
 
-  // Live VPS finding 2026-06-18: a session that resolved an outcome on an EARLIER turn
+  // Live finding: a session that resolved an outcome on an EARLIER turn
   // but ended on a no-signal turn (e.g. a tool-less recall reply → `unknown`) was wrongly
   // flagged `outcome_unresolved` because the fold used LAST-record-wins. The verdict means
   // "NO signal resolved", so it must key on "ever resolved".
@@ -214,11 +213,10 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.outcome).toBe("unknown");
   });
 
-  // Phase 226 SIMPLIFY-04: the learning.skill_validated FAILURE → skillFailures path was
-  // removed with the 0-emit event (the dynamic sandbox was deleted in 223). skillFailures now
-  // keys on the terminal outcome only — covered by the failure/corrected/success tests above.
+  // skillFailures keys on the terminal outcome only — covered by the
+  // failure/corrected/success tests above.
 
-  it("synthesisAbstained is true when a reflect.funnel record carries abstained:true (Phase 226 rename)", () => {
+  it("synthesisAbstained is true when a reflect.funnel record carries abstained:true", () => {
     const state = emptyLearningFold();
     accumulateReflectFunnelRecord(state, { count: 0, abstained: true });
     const sig = buildLearningSignal(state);
@@ -252,11 +250,7 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(json).not.toContain("leak-me");
   });
 
-  // Phase 226 SIMPLIFY-04: the REVISE/GENERAL fold tests were DELETED with the
-  // accumulateUserModelRevisedRecord + accumulateMemoryGeneralizedRecord folds and the
-  // userModelRevised / memoriesGeneralized signal fields (the user-rep revision +
-  // generalization paths folded into the reflection engine in Phase 225; their events are
-  // 0-emit). The learning block is now {outcome, sources, skillsUsed, skillFailures,
+  // The learning block is {outcome, sources, skillsUsed, skillFailures,
   // synthesisAbstained} — counts/ids/closed-enums only.
 
   it("a reflect.funnel record alone (no outcome) STILL yields a learning block (count bumped)", () => {

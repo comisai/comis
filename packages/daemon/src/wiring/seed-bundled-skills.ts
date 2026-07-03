@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SKILLS-SEED-01 — seed EVERY bundled skill into the user data dir, version-aware.
+ * Seed EVERY bundled skill into the user data dir, version-aware.
  *
  * Generalizes the former single-`skill-creator` boot IIFE (daemon.ts) to AUTO-SCAN
  * `packages/daemon/bundled-skills/<name>/` and seed each into `<dataDir>/skills/<name>`.

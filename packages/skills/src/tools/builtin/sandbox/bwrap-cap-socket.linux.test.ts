@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * (Linux/VPS) — the cap-socket bwrap network mode real-reachability proof
- * (ENDPOINT-03).
+ * (Linux/VPS) — the cap-socket bwrap network mode real-reachability proof.
  *
- * The capability-lease loopback endpoint (Phase 211-06) listens on a 0600 unix
+ * The capability-lease loopback endpoint listens on a 0600 unix
  * socket the jailed orchestrate child must reach. The kernel network namespace
  * (`--unshare-net`) affects IP sockets ONLY — a bind-mounted unix path stays
  * reachable. This suite PROVES that on the production Linux host class by driving

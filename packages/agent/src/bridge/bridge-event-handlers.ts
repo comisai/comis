@@ -13,7 +13,7 @@
  */
 
 // fingerprint is the shared 12-hex sha256 digest util. It is imported from
-// @comis/core (its canonical home, Plan 01) — NOT from @comis/infra:
+// @comis/core (its canonical home) — NOT from @comis/infra:
 // @comis/agent is architecturally FORBIDDEN from depending on @comis/infra
 // (enforced by packages/agent/src/__tests__/architecture.test.ts). agent
 // already depends on @comis/core, so this adds no package edge.
@@ -30,7 +30,7 @@ export { extractMcpServerName } from "@comis/shared";
  * Cap for {@link extractErrorText} output. A tool result can be a 53 KB body
  * (possibly secret/PII-bearing); bounding it here keeps both the tool-retry
  * breaker's `lastError` and the WARN log from ingesting an unbounded body
- * (threats T-150-06 information-disclosure + T-150-08 context-bloat DoS).
+ * (an information-disclosure and context-bloat DoS threat).
  */
 const MAX_ERROR_TEXT_CHARS = 2000;
 
@@ -79,7 +79,7 @@ export function sanitizeToolArgs(args: Record<string, unknown>): Record<string, 
  * truncated and suffixed with `…[+N chars, digest:<12hex>]`, where the digest
  * is `fingerprint(rawFullText)`. Both the breaker (`recordResult` lastError)
  * and the WARN log then receive the bounded form automatically — the raw body
- * never crosses into logs/events (D4).
+ * never crosses into logs/events.
  */
 export function extractErrorText(result: unknown): string {
   return boundErrorText(coerceErrorText(result));

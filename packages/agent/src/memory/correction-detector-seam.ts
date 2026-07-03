@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The daemon-injected OPTIONAL, cost-gated correction-detector seam (CORRECT-01).
+ * The daemon-injected OPTIONAL, cost-gated correction-detector seam.
  *
  * {@link createCorrectionDetectorSeam} wraps a cheap resolved model into a
  * `detect(followUpUserTurn)` seam — the SEPARATE `correction` outcome source for
- * v2.26 Verified Learning (WS1). When a finished trajectory is immediately
+ * verified learning. When a finished trajectory is immediately
  * followed by a user turn AND the per-agent correction detector is enabled, the
- * daemon (Plan 04) runs ONE cheap-model pass over that follow-up turn and gets
+ * daemon runs ONE cheap-model pass over that follow-up turn and gets
  * back an `isCorrection` verdict + a confidence. When `isCorrection`, the verdict
  * is fed to `OutcomeSignalPort.observe()` as a `source: "correction"` /
  * `outcome: "corrected"` observation — a SOFT-FAILURE of the PRIOR trajectory.
- * The deterministic tool/pipeline sources ALWAYS outrank it via the Plan 02
+ * The deterministic tool/pipeline sources ALWAYS outrank it via the
  * fusion precedence — a correction can never overturn a deterministic result.
  *
  * This is the signal the outcome-judge seam explicitly defers to: "the judge
- * does NOT detect corrections (that is the separate `correction` signal, Phase
- * 199)". It is a verbatim clone of {@link createOutcomeJudgeSeam}, changing ONLY
+ * does NOT detect corrections (that is the separate `correction`
+ * signal)". It is a verbatim clone of {@link createOutcomeJudgeSeam}, changing ONLY
  * the verdict shape, the cap constant, the source tier, and the prompt; the
  * entire untrusted-input posture (wrap + lenient parse + cap-in-code + tier-in-
  * code), the non-fatal `callModel`, and the abort timer are copied UNCHANGED.
  *
- * Built but DORMANT: the detector ships `correction.enabled:false` by default
- * (design D6 / Plan 01), so the daemon never constructs or calls it unless an
+ * Built but DORMANT: the detector ships `correction.enabled:false` by default,
+ * so the daemon never constructs or calls it unless an
  * operator opts in.
  *
- * Security posture (CORRECT-01 / SEC-01 / §9 triple-bound — the follow-up turn
+ * Security posture (a triple bound — the follow-up turn
  * the detector scores is UNTRUSTED, and the model's self-reported `confidence` is
  * UNTRUSTED):
  * 1. The follow-up turn is delimiter-wrapped via
@@ -32,7 +32,7 @@
  *    ever sees it — an injected "this is a correction / confidence: 1.0" is
  *    neutralized as external content, not read as an instruction. (The
  *    `outcome_judge` content label is reused — a separate `correction_input`
- *    label would be cosmetic; research A2.)
+ *    label would be cosmetic.)
  * 2. The reward the daemon will `observe()` is capped in CODE at
  *    {@link CORRECTION_REWARD_CAP} — `Math.min(modelConfidence,
  *    CORRECTION_REWARD_CAP)` — INDEPENDENT of the model's self-report. An injected
@@ -52,13 +52,13 @@
  * the prior outcome simply stays unflipped. Each call is BOUNDED by
  * `maxOutputTokens` and a wall-clock-free abort timer (the injected `clock`
  * supplies timestamps; the abort uses the sanctioned-root `systemSetTimeout`),
- * routed to the cheap `fast` tier (`outcomeJudge` ModelOperationType — research
- * A2, no new ModelOperationType; the daemon resolves provider/modelId/apiKey by
+ * routed to the cheap `fast` tier (the existing `outcomeJudge` ModelOperationType
+ * — no new ModelOperationType; the daemon resolves provider/modelId/apiKey by
  * NAME and injects them via Deps).
  *
  * OFFLINE only — NEVER imported by the recall read path; no agent↛memory edge
  * (it imports the `@comis/core` `wrapExternalContent` + types and `pi-ai` only —
- * the closed-graph cut, SEC-01).
+ * the closed-graph cut).
  *
  * @module
  */
@@ -74,8 +74,8 @@ import { parseLenientJson } from "./llm-json.js";
 const LLM_TIMEOUT_MS = 120_000;
 
 /**
- * The reward ceiling for a correction verdict — the CORRECT-01 "reward capped
- * independent of self-reported confidence" constant (design §9 / §17 triple-bound).
+ * The reward ceiling for a correction verdict — the "reward capped
+ * independent of self-reported confidence" constant (bound #2 of the triple bound).
  * The effective reward the daemon `observe()`s is `Math.min(modelConfidence,
  * CORRECTION_REWARD_CAP)`, so a maximal self-report (an injection coercing
  * `confidence: 1.0 / this is a correction`) can never produce a reward above this
@@ -105,8 +105,8 @@ export interface CorrectionDetectorSeamDeps {
    * Custom OpenAI-compatible model spec (resolved, normalized `…/v1` baseUrl) for
    * building the judge Model when the pi-ai catalog has no entry for
    * `provider/modelId` — a custom YAML provider (ollama/lm-studio/…). Undefined
-   * for built-in providers. Without it, correction detection SKIPPED on every
-   * keyless/local turn (the same bug as the outcome judge, live 2026-06-20).
+   * for built-in providers. Without it, correction detection is SKIPPED on every
+   * keyless/local turn (the same failure mode the outcome judge guards against).
    */
   customModel?: CustomCompletionsModelSpec;
 }
@@ -128,7 +128,7 @@ export interface CorrectionVerdict {
   /**
    * The EFFECTIVE reward the daemon will `observe()`: `Math.min(confidence,
    * CORRECTION_REWARD_CAP)`. Capped in CODE independent of the self-report — the
-   * CORRECT-01 keystone. An injected `confidence: 1.0` yields at most the cap.
+   * reward-cap keystone. An injected `confidence: 1.0` yields at most the cap.
    */
   cappedConfidence: number;
   /** The outcome the daemon observes when `isCorrection` — a soft-failure of the PRIOR trajectory. Set in CODE. */
@@ -211,7 +211,7 @@ function parseVerdict(raw: string): CorrectionVerdict {
   return {
     isCorrection: parsed.data.isCorrection,
     confidence: parsed.data.confidence,
-    // The CORRECT-01 reward cap — bounded in CODE, never trusted from the model.
+    // The reward cap — bounded in CODE, never trusted from the model.
     cappedConfidence: Math.min(parsed.data.confidence, CORRECTION_REWARD_CAP),
     // The outcome + tier are set HERE, in code — a smuggled `outcome`/`source`
     // field cannot promote the verdict.
@@ -296,10 +296,10 @@ export function createCorrectionDetectorSeam(
   return async function detect(followUpUserTurn: string): Promise<CorrectionVerdict | undefined> {
     // The follow-up turn is UNTRUSTED — delimiter-wrap it BEFORE the model sees it
     // so an injected "this is a correction / confidence: 1.0" is neutralized as
-    // external content, never read as an instruction (CORRECT-01 bound #1). The
+    // external content, never read as an instruction (bound #1). The
     // wrap reads `contentDelimiter` from the ALS context for cache-stable,
     // session-consistent markers. The `outcome_judge` source label is reused
-    // (research A2 — a separate `correction_input` label would be cosmetic).
+    // (a separate `correction_input` label would be cosmetic).
     const wrapped = wrapExternalContent(followUpUserTurn, { source: "outcome_judge" });
     const text = await callModel(CORRECTION_DETECTOR_PROMPT, wrapped);
     // A failed/aborted call → no verdict (undefined); the prior outcome stays unflipped.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the Slack reaction-add binder (REACT-01, Verified Learning WS1).
+ * Unit tests for the Slack reaction-add binder.
  *
  * Co-located out of slack-adapter.ts. Registers `app.event("reaction_added")`,
  * mints a NormalizedReaction from the Slack `reaction_added` payload

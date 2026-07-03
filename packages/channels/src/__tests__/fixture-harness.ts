@@ -2,7 +2,7 @@
 // @allow-throw: test fixture loader; the thrown "missing fixture" error is the
 // RED signal for an un-pinned scenario and is caught by Vitest at the call site.
 /**
- * Golden-fixture read helper (§18.1 read-from-disk + `toEqual`).
+ * Golden-fixture read helper (read-from-disk + `toEqual`).
  *
  * The single shared piece every channel renderer test reuses (rule-of-three):
  * `readFixture(channel, scenario)` reads
@@ -11,7 +11,7 @@
  *
  * `toEqual` against a read-from-disk object is the deliberate alternative to
  * `toMatchSnapshot` / `toMatchFileSnapshot`, which auto-write and self-heal a
- * wrong fixture (Pitfall 3). A missing fixture THROWS — that is the RED signal
+ * wrong fixture. A missing fixture THROWS — that is the RED signal
  * for a scenario the author has not yet pinned; the `check-fixture-diff.sh` CI
  * gate then guards undeclared fixture mutations.
  *

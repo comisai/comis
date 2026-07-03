@@ -85,7 +85,7 @@ describe("wireContextTools — daemon composition root", () => {
     expect(ctxSearch).toBeDefined();
 
     // Drive execute inside a live, FULLY-SCOPED session so the per-call scope-gate
-    // passes (R4 132-03: the ctx tools require a live agentId + tenantId — WR-02).
+    // passes (the ctx tools require a live agentId + tenantId).
     await runWithContext(
       {
         tenantId: "default",
@@ -98,7 +98,7 @@ describe("wireContextTools — daemon composition root", () => {
       },
     );
 
-    // The wiring passed the SAME store instance through — not a fresh one. R4:
+    // The wiring passed the SAME store instance through — not a fresh one.
     // searchLcd now receives the full ContextStoreScope built from the LIVE
     // context (conversationId + agentId + tenantId), never a bare conversation id.
     expect(searchLcd).toHaveBeenCalledTimes(1);
@@ -114,7 +114,7 @@ describe("wireContextTools — daemon composition root", () => {
   });
 });
 
-describe("resolveCtxExpandDepth — DEPTH-02 tier-gated multi-hop depth at wiring time", () => {
+describe("resolveCtxExpandDepth — tier-gated multi-hop depth at wiring time", () => {
   it("resolves an anthropic (frontier) agent model to depth 4", () => {
     expect(resolveCtxExpandDepth("claude-sonnet-4-5-20250929", "anthropic")).toBe(4);
   });
@@ -136,23 +136,23 @@ describe("resolveCtxExpandDepth — DEPTH-02 tier-gated multi-hop depth at wirin
     expect(resolveCtxExpandDepth("default", "default")).toBe(2);
   });
 
-  // WR-04 (Phase 174-04): the operator capabilityClass override (the same
+  // The operator capabilityClass override (the same
   // providers.entries.<id>.capabilities.capabilityClass pin pi-executor honors) must govern
   // the ctx_expand walk depth. Without threading it, a pinned model resolves depth purely
   // from the provider-family heuristic — silently ignoring the operator pin.
-  it("WR-04: an operator capabilityClass override governs the depth (pinned 'mid' ollama → depth 3, not the small heuristic 2)", () => {
+  it("an operator capabilityClass override governs the depth (pinned 'mid' ollama → depth 3, not the small heuristic 2)", () => {
     // An ollama model heuristically resolves "small" → depth 2. Pinning it "mid" must yield
     // the mid tier's depth 3 — proving the override is threaded through to resolveModelProfile.
     expect(resolveCtxExpandDepth("qwen3.6:35b", "ollama", "mid")).toBe(3);
   });
-  it("WR-04: a 'frontier' override on a small-family model yields the frontier depth 4", () => {
+  it("a 'frontier' override on a small-family model yields the frontier depth 4", () => {
     expect(resolveCtxExpandDepth("qwen3.6:35b", "ollama", "frontier")).toBe(4);
   });
-  it("WR-04: a 'nano' override locks the depth to 1 even for an anthropic (frontier-heuristic) model", () => {
+  it("a 'nano' override locks the depth to 1 even for an anthropic (frontier-heuristic) model", () => {
     // The override wins UNCONDITIONALLY over the provider family (model-profile.ts:158).
     expect(resolveCtxExpandDepth("claude-sonnet-4-5-20250929", "anthropic", "nano")).toBe(1);
   });
-  it("WR-04: an absent override preserves the provider-family heuristic (back-compat with the call site)", () => {
+  it("an absent override preserves the provider-family heuristic (back-compat with the call site)", () => {
     expect(resolveCtxExpandDepth("qwen3.6:35b", "ollama", undefined)).toBe(2);
   });
 });

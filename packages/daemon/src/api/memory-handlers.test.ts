@@ -11,7 +11,7 @@ import {
 import { createMemoryHandlers } from "./memory-handlers.js";
 import { bindMemoryAskHandler } from "./memory-ask-handlers.js";
 import type { MemoryHandlerDeps } from "./memory-handlers.js";
-// FIX 2: the empty-content rejection must be a typed ValidationError so the RPC
+// The empty-content rejection must be a typed ValidationError so the RPC
 // dispatcher classifies it as warn/validation (not error/internal).
 import { ValidationError } from "./errors.js";
 import { classifyRpcError } from "./rpc-dispatch.js";
@@ -197,9 +197,10 @@ describe("createMemoryHandlers - memory management", () => {
     });
 
     it("reports the FULL match count as total (not the page length) so pagination can advance past one page", async () => {
-      // P4: a full page (5 entries at limit 5) where the store holds 383 total.
-      // `total` must be the count() value (383), NOT entries.length (5) — the old
-      // bug reported '1-5 of 5' and disabled Next even with 378 more entries.
+      // A full page (5 entries at limit 5) where the store holds 383 total.
+      // `total` must be the count() value (383), NOT entries.length (5) —
+      // reporting the page length reads '1-5 of 5' and disables Next even
+      // with 378 more entries.
       const entries = Array.from({ length: 5 }, (_, i) => ({
         id: `mem-${i}`,
         content: `Content ${i}`,
@@ -326,15 +327,14 @@ describe("createMemoryHandlers - memory management", () => {
     });
 
     it("does NOT phantom-count a not-found id as deleted (real adapter returns ok:true,value:false)", async () => {
-      // Live regression (admin-manage-tools live-test 2026-06-25, H-NOFAB oracle):
-      // the REAL sqlite adapter returns ok(result.changes > 0) — a not-found id is
+      // The REAL sqlite adapter returns ok(result.changes > 0) — a not-found id is
       // { ok: true, value: false }, NOT { ok: false }. The handler must count `deleted`
       // off result.VALUE (a row was actually removed), never result.OK (the DELETE
-      // statement ran without error). The pre-existing "partial failures" test above
-      // modelled not-found as { ok: false } (an ERROR result), so it NEVER exercised
-      // the real not-found path — and the bug shipped: live `memory_manage delete
-      // ['nonexistent-id-99999']` returned `{ deleted: 1, failed: 0, total: 1 }`
-      // (phantom — exactly the false-count class H-NOFAB guards).
+      // statement ran without error). The "partial failures" test above
+      // models not-found as { ok: false } (an ERROR result), so it never exercises
+      // the real not-found path — without this test, a live delete of a
+      // nonexistent id would report `{ deleted: 1, failed: 0, total: 1 }` (a
+      // phantom count of an operation that removed nothing).
       const deps = makeDeps({
         memoryAdapter: {
           delete: vi.fn(async (id: string) =>
@@ -539,10 +539,10 @@ describe("memory.store - write validation", () => {
   });
 
   it("attributes a tool-stored fact to the conversation's real user, not the literal 'agent'", async () => {
-    // Live finding 2026-06-11: agent-stored rows carried user_id "agent"
-    // while the paired auto-captures carried the real session user — "who is
-    // this fact about" was lost on the tool path. The dispatcher injects
-    // _callerSessionKey; the handler recovers the userId from it.
+    // Without this, agent-stored rows carry user_id "agent" while the paired
+    // auto-captures carry the real session user — "who is this fact about"
+    // is lost on the tool path. The dispatcher injects _callerSessionKey;
+    // the handler recovers the userId from it.
     const deps = makeDeps();
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
@@ -747,26 +747,22 @@ describe("memory.store - write validation", () => {
   });
 
   // -------------------------------------------------------------------------
-  // FIX 2 (LOW logging hygiene) — empty/whitespace memory.store content is a
+  // Logging hygiene — empty/whitespace memory.store content is a
   // CALLER/VALIDATION error, not an internal fault.
   //
-  // Bug: the empty-content guard threw a BARE `Error("Missing required
-  // parameter: content")`. The RPC dispatcher's classifyRpcError only
+  // A BARE `Error("Missing required parameter: content")` would misclassify:
+  // the RPC dispatcher's classifyRpcError only
   // short-circuits typed errors (PreconditionError/ValidationError) to
   // warn-level — a bare Error falls through to the default `errorKind:
-  // "internal"`, `level: "error"` (rpc-dispatch.ts:105). So a routine
-  // empty-content rejection logged at level:50 (ERROR) with
+  // "internal"`, `level: "error"` (rpc-dispatch.ts:105), so a routine
+  // empty-content rejection would log at level:50 (ERROR) with
   // errorKind:"internal", polluting error dashboards with a caller mistake.
   //
-  // FIX: throw a ValidationError so classifyRpcError maps it to
+  // The guard therefore throws a ValidationError so classifyRpcError maps it to
   // errorKind:"validation", level:"warn" (40). The rejection BEHAVIOR is
-  // unchanged — the call is still rejected, the turn is still graceful, and
-  // the user-facing message stays "Missing required parameter: content" (the
+  // otherwise the same — the call is still rejected, the turn is still graceful,
+  // and the user-facing message stays "Missing required parameter: content" (the
   // 15+ existing memory-handlers.test.ts assertions rely on it).
-  //
-  // RED-first: on the pre-patch tree the thrown error is a bare Error (name
-  // "Error"), so the ValidationError instanceof + the classifyRpcError
-  // validation/warn assertions FAIL.
   // -------------------------------------------------------------------------
   describe("empty-content rejection is a validation (caller) error, not internal", () => {
     async function captureStoreError(content: unknown): Promise<unknown> {
@@ -793,7 +789,7 @@ describe("memory.store - write validation", () => {
     it("throws a ValidationError (so the dispatcher logs warn/validation, NOT error/internal)", async () => {
       const err = await captureStoreError("");
       // The thrown error is the TYPED ValidationError — the only path
-      // classifyRpcError short-circuits to warn-level. A bare Error (pre-patch)
+      // classifyRpcError short-circuits to warn-level. A bare Error
       // fails this instanceof + the name check.
       expect(err).toBeInstanceOf(ValidationError);
       expect((err as Error).name).toBe("ValidationError");
@@ -1070,9 +1066,9 @@ describe("createMemoryHandlers - diagnostics", () => {
     }
 
     it("a disabled recorder yields an honest empty — tracingEnabled:false + a hint naming the knob (never a silent {records: []})", async () => {
-      // Live finding 2026-06-11: right after a live recall, the trace query
-      // returned a bare empty because diagnostics.recallTrace.enabled
-      // defaults false — indistinguishable from "no recalls happened".
+      // Right after a live recall, a bare empty response (because
+      // diagnostics.recallTrace.enabled defaults false) is indistinguishable
+      // from "no recalls happened" — hence the explicit flag + knob-naming hint.
       const { deps } = makeDiagDeps(); // no dataDir → no trace file; gate unset → disabled
       const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
@@ -1129,8 +1125,8 @@ describe("createMemoryHandlers - diagnostics", () => {
       // The PRODUCTION recorder ALWAYS writes `sessionId` and only writes
       // `sessionKey` when an envelope is supplied. These fixtures use the
       // real-recorder shape (sessionId present), and the selector must match
-      // session_key against it. The old fixtures hand-wrote `sessionKey` — a
-      // field the recorder did not always write — which masked the dead selector.
+      // session_key against it. Fixtures that hand-write `sessionKey` — a
+      // field the recorder does not always write — would mask a dead selector.
       const dataDir = writeTraceFile([
         { ts: "2026-05-29T00:00:00.000Z", sessionId: "sess-A", traceId: "t-A", agentId: "default", finalCount: 3 },
         { ts: "2026-05-29T00:01:00.000Z", sessionId: "sess-B", traceId: "t-B", agentId: "default", finalCount: 1 },
@@ -1319,7 +1315,7 @@ function makeSeam(parsed: DialecticParsed): {
 }
 
 describe("createMemoryHandlers - memory.ask (dialectic)", () => {
-  it("Test 1: abstains WITHOUT calling the seam on empty recall (Pitfall 5)", async () => {
+  it("abstains WITHOUT calling the seam on empty recall", async () => {
     const recall = makeRecall([]); // empty recall
     const seam = makeSeam({ abstain: false, answer: "should-not-be-used", citedIds: ["x"] });
     const deps = makeDeps({
@@ -1340,7 +1336,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(seam.spy).not.toHaveBeenCalled();
   });
 
-  it("Test 2: grounded answer with real-id citations (citations ⊆ recalled ids)", async () => {
+  it("grounded answer with real-id citations (citations ⊆ recalled ids)", async () => {
     const recall = makeRecall([
       memResult("id-a", "UTC is the timezone", "learned", ["src-1"]),
       memResult("id-b", "another fact", "learned", ["src-2"]),
@@ -1366,7 +1362,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(recall.recallCalls[0]?.query).toBe("what timezone");
   });
 
-  it("Test 3: a bogus citation id is dropped (citations validated ⊆ recalled ids)", async () => {
+  it("a bogus citation id is dropped (citations validated ⊆ recalled ids)", async () => {
     const recall = makeRecall([memResult("id-a", "UTC is the timezone", "learned")]);
     const seam = makeSeam({ abstain: false, answer: "UTC", citedIds: ["id-a", "id-BOGUS"] });
     const deps = makeDeps({
@@ -1386,7 +1382,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(result.abstained).toBe(false);
   });
 
-  it("Test 4: trust-first — the grounding presents the system claim BEFORE the external claim", async () => {
+  it("trust-first — the grounding presents the system claim BEFORE the external claim", async () => {
     // A system current-truth ("UTC") contradicts an external claim ("PST"). orderByTrust
     // must put the system claim first in the grounding the seam RECEIVES.
     const recall = makeRecall([
@@ -1418,7 +1414,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(sysAt).toBeLessThan(extAt);
   });
 
-  it("Test 5: uses createMemoryRecall (the injected factory), NOT deps.memoryApi.search", async () => {
+  it("uses createMemoryRecall (the injected factory), NOT deps.memoryApi.search", async () => {
     const recall = makeRecall([memResult("id-a", "fact", "learned")]);
     const seam = makeSeam({ abstain: false, answer: "a", citedIds: ["id-a"] });
     const deps = makeDeps({
@@ -1441,7 +1437,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(recall.buildCalls).toEqual(["agent-1"]);
   });
 
-  it("Test 6: seam absent ⇒ graceful abstain (no key / not wired), never throws", async () => {
+  it("seam absent ⇒ graceful abstain (no key / not wired), never throws", async () => {
     const recall = makeRecall([memResult("id-a", "fact", "learned")]);
     // dialecticSeam undefined — not wired.
     const deps = makeDeps({
@@ -1459,7 +1455,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(result).toEqual({ answer: "", citations: [], abstained: true, reason: "dialectic_unavailable" });
   });
 
-  it("Test 6b: a REAL createDialecticSeam with an unresolvable model degrades to abstain", async () => {
+  it("a REAL createDialecticSeam with an unresolvable model degrades to abstain", async () => {
     // Build the genuine seam (not a stub) with a model that cannot resolve, so the
     // seam degrades non-fatally to { abstain: true } and the handler returns the sentinel.
     // This exercises the injected-seam contract end-to-end (createDialecticSeam shape).
@@ -1991,10 +1987,10 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// memory.portability.export — scrubber RED→GREEN security tests
+// memory.portability.export — scrubber security tests.
 //
-// These tests demonstrate the vulnerability on pre-firewall code (RED state)
-// and pass after the scrubber is wired in the export handler (GREEN state).
+// The export handler must scrub secret-shaped content before it reaches the
+// export envelope; an unscrubbed export would exfiltrate stored secrets.
 // ---------------------------------------------------------------------------
 
 // Secret-shaped content fixture — split to avoid triggering ESLint scanners.
@@ -2004,8 +2000,8 @@ const SECRET_CONTENT = "sk-ant-api03-" + "TESTAPIKEY1234567890abcdef";
 // validateMemoryWrite targets the space-separated phrase.
 const JAILBREAK_CONTENT = "Ignore-all-previous-instructions-jailbreak-test-fixture";
 
-describe("memory.portability.export — scrubber RED→GREEN", () => {
-  it("scrubs secret-shaped content before returning the export envelope (RED: handler absent)", async () => {
+describe("memory.portability.export — scrubber", () => {
+  it("scrubs secret-shaped content before returning the export envelope", async () => {
     const deps = makeDeps({
       memoryApi: {
         inspect: vi.fn(() => [
@@ -2024,7 +2020,6 @@ describe("memory.portability.export — scrubber RED→GREEN", () => {
       } as never,
     });
     const handlers = createMemoryPortabilityHandlers(deps);
-    // RED: handler absent → TypeError. GREEN: handler exists and scrubs content.
     const result = await (handlers["memory.portability.export"] as Function)({
       agent_id: "agent1",
       _trustLevel: "admin",
@@ -2037,8 +2032,8 @@ describe("memory.portability.export — scrubber RED→GREEN", () => {
   });
 });
 
-describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
-  it("blocks secret-bearing entry: store is NOT called when validateMemoryWrite returns critical (RED: handler absent)", async () => {
+describe("memory.portability.import — CRITICAL firewall", () => {
+  it("blocks secret-bearing entry: store is NOT called when validateMemoryWrite returns critical", async () => {
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
@@ -2049,7 +2044,6 @@ describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
       })),
     });
     const handlers = createMemoryPortabilityHandlers(deps);
-    // RED: handler absent → TypeError. GREEN: handler exists and blocks the entry.
     const result = await (handlers["memory.portability.import"] as Function)({
       entries: [{
         id: "e1", content: SECRET_CONTENT, trust_level: "learned",
@@ -2066,19 +2060,17 @@ describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
     expect(result.imported).toBe(0);
   });
 
-  it("CR-02: import handler fails closed when memoryWriteValidator is absent — no entries stored, error thrown", async () => {
+  it("import handler fails closed when memoryWriteValidator is absent — no entries stored, error thrown", async () => {
     // FAIL-CLOSED SENTINEL: the import handler MUST refuse to proceed without a validator.
     // Absence of the validator is a wiring mistake; silently bypassing the firewall is
-    // more dangerous than refusing the whole batch. This replaced the old "proves validator
-    // is the guard" test that documented the fail-open posture.
+    // more dangerous than refusing the whole batch.
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
       memoryWriteValidator: undefined,  // no validator wired — must fail closed
     });
     const handlers = createMemoryPortabilityHandlers(deps);
-    // RED (before fix): handler falls through and calls store.
-    // GREEN (after fix): handler throws before any store call.
+    // The handler must throw before any store call.
     await expect(
       (handlers["memory.portability.import"] as Function)({
         entries: [{
@@ -2096,7 +2088,7 @@ describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
   });
 });
 
-describe("memory.portability.import — MEM-IMPORT-DUP idempotency (30uc UC-22)", () => {
+describe("memory.portability.import — duplicate-content idempotency", () => {
   const cleanValidator = vi.fn(() => ({ severity: "clean" as const, patterns: [], criticalPatterns: [] }));
   function importEntry(content: string, id: string) {
     return {
@@ -2106,7 +2098,7 @@ describe("memory.portability.import — MEM-IMPORT-DUP idempotency (30uc UC-22)"
     };
   }
 
-  it("DEDUPS an entry whose content already exists in the target scope — store NOT called (RED: re-import doubled)", async () => {
+  it("DEDUPS an entry whose content already exists in the target scope — store NOT called (a re-import must not double entries)", async () => {
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
       // target already has "already here" → a re-import of it must be skipped, not duplicated.
@@ -2144,8 +2136,8 @@ describe("memory.portability.import — MEM-IMPORT-DUP idempotency (30uc UC-22)"
   });
 });
 
-describe("memory.portability.import — WARN downgrade RED→GREEN", () => {
-  it("downgrades jailbreak entry to external trust with security-tainted tag (RED: handler absent)", async () => {
+describe("memory.portability.import — WARN downgrade", () => {
+  it("downgrades jailbreak entry to external trust with security-tainted tag", async () => {
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
@@ -2156,7 +2148,7 @@ describe("memory.portability.import — WARN downgrade RED→GREEN", () => {
       })),
     });
     const handlers = createMemoryPortabilityHandlers(deps);
-    // RED: handler absent → TypeError. GREEN: downgrades to "external" with "security-tainted" tag.
+    // A warn-severity entry is downgraded to "external" with a "security-tainted" tag.
     await (handlers["memory.portability.import"] as Function)({
       entries: [{
         id: "e2", content: JAILBREAK_CONTENT, trust_level: "learned",
@@ -2175,8 +2167,8 @@ describe("memory.portability.import — WARN downgrade RED→GREEN", () => {
   });
 });
 
-describe("memory.portability.import — re-stamp scope + dry-run RED→GREEN", () => {
-  it("re-stamps tenantId and agentId from RPC params, never from envelope scope (RED: handler absent)", async () => {
+describe("memory.portability.import — re-stamp scope + dry-run", () => {
+  it("re-stamps tenantId and agentId from RPC params, never from envelope scope", async () => {
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
       tenantId: "correct-tenant",
@@ -2201,7 +2193,7 @@ describe("memory.portability.import — re-stamp scope + dry-run RED→GREEN", (
     expect(storedEntry["agentId"]).toBe("target-agent");
   });
 
-  it("dry-run does not call memoryAdapter.store but still reports blocked/downgraded counts (RED: handler absent)", async () => {
+  it("dry-run does not call memoryAdapter.store but still reports blocked/downgraded counts", async () => {
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
@@ -2236,19 +2228,19 @@ describe("memory.portability.import — re-stamp scope + dry-run RED→GREEN", (
 });
 
 // ---------------------------------------------------------------------------
-// CR-01: Export scrubber applied to source_who, source_channel, source_session_key, tags
-// RED state: these fields are emitted unscrubbed in the pre-fix code.
-// GREEN state: all free-text export fields are scrubbed through scrubSecretsFromText.
+// Export scrubber applied to source_who, source_channel, source_session_key, tags.
+// ALL free-text export fields must pass through scrubSecretsFromText — not just
+// content — so a secret-shaped value never reaches the export envelope.
 // ---------------------------------------------------------------------------
 
-describe("memory.portability.export — source fields + tags are scrubbed (CR-01)", () => {
+describe("memory.portability.export — source fields + tags are scrubbed", () => {
   it("scrubs secret-shaped value in source_who — must not reach the export envelope unscrubbed", async () => {
     const secretWho = "sk-ant-api03-" + "WHOKEY1234567890abcdef";
     const deps = makeDeps({
       memoryApi: {
         inspect: vi.fn(() => [
           {
-            id: "mem-cr01-who",
+            id: "mem-export-who",
             content: "harmless content",
             trustLevel: "learned",
             tags: [],
@@ -2262,7 +2254,7 @@ describe("memory.portability.export — source fields + tags are scrubbed (CR-01
       } as never,
     });
     const handlers = createMemoryPortabilityHandlers(deps);
-    // RED: source_who passes through unscrubbed. GREEN: value is [REDACTED].
+    // The scrubber must replace the secret-shaped source_who with [REDACTED].
     const result = await (handlers["memory.portability.export"] as Function)({
       agent_id: "agent1",
       _trustLevel: "admin",
@@ -2279,7 +2271,7 @@ describe("memory.portability.export — source fields + tags are scrubbed (CR-01
       memoryApi: {
         inspect: vi.fn(() => [
           {
-            id: "mem-cr01-tag",
+            id: "mem-export-tag",
             content: "harmless content",
             trustLevel: "learned",
             tags: [secretTag, "normal-tag"],
@@ -2293,7 +2285,7 @@ describe("memory.portability.export — source fields + tags are scrubbed (CR-01
       } as never,
     });
     const handlers = createMemoryPortabilityHandlers(deps);
-    // RED: secret tag passes through unscrubbed. GREEN: secret tag value is [REDACTED].
+    // The scrubber must replace the secret-shaped tag value with [REDACTED].
     const result = await (handlers["memory.portability.export"] as Function)({
       agent_id: "agent1",
       _trustLevel: "admin",
@@ -2309,12 +2301,12 @@ describe("memory.portability.export — source fields + tags are scrubbed (CR-01
 });
 
 // ---------------------------------------------------------------------------
-// WR-03: non-string tag elements are filtered before reaching the store
-// RED state: rawTags cast as string[] lets non-string elements pass through.
-// GREEN state: .filter((t): t is string => typeof t === "string") applied.
+// Non-string tag elements are filtered before reaching the store: a bare
+// `rawTags as string[]` cast would let non-string elements pass through, so
+// `.filter((t): t is string => typeof t === "string")` must be applied.
 // ---------------------------------------------------------------------------
 
-describe("memory.portability.import — non-string tags are filtered before store (WR-03)", () => {
+describe("memory.portability.import — non-string tags are filtered before store", () => {
   it("filters numeric and null tag elements — only string tags reach memoryAdapter.store", async () => {
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
@@ -2322,7 +2314,7 @@ describe("memory.portability.import — non-string tags are filtered before stor
       memoryWriteValidator: vi.fn(() => ({ severity: "clean" as const, patterns: [], criticalPatterns: [] })),
     });
     const handlers = createMemoryPortabilityHandlers(deps);
-    // RED: non-string elements pass through to store. GREEN: only strings survive.
+    // Non-string elements must never pass through to store — only strings survive.
     await (handlers["memory.portability.import"] as Function)({
       entries: [{
         id: "e-wr03", content: "clean content", trust_level: "learned",

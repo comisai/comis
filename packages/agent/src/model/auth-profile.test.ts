@@ -459,10 +459,10 @@ describe("createAuthProfileManager", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Backward compatibility
+  // Default ordering strategy (no orderingStrategy configured)
   // -------------------------------------------------------------------------
 
-  describe("backward compatibility", () => {
+  describe("default ordering strategy", () => {
     it("no orderingStrategy in config defaults to explicit behavior", () => {
       const manager = createAuthProfileManager({
         profiles: [
@@ -479,7 +479,7 @@ describe("createAuthProfileManager", () => {
       expect(manager.getAvailableKey("anthropic")).toBe("val-a");
     });
 
-    it("existing test patterns continue to pass with no config changes", () => {
+    it("the default explicit strategy skips cooldown keys and returns the first key again once its cooldown clears", () => {
       const manager = createAuthProfileManager({
         profiles: [
           { keyName: "KEY_A", provider: "anthropic" },

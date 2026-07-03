@@ -190,7 +190,7 @@ describe("createAuthStorageAdapter", () => {
     expect(storage.hasAuth("nvidia")).toBe(false);
   });
 
-  // Live incident (v2.20 distillation flagship validation, 2026-06-10): a keyless
+  // Live incident: a keyless
   // local Ollama provider (type "ollama", no apiKeyName) got NO runtime key, so
   // resolveProviderApiKey -> authStorage.getApiKey returned "" and the LCD
   // summarizer's SDK call threw "No API key for provider: <id>", tripping the

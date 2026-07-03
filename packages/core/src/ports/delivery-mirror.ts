@@ -6,10 +6,8 @@
  * the agent's prompt on subsequent turns. This enables the agent to "see"
  * messages it sent to other channels/sessions, creating cross-session awareness.
  *
- * Session Mirroring.
- *
  * The createNoOpDeliveryMirror() factory lives at
- * ../delivery/no-op-delivery-mirror.ts; this file is now type-only.
+ * ../delivery/no-op-delivery-mirror.ts; this file is type-only.
  *
  * @module
  */

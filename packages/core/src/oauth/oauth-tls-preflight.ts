@@ -7,9 +7,8 @@
  * fixable via `apt install ca-certificates` etc.) or `network` (DNS,
  * firewall, proxy — operator action required).
  *
- * Verbatim port of OpenClaw's provider-openai-codex-oauth-tls.ts minus the
- * Homebrew prefix-resolution branch and minus the `note()` UI (caller decides
- * how to surface the result; this module is pure).
+ * This module is pure and renders no UI — the caller decides how to
+ * surface the result. Derived from third-party code; see NOTICE.
  *
  * The probe URL uses the public OpenAI Codex client_id
  * `app_EMoamEEZ73f0CkXaXp7hrann` (NOT a Comis-distinct value) to avoid
@@ -52,9 +51,8 @@ export type TlsPreflightFailureKind = "tls-cert" | "network";
 /**
  * Discriminated union returned by runOAuthTlsPreflight.
  *
- * NOTE on Result<T,E> deviation: this shape is from the OpenClaw port.
- * Callers pattern-match on `.kind` for actionable routing, which is
- * more ergonomic than `.error.kind`.
+ * NOTE on Result<T,E> deviation: callers pattern-match on `.kind` for
+ * actionable routing, which is more ergonomic here than `.error.kind`.
  */
 export type TlsPreflightResult =
   | { ok: true }
@@ -69,7 +67,7 @@ export type TlsPreflightResult =
 
 /** Options for the preflight probe. */
 export interface RunOAuthTlsPreflightOptions {
-  /** Defaults to 5000 ms (matches OpenClaw doctor variant; daemon-boot caller passes 4000). */
+  /** Defaults to 5000 ms; the daemon-boot caller passes 4000. */
   timeoutMs?: number;
   /** Dependency-injected fetch — used by tests; defaults to globalThis.fetch. */
   fetchImpl?: typeof fetch;
@@ -102,9 +100,8 @@ export async function runOAuthTlsPreflight(
 }
 
 function classifyTlsPreflightError(error: unknown): TlsPreflightResult {
-  // Inline narrowing — OpenClaw's asNullableObjectRecord helper is not
-  // exported by Comis; duplicating ~3 lines is preferred over adding a
-  // shared util (rule of three not yet met).
+  // Inline narrowing — duplicating ~3 lines of object-record coercion is
+  // preferred over adding a shared util (rule of three not yet met).
   const root = (error && typeof error === "object" ? error : {}) as Record<string, unknown>;
   const cause = (root.cause && typeof root.cause === "object" ? root.cause : {}) as Record<
     string,

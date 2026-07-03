@@ -3,7 +3,7 @@
  * Agents + models + providers-domain RPC contracts. Mirrors the three daemon
  * handler factory files that share the `AgentsApiDeps` cluster slice:
  *
- *   - `packages/daemon/src/api/agent-handlers.ts`     ( 8 methods — agents.*
+ *   - `packages/daemon/src/api/agent-handlers.ts`     ( 7 methods — agents.*
  *                                                       + agent.getOperationModels)
  *   - `packages/daemon/src/api/model-handlers.ts`     ( 3 methods — models.*)
  *   - `packages/daemon/src/api/provider-handlers.ts`  ( 7 methods — providers.*)

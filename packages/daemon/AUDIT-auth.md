@@ -25,7 +25,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. `oauthCredentialStore` is the OAuth-profile management surface (mirrored to AgentsApiDeps + ConfigApiDeps for multi-extends parity); `persistDeps` is the YAML-write surface (omitted in tests so file I/O is bypassed). `secretStore` is required (Plan 02-04) — always wired with file/encrypted/env adapter; secrets.set/delete/list/get always have a backend.
+**None.** Every optional field corresponds to a feature-gate documented above. `oauthCredentialStore` is the OAuth-profile management surface (mirrored to AgentsApiDeps + ConfigApiDeps for multi-extends parity); `persistDeps` is the YAML-write surface (omitted in tests so file I/O is bypassed). `secretStore` is required — always wired with a file/encrypted/env adapter; secrets.set/delete/list/get always have a backend.
 
 ## Summary
 

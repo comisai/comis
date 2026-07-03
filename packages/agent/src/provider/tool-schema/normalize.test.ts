@@ -18,8 +18,8 @@ import type { ComisLogger } from "@comis/core";
 /**
  * Reset the module-level gbnf boot-summary latch between tests (mirrors the
  * logger reset in the top-level beforeEach — without it, test order breaks).
- * Bound tolerantly via the namespace so the file still loads on the pre-patch
- * module where the export does not exist yet (the RED state).
+ * Bound tolerantly via the namespace so a missing export degrades to a
+ * no-op instead of failing the whole file's module link.
  */
 function resetGbnfBootSummary(): void {
   (
@@ -43,8 +43,8 @@ function makeTool(
 
 /**
  * The hostile fixtures are inert data (name/description/parameters, no
- * execute) — cast to the SDK shape the pipeline reads (per the Plan-01
- * fixture contract: consumers cast where a full ToolDefinition is required).
+ * execute) — cast to the SDK shape the pipeline reads (the fixture module's
+ * contract: consumers cast where a full ToolDefinition is required).
  */
 function asToolDefs(tools: readonly HostileMcpTool[]): ToolDefinition[] {
   return tools as unknown as ToolDefinition[];
@@ -430,10 +430,10 @@ describe("normalizeToolSchemasForProvider", () => {
     });
   });
 
-  describe("Trace logging — log-review demotion", () => {
-    // Previously this log was debug-level, firing per-tool-per-request and
-    // dominating debug logs. It's now trace-level — recoverable when
-    // an operator needs it, silent during routine debug-mode operation.
+  describe("Trace logging — keyword-strip lines stay below debug level", () => {
+    // This log fires per-tool-per-request; at debug level it would dominate
+    // debug output. It must stay at trace level — recoverable when an
+    // operator needs it, silent during routine debug-mode operation.
 
     it("calls logger.trace (NOT .debug) when keywords are stripped", () => {
       const debugFn = vi.fn();
@@ -498,8 +498,8 @@ describe("normalizeToolSchemasForProvider", () => {
   describe("GBNF profile (Layer 3.5) — local providers", () => {
     // These tests drive the FULL public pipeline (never the transform fn in
     // isolation — that is clean-for-gbnf.test.ts's job). They pin the GATE:
-    // the early-return at the no-provider-cleaning branch must learn the gbnf
-    // profile or local providers silently skip the layer (RESEARCH Pitfall 3).
+    // the early-return at the no-provider-cleaning branch must recognize the
+    // gbnf profile or local providers silently skip the layer.
     const gbnfCtx: ToolNormalizationContext = {
       provider: "my-ollama",
       modelId: "qwen3.6:35b",
@@ -532,7 +532,7 @@ describe("normalizeToolSchemasForProvider", () => {
       });
     });
 
-    it("preserves pattern and format under the proactive gbnf profile (reactive strip is GBNF-02)", () => {
+    it("preserves pattern and format under the proactive gbnf profile (the reactive strip owns that)", () => {
       const result = normalizeToolSchemasForProvider(
         asToolDefs([hostileMcpTool]),
         gbnfCtx,
@@ -577,7 +577,7 @@ describe("normalizeToolSchemasForProvider", () => {
       expect((result[0].parameters as Record<string, unknown>).type).toBe("object");
     });
 
-    // CR-01 (175-REVIEW): Layer 3.5 runs BEFORE Layer 4, and T4 infers
+    // Layer 3.5 runs BEFORE Layer 4, and T4 infers
     // "string" for a typeless top level with no properties/required/
     // additionalProperties/items — `parameters: {}` (a real no-arg-tool shape
     // from sloppy MCP servers) and `parameters: {description}` became
@@ -585,7 +585,7 @@ describe("normalizeToolSchemasForProvider", () => {
     // arguments payload as a JSON string. Layer 4 then no-ops because a type
     // is present. Every other provider path produces type "object" for the
     // same input — these pins force the gbnf path onto the same contract.
-    it("CR-01: a bare no-arg top-level schema ({}) becomes type object under the gbnf profile — never type string", () => {
+    it("a bare no-arg top-level schema ({}) becomes type object under the gbnf profile — never type string", () => {
       const tool = makeTool("noarg_bare", {});
 
       const result = normalizeToolSchemasForProvider([tool], gbnfCtx);
@@ -593,7 +593,7 @@ describe("normalizeToolSchemasForProvider", () => {
       expect(result[0].parameters).toEqual({ type: "object", properties: {} });
     });
 
-    it("CR-01: a description-only top-level schema becomes type object under the gbnf profile, matching the no-compat path's contract", () => {
+    it("a description-only top-level schema becomes type object under the gbnf profile, matching the no-compat path's contract", () => {
       const descOnly = { description: "No-arg tool from a sloppy MCP server" };
       const gbnfResult = normalizeToolSchemasForProvider(
         [makeTool("noarg_desc_only", { ...descOnly })],
@@ -612,7 +612,7 @@ describe("normalizeToolSchemasForProvider", () => {
       expect(gbnfParams.description).toBe(descOnly.description);
     });
 
-    it("CR-01: typeless top-level normalization stays idempotent under the gbnf profile (twice = once, byte-identical)", () => {
+    it("typeless top-level normalization stays idempotent under the gbnf profile (twice = once, byte-identical)", () => {
       const tools = [
         makeTool("noarg_bare", {}),
         makeTool("noarg_desc_only", { description: "No-arg tool" }),
@@ -625,15 +625,14 @@ describe("normalizeToolSchemasForProvider", () => {
     });
   });
 
-  describe("I3 — non-local providers byte-identical (expected literals)", () => {
-    // Expected literals derived by running the PRE-PATCH pipeline (base
-    // efd87538, before the gbnf layer existed) once per provider on
-    // hostileMcpTool and inlining the output verbatim. NEVER compare the
-    // pipeline to itself in these assertions — self-comparison pins can't
-    // fail (RESEARCH Pitfall 7). These four pins must pass pre- AND
-    // post-patch: the gbnf layer must not perturb any non-gbnf provider.
+  describe("non-local providers byte-identical (expected literals)", () => {
+    // Expected literals derived by running the pipeline WITHOUT the gbnf
+    // layer once per provider on hostileMcpTool and inlining the output
+    // verbatim. NEVER compare the pipeline to itself in these assertions —
+    // self-comparison pins can't fail. These four pins prove the gbnf layer
+    // does not perturb any non-gbnf provider.
 
-    it("anthropic: hostile fixture normalizes to the pinned pre-phase literal (keyword strip + L0 + L4)", () => {
+    it("anthropic: hostile fixture normalizes to the pinned no-gbnf literal (keyword strip + L0 + L4)", () => {
       const result = normalizeToolSchemasForProvider(
         asToolDefs([hostileMcpTool]),
         { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
@@ -654,7 +653,7 @@ describe("normalizeToolSchemasForProvider", () => {
       });
     });
 
-    it("openai: hostile fixture normalizes to the pinned pre-phase literal (L0 + L4 only)", () => {
+    it("openai: hostile fixture normalizes to the pinned no-gbnf literal (L0 + L4 only)", () => {
       const result = normalizeToolSchemasForProvider(
         asToolDefs([hostileMcpTool]),
         { provider: "openai", modelId: "gpt-4o" },
@@ -674,7 +673,7 @@ describe("normalizeToolSchemasForProvider", () => {
       });
     });
 
-    it("google: hostile fixture normalizes to the pinned pre-phase literal (gemini cleaning + keyword strip + L0 + L4)", () => {
+    it("google: hostile fixture normalizes to the pinned no-gbnf literal (gemini cleaning + keyword strip + L0 + L4)", () => {
       const result = normalizeToolSchemasForProvider(
         asToolDefs([hostileMcpTool]),
         { provider: "google", modelId: "gemini-2.0-flash" },
@@ -697,7 +696,7 @@ describe("normalizeToolSchemasForProvider", () => {
       });
     });
 
-    it("my-ollama without gbnf compat: pinned L0+L4-only literal proves no name sniffing (D-08)", () => {
+    it("my-ollama without gbnf compat: pinned L0+L4-only literal proves no name sniffing", () => {
       const result = normalizeToolSchemasForProvider(
         asToolDefs([hostileMcpTool]),
         { provider: "my-ollama", modelId: "qwen3.6:35b" },
@@ -705,7 +704,7 @@ describe("normalizeToolSchemasForProvider", () => {
 
       // No compat → the gbnf layer must NEVER apply, regardless of the
       // ollama-ish provider name: the gate derives solely from
-      // compat.toolSchemaProfile (D-08: no baseUrl/name sniffing).
+      // compat.toolSchemaProfile (no baseUrl/name sniffing).
       expect(result[0].parameters).toEqual({
         type: "object",
         properties: {
@@ -721,7 +720,7 @@ describe("normalizeToolSchemasForProvider", () => {
     });
   });
 
-  describe("GBNF once-per-boot INFO summary (GBNF-03)", () => {
+  describe("GBNF once-per-boot INFO summary", () => {
     beforeEach(() => {
       // The latch is module-level state — reset it alongside the logger
       // (top-level beforeEach) so each test starts from a fresh boot.
@@ -821,7 +820,7 @@ describe("normalizeToolSchemasForProvider", () => {
       expect(providers).toEqual(["my-ollama", "my-lmstudio"]);
     });
 
-    it("keeps the INFO content-free: no schema-structure substrings leak into the log fields (I7)", () => {
+    it("keeps the INFO content-free: no schema-structure substrings leak into the log fields", () => {
       const { logger, infoFn } = makeMockLogger();
       setToolNormalizationLogger(logger);
 
@@ -852,16 +851,17 @@ describe("normalizeToolSchemasForProvider", () => {
     });
   });
 
-  // AUTHOR-03 (best-effort, Phase 174-05): the gbnfConstrain authoring gate.
+  // The gbnfConstrain authoring gate (best-effort).
   // The flag threads `config.orchestration.authoring.gbnfConstrain` into the
   // Layer 3.5 entry so an operator can engage the GBNF structural transform on
   // the raw pipeline escape hatch for GBNF-eligible (local/default-family)
   // providers EVEN WHEN they have not been pinned to the explicit gbnf profile.
   // It is REMOVAL/RELAXATION ONLY (never widens field VALUE validation — the
-  // daemon driver Zod stays the single source of truth) and is gated D-08-strict:
+  // daemon driver Zod stays the single source of truth) and is strictly gated:
   // it never engages GBNF on a CLOUD-family provider (anthropic/google/xai) by
-  // name. The load-bearing invariant: FLAGS-OFF is byte-identical to today.
-  describe("AUTHOR-03 gbnfConstrain authoring gate (Layer 3.5)", () => {
+  // name. The load-bearing invariant: with the flag off (or absent), the
+  // output is byte-identical to a call that never mentions the flag.
+  describe("gbnfConstrain authoring gate (Layer 3.5)", () => {
     // A gbnf-profile provider where the structural transform is observable: the
     // hostile fixture's `retries: ["integer","null"]` type array collapses to a
     // scalar `{type:"integer"}` only when Layer 3.5 engages.
@@ -870,20 +870,20 @@ describe("normalizeToolSchemasForProvider", () => {
       modelId: "qwen3.6:35b",
       compat: { toolSchemaProfile: "gbnf" },
     };
-    // The SAME local provider WITHOUT the explicit gbnf profile. Pre-patch this
-    // short-circuits the early-return (no keyword set, not gemini, not xai, not
-    // gbnf) and Layer 3.5 never runs — the flag is what newly engages it.
+    // The SAME local provider WITHOUT the explicit gbnf profile. Without the
+    // flag this short-circuits the early-return (no keyword set, not gemini,
+    // not xai, not gbnf) and Layer 3.5 never runs — the flag is what engages it.
     const eligibleNoProfileCtx: ToolNormalizationContext = {
       provider: "my-ollama",
       modelId: "qwen3.6:35b",
     };
 
-    // Test 1 (flag-on, the RED-bearing case): on a GBNF-eligible local provider
-    // that is NOT pinned to the gbnf profile, gbnfConstrain:true engages the
-    // Layer 3.5 structural transform for the raw pipeline schema. Assert via the
-    // same observable as the existing gbnf gate test: the ["integer","null"]
-    // type array collapses to the scalar type. Pre-patch (flag ignored, early
-    // return taken) the array survives → this fails RED.
+    // Test 1 (flag-on): on a GBNF-eligible local provider that is NOT pinned
+    // to the gbnf profile, gbnfConstrain:true engages the Layer 3.5 structural
+    // transform for the raw pipeline schema. Assert via the same observable as
+    // the existing gbnf gate test: the ["integer","null"] type array collapses
+    // to the scalar type. If the flag were ignored (early return taken) the
+    // array would survive.
     it("flag-on, gbnf-eligible provider (no profile): engages the Layer 3.5 transform", () => {
       const result = normalizeToolSchemasForProvider(asToolDefs([hostileMcpTool]), {
         ...eligibleNoProfileCtx,
@@ -897,7 +897,7 @@ describe("normalizeToolSchemasForProvider", () => {
     });
 
     // The flag is at minimum no-op-or-stronger on an already-gbnf-profile
-    // provider (never weaker than today).
+    // provider (never weaker than the profile alone).
     it("flag-on, gbnf-profile provider: still engages the transform (never weaker)", () => {
       const result = normalizeToolSchemasForProvider(asToolDefs([hostileMcpTool]), {
         ...gbnfProfileCtx,
@@ -910,7 +910,8 @@ describe("normalizeToolSchemasForProvider", () => {
 
     // Test 2 (value validation untouched): the transform is removal/relaxation
     // only — it does NOT strip pattern/format and does NOT relax a required
-    // field into optional (mirror clean-for-gbnf.test.ts:417 discipline). The
+    // field into optional (mirroring clean-for-gbnf.test.ts's
+    // pattern/format-survival discipline). The
     // daemon driver Zod remains the single source of truth for field VALUES.
     it("flag-on: never widens VALUE validation (pattern/format survive, required stays required)", () => {
       const result = normalizeToolSchemasForProvider(asToolDefs([hostileMcpTool]), {
@@ -929,7 +930,7 @@ describe("normalizeToolSchemasForProvider", () => {
 
     // Test 3 (FLAGS-OFF byte-identical — THE load-bearing test): with
     // gbnfConstrain:false (or absent), the normalize output is DEEP-EQUAL to the
-    // same call without the new field — across (a) a gbnf-profile provider, (b) a
+    // same call without the field — across (a) a gbnf-profile provider, (b) a
     // gbnf-eligible local provider with no profile, (c) gemini and (d) xai. The
     // gate is inert when off.
     describe("FLAGS-OFF byte-identical (the load-bearing invariant)", () => {
@@ -989,13 +990,13 @@ describe("normalizeToolSchemasForProvider", () => {
       }
     });
 
-    // Test 4 (cloud-family provider + flag-on is still inert — D-08): gbnfConstrain
+    // Test 4 (cloud-family provider + flag-on is still inert): gbnfConstrain
     // :true on a CLOUD-family provider (anthropic) does NOT engage the GBNF
     // transform. The authoring flag hardens the raw hatch only where GBNF
     // actually applies (local/default family) — the GBNF gate never derives GBNF
     // from a cloud provider name. anthropic's own Layer-1 keyword strip still
     // runs (that is its existing path, unchanged by the flag).
-    it("flag-on, CLOUD-family provider (anthropic): does NOT engage GBNF (D-08)", () => {
+    it("flag-on, CLOUD-family provider (anthropic): does NOT engage GBNF", () => {
       // A type-array node: GBNF would collapse it; anthropic's Layer 1 leaves
       // `type` untouched (it strips minLength/pattern, not type unions).
       const tool = makeTool("anthropic_tool", {

@@ -96,7 +96,7 @@ vi.mock("@comis/agent", () => ({
   resolveOperationModel: (...args: unknown[]) => mockResolveOperationModel(...args),
   resolveProviderFamily: vi.fn((p: string) => p),
   runMemoryReview: (...args: unknown[]) => mockRunMemoryReview(...args),
-  // CR-01: the __MEMORY_REVIEW__ branch now derives R6 capabilityClass via
+  // The __MEMORY_REVIEW__ branch derives the capabilityClass via
   // resolveModelProfile (capability axis only: provider family + override).
   resolveModelProfile: vi.fn((model: { provider: string }, override?: string) => {
     let capabilityClass = override;
@@ -116,7 +116,7 @@ vi.mock("@comis/core", async () => {
   return {
     formatSessionKey: vi.fn((sk: SessionKey) => `${sk.tenantId}:${sk.userId}:${sk.channelId}`),
     runWithContext: vi.fn(async (_ctx: any, fn: () => any) => fn()),
-    // F-OLL1: credentials.ts (memory-review gate) now consults the keyless
+    // credentials.ts (memory-review gate) consults the keyless
     // allowlist + sentinel; mirror the real @comis/core values so the partial
     // mock resolves them (anthropic provider here is non-keyless → still skips).
     KEYLESS_PROVIDER_TYPES: new Set(["ollama", "lm-studio"]),

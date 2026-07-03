@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { createGoalPlanner } from "./goal-planner.js";
 
-describe("createGoalPlanner (R5 deferred stub)", () => {
+describe("createGoalPlanner (deferred planner stub)", () => {
   it("returns a planner function", () => {
     const planner = createGoalPlanner({});
     expect(typeof planner).toBe("function");

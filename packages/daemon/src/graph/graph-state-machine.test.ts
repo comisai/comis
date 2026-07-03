@@ -319,12 +319,12 @@ describe("createGraphStateMachine", () => {
   });
 
   // -------------------------------------------------------------------------
-  // markNodeFailed terminal-fail (budget breach) — D2
+  // markNodeFailed terminal-fail (budget breach)
   // -------------------------------------------------------------------------
 
   describe("markNodeFailed terminal-fail (budget breach)", () => {
     it("budget-class terminal fail with retries>0 does NOT retry (status failed, retrying empty)", () => {
-      // D2: a budget breach must bypass the retry path even when retries remain,
+      // A budget breach must bypass the retry path even when retries remain,
       // because a retry would just re-burn the budget.
       const sm = createGraphStateMachine(buildGraph([{ nodeId: "A", retries: 2 }]));
       sm.markNodeRunning("A", "run-1");
@@ -338,9 +338,9 @@ describe("createGraphStateMachine", () => {
       expect(sm.getNodeState("A")?.error).toBe("Node token budget exceeded");
     });
 
-    it("ordinary fail with retries>0 still retries (terminal flag is opt-in — byte-identical)", () => {
+    it("ordinary fail with retries>0 still retries (terminal flag is opt-in)", () => {
       // The SAME node config (retries:2) with a NORMAL fail (no terminal flag)
-      // must retry exactly as today: status back to "ready", retrying:[nodeId].
+      // must retry: status back to "ready", retrying:[nodeId].
       const sm = createGraphStateMachine(buildGraph([{ nodeId: "A", retries: 2 }]));
       sm.markNodeRunning("A", "run-1");
       const result = sm.markNodeFailed("A", "boom");

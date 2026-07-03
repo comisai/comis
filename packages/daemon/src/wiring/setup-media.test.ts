@@ -765,28 +765,28 @@ describe("STT/TTS lazy-delegation — rotated key observed per call without rest
 });
 
 // =============================================================================
-// WR-01 / WR-02 (Phase 193 code-review): the construction seam MUST build from
-// the resolver's CHOSEN provider, not the raw config.
+// The construction seam MUST build from the resolver's CHOSEN provider, not the
+// raw config.
 //
-// The documented CRED-01 follow-main path is: STT config provider:"auto",
+// The documented credential follow-main path is: STT config provider:"auto",
 // default agent main = openai, OPENAI_API_KEY present, localEngineAvailable()
 // === false. resolveStt() then returns {ok:true, provider:"openai",
-// source:"follow-main-key"} — but pre-fix setup-media passed the RAW config
-// (provider:"auto") to createSTTProvider, which hits the factory's `default`
+// source:"follow-main-key"} — but passing the RAW config
+// (provider:"auto") to createSTTProvider hits the factory's `default`
 // branch → err("Unknown STT provider: auto") → transcriber stays undefined and
-// the operator sees a misleading "not configured" WARN. No prior test exercised
+// the operator sees a misleading "not configured" WARN. No other test exercises
 // the construct seam AFTER a follow-main resolution (daemon.test.ts mocks
 // setupMedia; the boot-gate overrides it).
 //
-// To faithfully reproduce the bug, the createSTTProvider / createTTSProvider
-// mocks below mirror the REAL skills factory (stt-factory.ts:35-67,
+// To faithfully reproduce that failure mode, the createSTTProvider / createTTSProvider
+// mocks below mirror the REAL skills factory (stt-factory.ts,
 // tts-factory.ts): keyed providers → {ok}, anything else (including "auto")
 // → err("Unknown … provider: <provider>"). With that mock, a config carrying
-// provider:"auto" yields an undefined transcriber (RED); only threading the
+// provider:"auto" yields an undefined transcriber; only threading the
 // resolved provider:"openai" into construction flips it green.
 // =============================================================================
 
-describe("setupMedia — construction follows the resolver's chosen provider (WR-01/WR-02)", () => {
+describe("setupMedia — construction follows the resolver's chosen provider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDetectFfmpeg.mockResolvedValue({
@@ -834,12 +834,12 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
       ),
     });
 
-    // The bug: pre-fix, construction passed provider:"auto" → factory default
-    // branch → err → transcriber undefined. The transcriber MUST be built for
-    // the resolved openai provider.
+    // The failure mode: passing provider:"auto" to construction hits the factory
+    // default branch → err → transcriber undefined. The transcriber MUST be built
+    // for the resolved openai provider.
     expect(result.transcriber).toBeDefined();
     // createSTTProvider must have been called with the RESOLVED provider, not "auto".
-    // Plan 02: a third arg — the scoped dataDir — is threaded through.
+    // A third arg — the scoped dataDir — is threaded through.
     expect(mockCreateSTTProvider).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "openai" }),
       expect.anything(),
@@ -853,7 +853,7 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
     );
   });
 
-  it("threads the resolved STT model from the selection into construction (WR-02)", async () => {
+  it("threads the resolved STT model from the selection into construction", async () => {
     const setupMedia = await getSetupMedia();
     await setupMedia({
       container: createMinimalMediaConfig({ transcription: { provider: "auto", model: "config-default", fallbackProviders: [] } }),
@@ -886,7 +886,7 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
 
     expect(result.ttsAdapter).toBeDefined();
     // createTTSProvider must be called with the RESOLVED provider, not "auto".
-    // TTS-02: a third arg — the scoped dataDir — is threaded through (mirrors STT).
+    // A third arg — the scoped dataDir — is threaded through (mirrors STT).
     expect(mockCreateTTSProvider).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "openai" }),
       expect.anything(),
@@ -899,10 +899,10 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
     );
   });
 
-  it("preserves pre-193 behavior: with NO selector, construction uses the raw config provider unchanged", async () => {
+  it("with NO selector, construction uses the raw config provider unchanged", async () => {
     const setupMedia = await getSetupMedia();
     await setupMedia({
-      // No audioSelector → pre-193 callers (test harnesses) construct from config.
+      // No audioSelector → callers without a selector (test harnesses) construct from config.
       container: createMinimalMediaConfig({ transcription: { provider: "openai", fallbackProviders: [] } }),
       skillsLogger: createMockLogger() as any,
     });
@@ -914,7 +914,7 @@ describe("setupMedia — construction follows the resolver's chosen provider (WR
     );
   });
 
-  // Plan 02 (LOCAL-01): the scoped container.config.dataDir is threaded into every
+  // The scoped container.config.dataDir is threaded into every
   // createSTTProvider call site so the in-process `local` adapter writes its model
   // cache to <dataDir>/models/whisper/. process.env is NOT used.
   it("threads the scoped container.config.dataDir into the local STT provider construction", async () => {

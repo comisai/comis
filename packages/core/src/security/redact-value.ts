@@ -3,7 +3,7 @@
  * redactValue — the pure, bounded redaction primitive.
  *
  * This is the ONLY sanctioned path from raw tool `params` to user-visible
- * activity text (AGENT-TRANSPARENCY-SPEC §10.1/§10.2). It lives in
+ * activity text. It lives in
  * `core/security` — NOT `core/activity` and NOT `observability` — because the
  * pure template engine (`core/activity/template-engine.ts`) must
  * call it and `core` cannot import `observability`.
@@ -19,14 +19,15 @@
  *   - No PII: email / phone / credit-card / SSN shapes masked.
  *
  * The replacement token is the lowercase-angle `<redacted>` — deliberately
- * distinct from the log sanitizer's bracketed-uppercase token (Pitfall 5).
+ * distinct from the log sanitizer's bracketed-uppercase token, so output
+ * always shows WHICH layer redacted a value.
  *
  * It is PURE: no `eval`, no `Function`, no dynamic require, no logger, no I/O,
  * no input mutation. It NEVER throws. The observability layer reads
  * `redactionsApplied` post-call and emits the redaction WARN; this primitive does
  * not log.
  *
- * Bounds (§10.1): recursive descent is capped at depth ≤ 4, keys ≤ 16 per
+ * Bounds: recursive descent is capped at depth ≤ 4, keys ≤ 16 per
  * level, arrays ≤ 32 elements, total ≤ 4 KB. Exceeding a bound truncates with a
  * corresponding `redactionsApplied` entry — it does not hang or throw. A
  * `WeakSet` cycle guard prevents infinite recursion; a length guard mirrors the
@@ -64,11 +65,11 @@ export { CREDENTIAL_LOG_PATTERNS };
 // Public contract
 // ---------------------------------------------------------------------------
 
-/** The single replacement token. Lowercase-angle — NOT the bracketed-uppercase log token (Pitfall 5). */
+/** The single replacement token. Lowercase-angle — NOT the bracketed-uppercase log token (keeps the redacting layer identifiable). */
 const REDACTED = "<redacted>";
 
 /**
- * Limits enforced during recursive descent (§10.1). Frozen so callers cannot
+ * Limits enforced during recursive descent. Frozen so callers cannot
  * mutate the shared default.
  */
 export const REDACT_LIMITS = Object.freeze({
@@ -89,7 +90,7 @@ export type RedactLimits = typeof REDACT_LIMITS;
  * Why a particular value (or subtree) was redacted or truncated.
  *
  * Closed union — never widened to `string` (AGENTS.md §2.8). The PII / bound
- * variants mirror AGENT-TRANSPARENCY-SPEC §10.1 lines 1171-1182 exactly;
+ * variants form a fixed reason vocabulary consumed downstream;
  * `network_identifier` extends it for the IP/hostname/MAC masks.
  */
 export type RedactionReason =
@@ -155,8 +156,8 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
 
 /**
  * Secret-SHAPE regexes reused from `injection-patterns.ts`. We borrow the
- * detection PATTERNS only — the replacement is our own `<redacted>` token
- * (Pitfall 5). All carry the `g` flag, so `lastIndex` is reset before use.
+ * detection PATTERNS only — the replacement is our own `<redacted>` token.
+ * All carry the `g` flag, so `lastIndex` is reset before use.
  *
  * MUST stay a superset of the log sanitizer's `CREDENTIAL_LOG_PATTERNS`
  * (re-exported below) — a credential shape covered by the log sanitizer but
@@ -181,12 +182,12 @@ export const SECRET_SHAPE_PATTERNS: readonly RegExp[] = [
   TELEGRAM_BOT_TOKEN,
   DISCORD_BOT_TOKEN,
   HEX_SECRET_LONG,
-  // FAL key shape `<uuid>:<hex>` (CR-01, Phase 192) — mirror the log sanitizer so
+  // FAL key shape `<uuid>:<hex>` — mirror the log sanitizer so
   // a FAL credential under a benign activity key is masked here too.
   FAL_KEY,
   // The three shapes the log sanitizer (CREDENTIAL_LOG_PATTERNS) covers
-  // but the activity redactor previously omitted. Without these, a secret-shaped
-  // value under a benign allowlisted key (url/cmd/note) reached the rendered
+  // that the activity redactor must not omit. Without these, a secret-shaped
+  // value under a benign allowlisted key (url/cmd/note) reaches the rendered
   // label verbatim. BEARER_TOKEN_LOG and AWS_SECRET_KEY are simple-match
   // patterns. URL_PASSWORD is a capturing-group pattern (`://user:pw@`); a bare
   // `.replace(pat, "<redacted>")` (applyShape) masks the WHOLE match span, so
@@ -214,7 +215,7 @@ const MAC_RE = /\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b/g;
 // not hosts). Run AFTER email/IP so those more-specific shapes win first.
 //
 // `(?<!\/\/)` negative-lookbehind exempts URL hosts (preceded by
-// the scheme's two slashes) from this mask. Per SPEC §8.4, public URL hosts are
+// the scheme's two slashes) from this mask. Public URL hosts are
 // information the user expects to see — `tavily.com/search` renders verbatim —
 // not internal infrastructure leakage. Standalone hostnames not inside a URL
 // (e.g. an internal `db-primary.internal.example.com` reference in a log line)
@@ -253,7 +254,8 @@ function applyShape(
  * `~`; other system-absolute paths (`/var/...`, `/tmp/...`, `/etc/...`) compact
  * to their last 2 segments. Compaction PRESERVES trailing segments — it does
  * not strip — so `~/.comis/config.yaml` survives. Uses literal `replaceAll`
- * for the home root (no regex metachar hazard, per the value-shapes analog).
+ * for the home root (a homeDir containing regex metachars must never break
+ * or widen the match).
  */
 function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRecord[]): string {
   let out = s;
@@ -271,8 +273,8 @@ function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRec
   //    preceded by `:` or `/`. The `:` half is obvious (first slash of `://`);
   //    the `/` half blocks the SECOND slash of `://` — without it, the matcher
   //    would still anchor at the second slash and treat `//host/path/...` as a
-  //    `/host/path/...` filesystem path. URL hosts are public info per SPEC
-  //    §8.4 (tavily.com/search renders verbatim), not filesystem paths. A
+  //    `/host/path/...` filesystem path. URL hosts are public info
+  //    (tavily.com/search renders verbatim), not filesystem paths. A
   //    two-character negative-lookbehind keeps the rest of the matcher identical
   //    so the existing filesystem-path compaction tests stay green (no leading
   //    `/` of a real FS path like `/var/folders/...` or `/Users/alice/...` is
@@ -298,7 +300,7 @@ function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRec
  *
  * Used to wrap the network-identifier and PII matcher passes so URL paths
  * (including numeric IDs that look like phone numbers or credit-card runs) and
- * URL hosts are NOT masked. Per SPEC §8.4, public URL hosts AND paths are
+ * URL hosts are NOT masked. Public URL hosts AND paths are
  * user-facing context, not infrastructure leakage.
  *
  * Defense-in-depth: this runs AFTER the secret-shape pass, so URL_PASSWORD
@@ -327,9 +329,9 @@ function withUrlsProtected(input: string, fn: (s: string) => string): string {
 }
 
 /**
- * Redact a single string leaf. Order per §10.1, refined so that more-specific
- * shapes always win over the greedy phone matcher AND so that public URLs
- * (hosts + paths) survive verbatim per SPEC §8.4:
+ * Redact a single string leaf. The pass order guarantees that more-specific
+ * shapes always win over the greedy phone matcher AND that public URLs
+ * (hosts + paths) survive verbatim:
  *   (1) secret-shape pass (sk_*, ghp_*, AKIA*, JWT, provider tokens). Runs
  *       FIRST so URL-embedded credentials (`https://user:pw@host`) are
  *       URL_PASSWORD-masked BEFORE the URL guard stashes the URL — the
@@ -366,7 +368,7 @@ function redactString(
   out = compactPaths(out, homeDir, sink);
 
   // (3)+(4)+(5) URL-aware pre-pass wraps all remaining network + PII matchers.
-  //     URL hosts AND URL paths are public, user-facing context (SPEC §8.4) —
+  //     URL hosts AND URL paths are public, user-facing context —
   //     numeric IDs in URL paths must not false-positive as phone/CC/SSN, and
   //     URL hosts must not be masked as network identifiers. Standalone
   //     hostnames / IPs / MACs / phones / CCs / SSNs / emails OUTSIDE any URL
@@ -391,7 +393,7 @@ function redactString(
 }
 
 // ---------------------------------------------------------------------------
-// Recursive walker (ported from observability/value-shapes.ts into core)
+// Recursive walker (same walk discipline as observability/value-shapes.ts)
 // ---------------------------------------------------------------------------
 
 /** Case-insensitive exact match of a key against the 9 secret keys. */
@@ -439,7 +441,7 @@ function walk(value: unknown, depth: number, keyForValue: string, state: WalkSta
       }
     }
     // Byte budget: a single oversized string leaf is hard-truncated so the
-    // total serialized value stays under maxTotalBytes (§10.1).
+    // total serialized value stays under maxTotalBytes.
     const remaining = state.limits.maxTotalBytes - state.bytes;
     if (redacted.length > remaining) {
       redacted = redacted.slice(0, Math.max(0, remaining));

@@ -8,7 +8,7 @@
  * RED→GREEN unit coverage. The job wires these into `runMemoryReview`.
  *
  * Contents:
- * - {@link STRUCTURED_PROMPT}: the Hindsight-style system prompt instructing the
+ * - {@link STRUCTURED_PROMPT}: the structured-extraction system prompt instructing the
  *   LLM to emit `{ memories: [{ content, occurredAt?(ISO), entities[], memoryType?, causes? }] }`,
  *   convert relative dates to absolute ISO 8601, always include the
  *   "user" entity, emit explicit cause→effect `causes`,
@@ -39,7 +39,7 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const ONE_HUNDRED_YEARS_MS = 100 * 365 * ONE_DAY_MS;
 
 /**
- * The Hindsight-style structured-extraction system prompt (design §6.1).
+ * The structured-extraction system prompt.
  *
  * Instructs the LLM to emit the `{ memories: [...] }` envelope the parser
  * validates, convert ALL relative temporal expressions to absolute ISO 8601,
@@ -87,13 +87,13 @@ No markdown fences, no commentary. If nothing qualifies: { "memories": [] }`;
  * boundary): adversarial or malformed payloads return `undefined`, so a bad
  * payload cannot crash the caller (the job advances the watermark on
  * `undefined`). Steps:
- *   1. strip markdown code fences (same regex as the replaced flat parser),
+ *   1. strip markdown code fences,
  *   2. `JSON.parse` inside try/catch (parse error → `undefined`),
  *   3. `MemoryExtractionResultSchema.safeParse` (schema mismatch → `undefined`).
  *
  * The schema is LENIENT: a benign extra LLM key (e.g. `confidence`)
  * is stripped, not rejected, so a valid memory is never discarded over an
- * unrequested field. The OLD flat `[{content, session}]` array shape is rejected
+ * unrequested field. A flat `[{content, session}]` array shape is rejected
  * (it is not the `{ memories: [...] }` envelope).
  */
 export function parseExtractionResult(text: string): MemoryExtractionResult | undefined {

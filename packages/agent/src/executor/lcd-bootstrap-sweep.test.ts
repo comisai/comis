@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the DEPTH-03 bootstrap crash-recovery sweep (Plan 174-03).
+ * Tests for the bootstrap crash-recovery sweep.
  *
- * RED-first. Drives the not-yet-built `bootstrapLcdSweep` — a thin trigger that
+ * Drives `bootstrapLcdSweep` — a thin trigger that
  * runs the EXISTING `ingestTurnGuarded` (lcd-ingest.ts:269) inside
  * `runOnConversation` at SESSION START (not only at afterTurn). The recovery
  * logic is the existing epoch-cursor continue-append; the new code is only the
@@ -16,8 +16,7 @@
  *    gap and bumps the cursor to live.length — once.
  *  - "no double-append: sweep + subsequent afterTurn" (LOAD-BEARING) — after the
  *    sweep recovers the gap, a SECOND ingestTurnGuarded (the simulated afterTurn)
- *    with the SAME live array appends zero further rows (the cursor guard,
- *    Pitfall 6).
+ *    with the SAME live array appends zero further rows (the cursor guard).
  *  - "fail-closed ambiguous identity" (LOAD-BEARING) — conversationId≠sessionKey
  *    → ingestTurnGuarded refuses (isScopeSafeForIngest); the sweep fires the
  *    onFailClosed path → a content-free context:dag_degraded reason
@@ -29,7 +28,8 @@
  *  - "rebase continuation emits session_rebase" — live[0] anchor DIFFERS from the
  *    stored cursor (JSONL re-based) → the sweep continue-appends at the store's
  *    current max seq and fires onRebase → context:dag_degraded reason
- *    "session_rebase" (the v2.17 RR6 path, now reachable at bootstrap too).
+ *    "session_rebase" (the same rebase path the afterTurn ingest takes, reachable
+ *    at bootstrap too).
  *
  * The store is the REAL `createLcdStore(new Database(":memory:"))` for the
  * recovery-fidelity cases — `@comis/memory` is an agent devDependency, allowed in
@@ -150,7 +150,7 @@ function degradedEmits(emit: ReturnType<typeof vi.fn>): Array<Record<string, unk
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("bootstrapLcdSweep (DEPTH-03 bootstrap crash-recovery sweep)", () => {
+describe("bootstrapLcdSweep (bootstrap crash-recovery sweep)", () => {
   it("crash recovery: gap recovered exactly once (mid-turn crash after JSONL write, before afterTurn)", async () => {
     // Arrange a crashed mid-turn: the store holds 3 persisted rows + a cursor
     // that says only 3 live messages were ingested (the afterTurn for the last 2
@@ -190,7 +190,7 @@ describe("bootstrapLcdSweep (DEPTH-03 bootstrap crash-recovery sweep)", () => {
     expect(degradedEmits(emit)).toHaveLength(0);
   });
 
-  it("no double-append: bootstrap sweep + subsequent afterTurn appends nothing more (cursor guard, Pitfall 6)", async () => {
+  it("no double-append: bootstrap sweep + subsequent afterTurn appends nothing more (cursor guard)", async () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);
@@ -309,7 +309,7 @@ describe("bootstrapLcdSweep (DEPTH-03 bootstrap crash-recovery sweep)", () => {
     expect(emit).not.toHaveBeenCalled();
   });
 
-  it("rebase continuation: a re-based live[0] continue-appends at max seq + emits session_rebase (the RR6 path, now reachable at bootstrap)", async () => {
+  it("rebase continuation: a re-based live[0] continue-appends at max seq + emits session_rebase (also reachable at bootstrap)", async () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);

@@ -29,7 +29,7 @@ const INLINE_RECALL_BLOCK_RE =
 /**
  * Remove the leading inline-recall block from a user message's text. The single
  * source of truth for carving this TRANSIENT cross-session recall back out before
- * it is persisted into the LCD F1 lossless store — the store must keep the actual
+ * it is persisted into the LCD lossless store — the store must keep the actual
  * conversation, not the per-turn rendered prompt's recalled memory (which would
  * bloat the store, cross-contaminate the session, and feed back into later
  * recall). A no-op when no block is present.
@@ -41,10 +41,11 @@ export function stripInlineRecalledMemory(text: string): string {
 /**
  * Split a user message's text into its leading inline-recall block and the rest.
  * Returns `{ recall: null, rest: text }` when no block is present. Used by the
- * request-body layer (cache #C4) to move the TRANSIENT recall block onto the
+ * request-body caching layer to move the TRANSIENT recall block onto the
  * UNCACHED tail (a separate trailing content block, after the cache fence) so it
  * is visible to the model yet never cached — preventing the cached-prefix mutation
- * that occurs when C-FIX-3 strips the recall the turn after it goes historical.
+ * that occurs when the request-body layer strips the recall the turn after it
+ * goes historical.
  */
 export function extractInlineRecalledMemory(text: string): { recall: string | null; rest: string } {
   const m = INLINE_RECALL_BLOCK_RE.exec(text);

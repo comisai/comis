@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * R1: per-tenant summarizer spend cap + circuit breaker.
+ * Per-tenant summarizer spend cap + circuit breaker.
  *
  * Wraps the injected {@link LeafSummarizer} seam with (a) a per-tenant circuit
  * breaker and (b) a per-tenant rolling-window token-spend tracker. When the
@@ -9,19 +9,19 @@
  * ladder already catches a throw from `summarize(...)` and falls through to the
  * deterministic Level-3 floor (truncation-only assembly), so the turn proceeds
  * with no crash and no hang. It NEVER retries the inner call when the breaker is
- * open (the RESEARCH anti-pattern). On a successful inner call it records success
- * + actual token usage; on a thrown inner call it records a failure.
+ * open (a retry would defeat the breaker). On a successful inner call it records
+ * success + actual token usage; on a thrown inner call it records a failure.
  *
  * `safety/` is a sanctioned raw-throw boundary (`raw-throw.test.ts` exempts
  * `packages/*\/src/safety/`), so the degrade throw needs no `@allow-throw`.
  *
- * Per-TENANT by construction (design §1.4 / Pitfall 1): one tenant's failures or
+ * Per-TENANT by construction: one tenant's failures or
  * spend can never open another tenant's breaker or consume another tenant's
  * window — both are keyed in `Map<tenantId, …>` and lazily created per tenant.
  *
  * Pure mechanism: NO logging, NO infra import, NO message/summary content — it
  * operates on token COUNTS/estimates only. Observability (breaker-trip WARN +
- * eventBus) is added at the wiring site (132-05) where the injected logger lives.
+ * eventBus) is added at the wiring site, where the injected logger lives.
  * All time comes from the injected {@link ClockPort} (no raw clock/timer globals —
  * the globals gate).
  *
@@ -59,7 +59,7 @@ export interface SummarizerSpendBreakerDeps {
   estimateOutputTokens: (out: string) => number;
 }
 
-/** The R1 gate factory return shape. */
+/** The spend-breaker gate factory return shape. */
 export interface SummarizerSpendBreaker {
   /**
    * Wrap an inner {@link LeafSummarizer} with the given tenant's breaker + spend
@@ -70,7 +70,7 @@ export interface SummarizerSpendBreaker {
 }
 
 /** Closed reason for a degrade BYPASS — maps 1:1 onto the `context:dag_degraded`
- *  reserved reasons so the wiring (132-05) can emit the right event/errorKind. */
+ *  reserved reasons so the wiring can emit the right event/errorKind. */
 export type SummarizerDegradeReason = "breaker_open" | "spend_cap";
 
 /**
@@ -154,7 +154,7 @@ export function createSummarizerSpendBreaker(
         if (breaker.isOpen()) {
           // DEGRADE (breaker open): throw → leaf/condense ladder catches →
           // deterministic L3 floor → truncation-only. No retry of inner
-          // (anti-pattern); inner is NOT called. The breaker is checked FIRST so an
+          // (a retry would defeat the breaker); inner is NOT called. The breaker is checked FIRST so an
           // open breaker is reported as breaker_open even when also over-cap.
           throw new SummarizerDegradeError("breaker_open");
         }

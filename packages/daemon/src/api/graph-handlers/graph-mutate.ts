@@ -59,7 +59,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
 
   return {
     [GraphDefineContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // In-process capability gate — the agent loop skips
       // checkScope, so orch:graph is enforced here, reading the injected
       // _capabilities from raw params BEFORE the strip.
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
@@ -73,7 +73,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       }
 
       const userParams = stripInternalFields(rawParams);
-      // WR-02 (Phase 173 review): a present-but-malformed authoring call that
+      // A present-but-malformed authoring call that
       // fails the STRICT GraphDefineContract z.object (e.g. a wrong-typed
       // contract field) throws HERE, before buildGraphInput — yet it is a
       // genuine small-model "authored an invalid pipeline" attempt. Emit
@@ -91,13 +91,13 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         throw e;
       }
 
-      // AUTHOR-01 (Phase 174-03): resolve the calling agent's tier SERVER-SIDE,
+      // Resolve the calling agent's tier SERVER-SIDE,
       // gated on repairProducer. FLAGS-OFF (or absent) ⇒ undefined ⇒ the capable
-      // direct-emit path ⇒ byte-identical to pre-174. NEVER read the tool-supplied
-      // userParams.capabilityClass for the tier (the spoofing surface 173 closed,
-      // T-174-SPOOF / T-173-03 — a weak model claiming "frontier" to skip repair).
+      // direct-emit path ⇒ byte-identical to the ungated behavior. NEVER read the
+      // tool-supplied userParams.capabilityClass for the tier — that is a spoofing
+      // surface (a weak model claiming "frontier" to skip repair).
       const capabilityClass = resolveAuthoringTier(deps, rawParams);
-      // TELEM-01: capture the REAL buildGraphInput parse+validate verdict.
+      // Capture the REAL buildGraphInput parse+validate verdict.
       // buildGraphInput THROWS on parse/validate failure — emit schemaValid:false
       // and re-throw (the existing user-facing error contract is unchanged);
       // on success emit schemaValid:true BEFORE the later type_config/warning
@@ -127,7 +127,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphExecuteContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      // In-process capability gate (see graph.define).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
 
       // Bespoke pre-Zod validation FIRST.
@@ -135,18 +135,18 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         throw new Error("Agent-to-agent messaging is disabled by policy.");
       }
 
-      // AUTHOR-02 (Phase 174-04): read the from_intent marker BEFORE the strip
+      // Read the from_intent marker BEFORE the strip
       // (mirrors the _agentId/_callerSessionKey precedent — internal fields are
       // read from rawParams). It is the in-band signal the from_intent tool sets
       // so the daemon can GATE + AUDIT the synthesis at this chokepoint (the
       // synthesizer runs in the skills tool, separated from here by JSON-RPC).
       const synthPattern = rawParams._synthesizedFromIntent as string | undefined;
-      // FLAGS-OFF refusal (D-GATED-OFF / T-174-INTENT-GATE): refuse a from_intent
+      // FLAGS-OFF refusal: refuse a from_intent
       // dispatch when orchestration.authoring.intentAction is off, BEFORE any
       // graph runs. A non-from_intent execute (no marker) is wholly unaffected —
-      // byte-identical to pre-174.
+      // byte-identical to the ungated behavior.
       if (synthPattern && !deps.authoringConfig?.intentAction) {
-        // Typed (OBS-RPC-REFUSAL-CLASS): a gated-off policy refusal is a caller
+        // Typed: a gated-off policy refusal is a caller
         // precondition failure, not an internal handler fault — classifyRpcError maps
         // PreconditionError to precondition/warn so it doesn't read as a fleet ERROR.
         throw new PreconditionError(
@@ -155,13 +155,13 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       }
 
       const userParams = stripInternalFields(rawParams);
-      // M-1 (T-174-MARKER-LEAK): _synthesizedFromIntent is NOT in
+      // Marker-leak guard: _synthesizedFromIntent is NOT in
       // INTERNAL_FIELD_NAMES (a single-use graph-handler-local marker, not a
       // shared dispatcher field), and GraphExecuteContract.request is a loose
       // z.record — so the strip alone leaves it on userParams → it would reach
       // buildGraphInput. Remove it explicitly so it never reaches the graph builder.
       delete userParams._synthesizedFromIntent;
-      // WR-02 (Phase 173 review): unlike graph.define, GraphExecuteContract is a
+      // Unlike graph.define, GraphExecuteContract is a
       // LOOSE z.record(z.string(), z.unknown()) — it accepts essentially any
       // object, so a present-but-malformed authoring call does NOT throw here.
       // It instead reaches buildGraphInput below, which already emits
@@ -170,11 +170,11 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       // is needed around this parse.
       GraphExecuteContract.request.parse(userParams);
 
-      // AUTHOR-01 (Phase 174-03): server-side gated tier — see graph.define.
+      // Server-side gated tier — see graph.define.
       // FLAGS-OFF ⇒ undefined ⇒ capable path (byte-identical). The tool-supplied
-      // userParams.capabilityClass is never read for the tier (T-174-SPOOF).
+      // userParams.capabilityClass is never read for the tier (spoofing surface).
       const capabilityClass = resolveAuthoringTier(deps, rawParams);
-      // TELEM-01: same try/catch verdict capture as graph.define — emit
+      // Same try/catch verdict capture as graph.define — emit
       // schemaValid:false on a parse/validate throw (still re-throwing), true
       // on success, before the coordinator dispatch.
       let validated;
@@ -187,8 +187,8 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       emitPipelineAuthored("execute", true, rawParams);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
 
-      // AUTHOR-02 (Phase 174-04): emit the synthesis audit AFTER governance
-      // succeeded, so it reflects a GOVERNED graph (T-174-SYNTH-EMIT best-effort).
+      // Emit the synthesis audit AFTER governance
+      // succeeded, so it reflects a GOVERNED graph (best-effort emit).
       // Only when the marker was set AND intentAction is on (FLAGS-OFF already threw).
       if (synthPattern && deps.authoringConfig?.intentAction && isSynthPattern(synthPattern)) {
         emitGraphSynthesized(synthPattern, validated.graph.nodes.length, rawParams);
@@ -270,7 +270,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphCancelContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      // In-process capability gate (see graph.define).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
 
       // Bespoke pre-Zod validation FIRST.
@@ -306,7 +306,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     // -----------------------------------------------------------------
 
     [GraphSaveContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      // In-process capability gate (see graph.define).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
 
       // Bespoke pre-Zod validation FIRST.
@@ -327,13 +327,13 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const agentId = (rawParams.agentId as string) ?? deps.defaultAgentId;
 
       // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema).
-      // AUTHOR-01 (Phase 174-03): server-side gated tier — see graph.define.
+      // Server-side gated tier — see graph.define.
       // FLAGS-OFF ⇒ undefined ⇒ capable direct path (byte-identical).
       const capabilityClass = resolveAuthoringTier(deps, rawParams);
       const validated = await buildGraphInput(userParams, capabilityClass, repairContext(deps, rawParams));
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
 
-      // DEFER-174-SAVE (IN-01): persists ORIGINAL raw nodes, not the validated/repaired graph (pre-existing graph.save behavior; rationale: deferred-items.md).
+      // Deliberate: persists the ORIGINAL raw nodes, not the validated/repaired graph — the raw form preserves the author's input verbatim, and a loaded graph passes through buildGraphInput validation again when executed.
       deps.namedGraphStore.save({
         id,
         tenantId,
@@ -350,7 +350,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphDeleteContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      // In-process capability gate (see graph.define).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
 
       // Bespoke pre-Zod validation FIRST.
@@ -378,7 +378,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphDeleteRunContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      // In-process capability gate (see graph.define).
       // graph.deleteRun is a mutating graph op → orch:graph (HANDLER_CAPABILITY_MAP).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
 

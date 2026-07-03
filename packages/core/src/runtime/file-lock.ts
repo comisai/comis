@@ -10,9 +10,9 @@
  * for non-scheduler consumers (CLI, agent OAuth call sites, agent
  * session-write-lock).
  *
- * The `withExecutionLock` + `isLocked` named-export helpers below are the
- * legacy direct-call surface; they have no in-repo consumer from @comis/core
- * (the scheduler-side caller `cron-store.ts` still imports them from its
+ * The `withExecutionLock` + `isLocked` named-export helpers below are a
+ * direct-call surface with no in-repo consumer from @comis/core
+ * (the scheduler-side caller `cron-store.ts` imports them from its
  * own `../execution/execution-lock.js`).
  */
 

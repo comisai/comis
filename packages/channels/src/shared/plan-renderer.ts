@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * plan-renderer — pure checkbox rendering of SEP plan state (§8.3).
+ * plan-renderer — pure checkbox rendering of SEP plan state.
  *
  * Maps a `PlanSnapshot` (sourced from the Silent Execution Planner via
- * `ExecutionPlanPort`, §16.7) to deterministic plain-text checkbox lines. Rich
+ * `ExecutionPlanPort`) to deterministic plain-text checkbox lines. Rich
  * surfaces can re-skin per status; this is the canonical ASCII form for
  * plain-text channels (IRC, Email, Echo).
  *

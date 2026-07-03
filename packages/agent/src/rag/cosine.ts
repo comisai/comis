@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Cosine similarity — a pure, no-NaN vector-proximity util on the recall HOT PATH
- * (`rag/mmr.ts` → `rag/memory-recall.ts`).
- *
- * Relocated here in v2.31 Phase 225 (FOLD/D-04): it formerly lived in
- * `memory-consolidation-clustering.ts` and was the sole survivor of that file
- * once the standalone consolidation/reasoning jobs were deleted. Keeping it as a
- * `rag/`-local pure util removes the cross-file dependency the deleted jobs no
- * longer justify, while preserving the byte-identical behaviour `mmr.ts` relies on.
+ * (`rag/mmr.ts` → `rag/memory-recall.ts`). Kept as a `rag/`-local pure util so
+ * the hot path carries no cross-file dependency.
  *
  * @module
  */

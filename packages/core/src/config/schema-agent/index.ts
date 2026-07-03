@@ -31,22 +31,22 @@
 export * from "./schema-agent-model.js";
 export * from "./schema-agent-context.js";
 export * from "./schema-agent-prompt.js";
-// 217: the autonomy MODE vocabulary + the EVICT-02 fail-closed
+// The autonomy MODE vocabulary + the fail-closed
 // `resolveEffectiveMode` primitive + the per-profile posture notices (split into
 // a sibling leaf for the file-size cap; the autonomy leaf imports it one-way).
 export * from "./schema-agent-autonomy-mode.js";
-// 218-01 (COORD-01): the autonomy ROLE vocabulary + the coordinator-surface
+// The autonomy ROLE vocabulary + the coordinator-surface
 // expansion (sibling leaf for the file-size cap; the autonomy leaf imports it
 // one-way — no cycle).
 export * from "./schema-agent-autonomy-role.js";
 export * from "./schema-agent-autonomy.js";
-// 213-03: the autonomy BOUNDS sub-blocks + the honest-degrade path live in
+// The autonomy BOUNDS sub-blocks + the honest-degrade path live in
 // sibling leaves (file-size cap + concern split); exported here so the public
 // surface is unchanged. `*-bounds` imports only zod; `*-degrade` imports one-way
 // from `*-autonomy` (no cycle — see no-cycles.test.ts).
 export * from "./schema-agent-autonomy-bounds.js";
 export * from "./schema-agent-autonomy-degrade.js";
-// Phase 216: the autonomy.durability sub-block schema (nested into
+// The autonomy.durability sub-block schema (nested into
 // AutonomyConfigSchema). Exported so the daemon reads DurabilityConfigSchema
 // for the boot-time durability resolution.
 export * from "./schema-agent-autonomy-durability.js";

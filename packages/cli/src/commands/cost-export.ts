@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI command module — Commander.js boundary catches throws and surfaces user-readable messages. The catch block below converts them to error()/process.exit(1) directly.
 /**
- * `comis cost export` — operator CLI for the COST-03 corrected-cost export.
+ * `comis cost export` — operator CLI for the corrected-cost export.
  *
  * Emits the corrected-cost time buckets (hourly by default, or 15-min quarter-hour
  * via `--quarter-hour`) as CSV (default) or JSON, honoring agent/provider/model/since
  * filters. Each row carries the four cost rollups + cacheSaved + costCorrection + the
- * E1 pricing-coverage pair (`pricingState`/`missingPricingCount`) so a finance review
+ * pricing-coverage pair (`pricingState`/`missingPricingCount`) so a finance review
  * sees how trustworthy the dollars are.
  *
  * Data source: the LOCAL ~/.comis observability store, read OFFLINE — the telemetry
  * lives on disk, so an export must not require a live gateway. (There is no admin
- * aggregate RPC for the quarter-hour buckets yet; a dedicated export RPC is 179-04's,
- * NOT invented here — which is also why this command contacts no daemon RPC and so
- * trivially satisfies the cli-uses-typed-rpc gate.)
+ * aggregate RPC for the quarter-hour buckets; this command deliberately contacts no
+ * daemon RPC and so trivially satisfies the cli-uses-typed-rpc gate.)
  *
  * Content-free: the CSV/JSON carries ONLY the explicit column allowlist (the cost
- * buckets + coverage) — never a message body / secret / query (threat T-179-07). The
+ * buckets + coverage) — never a message body / secret / query. The
  * `toCsv` serializer projects only `COST_EXPORT_COLUMNS`, so a stray source-row field
  * can never reach the file.
  *

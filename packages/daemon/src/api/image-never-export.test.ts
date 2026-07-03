@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SEC-01: `image_generate` never-export regression-guard.
+ * `image_generate` never-export regression-guard.
  *
  * `image_generate` is a COST-BEARING platform tool. It must NEVER be exported
  * to an untrusted MCP client. Today it is default-deny: it is registered in the
@@ -31,7 +31,7 @@ import "@comis/skills";
 // absence from the MCP registry is a deliberate default-deny, not a typo).
 import { createPlatformToolRegistry } from "@comis/skills/platform-tools";
 
-describe("SEC-01: image_generate never-export regression-guard", () => {
+describe("image_generate never-export regression-guard", () => {
   it("image_generate is NOT in the MCP exported tool metadata (default-deny)", () => {
     const all = getAllToolMetadata();
     // No entry named image_generate → it is never in the MCP registered set.

@@ -18,7 +18,7 @@
 
 import { fingerprint, sanitizeLogString } from "@comis/core";
 import type { IncidentSignals } from "@comis/core";
-// OBS-02 (196): the voice fold lives in a sibling (the obs-handlers/* 500-line cap);
+// The voice fold lives in a sibling (the obs-handlers/* 500-line cap);
 // applyMediaRecord dispatches the media.stt.*/media.tts.* arms to it.
 import { accumulateVoiceRecord, type IncidentVoiceSignal } from "./obs-explain-voice-fold.js";
 // Re-export so obs-explain-signals.ts keeps its single fields-import for the Acc type.
@@ -28,11 +28,11 @@ export type { IncidentVoiceSignal } from "./obs-explain-voice-fold.js";
  *  `IncidentSignals["image"]`). */
 export type IncidentImageSignal = NonNullable<IncidentSignals["image"]>;
 
-/** VIS-04 (187): the reconstructed vision turn (the non-optional shape of
+/** The reconstructed vision turn (the non-optional shape of
  *  `IncidentSignals["vision"]`). */
 export type IncidentVisionSignal = NonNullable<IncidentSignals["vision"]>;
 
-/** OBS-04 (192): the reconstructed video-generation turn (the non-optional
+/** The reconstructed video-generation turn (the non-optional
  *  shape of `IncidentSignals["videoGenerated"]`). */
 export type IncidentVideoSignal = NonNullable<IncidentSignals["videoGenerated"]>;
 
@@ -53,7 +53,7 @@ const RAW_BODY_SCAN_BOUND = 2_000;
  * a 200-char HEAD slice begins with this marker — so the length cap alone leaks
  * the injection header. The preview of such a body is collapsed WHOLESALE to a
  * digest reference; the full body stays addressable via `resultDigest`
- * (T-153-14, depth-independent — the consumer never sees the marker or its
+ * (depth-independent — the consumer never sees the marker or its
  * directives). Matched on the bounded slice (post-cap), never the raw body.
  */
 const UNTRUSTED_CONTENT_MARKER_RE = /SECURITY NOTICE|UNTRUSTED source/i;
@@ -68,7 +68,7 @@ export function asNumber(v: unknown): number | undefined {
 
 /** Keep only string entries of an array payload field (non-array → empty).
  * Defensive read for record fields that cross the provider/MCP-influenced
- * trust boundary into admin-facing verdict text (T-175-17). */
+ * trust boundary into admin-facing verdict text. */
 export function asStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
@@ -105,7 +105,7 @@ export function previewAndDigest(errorText: string | undefined): {
     0,
     MAX_ERROR_PREVIEW,
   );
-  // Untrusted-content guard (T-153-14): a wrapped EXTERNAL body leads with the
+  // Untrusted-content guard: a wrapped EXTERNAL body leads with the
   // "SECURITY NOTICE" injection marker, so the HEAD slice would inline it.
   // Collapse the preview to a digest reference — the body is still addressable
   // via resultDigest. Depth-independent (this runs before any depth bounding).
@@ -116,7 +116,7 @@ export function previewAndDigest(errorText: string | undefined): {
 }
 
 /** The seq-aware fold state: the reconstructed image turn + the `seq` of the
- *  record that last SET `outcome` (the terminal record). IN-04 (186): the fold
+ *  record that last SET `outcome` (the terminal record). The fold
  *  is driven by the record stream's `seq`, NOT array order, so only a record
  *  with a `seq` ≥ the last outcome-setting record can overwrite `outcome`. */
 export interface ImageFoldState {
@@ -126,17 +126,17 @@ export interface ImageFoldState {
 }
 
 /**
- * OBS-03/OBS-04 (186): fold one `image.*` trajectory record into the
+ * Fold one `image.*` trajectory record into the
  * reconstructed image-generation turn (extracted from `toIncidentSignals` to
  * keep that module ≤500). Pure: takes the prior fold state + the record's
  * `type`/`data`/`seq` and returns the new state. The terminal `image.generated`
  * / `image.failed` record sets `outcome` (+ cost/model on success, errorKind on
- * failure — the cost rides image.generated, Route a); `image.delivered` flips
+ * failure — the cost rides image.generated, the media-cost route); `image.delivered` flips
  * `delivered`; `image.requested` seeds a conservative `outcome:"failed"` block
  * so a turn aborting before a terminal record still surfaces. Returns `prev`
  * unchanged for a non-image type. Content-free reads (ids/labels/numbers only).
  *
- * IN-04 (186): the fold is SEQ-AWARE — a terminal `image.generated`/`image.failed`
+ * The fold is SEQ-AWARE — a terminal `image.generated`/`image.failed`
  * only overwrites `outcome` when its `seq` is ≥ the seq of the last
  * outcome-setting record. Today the handler always emits in lifecycle order and
  * the recorder appends in emit order (file order == lifecycle order), so this is
@@ -171,7 +171,7 @@ export function accumulateImageRecord(
           delivered: signal?.delivered ?? false,
           ...(asString(data.model) !== undefined ? { model: asString(data.model) } : {}),
           ...(asNumber(data.costUsd) !== undefined ? { costUsd: asNumber(data.costUsd) } : {}),
-          // WR-02 (186): carry the degraded-delivery flag (false on a persist-
+          // Carry the degraded-delivery flag (false on a persist-
           // failed but base64-delivered generation — still a charged outcome:"ok").
           ...(typeof data.persisted === "boolean" ? { persisted: data.persisted } : {}),
         },
@@ -201,9 +201,9 @@ export function accumulateImageRecord(
   }
 }
 
-/** VIS-04 (187): the seq-aware fold state for the reconstructed vision turn +
+/** The seq-aware fold state for the reconstructed vision turn +
  *  the `seq` of the record that last SET `outcome` (the terminal record).
- *  Mirrors `ImageFoldState` (IN-04): the fold is driven by the record stream's
+ *  Mirrors `ImageFoldState`: the fold is driven by the record stream's
  *  `seq`, NOT array order, so only a record with a `seq` ≥ the last
  *  outcome-setting record can overwrite `outcome`. */
 export interface VisionFoldState {
@@ -213,19 +213,19 @@ export interface VisionFoldState {
 }
 
 /**
- * VIS-04 (187): fold one `media.vision.*` trajectory record into the
+ * Fold one `media.vision.*` trajectory record into the
  * reconstructed vision turn (the analog of `accumulateImageRecord`, in this
  * helper to keep `obs-explain-signals.ts` ≤500). Pure: takes the prior fold
  * state + the record's `type`/`data`/`seq` and returns the new state. The
  * terminal `media.vision.completed` / `media.vision.failed` record sets
  * `outcome` (+ mainProvider/model/costUsd/path on success — the cost rides
- * completed, Route a; errorKind/path on failure); `media.vision.requested` seeds
+ * completed, the media-cost route; errorKind/path on failure); `media.vision.requested` seeds
  * a conservative `outcome:"failed"` block so a turn aborting before a terminal
  * record still surfaces an honest failed vision block. Returns `prev` unchanged
  * for a non-vision type. Content-free reads (asString/asNumber — ids/labels/
- * numbers/path only; never an image byte, prompt, or answer; T-187-12).
+ * numbers/path only; never an image byte, prompt, or answer).
  *
- * SEQ-AWARE (IN-04): a terminal completed/failed only overwrites `outcome` when
+ * SEQ-AWARE: a terminal completed/failed only overwrites `outcome` when
  * its `seq` is ≥ the seq of the last outcome-setting record — a stale lower-seq
  * `media.vision.failed` arriving after a higher-seq `media.vision.completed` no
  * longer flips an ok turn to failed. `media.vision.requested` (the seed) does
@@ -286,9 +286,9 @@ export function accumulateVisionRecord(
   }
 }
 
-/** OBS-04 (192): the seq-aware fold state for the reconstructed video turn +
+/** The seq-aware fold state for the reconstructed video turn +
  *  the `seq` of the record that last SET `outcome` (the terminal record).
- *  Mirrors `VisionFoldState`/`ImageFoldState` (IN-04): the fold is driven by the
+ *  Mirrors `VisionFoldState`/`ImageFoldState`: the fold is driven by the
  *  record stream's `seq`, NOT array order, so only a record with a `seq` ≥ the
  *  last outcome-setting record can overwrite `outcome`. */
 export interface VideoFoldState {
@@ -298,22 +298,22 @@ export interface VideoFoldState {
 }
 
 /**
- * OBS-04 (192): fold one `video.*` trajectory record into the reconstructed
+ * Fold one `video.*` trajectory record into the reconstructed
  * video-generation turn (the analog of `accumulateVisionRecord`, in this helper
  * to keep `obs-explain-signals.ts` ≤500). Pure: takes the prior fold state + the
  * record's `type`/`data`/`seq` and returns the new state. The terminal
  * `video.generated` / `video.failed` record sets `outcome` (+ model/costUsd/
- * estimatedCostUsd/durationSecs on success — the cost rides generated, Route a;
- * errorKind on failure); `video.delivered` flips the `delivered` latch (the
+ * estimatedCostUsd/durationSecs on success — the cost rides generated, the
+ * media-cost route; errorKind on failure); `video.delivered` flips the `delivered` latch (the
  * `image.delivered` precedent); `video.requested` seeds a conservative
  * `outcome:"failed"` block (so a turn aborting before a terminal still surfaces)
- * and `video.submitted` adds the `jobId` (the OBS-04 stitch handle). Returns
+ * and `video.submitted` adds the `jobId` (the background-completion stitch handle). Returns
  * `prev` unchanged for a non-video type. Content-free reads (asString/asNumber —
- * ids/labels/numbers only; never the prompt, the bytes, or a provider message;
- * T-192-06). `sizeBytes` rides the LOG/event but NOT the report block (only
+ * ids/labels/numbers only; never the prompt, the bytes, or a provider
+ * message). `sizeBytes` rides the LOG/event but NOT the report block (only
  * durationSecs/cost/model — matching the `videoGenerated` Zod).
  *
- * SEQ-AWARE (IN-04): a terminal generated/failed only overwrites `outcome` when
+ * SEQ-AWARE: a terminal generated/failed only overwrites `outcome` when
  * its `seq` is ≥ the seq of the last outcome-setting record — a stale lower-seq
  * record arriving after a higher-seq terminal no longer flips the outcome. The
  * `video.requested`/`video.submitted` seeds do not set `outcomeSeq`, so the
@@ -385,8 +385,8 @@ export function accumulateVideoRecord(
 }
 
 /** The mutable media-fold slice the record normalizer (`toIncidentSignals`)
- *  carries — the four seq-aware folds (`image.*` 186, `media.vision.*` 187,
- *  `video.*` 192, `media.stt.*`/`media.tts.*` 196) + their outcome-seqs + the
+ *  carries — the four seq-aware folds (`image.*`, `media.vision.*`,
+ *  `video.*`, `media.stt.*`/`media.tts.*`) + their outcome-seqs + the
  *  running seq counter. Structurally a subset of `Acc`; typed here so
  *  `applyMediaRecord` owns ALL switch-case groups and keeps
  *  `obs-explain-signals.ts` ≤500 (extraction, NOT an allowlist bump). */
@@ -404,16 +404,16 @@ export interface MediaFoldSlice {
 }
 
 /**
- * VIS-04 / OBS-04 / OBS-02: if `type` is an `image.*`, `media.vision.*`,
+ * If `type` is an `image.*`, `media.vision.*`,
  * `video.*`, or `media.stt.*`/`media.tts.*` lifecycle record, fold it into
  * `slice` (mutating the matching signal + outcomeSeq) and return `true`; otherwise
  * return `false` (the normalizer falls through to its other cases). Drives each
- * fold by the record's `seq` (IN-04 — not array order; records lacking a seq fall
+ * fold by the record's `seq` (not array order; records lacking a seq fall
  * back to the running counter, monotonic by arrival). Extracted from
  * `toIncidentSignals` so the four record classes share one dispatcher (their case
  * bodies were byte-identical boilerplate) — and so the `video.*`/`media.stt.*`/
  * `media.tts.*` arms live HERE, keeping `obs-explain-signals.ts` ≤500 (the
- * WARNING-1 file-size budget).
+ * file-size budget).
  */
 export function applyMediaRecord(
   slice: MediaFoldSlice,

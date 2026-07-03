@@ -393,18 +393,18 @@ describe("parseMarkdownToIR", () => {
       expect(spans[3]).toMatchObject({ type: "bold", text: "bold" });
     });
 
-    // Fix 7 (2026-05-28). Observed: an agent delivered a Higgsfield OAuth
-    // authorization URL through the message tool; Telegram received the
-    // URL with every `_` paired-underscore parsed as an italic span and
-    // dropped. The user's clicked target had `response_type` →
-    // `responsetype`, `code_challenge_method` → `codechallengemethod`,
-    // `redirect_uri` → `redirecturi`, scope `offline_access` →
-    // `offlineaccess`, and even the `_` inside the code_challenge VALUE
-    // was stripped. Higgsfield returned 400 `redirect_uri must be a valid
-    // absolute URL` because all the param names were unrecognized.
+    // Without the bare-URL branch in the inline parser, an OAuth
+    // authorization URL delivered through the message tool reaches the
+    // channel with every paired `_` parsed as an italic span and dropped:
+    // `response_type` → `responsetype`, `code_challenge_method` →
+    // `codechallengemethod`, `redirect_uri` → `redirecturi`, scope
+    // `offline_access` → `offlineaccess` — even a `_` inside the
+    // code_challenge VALUE is stripped. The provider then returns 400
+    // `redirect_uri must be a valid absolute URL` because the param names
+    // are unrecognized.
     //
-    // Fix: detect bare http/https URLs in the inline parser BEFORE the
-    // italic alternatives match. Emit them as link spans pointing at
+    // The parser therefore detects bare http/https URLs BEFORE the
+    // italic alternatives match and emits them as link spans pointing at
     // themselves so the URL bytes pass through unmodified, including
     // every `_`.
     it("preserves bare URLs (no italic spans inside) — OAuth authorize URL survives intact", () => {
@@ -422,8 +422,8 @@ describe("parseMarkdownToIR", () => {
     it("preserves bare URLs with multiple paired underscores (every `_` survives)", () => {
       // `mvfnuVcHnf_nLHjp` carries a single `_` mid-value; the test above
       // exercises that. This case stresses param names which are MOSTLY
-      // underscored tokens — historically the cluster the pre-fix parser
-      // mangled into `responsetype`/`codechallenge`/etc.
+      // underscored tokens — the cluster a parser without the bare-URL
+      // branch mangles into `responsetype`/`codechallenge`/etc.
       const url = "https://example.com/auth?a_b=1&c_d_e=2&f_g_h_i=3";
       const spans = firstBlockSpans(url);
       expect(spans).toHaveLength(1);

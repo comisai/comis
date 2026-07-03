@@ -3,11 +3,11 @@
  * GoalAnchor builder — pure function that formats an ExecutionPlan into a
  * tail-injected anchor block for the system prompt.
  *
- * The caller (Plan 02 / wrapEnvelope) gates on scaffoldLevel === "max" before
+ * The caller (wrapEnvelope) gates on scaffoldLevel === "max" before
  * calling this function. This module has no I/O and does not import from
  * @comis/core to keep the dependency graph clean (pure agent-internal utility).
  *
- * Threat mitigations (T-153-01a):
+ * Threat mitigations:
  *   - Output bounded by maxChars (default 500); excess truncated with "…"
  *   - Plain text only — no HTML/markdown injection path in the formatted block
  *

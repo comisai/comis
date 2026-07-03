@@ -7,7 +7,7 @@
  * prompt — agent-internal, so the prompt STRING never crosses the package boundary
  * (mirrors how the seam family keeps its prompts private). `parseDialecticOutput` is a
  * LENIENT + TOTAL parser: a malformed payload degrades to abstain (never throws — the
- * Pitfall-5 default) and any model-asserted `trust`/`trustLevel` is STRIPPED (the
+ * mandatory-abstention default) and any model-asserted `trust`/`trustLevel` is STRIPPED (the
  * anti-laundering boundary — trust is read from `entry.trustLevel` in CODE, never the LLM).
  */
 import { describe, it, expect } from "vitest";

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Signal plain-text approval-prompt tests (renderer half; §6.4.6 / §18.3).
+ * Signal plain-text approval-prompt tests (renderer half).
  *
  * Signal has NO button surface (DeleteAndRepost, `buttons:"none"`), so a
  * `kind:"approval"` frame appends the plain-text prompt
  * `buildApprovalText(event, { includeShortId })` to the posted message:
  * "Reply approve or deny within the approval timeout" for a single pending
  * approval, and the shortId-disambiguated form when more than one is pending in the
- * same session. NO signed buttons are attached — HMAC is skipped for plaintext
- * (§6.4.6); the router's plain-text branch scopes the reply to
+ * same session. NO signed buttons are attached — HMAC is skipped for plaintext;
+ * the router's plain-text branch scopes the reply to
  * `pendingForSession` and replay is blocked by pending-table removal.
  *
  * The signal-fake's send row is `{ op, id, text }` (no buttons field at all), so a
@@ -94,10 +94,10 @@ describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous)
     }
   });
 
-  it("posts the prompt as TEXT only — the send carries no button surface (§6.4.6)", async () => {
+  it("posts the prompt as TEXT only — the send carries no button surface", async () => {
     const timer = createFakeTimers();
     const fake = createFakeSignalAdapter();
-    // Drop clock so the §8.5 elapsed fallback is skipped — the test asserts
+    // Drop clock so the elapsed-time fallback is skipped — the test asserts
     // send.text byte-stably.
     const r = createSignalActivityRenderer(fake, "chat-1", { timer });
 
@@ -116,7 +116,7 @@ describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous)
   it("a non-approval frame appends no prompt (plain message only)", async () => {
     const timer = createFakeTimers();
     const fake = createFakeSignalAdapter();
-    // Drop clock so the §8.5 elapsed fallback is skipped — the test asserts
+    // Drop clock so the elapsed-time fallback is skipped — the test asserts
     // send.text byte-stably.
     const r = createSignalActivityRenderer(fake, "chat-1", { timer });
 
@@ -144,9 +144,9 @@ describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous)
     await r.apply(plain);
 
     const send = fake.recorded.calls.find((c) => c.op === "send");
-    // [Rule 1 — bug fix, quick-260528-nsv] Non-approval tool event renders
-    // with the per-step running 🔧 marker; the no-prompt invariant (this
-    // test's load-bearing point) is unchanged.
+    // A non-approval tool event renders
+    // with the per-step running 🔧 marker; the no-prompt invariant is this
+    // test's load-bearing point.
     if (send?.op === "send") expect(send.text).toBe("🔧 running tool");
   });
 });

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * STEER-01 (Phase 175 Plan 02, Task 2) — SubagentSteerContract response union.
+ * SubagentSteerContract response union.
  *
- * The steer response becomes a discriminated union on `status`:
+ * The steer response is a discriminated union on `status`:
  *   - `{ status: "steered", oldRunId, newRunId }`   — flag-off kill+respawn
  *   - `{ status: "steered_inject", runId }`          — flag-on live inject
  * Both shapes must parse; a cross-shaped object (wrong discriminant payload)
- * must be rejected so the union is exhaustive (§2.8 closed-union discipline).
+ * must be rejected so the union stays exhaustive — every discriminant maps to
+ * exactly one payload shape.
  *
  * @module
  */

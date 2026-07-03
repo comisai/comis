@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit coverage for the pure sandbox-posture primitive (SANDBOX-01).
+ * Unit coverage for the pure sandbox-posture primitive.
  *
  * Tests the partial-order comparator (`comparePosture`) across all 4
  * config-derived confinement dimensions and the skills-config resolver
  * (`resolvePostureFromSkills`), with special emphasis on the load-bearing
  * security invariant: a missing/absent dimension resolves to the MOST-confined
  * enum BEFORE comparison, so a posture is never inferred more permissive than
- * reality (threat T-172-01).
+ * reality.
  *
  * @module
  */
@@ -169,7 +169,7 @@ describe("comparePosture — partial order (any-dimension rule)", () => {
   });
 });
 
-describe("comparePosture — missing-field-safe-default (T-172-01)", () => {
+describe("comparePosture — missing-field-safe-default", () => {
   it("treats an absent child network field as the most-confined value (none) — NOT a downgrade vs a full parent", () => {
     // Parent explicitly opens network; child omits it. Absent -> none (strictest),
     // so the child is MORE confined -> allowed. This must never read absent as permissive.
@@ -240,7 +240,7 @@ describe("resolvePostureFromSkills", () => {
     expect(posture.exec).toBe("always");
   });
 
-  it("leaves filesystem, network, and uid unset in the P0-C sub-agent scope (present-but-inert per A1)", () => {
+  it("leaves filesystem, network, and uid unset — the sub-agent resolver populates only exec (inert dimensions)", () => {
     const posture = resolvePostureFromSkills({ execSandbox: { enabled: "never" } });
 
     expect(posture.filesystem).toBeUndefined();
@@ -266,7 +266,7 @@ describe("resolvePostureFromSkills", () => {
   });
 });
 
-describe("comparePosture — unknown-enum fallback fails CLOSED (IN-01)", () => {
+describe("comparePosture — unknown-enum fallback fails CLOSED", () => {
   // Zod validation makes a present-but-unknown enum value unreachable via the
   // validated config path, but the comparator must still fail CLOSED on the
   // defensive branch: an unexpected value must rank MOST-confined (not 0 = least),

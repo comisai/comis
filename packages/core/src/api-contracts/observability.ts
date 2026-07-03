@@ -5,8 +5,8 @@
  * Groups and method names:
  *   Diagnostics (1): obs.diagnostics
  *   Billing (5):     obs.billing.{byProvider,byAgent,bySession,total,usage24h}
- *   Audit (1):       obs.audit.query  (read surface onto obs_audit_events — AUDIT-05,
- *                    Phase 176; contract + wire schema in `audit-query.ts`)
+ *   Audit (1):       obs.audit.query  (read surface onto obs_audit_events;
+ *                    contract + wire schema in `audit-query.ts`)
  *   Channels (3):    obs.channels.{all,stale,get}
  *   Delivery (2):    obs.delivery.{recent,stats}
  *   Context (2):     obs.context.{pipeline,dag}  (gateway-scope gate only)
@@ -14,10 +14,10 @@
  *   Reset (2):       obs.reset, obs.reset.table
  *   SystemPrompt (2):obs.systemPromptReport.{latest,list}
  *   Trace (3):       obs.trace.{export,search,tail}
- *   Explain (1):     obs.explain  (IncidentReport assembler — Phase 153;
+ *   Explain (1):     obs.explain  (IncidentReport assembler;
  *                    contract + wire schema in sibling `incident-report.ts`)
- *   Fleet (1):       obs.fleet.health  (cross-session FleetHealthReport — v2.15
- *                    Phase 161; contract + wire schema in `fleet-health-report.ts`)
+ *   Fleet (1):       obs.fleet.health  (cross-session FleetHealthReport;
+ *                    contract + wire schema in `fleet-health-report.ts`)
  *
  * Dispatch: the non-Trace methods are web-SPA only (packages/web/src/views/),
  * handled by packages/daemon/src/api/obs-handlers.ts; the Trace group is also
@@ -40,7 +40,7 @@ import { defineContract } from "./types.js";
 import { ObsExplainContract } from "./incident-report.js";
 export { ObsExplainContract, IncidentReportSchema, IncidentContextBudgetSchema, IncidentPromptTimeoutSchema } from "./incident-report.js";
 export type { IncidentReport, IncidentFailure, IncidentSignals, IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentPromptTimeout } from "./incident-report.js";
-// The `obs.fleet.health` contract + wire schema (v2.15 R2, Phase 161) live in the
+// The `obs.fleet.health` contract + wire schema live in the
 // sibling `fleet-health-report.ts` (file-size split, mirroring incident-report.ts
 // which holds BOTH IncidentReportSchema + ObsExplainContract). Import the contract
 // for the OBSERVABILITY_CONTRACTS array below; re-export the contract + schema so
@@ -48,8 +48,8 @@ export type { IncidentReport, IncidentFailure, IncidentSignals, IncidentContextB
 import { ObsFleetHealthContract } from "./fleet-health-report.js";
 export { ObsFleetHealthContract, FleetHealthReportSchema } from "./fleet-health-report.js";
 export type { FleetHealthReport } from "./fleet-health-report.js";
-// The `obs.audit.query` contract + wire schema (AUDIT-05, Phase 176 Plan 05) live
-// in the sibling `audit-query.ts` (the read surface onto the now-durable
+// The `obs.audit.query` contract + wire schema live
+// in the sibling `audit-query.ts` (the read surface onto the durable
 // obs_audit_events table). Import for the OBSERVABILITY_CONTRACTS array below;
 // re-export the contract + schema so the `@comis/core` public surface + the
 // registered RPC set carry them (the ObsFleetHealthContract precedent).
@@ -150,10 +150,10 @@ export const ObsDiagnosticsContract = defineContract({
     events: ObsRecordArray,
     counts: ObsRecord,
   }),
-  // OBS-SELF-DEAD (30uc-20260624 UC-14): rpc, NOT admin — same as obs.explain. obs_query's
+  // rpc, NOT admin — same as obs.explain. obs_query's
   // self-observability path reads diagnostics for the agent's own sessions; read-only +
-  // scrubbed digests, single-tenant daemon. ["admin"] put it in the deny-by-origin set and
-  // killed the agent's self-diagnose. MD-02 re-scope class.
+  // scrubbed digests, single-tenant daemon. ["admin"] would put it in the deny-by-origin
+  // set and kill the agent's self-diagnose.
   scopes: ["rpc"] as const,
 });
 
@@ -422,8 +422,8 @@ export const ObsCacheStatsWindowContract = defineContract({
   scopes: ["admin"] as const,
 });
 
-/** `obs.cacheBreaks.byReason` — cache-break rate by reason + the $-lost SUM
- *  (WEBUI-02, 179-04). Admin-only. The rows are `{reason, count, estCostUsd}[]`
+/** `obs.cacheBreaks.byReason` — cache-break rate by reason + the $-lost SUM.
+ *  Admin-only. The rows are `{reason, count, estCostUsd}[]`
  *  GROUP BY'd server-side over the existing `category:'cache_break'` diagnostics
  *  index — content-free (a closed reason label + two numbers). The Cache Health
  *  view consumes it. Rides the loose ObsRecordArray (bundle-size budget). */
@@ -438,7 +438,7 @@ export const ObsCacheBreaksByReasonContract = defineContract({
 });
 
 /** `obs.spend.snapshot` — the LIVE per-agent/tenant/global spend the kill-switch
- *  sees (WEBUI-02, 179-04; locked A1 — the live accumulator, NOT the lagging SQL).
+ *  sees (served from the live accumulator, NOT the lagging SQL).
  *  Admin-only. The snapshot carries the per-scope spend + the configured ceilings →
  *  headroom + a three-state pricing-coverage count. Content-free (dollar counts +
  *  scope enums + pricing-state counts). The Spend & Governance view consumes it.
@@ -662,7 +662,7 @@ export const ObsTraceSearchContract = defineContract({
     since: z.string().optional(),
     where: z.string().optional(),
     limit: z.number().int().positive().max(1000).optional(),
-    // D9: admin opt-in to include synthetic/test sessions (excluded by default).
+    // Admin opt-in to include synthetic/test sessions (excluded by default).
     includeSynthetic: z.boolean().optional(),
   }),
   response: z.object({
@@ -673,7 +673,7 @@ export const ObsTraceSearchContract = defineContract({
 
 /**
  * Poll for live trace events on a chat. `chatId` required (min 1).
- * `limit` max 100. True WebSocket streaming deferred to v2.
+ * `limit` max 100. Polling only — there is no WebSocket streaming.
  */
 export const ObsTraceTailContract = defineContract({
   method: "obs.trace.tail",

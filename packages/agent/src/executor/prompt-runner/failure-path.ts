@@ -127,11 +127,11 @@ function emitFailureDiagnostics(
     config, deps, agentId, effectiveTimeout,
   } = params;
 
-  // Classify BEFORE the WARN so the knob-named hint rides the log line
-  // (LAT-01). For a PromptTimeoutError the binding provenance comes from the
-  // 177-02 effectiveTimeout (source + operationType + configured numbers,
-  // including the non-optional stallCeilingMultiplier — 177-REVIEW IN-01:
-  // without it the makespan hint's multiplier clause rendered number-less).
+  // Classify BEFORE the WARN so the knob-named hint rides the log line.
+  // For a PromptTimeoutError the binding provenance comes from the
+  // effectiveTimeout (source + operationType + configured numbers,
+  // including the non-optional stallCeilingMultiplier —
+  // without it the makespan hint's multiplier clause renders number-less).
   const isPromptTimeout = promptError instanceof PromptTimeoutError;
   const classified = isPromptTimeout
     ? classifyPromptTimeout(
@@ -161,7 +161,7 @@ function emitFailureDiagnostics(
   // Never expose raw error internals to users.
   // The raw error is already logged to deps.logger.warn above for operator diagnostics.
   // The classified userMessage stays generic/user-safe — the knob detail
-  // rides ONLY the hint above (T-177-13).
+  // rides ONLY the hint above.
   // Enrich auth_invalid messages with the failing provider name
   if (classified.category === "auth_invalid") {
     result.response = `The AI service could not authenticate with the "${config.provider}" provider. Please check the API key or notify the system administrator.`;
@@ -180,9 +180,9 @@ function emitFailureDiagnostics(
   // Anthropic still bills input tokens even when the request times out,
   // but pi-ai discards partial usage. Emit a conservative estimate so
   // the cost gap is visible in tracking. The error's timeoutMs carries the
-  // limit that FIRED (177-REVIEW IN-04: a makespan kill ran
-  // ~promptTimeoutMs × stallCeilingMultiplier ms — reporting the stall
-  // budget understated latencyMs by up to the multiplier).
+  // limit that FIRED — a makespan kill ran
+  // ~promptTimeoutMs × stallCeilingMultiplier ms, so reporting the stall
+  // budget would understate latencyMs by up to the multiplier.
   if (promptError instanceof PromptTimeoutError) {
     ghostCost = emitTimeoutGhostCost(params, messageText, promptError.timeoutMs);
   }
@@ -209,7 +209,7 @@ function emitFailureDiagnostics(
  * @param firedTimeoutMs - The ms value of the limit that FIRED
  *   (`PromptTimeoutError.timeoutMs`): stall budget, makespan ceiling, or
  *   whole-turn retry window — rides `latencyMs` so makespan kills are not
- *   understated by the multiplier (177-REVIEW IN-04).
+ *   understated by the multiplier.
  */
 function emitTimeoutGhostCost(
   params: RunPromptParams,
@@ -232,7 +232,7 @@ function emitTimeoutGhostCost(
     const paramLen = t.parameters ? JSON.stringify(t.parameters).length : 0;
     return sum + t.name.length + descLen + paramLen;
   }, 0);
-  // Effective-chars ONE-ceil form (TOK-01): each text term divides by its own
+  // Effective-chars ONE-ceil form: each text term divides by its own
   // script factor; per-term ceils would inflate pure-ASCII results.
   const estimatedPromptTokens = Math.ceil(
     (messageText.length / scriptTokenFactor(messageText) +

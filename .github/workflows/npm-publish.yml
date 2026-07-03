@@ -37,9 +37,7 @@ jobs:
         # shell out to `which bwrap` and FAIL — not skip — when bubblewrap is
         # absent (resolveBwrapPath throws). ci.yml installs these deps for its
         # test jobs; this gate must match or `pnpm test` fails before publish.
-        # Regressed silently because npm hadn't published since 1.0.42, before
-        # the v2.x terminal-driver suites landed. ffmpeg/ffprobe likewise drive
-        # the media-conversion skill tests.
+        # ffmpeg/ffprobe likewise drive the media-conversion skill tests.
         run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
 
       - name: Allow unprivileged user namespaces (bubblewrap sandbox tests)

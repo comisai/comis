@@ -33,7 +33,7 @@ const SMALL_256K_PROFILE: ModelProfile = {
 const S = 5_000; // system tokens estimate
 const P = 1_000; // preamble tokens estimate
 
-describe("computeTokenBudgetForProfile — C1", () => {
+describe("computeTokenBudgetForProfile — capability-aware budget caps", () => {
   describe("frontier: byte-identical to computeTokenBudget", () => {
     it("256K frontier → H identical to current computeTokenBudget", () => {
       const expected = computeTokenBudget(256_000, S, -1, P);
@@ -89,7 +89,7 @@ describe("computeTokenBudgetForProfile — C1", () => {
     });
   });
 
-  // W1 (obs-llm-troubleshooting): cap provenance — the budget must say WHICH knob
+  // Cap provenance — the budget must say WHICH knob
   // clamped the window so the exhaustion error / logs / trajectory can name it.
   // Live incident: config declared contextWindow=131072 but the guard aborted at
   // "effective window 32000" with nothing pointing at effectiveContextCapSmall.
@@ -140,18 +140,18 @@ describe("computeTokenBudgetForProfile — C1", () => {
     });
   });
 
-  // KNOB-02 (Phase 176): served-window provenance. The executor overwrites
+  // Served-window provenance. The executor overwrites
   // profile.contextWindow with the RECONCILED (possibly Ollama-served) value
   // before the budget ever sees it (pi-executor.ts resolveModelProfile call),
-  // so today a served-bound turn misreports the served value as "the model's
-  // declared window" with windowCapSource:"none" — the operator never learns
-  // the configured window exists. The optional 7th windowProvenance parameter
-  // carries { configuredWindow, served?, reconcileSource } so the budget can
-  // report the TRUE configured window and name "served" as the cap source.
-  describe("KNOB-02: served-window provenance (windowProvenance 7th param)", () => {
-    it("KNOB-02-1: served-bound profile reports the TRUE configured window and windowCapSource 'served'", () => {
+  // so without provenance a served-bound turn misreports the served value as
+  // "the model's declared window" with windowCapSource:"none" — the operator
+  // never learns the configured window exists. The optional 7th windowProvenance
+  // parameter carries { configuredWindow, served?, reconcileSource } so the
+  // budget can report the TRUE configured window and name "served" as the cap source.
+  describe("served-window provenance (windowProvenance 7th param)", () => {
+    it("served-bound profile reports the TRUE configured window and windowCapSource 'served'", () => {
       // Executor-overwritten contextWindow = the served 8192; configured = 131072.
-      // Pre-patch truth: rawContextWindowTokens === 8192 (the served value
+      // Without provenance: rawContextWindowTokens === 8192 (the served value
       // misreported as declared) and windowCapSource === "none".
       const budget = computeTokenBudgetForProfile(
         { ...SMALL_256K_PROFILE, contextWindow: 8_192 },
@@ -167,7 +167,7 @@ describe("computeTokenBudgetForProfile — C1", () => {
       expect(budget.servedWindowTokens).toBe(8_192);
     });
 
-    it("KNOB-02-2: double-cap — class cap bites tighter than served: the cap keeps the source, served is carried", () => {
+    it("double-cap — class cap bites tighter than served: the cap keeps the source, served is carried", () => {
       // served 50000 bound first (executor-reconciled contextWindow), but the
       // small class cap 32000 clamps further → source = the cap knob, raw = the
       // TRUE configured window, servedWindowTokens carried for the full chain.
@@ -185,10 +185,10 @@ describe("computeTokenBudgetForProfile — C1", () => {
       expect(budget.servedWindowTokens).toBe(50_000);
     });
 
-    it("KNOB-02-3 (WR-01): capability reconcile upstream — the capabilityClass PIN is named, never the inert budget knob and never a silent 'none' clamp", () => {
+    it("capability reconcile upstream — the capabilityClass PIN is named, never the inert budget knob and never a silent 'none' clamp", () => {
       // The executor's capability cap bound the window upstream (contextWindow
       // arrives already at 32000) — the budget's own cap bit never fires, but
-      // the clamp must still be named (no silent clamp). WR-01: that upstream
+      // the clamp must still be named (no silent clamp). That upstream
       // cap is DEFAULT_EFFECTIVE_CAP_BY_CLASS[pinned class] (pi-executor) — it
       // never reads contextEngine.budget.effectiveContextCapSmall, so labeling
       // this bind with the budget knob sends operators to a DEAD lever ("raise
@@ -208,11 +208,11 @@ describe("computeTokenBudgetForProfile — C1", () => {
       expect(budget.servedWindowTokens).toBeUndefined();
     });
 
-    it("WR-01: the budget's OWN cap bit still names the budget knob (raising it genuinely works on that branch)", () => {
+    it("the budget's OWN cap bit still names the budget knob (raising it genuinely works on that branch)", () => {
       // Same capability-pinned agent, but the operator LOWERED the budget knob
       // below the executor cap (16000 < 32000): the budget's cap bit fires and
       // the binding lever IS contextEngine.budget.effectiveContextCapSmall —
-      // the honest label is unchanged by the WR-01 branch.
+      // the honest label is unchanged on this branch.
       const budget = computeTokenBudgetForProfile(
         { ...SMALL_256K_PROFILE, contextWindow: 32_000 },
         1_000,
@@ -227,10 +227,10 @@ describe("computeTokenBudgetForProfile — C1", () => {
       expect(budget.rawContextWindowTokens).toBe(131_072);
     });
 
-    it("KNOB-02-4: I3 pin — without the 7th arg every capability class is byte-identical to pre-provenance output", () => {
-      // Inline pre-patch literals (NOT self-comparison of two calls): these are
-      // the exact TokenBudget values computeTokenBudgetForProfile produced
-      // BEFORE the windowProvenance parameter existed. They must keep passing.
+    it("without the 7th arg every capability class stays byte-identical to the pinned provenance-free output", () => {
+      // Inline pinned literals (NOT self-comparison of two calls): these are
+      // the exact TokenBudget values computeTokenBudgetForProfile must produce
+      // when no windowProvenance is supplied. Any drift is a behavior change.
       const frontier = computeTokenBudgetForProfile(FRONTIER_PROFILE, S, P, -1);
       expect(frontier).toEqual({
         windowTokens: 256_000,
@@ -290,7 +290,7 @@ describe("computeTokenBudgetForProfile — C1", () => {
       });
     });
 
-    it("KNOB-02-5: provenance present but nothing bound (reconcileSource 'configured') is identical to no-provenance output", () => {
+    it("provenance present but nothing bound (reconcileSource 'configured') is identical to no-provenance output", () => {
       const profile: ModelProfile = { ...FRONTIER_PROFILE, contextWindow: 131_072 };
       const budget = computeTokenBudgetForProfile(profile, S, P, -1, undefined, undefined, {
         configuredWindow: 131_072,

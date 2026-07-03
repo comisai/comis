@@ -1,7 +1,7 @@
 [
   {
     "id": "fs-01-snake-msft",
-    "title": "snake+MSFT 1-of-3 archetype (the Phase 149 incident scenario)",
+    "title": "snake+MSFT 1-of-3 archetype (claims complete after 1 of 3 requirements)",
     "response": "The game is complete! I have implemented the movement controls and collision detection. The snake moves smoothly and the game is fully playable.",
     "checklist": [
       { "index": 0, "description": "Implement snake movement controls", "status": "done" },

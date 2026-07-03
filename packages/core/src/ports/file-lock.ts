@@ -2,9 +2,9 @@
 /**
  * FileLockPort: hexagonal architecture boundary for file-based mutual exclusion.
  *
- * The port is broad enough for THREE current consumers:
- *   - scheduler execution locks (cron-shaped, fixed timing — withExecutionLock today)
- *   - agent session write locks (30s stale, 3 retries, 500ms min timeout — LockedSessionStoreOptions today)
+ * The port is broad enough for THREE consumers:
+ *   - scheduler execution locks (cron-shaped, fixed timing — withExecutionLock)
+ *   - agent session write locks (30s stale, 3 retries, 500ms min timeout — LockedSessionStoreOptions)
  *   - agent OAuth credential/token locks (cross-process stale-lock recovery)
  *
  * Implementation: scheduler ships the canonical `createFileLock(): FileLockPort` factory
@@ -29,9 +29,9 @@ export interface LockOptions {
   /**
    * Lock-acquisition retry budget (default 3). Accepts either a bare number
    * (mapped to proper-lockfile { retries: N }) or the full proper-lockfile retry
-   * config object so callers like agent oauth-token-manager — which today passes
-   * { retries: 5, minTimeout: 50, maxTimeout: 1_000, factor: 2 } — can carry their
-   * existing tuning forward without semantic regression.
+   * config object so callers like the agent oauth-token-manager — which passes
+   * { retries: 5, minTimeout: 50, maxTimeout: 1_000, factor: 2 } — can express
+   * their full retry tuning.
    */
   readonly retries?:
     | number
@@ -41,10 +41,9 @@ export interface LockOptions {
   /**
    * Mtime update interval in ms for liveness proof (default 30_000).
    * Forwarded to proper-lockfile's `update` option. Zero or undefined disables
-   * the liveness ping; consumers like agent OAuth refresh use 5_000 to keep
-   * stale-detection in scheduler exec-lock's neighborhood without flapping.
-   * Lets agent's existing { staleMs: 30_000, updateMs: 5_000 } shape survive
-   * the retarget from withExecutionLock to createFileLock().withLock.
+   * the liveness ping; consumers like agent OAuth refresh pass
+   * { staleMs: 30_000, updateMs: 5_000 } to keep stale-detection in scheduler
+   * exec-lock's neighborhood without flapping.
    */
   readonly updateMs?: number;
 }
@@ -69,7 +68,7 @@ export interface FileLockPort {
 
   /**
    * Release the lock at lockPath. Idempotent: double-release returns ok(undefined)
-   * (does not throw) — matches the existing finally{} swallow at session-write-lock.ts:127-131.
+   * (does not throw) — matches the finally{} swallow at session-write-lock.ts:127-131.
    */
   release(lockPath: string): Promise<Result<void, LockError>>;
 

@@ -396,10 +396,10 @@ describe("ScopedSecretManager", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 03-01 — MutableSecretManager shared-map invariants
+// MutableSecretManager shared-map invariants
 // ---------------------------------------------------------------------------
 
-describe("03-01 — MutableSecretManager shared-map invariants", () => {
+describe("MutableSecretManager shared-map invariants", () => {
   it("createSecretManagerWithMutableHandle returns secretManager and mutableHandle", () => {
     const result = createSecretManagerWithMutableHandle({});
     expect(result).toHaveProperty("secretManager");

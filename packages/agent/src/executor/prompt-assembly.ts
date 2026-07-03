@@ -83,15 +83,15 @@ import { economiseForReadOnlyChild } from "../spawn/child-prompt-economy.js";
 import * as os from "node:os";
 
 // ---------------------------------------------------------------------------
-// C2/S1: Prompt mode resolution for ModelProfile
+// Prompt mode resolution for ModelProfile
 // ---------------------------------------------------------------------------
 
 /**
  * Resolve the effective PromptMode for a given execution context.
  *
  * Priority (highest to lowest):
- * 1. Compact-secure for small/nano capabilityClass (C2/S1) — wins even for
- *    cron/heartbeat turns (WR-03: security holds independent of model + operation).
+ * 1. Compact-secure for small/nano capabilityClass — wins even for
+ *    cron/heartbeat turns (security holds independent of model + operation).
  * 2. Cron/heartbeat auto-upgrade: "full" → "operational" (frontier/mid + no-profile).
  * 3. baseMode (operator-explicit or "full" default).
  *
@@ -100,16 +100,16 @@ import * as os from "node:os";
  *   - profile.capabilityClass is "small" or "nano"
  *   - baseMode is "full" (respect explicit operator overrides)
  *
- * WR-03: the compact-secure check is evaluated BEFORE the cron/heartbeat →
- * operational downgrade. The milestone's premise is "weaker class ⇒ stricter
- * securityLevel", and compact-secure carries the S1 anti-injection sender-trust
+ * The compact-secure check is evaluated BEFORE the cron/heartbeat →
+ * operational downgrade. The design premise is "weaker class ⇒ stricter
+ * securityLevel", and compact-secure carries the anti-injection sender-trust
  * hardening. A cron/heartbeat turn on a small/nano model must NOT silently lose
  * that hardening — it gets compact-secure, not operational. The operational
  * downgrade is reserved for frontier/mid (and no-profile) cron/heartbeat turns,
  * which never enter compact-secure anyway.
  *
  * Frontier/mid: never compact-secure. This is the behavior-neutral guarantee
- * for large-tier models — their prompt stays byte-identical to pre-152 output.
+ * for large-tier models — their prompt is unaffected by this mode selection.
  *
  * @internal exported for tests only
  */
@@ -120,9 +120,9 @@ export function resolvePromptModeForProfile(
   compactPromptConfig: { enabled?: boolean; targetTokens?: number } | undefined,
 ): PromptMode {
   // compact-secure: only for small/nano with config flag enabled (default: true).
-  // NEVER for frontier/mid — behavior-neutral guarantee (T-152-05). Evaluated
-  // FIRST so a cron/heartbeat turn on a weak model keeps the S1 hardening (WR-03)
-  // instead of being downgraded to "operational".
+  // NEVER for frontier/mid — behavior-neutral guarantee. Evaluated
+  // FIRST so a cron/heartbeat turn on a weak model keeps the sender-trust
+  // hardening instead of being downgraded to "operational".
   if (
     (compactPromptConfig?.enabled ?? true) &&
     profile !== undefined &&
@@ -188,7 +188,7 @@ const sessionPromptSkillsXmlSnapshots = new Map<string, string | undefined>();
 
 /** Per-session location→skillName index, parsed once from the frozen prompt
  *  skills XML snapshot at the same freeze point as
- *  `sessionPromptSkillsXmlSnapshots`. ATTR-01 (skill-use attribution): the
+ *  `sessionPromptSkillsXmlSnapshots`. Skill-use attribution: the
  *  pi-event-bridge consults this index to map a `read` tool's path back to the
  *  skill the model invoked. Empty when no visible skills are listed (the
  *  default until learned skills exist), so the attribution path is a no-op. */
@@ -197,8 +197,8 @@ const sessionPromptSkillLocations = new Map<string, ReadonlyMap<string, string>>
 /** Reuse-attribution carrier: per-session, per-TURN set of the learned-skill NAMES whose stored
  *  common-core (topicTokens) the CURRENT turn instantiates (`topicMatchedSkillNames`). The
  *  pi-event-bridge UNIONS these into the turn's `usedSkillIds`, so a skill APPLIED from the surfaced
- *  `<available_skills>` summary / recall — without an explicit `read` of its SKILL.md (the ATTR-01
- *  path) — still promotes on success. Overwritten every prompt assembly (the same per-turn lifecycle
+ *  `<available_skills>` summary / recall — without an explicit `read` of its SKILL.md (the
+ *  read-attribution path) — still promotes on success. Overwritten every prompt assembly (the same per-turn lifecycle
  *  as the XML/location snapshots). Empty/no-match ⇒ the no-op default. */
 const sessionPromptTopicMatchedSkills = new Map<string, ReadonlyArray<string>>();
 
@@ -208,12 +208,12 @@ export function getSessionPromptTopicMatchedSkills(snapshotKey: string): Readonl
   return sessionPromptTopicMatchedSkills.get(snapshotKey);
 }
 
-/** The per-turn topic-match reuse CENSUS (finding A): every surfaced skill that overlapped the
+/** The per-turn topic-match reuse CENSUS: every surfaced skill that overlapped the
  *  turn, with its coverage + credited flag. STORED here during assembly (overwritten per turn) and
  *  emitted as `memory:skill_surfaced` by postExecution — NOT emitted inline, because the standing-block
  *  assembly runs BEFORE the trajectory bridge subscribes (assembleTools precedes
- *  attachTrajectoryToEventBus in pi-executor), so an inline emit fires to no listener (proven live,
- *  package-delivery-20260628). Same store→read-at-postExecution pattern as the usedSkillIds carrier above. */
+ *  attachTrajectoryToEventBus in pi-executor), so an inline emit fires to no listener (proven
+ *  live). Same store→read-at-postExecution pattern as the usedSkillIds carrier above. */
 export interface SkillSurfacedCensus {
   surfacedCount: number;
   creditedCount: number;
@@ -262,7 +262,7 @@ export function clearSessionPromptMemoryInjected(snapshotKey: string): void {
  * each carrying `<name>`, `<description>`, `<location>`) into a
  * `location → skillName` Map. The location is the raw absolute path the `read`
  * tool reports, so XML entities are unescaped (the inverse of `escapeXml`) to
- * make the keys/values match raw text. ATTR-01.
+ * make the keys/values match raw text.
  *
  * Pure + total: never throws. `undefined`/empty/no-`<skill>` input yields an
  * empty Map. A `<skill>` block missing either `<name>` or `<location>` is
@@ -305,7 +305,7 @@ function unescapeXml(str: string): string {
 
 /**
  * Read the frozen location→skillName index for a session. The pi-event-bridge
- * calls this on a `read` tool execution to attribute skill use (ATTR-01).
+ * calls this on a `read` tool execution to attribute skill use.
  * Returns undefined when no snapshot has been frozen for the session yet.
  *
  * @param snapshotKey - The formatted session key used at the freeze point.
@@ -316,10 +316,10 @@ export function getSessionPromptSkillLocations(
   return sessionPromptSkillLocations.get(snapshotKey);
 }
 
-/** Per-agent dedup for the WR-02 "S1: sender-trust not injected in compact-secure"
+/** Per-agent dedup for the "S1: sender-trust not injected in compact-secure"
  *  WARN. The trigger (compact-secure promptMode + senderTrustDisplayConfig disabled)
  *  is STATIC per agent, so emitting it once-per-prompt-assembly spams the log on every
- *  turn (live finding, 2026-06-12 UC-4 run: 9× in a 9-turn small-model session). The
+ *  turn (observed live: 9× in a 9-turn small-model session). The
  *  operator signal is preserved once per agent; the per-turn repetition is dropped. */
 const wr02SenderTrustWarnedAgents = new Set<string>();
 
@@ -369,12 +369,12 @@ export function clearSessionBootstrapFileSnapshot(sessionKey: string): void {
  */
 export function clearSessionPromptSkillsXmlSnapshot(sessionKey: string): void {
   sessionPromptSkillsXmlSnapshots.delete(sessionKey);
-  // ATTR-01: clear the parsed location index in lockstep with the XML snapshot.
+  // Clear the parsed location index in lockstep with the XML snapshot.
   sessionPromptSkillLocations.delete(sessionKey);
 }
 
 /**
- * Reset the per-agent WR-02 sender-trust WARN dedup. Test-only seam (mirrors
+ * Reset the per-agent sender-trust WARN dedup. Test-only seam (mirrors
  * the clearSession* snapshot resets) so suites don't leak the once-per-agent
  * state across cases.
  */
@@ -510,21 +510,19 @@ export interface PromptAssemblyParams {
      *  → PromptAssemblyParams.deps → createMemoryRecall. TYPE-only (the agent↛memory build cut). */
     pinnedStore?: import("@comis/core").MemoryPinnedStore;
     /** Optional LCD provenance read store for createMemoryRecall's post-fusion
-     *  provenance down-weighting pass (Phase 173, DIST-03 read side — the C1→C2
-     *  carry-in). DEFAULT-OFF BYTE-IDENTITY: absent OR no lcd_distilled result → no
-     *  read, recall order unchanged. Passed from PiExecutorDeps → PromptAssemblyParams.deps
+     *  provenance down-weighting pass. DEFAULT-OFF BYTE-IDENTITY: absent OR no
+     *  lcd_distilled result → no read, recall order unchanged. Passed from
+     *  PiExecutorDeps → PromptAssemblyParams.deps
      *  → createMemoryRecall. TYPE-only (the agent↛memory build cut). */
     provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
-    /** Optional per-user profile store for the LLM-free standing-block injection
-     *  (default-OFF). Absent ⇒ no read, no push, byte-identical prompt
-    /** Optional mental-model store (the v2.31 Reflection doc store) for the LLM-free
-     *  `<user_profile>` standing-block injection (FOLD-01, Phase 225 — the kind:"profile"
-     *  read source; the standalone userRepresentationStore was deleted in Plan 05). Absent ⇒ no list, no push,
+    /** Optional mental-model store (the Reflection doc store) for the LLM-free
+     *  `<user_profile>` standing-block injection (the kind:"profile"
+     *  read source). Absent ⇒ no list, no push,
      *  byte-identical prompt (the cost gate). The agent receives the segregated port
      *  TYPE only — the agent↛memory build cut. The read is a deterministic
      *  `list(scope,"profile")` + the pure `buildProfileBlock` formatter (the per-user
      *  doc is selected by `topicKey === sessionKey.userId`); NO model call crosses onto
-     *  the recall hot path (the milestone's #1 constraint). */
+     *  the recall hot path (the recall hot path must stay LLM-free). */
     mentalModelStore?: import("@comis/core").MentalModelStorePort;
     timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
@@ -631,21 +629,20 @@ export interface PromptAssemblyParams {
    *  the promptMode from "full" to "operational" and dispatch operation-specific
    *  bootstrap filters. */
   operationType: ModelOperationType;
-  /** C2/S1: ModelProfile resolved per execution in pi-executor. Drives compact-secure
+  /** ModelProfile resolved per execution in pi-executor. Drives compact-secure
    *  promptMode selection for small/nano capabilityClass when
    *  contextEngine.compactPrompt.enabled is true. Also supplies securityLevel for
    *  lockdown scaling inside the compact-secure assembler. When absent, no compact-secure
    *  downgrade is applied (fail-open for the mode selection, fail-closed at the security
    *  level via the assembler's default "standard" securityLevel). */
   modelProfile?: ModelProfile;
-  /** Degenerate-window compact-prompt fallback budget (2026-06-22 root-cause
-   *  context-exhaustion fix, Part 2 extension). When provided AND the resolved-mode
+  /** Degenerate-window compact-prompt fallback budget. When provided AND the resolved-mode
    *  system prompt cannot fit the effective window —
    *  `systemPromptOnlyTokens + outputHeadroom + messageFloorTokens > effectiveWindow`,
    *  i.e. even zero tools won't fit — the assembler re-assembles in the existing
    *  `compact-secure` mode (security floor intact, ~700 tok) so the agent still
    *  runs instead of context-exhausting on its fixed overhead. Absent ⇒ no
-   *  window-fit check (byte-identical to pre-fix; the assembler is window-agnostic).
+   *  window-fit check (the assembler is then window-agnostic).
    *  Already-compact modes (`compact-secure`, `none`) are never re-assembled. */
   windowFitBudget?: {
     /** The effective context window in tokens (min(configured, served, capabilityCap)). */
@@ -780,7 +777,7 @@ export interface ExecutionPromptResult {
   recalledMemories?: ReadonlyArray<{ id: string; content: string }>;
   /** USER.md preferred language (extractUserLanguage value, placeholder-filtered),
    *  surfaced so the executor can thread it into PostExecutionParams.userMdLanguage
-   *  (DET-02 tier-2). Undefined on the parent-cache reuse path. */
+   *  (reply-language tier-2). Undefined on the parent-cache reuse path. */
   userLanguage?: string;
 }
 
@@ -791,11 +788,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // of the explicit msg.metadata.lightContext flag. Callers that only set the
   // metadata flag OR only set operationType="heartbeat" produce identical
   // prompt output. Hoisted above the parent-cache reuse branch so BOTH paths
-  // share the same bootstrap filter dispatch (WR-01).
+  // share the same bootstrap filter dispatch.
   const effectiveLightContext =
     msg.metadata?.lightContext === true || params.operationType === "heartbeat";
 
-  // SD6 (Phase 159): capability-gated bootstrap.maxChars.
+  // Capability-gated bootstrap.maxChars.
   // resolveScaffoldDefaults handles the === 20_000 sentinel check internally.
   // Fail-closed: absent modelProfile → FAIL_CLOSED_PROFILE (nano) → 3_500 (conservative).
   const { bootstrapMaxChars, bootstrapTotalMaxChars } = resolveScaffoldDefaults(
@@ -805,8 +802,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   // Snapshot-aware bootstrap load + per-turn filter dispatch + char-budget
   // build. Shared by the full-assembly path AND the parent-cache reuse path so
-  // the reuse path can resolve DET-02 tier-2 (USER.md preferred language)
-  // without drifting from the full path's filtering (WR-01). The session
+  // the reuse path can resolve reply-language tier-2 (USER.md preferred language)
+  // without drifting from the full path's filtering. The session
   // snapshot keeps loadWorkspaceBootstrapFiles to once per session and keeps the
   // system-prompt prefix stable across turns.
   async function resolveBootstrapContextFiles(
@@ -904,12 +901,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     if (promptSkillsXml) {
       dynamicPreambleParts.push(`## Available Skills\n${promptSkillsXml}`);
     }
-    // WR-06 (ATTR-01): this reuse path re-emits the `## Available Skills` block
+    // This reuse path re-emits the `## Available Skills` block
     // (a learned-skill <location> can be visible to the model), so it MUST also
     // populate the location→skillName index the bridge reads — otherwise
     // getSessionPromptSkillLocations() returns undefined and skill-use
-    // attribution silently no-ops for the DOMINANT cache-reuse (sub-agent) path
-    // (the precise seam-mismatch class that bit Phase 200). The full-assembly
+    // attribution silently no-ops for the DOMINANT cache-reuse (sub-agent)
+    // path. The full-assembly
     // path freezes this in lockstep with its XML snapshot (see the
     // sessionPromptSkillLocations.set below); here we key on the same
     // formatSessionKey(sessionKey) and freeze once (don't clobber an index a
@@ -939,12 +936,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         workspaceDir: deps.spawnPacket.workspaceDir,
         parentSummary: deps.spawnPacket.parentSummary,
         agentWorkspaces: deps.spawnPacket.agentWorkspaces,
-        // GEN-03 (CR-01): the inherited conversation language was dropped on
-        // this cache-reuse path — the DOMINANT runtime path for same-model
-        // sub-agents — so a he/ar/ru sub-agent produced English output. Thread
+        // The inherited conversation language must not be dropped on this
+        // cache-reuse path — the DOMINANT runtime path for same-model
+        // sub-agents — or a he/ar/ru sub-agent produces English output. Thread
         // it so both role-section call sites are symmetric. en/undefined emits
         // nothing (buildSubagentRoleSection guards on `language && !== "en"`),
-        // so the en path stays byte-identical (I1).
+        // so the en path stays byte-identical.
         language: deps.spawnPacket.language,
       });
       if (roleLines.length > 0) dynamicPreambleParts.push(roleLines.join("\n"));
@@ -1003,10 +1000,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       "Using parent cache prefix (model/provider match)",
     );
 
-    // WR-01: resolve DET-02 tier-2 (USER.md preferred language) on the reuse
-    // path too. Pre-fix this hardcoded `undefined`, so a sub-agent that took the
-    // (dominant) cache-reuse path resolved its degraded reply WITHOUT tier-2 —
-    // silently falling through to tier-3 (inbound script). Compute promptMode
+    // Resolve reply-language tier-2 (USER.md preferred language) on the reuse
+    // path too. If this were a hardcoded `undefined`, a sub-agent that took the
+    // (dominant) cache-reuse path would resolve its degraded reply WITHOUT tier-2
+    // — silently falling through to tier-3 (inbound script). Compute promptMode
     // (the same pure resolution as the full path) and load USER.md via the
     // shared snapshot-aware helper so the filtering (incl. group-chat USER.md
     // stripping) matches the full path. The system prompt itself is still the
@@ -1021,7 +1018,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     const { bootstrapContextFiles: reuseBootstrapFiles } = await resolveBootstrapContextFiles(reusePromptMode);
     const reuseUserLanguage = extractUserLanguage(reuseBootstrapFiles);
 
-    // STRIP-01/02 (cache-reuse path): the reused prefix is the PARENT's full
+    // Read-only-child input economy (cache-reuse path): the reused prefix is the PARENT's full
     // frozen prompt, so a read-only child drops the heavy blocks here too (else
     // the dominant same-model sub-agent path leaks the full inherited context).
     const reuseEconomised = deps.spawnPacket
@@ -1043,15 +1040,15 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     config.contextEngine?.compactPrompt,
   );
 
-  // WR-02: warn when compact-secure is active but senderTrustDisplayConfig is disabled.
+  // Warn when compact-secure is active but senderTrustDisplayConfig is disabled.
   // The sender-trust section wiring is correct (MODES_FULL_MIN_COMPACT includes it), but
   // the data it receives is always an empty array when the feature is not configured —
   // producing a structurally-satisfied but content-empty section. Operators should
   // configure senderTrustDisplayConfig to get meaningful anti-injection trust display.
-  // WR-02 trigger is STATIC per agent (capabilityClass-derived promptMode +
+  // The trigger is STATIC per agent (capabilityClass-derived promptMode +
   // per-agent senderTrustDisplayConfig), so warn ONCE per agent — not per
-  // prompt assembly — to keep the log readable (the per-turn repetition was
-  // pure noise: 9× in a 9-turn small-model session, 2026-06-12 UC-4 run).
+  // prompt assembly — to keep the log readable (per-turn repetition would fire
+  // on every turn of a small-model session, which is pure noise).
   if (promptMode === "compact-secure" && !deps.senderTrustDisplayConfig?.enabled) {
     const wr02Key = agentId ?? config.name;
     if (!wr02SenderTrustWarnedAgents.has(wr02Key)) {
@@ -1071,15 +1068,15 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // snapshot-aware helper. `bootstrapFilesForReport` tracks the raw post-filter
   // shape so the SystemPromptReport can populate injectedWorkspaceFiles[] with
   // missing/truncated/rawChars/injectedChars accounting. The same helper feeds
-  // the parent-cache reuse path's tier-2 resolution (WR-01), so the filter
+  // the parent-cache reuse path's tier-2 language resolution, so the filter
   // dispatch can never drift between the two paths.
   const { bootstrapContextFiles, bootstrapFilesForReport } =
     await resolveBootstrapContextFiles(promptMode);
 
   // 3. RAG recall via createMemoryRecall + hybrid memory injector (non-fatal).
-  // `memorySections` = prompt content (retrieved sections + §7.3 guidance block when
-  // present); the `retrieved*` accumulators are telemetry truth — retrieved memory
-  // only, excluding the fixed guidance block.
+  // `memorySections` = prompt content (retrieved sections + the temporal-guidance
+  // block when present); the `retrieved*` accumulators are telemetry truth —
+  // retrieved memory only, excluding the fixed guidance block.
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
   // id + content of the recalled memories, surfaced on the result so the
@@ -1120,8 +1117,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       // `scoring` below) — there is NO alpha on `feedback`.
       const ragFeedback = (config.rag as typeof config.rag & { feedback?: { enabled: boolean } })
         .feedback;
-      // Recall scoring is the FIXED config.rag.scoring alphas (Phase 224, RECALL-02/03):
-      // the UCB online-tuning bandit + its per-intent tuned-alpha overlay are deleted, so
+      // Recall scoring is the FIXED config.rag.scoring alphas: there is no
+      // online-tuning bandit or per-intent tuned-alpha overlay, so
       // there is no learned-weight read on the recall hot path — ranking is fused RRF + the
       // cross-encoder reranker over the config-sourced alphas only. Deterministic + LLM-free.
       const recall = createMemoryRecall(
@@ -1134,15 +1131,15 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           tripleStore: deps.tripleStore,
           embeddingStore: deps.embeddingStore,
           usefulnessStore: deps.usefulnessStore,
-          // R6: wire the pinned-first lane store so Step 0 of the recall pipeline
+          // Wire the pinned-first lane store so Step 0 of the recall pipeline
           // (`if (cfg_pinned?.enabled === true && deps.pinnedStore !== undefined)`) can fire
           // at runtime. The same `memoryAdapter` already passed as `memoryPort` implements
           // `MemoryPinnedStore`; the daemon composition root threads it here through
           // PiExecutorDeps.pinnedStore → PromptAssemblyParams.deps.pinnedStore. Default-OFF
           // byte-identity: with `rag.pinned.enabled=false` (the default) no query runs.
           ...(deps.pinnedStore !== undefined ? { pinnedStore: deps.pinnedStore } : {}),
-          // DIST-03 (Phase 173, the C1→C2 carry-in): thread the provenance read
-          // store so createMemoryRecall's post-fusion down-weighting pass can fire
+          // Thread the provenance read store so createMemoryRecall's
+          // post-fusion down-weighting pass can fire
           // live. The daemon composition root threads it here through
           // PiExecutorDeps.provenanceStore → PromptAssemblyParams.deps.provenanceStore.
           // DEFAULT-OFF byte-identity: absent OR no lcd_distilled result → no read.
@@ -1158,7 +1155,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           minScore: config.rag.minScore,
           includeTrustLevels: config.rag.includeTrustLevels,
           rerank: config.rag.rerank,
-          // Fixed config-sourced scoring alphas — no learned overlay (Phase 224, RECALL-02/03).
+          // Fixed config-sourced scoring alphas — no learned overlay.
           scoring: config.rag.scoring,
           lanes: config.rag.lanes,
           entityLane: config.rag.entityLane,
@@ -1175,26 +1172,25 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           // score.ts forces forgetFactor to exactly 1.0 ⇒ byte-identical recall until an
           // operator opts in (rag.forget.enabled); the neutral byte-identity holds even when on.
           forget: config.rag.forget,
-          // R6: forward the pinned-memory injection config so Step 0 knows the cap.
+          // Forward the pinned-memory injection config so Step 0 knows the cap.
           // A fully-defaulted RagConfig field (same posture as mmr/forget), so it passes DIRECTLY.
           // Default-OFF (`enabled:false`) ⇒ the pinned lane is skipped (byte-identical).
           pinned: config.rag.pinned,
-          // R3: forward the base-score floor gate.
-          // SD2 (Phase 158): capability-gated baseFloor.
+          // Forward the base-score floor gate — capability-gated baseFloor.
           // Resolved: explicit config.rag.baseFloor (>0) wins; for small/nano with
           // baseFloor===0 (schema default/"unset"), applies SMALL_NANO_DEFAULT_BASE_FLOOR=0.15.
           // frontier/mid with no config: effective floor remains 0 (byte-identical).
           // Fail-closed when modelProfile absent → 0 floor (frontier-equivalent behavior).
-          // T-153-poison: boosts cannot resurrect a low-base memory (floor gates pre-boost).
+          // Poison resistance: boosts cannot resurrect a low-base memory (floor gates pre-boost).
           baseFloor: params.modelProfile !== undefined
             ? resolveScaffoldDefaults(params.modelProfile, config).baseFloor
             : (config.rag as typeof config.rag & { baseFloor?: number }).baseFloor,
-          // RETR-04 / WR-02 (Phase 173): thread the unified-arbiter-active signal so the
+          // Thread the unified-arbiter-active signal so the
           // recall baseFloor gate is FAIL-CLOSED under the arbiter (an unconfigured floor
           // resolves to the class default instead of silently skipping) AND the trust gate
           // runs upstream of fusion. relevanceFirst=true only for small/nano non-caching
-          // models (resolveScaffoldDefaults); frontier/mid → false → recall byte-identical
-          // (LOCKED #2). Absent modelProfile → undefined → off (recency-first, byte-identical).
+          // models (resolveScaffoldDefaults); frontier/mid → false → recall byte-identical.
+          // Absent modelProfile → undefined → off (recency-first, byte-identical).
           ...(params.modelProfile !== undefined
             ? { relevanceFirst: resolveScaffoldDefaults(params.modelProfile, config).relevanceFirst }
             : {}),
@@ -1215,7 +1211,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // Budget accounting: subtract pinnedChars from maxContextChars BEFORE sizing
         // fused recall. Pinned entries are identified by entry.pinned===true (set by
         // rowToEntry from the DB column; the recall pipeline's Step-0 lane prepends them).
-        // CR-03: use entry.pinned to identify actual pinned entries rather than a positional
+        // Use entry.pinned to identify actual pinned entries rather than a positional
         // slice(0, maxPinnedInjection). When real pins < cap, the positional slice over-counts
         // and incorrectly measures fused entries in pinnedChars, silently dropping them from
         // injector.split. The entry.pinned filter deducts only real-pin chars.
@@ -1231,10 +1227,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           pinnedChars = pinnedSection ? pinnedSection.length : 0;
         }
 
-        // R3: small/nano profile count cap (3 items max) and chars cap (2000/1000).
+        // Small/nano profile count cap (3 items max) and chars cap (2000/1000).
         // Applied AFTER the base-floor filter in the recall pipeline, at the injection site.
         // Caps are conservative but generous for small models; frontier/mid are uncapped.
-        // T-153-03b: accepted DoS risk — caps are well above typical useful recall sets.
+        // Accepted DoS risk: caps are well above typical useful recall sets.
         const maxRecallItems =
           params.modelProfile?.capabilityClass === "small" || params.modelProfile?.capabilityClass === "nano"
             ? 3
@@ -1267,7 +1263,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         retrievedSectionsChars = memorySections.reduce((sum, s) => sum + s.length, 0);
         retrievedRagHits = memorySections.length + (inlineMemory ? 1 : 0);
 
-        // Read-time contradiction guidance: inject the §7.3 block when
+        // Read-time contradiction guidance: inject the temporal-guidance block when
         // >=2 surfaced memories are co-retrieved for the same query. Pure formatter; no
         // deletion, no content echo. The >=2 gate is tightened with entity overlap.
         // FIXED guidance text, NOT a retrieved memory — excluded from telemetry above.
@@ -1278,7 +1274,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // AFTER the trajectory bridge has subscribed. The inline assembly runs inside assembleTools,
         // BEFORE attachTrajectoryToEventBus (pi-executor), so an inline emit fired to NO listener and
         // the trajectory missed the RAG record on every turn — the same pre-bridge timing bug fixed
-        // for memory:skill_surfaced (finding A). Fires only on turns where the injector produced
+        // for memory:skill_surfaced. Fires only on turns where the injector produced
         // content (this block is reached only then). Retrieved memory ONLY (inline + retrieved
         // sections), never the guidance block — keeps charsInjected consistent with hitCount.
         sessionPromptMemoryInjected.set(formatSessionKey(sessionKey), {
@@ -1296,12 +1292,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   // USER-PROFILE STANDING BLOCK: the LLM-free per-user-profile block is a DURABLE
   // standing block ("what we know about this user"), NOT a per-recall-conditional one.
-  // FOLD-01 (Phase 225 Plan 02): the source is REWIRED from the deleted
-  // `userRepresentationStore` to the v2.31 mental-model store — a `kind:"profile"`
+  // The source is the mental-model store — a `kind:"profile"`
   // Mental Model doc (`mentalModelStore.list(scope,"profile")` → `buildProfileBlock`).
   //
-  // It is injected on its OWN gate — `config.learning.enabled` (the collapsed
-  // learning flag, Phase 226 / SIMPLIFY-05; was learningSkills.enabled)
+  // It is injected on its OWN gate — `config.learning.enabled` (the single
+  // collapsed learning flag)
   // AND the optional store dep — INDEPENDENT of whether RAG ran, whether recall hit,
   // and independent of `rag.enabled`. This is why it lives OUTSIDE the
   // `if (deps.memoryPort && config.rag?.enabled ...)` recall block above: nesting it
@@ -1314,7 +1309,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // buildProfileBlock formatter (NO model call — the recall hot path stays LLM-free).
   // The profile groupKey is the userId, carried on the doc's `topicKey` (LearningScope
   // has only (tenant, agent)), so the CURRENT user's doc is selected by
-  // `topicKey === sessionKey.userId` — cross-user isolation at read (T-225-09). The
+  // `topicKey === sessionKey.userId` — cross-user isolation at read. The
   // formatter returns undefined on an empty/absent profile ⇒ nothing pushed ⇒
   // byte-identity. Non-fatal: a list err is swallowed so the agent proceeds without the
   // profile. The profile content was redaction-checked + validateLearnedDocBody-clean +
@@ -1351,7 +1346,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // --- reuse-attribution by TOPIC MATCH (kind=skill).
         // Credit any learned skill whose stored common-core (topicTokens) THIS turn instantiates,
         // so a skill APPLIED from the surfaced `<available_skills>` summary / recall — without an
-        // explicit `read` of its SKILL.md (the ATTR-01 path) — still enters `usedSkillIds` and
+        // explicit `read` of its SKILL.md (the read-attribution path) — still enters `usedSkillIds` and
         // promotes on success. Per-turn (the match depends on the turn's request text); the carrier
         // is unioned into the turn's usedSkillIds by the pi-event-bridge.
         const skills = docs.value.filter((d) => d.kind === "skill");
@@ -1372,9 +1367,9 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
             "reuse-attribution: turn topic-credited learned skill(s) without an explicit read",
           );
         }
-        // memory:skill_surfaced (finding A): the full reuse-attribution census. memory:skill_used
+        // memory:skill_surfaced: the full reuse-attribution census. memory:skill_used
         // (post-execution) fires only when ≥1 skill is CREDITED, so a NEAR-MISS — a skill that
-        // overlapped the turn but missed the credit bar, or a legacy doc with no topicTokens — was
+        // overlapped the turn but missed the credit bar, or a doc with no topicTokens — was
         // silent ("why wasn't my skill reused?" needed a debugger). Emit per turn when ≥1 learned
         // skill has ANY token overlap (sharedCount>0) or is credited; carry a content-free score
         // (name=id, rest=numbers; zero-overlap skills omitted as noise; capped). Best-effort.
@@ -1407,12 +1402,6 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       );
     }
   }
-
-  // (The CHANNEL-RELATIONSHIP STANDING BLOCK — the LLM-free directional `<channel_relationships>`
-  //  injection, gated on `config.socialModeling.enabled && privacyReviewSignedOffBy` + the store dep —
-  //  was DELETED in Phase 226-04 with the rest of the social-modeling subsystem (the RelationshipStore
-  //  port + adapter, the `relationship` table, the offline directional-edge builder). Deleting the
-  //  injection removes a prompt-injected relationship-model surface; no dormant seam left (I1).)
 
   // 4. Build runtime info
   const runtimeInfo: RuntimeInfo = {
@@ -1512,7 +1501,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   const hasMemoryTools = stableToolNames.includes("memory_store") || stableToolNames.includes("memory_search");
 
-  // P2: include the Compressed-context uncertainty clause when the DAG (LCD)
+  // Include the Compressed-context uncertainty clause when the DAG (LCD)
   // engine is enabled. Gated on the per-session, operator-only
   // `contextEngine.version` (stable config) -- NOT per-turn store state -- so the
   // cache-stable system-prompt prefix is not thrashed on every compaction.
@@ -1525,7 +1514,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   if (promptSkillsXml === undefined && !sessionPromptSkillsXmlSnapshots.has(snapshotKey)) {
     promptSkillsXml = deps.getPromptSkillsXml?.() ?? undefined;
     sessionPromptSkillsXmlSnapshots.set(snapshotKey, promptSkillsXml);
-    // ATTR-01: parse the frozen XML into the location→skillName index ONCE,
+    // Parse the frozen XML into the location→skillName index ONCE,
     // in lockstep with the XML snapshot, so the bridge can attribute skill use
     // from a `read` path. Empty when no skills are listed (the default).
     sessionPromptSkillLocations.set(snapshotKey, parseSkillLocationIndex(promptSkillsXml));
@@ -1600,7 +1589,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     workspaceProfile: config.workspace?.profile,
     sepEnabled: params.sepEnabled,
     dagModeEnabled,
-    // C2/S1: securityLevel from ModelProfile drives lockdown tightening in compact-secure mode.
+    // securityLevel from ModelProfile drives lockdown tightening in compact-secure mode.
     // Only applied when promptMode === "compact-secure"; ignored for full/operational/minimal.
     securityLevel: params.modelProfile?.securityLevel,
   };
@@ -1612,8 +1601,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // by shared buildAllSections().
   let systemPromptBlocks = assembleRichSystemPromptBlocks(assemblerParams);
 
-  // ROOT-CAUSE context-exhaustion guard — degenerate-window compact fallback
-  // (2026-06-22). The window-aware tool-budget fit pass (executor-tool-assembly)
+  // ROOT-CAUSE context-exhaustion guard — degenerate-window compact fallback.
+  // The window-aware tool-budget fit pass (executor-tool-assembly)
   // defers tools to fit, but the system prompt itself is non-evictable: a model
   // whose effective window is SMALLER than its full prompt (e.g. an ~8K window
   // mid-class model with a ~10K prompt — compact-secure never fires for mid/
@@ -1632,7 +1621,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     promptMode !== "compact-secure" &&
     promptMode !== "none"
   ) {
-    // TOK-01: factor the prompt's own script (dense non-Latin prompts carry more
+    // Factor the prompt's own script (dense non-Latin prompts carry more
     // tokens/char), matching estimateSystemTokensFactored at toolOverheadChars=0.
     const systemPromptOnlyTokens = Math.ceil(
       systemPrompt.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(systemPrompt)),
@@ -1676,7 +1665,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
 
-  // STRIP-01/02: read-only-child input economy. Gating + drop logic all live in
+  // Read-only-child input economy. Gating + drop logic all live in
   // spawn/child-prompt-economy.ts (blocks are always defined on this path).
   if (deps.spawnPacket) {
     const economised = economiseForReadOnlyChild(systemPrompt, systemPromptBlocks, stableToolNames);
@@ -1764,7 +1753,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         policyFilteredToolNames: deps.policyFilteredToolNames,
         // memoryInjection reflects RETRIEVED memory only (inline + retrieved
         // sections). The predicate gates on injected content (memorySections
-        // includes the §7.3 guidance block); the COUNTS use the retrieved-only
+        // includes the temporal-guidance block); the COUNTS use the retrieved-only
         // accumulators so they never tally the fixed guidance text. The
         // `?? 0` on inlineMemory.length is load-bearing for the sections-only
         // branch (the outer predicate can be true with inlineMemory undefined).
@@ -1825,7 +1814,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     wrappedApiSystemPrompt = wrapExternalContent(apiSystemPrompt, { source: "api", includeWarning: true, onSuspiciousContent: deps.onSuspiciousContent });
   }
 
-  // Bootstrap content budget tracking (F4: denominator = systemPromptChars + toolDefOverheadChars)
+  // Bootstrap content budget tracking (denominator = systemPromptChars + toolDefOverheadChars)
   const bootstrapChars = bootstrapContextFiles.reduce((sum, f) => sum + f.content.length, 0);
   const systemPromptChars = systemPrompt.length;
   const toolDefOverheadChars = mergedCustomTools.reduce((sum, t) => {
@@ -1999,8 +1988,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // BOOTSTRAP.md onboarding content relocated from system prompt to dynamic preamble.
   // Specialist-profile agents (task workers spawned by pipelines, sub-agents, or
   // graphs) must never receive onboarding: the "greet the user, ask who I am"
-  // script hijacks task execution and wastes ~3 KB of context per turn. See
-  // audit finding F3 (2026-04-19).
+  // script hijacks task execution and wastes ~3 KB of context per turn.
   if (isOnboarding && config.workspace?.profile !== "specialist") {
     try {
       const bootstrapPath = safePath(deps.workspaceDir, "BOOTSTRAP.md");
@@ -2038,7 +2026,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   const dynamicPreamble = dynamicPreambleParts.join("\n\n");
 
   // Token budget breakdown for optimization measurement. Script-factored
-  // (TOK-01) so the operator-visible numbers stay consistent with the real
+  // so the operator-visible numbers stay consistent with the real
   // factored reservation in executor-tool-assembly.
   const systemPromptTokens = Math.ceil(systemPrompt.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(systemPrompt)));
   const dynamicPreambleTokens = Math.ceil(dynamicPreamble.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(dynamicPreamble)));

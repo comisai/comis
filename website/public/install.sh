@@ -3742,7 +3742,7 @@ Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=45
 # KillMode=process: on stop, systemd signals ONLY the main daemon process — NOT the whole
-# cgroup (the default 'control-group'). REQUIRED for durable terminal drives (DUR-01): a
+# cgroup (the default 'control-group'). REQUIRED for durable terminal drives: a
 # durable session runs its child inside a detached 'tmux new-session -d' server that
 # daemonizes (reparented to init) but REMAINS a member of this unit's cgroup — the daemon
 # cannot move it out (ProtectControlGroups=yes + non-root service user + no user bus). With
@@ -3791,7 +3791,7 @@ EnvironmentFile=-${COMIS_ENV_FILE}
 ProtectSystem=strict
 ProtectHome=read-only
 ${COMIS_PRIVATE_TMP_LINE}
-# ReadWritePaths punches through ProtectHome=read-only. TERMRW-01: it grants the WHOLE
+# ReadWritePaths punches through ProtectHome=read-only. It grants the WHOLE
 # service home read-write — the terminal driver's `filesystem: home` scope runs driven CLIs
 # (claude, codex, …) that keep state in their own home dirs (~/.claude, ~/.codex, ~/.local),
 # and the bwrap jail binds the DAEMON's view of ~/, so a read-only home read-onlys exactly

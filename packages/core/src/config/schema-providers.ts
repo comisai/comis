@@ -71,7 +71,7 @@ export type UserModel = z.infer<typeof UserModelSchema>;
 
 /** Schema default for providers.entries.<id>.timeoutMs — shared with the boot
  *  redirect WARN (daemon wiring/provider-timeout-redirect.ts) so the ≠-default
- *  check can never drift from the schema (LAT-03). */
+ *  check can never drift from the schema. */
 export const PROVIDER_TIMEOUT_MS_DEFAULT = 120_000;
 
 /**
@@ -89,7 +89,7 @@ export const ProviderEntrySchema = z.strictObject({
     /** Whether this provider is enabled (default: true) */
     enabled: z.boolean().default(true),
     /**
-     * NOT enforced on completion calls (LAT-03/D-11): the only consumer is the
+     * NOT enforced on completion calls: the only consumer is the
      * provider-config echo (daemon provider-handlers). The operative completion
      * deadline is agents.<id>.promptTimeout.promptTimeoutMs (stall budget) — see
      * config-yaml.mdx. Setting a non-default value emits a one-time boot WARN

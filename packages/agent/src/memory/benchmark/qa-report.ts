@@ -11,7 +11,7 @@
  * harness (where the dataset bytes are read) and passed in as `dataset.sha256` --
  * this module just records the string.
  *
- * SECURITY -- structural secret omission (Pitfall 6, ASVS V7): the
+ * SECURITY -- structural secret omission (ASVS V7): the
  * report is persisted via writeRegularFile, OUTSIDE Pino's redaction safety-net,
  * so the builder itself must guarantee no credential ever reaches the file. It
  * does so STRUCTURALLY: each model role is rebuilt as a fresh `{ provider,
@@ -23,7 +23,7 @@
  * (`https://user:token@host/...?token=...`) cannot smuggle a credential through.
  * Even when the operator config carries a per-role secret, it cannot appear in
  * `JSON.stringify(report)` because there is no path from the input secret to the
- * output object. (RED gate: the unit asserts the serialized report contains none
+ * output object. (The unit gate asserts the serialized report contains none
  * of the known secret substrings -- apiKey/Bearer/base_url AND a credential-bearing
  * modelUri -- with a secret-bearing config.)
  *
@@ -134,7 +134,7 @@ export interface BenchmarkControl {
 /**
  * The reproducibility object. Records WHAT built/answered/judged
  * (model identities), the dataset, the recall defaults, and the accuracy results
- * (carrying `invalid` + `validTotal` per the corrected denominator) -- with no
+ * (carrying `invalid` + `validTotal` for the invalid-excluded denominator) -- with no
  * secret anywhere.
  */
 export interface BenchmarkReport {
@@ -165,9 +165,9 @@ export interface BenchmarkReport {
     rerankEnabled: boolean;
     scoringAlphas: ScoringAlphas;
   };
-  /** The accuracy results (overall + per-category, with the corrected denominator fields). */
+  /** The accuracy results (overall + per-category, with the invalid-excluded denominator fields). */
   results: AccuracyResult;
-  /** The harness version tag (e.g. "phase-89-v1"). */
+  /** The harness version tag -- a fixed stamp identifying the harness code that produced the run. */
   harnessVersion: string;
   /**
    * Tokens/query (answer + judge). Present only when the run measured it;

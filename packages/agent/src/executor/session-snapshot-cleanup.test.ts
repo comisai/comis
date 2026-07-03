@@ -116,10 +116,10 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionCacheSavings).toHaveBeenCalledWith(key);
       expect(mockClearSessionPrefixStability).toHaveBeenCalledWith(key);
       expect(mockClearSessionCadenceTracker).toHaveBeenCalledWith(key);
-      // CR-02 (175-REVIEW): the GBNF-02 strip once-gate is session-lifetime —
+      // The reactive schema-strip once-gate is session-lifetime —
       // it must re-arm when the session is reset/expired.
       expect(mockClearSessionReactiveSchemaStrip).toHaveBeenCalledWith(key);
-      // KNOB-02 (Phase 176): the window-reconcile INFO latch is once-per-session —
+      // The window-reconcile INFO latch is once-per-session —
       // delete/reset must grant the next session a fresh INFO.
       expect(mockClearWindowReconcileLogged).toHaveBeenCalledWith(key);
     });
@@ -211,7 +211,7 @@ describe("session-snapshot-cleanup", () => {
         reason: "manual-reset",
       });
 
-      // formatSessionKey no longer emits the `agent:<agentId>:` prefix even
+      // formatSessionKey does not emit an `agent:<agentId>:` prefix even
       // when `key.agentId` is set — the field is retained on the schema for
       // caller ergonomics but is intentionally not serialized.
       const expectedKey = "t1:u1:c1";

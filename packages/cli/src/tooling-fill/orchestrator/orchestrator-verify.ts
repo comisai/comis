@@ -101,7 +101,7 @@ export async function verifyFill(
   }
 
   // ---- Protected mutation window --------------------------------------
-  // 9a. stopDaemon
+  // Stop the daemon so no live process reads the config mid-mutation.
   if (willRestart) {
     const stopRes = await stopDaemon(supervisor);
     if (!stopRes.ok) {
@@ -112,7 +112,7 @@ export async function verifyFill(
     }
   }
 
-  // 9b. writeBackup
+  // Back up the config before any mutation (backup-fail-fast).
   const backupRes = writeBackup(opts.configPath, opts.homeDir, "tooling-fill");
   if (!backupRes.ok) {
     // Best-effort restart, then exit 2.
@@ -126,7 +126,7 @@ export async function verifyFill(
   }
   const backupPath = backupRes.value.backupPath;
 
-  // 9c. setHintFields per entry — accumulate into doc.
+  // setHintFields per entry — accumulate into doc.
   for (const entry of filled) {
     const applyRes = setHintFields(doc, entry.kind, entry.name, {
       description: entry.description,
@@ -142,7 +142,7 @@ export async function verifyFill(
     }
   }
 
-  // 9d. atomicWriteFile
+  // Atomically write the mutated doc over the config.
   const writeRes = atomicWriteFile(opts.configPath, doc.toString());
   if (!writeRes.ok) {
     const rb = await rollback(opts.configPath, rawYaml, willRestart, supervisor);
@@ -152,7 +152,7 @@ export async function verifyFill(
     };
   }
 
-  // 9e. validateConfig — re-load + validate the freshly written file.
+  // validateConfig — re-load + validate the freshly written file.
   // Env-substitute `${VAR}` references before validation, mirroring
   // `comis config validate` (commands/config.ts:131-133). Without this, any
   // config using the documented `${COMIS_GATEWAY_TOKEN}` pattern would fail
@@ -181,7 +181,7 @@ export async function verifyFill(
     };
   }
 
-  // ---- 10. startDaemon + verify-alive ---------------------------------
+  // ---- startDaemon + verify-alive --------------------------------------
   // `systemctl start` exits 0 once the unit is queued, not once the daemon
   // has finished booting. If the daemon then crashes during boot (e.g.
   // misowned config, invalid YAML), the orchestrator was previously a
@@ -215,7 +215,7 @@ export async function verifyFill(
     }
   }
 
-  // ---- 11. Partial success on --all -----------------------------------
+  // ---- Partial success on --all -----------------------------------------
   if (skipped.length > 0) {
     const filledNames = filled.map((f) => f.name).join(", ");
     const skippedReport = skipped
@@ -228,13 +228,13 @@ export async function verifyFill(
     };
   }
 
-  // ---- 12. Backup retention -------------------------------------------
+  // ---- Backup retention --------------------------------------------------
   // Keep the 5 most recent tooling-fill backups, drop older. Best-effort —
   // never failing the success path on a housekeeping miss.
   const pruneRes = pruneOldBackups(opts.homeDir, "tooling-fill", 5);
   const pruneSuffix = pruneRes.deleted > 0 ? ` (pruned ${pruneRes.deleted} older backup(s))` : "";
 
-  // ---- 13. Success exit ------------------------------------------------
+  // ---- Success exit ------------------------------------------------------
   const filledNames = filled.map((f) => f.name).join(", ");
   const droppedReport = renderDroppedReport(filled);
   return {

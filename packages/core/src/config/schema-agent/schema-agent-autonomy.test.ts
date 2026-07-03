@@ -5,33 +5,33 @@ import {
   AUTONOMY_PROFILES,
   resolveAutonomy,
 } from "./schema-agent-autonomy.js";
-// 217: resolveEffectiveMode lives in the mode leaf (file-size split); the barrel
+// resolveEffectiveMode lives in the mode leaf (file-size split); the barrel
 // re-exports it, so @comis/core consumers reach it unchanged.
 import { resolveEffectiveMode } from "./schema-agent-autonomy-mode.js";
-// PROFILE-03 honest-degrade moved to its own leaf (213-03 file-size split).
+// The honest-degrade path lives in its own leaf (file-size split).
 import { degradeAutonomy, type AutonomyDownshift } from "./schema-agent-autonomy-degrade.js";
 
 // ---------------------------------------------------------------------------
-// PROFILE-01 (Phase 210): the v8 §3.8 named-profile resolver. An
+// The named-profile resolver. An
 // `AutonomyConfigSchema` Zod leaf whose `.default()` produces `standard` (the
-// zero-config great-out-of-box default + the MIG-01 migration target), plus a
-// PURE `resolveAutonomy()` that expands `profile:` into the full §3.3
+// zero-config great-out-of-box default), plus a
+// PURE `resolveAutonomy()` that expands `profile:` into the full
 // cap/guard block (an explicit field OVERRIDES the profile — progressive
-// disclosure). Per v8 §3.8, `unattended`/`max` keep `standard`'s cap set (no
-// silent over-grant); `max` carries an "available in M3" clamp notice, while
-// `unattended`'s notice (Phase 217) says its never-hang MODE behaviors are ACTIVE.
+// disclosure). `unattended`/`max` keep `standard`'s cap set (no
+// silent over-grant); `max` carries a clamp notice disclosing its
+// not-yet-available surface, while `unattended`'s notice says its never-hang
+// MODE behaviors are ACTIVE.
 //
-// These cases fail on the pre-patch tree (the schema file does not exist yet,
-// so the import itself is unresolvable) — RED proof. The resolver is a pure
-// function of its config input (no env/clock/fs — AGENTS §2.2).
+// The resolver is a pure function of its config input (no env/clock/fs —
+// AGENTS §2.2).
 // ---------------------------------------------------------------------------
 
-// The nine FLOOR-CONTAINED orchestration caps `standard` turns on (v8 §3.8 /
-// §22.3). `orch:message` IS a member (210-GAP MIG-01 / §3.8 line 253): the
+// The nine FLOOR-CONTAINED orchestration caps `standard` turns on.
+// `orch:message` IS a member: the
 // standard profile turns ON origin-channel messaging. The ORIGIN-vs-new scoping
 // rides `message.channels` (`["origin"]` default); origin sends are
 // auto-allowable under quota, a NEW channel is an `autoApprovable:false` floor
-// item (§3.5/§22.3) — so the cap-literal is floor-contained + autoApprovable.
+// item — so the cap-literal is floor-contained + autoApprovable.
 const STANDARD_FLOOR_CAPS = [
   "orch:read",
   "orch:web",
@@ -44,17 +44,17 @@ const STANDARD_FLOOR_CAPS = [
   "orch:message",
 ] as const;
 
-describe("AutonomyConfigSchema (PROFILE-01 — zero-config default → standard)", () => {
-  it("PROFILE-01-S1: parse({}) resolves profile 'standard' (the zero-config default + MIG-01 target)", () => {
+describe("AutonomyConfigSchema (zero-config default → standard)", () => {
+  it("parse({}) resolves profile 'standard' (the zero-config default)", () => {
     const parsed = AutonomyConfigSchema.parse({});
     expect(parsed.profile).toBe("standard");
   });
 
-  it("PROFILE-01-S2: strictObject rejects an unknown key (typo guard)", () => {
+  it("strictObject rejects an unknown key (typo guard)", () => {
     expect(AutonomyConfigSchema.safeParse({ profil: "standard" }).success).toBe(false);
   });
 
-  it("PROFILE-01-S3: accepts each of the four profile names", () => {
+  it("accepts each of the four profile names and rejects an unknown one", () => {
     for (const p of ["assistant", "standard", "unattended", "max"] as const) {
       expect(AutonomyConfigSchema.safeParse({ profile: p }).success).toBe(true);
     }
@@ -62,7 +62,7 @@ describe("AutonomyConfigSchema (PROFILE-01 — zero-config default → standard)
   });
 });
 
-describe("AUTONOMY_PROFILES (the §3.8 resolved cap/guard sets)", () => {
+describe("AUTONOMY_PROFILES (the resolved cap/guard sets)", () => {
   it("exposes all four named profiles", () => {
     expect(Object.keys(AUTONOMY_PROFILES).sort()).toEqual(
       ["assistant", "max", "standard", "unattended"].sort(),
@@ -70,8 +70,8 @@ describe("AUTONOMY_PROFILES (the §3.8 resolved cap/guard sets)", () => {
   });
 });
 
-describe("resolveAutonomy (PROFILE-01 — pure profile → §3.3 block)", () => {
-  it("PROFILE-01-S4: resolveAutonomy(undefined) → standard, caps include orch:spawn/orch:graph/orch:cron/orch:message", () => {
+describe("resolveAutonomy (pure profile → cap/guard block)", () => {
+  it("resolveAutonomy(undefined) → standard, caps include orch:spawn/orch:graph/orch:cron/orch:message", () => {
     const r = resolveAutonomy(undefined);
     expect(r.profile).toBe("standard");
     expect(r.enabled).toBe(true);
@@ -80,14 +80,14 @@ describe("resolveAutonomy (PROFILE-01 — pure profile → §3.3 block)", () => 
     );
   });
 
-  it("PROFILE-01-S5: standard resolves to exactly the nine floor-contained caps (incl. origin orch:message)", () => {
+  it("standard resolves to exactly the nine floor-contained caps (incl. origin orch:message)", () => {
     const r = resolveAutonomy({ profile: "standard" });
     expect([...r.capabilities].sort()).toEqual([...STANDARD_FLOOR_CAPS].sort());
   });
 
-  it("210-GAP MIG-01: standard's orch:message is autoApprovable:true (origin-channel auto-send), NOT an always-escalate floor cap", () => {
-    // The cap-literal is auto-allowable to the OWN origin channel under quota
-    // (§3.8 capable default); the non-origin TARGET escalates via the message
+  it("standard's orch:message is autoApprovable:true (origin-channel auto-send), NOT an always-escalate floor cap", () => {
+    // The cap-literal is auto-allowable to the OWN origin channel under quota;
+    // the non-origin TARGET escalates via the message
     // config, NOT by marking the cap autoApprovable:false. orch:browse stays the
     // only always-escalate cap-literal.
     const r = resolveAutonomy({ profile: "standard" });
@@ -96,74 +96,74 @@ describe("resolveAutonomy (PROFILE-01 — pure profile → §3.3 block)", () => 
     expect(msg!.autoApprovable).toBe(true);
   });
 
-  it("210-GAP IN-01: a per-surface toggle OVERRIDES enabled — { profile: assistant, web: true } resolves enabled:false but STILL grants orch:web", () => {
-    // The toggle IS the enable signal for that surface (design option (a)):
+  it("a per-surface toggle OVERRIDES enabled — { profile: assistant, web: true } resolves enabled:false but STILL grants orch:web", () => {
+    // The toggle IS the enable signal for that surface:
     // enabled:false does NOT zero an explicitly-toggled surface (progressive
-    // disclosure). The §22.3 floor still bounds the granted cap.
+    // disclosure). The structural floor still bounds the granted cap.
     const r = resolveAutonomy({ profile: "assistant", web: true });
     expect(r.enabled).toBe(false);
     expect(r.capabilities).toContain("orch:web");
   });
 
-  it("PROFILE-01-S6: assistant → enabled false, zero orchestration surfaces", () => {
+  it("assistant → enabled false, zero orchestration surfaces", () => {
     const r = resolveAutonomy({ profile: "assistant" });
     expect(r.enabled).toBe(false);
     expect(r.capabilities.length).toBe(0);
   });
 
-  it("PROFILE-01-S7: standard ships guards ON (budget/rate/ceiling > 0)", () => {
+  it("standard ships guards ON (budget/rate/ceiling > 0)", () => {
     const r = resolveAutonomy({ profile: "standard" });
     expect(r.aggregateBudgetUsd).toBeGreaterThan(0);
     expect(r.maxConcurrentSelfAgents).toBeGreaterThan(0);
     expect(r.maxSelfSpawnRatePerMin).toBeGreaterThan(0);
   });
 
-  it("PROFILE-01-S8: standard.message.channels is origin-only", () => {
+  it("standard.message.channels is origin-only", () => {
     const r = resolveAutonomy({ profile: "standard" });
     expect(r.message.channels).toEqual(["origin"]);
   });
 
-  it("PROFILE-01-S9: max is CLAMPED to a subset of standard's caps + carries an m1Notice naming M2/M3", () => {
+  it("max is CLAMPED to a subset of standard's caps and its m1Notice discloses the not-yet-available surface", () => {
     const max = resolveAutonomy({ profile: "max" });
     const std = resolveAutonomy({ profile: "standard" });
     const stdSet = new Set(std.capabilities);
     expect(max.capabilities.every((c) => stdSet.has(c))).toBe(true);
     expect(typeof max.m1Notice).toBe("string");
-    expect(max.m1Notice).toMatch(/M2|M3/);
+    expect(max.m1Notice).toMatch(/not yet available/i);
   });
 
-  it("PROFILE-01-S10: unattended keeps a standard-equivalent cap set + carries a notice that the never-hang behaviors are ACTIVE (217 — no longer deferred to M2/M3)", () => {
+  it("unattended keeps a standard-equivalent cap set and its notice says the never-hang behaviors are ACTIVE, not deferred", () => {
     const un = resolveAutonomy({ profile: "unattended" });
     const std = resolveAutonomy({ profile: "standard" });
     const stdSet = new Set(std.capabilities);
     // The cap set stays standard-equivalent (no over-grant — that is unchanged).
     expect(un.capabilities.every((c) => stdSet.has(c))).toBe(true);
     expect(un.m1Notice).toBeTruthy();
-    // Phase 217: the notice now describes the ACTIVE never-hang behaviors, NOT a
-    // deferral. It must NOT claim the surface is "available in M2/M3" any more.
-    expect(un.m1Notice).not.toMatch(/M2|M3/);
+    // The notice describes the ACTIVE never-hang behaviors, NOT a deferral —
+    // it must not read as a not-yet-available surface.
+    expect(un.m1Notice).not.toMatch(/not yet available/i);
     expect(un.m1Notice).toMatch(/active/i);
     expect(un.m1Notice).toMatch(/escalate/i);
   });
 
-  it("PROFILE-01-S11: an explicit field OVERRIDES the profile (progressive disclosure)", () => {
+  it("an explicit field OVERRIDES the profile (progressive disclosure)", () => {
     const r = resolveAutonomy({ profile: "standard", aggregateBudgetUsd: 5 });
     expect(r.aggregateBudgetUsd).toBe(5);
   });
 
-  it("PROFILE-01-S12: an enabled per-surface toggle adds its matching orch:* cap (browse → orch:browse)", () => {
+  it("an enabled per-surface toggle adds its matching orch:* cap (browse → orch:browse)", () => {
     // `orch:browse` is OFF in every default profile; an explicit toggle opts in.
     const r = resolveAutonomy({ profile: "standard", browse: true });
     expect(r.capabilities).toContain("orch:browse");
   });
 
-  it("PROFILE-01-S13: resolveAutonomy is pure — same input yields a deeply-equal result", () => {
+  it("resolveAutonomy is pure — same input yields a deeply-equal result", () => {
     expect(resolveAutonomy({ profile: "standard" })).toEqual(resolveAutonomy({ profile: "standard" }));
   });
 });
 
 // ---------------------------------------------------------------------------
-// PROFILE-03 (Phase 210): honest, LEGIBLE degrade. When a host precondition for
+// Honest, LEGIBLE degrade. When a host precondition for
 // the jail fails — the namespace/`unshare` preflight — the resolved posture must
 // downshift to `assistant` (enabled === false, zero caps) AND SAY SO: it returns
 // a structured `AutonomyDownshift` signal (downshiftedFrom/To, reason, hint,
@@ -171,12 +171,12 @@ describe("resolveAutonomy (PROFILE-01 — pure profile → §3.3 block)", () => 
 // There is NEVER a silent unjailed fallback (an enabled-but-unjailed posture).
 //
 // The downshift is driven by a preflight-RESULT INPUT (a boolean the resolver
-// receives), NOT a live bwrap probe — that probe is Phase 211 (JAIL-03). This
+// receives), NOT a live bwrap probe — probing is the caller's job. This
 // keeps `degradeAutonomy` PURE (AGENTS §2.2): a function of (resolved, preflight)
-// only. These cases are RED until `degradeAutonomy` + `AutonomyDownshift` exist.
+// only.
 // ---------------------------------------------------------------------------
-describe("degradeAutonomy (PROFILE-03 — honest legible degrade on a failed preflight)", () => {
-  it("PROFILE-03-S1: namespacePreflightOk:false downshifts standard → assistant (enabled false, zero caps)", () => {
+describe("degradeAutonomy (honest legible degrade on a failed preflight)", () => {
+  it("namespacePreflightOk:false downshifts standard → assistant (enabled false, zero caps)", () => {
     const std = resolveAutonomy({ profile: "standard" });
     const { resolved } = degradeAutonomy(std, { namespacePreflightOk: false });
     expect(resolved.profile).toBe("assistant");
@@ -184,7 +184,7 @@ describe("degradeAutonomy (PROFILE-03 — honest legible degrade on a failed pre
     expect(resolved.capabilities.length).toBe(0);
   });
 
-  it("PROFILE-03-S2: the downshift SURFACES a structured signal (never a silent swap)", () => {
+  it("the downshift SURFACES a structured signal (never a silent swap)", () => {
     const std = resolveAutonomy({ profile: "standard" });
     const { downshift } = degradeAutonomy(std, { namespacePreflightOk: false });
     expect(downshift).toBeDefined();
@@ -198,14 +198,14 @@ describe("degradeAutonomy (PROFILE-03 — honest legible degrade on a failed pre
     expect(signal.hint.length).toBeGreaterThan(0);
   });
 
-  it("PROFILE-03-S3: namespacePreflightOk:true (the 210 default) leaves the resolved profile UNCHANGED + no signal", () => {
+  it("namespacePreflightOk:true (the default) leaves the resolved profile UNCHANGED + no signal", () => {
     const std = resolveAutonomy({ profile: "standard" });
     const { resolved, downshift } = degradeAutonomy(std, { namespacePreflightOk: true });
     expect(resolved).toEqual(std);
     expect(downshift).toBeUndefined();
   });
 
-  it("PROFILE-03-S4: the downshift NEVER yields an enabled-but-unjailed posture (no silent unjailed fallback)", () => {
+  it("the downshift NEVER yields an enabled-but-unjailed posture (no silent unjailed fallback)", () => {
     // Even from `max` (the most-privileged selectable profile), a failed
     // preflight must land on the assistant posture — enabled false.
     const max = resolveAutonomy({ profile: "max" });
@@ -215,7 +215,7 @@ describe("degradeAutonomy (PROFILE-03 — honest legible degrade on a failed pre
     expect((downshift as AutonomyDownshift).downshiftedFrom).toBe("max");
   });
 
-  it("PROFILE-03-S5: an already-assistant posture is a no-op downshift (idempotent, no spurious signal)", () => {
+  it("an already-assistant posture is a no-op downshift (idempotent, no spurious signal)", () => {
     const asst = resolveAutonomy({ profile: "assistant" });
     const { resolved, downshift } = degradeAutonomy(asst, { namespacePreflightOk: false });
     expect(resolved.profile).toBe("assistant");
@@ -224,39 +224,35 @@ describe("degradeAutonomy (PROFILE-03 — honest legible degrade on a failed pre
     expect(downshift).toBeUndefined();
   });
 
-  it("PROFILE-03-S6: the m1Notice rides the resolved result so the boot log can print it (unattended/max)", () => {
-    // Re-assert (PROFILE-03 reads this at boot): `max` carries the M2/M3 notice
-    // on the resolved posture, which the legible boot log surfaces.
+  it("the m1Notice rides the resolved result so the boot log can print it (unattended/max)", () => {
+    // Re-assert (the boot-log builder reads this): `max` carries the clamp
+    // notice on the resolved posture, which the legible boot log surfaces.
     const max = resolveAutonomy({ profile: "max" });
     expect(max.m1Notice).toBeTruthy();
-    expect(max.m1Notice).toMatch(/M2|M3/);
+    expect(max.m1Notice).toMatch(/not yet available/i);
   });
 });
 
 // ---------------------------------------------------------------------------
-// LEASE-02 (Phase 211): the `autonomy.lease.leaseMaxTtlMin` renewal ceiling. A
-// nested `autonomy.lease.{ leaseMaxTtlMin }` sub-block (REQUIREMENTS.md:111 /
-// v8 §3.3) — the bounded positive-int (MINUTES) maximum a renewable lease can
-// live. The LeaseManager (211-01) clamps each renew to a `maxExpiresAt` derived
+// The `autonomy.lease.leaseMaxTtlMin` renewal ceiling. A
+// nested `autonomy.lease.{ leaseMaxTtlMin }` sub-block
+// — the bounded positive-int (MINUTES) maximum a renewable lease can
+// live. The LeaseManager clamps each renew to a `maxExpiresAt` derived
 // from it, so revoke actually STOPS renewal (no unbounded re-lease). Defaults to
 // 60 under every autonomy-bearing profile so `ResolvedAutonomy` stays total.
-//
-// These cases are RED until the field is threaded through the schema +
-// ProfileEntry + STANDARD_GUARDS + the resolver merge: `result.leaseMaxTtlMin`
-// is `undefined` (≠ 60) and the field is absent from the resolved type.
 // ---------------------------------------------------------------------------
-describe("resolveAutonomy (LEASE-02 — autonomy.lease.leaseMaxTtlMin renewal ceiling)", () => {
-  it("LEASE-02-S1: zero-config (→ standard) resolves leaseMaxTtlMin to the default 60 (a 1-hour ceiling)", () => {
+describe("resolveAutonomy (autonomy.lease.leaseMaxTtlMin renewal ceiling)", () => {
+  it("zero-config (→ standard) resolves leaseMaxTtlMin to the default 60 (a 1-hour ceiling)", () => {
     const r = resolveAutonomy(undefined);
     expect(r.leaseMaxTtlMin).toBe(60);
   });
 
-  it("LEASE-02-S2: an explicit lease.leaseMaxTtlMin OVERRIDES the profile default (progressive disclosure)", () => {
+  it("an explicit lease.leaseMaxTtlMin OVERRIDES the profile default (progressive disclosure)", () => {
     const r = resolveAutonomy({ profile: "standard", lease: { leaseMaxTtlMin: 30 } });
     expect(r.leaseMaxTtlMin).toBe(30);
   });
 
-  it("LEASE-02-S3: every profile exposes a numeric leaseMaxTtlMin — the resolved type is TOTAL (assistant included)", () => {
+  it("every profile exposes a numeric leaseMaxTtlMin — the resolved type is TOTAL (assistant included)", () => {
     // assistant mints no lease, but the field is harmless and keeps the resolved
     // posture total (no `number | undefined` at the LeaseManager call site).
     for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
@@ -269,46 +265,40 @@ describe("resolveAutonomy (LEASE-02 — autonomy.lease.leaseMaxTtlMin renewal ce
   });
 });
 
-describe("AutonomyConfigSchema (LEASE-02 — the nested lease sub-block is positive-int guarded)", () => {
-  it("LEASE-02-S4: accepts a positive-int lease.leaseMaxTtlMin", () => {
+describe("AutonomyConfigSchema (the nested lease sub-block is positive-int guarded)", () => {
+  it("accepts a positive-int lease.leaseMaxTtlMin", () => {
     expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: 120 } }).success).toBe(true);
   });
 
-  it("LEASE-02-S5: rejects leaseMaxTtlMin = 0 (must be a positive renewal ceiling)", () => {
+  it("rejects leaseMaxTtlMin = 0 (must be a positive renewal ceiling)", () => {
     expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: 0 } }).success).toBe(false);
   });
 
-  it("LEASE-02-S6: rejects a negative leaseMaxTtlMin", () => {
+  it("rejects a negative leaseMaxTtlMin value", () => {
     expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: -5 } }).success).toBe(false);
   });
 
-  it("LEASE-02-S7: rejects a non-integer leaseMaxTtlMin (minutes are whole)", () => {
+  it("rejects a non-integer leaseMaxTtlMin (minutes are whole)", () => {
     expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: 1.5 } }).success).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// BUDGET-01/02 + RATE-01 + CEIL-01 + QUOTA-01/02 (Phase 213): the NET-NEW
-// nested autonomy sub-blocks the daemon-side BoundedAutonomy service (Plans
-// 04/05/06/07) reads. The shipped 210 schema has FLAT $-budget /
+// The nested autonomy BOUNDS sub-blocks the daemon-side BoundedAutonomy
+// service reads: the schema has FLAT $-budget /
 // concurrent-spawn / spawn-rate / cron fields + nested message/lease blocks,
-// but the TOKEN + WALL-CLOCK budget limbs (BUDGET-01/02), the per-root /
-// per-socket / connection-churn RATE limbs (RATE-01), the spawn DEPTH/FANOUT
-// shape surfaced into ResolvedAutonomy (CEIL-01), and the outward
-// per-target-grant / volume-cap (QUOTA-01/02) do NOT exist yet. Per
-// REQUIREMENTS.md §Config surface + the message/lease nested precedent
-// (RESEARCH §D — A2), these are NESTED `z.strictObject` sub-blocks with
-// safe-floor defaults, the resolver merging the nested + legacy-flat per-field
+// plus the TOKEN + WALL-CLOCK budget limbs, the per-root /
+// per-socket / connection-churn RATE limbs, the spawn DEPTH/FANOUT
+// shape surfaced into ResolvedAutonomy, and the outward
+// per-target-grant / volume-cap. Following the
+// message/lease nested precedent,
+// these are NESTED `z.strictObject` sub-blocks with
+// safe-floor defaults, the resolver merging the nested + flat aliases per-field
 // (the `cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin` model).
-//
-// These cases are RED until the four sub-blocks + STANDARD_GUARDS defaults +
-// ProfileEntry/ResolvedAutonomy fields + the resolver expansion land: the
-// `resolved.budget`/`rate`/`spawn`/`outward` fields are absent from the
-// resolved type and `undefined` at runtime.
 // ---------------------------------------------------------------------------
-describe("resolveAutonomy (BUDGET-01/02 — the nested budget sub-block: $/token/wall-clock limbs)", () => {
-  it("BUDGET-01-S1: zero-config (→ standard) resolves all three budget limbs to safe non-zero defaults", () => {
-    // BUDGET-01/02 need the token + wall-clock limbs ON TOP of the existing $
+describe("resolveAutonomy (the nested budget sub-block: $/token/wall-clock limbs)", () => {
+  it("zero-config (→ standard) resolves all three budget limbs to safe non-zero defaults", () => {
+    // The token + wall-clock limbs sit ON TOP of the $
     // limb so an unknown-priced ($0) self-spawn loop still trips a bound.
     const r = resolveAutonomy(undefined);
     expect(r.budget.aggregateUsd).toBe(2.0); // mirrors the existing flat standard $ default
@@ -316,14 +306,14 @@ describe("resolveAutonomy (BUDGET-01/02 — the nested budget sub-block: $/token
     expect(r.budget.wallClockMs).toBeGreaterThan(0);
   });
 
-  it("BUDGET-01-S2: an explicit budget.tokens overrides ONLY tokens — the other limbs keep their defaults (per-field merge)", () => {
+  it("an explicit budget.tokens overrides ONLY tokens — the other limbs keep their defaults (per-field merge)", () => {
     const r = resolveAutonomy({ profile: "standard", budget: { tokens: 999 } });
     expect(r.budget.tokens).toBe(999);
     expect(r.budget.aggregateUsd).toBe(2.0);
     expect(r.budget.wallClockMs).toBeGreaterThan(0);
   });
 
-  it("BUDGET-01-S3: the legacy flat aggregateBudgetUsd still feeds budget.aggregateUsd (resolved-output surfacing, not a compat shim)", () => {
+  it("the flat aggregateBudgetUsd alias still feeds budget.aggregateUsd (one resolved source, not a compat shim)", () => {
     const r = resolveAutonomy({ profile: "standard", aggregateBudgetUsd: 7 });
     expect(r.budget.aggregateUsd).toBe(7);
     // the flat field is also still surfaced for the existing consumers.
@@ -331,15 +321,15 @@ describe("resolveAutonomy (BUDGET-01/02 — the nested budget sub-block: $/token
   });
 });
 
-describe("resolveAutonomy (RATE-01 — the nested rate sub-block: per-root/per-socket/churn)", () => {
-  it("RATE-01-S1: zero-config (→ standard) resolves all three rate limbs to safe non-zero defaults", () => {
+describe("resolveAutonomy (the nested rate sub-block: per-root/per-socket/churn)", () => {
+  it("zero-config (→ standard) resolves all three rate limbs to safe non-zero defaults", () => {
     const r = resolveAutonomy(undefined);
     expect(r.rate.perRootCallsPerSec).toBeGreaterThan(0);
     expect(r.rate.perSocketCallsPerSec).toBeGreaterThan(0);
     expect(r.rate.connectionChurnPerMin).toBeGreaterThan(0);
   });
 
-  it("RATE-01-S2: an explicit rate.perRootCallsPerSec overrides ONLY that limb (per-field merge)", () => {
+  it("an explicit rate.perRootCallsPerSec overrides ONLY that limb (per-field merge)", () => {
     const r = resolveAutonomy({ profile: "standard", rate: { perRootCallsPerSec: 3 } });
     expect(r.rate.perRootCallsPerSec).toBe(3);
     expect(r.rate.perSocketCallsPerSec).toBeGreaterThan(0);
@@ -347,30 +337,30 @@ describe("resolveAutonomy (RATE-01 — the nested rate sub-block: per-root/per-s
   });
 });
 
-describe("resolveAutonomy (CEIL-01 — the spawn sub-block surfaces depth/fanout into ResolvedAutonomy)", () => {
-  it("CEIL-01-S1: zero-config (→ standard) resolves the v8 CEIL-01 spawn shape (concurrent 4 / depth 3 / children 5)", () => {
+describe("resolveAutonomy (the spawn sub-block surfaces depth/fanout into ResolvedAutonomy)", () => {
+  it("zero-config (→ standard) resolves the default spawn shape (concurrent 4 / depth 3 / children 5)", () => {
     const r = resolveAutonomy(undefined);
     expect(r.spawn.maxConcurrentSelfAgents).toBe(4);
     expect(r.spawn.maxSpawnDepth).toBe(3);
     expect(r.spawn.maxChildrenPerAgent).toBe(5);
   });
 
-  it("CEIL-01-S2: the legacy flat maxConcurrentSelfAgents still feeds spawn.maxConcurrentSelfAgents (one resolved source)", () => {
+  it("the flat maxConcurrentSelfAgents alias still feeds spawn.maxConcurrentSelfAgents (one resolved source)", () => {
     const r = resolveAutonomy({ profile: "standard", maxConcurrentSelfAgents: 9 });
     expect(r.spawn.maxConcurrentSelfAgents).toBe(9);
     expect(r.maxConcurrentSelfAgents).toBe(9);
   });
 });
 
-describe("resolveAutonomy (QUOTA-01/02 — the outward sub-block: origin-only/grants/volume)", () => {
-  it("QUOTA-01-S1: zero-config (→ standard) resolves origin-only true, an EMPTY grant list, and a positive volume cap", () => {
+describe("resolveAutonomy (the outward sub-block: origin-only/grants/volume)", () => {
+  it("zero-config (→ standard) resolves origin-only true, an EMPTY grant list, and a positive volume cap", () => {
     const r = resolveAutonomy(undefined);
     expect(r.outward.originOnly).toBe(true);
     expect(r.outward.perTargetGrants).toEqual([]);
     expect(r.outward.volumeCap).toBeGreaterThan(0);
   });
 
-  it("QUOTA-01-S2: an explicit outward.perTargetGrants overrides the empty default (the §8.4 per-target grant seam)", () => {
+  it("an explicit outward.perTargetGrants overrides the empty default (the per-target grant seam)", () => {
     const r = resolveAutonomy({ profile: "standard", outward: { perTargetGrants: ["telegram:c1"] } });
     expect(r.outward.perTargetGrants).toEqual(["telegram:c1"]);
     expect(r.outward.originOnly).toBe(true);
@@ -378,35 +368,35 @@ describe("resolveAutonomy (QUOTA-01/02 — the outward sub-block: origin-only/gr
 });
 
 describe("AutonomyConfigSchema (BUDGET/RATE/SPAWN/OUTWARD — every new sub-block is strictObject typo-guarded)", () => {
-  it("213-S1: strictObject rejects a typo'd budget key (budget.tokenz — fails-closed, not a silent disabled limb)", () => {
+  it("strictObject rejects a typo'd budget key (budget.tokenz — fails-closed, not a silent disabled limb)", () => {
     expect(AutonomyConfigSchema.safeParse({ budget: { tokenz: 1 } }).success).toBe(false);
   });
 
-  it("213-S2: strictObject rejects a typo'd rate key (rate.perRootCallsPerSecond)", () => {
+  it("strictObject rejects a typo'd rate key (rate.perRootCallsPerSecond)", () => {
     expect(
       AutonomyConfigSchema.safeParse({ rate: { perRootCallsPerSecond: 1 } }).success,
     ).toBe(false);
   });
 
-  it("213-S3: strictObject rejects a typo'd spawn key (spawn.maxSpawnDepthh)", () => {
+  it("strictObject rejects a typo'd spawn key (spawn.maxSpawnDepthh)", () => {
     expect(AutonomyConfigSchema.safeParse({ spawn: { maxSpawnDepthh: 1 } }).success).toBe(false);
   });
 
-  it("213-S4: strictObject rejects a typo'd outward key (outward.volumeCapp)", () => {
+  it("strictObject rejects a typo'd outward key (outward.volumeCapp)", () => {
     expect(AutonomyConfigSchema.safeParse({ outward: { volumeCapp: 1 } }).success).toBe(false);
   });
 
-  it("213-S5: rejects a non-positive budget.tokens (must bound, never zero)", () => {
+  it("rejects a non-positive budget.tokens (must bound, never zero)", () => {
     expect(AutonomyConfigSchema.safeParse({ budget: { tokens: 0 } }).success).toBe(false);
   });
 
-  it("213-S6: rejects a non-positive rate.perSocketCallsPerSec", () => {
+  it("rejects a non-positive rate.perSocketCallsPerSec value", () => {
     expect(AutonomyConfigSchema.safeParse({ rate: { perSocketCallsPerSec: 0 } }).success).toBe(
       false,
     );
   });
 
-  it("213-S7: accepts a fully-specified budget/rate/spawn/outward config (the explicit-override surface)", () => {
+  it("accepts a fully-specified budget/rate/spawn/outward config (the explicit-override surface)", () => {
     expect(
       AutonomyConfigSchema.safeParse({
         budget: { aggregateUsd: 1, tokens: 100, wallClockMs: 1000 },
@@ -418,8 +408,8 @@ describe("AutonomyConfigSchema (BUDGET/RATE/SPAWN/OUTWARD — every new sub-bloc
   });
 });
 
-describe("resolveAutonomy (213 — every profile surfaces a TOTAL resolved budget/rate/spawn/outward)", () => {
-  it("213-S8: each of the four profiles resolves total (non-undefined) budget/rate/spawn/outward limbs", () => {
+describe("resolveAutonomy (every profile surfaces a TOTAL resolved budget/rate/spawn/outward)", () => {
+  it("each of the four profiles resolves total (non-undefined) budget/rate/spawn/outward limbs", () => {
     for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
       const r = resolveAutonomy({ profile });
       expect(typeof r.budget.tokens, `${profile} budget.tokens`).toBe("number");
@@ -433,37 +423,37 @@ describe("resolveAutonomy (213 — every profile surfaces a TOTAL resolved budge
 });
 
 // ---------------------------------------------------------------------------
-// Phase 216 (DUR-01..04 / HB-01): the durability sub-block. Default-off — a
+// The durability sub-block. Default-off — a
 // fully-omitted autonomy block (and a fully-omitted durability block) resolves
 // durability.enabled === false, so the daemon constructs no durable stores /
 // boot recovery / watchdog (byte-identical default install). strictObject is the
 // typo guard; each ms limb is a positive int (never fails-open at zero).
 // ---------------------------------------------------------------------------
-describe("AutonomyConfigSchema (216 — durability sub-block defaults off)", () => {
-  it("216-S1: a fully-omitted autonomy block resolves durability.enabled = false", () => {
+describe("AutonomyConfigSchema (durability sub-block defaults off)", () => {
+  it("a fully-omitted autonomy block resolves durability.enabled = false", () => {
     const parsed = AutonomyConfigSchema.parse({});
     expect(parsed.durability.enabled).toBe(false);
   });
 
-  it("216-S2: an omitted durability block fills the conservative-ratio defaults (stale = 4x keepAlive)", () => {
+  it("an omitted durability block fills the conservative-ratio defaults (stale = 4x keepAlive)", () => {
     const parsed = AutonomyConfigSchema.parse({});
     expect(parsed.durability.keepAliveMs).toBe(30_000);
     expect(parsed.durability.staleHeartbeatMs).toBe(120_000);
     expect(parsed.durability.recoveryBudgetMs).toBe(30_000);
-    // The Pitfall-4 conservative ratio: the stale threshold is 4x the keep-alive.
+    // The conservative ratio: the stale threshold is 4x the keep-alive.
     expect(parsed.durability.staleHeartbeatMs).toBe(parsed.durability.keepAliveMs * 4);
   });
 
-  it("216-S3: an explicit enabled:true is honored", () => {
+  it("an explicit durability.enabled:true is honored", () => {
     const parsed = AutonomyConfigSchema.parse({ durability: { enabled: true } });
     expect(parsed.durability.enabled).toBe(true);
   });
 
-  it("216-S4: strictObject rejects an unknown durability key (typo guard)", () => {
+  it("strictObject rejects an unknown durability key (typo guard)", () => {
     expect(AutonomyConfigSchema.safeParse({ durability: { enabld: true } }).success).toBe(false);
   });
 
-  it("216-S5: each ms limb is a positive int (a zero/negative/float fails closed)", () => {
+  it("each ms limb is a positive int (a zero/negative/float fails closed)", () => {
     expect(AutonomyConfigSchema.safeParse({ durability: { keepAliveMs: 0 } }).success).toBe(false);
     expect(AutonomyConfigSchema.safeParse({ durability: { staleHeartbeatMs: -1 } }).success).toBe(false);
     expect(AutonomyConfigSchema.safeParse({ durability: { recoveryBudgetMs: 1.5 } }).success).toBe(false);
@@ -471,61 +461,56 @@ describe("AutonomyConfigSchema (216 — durability sub-block defaults off)", () 
 });
 
 // ---------------------------------------------------------------------------
-// Phase 217 (BREAK-01 / EVICT-02 / UNATT-01): the two FLAT never-hang config
-// scalars the denial breaker + the evict fail-closed path read. Per v8 §22.6
-// (line 720-721) these are flat siblings of `mode`/`cronSelfMax` (RESEARCH A1 —
-// KISS, no sub-block for two scalars), threaded through the same five-touch
+// The two FLAT never-hang config scalars the denial breaker + the evict
+// fail-closed path read. These are flat siblings of `mode`/`cronSelfMax`
+// (KISS — no sub-block for two scalars), threaded through the same five-touch
 // pattern every scalar follows (schema field + ProfileEntry + STANDARD_GUARDS +
 // ResolvedAutonomy + the resolveAutonomy fold). They MUST default-safe so a
 // default install is byte-identical: the breaker is inert until a deny happens
 // (`denialBreakerN: 5`), and `evictOnPolicyUnreachable: true` IS the already-safe
 // fail-closed behavior.
-//
-// These cases are RED until the five touches land: the fields are absent from
-// the resolved type and `undefined` at runtime, and the schema rejects/accepts
-// nothing for them yet.
 // ---------------------------------------------------------------------------
-describe("AutonomyConfigSchema (217 — denialBreakerN + evictOnPolicyUnreachable defaults + validation)", () => {
-  it("BREAK-01-S1: parse({}) resolves denialBreakerN to the default 5 and evictOnPolicyUnreachable to default true", () => {
+describe("AutonomyConfigSchema (denialBreakerN + evictOnPolicyUnreachable defaults + validation)", () => {
+  it("parse({}) resolves denialBreakerN to the default 5 and evictOnPolicyUnreachable to default true", () => {
     const parsed = AutonomyConfigSchema.parse({});
     expect(parsed.denialBreakerN).toBe(5);
     expect(parsed.evictOnPolicyUnreachable).toBe(true);
   });
 
-  it("BREAK-01-S2: round-trips an explicit denialBreakerN + evictOnPolicyUnreachable override", () => {
+  it("round-trips an explicit denialBreakerN + evictOnPolicyUnreachable override", () => {
     const parsed = AutonomyConfigSchema.parse({ denialBreakerN: 3, evictOnPolicyUnreachable: false });
     expect(parsed.denialBreakerN).toBe(3);
     expect(parsed.evictOnPolicyUnreachable).toBe(false);
   });
 
-  it("BREAK-01-S3: rejects denialBreakerN = 0 (T-217-01 — a 0 would disable the breaker; must fail closed)", () => {
+  it("rejects denialBreakerN = 0 (a 0 would disable the breaker; must fail closed)", () => {
     expect(AutonomyConfigSchema.safeParse({ denialBreakerN: 0 }).success).toBe(false);
   });
 
-  it("BREAK-01-S4: rejects a negative denialBreakerN (must be a positive consecutive-block count)", () => {
+  it("rejects a negative denialBreakerN (must be a positive consecutive-block count)", () => {
     expect(AutonomyConfigSchema.safeParse({ denialBreakerN: -2 }).success).toBe(false);
   });
 
-  it("BREAK-01-S5: rejects a non-integer denialBreakerN (consecutive blocks are whole)", () => {
+  it("rejects a non-integer denialBreakerN (consecutive blocks are whole)", () => {
     expect(AutonomyConfigSchema.safeParse({ denialBreakerN: 2.5 }).success).toBe(false);
   });
 });
 
-describe("resolveAutonomy (217 — both scalars surface on every resolved profile, default-safe)", () => {
-  it("BREAK-01-S6: zero-config (→ standard) exposes denialBreakerN 5 + evictOnPolicyUnreachable true on the resolved posture", () => {
+describe("resolveAutonomy (both scalars surface on every resolved profile, default-safe)", () => {
+  it("zero-config (→ standard) exposes denialBreakerN 5 + evictOnPolicyUnreachable true on the resolved posture", () => {
     const r = resolveAutonomy(undefined);
     expect(r.denialBreakerN).toBe(5);
     expect(r.evictOnPolicyUnreachable).toBe(true);
   });
 
-  it("UNATT-01-S1: the unattended profile exposes both scalars AND still resolves mode 'unattended' (the activation signal is intact, not clamped away)", () => {
+  it("the unattended profile exposes both scalars AND still resolves mode 'unattended' (the activation signal is intact, not clamped away)", () => {
     const un = resolveAutonomy({ profile: "unattended" });
     expect(un.denialBreakerN).toBe(5);
     expect(un.evictOnPolicyUnreachable).toBe(true);
     expect(un.mode).toBe("unattended");
   });
 
-  it("BREAK-01-S7: every profile surfaces a numeric denialBreakerN + boolean evictOnPolicyUnreachable — the resolved type is TOTAL", () => {
+  it("every profile surfaces a numeric denialBreakerN + boolean evictOnPolicyUnreachable — the resolved type is TOTAL", () => {
     for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
       const r = resolveAutonomy({ profile });
       expect(typeof r.denialBreakerN, `${profile} denialBreakerN`).toBe("number");
@@ -536,61 +521,54 @@ describe("resolveAutonomy (217 — both scalars surface on every resolved profil
     }
   });
 
-  it("BREAK-01-S8: an explicit denialBreakerN OVERRIDES the profile default (progressive disclosure)", () => {
+  it("an explicit denialBreakerN OVERRIDES the profile default (progressive disclosure)", () => {
     const r = resolveAutonomy({ profile: "standard", denialBreakerN: 9 });
     expect(r.denialBreakerN).toBe(9);
   });
 
-  it("EVICT-02-S1: an explicit evictOnPolicyUnreachable:false is HONORED (the fold uses ?? not ||, so false is not coerced to the default true)", () => {
+  it("an explicit evictOnPolicyUnreachable:false is HONORED (the fold uses ?? not ||, so false is not coerced to the default true)", () => {
     const r = resolveAutonomy({ profile: "standard", evictOnPolicyUnreachable: false });
     expect(r.evictOnPolicyUnreachable).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// EVICT-02 (Phase 217): the PURE `resolveEffectiveMode` fail-closed primitive.
+// The PURE `resolveEffectiveMode` fail-closed primitive.
 // Given a (possibly absent/forged/unparseable) mode value — the chokepoint's
 // injected `_autonomyMode`, or a future external policy read — return the SAFE
 // mode. A recognized AutonomyMode passes through; ANYTHING else (undefined, a
 // non-string, an unknown string) collapses to "default", NEVER to a broader
-// profile (T-217-02 elevation-of-privilege). This is the single fail-closed
-// point EVICT-02's "unreachable policy source -> default" contract is tested
-// against. PURE (no env/clock/fs).
-//
-// These cases are RED until the helper is exported — the named import is
-// unresolvable on the pre-patch tree.
+// profile (an elevation-of-privilege guard). This is the single fail-closed
+// point where the "unreachable policy source -> default" contract is tested.
+// PURE (no env/clock/fs).
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// COORD-01 (Phase 218): the lean-coordinator `autonomy.role` posture. A net-new
+// The lean-coordinator `autonomy.role` posture. A
 // `role: z.enum(["worker","coordinator"]).default("worker")` field on
 // AutonomyConfigSchema that `resolveAutonomy` expands into a
 // `coordinatorToolGroups` allowlist (`["coordinator"]` when role:coordinator,
 // undefined for worker). `role` NARROWS the resolved TOOL SURFACE only — it
-// NEVER changes the resolved capability set (the §22.3 over-grant guard: the
+// NEVER changes the resolved capability set (the over-grant guard: the
 // resolved `capabilities[]` must be IDENTICAL with and without `role` for the
-// same profile). Default `worker` ⇒ byte-identical to today (no BC shim).
-//
-// These cases are RED until the field + the resolver expansion land: the schema
-// rejects nothing for `role`, and `resolved.role` / `resolved.coordinatorToolGroups`
-// are absent from the resolved type and `undefined` at runtime.
+// same profile). Default `worker` ⇒ byte-identical to a config with no role.
 // ---------------------------------------------------------------------------
-describe("AutonomyConfigSchema (COORD-01 — the role field is a closed worker|coordinator enum)", () => {
-  it("COORD-01-S1: parse({}) resolves role to the default 'worker' (zero-config byte-identical default)", () => {
+describe("AutonomyConfigSchema (the role field is a closed worker|coordinator enum)", () => {
+  it("parse({}) resolves role to the default 'worker' (zero-config byte-identical default)", () => {
     const parsed = AutonomyConfigSchema.parse({});
     expect(parsed.role).toBe("worker");
   });
 
-  it("COORD-01-S2: round-trips an explicit role:coordinator", () => {
+  it("round-trips an explicit role:coordinator override", () => {
     expect(AutonomyConfigSchema.parse({ role: "coordinator" }).role).toBe("coordinator");
   });
 
-  it("COORD-01-S3: rejects a bogus role (closed enum, strictObject typo guard)", () => {
+  it("rejects a bogus role (closed enum, strictObject typo guard)", () => {
     expect(AutonomyConfigSchema.safeParse({ role: "bogus" }).success).toBe(false);
   });
 });
 
-describe("resolveAutonomy (COORD-01 — role expands into coordinatorToolGroups; narrows-only)", () => {
-  it("COORD-01-S4: role:coordinator resolves role 'coordinator' + a non-empty coordinatorToolGroups containing 'coordinator'", () => {
+describe("resolveAutonomy (role expands into coordinatorToolGroups; narrows-only)", () => {
+  it("role:coordinator resolves role 'coordinator' + a non-empty coordinatorToolGroups containing 'coordinator'", () => {
     const r = resolveAutonomy({ profile: "unattended", role: "coordinator" });
     expect(r.role).toBe("coordinator");
     expect(Array.isArray(r.coordinatorToolGroups)).toBe(true);
@@ -598,18 +576,18 @@ describe("resolveAutonomy (COORD-01 — role expands into coordinatorToolGroups;
     expect(r.coordinatorToolGroups).toContain("coordinator");
   });
 
-  it("COORD-01-S5: role:worker (default) resolves role 'worker' + NO coordinatorToolGroups (no narrowing)", () => {
+  it("role:worker (default) resolves role 'worker' + NO coordinatorToolGroups (no narrowing)", () => {
     const r = resolveAutonomy({ profile: "standard" });
     expect(r.role).toBe("worker");
     expect(r.coordinatorToolGroups).toBeUndefined();
   });
 
-  it("COORD-01-S6: zero-config (resolveAutonomy(undefined)) defaults role to 'worker'", () => {
+  it("zero-config (resolveAutonomy(undefined)) defaults role to 'worker'", () => {
     expect(resolveAutonomy(undefined).role).toBe("worker");
     expect(resolveAutonomy({}).role).toBe("worker");
   });
 
-  it("COORD-01-S7: role NARROWS the surface, NEVER the caps — the resolved capabilities are IDENTICAL with and without role (the §22.3 over-grant guard)", () => {
+  it("role NARROWS the surface, NEVER the caps — the resolved capabilities are IDENTICAL with and without role (the over-grant guard)", () => {
     const withoutRole = resolveAutonomy({ profile: "unattended" });
     const withRole = resolveAutonomy({ profile: "unattended", role: "coordinator" });
     expect([...withRole.capabilities].sort()).toEqual([...withoutRole.capabilities].sort());
@@ -617,7 +595,7 @@ describe("resolveAutonomy (COORD-01 — role expands into coordinatorToolGroups;
     expect(withRole.resolvedCapabilities).toEqual(withoutRole.resolvedCapabilities);
   });
 
-  it("COORD-01-S8: every profile resolves a role field — the resolved type is TOTAL (worker by default)", () => {
+  it("every profile resolves a role field — the resolved type is TOTAL (worker by default)", () => {
     for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
       const r = resolveAutonomy({ profile });
       expect(r.role, `${profile} must resolve a role`).toBe("worker");
@@ -626,30 +604,30 @@ describe("resolveAutonomy (COORD-01 — role expands into coordinatorToolGroups;
   });
 });
 
-describe("resolveEffectiveMode (EVICT-02 — fail-closed mode resolution)", () => {
-  it("EVICT-02-S2: a recognized mode 'unattended' passes through unchanged", () => {
+describe("resolveEffectiveMode (fail-closed mode resolution)", () => {
+  it("a recognized mode 'unattended' passes through unchanged", () => {
     expect(resolveEffectiveMode("unattended")).toBe("unattended");
   });
 
-  it("EVICT-02-S3: every valid AutonomyMode (default/accept-reversible/unattended/max) passes through", () => {
+  it("every valid AutonomyMode (default/accept-reversible/unattended/max) passes through", () => {
     for (const mode of ["default", "accept-reversible", "unattended", "max"] as const) {
       expect(resolveEffectiveMode(mode)).toBe(mode);
     }
   });
 
-  it("EVICT-02-S4: an absent mode (undefined) fail-closes to 'default' (unreachable policy source)", () => {
+  it("an absent mode (undefined) fail-closes to 'default' (unreachable policy source)", () => {
     expect(resolveEffectiveMode(undefined)).toBe("default");
   });
 
-  it("EVICT-02-S5: an unknown string 'bogus' fail-closes to 'default', NEVER a broader mode (T-217-02)", () => {
+  it("an unknown string 'bogus' fail-closes to 'default', NEVER a broader mode", () => {
     expect(resolveEffectiveMode("bogus")).toBe("default");
   });
 
-  it("EVICT-02-S6: a non-string (a forged numeric mode) fail-closes to 'default'", () => {
+  it("a non-string (a forged numeric mode) fail-closes to 'default'", () => {
     expect(resolveEffectiveMode(123 as never)).toBe("default");
   });
 
-  it("EVICT-02-S7: null / an object likewise fail-close to 'default' (never throws on a hostile value)", () => {
+  it("null / an object likewise fail-close to 'default' (never throws on a hostile value)", () => {
     expect(resolveEffectiveMode(null)).toBe("default");
     expect(resolveEffectiveMode({ mode: "max" } as never)).toBe("default");
   });

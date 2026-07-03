@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * LeaseManager — the run-scoped, multi-use, revocable, audience-bound
- * capability lease (LEASE-01 / LEASE-02 / LEASE-03; v8 §4.2).
+ * capability lease.
  *
  * A `SessionManager` variant: same factory shape, same length-guarded
  * timing-safe `tokenEquals`, same lazy-TTL reaper — but the lease is the
@@ -18,15 +18,16 @@
  *     `HANDLER_CAPABILITY_MAP[method]` and rejects if the lease does not hold
  *     it — a captured lease replayed at a foreign method is denied. Deriving
  *     the audience from the shipped map (not a bespoke audience claim) means
- *     caps and audience cannot drift. The one exception is the Phase-212
+ *     caps and audience cannot drift. The one exception is the
  *     `tool.invoke` dispatch: it is not in `HANDLER_CAPABILITY_MAP`, so its
  *     audience is the INNER tool's cap from `TOOL_CAPABILITY_MAP[innerTool]`
- *     (Pitfall 2) — still derived from a shipped table, so a lease scoped to
+ *     — still derived from a shipped table, so a lease scoped to
  *     `orch:read` cannot `tool.invoke` a `web_fetch` (orch:web).
  *
- * In-memory only (a `Map`, like SessionManager) — M1 does NOT persist in-flight
- * run state (that is M2). The operator-facing revoke RPC + cascade are Phase
- * 213; this module ships the `revoked` field + the revocation-respecting paths.
+ * In-memory only (a `Map`, like SessionManager) — in-flight run state is not
+ * persisted across restarts. The operator-facing revoke RPC + cascade live in
+ * the daemon; this module ships the `revoked` field + the revocation-respecting
+ * paths.
  *
  * SECURITY: bearer minted via `generateStrongToken()` (CSPRNG, never
  * `Math.random`); stored as a Buffer for `timingSafeEqual`; the length-guard in
@@ -44,7 +45,7 @@ import {
   type AgentCapability,
 } from "@comis/core";
 
-// O(1) membership for the self-scoped-read audience exception (CLI-01/02). The
+// O(1) membership for the self-scoped-read audience exception. The
 // const is the single auditable source in @comis/core; building the Set once at
 // module load keeps the per-validate check small.
 const SELF_SCOPED_AGENT_READ_SET = new Set<string>(SELF_SCOPED_AGENT_READS);
@@ -64,7 +65,7 @@ interface LeaseEntry {
   revoked: boolean;
 }
 
-/** Input to mint a new lease (LEASE-01). */
+/** Input to mint a new lease. */
 export interface MintLeaseInput {
   agentId: string;
   caps: readonly AgentCapability[];
@@ -103,8 +104,8 @@ export interface LeaseManager {
    *
    * AUDIENCE (RFC 8707): for every method the required cap is derived from
    * `HANDLER_CAPABILITY_MAP[requestedMethod]`, EXCEPT the `tool.invoke` dispatch
-   * (Phase 212) — `tool.invoke` is not in that map; its audience is the INNER
-   * tool's cap from `TOOL_CAPABILITY_MAP[innerTool]` (Pitfall 2). So a lease
+   * — `tool.invoke` is not in that map; its audience is the INNER
+   * tool's cap from `TOOL_CAPABILITY_MAP[innerTool]`. So a lease
    * scoped to `orch:read` is in-audience at `tool.invoke({tool:"memory_search"})`
    * (orch:read) and OUT of audience at `tool.invoke({tool:"web_fetch"})`
    * (orch:web) — a captured lease cannot dispatch a tool whose cap it lacks.
@@ -120,17 +121,17 @@ export interface LeaseManager {
    * honest count: `{ revoked: 1 }` if the id existed, `{ revoked: 0 }` if unknown. */
   revoke(leaseId: string): { revoked: number };
   /**
-   * Cascade-revoke a lease and every descendant reachable via `parentLeaseId`
-   * (REVOKE-02). Reaches grandchildren: revoking a parent revokes its children
-   * AND their children. Built on the at-mint `parentLeaseId`→children adjacency
-   * (the reverse of `parentLeaseId` does not exist otherwise — Pitfall 5). A
-   * `visited` set guards re-entry; leaseIds never re-mint, so the tree is
-   * acyclic and the guard is cheap insurance. The control-plane authority the
-   * admin `lease.revoke`/`run.kill` RPC (Phase 213) drives.
+   * Cascade-revoke a lease and every descendant reachable via `parentLeaseId`.
+   * Reaches grandchildren: revoking a parent revokes its children AND their
+   * children. Built on the at-mint `parentLeaseId`→children adjacency (the
+   * reverse of `parentLeaseId` does not exist otherwise). A `visited` set guards
+   * re-entry; leaseIds never re-mint, so the tree is acyclic and the guard is
+   * cheap insurance. The control-plane authority the admin `lease.revoke` /
+   * `run.kill` RPC drives.
    */
   cascadeRevoke(leaseId: string, visited?: Set<string>): void;
   /**
-   * Revoke EVERY lease of a root-run (REVOKE-01), cascading each to its
+   * Revoke EVERY lease of a root-run, cascading each to its
    * descendants. Scans on `rootRunId` and `cascadeRevoke`s each match through
    * ONE shared `visited` set, so the returned `revoked` is the distinct number
    * of leases flipped (a parent + its already-cascaded child are not
@@ -160,9 +161,9 @@ function tokenEquals(candidate: Buffer, stored: Buffer): boolean {
 export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
   const { clock, defaultTtlMs = 15 * 60 * 1000 } = deps;
   const leases = new Map<string, LeaseEntry>();
-  // parentLeaseId → child leaseIds, built at MINT (Pitfall 5). cascadeRevoke
-  // reads this reverse index to reach a lease's children/grandchildren; deriving
-  // it at revoke time is impossible because parentLeaseId has no reverse index.
+  // parentLeaseId → child leaseIds, built at MINT. cascadeRevoke reads this
+  // reverse index to reach a lease's children/grandchildren; deriving it at
+  // revoke time is impossible because parentLeaseId has no reverse index.
   const childrenByParent = new Map<string, Set<string>>();
 
   /**
@@ -185,7 +186,7 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
    * Per-lease revoke: flag the entry (do NOT delete) so validate denies it.
    * Returns 1 when an entry existed (now revoked), 0 for an UNKNOWN id — so the
    * exposed `revoke` reports an HONEST count to the operator and never a phantom
-   * revoke of an id that was never minted (REVOKE-01 honesty; the live finding).
+   * revoke of an id that was never minted.
    */
   function revokeLease(leaseId: string): number {
     // Keep the entry (do NOT delete) so validate's `revoked` check denies it;
@@ -221,9 +222,9 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         maxExpiresAtMs,
         revoked: false,
       });
-      // Build the parent→children adjacency at MINT (Pitfall 5) so a later
-      // cascadeRevoke can reach this lease from its parent. Deriving the reverse
-      // of parentLeaseId at revoke time is impossible.
+      // Build the parent→children adjacency at MINT so a later cascadeRevoke can
+      // reach this lease from its parent. Deriving the reverse of parentLeaseId
+      // at revoke time is impossible.
       if (input.parentLeaseId !== undefined) {
         const siblings = childrenByParent.get(input.parentLeaseId) ?? new Set<string>();
         siblings.add(leaseId);
@@ -268,7 +269,7 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
           rootRunId: entry.rootRunId,
           ...(entry.parentLeaseId !== undefined ? { parentLeaseId: entry.parentLeaseId } : {}),
         };
-        // Self-scoped-read audience exception (CLI-01/02; v8 §15 whoami/status).
+        // Self-scoped-read audience exception (whoami/status).
         // The three ungated, scopes:["rpc"], self-_agentId-scoped reads in
         // SELF_SCOPED_AGENT_READS (capabilities.introspect / session.status /
         // session.list) are in-audience for ANY valid lease — the cap-socket
@@ -288,12 +289,12 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         // be one the lease holds. A non-cap method ("deny-by-origin"/"ungated")
         // or an unknown method has no orch:* cap → out of audience → deny.
         //
-        // Pitfall 2 (Phase 212): `tool.invoke` is NOT in HANDLER_CAPABILITY_MAP;
-        // its audience is the INNER tool's cap from TOOL_CAPABILITY_MAP (shape
-        // (b) — derive from the SAME table the dispatch gate reads, so caps and
-        // audience cannot drift). An undefined/unmapped inner tool yields no cap →
-        // denied here, mirroring the dispatch-layer default-deny (defense-in-depth
-        // with requireCapability at the endpoint).
+        // `tool.invoke` is NOT in HANDLER_CAPABILITY_MAP; its audience is the
+        // INNER tool's cap from TOOL_CAPABILITY_MAP — derive from the SAME table
+        // the dispatch gate reads, so caps and audience cannot drift. An
+        // undefined/unmapped inner tool yields no cap → denied here, mirroring
+        // the dispatch-layer default-deny (defense-in-depth with
+        // requireCapability at the endpoint).
         const requiredCap =
           requestedMethod === "tool.invoke"
             ? innerTool === undefined
@@ -341,7 +342,7 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
       // ONE shared `visited` set dedupes across the scan so the count is the
       // distinct number of leases revoked (a parent + its already-cascaded child
       // are not double-counted). An unknown root is a clean 0-revoke no-op — the
-      // daemon RPC handler (Phase 213, Plan 06) is the throw boundary.
+      // daemon RPC handler is the throw boundary.
       const visited = new Set<string>();
       for (const [id, entry] of leases) {
         if (entry.rootRunId === rootRunId) {

@@ -39,7 +39,7 @@ export interface LockedSessionStoreOptions {
   /**
    * Optional logger. When provided, structured-cause logging fires
    * before the FileLockPort's discriminated error union is collapsed to
-   * the legacy "locked" | "error" string. Without it, observability is
+   * the coarse "locked" | "error" string. Without it, observability is
    * limited to the collapsed return value — callers cannot distinguish
    * "ELOCKED after N retries" from "EACCES on the lock directory".
    *
@@ -90,8 +90,7 @@ function deriveLockPath(lockDir: string, sessionKey: string): string {
  * `fileLock` is injected by the caller — daemon composition passes the
  * `createFileLock()` instance built once at startup. The port handles
  * sentinel-file creation, stale-lock recovery, retry backoff, and the
- * ELOCKED → "locked" mapping that the legacy direct-proper-lockfile path
- * used to implement inline.
+ * ELOCKED → "locked" mapping.
  */
 export async function withSessionLock<T>(
   fileLock: FileLockPort,
@@ -107,11 +106,11 @@ export async function withSessionLock<T>(
   const sentinelPath = deriveLockPath(lockDir, sessionKey);
 
   // `fileLock.withLock` ensures the lockDir + sentinel file exist (the
-  // createFileLock adapter mkdir+writeFile-as-needed sequence preserves the
-  // pre-injection behavior here). It also catches thrown errors from `fn`
-  // and surfaces them as `err({ kind: "error" })` — we collapse the port's
-  // discriminated error union back to the legacy "locked" | "error" string
-  // so the public API of withSessionLock is unchanged.
+  // createFileLock adapter creates them on demand via mkdir+writeFile).
+  // It also catches thrown errors from `fn` and surfaces them as
+  // `err({ kind: "error" })` — we collapse the port's discriminated error
+  // union to the coarse "locked" | "error" string that withSessionLock's
+  // public API exposes.
   const lockResult = await fileLock.withLock(
     sentinelPath,
     async () => await fn(),

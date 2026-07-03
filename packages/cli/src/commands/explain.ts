@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `comis explain` — operator CLI for the Phase-153 IncidentReport.
+ * `comis explain` — operator CLI for the IncidentReport.
  *
  * Assembles a bounded, redaction-safe post-mortem (outcome, cost, per-tool
  * stats, failures, breaker timeline, deterministic likely root cause) for a
@@ -9,7 +9,7 @@
  * Usage:
  *   comis explain <sessionKey|traceId|rootRunId> [--format table|json] [--depth summary|full]
  *
- * Arg routing (FLEET-05 adds the 3rd): a `root-` prefix → {rootRunId} (an
+ * Arg routing: a `root-` prefix → {rootRunId} (an
  * autonomy run — the synthetic `root-session-<key>` or a real spawned root,
  * checked FIRST); else a session key contains ':' (tenant:user:channel:ts) →
  * {sessionKey}; a UUID (no ':') → {traceId}. The daemon canonicalizes a traceId
@@ -56,7 +56,7 @@ export function registerExplainCommand(program: Command): void {
       async (idArg: string, options: { format: string; depth: string; offline?: boolean }) => {
         try {
           const depth = options.depth as "summary" | "full";
-          // Route by arg shape (FLEET-05 adds the 3rd): the `root-` prefix is the
+          // Route by arg shape: the `root-` prefix is the
           // disambiguator for an autonomy run's rootRunId (a synthetic in-process
           // root is `root-session-<key>`; a real spawned root is `root-…`) and is
           // checked FIRST — a synthetic root contains ':' yet must NOT route to
@@ -67,14 +67,14 @@ export function registerExplainCommand(program: Command): void {
             : idArg.includes(":")
               ? { sessionKey: idArg, depth }
               : { traceId: idArg, depth };
-          // W14 (obs-llm-troubleshooting): the telemetry lives on LOCAL disk —
+          // The telemetry lives on LOCAL disk —
           // a post-mortem must not require a live gateway. --offline assembles
           // locally; an UNREACHABLE gateway falls back automatically. An
           // AUTH-REJECTED gateway does NOT auto-fall-back (the daemon is up;
           // masking the token problem hides a misconfiguration) — the error
           // names COMIS_GATEWAY_TOKEN and --offline remains the explicit out.
           let assembledOffline = options.offline === true;
-          // OBS-5: the reason shown when we assembled offline (set in the catch below). Defaults to the
+          // The reason shown when we assembled offline (set in the catch below). Defaults to the
           // explicit --offline path; overwritten with the real cause (admin-deny vs unreachable) on fallback.
           let offlineReason = "report assembled offline from the local data dir (--offline)";
           const report: IncidentReport = await withSpinner(
@@ -92,7 +92,7 @@ export function registerExplainCommand(program: Command): void {
               } catch (e) {
                 if (isGatewayAuthRejection(e)) throw e;
                 assembledOffline = true;
-                // OBS-5: distinguish an admin-trust deny (the RPC connected + refused — obs.explain is
+                // Distinguish an admin-trust deny (the RPC connected + refused — obs.explain is
                 // admin-only by design) from a truly-unreachable daemon, so the fallback message names
                 // the REAL cause instead of always blaming the daemon.
                 offlineReason = /admin access required/i.test(e instanceof Error ? e.message : String(e))
@@ -130,7 +130,7 @@ export function registerExplainCommand(program: Command): void {
             `Timing:     ${report.timing.durationMs} ms · ${report.timing.turnCount} turns`,
           );
           info(`Summary:    ${report.summary}`);
-          // TREE-01/02 (215): the root→children spawn tree (present only when the
+          // The root→children spawn tree (present only when the
           // session emitted per-cap audit records). Each node names its leaseId,
           // the parent edge (or "(root)"), the attenuated caps it held, the tool
           // NAMES it invoked, and any CapabilityDeniedError cap (DENIED=[...]) —
@@ -138,7 +138,7 @@ export function registerExplainCommand(program: Command): void {
           // whole report (spawnTree included) above.
           if (report.spawnTree && report.spawnTree.length > 0) {
             info(`Spawn tree:`);
-            // WR-03: bound each per-node list in the table view so a hot root
+            // Bound each per-node list in the table view so a hot root
             // (many distinct tools/caps) cannot print one unbounded line. The
             // full lists always ride `--format json` (json(report) above).
             const MAX_LIST = 12;

@@ -1,31 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the pure NOTIFY-01 wake-outcome module
- * (terminal-drive-outcome.ts) — design §4 Phase D, CONTEXT I4/I6/I9.
- *
- * RED-first: `terminal-drive-outcome.ts` does not exist when this file is first
- * committed — the import fails, every case is RED. The production module turns them
- * GREEN. (Mirrors terminal-spend-ceiling.test.ts:1-9 / terminal-drive-journal.test.ts —
- * the "module does not exist on first commit" banner.)
+ * Unit tests for the pure wake-outcome module
+ * (terminal-drive-outcome.ts).
  *
  * Two pure decisions over a settled wake + the drive context:
  *
  *   - decideWakeAction(classifier, decision) → "escalate" | "answer" | "wait":
  *     the three-way, in PRIORITY order. escalate-always already won INSIDE
  *     decideAutoAnswer (terminal-auto-answer.ts) — this fn only READS the verdict and
- *     NEVER re-derives the SEC-12 gate (I4/I8). A safe-pattern `answer` is silent; a
- *     `working`/low-confidence frame waits, never a synthesized outcome (I6).
+ *     NEVER re-derives the escalate-always gate. A safe-pattern `answer` is silent; a
+ *     `working`/low-confidence frame waits, never a synthesized outcome.
  *
  *   - mapTerminalOutcome(i) → "done" | "needs-you" | "failed" | undefined, in this
  *     PRIORITY order (failure > escalation > done > the uninteresting middle):
- *       - i.failure set      → "failed"     (I9 — fires ONLY for a genuine death; a
+ *       - i.failure set      → "failed"     (fires ONLY for a genuine death; a
  *                                            healthy long/quiet drive never sets failure)
- *       - i.escalation set   → "needs-you"  (an escalation IS a terminal outcome, I4)
- *       - exited | text|exit → "done"       (I6 — never on awaiting-input/working/stuck)
+ *       - i.escalation set   → "needs-you"  (an escalation IS a terminal outcome)
+ *       - exited | text|exit → "done"       (never on awaiting-input/working/stuck)
  *       - otherwise          → undefined    (the middle — no notification)
  *
  * These pin the FULL contract. The escalate-always GATE itself is NOT re-tested here —
- * that is terminal-auto-answer.test.ts's job (I8 — single source of the SEC-12 gate).
+ * that is terminal-auto-answer.test.ts's job (the single source of the gate).
  *
  * @module
  */
@@ -40,10 +35,10 @@ import {
 import type { AutoAnswerDecision } from "./terminal-auto-answer.js";
 
 // ---------------------------------------------------------------------------
-// mapTerminalOutcome — done (I6: only a high-confidence exited / explicit match)
+// mapTerminalOutcome — done (only a high-confidence exited / explicit match)
 // ---------------------------------------------------------------------------
 
-describe("mapTerminalOutcome — done fires only on exited / forText / forExit (I6)", () => {
+describe("mapTerminalOutcome — done fires only on exited / forText / forExit", () => {
   it("a clean PTY exit → done", () => {
     expect(mapTerminalOutcome({ classifier: "exited" })).toBe("done");
   });
@@ -58,10 +53,10 @@ describe("mapTerminalOutcome — done fires only on exited / forText / forExit (
 });
 
 // ---------------------------------------------------------------------------
-// mapTerminalOutcome — the uninteresting middle → undefined (no notification, I6)
+// mapTerminalOutcome — the uninteresting middle → undefined (no notification)
 // ---------------------------------------------------------------------------
 
-describe("mapTerminalOutcome — the middle is silent (undefined; never fabricate done, I6)", () => {
+describe("mapTerminalOutcome — the middle is silent (undefined; never fabricate done)", () => {
   it("awaiting-input with no match/escalation → undefined (never a synthesized done)", () => {
     expect(mapTerminalOutcome({ classifier: "awaiting-input" })).toBeUndefined();
   });
@@ -70,16 +65,16 @@ describe("mapTerminalOutcome — the middle is silent (undefined; never fabricat
     expect(mapTerminalOutcome({ classifier: "working" })).toBeUndefined();
   });
 
-  it("stuck (no escalation, no failure) → undefined (I6 — never fabricate done)", () => {
+  it("stuck (no escalation, no failure) → undefined — never fabricate done", () => {
     expect(mapTerminalOutcome({ classifier: "stuck" })).toBeUndefined();
   });
 });
 
 // ---------------------------------------------------------------------------
-// mapTerminalOutcome — needs-you (an escalation IS a terminal outcome, I4)
+// mapTerminalOutcome — needs-you (an escalation IS a terminal outcome)
 // ---------------------------------------------------------------------------
 
-describe("mapTerminalOutcome — needs-you on an escalation (I4)", () => {
+describe("mapTerminalOutcome — needs-you fires on any escalation reason", () => {
   it("an escalation on an awaiting-input frame → needs-you", () => {
     expect(
       mapTerminalOutcome({ classifier: "awaiting-input", escalation: "approval" }),
@@ -94,10 +89,10 @@ describe("mapTerminalOutcome — needs-you on an escalation (I4)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// mapTerminalOutcome — failed ONLY on a genuine death (I9)
+// mapTerminalOutcome — failed ONLY on a genuine death
 // ---------------------------------------------------------------------------
 
-describe("mapTerminalOutcome — failed fires only on a genuine death (I9)", () => {
+describe("mapTerminalOutcome — failed fires only on a genuine death", () => {
   it("an unrecoverable death → failed", () => {
     expect(
       mapTerminalOutcome({
@@ -116,14 +111,14 @@ describe("mapTerminalOutcome — failed fires only on a genuine death (I9)", () 
     ).toBe("failed");
   });
 
-  it("a healthy long/quiet working drive (failure:undefined) → undefined — NEVER failed (I9 RED-pin)", () => {
+  it("a healthy long/quiet working drive (failure:undefined) → undefined — NEVER failed", () => {
     // The 40h long-compile case: no escalation, no exit, no failure → silence, not failed.
     expect(
       mapTerminalOutcome({ classifier: "working", failure: undefined }),
     ).toBeUndefined();
   });
 
-  it("a healthy long/quiet STUCK-busy drive (failure:undefined) → undefined — NEVER failed (I9)", () => {
+  it("a healthy long/quiet STUCK-busy drive (failure:undefined) → undefined — NEVER failed either", () => {
     expect(
       mapTerminalOutcome({ classifier: "stuck", failure: undefined }),
     ).toBeUndefined();
@@ -185,10 +180,10 @@ describe("mapTerminalOutcome — TOTAL (a degenerate input never throws)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// decideWakeAction — the three-way (escalate > answer > wait); reads, not derives (I4)
+// decideWakeAction — the three-way (escalate > answer > wait); reads, not derives
 // ---------------------------------------------------------------------------
 
-describe("decideWakeAction — escalate-any-reason → escalate (READS the verdict, I4)", () => {
+describe("decideWakeAction — escalate-any-reason → escalate (READS the verdict)", () => {
   it("escalate:no_safe_match → escalate", () => {
     const d: AutoAnswerDecision = { action: "escalate", reason: "no_safe_match" };
     expect(decideWakeAction("awaiting-input", d)).toBe("escalate");
@@ -204,13 +199,13 @@ describe("decideWakeAction — escalate-any-reason → escalate (READS the verdi
     expect(decideWakeAction("stuck", d)).toBe("escalate");
   });
 
-  it("escalate:auth_login → escalate (even on a working frame — escalate-always wins, I4)", () => {
+  it("escalate:auth_login → escalate (even on a working frame — escalate-always wins)", () => {
     const d: AutoAnswerDecision = { action: "escalate", reason: "auth_login" };
     expect(decideWakeAction("working", d)).toBe("escalate");
   });
 });
 
-describe("decideWakeAction — answer → answer (silent); working/no-answer → wait (I6)", () => {
+describe("decideWakeAction — answer → answer (silent); working/no-answer → wait", () => {
   it("returns answer for an answer verdict (silent)", () => {
     const d: AutoAnswerDecision = { action: "answer", keys: ["\r"], matchedPatternIndex: 0 };
     expect(decideWakeAction("awaiting-input", d)).toBe("answer");

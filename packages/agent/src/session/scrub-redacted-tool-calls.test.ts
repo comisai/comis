@@ -98,8 +98,8 @@ describe("scrubRedactedToolCalls", () => {
     expect(resultMsg.content[0].type).toBe("text");
   });
 
-  it("rewrites the two sequential env_set calls from the reported incident", () => {
-    // Mirror of the user's session lines 65-78: first CLOUDFLARE_API_TOKEN,
+  it("rewrites two sequential redacted env_set calls in separate assistant turns", () => {
+    // Two back-to-back env_set turns: first CLOUDFLARE_API_TOKEN,
     // then CLOUDFLARE_ACCOUNT_ID. Both must be neutralized.
     const fileEntries = [
       msg("user", [{ type: "text", text: "here is the token" }]),

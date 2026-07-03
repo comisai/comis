@@ -10,12 +10,12 @@
  *     instruct a runtime to load attacker-controlled code at startup → code exec
  *     (Elevation; e.g. a daemon `NODE_OPTIONS=--require evil.js` leaking in);
  *   - the interpreter-vector PREFIX families `LD_*`/`DYLD_*`/`PIP_*`/`UV_*`
- *     (dynamic-linker preload / package-index redirection → RCE, JAIL-04) —
+ *     (dynamic-linker preload / package-index redirection → RCE) —
  *     stripped on BOTH env sources, regardless of origin;
  *   - the whole `COMIS_*` operational prefix WHEN scrubbing an UNTRUSTED
  *     workspace-loaded `.env` (`source: "workspace"`) — a forged `COMIS_CAP_LEASE`
  *     (or a future runtime-control var) must not ride attacker-supplied content
- *     into the jail (JAIL-04 / Open Q3). The daemon's OWN `COMIS_CAP_LEASE`/
+ *     into the jail. The daemon's OWN `COMIS_CAP_LEASE`/
  *     `COMIS_ORCH_SOCKET` injection rides the trusted inherited path and is NOT
  *     blocked (it authenticates the cap socket — see {@link scrubChildEnv});
  *   - the net-new nested-CLI markers `CLAUDECODE` (exact) + `CLAUDE_CODE_*` (prefix)
@@ -38,8 +38,8 @@
  * Pure function (env-in → env-out): it does NOT read the ambient/system env (the
  * caller — the worker — passes its `envSnapshot()`), holds NO module-global
  * state, and does NOT depend on the infra package. Imported DIRECTLY by the worker
- * via `./terminal-env-scrub.js` (NOT re-exported through the barrel — the barrel is
- * written by a single Wave-1 module).
+ * via `./terminal-env-scrub.js` (NOT re-exported through the barrel — the barrel
+ * has a single writer module).
  *
  * @module
  */
@@ -66,7 +66,7 @@ const INTERPRETER_CONTROL_BLOCKLIST: ReadonlySet<string> = new Set([
  * Interpreter-control PREFIX families stripped from the child env unconditionally
  * (both env sources — dangerous regardless of origin). Unlike the exact-name
  * {@link INTERPRETER_CONTROL_BLOCKLIST}, these are open-ended families with many
- * concrete keys, so they are matched by `startsWith` (JAIL-04):
+ * concrete keys, so they are matched by `startsWith`:
  *   - `LD_*`  (`LD_PRELOAD`/`LD_LIBRARY_PATH`/…) — glibc dynamic-linker preload /
  *     search-path injection: load an attacker `.so` at every dynamically-linked
  *     exec → code exec (Elevation).
@@ -87,7 +87,7 @@ const INTERPRETER_CONTROL_PREFIXES: readonly string[] = ["LD_", "DYLD_", "PIP_",
  * The reserved operational prefix the daemon's OWN runtime-control vars use
  * (`COMIS_CAP_LEASE`/`COMIS_ORCH_SOCKET`/…). Fail-closed-blocked from a
  * `source: "workspace"` scrub ONLY — see the {@link scrubChildEnv} doc for the
- * load-bearing source-distinction (RESEARCH Open Q3 / v8 §4.7).
+ * load-bearing source-distinction.
  */
 const COMIS_OPERATIONAL_PREFIX = "COMIS_";
 
@@ -114,7 +114,7 @@ const NESTED_CLI_EXACT: ReadonlySet<string> = new Set(["CLAUDECODE"]);
  *     `COMIS_` namespace, documenting that "layout pointers … [are] excluded from
  *     untrusted-child envs AT THE SPAWN SITE" — THIS scrubber is that spawn site,
  *     so the gateway token is exactly the credential the boot layer trusted us to
- *     exclude (the layer mismatch §2.11 warns about).
+ *     exclude (a classic cross-layer mismatch if missed here).
  *   - `GWTOKEN` — the ops/rig alias that carries the SAME token value; not
  *     `COMIS_`-prefixed, so the boot scrub never matched it.
  *   - `GATEWAY_TOKEN_<ID>` (PREFIX {@link DAEMON_SECRET_PREFIXES}) — the minted
@@ -208,12 +208,12 @@ export type ScrubEnvSource =
  * COPIES every key EXCEPT: a non-string value; an exact interpreter-control key
  * (`NODE_OPTIONS`/`BASH_ENV`/…); an interpreter-control PREFIX family
  * (`LD_*`/`DYLD_*`/`PIP_*`/`UV_*` — dynamic-linker preload / package-index
- * redirection → RCE, JAIL-04); the exact `CLAUDECODE`; any `CLAUDE_CODE_*` key;
+ * redirection → RCE); the exact `CLAUDECODE`; any `CLAUDE_CODE_*` key;
  * a `()`-prefixed (Shellshock) function-export value. Everything else is
  * preserved (a rich env for the driven TUI). Pure — no env read, no mutation of
  * the input.
  *
- * SOURCE-DISTINCTION (RESEARCH Open Q3 / v8 §4.7 — the load-bearing correctness
+ * SOURCE-DISTINCTION (the load-bearing correctness
  * point): the `COMIS_*` fail-closed block is applied ONLY when
  * `opts.source === "workspace"` (an untrusted workspace-loaded `.env`). The
  * default (`"inherited"`) does NOT block `COMIS_*`, so the daemon's OWN
@@ -236,9 +236,9 @@ export function scrubChildEnv(
   for (const [key, value] of Object.entries(env)) {
     if (typeof value !== "string") continue; // non-string (undefined) → skip
     if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue; // exact-name startup code-injection vector
-    if (INTERPRETER_CONTROL_PREFIXES.some((p) => key.startsWith(p))) continue; // LD_/DYLD_/PIP_/UV_ family (JAIL-04, both sources)
+    if (INTERPRETER_CONTROL_PREFIXES.some((p) => key.startsWith(p))) continue; // LD_/DYLD_/PIP_/UV_ family (both sources)
     if (isDaemonSecretEnvKey(key)) continue; // gateway-token family / master key — never into a jailed CLI, BOTH sources (TERM-ENV-GATEWAY-TOKEN-LEAK)
-    if (blockComis && key.startsWith(COMIS_OPERATIONAL_PREFIX)) continue; // COMIS_* from an untrusted workspace .env ONLY (Open Q3)
+    if (blockComis && key.startsWith(COMIS_OPERATIONAL_PREFIX)) continue; // COMIS_* from an untrusted workspace .env ONLY
     if (NESTED_CLI_EXACT.has(key)) continue; // CLAUDECODE
     if (NESTED_CLI_PREFIXES.some((p) => key.startsWith(p))) continue; // CLAUDE_CODE_*
     if (value.startsWith("()")) continue; // Shellshock function-export (CVE-2014-6271)

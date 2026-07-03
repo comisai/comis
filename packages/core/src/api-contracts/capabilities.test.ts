@@ -1,23 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract test for the capabilities-domain registry (Phase 215-02,
- * INTRO-01/INTRO-02).
+ * Contract test for the capabilities-domain registry.
  *
  * `capabilities.introspect` is the read-only, agent-reachable RPC that returns the
  * run's resolved caps + remaining budgets/quotas (the `whoami` surface). Pins:
- *   - the method name + the `scopes:["rpc"]` posture (INTRO-02: agent-reachable,
+ *   - the method name + the `scopes:["rpc"]` posture (agent-reachable,
  *     NOT admin, NOT cap-gated — the read-only "ungated" class),
  *   - the request is self-scoped via the dispatcher-injected `_agentId` — the
- *     contract request is `{}` and declares NO internal `_X` key (V4 — never an
+ *     contract request is `{}` and declares NO internal `_X` key (never an
  *     arbitrary `agentId` param),
  *   - the response accepts the resolved caps + the optional remaining
  *     budget/quota shapes (budget.usdRemaining nullable for the honest-degrade
- *     case, BUDGET-02),
+ *     case),
  *   - the contract is registered in the CAPABILITIES_CONTRACTS aggregator.
- *
- * NOTE the handler + the codegen regen + the bidirectional contract↔handler
- * parity are DEFERRED to Plan 04 (the same-wave contract+handler rule); this
- * plan declares the contract only.
  *
  * @module
  */
@@ -53,12 +48,12 @@ describe("CAPABILITIES_CONTRACTS aggregator", () => {
   });
 });
 
-describe("CapabilitiesIntrospectContract (INTRO-01/INTRO-02)", () => {
+describe("CapabilitiesIntrospectContract", () => {
   it("declares method capabilities.introspect", () => {
     expect(CapabilitiesIntrospectContract.method).toBe("capabilities.introspect");
   });
 
-  it("is scopes:['rpc'] — agent-reachable, NOT admin, NOT cap-gated (INTRO-02)", () => {
+  it("is scopes:['rpc'] — agent-reachable, NOT admin, NOT cap-gated", () => {
     expect(CapabilitiesIntrospectContract.scopes).toEqual(["rpc"]);
   });
 
@@ -98,8 +93,8 @@ describe("CapabilitiesIntrospectContract (INTRO-01/INTRO-02)", () => {
     expect(minimal.outwardQuota).toBeUndefined();
   });
 
-  it("response REQUIRES the enabled flag (finding E: a disabled/assistant agent gets {enabled:false}, not Unknown-method)", () => {
-    // The handler is now registered UNCONDITIONALLY (not gated on bounded-autonomy),
+  it("response REQUIRES the enabled flag (a disabled/assistant agent gets {enabled:false}, not Unknown-method)", () => {
+    // The handler is registered UNCONDITIONALLY (not gated on bounded-autonomy),
     // so the response always carries the caller's resolved autonomy.enabled — an
     // absent enabled is a contract violation, never a silent default.
     expect(
@@ -110,7 +105,7 @@ describe("CapabilitiesIntrospectContract (INTRO-01/INTRO-02)", () => {
     ).toBe(false);
   });
 
-  it("response accepts a NULL usdRemaining (the honest-degrade unpriceable case, BUDGET-02)", () => {
+  it("response accepts a NULL usdRemaining (the honest-degrade unpriceable case)", () => {
     const degraded = CapabilitiesIntrospectContract.response.parse({
       agentId: "agent-3",
       enabled: true,

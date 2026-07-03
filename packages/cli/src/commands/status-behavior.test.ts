@@ -145,7 +145,7 @@ describe("status displays overview in table format", () => {
     expect(output).toContain("12345");
     // NOTE: the daemon's version is exposed via `nodeVersion` in
     // GatewayStatusContract, but status.ts checks `details["version"]` —
-    // a pre-existing mismatch unrelated to plan 55-04. The CLI does not
+    // a known mismatch. The CLI does not
     // display the daemon version today, so no assertion is made.
   });
 

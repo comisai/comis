@@ -3,14 +3,14 @@ import { describe, it, expect } from "vitest";
 import { SkillsConfigSchema, TerminalDriverConfigSchema } from "./schema-skills.js";
 
 /**
- * Regression tests for tightening `minBm25Score` to z.number().min(0).max(1).
+ * `minBm25Score` is bounded to z.number().min(0).max(1).
  *
  * discover_tools normalizes BM25 scores to [0, 1] before the floor applies.
- * A stale raw-score override like `2.5` would produce zero matches under the
- * new normalized semantics — hard-fail at config load is safer than silently
+ * A raw-score override like `2.5` would produce zero matches under the
+ * normalized semantics — hard-fail at config load is safer than silently
  * broken discovery (fail-fast at config load is the correct behaviour).
  */
-describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]", () => {
+describe("SkillsConfigSchema -- toolDiscovery.minBm25Score bounded to [0, 1]", () => {
   it("minBm25Score > 1.0 fails validation", () => {
     const result = SkillsConfigSchema.safeParse({ toolDiscovery: { minBm25Score: 2.5 } });
     expect(result.success).toBe(false);
@@ -34,8 +34,8 @@ describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]"
     expect(result.toolDiscovery.minBm25Score).toBe(0.8);
   });
 
-  // 124-09 (WR-01 closure): the interactive terminal driver config is now MOUNTED on
-  // SkillsConfigSchema (it was an orphaned, unmounted schema). Optional + fail-closed:
+  // The interactive terminal driver config is MOUNTED on SkillsConfigSchema.
+  // Optional + fail-closed:
   // absent ⇒ undefined (the daemon wires an empty allow-set + no reaper). When present
   // it round-trips so the daemon threads the allow-set + worker caps into the registry.
   it("terminal is OPTIONAL and absent by default (fail-closed: no terminal config ⇒ undefined)", () => {
@@ -43,7 +43,7 @@ describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]"
     expect(result.terminal).toBeUndefined();
   });
 
-  it("terminal round-trips through SkillsConfigSchema when present (the WR-01 config-plumbing seam)", () => {
+  it("terminal round-trips through SkillsConfigSchema when present (the config-plumbing seam)", () => {
     const result = SkillsConfigSchema.parse({
       terminal: {
         enabled: true,
@@ -59,7 +59,7 @@ describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]"
     expect(result.terminal?.allow).toEqual([]);
   });
 
-  it("terminal stays a closed strictObject inside skills (a typo'd terminal key rejects, OPS-02)", () => {
+  it("terminal stays a closed strictObject inside skills (a typo'd terminal key rejects)", () => {
     const result = SkillsConfigSchema.safeParse({
       terminal: {
         enabled: true,
@@ -77,10 +77,10 @@ describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]"
 
 /**
  * The closed `TerminalDriverConfig` schema. A `z.strictObject` at every
- * level rejects unknown/legacy keys by construction (a typo'd or injected key
+ * level rejects unknown keys by construction (a typo'd or injected key
  * throws at config load rather than being silently dropped — a restriction the
- * operator believes is in effect must actually be parsed). The whole spec §6
- * shape is implemented now so the operator allow-set round-trips.
+ * operator believes is in effect must actually be parsed). The whole allow-entry
+ * shape is implemented so the operator allow-set round-trips.
  */
 describe("TerminalDriverConfigSchema -- closed allow-set", () => {
   // A config whose allow[] has one FULL entry exercising every allow-entry field.
@@ -197,17 +197,17 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
 });
 
 /**
- * OPS-05: the operator-dialable cgroup/`TasksMax` ceiling on the CLOSED `worker`
- * strictObject. The tmux backend (124-08) makes a worker's named sessions outlive
+ * The operator-dialable cgroup/`TasksMax` ceiling on the CLOSED `worker`
+ * strictObject. The tmux backend makes a worker's named sessions outlive
  * the worker; N concurrent memory-hungry sessions share one cgroup, so an operator
  * must be able to bound the concurrent-session subprocess footprint vs the systemd
- * `TasksMax` (T-124-22). The field is OPTIONAL — absent ⇒ bounded by `maxSessions`
+ * `TasksMax`. The field is OPTIONAL — absent ⇒ bounded by `maxSessions`
  * alone — and the addition MUST NOT loosen the strictObject (an unknown worker key
- * still rejects). The whole `worker` block is the only P5 schema change: every other
+ * still rejects). Every other
  * attention field (autoAnswer/hintPatterns/backend/stuckMs/maxConcurrentAttentionTurns/
- * maxInteractions) is already declared.
+ * maxInteractions) is already declared on the schema.
  */
-describe("TerminalDriverConfigSchema -- worker.tasksMax cgroup ceiling (OPS-05)", () => {
+describe("TerminalDriverConfigSchema -- worker.tasksMax cgroup ceiling", () => {
   // The minimal-but-valid base config the three tasksMax tests vary.
   const baseCfg = {
     enabled: true,
@@ -250,26 +250,26 @@ describe("TerminalDriverConfigSchema -- worker.tasksMax cgroup ceiling (OPS-05)"
 });
 
 /**
- * v2.24 (164-05, DRIVE-02/READ-01): the additive strict `drive{}` block on the
- * CLOSED `TerminalDriverConfig` schema. This phase introduces `drive.mode`
- * (`auto` default — auto-promote a genuinely-long drive; `attached` = today's
+ * The additive strict `drive{}` block on the
+ * CLOSED `TerminalDriverConfig` schema. It carries `drive.mode`
+ * (`auto` default — auto-promote a genuinely-long drive; `attached` = the
  * inline behavior; `detached` = promote at the first wait) and `drive.readMode`
  * (`digest` default — a bounded digest of the current screen; `diff` — only
  * changed rows; `full` — the whole screen, bounded). The block is OPTIONAL +
  * `z.strictObject`, so:
- *   - I1: a config with NO `drive` block parses byte-identical to today
- *     (`parsed.drive` is `undefined` — no behavior change for an unconfigured operator).
- *   - The per-field defaults preserve today's effective behavior (`mode:"auto"`
+ *   - a config with NO `drive` block parses with `parsed.drive` `undefined`
+ *     (no behavior change for an unconfigured operator).
+ *   - The per-field defaults preserve the inert baseline (`mode:"auto"`
  *     only promotes a genuinely-long drive; `readMode:"digest"` is already the
  *     tool's effective default).
- *   - OPS-02: an unknown/typo'd `drive.*` key REJECTS at config load (a
+ *   - an unknown/typo'd `drive.*` key REJECTS at config load (a
  *     restriction the operator believes is in effect must actually be parsed).
- * Phases 165/166 extend this SAME block (durable/notify/heartbeat/maxCostUsd);
- * the optional-block + per-field-default discipline lets each phase's additions
- * be independent. Changing/adding a default regenerates the section-registry-parity
- * snapshot (a validate-only gate).
+ * The endurance and notification fields (durable/notify/heartbeat/maxCostUsd)
+ * share this SAME block; the optional-block + per-field-default discipline keeps
+ * each field's addition independent. Changing/adding a default regenerates the
+ * section-registry-parity snapshot (a validate-only gate).
  */
-describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/READ-01)", () => {
+describe("TerminalDriverConfigSchema -- additive strict drive{} block", () => {
   // The minimal-but-valid base config the drive tests vary.
   const baseCfg = {
     enabled: true,
@@ -300,12 +300,12 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
     expect(parsed.drive?.readMode).toBe("digest");
   });
 
-  it("parses with the drive block ABSENT (I1 — byte-identical to today; parsed.drive is undefined)", () => {
+  it("parses with the drive block ABSENT (parsed.drive stays undefined — mode/readMode impose nothing)", () => {
     const parsed = TerminalDriverConfigSchema.parse(baseCfg);
     expect(parsed.drive).toBeUndefined();
   });
 
-  it("REJECTS an unknown drive.* key (the block is a closed strictObject, OPS-02)", () => {
+  it("REJECTS an unknown drive.* key (the block is a closed strictObject)", () => {
     const result = TerminalDriverConfigSchema.safeParse({
       ...baseCfg,
       drive: { mode: "auto", bogusDriveKnob: 1 },
@@ -334,20 +334,20 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
   });
 
   // -------------------------------------------------------------------------
-  // Phase 165 (165-05, DUR-01/LIVE-01/ENDURE-01): the SAME additive strict
-  // drive{} block gains three endurance/durability fields —
-  //   durable     (bool,        DEFAULT true)   — DUR-01: detached tmux + re-attach (the
-  //                                               default working setup since 2026-06-16 —
+  // The SAME additive strict drive{} block carries three endurance/durability
+  // fields —
+  //   durable     (bool,        DEFAULT true)   — detached tmux + re-attach (the
+  //                                               default working setup —
   //                                               driveable via node-pty attach + survive-
   //                                               restart via KillMode=process + data-dir socket)
-  //   heartbeatMs (int>0,       default 90_000) — LIVE-01: internal liveness backstop interval
-  //   maxCostUsd  (number|null, default null)   — ENDURE-01: per-drive spend ceiling
+  //   heartbeatMs (int>0,       default 90_000) — internal liveness backstop interval
+  //   maxCostUsd  (number|null, default null)   — per-drive spend ceiling
   // An EMPTY drive block fills durable:TRUE (the default backend), heartbeatMs:90000,
   // maxCostUsd:null. The block stays a closed strictObject (a typo'd key still
-  // rejects). §7.1.5 LOCKED: drive.durable:true is ACCEPTED at config-validation —
+  // rejects). LOCKED: drive.durable:true is ACCEPTED at config-validation —
   // tmux availability is a RUNTIME property (degrade + WARN at runtime), NOT a
-  // config-time hard-require; a RED test pins durable:true parses with NO tmux check.
-  it("round-trips durable/heartbeatMs/maxCostUsd (the three Phase-165 fields parse to the supplied values)", () => {
+  // config-time hard-require; a test below pins durable:true parses with NO tmux check.
+  it("round-trips durable/heartbeatMs/maxCostUsd (the three endurance fields parse to the supplied values)", () => {
     const parsed = TerminalDriverConfigSchema.parse({
       ...baseCfg,
       drive: { durable: true, heartbeatMs: 90_000, maxCostUsd: 5 },
@@ -357,7 +357,7 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
     expect(parsed.drive?.maxCostUsd).toBe(5);
   });
 
-  it("fills the Phase-165 defaults on an EMPTY drive block (durable:TRUE the default backend, heartbeatMs:90000, maxCostUsd:null)", () => {
+  it("fills the endurance-field defaults on an EMPTY drive block (durable:TRUE the default backend, heartbeatMs:90000, maxCostUsd:null)", () => {
     const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
     expect(parsed.drive?.durable).toBe(true);
     expect(parsed.drive?.heartbeatMs).toBe(90_000);
@@ -369,11 +369,11 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
     expect(parsed.drive?.durable).toBe(false);
   });
 
-  it("ACCEPTS drive.durable:true with NO config-time tmux check (§7.1.5 LOCKED — tmux is a runtime property; the OTHER fields still default)", () => {
+  it("ACCEPTS drive.durable:true with NO config-time tmux check (tmux is a runtime property; the OTHER fields still default)", () => {
     // The locked decision: config-validation ACCEPTS durable:true even on a
     // tmux-less host; the drive degrades to non-durable + a WARN at RUNTIME.
     // Do NOT hard-require tmux here (that would fail a whole config on a
-    // tmux-less host — T-165-15). Assert it parses and the others default.
+    // tmux-less host). Assert it parses and the others default.
     const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: { durable: true } });
     expect(parsed.drive?.durable).toBe(true);
     expect(parsed.drive?.heartbeatMs).toBe(90_000);
@@ -392,7 +392,7 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
     expect(TerminalDriverConfigSchema.safeParse({ ...baseCfg, drive: { maxCostUsd: "5" } }).success).toBe(false);
   });
 
-  it("REJECTS a typo'd Phase-165 drive key (the block stays a closed strictObject after the additions, T-165-14)", () => {
+  it("REJECTS a typo'd endurance-field drive key (the block stays a closed strictObject after the additions)", () => {
     const result = TerminalDriverConfigSchema.safeParse({
       ...baseCfg,
       drive: { durable: true, hartbeatMs: 90_000 }, // typo: hartbeatMs
@@ -404,19 +404,18 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
   });
 
   // -------------------------------------------------------------------------
-  // Phase 166 (166-02, NOTIFY-01/NOTIFY-02): the SAME additive strict drive{}
-  // block gains the two user-facing notification fields that COMPLETE the
-  // v2.24 drive block —
-  //   notify            (enum terminal/all/none, default "terminal") — NOTIFY-01:
-  //     which terminal outcomes reach the user. "none" still escalates (I4).
-  //   heartbeatNotifyMs (int>=0, default 3_600_000 / 1h) — NOTIFY-02 (§7.1.4):
+  // The SAME additive strict drive{} block carries the two user-facing
+  // notification fields —
+  //   notify            (enum terminal/all/none, default "terminal") —
+  //     which terminal outcomes reach the user. "none" still escalates.
+  //   heartbeatNotifyMs (int>=0, default 3_600_000 / 1h) —
   //     the coarse user-facing progress-heartbeat cadence for a promoted long
   //     drive. `0` is a VALID value = terminal-only (distinct from `heartbeatMs`
   //     the INTERNAL liveness backstop which is .positive()).
-  // Both defaults preserve today's behavior (I1): a config with no drive block,
-  // or an empty drive block, is byte-identical to today. The block stays a
-  // closed strictObject (a typo'd key still rejects, OPS-02).
-  it("round-trips notify + heartbeatNotifyMs (the two Phase-166 fields parse to the supplied values)", () => {
+  // Both defaults preserve the inert baseline: a config with no drive block,
+  // or an empty drive block, changes no behavior. The block stays a
+  // closed strictObject (a typo'd key still rejects).
+  it("round-trips notify + heartbeatNotifyMs (the two notification fields parse to the supplied values)", () => {
     const parsed = TerminalDriverConfigSchema.parse({
       ...baseCfg,
       drive: { notify: "all", heartbeatNotifyMs: 7_200_000 },
@@ -425,13 +424,13 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
     expect(parsed.drive?.heartbeatNotifyMs).toBe(7_200_000);
   });
 
-  it("fills the Phase-166 defaults on an EMPTY drive block (notify:terminal, heartbeatNotifyMs:3_600_000 — I1)", () => {
+  it("fills the notification-field defaults on an EMPTY drive block (notify:terminal, heartbeatNotifyMs:3_600_000)", () => {
     const parsed = TerminalDriverConfigSchema.parse({ ...baseCfg, drive: {} });
     expect(parsed.drive?.notify).toBe("terminal");
     expect(parsed.drive?.heartbeatNotifyMs).toBe(3_600_000);
   });
 
-  it("parses with the drive block ABSENT (I1 — the Phase-166 fields add NO new behavior; parsed.drive is undefined)", () => {
+  it("parses with the drive block ABSENT (the notification fields add NO new behavior; parsed.drive is undefined)", () => {
     const parsed = TerminalDriverConfigSchema.parse(baseCfg);
     expect(parsed.drive).toBeUndefined();
   });
@@ -463,7 +462,7 @@ describe("TerminalDriverConfigSchema -- additive strict drive{} block (DRIVE-02/
     ).toBe(false);
   });
 
-  it("REJECTS a typo'd Phase-166 drive key (the block stays a closed strictObject after the additions, OPS-02)", () => {
+  it("REJECTS a typo'd notification-field drive key (the block stays a closed strictObject after the additions)", () => {
     const result = TerminalDriverConfigSchema.safeParse({
       ...baseCfg,
       drive: { notify: "terminal", heartbeatNotifyMls: 3_600_000 }, // typo: heartbeatNotifyMls

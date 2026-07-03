@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Boot-root rehydration of the daemon-wide spend accumulator (Phase 177 — the
- * dollars kill-switch). This is a SEPARATE module from `setup-observability.ts`
+ * Boot-root rehydration of the daemon-wide spend accumulator (the dollars
+ * kill-switch). This is a SEPARATE module from `setup-observability.ts`
  * because `getRollingSpendUsd` lives on `obsStore`, which the daemon builds
  * ~60-90 lines AFTER the `setupObservability(...)` call (and only when
  * `observability.persistence.enabled`). So the accumulator is CONSTRUCTED in
@@ -23,7 +23,7 @@ import type { ObservabilityStore } from "@comis/memory";
  * live from the `recordSpend` subscriber — a documented honest degradation, NOT
  * a bug.
  *
- * L1: `obs_token_usage` has no `tenant_id` column, so the boot read groups by
+ * Known limitation: `obs_token_usage` has no `tenant_id` column, so the boot read groups by
  * `agent_id` only. Global + per-agent are seeded from the persisted dollars;
  * per-tenant accrues live-from-boot (the boot rows carry a placeholder
  * `tenantId: "default"`). Exact historical per-tenant would need a forward-only

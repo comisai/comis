@@ -149,7 +149,7 @@ export const McpServerEntrySchema = z.preprocess(
     /** Per-server authentication scheme. "oauth" opts the
      *  server into the OAuth 2.1 + PKCE flow (mcp.oauth_login / token store).
      *  "bearer" / "none" are explicit no-OAuth markers. Undefined ⇒ no OAuth
-     *  (treated as "none"). Threaded schema→runtime→persist (locked decision #7)
+     *  (treated as "none"). Threaded schema→runtime→persist
      *  so a reconnect cannot silently strip a server's OAuth requirement. */
     auth: z.enum(["none", "bearer", "oauth"]).optional(),
     /** OAuth provider hints for an `auth:"oauth"` server.
@@ -161,9 +161,9 @@ export const McpServerEntrySchema = z.preprocess(
         authorizationEndpoint: z.url().optional(),
         /** Cascade fallback for RFC 8628 device-authorization: user-provided
          *  device-authorization endpoint URL used when the resolved authorization-
-         *  server metadata does not surface device_authorization_endpoint (Higgsfield
-         *  reality 2026-05-28 — fnf-device-auth.higgsfield.ai returns 404 on every
-         *  probed RFC 8414 / OIDC well-known path). Sibling of authorizationEndpoint;
+         *  server metadata does not surface device_authorization_endpoint (some
+         *  real-world OAuth servers return 404 on every RFC 8414 / OIDC well-known
+         *  path). Sibling of authorizationEndpoint;
          *  consumed by runDeviceFlow's discovery cascade. */
         deviceAuthorizationEndpoint: z.url().optional(),
         /** Per-server flow override that beats the headless-detection heuristic.
@@ -225,29 +225,26 @@ export const McpConfigSchema = z.strictObject({
   });
 
 /**
- * The operator-configurable STT (speech-to-text) provider vocabulary (CFG-01).
+ * The operator-configurable STT (speech-to-text) provider vocabulary.
  *
  * NOTE: this is a DIFFERENT vocabulary from the MAIN_PROVIDER_AUDIO keys (resolved
  * main-provider ids in `@comis/core/media`). "auto" = keyless-first then follow the
- * agent's main provider (the new default, I1/I2); "local" = the keyless local whisper
- * engine (the adapter lands Phase 194). Keeping "openai"/"groq"/"deepgram" preserves
- * every existing config (the additive guarantee, I9). `fallbackProviders` entries
- * validate against this same closed set, so an injected/typo'd provider fails at
- * parse rather than reaching a transport (T-193-05 / T-183-05 backstop).
+ * agent's main provider (the default); "local" = the keyless local whisper
+ * engine. `fallbackProviders` entries validate against this same closed set, so an
+ * injected/typo'd provider fails at parse rather than reaching a transport.
  */
 const TRANSCRIPTION_PROVIDER_VALUES = ["auto", "local", "openai", "groq", "deepgram"] as const;
 
 /**
- * Local (keyless) STT engine configuration (CFG-01). The in-process engine +
- * `baseUrl` local-server escape hatch land in Phase 194 — the shape lands here
- * now so the resolver + daemon wiring compile against it. `model` defaults to "base".
+ * Local (keyless) STT engine configuration: the in-process engine plus the
+ * `baseUrl` local-server escape hatch. `model` defaults to "base".
  */
 export const LocalTranscriptionConfigSchema = z.strictObject({
-    /** Whisper model size to load/download (default "base"; "tiny"/"small"/… are Phase 194). */
+    /** Whisper model size to load/download (default "base"; e.g. "tiny"/"small"). */
     model: z.string().default("base"),
-    /** OpenAI-compatible local whisper server URL (Phase 194 LOCAL-03 seam; loopback-default, SSRF-guarded in 197). */
+    /** OpenAI-compatible local whisper server URL (loopback-default, SSRF-guarded). */
     baseUrl: z.string().optional(),
-    /** Engine mechanism override (Phase 194 LOCAL-04 seam: wasm/native/subprocess/server). */
+    /** Engine mechanism override: wasm/native/subprocess/server. */
     engine: z.string().optional(),
   });
 
@@ -255,7 +252,7 @@ export const LocalTranscriptionConfigSchema = z.strictObject({
  * Transcription service configuration.
  */
 export const TranscriptionConfigSchema = z.strictObject({
-    /** Primary STT provider (default: "auto" — keyless-first then follows the agent's main provider; I1/I2). */
+    /** Primary STT provider (default: "auto" — keyless-first then follows the agent's main provider). */
     provider: z.enum(TRANSCRIPTION_PROVIDER_VALUES).default("auto"),
     /** Provider-specific model ID (e.g., "gpt-4o-mini-transcribe", "whisper-large-v3-turbo", "nova-3") */
     model: z.string().optional(),
@@ -271,7 +268,7 @@ export const TranscriptionConfigSchema = z.strictObject({
     preflight: z.boolean().default(true),
     /** Ordered fallback providers to try when primary fails (default: []) */
     fallbackProviders: z.array(z.enum(TRANSCRIPTION_PROVIDER_VALUES)).default([]),
-    /** Local (keyless) STT engine settings (CFG-01; the engine lands Phase 194). */
+    /** Local (keyless) STT engine settings. */
     local: LocalTranscriptionConfigSchema.default(() => LocalTranscriptionConfigSchema.parse({})),
   });
 
@@ -328,16 +325,16 @@ export const TtsOutputFormatSchema = z.strictObject({
   });
 
 /**
- * The operator-configurable TTS (text-to-speech) provider vocabulary (CFG-01).
+ * The operator-configurable TTS (text-to-speech) provider vocabulary.
  *
- * "edge" = the keyless Microsoft Edge TTS default (zero credentials, the new
- * default per I1); "openai"/"elevenlabs" are keyed cloud opt-ins; "local" and
- * "piper" are aliases for the SAME offline keyless in-process transformers.js
- * text-to-audio adapter (TTS-02, shipped Phase 197) — both auto-download a small
- * single-speaker ONNX voice model into `<dataDir>/models/tts/` and synthesize
- * with no key and no network after the first load (both are members of the
- * resolver's `VOICE_KEYLESS`). Closed enum so an injected/typo'd provider fails
- * at parse, not at a transport (T-193-05 / T-183-05 backstop).
+ * "edge" = the keyless Microsoft Edge TTS default (zero credentials);
+ * "openai"/"elevenlabs" are keyed cloud opt-ins; "local" and "piper" are
+ * aliases for the SAME offline keyless in-process transformers.js
+ * text-to-audio adapter — both auto-download a small single-speaker ONNX
+ * voice model into `<dataDir>/models/tts/` and synthesize with no key and
+ * no network after the first load (both are members of the resolver's
+ * `VOICE_KEYLESS`). Closed enum so an injected/typo'd provider fails at
+ * parse, not at a transport.
  */
 const TTS_PROVIDER_VALUES = ["edge", "openai", "elevenlabs", "local", "piper"] as const;
 
@@ -345,7 +342,7 @@ const TTS_PROVIDER_VALUES = ["edge", "openai", "elevenlabs", "local", "piper"] a
  * Text-to-speech service configuration.
  */
 export const TtsConfigSchema = z.strictObject({
-    /** TTS provider (default: "edge" — the keyless Edge TTS default; I1). */
+    /** TTS provider (default: "edge" — keyless, zero credentials). */
     provider: z.enum(TTS_PROVIDER_VALUES).default("edge"),
     /** Voice identifier (default: "alloy") */
     voice: z.string().default("alloy"),
@@ -515,13 +512,12 @@ export const MediaPersistenceConfigSchema = z.strictObject({
   });
 
 /**
- * The operator-configurable image-generation provider vocabulary (CFG-01).
+ * The operator-configurable image-generation provider vocabulary.
  *
  * NOTE: this is a DIFFERENT vocabulary from the IMAGE_CAPABILITY keys (resolved-provider ids
- * in `@comis/core/media`). "auto" = follow the agent's main provider (the new default, I2);
- * "fal" = explicit legacy backend. Keeping "fal"/"openai" preserves every existing config
- * (the additive guarantee). `fallbackChain` entries validate against this same closed set, so
- * an injected/typo'd provider fails at parse rather than reaching a transport (T-183-05).
+ * in `@comis/core/media`). "auto" = follow the agent's main provider (the default);
+ * "fal" = explicit FAL backend. `fallbackChain` entries validate against this same closed
+ * set, so an injected/typo'd provider fails at parse rather than reaching a transport.
  */
 const IMAGE_PROVIDER_VALUES = ["auto", "fal", "openai", "openai-codex", "google", "openrouter"] as const;
 
@@ -529,7 +525,7 @@ const IMAGE_PROVIDER_VALUES = ["auto", "fal", "openai", "openai-codex", "google"
  * Image generation service configuration.
  */
 export const ImageGenerationConfigSchema = z.strictObject({
-    /** Image generation provider (default: "auto" — follows the agent's main provider; I2). */
+    /** Image generation provider (default: "auto" — follows the agent's main provider). */
     provider: z.enum(IMAGE_PROVIDER_VALUES).default("auto"),
     /** Provider-specific model ID (e.g., "fal-ai/flux/dev", "gpt-image-1"); overrides the per-provider default. */
     model: z.string().optional(),
@@ -540,41 +536,39 @@ export const ImageGenerationConfigSchema = z.strictObject({
     /** Default image size/dimensions (default: "1024x1024") */
     defaultSize: z.string().default("1024x1024"),
     /**
-     * Generation timeout in milliseconds (default: 120000 = 120s). Raised from
-     * 60s: the Codex hosted `image_generation` tool (the follow-main path for a
-     * ChatGPT-login agent) takes ~20-60s to generate (VERIFIED LIVE: 19s / 45s /
-     * 59.5s), so a 60s cap clipped the slow generations as a `timeout` (~25% of
-     * runs). 120s gives headroom; the fast key-auth providers (openai / google /
-     * openrouter) finish well under it. Operators on fast-only providers may lower it.
+     * Generation timeout in milliseconds (default: 120000 = 120s). The Codex
+     * hosted `image_generation` tool (the follow-main path for a ChatGPT-login
+     * agent) takes ~20-60s to generate in practice, so a 60s cap would clip the
+     * slow generations as a `timeout`. 120s gives headroom; the fast key-auth
+     * providers (openai / google / openrouter) finish well under it. Operators
+     * on fast-only providers may lower it.
      */
     timeoutMs: z.number().int().positive().default(120_000),
-    /** Providers consulted in order ONLY after the follow-main path fails (RES-04). Default empty. */
+    /** Providers consulted in order ONLY after the follow-main path fails. Default empty. */
     fallbackChain: z.array(z.enum(IMAGE_PROVIDER_VALUES)).default([]),
-    /** Optional per-agent/hour USD cost ceiling (consumed in Phase 186 SEC-02; lands additively now). */
+    /** Optional per-agent/hour USD cost ceiling, enforced before generation. */
     maxCostPerHourUsd: z.number().positive().optional(),
   });
 
 /**
- * The operator-configurable video-generation provider vocabulary (CFG-01).
+ * The operator-configurable video-generation provider vocabulary.
  *
  * NOTE: this is a DIFFERENT vocabulary from the VIDEO_CAPABILITY keys (resolved
  * main-provider ids in `@comis/core/media`). "auto" = follow the agent's main
- * provider when it has a video API (I4); "fal" = explicit FAL backend (the
- * loop-prover this milestone); "google"/"xai" select the Veo/Grok backends
- * (live adapters land Phase 190). `fallbackChain` entries validate against this
- * same closed set, so an injected/typo'd provider fails at parse rather than
- * reaching a transport (T-188-...).
+ * provider when it has a video API; "fal" = explicit FAL backend;
+ * "google"/"xai" select the Veo/Grok backends. `fallbackChain` entries
+ * validate against this same closed set, so an injected/typo'd provider fails
+ * at parse rather than reaching a transport.
  */
 const VIDEO_PROVIDER_VALUES = ["auto", "fal", "google", "xai"] as const;
 
 /**
- * Video generation service configuration (CFG-01) — additive sibling of
- * `imageGeneration`. The cost ceiling is enforced PRE-submit against a
- * worst-case estimate (SEC-02, I6); the rate limit + poll cadence bound a
- * dollars-per-clip async backend.
+ * Video generation service configuration — sibling of `imageGeneration`.
+ * The cost ceiling is enforced PRE-submit against a worst-case estimate;
+ * the rate limit + poll cadence bound a dollars-per-clip async backend.
  */
 export const VideoGenerationConfigSchema = z.strictObject({
-    /** Video generation provider (default: "auto" — follows the agent's main provider; I4). */
+    /** Video generation provider (default: "auto" — follows the agent's main provider). */
     provider: z.enum(VIDEO_PROVIDER_VALUES).default("auto"),
     /** Provider-specific model/endpoint ID (e.g., "fal-ai/veo3.1/fast"); overrides the per-provider default. */
     model: z.string().optional(),
@@ -592,16 +586,16 @@ export const VideoGenerationConfigSchema = z.strictObject({
     timeoutMs: z.number().int().positive().default(300_000),
     /** Poll cadence in milliseconds while awaiting a terminal job state (default: 10000). */
     pollIntervalMs: z.number().int().positive().default(10_000),
-    /** Optional cap on concurrent in-flight jobs (consumed by the Phase 189 background poller). */
+    /** Optional cap on concurrent in-flight jobs (consumed by the background poller). */
     maxConcurrentJobs: z.number().int().positive().optional(),
-    /** Max delivery/completion attempts before the Phase-189 poller dead-letters a
-     *  job to `failed` (CR-01). Bounds the redelivery loop so a persistent channel
+    /** Max delivery/completion attempts before the background poller dead-letters a
+     *  job to `failed`. Bounds the redelivery loop so a persistent channel
      *  delivery failure (or a stuck job) converges instead of re-polling +
      *  re-downloading every pollIntervalMs forever (default: 5). */
     maxDeliveryAttempts: z.number().int().positive().default(5),
-    /** Providers consulted in order ONLY after the follow-main path fails (RES-04). Default empty. */
+    /** Providers consulted in order ONLY after the follow-main path fails. Default empty. */
     fallbackChain: z.array(z.enum(VIDEO_PROVIDER_VALUES)).default([]),
-    /** Optional per-agent/hour USD cost ceiling, gated PRE-submit (SEC-02, I6; enforcement Plan 04). */
+    /** Optional per-agent/hour USD cost ceiling, gated PRE-submit. */
     maxCostPerHourUsd: z.number().positive().optional(),
   });
 
@@ -633,7 +627,7 @@ export const MediaConfigSchema = z.strictObject({
     imageGeneration: ImageGenerationConfigSchema.default(
       () => ImageGenerationConfigSchema.parse({}),
     ),
-    /** Video generation settings (CFG-01) */
+    /** Video generation settings */
     videoGeneration: VideoGenerationConfigSchema.default(
       () => VideoGenerationConfigSchema.parse({}),
     ),

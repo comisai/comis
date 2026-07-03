@@ -130,8 +130,8 @@ describe("registerMemoryCommand", () => {
   });
 });
 
-describe("memory search runs the contracted entry search (stub-era exit-1 removed, live finding 2026-06-11)", () => {
-  it("renders the matched entries instead of the stale pipeline-era refusal", async () => {
+describe("memory search runs the contracted entry search", () => {
+  it("renders the matched entries returned by the search RPC", async () => {
     const program = new Command();
     program.exitOverride();
     registerMemoryCommand(program);
@@ -215,7 +215,7 @@ describe("memory clear safety checks", () => {
   });
 });
 
-describe("memory inspect shows the entry detail (stub-era exit-1 removed, live finding 2026-06-11)", () => {
+describe("memory inspect shows the entry detail", () => {
   it("finds the entry by id prefix via memory.browse and renders its fields", async () => {
     const program = new Command();
     program.exitOverride();
@@ -492,12 +492,11 @@ describe("memory import subcommand", () => {
 });
 
 // ============================================================================
-// WR-02: export --limit NaN guard
-// RED: passing --limit abc calls callTyped with NaN (no guard before RPC)
-// GREEN: CLI exits with clear error message before invoking callTyped
+// export --limit NaN guard: a non-numeric --limit must exit with a clear
+// error message BEFORE invoking callTyped — NaN must never reach the RPC.
 // ============================================================================
 
-describe("memory export --limit NaN guard (WR-02)", () => {
+describe("memory export --limit NaN guard rejects non-numeric input", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
@@ -521,8 +520,8 @@ describe("memory export --limit NaN guard (WR-02)", () => {
         "node", "test", "memory", "export", "--agent", "test-agent", "--limit", "abc",
       ]);
     } catch (e) {
-      // RED: no guard → callTyped called with NaN; process.exit never triggered.
-      // GREEN: process.exit called with error message before callTyped.
+      // The guard must call process.exit with an error message before
+      // callTyped is ever invoked (otherwise NaN would reach the RPC).
       expect((e as Error).message).toBe("process.exit called");
       const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
       expect(errOutput).toMatch(/[Ii]nvalid.*limit|limit.*invalid|positive integer/i);
@@ -537,7 +536,7 @@ describe("memory export --limit NaN guard (WR-02)", () => {
 });
 
 // ============================================================================
-// memory pin + unpin subcommand behavioral tests (W4)
+// memory pin + unpin subcommand behavioral tests
 // ============================================================================
 
 describe("memory pin subcommand", () => {

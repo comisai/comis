@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Narrate-without-emit continuation nudge (Issue 4, small-model e2e 2026-06-12).
+ * Narrate-without-emit continuation nudge.
  *
  * Small models (esp. qwen3.6-class) split "intent narration" from the tool
  * call and drop the call: the turn ends on *"Now let me write the comparison
  * script:"* / *"Found the image analyze tool. Let me use it now."* with NO
  * tool call emitted — the delivered answer is mid-task narration, and the
- * platform recorded the turn as a clean success (UC-2 turn 2; UC-5 vague run:
- * tool discovery ran 4×, the announced image-analysis call was never emitted,
+ * platform recorded the turn as a clean success (observed live: tool
+ * discovery ran 4×, the announced image-analysis call was never emitted,
  * 28 steps of flailing → starved answer marked `degraded:false`).
  *
  * This handler is the sibling of `post-batch-continuation.ts` (which covers
@@ -29,7 +29,7 @@
  * When the nudge fails to produce a real answer, the caller marks the result
  * (`ExecutionResult.narrateNudge`) so the post-execution chokepoint promotes
  * the turn to the named degraded cause `narration_stall` — closing the
- * soft-false-clean (the secondary half of Issue 4).
+ * soft-false-clean where narration was recorded as a clean success.
  *
  * @module
  */

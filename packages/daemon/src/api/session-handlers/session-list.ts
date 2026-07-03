@@ -34,8 +34,8 @@ import {
  *
  * Shared so search mode can NEVER again drift from list mode: search previously did
  * `listDetailed()` ALONE and was blind to JSONL-only sessions, so `session.search`
- * returned 0 hits for content `session.history`/`session.list` could see (live
- * 2026-06-20: the chat-API session is JSONL-only — the SQLite `sessions` table was
+ * returned 0 hits for content `session.history`/`session.list` could see (observed
+ * live: the chat-API session is JSONL-only — the SQLite `sessions` table was
  * empty — so every search returned empty).
  */
 export function enumerateListableSessions(
@@ -71,7 +71,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
       // kind="all" + sinceMinutes=undefined). Internal-field reads BEFORE strip.
       const callerMetadata = rawParams._callerMetadata as Record<string, unknown> | undefined;
       const callerSessionKey = rawParams._callerSessionKey as string | undefined;
-      // CR-03: the tool.invoke rpc route injects `_agentId = lease.agentId`; its
+      // The tool.invoke rpc route injects `_agentId = lease.agentId`; its
       // PRESENCE is the unforgeable agent-origin signal (inbound _agentId is
       // stripped from external callers at the gateway). Admin/operator/CLI calls
       // arrive with NO _agentId and keep full enumeration.
@@ -111,12 +111,12 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
         });
       }
 
-      // AgentId self-scope (CR-03): an agent-origin caller may enumerate ONLY
+      // AgentId self-scope: an agent-origin caller may enumerate ONLY
       // its own sessions. Mirror session.search's `_agentId` filter exactly
       // (the predicate `parseFormattedSessionKey(s.sessionKey)?.agentId ===
       // callerAgentId`) so a jailed orch:read script cannot harvest the
       // directory of every agent's/user's sessions (the keys that would turn
-      // the CR-02 single-session read into a turnkey cross-tenant exfiltration,
+      // a single-session read into a turnkey cross-tenant exfiltration,
       // plus a userId/channelId enumeration leak in its own right). Fail CLOSED
       // (filter to the caller's own) — composes with the sub-agent narrowing
       // below. When `callerAgentId` is undefined (admin / operator / CLI) the
@@ -230,8 +230,8 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
       // is a contiguous substring. The tool advertises "keywords"; a literal
       // indexOf on the joined query silently returned 0 for multi-keyword
       // queries whose terms were separated in the text (e.g. "axolotl Quark"
-      // vs "...axolotl named Quark") — a silent-empty footgun (live finding
-      // 2026-06-12). A single-token query degenerates to the prior substring
+      // vs "...axolotl named Quark") — a silent-empty footgun observed
+      // live. A single-token query degenerates to the prior substring
       // behavior, so existing phrase/keyword callers are unaffected.
       // Strip surrounding double-quotes per token: the tool-side FTS5
       // sanitizer wraps dotted/hyphenated terms (e.g. "chat-send", "v1.0")
@@ -250,7 +250,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
         // the OpenAI-compat chat session + any pi-agent-session-manager session is
         // JSONL-only (the primary store's loadByFormattedKey returns null for it), so
         // without this fallback session.search SKIPPED every such session → 0 hits for
-        // content session.history could read (live 2026-06-20). The enumerated entry
+        // content session.history could read (observed live). The enumerated entry
         // carries the JSONL path from scanWorkspaceSessions.
         if (!data && session.metadata?._workspaceJsonlPath) {
           data = loadJsonlSession(session.metadata._workspaceJsonlPath as string);

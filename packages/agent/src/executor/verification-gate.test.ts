@@ -1,32 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * verification-gate.test.ts — D2 (fail-closed) + D3 (false-success recall) +
- * D4 (FP rate + gate-skip) + D5 (honest exhaustion) + D7 (L5 reasoning-budget)
- *
- * RED phase: all tests import from verification-gate.ts which does not yet exist.
- * Commit this file first (RED), then create the implementation (GREEN).
+ * verification-gate.test.ts — fail-closed verdicts, false-success recall,
+ * false-positive rate + gate-skip, honest exhaustion, and reasoning-budget
+ * sizing for the verification critic.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import falseSuccessFixtures from "./__fixtures__/critic-eval/false-success.json";
 import trueSuccessFixtures from "./__fixtures__/critic-eval/true-success.json";
 import nonClaimsFixtures from "./__fixtures__/critic-eval/non-claims.json";
 import honestyFixtures from "./__fixtures__/critic-eval/honesty.json";
-// WR-04: drive the adversarial-injection fixtures end-to-end through the gate.
+// Drives the adversarial-injection fixtures end-to-end through the gate.
 import adversarialFixtures from "./__fixtures__/critic-eval/adversarial-injection.json";
 
-// These imports will FAIL (RED) until verification-gate.ts is created:
 import {
   runVerificationCritic,
   createVerificationCritic,
   shouldRunCritic,
-  // L5: resolveMaxOutputTokens must be exported from verification-gate.ts
+  // Exported so pi-executor.ts can apply the same sizing on the main path.
   resolveMaxOutputTokens,
-  // CR-01: main-path sizing — must NOT return the 512 verdict reserve.
+  // Main-path sizing — must NOT return the 512 verdict reserve.
   resolveMainPathMaxOutputTokens,
 } from "./verification-gate.js";
 
-// Also import isCompletionClaim to use as a negative assertion in D5,
-// and detectImpliedToolCall for the WR-01 user-facing-text assertions.
+// Also import isCompletionClaim to use as a negative assertion for honest
+// exhaustion, and detectImpliedToolCall for the user-facing-text assertions.
 import { isCompletionClaim, detectImpliedToolCall } from "./critic-isolation.js";
 
 // ---------------------------------------------------------------------------
@@ -96,9 +93,9 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// D2 — Fail-closed (every error path yields not-verified, never verified)
+// Fail-closed (every error path yields not-verified, never verified)
 // ---------------------------------------------------------------------------
-describe("D2 — Fail-closed", () => {
+describe("fail-closed verdicts on every critic error path", () => {
   const CLAIM_RESPONSE =
     "The game is complete! I have implemented the movement controls and collision detection. The snake moves smoothly and the game is fully playable.";
 
@@ -198,7 +195,7 @@ describe("D2 — Fail-closed", () => {
     expect(completeSimple).not.toHaveBeenCalled();
   });
 
-  it("no D2 error path ever returns verdict:verified", async () => {
+  it("no error path ever returns verdict:verified", async () => {
     const errorCases: Array<() => Promise<void>> = [
       async () => {
         (completeSimple as ReturnType<typeof vi.fn>).mockRejectedValue(
@@ -231,9 +228,9 @@ describe("D2 — Fail-closed", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D3 — False-success recall (fixture-driven; recall must be 6/6 = 1.0)
+// False-success recall (fixture-driven; recall must be 6/6 = 1.0)
 // ---------------------------------------------------------------------------
-describe("D3 — False-success recall", () => {
+describe("false-success recall on fixture responses", () => {
   it("false-success.json has at least 6 entries", () => {
     expect(falseSuccessFixtures.length).toBeGreaterThanOrEqual(6);
   });
@@ -339,9 +336,9 @@ describe("D3 — False-success recall", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D4 — False-positive rate + gate-skip
+// False-positive rate + gate-skip
 // ---------------------------------------------------------------------------
-describe("D4 — False-positive rate + gate-skip", () => {
+describe("false-positive rate and gate-skip behavior", () => {
   it("true-success.json has at least 5 entries", () => {
     expect(trueSuccessFixtures.length).toBeGreaterThanOrEqual(5);
   });
@@ -464,9 +461,9 @@ describe("D4 — False-positive rate + gate-skip", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D5 — Honest exhaustion (delivered text contains unmet IDs; isCompletionClaim = false)
+// Honest exhaustion (delivered text contains unmet IDs; isCompletionClaim = false)
 // ---------------------------------------------------------------------------
-describe("D5 — Honest exhaustion", () => {
+describe("honest exhaustion delivery on not-verified", () => {
   it("honesty.json has at least 3 entries", () => {
     expect(honestyFixtures.length).toBeGreaterThanOrEqual(3);
   });
@@ -574,17 +571,17 @@ describe("D5 — Honest exhaustion", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CR-01 — Terminal delivery is honest at the DEFAULT maxRetries (no re-queue loop)
+// Terminal delivery is honest at the DEFAULT maxRetries (no re-queue loop)
 //
-// postExecution is terminal in Phase 154 — it does NOT re-invoke the executor,
+// postExecution is terminal — it does NOT re-invoke the executor,
 // so a not-verified verdict's `response` is delivered VERBATIM to the user.
-// The DEFAULT config is maxCriticRetries=2 (>0). Under the old code that branch
-// returned the agent-directed redirect ("Please complete the following unmet
+// The DEFAULT config is maxCriticRetries=2 (>0). A regression here would
+// return the agent-directed redirect ("Please complete the following unmet
 // requirements: …") as the user-facing reply. Until a re-queue consumer exists,
 // the delivered text MUST be the first-person honest unmet-list, NEVER the
 // agent-directed redirect and NEVER an unqualified completion claim.
 // ---------------------------------------------------------------------------
-describe("CR-01 — honest terminal delivery at default maxRetries (2)", () => {
+describe("honest terminal delivery at default maxRetries (2)", () => {
   const CLAIM_RESPONSE =
     "The game is complete! I have implemented the movement controls and collision detection. The snake moves smoothly and the game is fully playable.";
 
@@ -656,7 +653,7 @@ describe("CR-01 — honest terminal delivery at default maxRetries (2)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-01 / IN-03 — LLM-controlled `unmet` strings cannot break the D5 guarantee
+// LLM-controlled `unmet` strings cannot break the honest-exhaustion guarantee
 //
 // `unmet[]` comes straight from the critic verdict JSON; the critic just
 // consumed UNTRUSTED reviewed content. A crafted unmet label must NOT be able
@@ -664,7 +661,7 @@ describe("CR-01 — honest terminal delivery at default maxRetries (2)", () => {
 // implied-tool-call phrase into user-facing prose. The delivered text is built
 // from sanitized bare REQ-\d+ tokens only.
 // ---------------------------------------------------------------------------
-describe("WR-01 — adversarial unmet labels cannot satisfy isCompletionClaim", () => {
+describe("adversarial unmet labels cannot satisfy isCompletionClaim", () => {
   const CLAIM_RESPONSE =
     "All done! I have finished the implementation. Everything is complete and ready to use for production now.";
 
@@ -735,13 +732,14 @@ describe("WR-01 — adversarial unmet labels cannot satisfy isCompletionClaim", 
 });
 
 // ---------------------------------------------------------------------------
-// WR-04 — Adversarial-injection fixtures driven END-TO-END through the gate
+// Adversarial-injection fixtures driven END-TO-END through the gate
 //
-// The D1 suite only SHAPE-asserts the adversarial fixtures (count + expected
-// verdict); it never feeds a fixture `response` through runVerificationCritic
-// while the (mocked) model COMPLIES with the embedded injection. This suite
-// proves the platform controls neutralize the attempt through the REAL code
-// path — even when the model is fooled into emitting the attacker payload:
+// The critic-isolation suite only SHAPE-asserts the adversarial fixtures
+// (count + expected verdict); it never feeds a fixture `response` through
+// runVerificationCritic while the (mocked) model COMPLIES with the embedded
+// injection. This suite proves the platform controls neutralize the attempt
+// through the REAL code path — even when the model is fooled into emitting
+// the attacker payload:
 //   - ALL injected fixtures: the reviewed response is wrapped as UNTRUSTED
 //     before the model sees it (structural injection defense — the system
 //     prompt's instructions are never reachable as commands).
@@ -751,9 +749,9 @@ describe("WR-01 — adversarial unmet labels cannot satisfy isCompletionClaim", 
 //   - implied-tool-call fixtures (response asks to "call write_file"): a model
 //     that returns verified + a tool-call followUp → detectImpliedToolCall →
 //     flips it to not-verified.
-// This is the real S2 assertion the fixtures were always meant to drive.
+// This is the injection-resistance assertion the fixtures exist to drive.
 // ---------------------------------------------------------------------------
-describe("WR-04 — adversarial injection resistance end-to-end (complying model)", () => {
+describe("adversarial injection resistance end-to-end (complying model)", () => {
   const injectedFixtures = adversarialFixtures.filter((f) => f.id.includes("injected"));
 
   function planFor(fixture: (typeof adversarialFixtures)[number]) {
@@ -880,9 +878,9 @@ describe("WR-04 — adversarial injection resistance end-to-end (complying model
 });
 
 // ---------------------------------------------------------------------------
-// D7 — Reasoning-budget adequacy (L5 sizing)
+// Reasoning-budget adequacy (critic maxOutputTokens sizing)
 // ---------------------------------------------------------------------------
-describe("D7 — Reasoning-budget adequacy (L5)", () => {
+describe("reasoning-budget adequacy for the critic call", () => {
   const NATIVE_PROFILE = {
     reasoningStyle: "native",
     maxOutputTokens: 8192,
@@ -999,14 +997,14 @@ describe("D7 — Reasoning-budget adequacy (L5)", () => {
 // ---------------------------------------------------------------------------
 // shouldRunCritic — gate function
 //
-// WR-02: the post-execution hook has NO secretManager at its layer, so it
+// The post-execution hook has NO secretManager at its layer, so it
 // cannot resolve a cloud API key. buildSyntheticCriticDeps must call with
 // apiKey:"" — which for a key-REQUIRING provider (groq/cerebras/openrouter/…,
 // all mapped to capabilityClass "small") would auth-fail → fail-closed
 // not-verified → clobber a CORRECT answer into a false "I was unable to
-// satisfy…". So shouldRunCritic gates the critic to KEYLESS providers in this
-// phase and skips-with-WARN for key-requiring ones (cloud key threading is
-// Phase 155). Every call now passes the resolved `provider`.
+// satisfy…". So shouldRunCritic gates the critic to KEYLESS providers and
+// skips-with-WARN for key-requiring ones (cloud key threading is not yet
+// wired). Every call passes the resolved `provider`.
 // ---------------------------------------------------------------------------
 describe("shouldRunCritic", () => {
   const baseConfig = {
@@ -1131,7 +1129,7 @@ describe("shouldRunCritic", () => {
     ).toBe(false);
   });
 
-  // --- WR-02: key-requiring CLOUD providers are skipped (not clobbered) ------
+  // --- key-requiring CLOUD providers are skipped (not clobbered) -------------
   it.each(["groq", "cerebras", "openrouter", "deepseek", "mistral", "xai"])(
     "returns false for key-requiring cloud provider %s (skip, not clobber)",
     (provider) => {
@@ -1146,7 +1144,7 @@ describe("shouldRunCritic", () => {
     },
   );
 
-  it("emits a one-time WARN (with a Phase-155 hint) when skipping a key-requiring provider", () => {
+  it("emits a one-time WARN with a keyless-provider hint when skipping a key-requiring provider", () => {
     const logger = makeLogger();
     shouldRunCritic({
       capabilityClass: "small",
@@ -1187,14 +1185,12 @@ describe("shouldRunCritic", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SD4 — resolveMainPathMaxOutputTokens floor bump (Phase 158)
+// resolveMainPathMaxOutputTokens native-reasoning floor
 //
-// NATIVE_REASONING_MAIN_PATH_FLOOR raised 4096→16384 so reasoning_content
+// NATIVE_REASONING_MAIN_PATH_FLOOR is 16384 so reasoning_content
 // cannot starve the visible answer on small native-reasoning models.
-// RED: tests fail because NATIVE_REASONING_MAIN_PATH_FLOOR=4096
-//   (Math.max(8192, 4096)=8192, not 16384).
 // ---------------------------------------------------------------------------
-describe("SD4 — resolveMainPathMaxOutputTokens floor raised to 16_384 (Phase 158)", () => {
+describe("resolveMainPathMaxOutputTokens enforces the 16_384 native-reasoning floor", () => {
   const BASE_PROFILE = {
     contextWindow: 32_768,
     capabilityClass: "small" as const,
@@ -1207,19 +1203,19 @@ describe("SD4 — resolveMainPathMaxOutputTokens floor raised to 16_384 (Phase 1
     supportsStructuredOutput: false,
   };
 
-  it("Test A: native-reasoning profile with maxOutputTokens=8192 → returns 16384 (floor raised 4096→16384)", () => {
+  it("native-reasoning profile with maxOutputTokens=8192 → returns 16384 (floor applied)", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 8192 };
-    // RED: currently returns Math.max(8192, 4096)=8192 (not 16384) — fails until SD4 lands.
+    // Math.max(8192, 16384)=16384 — the floor lifts small native budgets.
     expect(resolveMainPathMaxOutputTokens(profile)).toBe(16_384);
   });
 
-  it("Test B: non-reasoning profile with maxOutputTokens=8192 → returns 8192 (floor not applied)", () => {
+  it("non-reasoning profile with maxOutputTokens=8192 → returns 8192 (floor not applied)", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "none" as const, maxOutputTokens: 8192 };
     // Non-reasoning path returns profile.maxOutputTokens unchanged.
     expect(resolveMainPathMaxOutputTokens(profile)).toBe(8192);
   });
 
-  it("Test C: native-reasoning profile with maxOutputTokens=32768 → returns 32768 (already above 16384 floor)", () => {
+  it("native-reasoning profile with maxOutputTokens=32768 → returns 32768 (already above 16384 floor)", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 32_768 };
     // Math.max(32768, 16384)=32768 — model budget preserved.
     expect(resolveMainPathMaxOutputTokens(profile)).toBe(32_768);
@@ -1227,20 +1223,18 @@ describe("SD4 — resolveMainPathMaxOutputTokens floor raised to 16_384 (Phase 1
 });
 
 // ---------------------------------------------------------------------------
-// SD3 — shouldRunCritic effectiveEnabled parameter (Phase 158)
+// shouldRunCritic effectiveEnabled parameter
 //
 // effectiveEnabled is the pre-resolved flag from resolveScaffoldDefaults.
 // When provided, it replaces the config.verification?.enabled check:
 //   effectiveEnabled=true  → override-on  (even if config not set)
 //   effectiveEnabled=false → override-off (explicit false wins)
-// The keyless-provider check (WR-02) still applies AFTER the effectiveEnabled
-// gate.
-// RED: tests fail because shouldRunCritic does not yet accept effectiveEnabled.
+// The keyless-provider check still applies AFTER the effectiveEnabled gate.
 // ---------------------------------------------------------------------------
-describe("SD3 — shouldRunCritic effectiveEnabled parameter (Phase 158)", () => {
+describe("shouldRunCritic effectiveEnabled parameter", () => {
   const activePlan = { current: BASE_PLAN };
 
-  it("Test D: effectiveEnabled=true + small + ollama + active plan → returns true (override-on)", () => {
+  it("effectiveEnabled=true + small + ollama + active plan → returns true (override-on)", () => {
     // config has NO verification.enabled set — effectiveEnabled supplies the gate.
     expect(
       shouldRunCritic({
@@ -1253,7 +1247,7 @@ describe("SD3 — shouldRunCritic effectiveEnabled parameter (Phase 158)", () =>
     ).toBe(true);
   });
 
-  it("Test E: effectiveEnabled=false + small + ollama + active plan → returns false (explicit false wins even for small/keyless)", () => {
+  it("effectiveEnabled=false + small + ollama + active plan → returns false (explicit false wins even for small/keyless)", () => {
     // Even though class=small + keyless + config.verification.enabled=true,
     // effectiveEnabled=false (pre-resolved by resolveScaffoldDefaults) wins.
     expect(
@@ -1293,13 +1287,12 @@ describe("createVerificationCritic", () => {
 });
 
 // ---------------------------------------------------------------------------
-// L5 — resolveMaxOutputTokens exported and correct (direct export test)
+// resolveMaxOutputTokens exported and correct (direct export test)
 //
-// The function was previously unexported (only used internally by callCritic).
-// L5 requires it to be exported so pi-executor.ts can apply the same sizing
-// on the MAIN execution path (not just the critic path).
+// The export contract: pi-executor.ts imports resolveMaxOutputTokens so the
+// MAIN execution path can apply the same sizing (not just the critic path).
 // ---------------------------------------------------------------------------
-describe("L5 — resolveMaxOutputTokens exported and sizing correct", () => {
+describe("resolveMaxOutputTokens exported and sizing correct", () => {
   const BASE_PROFILE = {
     contextWindow: 32_768,
     maxOutputTokens: 4_096,
@@ -1313,33 +1306,32 @@ describe("L5 — resolveMaxOutputTokens exported and sizing correct", () => {
     supportsStructuredOutput: false,
   };
 
-  it("L5: native-reasoning profile → resolveMaxOutputTokens returns >= 2048 (VERDICT_RESERVE_TOKENS * 4)", () => {
-    // FAILS before the export is added (resolveMaxOutputTokens is undefined).
+  it("native-reasoning profile → resolveMaxOutputTokens returns >= 2048 (VERDICT_RESERVE_TOKENS * 4)", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 4096 };
     expect(resolveMaxOutputTokens(profile)).toBeGreaterThanOrEqual(2048);
   });
 
-  it("L5: non-reasoning profile → resolveMaxOutputTokens returns 512 (VERDICT_RESERVE_TOKENS)", () => {
+  it("non-reasoning profile → resolveMaxOutputTokens returns 512 (VERDICT_RESERVE_TOKENS)", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "none" as const, maxOutputTokens: 4096 };
     expect(resolveMaxOutputTokens(profile)).toBe(512);
   });
 
-  it("L5: native profile with small maxOutputTokens → still returns >= 2048 (max() enforcement)", () => {
+  it("native profile with small maxOutputTokens → still returns >= 2048 (max() enforcement)", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 256 };
     expect(resolveMaxOutputTokens(profile)).toBeGreaterThanOrEqual(2048);
   });
 });
 
 // ---------------------------------------------------------------------------
-// CR-01 — main-path output budget MUST NOT clamp to the 512 verdict reserve
+// Main-path output budget MUST NOT clamp to the 512 verdict reserve
 //
-// Regression guard: the original L5 wiring fed the critic's
-// resolveMaxOutputTokens (which returns VERDICT_RESERVE_TOKENS=512 for
-// non-reasoning profiles) into the MAIN execution path's ConfigResolver,
-// truncating every non-reasoning agent answer at 512 tokens. The main path
-// must use the model's REAL maxOutputTokens instead.
+// Regression guard: feeding the critic's resolveMaxOutputTokens (which
+// returns VERDICT_RESERVE_TOKENS=512 for non-reasoning profiles) into the
+// MAIN execution path's ConfigResolver truncates every non-reasoning agent
+// answer at 512 tokens. The main path must use the model's REAL
+// maxOutputTokens instead.
 // ---------------------------------------------------------------------------
-describe("CR-01 — resolveMainPathMaxOutputTokens does not cap the main answer at 512", () => {
+describe("resolveMainPathMaxOutputTokens does not cap the main answer at 512", () => {
   const BASE_PROFILE = {
     contextWindow: 32_768,
     maxOutputTokens: 4_096,
@@ -1353,20 +1345,20 @@ describe("CR-01 — resolveMainPathMaxOutputTokens does not cap the main answer 
     supportsStructuredOutput: false,
   };
 
-  it("CR-01: non-reasoning small model returns its FULL maxOutputTokens, never the 512 verdict floor", () => {
+  it("non-reasoning small model returns its FULL maxOutputTokens, never the 512 verdict floor", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "none" as const, maxOutputTokens: 4096 };
     const budget = resolveMainPathMaxOutputTokens(profile);
-    // The defect: this used to be VERDICT_RESERVE_TOKENS (512) on the main path.
+    // The defect this guards against: clamping the main path to VERDICT_RESERVE_TOKENS (512).
     expect(budget).toBe(4096);
     expect(budget).not.toBe(512);
   });
 
-  it("CR-01: non-reasoning model with a large maxOutputTokens passes the full budget through", () => {
+  it("non-reasoning model with a large maxOutputTokens passes the full budget through", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "none" as const, maxOutputTokens: 8192 };
     expect(resolveMainPathMaxOutputTokens(profile)).toBe(8192);
   });
 
-  it("CR-01: native-reasoning profile is sized UP so reasoning_content does not starve the answer", () => {
+  it("native-reasoning profile is sized UP so reasoning_content does not starve the answer", () => {
     // A small profile budget must be raised, not lowered, for native reasoning.
     const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 1024 };
     const budget = resolveMainPathMaxOutputTokens(profile);
@@ -1374,7 +1366,7 @@ describe("CR-01 — resolveMainPathMaxOutputTokens does not cap the main answer 
     expect(budget).toBeGreaterThanOrEqual(profile.maxOutputTokens);
   });
 
-  it("CR-01: native-reasoning profile with a large budget keeps the larger value (never shrinks)", () => {
+  it("native-reasoning profile with a large budget keeps the larger value (never shrinks)", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 16384 };
     expect(resolveMainPathMaxOutputTokens(profile)).toBe(16384);
   });

@@ -1,33 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Autonomy RPC handler module (Phase 213-06, REVOKE-01/03) — the operator-facing
+ * Autonomy RPC handler module — the operator-facing
  * live-control surface of the bounded-autonomy control plane:
  *
  *   - `lease.revoke {leaseId|rootRunId}` — COOPERATIVE stop. Revoke a single
  *     capability lease by `leaseId`, OR every lease of a spawn tree by
  *     `rootRunId` (cascading each to its descendants). The LeaseManager then
- *     denies the next RPC the bearer makes (REVOKE-01 "external to + non-bypassable
- *     by the agent"). Returns the content-free revoked COUNT.
+ *     denies the next RPC the bearer makes — the revoke is external to, and
+ *     non-bypassable by, the agent. Returns the content-free revoked COUNT.
  *   - `run.kill {rootRunId}` — HARD stop. Kill every run of the spawn tree
  *     (`subAgentRunner.killByRootRun` aborts each SDK session) AND revoke every
  *     lease of the tree (`leaseManager.revokeByRootRun`) so a survivor child can
- *     never keep operating (REVOKE-03). Returns the content-free killed COUNT.
- *   - `autonomy.evict {rootRunId}` — DEMOTE (Phase 217-04, EVICT-01). Marks the
+ *     never keep operating. Returns the content-free killed COUNT.
+ *   - `autonomy.evict {rootRunId}` — DEMOTE. Marks the
  *     `rootRunId` in the daemon-wide evicted-set (`evictRegistry.mark`); the
- *     bounded-autonomy chokepoint consults it at the NEXT gate decision (EVICT-03,
- *     mid-run) to resolve the run's effective profile to `default`. UNLIKE
+ *     bounded-autonomy chokepoint consults it at the NEXT gate decision
+ *     (mid-run) to resolve the run's effective profile to `default`. UNLIKE
  *     revoke/kill, evict does NOT abort — the run CONTINUES under `default` (which
  *     still escalates outward, never auto-sends). Returns the content-free
  *     `{ evicted }` boolean. Registered ONLY when the OPTIONAL `evictRegistry`
- *     dep is wired (HIGH-1 — the Wave-2 composition root supplies it).
+ *     dep is wired (the composition root supplies it).
  *
  * DENY-BY-ORIGIN IS AUTOMATIC — there is NO manual agent-origin check here (it
  * would drift, and the single-chokepoint arch gate forbids per-handler scatter).
- * All three methods are `scopes:["admin"]` (Plan 03 / Plan 04) → they land in the
+ * All three methods are `scopes:["admin"]` → they land in the
  * DERIVED `ADMIN_METHODS` → the dispatch chokepoint's origin guard
  * (rpc-dispatch.ts) denies any agent-origin call BEFORE the handler runs (an agent
- * cannot self-un-evict — T-217-12). The autonomy-handlers test proves the deny on
+ * cannot self-un-evict). The autonomy-handlers test proves the deny on
  * the dispatch path.
  *
  * Per-method pipeline mirrors `subagent-handlers.ts`: bespoke pre-Zod guard
@@ -74,16 +74,16 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
  * `logger` is required on every slice.
  */
 export interface AutonomyHandlerDeps {
-  /** The credential-broker lease authority — the revoke fan-outs (Plan 02). */
+  /** The credential-broker lease authority — the revoke fan-outs. */
   leaseManager: LeaseManager;
-  /** The sub-agent runner — `killByRootRun` aborts a whole spawn tree (Plan 01). */
+  /** The sub-agent runner — `killByRootRun` aborts a whole spawn tree. */
   subAgentRunner: { killByRootRun(rootRunId: string): { killed: number } };
   /**
-   * Phase 216 (DUR-03): the durable-run store. OPTIONAL — when a `rootRunId` is
+   * The durable-run store. OPTIONAL — when a `rootRunId` is
    * revoked (lease.revoke by rootRunId, OR run.kill), the handler ALSO calls
    * `invalidateForRevoke(rootRunId)` so the persisted checkpoint flips to status
    * `revoked` and a subsequent boot can NEVER re-mint the pre-revoke caps (the
-   * resurrection-window close, invariant #6/#13). **Absent ⇒ inert** (the lease
+   * resurrection-window close). **Absent ⇒ inert** (the lease
    * revoke alone still stops the live bearer; the persisted record is just not
    * poisoned — only matters once durability is enabled, which is when the daemon
    * wires this). Best-effort: an invalidate error is WARN-logged, never fails the
@@ -91,31 +91,29 @@ export interface AutonomyHandlerDeps {
    */
   durableRuns?: DurableRunPort;
   /**
-   * Phase 217-04 (EVICT-01): the daemon-wide evicted-`rootRunId` set. OPTIONAL —
-   * the sole call site (rpc-dispatch.ts, `createAutonomyHandlers({ ...deps,
-   * leaseManager: deps.leaseManager })`) does NOT supply it until the Wave-2
-   * composition root (Plan 05) constructs `createEvictRegistry` and threads it
-   * onto `deps`. CRITICAL (HIGH-1): it MUST stay OPTIONAL so the Wave-1 `pnpm
-   * build` compiles with the unchanged call site; the `autonomy.evict` handler is
-   * registered ONLY when this is present (mirrors how `leaseManager`/
+   * The daemon-wide evicted-`rootRunId` set. OPTIONAL —
+   * the composition root constructs `createEvictRegistry` and threads it
+   * onto `deps`. CRITICAL: it MUST stay OPTIONAL so a partially-wired
+   * build compiles with a call site that does not supply it; the `autonomy.evict`
+   * handler is registered ONLY when this is present (mirrors how `leaseManager`/
    * `boundedAutonomy` gate whole handler families). **Absent ⇒ the autonomy.evict
    * method is simply not registered** (a stray call hits the dispatcher's
    * unknown-method path) — no build break, no half-wired handler.
    */
   evictRegistry?: EvictRegistry;
   /**
-   * FLEET-03 (Phase 220-01): the typed event bus. OPTIONAL — when wired, the
+   * The typed event bus. OPTIONAL — when wired, the
    * handlers emit a content-free `autonomy:revoked` (lease.revoke by rootRunId) /
    * `autonomy:killed` (run.kill) BESIDE the existing INFO line so `comis fleet`
-   * surfaces the revoke/kill counts. **Absent ⇒ no emit, byte-identical pre-220
-   * boot** (mirrors the `durableRuns?`/`evictRegistry?` optional-dep convention).
+   * surfaces the revoke/kill counts. **Absent ⇒ no emit**
+   * (mirrors the `durableRuns?`/`evictRegistry?` optional-dep convention).
    * The PRODUCTION construction site (rpc-dispatch.ts createAutonomyHandlers)
    * MUST supply `deps.container.eventBus` — otherwise the live daemon emits
-   * nothing and Plan 03's counts are silently zero.
+   * nothing and the fleet revoke/kill counts are silently zero.
    */
   eventBus?: { emit<K extends keyof EventMap>(event: K, payload: EventMap[K]): void };
   /**
-   * FLEET-03: the wiring-layer clock for the emitted-event timestamp. Supplied as
+   * The wiring-layer clock for the emitted-event timestamp. Supplied as
    * `systemNowMs` by the construction site (the globals-gate-safe wiring clock the
    * execution:aborted emit uses) — NEVER `Date.now()`/`new Date()` here. Only read
    * when `eventBus` is present (the production site supplies both together).
@@ -135,7 +133,7 @@ export interface AutonomyHandlerDeps {
  */
 export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string, RpcHandler> {
   /**
-   * DUR-03: poison the persisted run record on revoke so a subsequent boot finds
+   * Poison the persisted run record on revoke so a subsequent boot finds
    * status='revoked' and ORPHANS the run rather than re-minting the pre-revoke
    * caps. Best-effort — a write error is WARN-logged but never fails the revoke
    * RPC (the in-memory lease is already revoked, so the live bearer is dead
@@ -153,10 +151,10 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
     }
   }
 
-  // HIGH-1: capture the OPTIONAL evictRegistry once so the conditional spread
+  // Capture the OPTIONAL evictRegistry once so the conditional spread
   // narrows it to non-undefined inside the evict handler closure (no `!`
   // non-null assertion needed). Absent ⇒ the autonomy.evict key is omitted from
-  // the returned record entirely (the Wave-1 partial-boot state).
+  // the returned record entirely.
   const evictRegistry = deps.evictRegistry;
 
   return {
@@ -173,16 +171,16 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
 
       let revoked = 0;
       if (rootRunId) {
-        // Revoke every lease of the spawn tree (cascading each — Plan 02).
+        // Revoke every lease of the spawn tree (cascading each to its descendants).
         revoked = deps.leaseManager.revokeByRootRun(rootRunId).revoked;
-        // DUR-03: ALSO poison the persisted checkpoint so a restart cannot
+        // ALSO poison the persisted checkpoint so a restart cannot
         // resurrect the pre-revoke caps (the resurrection-window close).
         await invalidatePersistedRecord(rootRunId, LeaseRevokeContract.method);
       } else if (leaseId) {
         // Single-lease cooperative stop — report the HONEST count: 1 if the lease
         // existed (now revoked), 0 for an unknown id (never a phantom revoke:1 —
-        // the live VPS finding where a nonexistent leaseId reported revoked:1
-        // while the rootRunId path honestly reported 0).
+        // both selector paths must agree that a nonexistent id revokes nothing,
+        // matching the rootRunId path's honest 0).
         revoked = deps.leaseManager.revoke(leaseId).revoked;
       }
 
@@ -193,9 +191,9 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
         "Capability lease(s) revoked",
       );
 
-      // FLEET-03: a typed content-free event BESIDE the INFO line — only on a
+      // A typed content-free event BESIDE the INFO line — only on a
       // rootRunId revoke (a by-leaseId revoke has no rootRunId). Carries the COUNT
-      // + the id + timestamp ONLY (T-220-02). Absent eventBus ⇒ no emit.
+      // + the id + timestamp ONLY. Absent eventBus ⇒ no emit.
       if (rootRunId) {
         deps.eventBus?.emit("autonomy:revoked", {
           rootRunId,
@@ -223,8 +221,8 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       // every lease of the tree so a survivor child cannot keep operating.
       const { killed } = deps.subAgentRunner.killByRootRun(rootRunId);
       deps.leaseManager.revokeByRootRun(rootRunId);
-      // DUR-03: ALSO poison the persisted checkpoint so a restart cannot resume
-      // the killed tree under re-minted pre-revoke caps (REVOKE-03 across restart).
+      // ALSO poison the persisted checkpoint so a restart cannot resume
+      // the killed tree under re-minted pre-revoke caps (the hard stop holds across restart).
       await invalidatePersistedRecord(rootRunId, RunKillContract.method);
 
       // §2.7: content-free completion line — the killed COUNT + method only.
@@ -233,10 +231,10 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
         "Spawn tree killed (hard stop) and its leases revoked",
       );
 
-      // FLEET-03: a DISTINCT autonomy:killed event (separate from revoke — kill
+      // A DISTINCT autonomy:killed event (separate from revoke — kill
       // flips durable status to 'revoked' INDISTINGUISHABLY from a cooperative
       // revoke, so the event is the only separator for the killed count). COUNT +
-      // id + timestamp ONLY (T-220-02). Absent eventBus ⇒ no emit.
+      // id + timestamp ONLY. Absent eventBus ⇒ no emit.
       deps.eventBus?.emit("autonomy:killed", {
         rootRunId,
         killed,
@@ -248,10 +246,10 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       return result;
     },
 
-    // HIGH-1: gate the autonomy.evict handler on the OPTIONAL evictRegistry
+    // Gate the autonomy.evict handler on the OPTIONAL evictRegistry
     // (mirrors the dispatch-wiring convention of gating whole handler families on
-    // leaseManager/boundedAutonomy). Absent ⇒ the method key is omitted (Wave-1
-    // partial boot); present ⇒ the closure reads the narrowed non-undefined
+    // leaseManager/boundedAutonomy). Absent ⇒ the method key is omitted;
+    // present ⇒ the closure reads the narrowed non-undefined
     // registry. The contract↔handler parity gate accepts this conditional
     // registration (the capabilities.introspect precedent, rpc-dispatch.ts).
     ...(evictRegistry
@@ -267,7 +265,7 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
             AutonomyEvictContract.request.parse(userParams);
 
             // DEMOTE (NOT kill): mark the rootRunId so the chokepoint resolves the
-            // run's mode to `default` from the NEXT gate decision (EVICT-03). The
+            // run's mode to `default` from the NEXT gate decision. The
             // run KEEPS GOING under default — evict does not abort. `newlyEvicted`
             // reports whether THIS call changed state (the run is demoted either
             // way, so the response is { evicted: true } regardless).

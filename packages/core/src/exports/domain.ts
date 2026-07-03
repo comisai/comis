@@ -85,7 +85,7 @@ export {
   RequiredToolsUnreachableError,
   toolReachableGroups,
   computeReachableToolNames,
-  // RPC typed-refusal classification (single source of truth — OBS-RPC-REFUSAL-CLASS)
+  // RPC typed-refusal classification (single source of truth)
   classifyTypedRpcError,
   // MemoryExportEnvelope
   MemoryExportEnvelopeSchema,

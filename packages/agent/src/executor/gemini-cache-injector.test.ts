@@ -330,7 +330,7 @@ describe("createGeminiCacheInjector", () => {
     expect(configObj.cachedContent).toBeUndefined();
   });
 
-  it("HITS the cache when toolConfig is undefined (no false staleness — the D03 bug)", async () => {
+  it("HITS the cache when toolConfig is undefined (no false staleness from absent optional fields)", async () => {
     // Regression: pi-ai sets config.toolConfig = undefined whenever there is no toolChoice
     // (google.js), and omits `tools` when there are none. The old guard treated those undefined
     // fields as "stale" and evicted the cache on every such request -> it never hit. With the

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the per-conversation single-flight ingest serializer (Plan 132-04,
- * R3). RED-first — drives the not-yet-built `createIngestSerializer`.
+ * Tests for the per-conversation single-flight ingest serializer,
+ * `createIngestSerializer`.
  *
- * The serializer is the integrity boundary C4 introduces (Pitfall 2): once the
+ * The serializer is the integrity boundary the deferred compaction requires: once the
  * afterTurn leaf/condense compaction is DEFERRED off the turn, a detached
  * compaction write can race the NEXT turn's synchronous ingest on the same
  * conversation's `(conversation_id, seq)` index. Routing BOTH writers through a
@@ -31,7 +31,7 @@ async function yieldTicks(ticks: number): Promise<void> {
   }
 }
 
-describe("createIngestSerializer — per-conversation single-flight (R3)", () => {
+describe("createIngestSerializer — per-conversation single-flight", () => {
   it("two operations enqueued for the same conversationId run strictly one-at-a-time (no overlap)", async () => {
     const serializer = createIngestSerializer();
     const events: string[] = [];

@@ -73,10 +73,9 @@ export function registerChannelCommand(program: Command): void {
     .action(async (options: { format: string }) => {
       try {
         // Config tells us what is CONFIGURED (enabled/disabled + identity
-        // details); channels.health tells us what is actually RUNNING. The
-        // old config-only read defaulted every enabled channel to
-        // "disconnected" — a static lie against a healthy live adapter
-        // (live C5 finding, 2026-06-12).
+        // details); channels.health tells us what is actually RUNNING. A
+        // config-only read would default every enabled channel to
+        // "disconnected" — a static lie against a healthy live adapter.
         const { config, health } = await withSpinner("Fetching channel status...", () =>
           withClient(async (client) => {
             const config = await callTyped(client, ConfigReadContract, {

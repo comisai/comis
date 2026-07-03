@@ -8,7 +8,7 @@
  * trajectory. A DAG turn fires BOTH `graph:completed` AND `diagnostic:message_processed`
  * (the single-agent path's completion event), so without this guard the consumer chain
  * (RANK reward / FORGET accrual / SURFACE promote-demote) would run twice for one
- * trajectory — double reward / double promote. Mirrors the WR-01 bounded-tally tests
+ * trajectory — double reward / double promote. Mirrors the bounded-tally tests
  * for failureCorroborated (setup-learning.test.ts).
  */
 

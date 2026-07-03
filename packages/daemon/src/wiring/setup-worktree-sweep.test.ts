@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 219 Plan 08 (WT-02): the worktree-orphan-sweep subsystem wiring.
+ * The worktree-orphan-sweep subsystem wiring.
  *
  * These cases fail on the pre-patch tree (`./setup-worktree-sweep.js` does not
  * exist) — RED proof. They assert:
@@ -144,7 +144,7 @@ describe("toLifecycleGitExec", () => {
 // ---------------------------------------------------------------------------
 
 describe("setupWorktreeSweep", () => {
-  it("boot sweep ACTUALLY calls sweepOrphans and reclaims a gone-from-disk orphan (WT-02)", async () => {
+  it("boot sweep ACTUALLY calls sweepOrphans and reclaims a gone-from-disk orphan", async () => {
     const reg = createWorktreeRegistry();
     // A crashed run left a registry entry whose dir is gone from disk.
     reg.register({ dir: "/ws/wt-crashed", baseRef: "main", branch: "wt-crashed", runId: "crashed" });
@@ -175,7 +175,7 @@ describe("setupWorktreeSweep", () => {
     handle.shutdown();
   });
 
-  it("DANGEROUS case: a completed-but-DIRTY worktree is PRESERVED, never removed (WT-02 conservative sweep)", async () => {
+  it("DANGEROUS case: a completed-but-DIRTY worktree is PRESERVED, never removed (conservative sweep)", async () => {
     const reg = createWorktreeRegistry();
     reg.register({ dir: "/ws/wt-dirty", baseRef: "main", branch: "wt-dirty", runId: "dirty" });
     reg.markCompleted("/ws/wt-dirty");

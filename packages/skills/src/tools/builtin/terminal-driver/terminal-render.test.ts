@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the per-session terminal emulator wrapper (spec §2.4).
+ * Unit tests for the per-session terminal emulator wrapper.
  *
  * `terminal-render.ts` wraps a REAL `@xterm/headless` Terminal (pure-JS — these
  * tests run green on macOS without a PTY or a forked process). It is the new
@@ -33,13 +33,13 @@ describe("createSessionEmulator — construct + plain grid", () => {
   });
 });
 
-describe("createSessionEmulator — real cursor (replaces the earlier {0,0} placeholder)", () => {
+describe("createSessionEmulator — real cursor from the emulator buffer", () => {
   it("reports the REAL cursorX/cursorY after a write", async () => {
     const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
     await emu.write("abc");
     const snap = emu.snapshot();
 
-    // The real emulator cursor — NOT the earlier hard-coded {0,0}.
+    // The real emulator cursor — NOT a hard-coded {0,0} placeholder.
     expect(snap.cursor.x).toBe(3);
     expect(snap.cursor.y).toBe(0);
     emu.dispose();
@@ -63,7 +63,7 @@ describe("createSessionEmulator — alt-screen flag", () => {
   });
 });
 
-describe("createSessionEmulator — write flush ordering (the §2.4 parse-complete primitive)", () => {
+describe("createSessionEmulator — write flush ordering (the parse-complete primitive)", () => {
   it("write resolves only AFTER the chunk is parsed, so a post-await snapshot reflects it", async () => {
     const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
 
@@ -267,17 +267,17 @@ describe("createSessionEmulator — diffSnapshot (the per-read screen-diff)", ()
 });
 
 // ===========================================================================
-// FINDING-3 / RENDER-01 (v2.26): the dim-autocomplete ghost-strip is a Claude
-// SPECIAL-CASE and now lives in the `claude-code` PROFILE (`transformSnapshot`),
+// The dim-autocomplete ghost-strip is a Claude
+// SPECIAL-CASE and lives in the `claude-code` PROFILE (`transformSnapshot`),
 // NOT the agnostic engine. The engine here proves two things: (1) with NO profile
-// the render is the plain `translateToString` grid — the dim ghost is kept (INV-1,
-// byte-identical to today's generic path); (2) `transformSnapshot` is a GENERIC
+// the render is the plain `translateToString` grid — the dim ghost is kept,
+// byte-identical to the generic path; (2) `transformSnapshot` is a GENERIC
 // injected hook the engine applies to text reads, feeding it the viewport cell
 // grid (so a profile can read the `dim` attribute the flat `screen` lost). The
 // ghost-strip ITSELF is golden-tested in `platforms/claude-code/profile.test.ts`.
 // ===========================================================================
 
-describe("createSessionEmulator — agnostic render is the plain grid (no platform strip, INV-1)", () => {
+describe("createSessionEmulator — agnostic render is the plain grid (no platform strip)", () => {
   it("keeps the dim composer ghost verbatim when no profile transform is wired", async () => {
     // No transform ⇒ the engine is byte-identical to translateToString: the dim ghost is NOT stripped.
     const emu = createSessionEmulator({ cols: 80, rows: 6, scrollback: 0 });
@@ -329,7 +329,7 @@ describe("createSessionEmulator — transformSnapshot is a generic read-side hoo
   });
 });
 
-describe("createSessionEmulator + claudeCodeProfile.transformSnapshot — FINDING-3 end-to-end (design §8)", () => {
+describe("createSessionEmulator + claudeCodeProfile.transformSnapshot — ghost-strip end-to-end", () => {
   it("strips the dim composer ghost on the cursor row when the claude-code profile is selected", async () => {
     const emu = createSessionEmulator({
       cols: 80,

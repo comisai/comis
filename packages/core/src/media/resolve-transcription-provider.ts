@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * resolveTranscriptionProvider — the pure, I/O-free, keyless-first priority
- * resolver for STT provider selection (RES-01/04/05, STEER-01/02, CRED-01).
+ * resolver for STT provider selection.
  *
  * Mirrors `resolveImageProvider` (resolve-image-provider.ts) exactly — a single
  * function, explicit numbered priority, a single discriminated return type, no
- * throws — with two STT-specific divergences (design §5a):
- *   1. a KEYLESS-LOCAL rung that runs BEFORE follow-main (the default; OAuth-safe
- *      and Hermes-parity), and
+ * throws — with two STT-specific divergences:
+ *   1. a KEYLESS-LOCAL rung that runs BEFORE follow-main (the default;
+ *      OAuth-safe), and
  *   2. a SECOND injected predicate (`localEngineAvailable`) the image resolver
  *      has no analog for.
  *
  * Purity is preserved by INJECTION: the daemon supplies `localEngineAvailable`
- * (FALSE until Phase 194 wires a real engine) and `audioKeyAvailable` (a closure
+ * (FALSE when no real local engine is wired) and `audioKeyAvailable` (a closure
  * over its SecretManager; FALSE for OAuth-only mains) plus an optional `onSkip`
  * reporter. This resolver never performs I/O, never reads the environment, and
  * never imports a secret store — so it is trivially unit-testable with no daemon
  * and no network.
  *
- * Honest-capability invariant (STEER-01/02): an OAuth-only main (whose
+ * Honest-capability invariant: an OAuth-only main (whose
  * MAIN_PROVIDER_AUDIO entry is `undefined`) or an absent audio key yields
  * `{ ok: false, errorKind, hint }` naming the ACTUAL remedy — NEVER a silent
  * empty-bearer call to a keyed provider. `fallbackProviders` is consulted ONLY
@@ -33,8 +33,8 @@ import type { SttErrorKind } from "./voice-error.js";
 /**
  * The structural subset of the transcription selection config this resolver
  * reads. Declared LOCALLY (not imported from the runtime `TranscriptionConfig`
- * in schema-integrations.ts) so this Wave-1 plan stays decoupled from Plan 02,
- * which edits that schema in the same wave. Note: STT uses `fallbackProviders`
+ * in schema-integrations.ts) to keep this pure resolver decoupled from the
+ * runtime config schema. Note: STT uses `fallbackProviders`
  * (the existing schema field name), where the image resolver uses `fallbackChain`.
  */
 export type SttSelectionConfig = {
@@ -42,7 +42,7 @@ export type SttSelectionConfig = {
   provider: string;
   /** Tool/config-supplied model that overrides the per-provider default. */
   model?: string;
-  /** Plan 02 lands the real field; this resolver reads it defensively. */
+  /** Defined by the runtime schema; this resolver reads it defensively. */
   fallbackProviders?: string[];
 };
 
@@ -73,7 +73,7 @@ function keyHint(provider: string): string {
 }
 
 /**
- * The STEER-02 verbatim honest-unavailable hint (success-criterion #1): names
+ * The verbatim honest-unavailable hint: names
  * the local engine, the local.baseUrl escape hatch, AND the keyed-provider env
  * vars — and states explicitly that a Codex OAuth login cannot drive audio.
  */
@@ -106,14 +106,14 @@ export function resolveTranscriptionProvider(
     return { ok: false, errorKind: "auth_required", hint: keyHint(cfg.provider) };
   }
 
-  // 2. "auto" → KEYLESS LOCAL FIRST (the default; OAuth-safe, Hermes parity).
+  // 2. "auto" → KEYLESS LOCAL FIRST (the default; OAuth-safe).
   if (localEngineAvailable()) {
     return { ok: true, provider: "local", keyless: true, model: cfg.model, source: "keyless-local" };
   }
 
-  // 3. → follow the main provider's audio key ONLY IF it really exists (CRED-01).
+  // 3. → follow the main provider's audio key ONLY IF it really exists.
   //    An OAuth-only main (openai-codex) maps to `undefined` here, so it is never
-  //    queried for a key — STEER-01.
+  //    queried for a key.
   const mainAudio = MAIN_PROVIDER_AUDIO[mainProviderId];
   if (mainAudio && audioKeyAvailable(mainAudio)) {
     return { ok: true, provider: mainAudio, keyless: false, model: cfg.model, source: "follow-main-key" };
@@ -131,6 +131,6 @@ export function resolveTranscriptionProvider(
     onSkip?.(`fallback "${p}" skipped: no key`);
   }
 
-  // 5. honest-unavailable — names the ACTUAL remedy (STEER-02).
+  // 5. honest-unavailable — names the ACTUAL remedy.
   return { ok: false, errorKind: "no_keyless_engine", hint: noKeylessEngineHint() };
 }

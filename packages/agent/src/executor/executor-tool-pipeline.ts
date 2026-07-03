@@ -92,7 +92,7 @@ export interface SchemaPruneParams {
   logger: ComisLogger;
 }
 
-/** Apply schema pruning for nano-class models (behavior-neutral: old small=<=32K → new nano). */
+/** Apply schema pruning for nano-class models (only the "nano" capability class is pruned). */
 export function applySchemasPruning(params: SchemaPruneParams): ToolDefinition[] {
   if (params.capabilityClass !== "nano") return params.tools;
 
@@ -221,7 +221,7 @@ export interface ProviderNormalizeParams {
   modelId: string;
   compat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai" | "gbnf"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
   /**
-   * AUTHOR-03 (174-05 / CR-01): the value of
+   * The value of
    * `config.orchestration.authoring.gbnfConstrain`, threaded from the
    * assembly call site. When true, the Layer 3.5 GBNF transform engages for
    * gbnf-ELIGIBLE (local/default-family) providers even when they are not
@@ -250,7 +250,7 @@ export function applyProviderNormalization(params: ProviderNormalizeParams): Too
     provider: params.provider,
     modelId: params.modelId,
     compat: params.compat,
-    // AUTHOR-03 (CR-01): forward the authoring gate so the Layer 3.5 GBNF
+    // Forward the authoring gate so the Layer 3.5 GBNF
     // transform actually engages on gbnf-eligible providers when the operator
     // flips it on. Absent ⇒ undefined ⇒ FLAGS-OFF byte-identical.
     gbnfConstrain: params.gbnfConstrain,
@@ -260,7 +260,7 @@ export function applyProviderNormalization(params: ProviderNormalizeParams): Too
   // (agent-loop.js prepareToolCall → validateToolArguments) — the correct interception
   // point for argument normalization. We compose two normalizations into it:
   //   1. xAI/Grok HTML-entity decode (provider-gated), then
-  //   2. per-field stringified-JSON coercion (F-3, universal): a small model emits
+  //   2. per-field stringified-JSON coercion (universal): a small model emits
   //      e.g. memory_manage {ids:"[\"uuid\"]"} — the SDK validator coerces stringified
   //      primitives but NOT arrays/objects, so the call was rejected and the model
   //      fabricated a result. Coerce array/object fields back to structured values,
@@ -284,7 +284,7 @@ export function applyProviderNormalization(params: ProviderNormalizeParams): Too
 }
 
 // ---------------------------------------------------------------------------
-// Persisted reactive schema strip (GBNF-02 / 175-REVIEW CR-02)
+// Persisted reactive schema strip
 // ---------------------------------------------------------------------------
 
 /** Parameters for the persisted reactive strip. */
@@ -296,7 +296,7 @@ export interface PersistedReactiveStripParams {
 
 /**
  * Re-apply the session's reactive pattern/format strip AFTER provider
- * normalization (CR-02). The strip-retry handler
+ * normalization. The strip-retry handler
  * (tool-schema-unsupported-handler.ts) mutates THIS turn's wire objects for
  * the in-flight retry, but every subsequent turn rebuilds `parameters` from
  * the pre-strip schema snapshot — and gbnf normalization constructs

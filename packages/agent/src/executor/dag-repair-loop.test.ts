@@ -24,11 +24,11 @@ const cycleGraphRaw: unknown = {
 };
 
 // ---------------------------------------------------------------------------
-// O1: repairDagWithBoundedRetries
+// repairDagWithBoundedRetries
 // ---------------------------------------------------------------------------
 
 describe("repairDagWithBoundedRetries", () => {
-  it("Case 1 (baseline): valid graph on first attempt returns ok without calling repromptFn", async () => {
+  it("baseline: valid graph on first attempt returns ok without calling repromptFn", async () => {
     const repromptFn = vi.fn<[string[]], Promise<unknown>>();
 
     const result = await repairDagWithBoundedRetries(validGraphRaw, repromptFn, 2);
@@ -40,7 +40,7 @@ describe("repairDagWithBoundedRetries", () => {
     }
   });
 
-  it("Case 2 (repair): invalid graph repaired on second attempt returns ok; repromptFn called exactly once", async () => {
+  it("repair: invalid graph repaired on second attempt returns ok; repromptFn called exactly once", async () => {
     // repromptFn returns the valid graph on its first (and only) call
     const repromptFn = vi.fn<[string[]], Promise<unknown>>().mockResolvedValueOnce(validGraphRaw);
 
@@ -56,7 +56,7 @@ describe("repairDagWithBoundedRetries", () => {
     }
   });
 
-  it("Case 3 (exhausted, fail-closed): always-bad repromptFn called exactly maxAttempts=2 times, returns err", async () => {
+  it("exhausted retries fail closed: always-bad repromptFn called exactly maxAttempts=2 times, returns err", async () => {
     // Always returns the cycle graph back — never fixes it
     const repromptFn = vi.fn<[string[]], Promise<unknown>>().mockResolvedValue(cycleGraphRaw);
 
@@ -67,7 +67,7 @@ describe("repairDagWithBoundedRetries", () => {
     expect(repromptFn).toHaveBeenCalledTimes(2);
   });
 
-  it("Case 4 (canonical O3 template): small-model path — fill research-fanout template then validate", async () => {
+  it("canonical template small-model path — fill research-fanout template then validate", async () => {
     // Simulate the small-model template path: fill the template, construct graph, validate
     const fillResult = fillDagTemplate(CANONICAL_DAG_TEMPLATES["research-fanout"], {
       TOPIC: "climate change",

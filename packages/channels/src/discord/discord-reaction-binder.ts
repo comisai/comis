@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discord reaction-add binder (REACT-01, Verified Learning WS1).
+ * Discord reaction-add binder.
  *
  * Co-located out of discord-adapter.ts to hold the 800-line file-size cap
  * (the adapter only keeps the `reactionHandlers` array + the bind call + the
  * `onReaction` registration). This module owns the single
- * `Events.MessageReactionAdd` listener that Comis never bound before — the net-
- * new inbound-reaction capture. The Discord client ALREADY holds the
+ * `Events.MessageReactionAdd` listener — Comis's inbound-reaction capture
+ * point. The Discord client ALREADY holds the
  * `GuildMessageReactions`/`DirectMessageReactions` intents (discord-adapter.ts:92-93).
  *
  * Posture (mirrors the MessageCreate binder at discord-adapter.ts:142):
@@ -14,13 +14,13 @@
  *   analogue of `msg.author.bot`).
  * - PARTIAL guard: discord.js v14 delivers a PARTIAL reaction for an uncached
  *   message; `reaction.fetch()` must resolve it before `messageId`/`emoji` can
- *   be read. A failed fetch is a NON-FATAL skip (RESEARCH Pitfall 3).
+ *   be read. A failed fetch is a NON-FATAL skip.
  * - fire-and-forget fanout: every handler is `void Promise.resolve(...).catch()`ed
  *   so one throwing handler never crashes the gateway event loop.
  *
  * The reactorId is UNTRUSTED inbound (an arbitrary chat sender); no trust is
  * assigned here — the binder only normalizes to {@link NormalizedReaction} and
- * fans out. Trust + the messageId→trajectory resolve happen daemon-side (Plan 04).
+ * fans out. Trust + the messageId→trajectory resolve happen daemon-side.
  *
  * @module
  */
@@ -88,7 +88,7 @@ export function bindDiscordReactions(
       const normalized: NormalizedReaction = {
         messageId: resolved.message.id,
         // SAME identity space as senderId (author.id) — what the trust resolver
-        // + rate limiter key on downstream (Plan 04).
+        // + rate limiter key on downstream.
         reactorId: user.id,
         emoji: resolved.emoji.name ?? resolved.emoji.toString(),
         channelType: "discord",

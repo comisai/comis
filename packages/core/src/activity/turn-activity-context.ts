@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TurnActivityContext — concrete per-turn routing context (spec §4.6).
+ * TurnActivityContext — concrete per-turn routing context.
  *
  * `ActivityEvent.channelKey` alone is too thin for renderers and routers.
  * Channels need agent identity, session correlation, channel-adapter selection,

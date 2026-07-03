@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The pure terminal state classifier (spec §4.3, the #1 milestone de-risk).
+ * The pure terminal state classifier.
  *
  * `classifyFrame(frame, history)` labels a SETTLED frame
  * `working | awaiting-input | exited | stuck` deterministically, from the render
  * snapshot (grid + REAL cursor) + a caller-supplied progress history. It is the
- * perception the worker (124-05/06) drives and the `session_status` tool surfaces.
+ * perception the worker drives and the `session_status` tool surfaces.
  *
- * The §4.3 decision tree (in priority order):
+ * The decision tree (in priority order):
  *   1. `!alive`            → `exited`         (PTY exit — nothing more can render)
  *   2. `!settled`          → `working`        (output still flowing / cursor advancing)
  *   3. settled + diff∅ + CURSOR PARKED        → `awaiting-input`  (a real prompt, `high`)
- *   3b. settled + diff∅ + DIALOG STRUCTURE    → `awaiting-input`  (CLASS-01 — a full-
+ *   3b. settled + diff∅ + DIALOG STRUCTURE    → `awaiting-input`  (a full-
  *                                              screen dialog whose cursor sits on a blank
  *                                              input line BELOW the prompt block, so the
  *                                              parked gate missed it; `medium`,
  *                                              `dialog_detected`)
  *   4. settled + no-progress > stuckMs:
- *        4a. + a DIALOG/PROMPT affordance (regardless of diff∅) → `awaiting-input` (LIVE-02 —
+ *        4a. + a DIALOG/PROMPT affordance (regardless of diff∅) → `awaiting-input` (
  *            a settled prompt the STALE backgrounded-drive anchor mis-diffed as changing, so
  *            diff∅ was false and 3/3b were skipped; `medium`, `dialog_detected`)
- *        4b. else                                               → `stuck`  (by PROGRESS, OPS-04)
+ *        4b. else                                               → `stuck`  (by PROGRESS, never wall-clock)
  *   5. else                → `working`        (settled but cursor NOT parked = a
  *                                              thinking/tool-use pause)
  *
- * The LOAD-BEARING gate (spec §4.3 risk table, severity HIGH): {@link isCursorParked}.
+ * The LOAD-BEARING gate: {@link isCursorParked}.
  * During generation an AI CLI renders output mid-screen — the cursor is NOT in the
  * input box, so a thinking/tool-use pause is read as `working`, NEVER as
  * `awaiting-input`. A false `awaiting-input` would wake a turn that fires a spurious
@@ -33,9 +33,9 @@
  * gate (cursor position relative to the rendered content) is primary; the optional
  * operator `hintPatterns` are a positive REINFORCEMENT only — they never OVERRIDE the
  * structure, so a prompt-injecting CLI cannot render a fake "(y/n)" mid-screen and be
- * read as a prompt (T-124-06).
+ * read as a prompt.
  *
- * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors
+ * Architecture invariants (binding — AGENTS.md; mirrors
  * `terminal-caps.ts`):
  *   - PURE: a free function, NOT a factory. NO clock/timer reads (the debounce
  *     timing lives in the settle the worker drives; the classifier receives an
@@ -47,9 +47,8 @@
  *     from `terminal-render.js` — no platform runtime packages, no observability
  *     egress, no raw timer (the globals + infra-runtime-scope architecture gates).
  *
- * Determinism: a pure function of its inputs ⇒ the Task-3 fixture corpus pins it
- * (a `claude` version bump that shifts a render is caught as a failing corpus case,
- * spec §10.4).
+ * Determinism: a pure function of its inputs ⇒ the fixture corpus pins it
+ * (a `claude` version bump that shifts a render is caught as a failing corpus case).
  *
  * @module
  */
@@ -76,7 +75,7 @@ const PARK_ROW_TOLERANCE = 1;
 // Types
 // ---------------------------------------------------------------------------
 
-/** The four mutually-exclusive session states (spec §4.3). */
+/** The four mutually-exclusive session states. */
 export type ClassifierState = "working" | "awaiting-input" | "exited" | "stuck";
 
 /**
@@ -104,27 +103,27 @@ export interface ClassifierFrame {
   /**
    * OPTIONAL operator-configured prompt cues (e.g. `"❯"`, `"(y/n)"`). A positive
    * REINFORCEMENT for the parked gate only — never a hardcoded or screen-derived
-   * trust signal, and never enough to OVERRIDE the structural cursor-position test
-   * (T-124-06). Absent ⇒ the gate is purely structural.
+   * trust signal, and never enough to OVERRIDE the structural cursor-position test.
+   * Absent ⇒ the gate is purely structural.
    */
   hintPatterns?: readonly string[];
   /**
    * OPTIONAL selected-platform perception (the `TerminalPlatformProfile.perception` for the
-   * session's operator-declared allowId, fed by the worker — v2.26 CLASSIFY-01). The classifier
-   * stays the SOLE owner of `activity` (D4): these patterns FEED the generic decision —
+   * session's operator-declared allowId, fed by the worker). The classifier
+   * stays the SOLE owner of the activity decision: these patterns FEED the generic decision —
    * `workingLine` biases a settled-unparked frame WITH recent progress to `working` (the Codex
    * `Working (Ns)` / Claude spinner case); `menuOrPicker` + `promptAffordance` feed the structural
-   * dialog detector (the D5 v2.11 menu fix + LIVE-02 idle-`❯`). `turnEnd` is populated but reserved
-   * for the §6-v2 structured-perception layer (NOT routed into the activity decision — it would
+   * dialog detector (the full-screen-menu + idle-`❯` cases). `turnEnd` is populated but reserved
+   * for a future structured-perception layer (NOT routed into the activity decision — it would
    * over-fire on Claude's per-tool-action `⏺` bullet). Absent ⇒ the purely generic path,
-   * byte-identical to today (INV-1).
+   * byte-identical to the profile-free behavior.
    */
   perception?: PlatformPerception;
   /**
-   * OPTIONAL selected-platform dialog `detect` patterns (`profile.dialogs[].detect`, v2.26
-   * DIALOG-01) — the trust-gate / permission-prompt / approval-overlay signatures. The dialog
+   * OPTIONAL selected-platform dialog `detect` patterns (`profile.dialogs[].detect`)
+   * — the trust-gate / permission-prompt / approval-overlay signatures. The dialog
    * detector consumes these as awaiting-input cues (a profile dialog IS awaiting-input), additive
-   * to the generic structural detection. Absent ⇒ the generic path (INV-1). Detection only; the
+   * to the generic structural detection. Absent ⇒ the generic path. Detection only; the
    * safe-only auto-answer (`decideAutoAnswer`) makes the keystroke decision downstream.
    */
   dialogDetects?: readonly RegExp[];
@@ -134,7 +133,7 @@ export interface ClassifierFrame {
  * The progress history the caller supplies (the classifier is pure — it does NOT
  * read a clock). `noProgressMs` is how long the screen has shown no progress
  * (output/cursor/diff), measured by the worker against its injected clock; `stuckMs`
- * is the operator's stuck threshold (OPS-04). Stuck is by PROGRESS, never elapsed
+ * is the operator's stuck threshold. Stuck is by PROGRESS, never elapsed
  * wall-clock of the session.
  */
 export interface FrameHistory {
@@ -175,7 +174,7 @@ export interface Classification {
  *     (`lastNonBlankRow <= PARK_ROW_TOLERANCE`), a cursor sitting ABOVE the last
  *     non-blank row (content still below it) parks ONLY if an operator `hintPattern`
  *     matches — closing the no-op hole where a tiny mid-generation frame would
- *     otherwise spuriously park (WR-04). A cursor genuinely at the bottom row is fine.
+ *     otherwise spuriously park. A cursor genuinely at the bottom row is fine.
  *
  * `hintPatterns` can only REINFORCE the line-has-text leg; they cannot satisfy the
  * row/column structure on their own, so a fake mid-screen "(y/n)" is rejected.
@@ -222,7 +221,7 @@ export function isCursorParked(
   const lineHasText = cursorLine.trim().length > 0;
   const hintMatches = hintPatterns.some((p) => p.length > 0 && cursorLine.includes(p));
 
-  // WR-04: the lower-bound "cursor mid-screen ABOVE content" rejection above is
+  // The lower-bound "cursor mid-screen ABOVE content" rejection above is
   // VACUOUS on a short screen — when `lastNonBlankRow <= PARK_ROW_TOLERANCE` the
   // threshold `lastNonBlankRow - PARK_ROW_TOLERANCE` is ≤ 0, so a cursor sitting
   // ABOVE the last non-blank row (the thinking-pause shape: content still rendered
@@ -248,7 +247,7 @@ export function isCursorParked(
 }
 
 // ---------------------------------------------------------------------------
-// The classifier (the §4.3 decision tree)
+// The classifier (the decision tree)
 // ---------------------------------------------------------------------------
 
 /** True iff any pattern matches the text — a selected-platform perception list. Empty/undefined ⇒ false. */
@@ -257,8 +256,8 @@ function matchesAnyPattern(text: string, patterns?: readonly RegExp[]): boolean 
 }
 
 /**
- * Classify a frame into `working | awaiting-input | exited | stuck` per the spec
- * §4.3 decision tree. Pure, total, never throws — biases to the SAFE direction
+ * Classify a frame into `working | awaiting-input | exited | stuck` per the
+ * decision tree above. Pure, total, never throws — biases to the SAFE direction
  * (`working`) whenever the prompt structure is not unambiguous.
  *
  * @param frame - The settle/diff signals + the render snapshot.
@@ -266,15 +265,15 @@ function matchesAnyPattern(text: string, patterns?: readonly RegExp[]): boolean 
  * @returns The typed {@link Classification}.
  */
 export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Classification {
-  // CLASSIFY-01: the selected platform profile's awaiting-input affordance patterns (or none — the
+  // The selected platform profile's awaiting-input affordance patterns (or none — the
   // generic path). `menuOrPicker` + `promptAffordance` FEED the structural dialog detector; the
-  // classifier remains the sole owner of `activity` (D4). `turnEnd` is deliberately EXCLUDED here
-  // (review WR-01): Claude's `⏺` turn bullet is also its per-tool-action bullet, so feeding it would
+  // classifier remains the sole owner of the activity decision. `turnEnd` is deliberately EXCLUDED
+  // here: Claude's `⏺` turn bullet is also its per-tool-action bullet, so feeding it would
   // over-fire awaiting-input on a mid-turn pause — the idle `❯` (promptAffordance) is the real cue;
-  // `turnEnd` stays populated for the §6-v2 structured-perception layer. Empty when no profile (INV-1).
+  // `turnEnd` stays populated for a future structured-perception layer. Empty when no profile.
   const perceptionAffordances: readonly RegExp[] = [
     ...(frame.perception ? [...(frame.perception.menuOrPicker ?? []), ...(frame.perception.promptAffordance ?? [])] : []),
-    ...(frame.dialogDetects ?? []), // DIALOG-01: a profile dialog (trust/permission/approval) IS awaiting-input
+    ...(frame.dialogDetects ?? []), // a profile dialog (trust/permission/approval) IS awaiting-input
   ];
   // 1. PTY exit — terminal; nothing more can render.
   if (!frame.alive) {
@@ -301,15 +300,15 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
     return { state: "awaiting-input", confidence: "high", reason: "settled_cursor_parked" };
   }
 
-  // 3.5. CLASSIFY-01: a SELECTED-platform working-line indicator (Claude spinner glyph+gerund /
+  // 3.5. A SELECTED-platform working-line indicator (Claude spinner glyph+gerund /
   //      Codex `Working (Ns)`) on a settled-but-UNPARKED frame that has made progress WITHIN the
   //      stuck window means the CLI is mid-work — a render that briefly stopped, NOT a prompt or a
   //      hang. Bias to `working` (pre-empts the dialog branch below). GATED on
-  //      `noProgressMs <= stuckMs` (review WR-02): a frame static for the WHOLE stuck window is hung
+  //      `noProgressMs <= stuckMs`: a frame static for the WHOLE stuck window is hung
   //      regardless of a leftover spinner glyph — letting it fall through to the stuck branch closes
   //      the hang-suppression hole (the daemon backstop derives `stuck` from this verdict and has no
   //      independent wall-clock timeout). A genuinely parked prompt already won at step 3; with no
-  //      profile this is a no-op (INV-1).
+  //      profile this is a no-op.
   if (
     history.noProgressMs <= history.stuckMs &&
     matchesAnyPattern(frame.snapshot.screen, frame.perception?.workingLine)
@@ -317,7 +316,7 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
     return { state: "working", confidence: "medium", reason: "working_line" };
   }
 
-  // 3b. CLASS-01: a settled, diff∅ frame whose STRUCTURE is unmistakably a full-screen
+  // 3b. A settled, diff∅ frame whose STRUCTURE is unmistakably a full-screen
   //     dialog/menu — even though the cursor is NOT parked. This is the documented
   //     claude-2.1.x shape: the prompt block (a box / an enumerated menu / a selector)
   //     renders ABOVE and the cursor sits on a blank input line BELOW it, so
@@ -325,29 +324,29 @@ export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Cl
   //     to `stuck`. The predicate is pure + structural + CLI-agnostic; `hintPatterns`
   //     reinforce a borderline selector only. Confidence is `medium` (the structural
   //     certainty of a parked cursor is `high`; this is the heuristic dialog branch).
-  //     No new classifier state — reuses `awaiting-input`. SEC-12 escalate-always still
-  //     gates the actual answer downstream (a dialog_detected frame routes through the
-  //     same decideAutoAnswer the wake-turn calls — I4 no-bypass).
+  //     No new classifier state — reuses `awaiting-input`. The escalate-always gate still
+  //     vets the actual answer downstream (a dialog_detected frame routes through the
+  //     same decideAutoAnswer the wake-turn calls — no bypass).
   if (frame.diffEmpty && detectsFullScreenDialog(frame.snapshot, frame.hintPatterns, perceptionAffordances)) {
     return { state: "awaiting-input", confidence: "medium", reason: "dialog_detected" };
   }
 
   // 4. Settled, no progress past the stuck window. Before declaring a hang, re-check the
-  //    interactive-affordance STRUCTURE — INDEPENDENT of `diffEmpty` (LIVE-02). The `diffEmpty`
+  //    interactive-affordance STRUCTURE — INDEPENDENT of `diffEmpty`. The `diffEmpty`
   //    gate on the awaiting-input branches (3/3b) keys on the attention emitter's edge-trigger
   //    anchor, which goes STALE for a backgrounded, idle drive: the worker runs settles only on
-  //    OUTPUT, so once a drive is promoted (DRIVE-02) and the CLI falls quiet, no settle
+  //    OUTPUT, so once a drive is promoted and the CLI falls quiet, no settle
   //    re-advances `lastClassifiedSnapshot`/`lastProgressMs`. The liveness backstop's
-  //    point-in-time `status` query (LIVE-01) then diffs the CURRENT settled prompt against that
+  //    point-in-time `status` query then diffs the CURRENT settled prompt against that
   //    stale baseline → `diffEmpty=false` → branches 3/3b are skipped → the frame falls here and
-  //    is mislabeled `stuck`, and the backstop re-escalates it every tick (real-VPS 2026-06-16:
+  //    is mislabeled `stuck`, and the backstop re-escalates it every tick (observed live:
   //    claude's idle `❯` input box with a status footer BELOW the cursor — isCursorParked missed
   //    it (footer below) AND the stale-anchor diff made diffEmpty=false). But noProgressMs >
   //    stuckMs PROVES the screen has been static for the WHOLE window, so a detected
   //    dialog/prompt/selector affordance is a SETTLED prompt awaiting input, NOT a hang (a
   //    still-GENERATING CLI emits output → progress → never reaches this branch). Only a static
-  //    frame with NO affordance is genuinely stuck. SEC-12 escalate-always still gates the answer
-  //    downstream (this routes through the SAME decideAutoAnswer as step 3b — I4 no-bypass).
+  //    frame with NO affordance is genuinely stuck. The escalate-always gate still vets the answer
+  //    downstream (this routes through the SAME decideAutoAnswer as step 3b — no bypass).
   if (history.noProgressMs > history.stuckMs) {
     if (detectsFullScreenDialog(frame.snapshot, frame.hintPatterns, perceptionAffordances)) {
       return { state: "awaiting-input", confidence: "medium", reason: "dialog_detected" };

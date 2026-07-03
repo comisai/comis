@@ -78,8 +78,9 @@ export function wrapToolResultWithGuide(
   // Rationale: if the first call to a guided tool errors (validation,
   // approval-required, etc.) and we mutate deliveredGuides here, a later
   // successful call finds the slot "consumed" and silently skips its guide.
-  // That's invisible and was the root cause of the NVDA team-agent session
-  // never seeing TOOL_GUIDES["agents_manage"]. Mutate only on success.
+  // That failure mode is invisible — the session simply never sees the
+  // guide (observed live with TOOL_GUIDES["agents_manage"]). Mutate only
+  // on success.
 
   // Step 1 — collect candidate guides (read-only on deliveredGuides)
   const toolGuide = getToolGuideWithSchema(toolName);

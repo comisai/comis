@@ -5,7 +5,7 @@
  * TIER: default CI / fast unit tier (no model, no dataset download, no store).
  * Runs over the tiny vendored neutral-placeholder fixture in __fixtures__/.
  *
- * The eval-integrity control (Test 1, the mandated RED test from Pitfall 1):
+ * The eval-integrity control (Test 1):
  * no emitted document's stringified `content` may contain the substring
  * "has_answer" — the fixture carries `has_answer: true` on one turn so a naive
  * `JSON.stringify(session)` would leak it and fail this test pre-strip.
@@ -84,9 +84,9 @@ describe("loadLongMemEval (one dated document per haystack session)", () => {
     for (const doc of docs) {
       expect(Number.isInteger(doc.createdAt)).toBe(true);
       expect(doc.createdAt).toBeGreaterThan(0);
-      // The per-doc questionId is dead (the harness keys on sessionId and
-      // resolves gold via answerSessionIdsByQuestion / questions[]). The doc no
-      // longer carries it, so the contract is not overstated.
+      // The doc carries no per-doc questionId (the harness keys on sessionId and
+      // resolves gold via answerSessionIdsByQuestion / questions[]), so the
+      // contract is not overstated.
       expect("questionId" in doc).toBe(false);
     }
     // session 1 (earlier date) < session 2 (later date)
@@ -111,8 +111,9 @@ describe("loadLongMemEval (judge category + gold answer side-channel)", () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     // The fixture carries `question_type: "single-session-user"` (:4) — the
-    // judge selects its per-category rubric from this. Pre-patch the field is
-    // dropped (the loader never read raw.question_type), so this is the RED case.
+    // judge selects its per-category rubric from this, so the loader must read
+    // raw.question_type and surface it as `category` (dropping it would silently
+    // route every question to the default rubric).
     expect(parsed.value.questions[0].category).toBe("single-session-user");
   });
 
@@ -121,7 +122,7 @@ describe("loadLongMemEval (judge category + gold answer side-channel)", () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     // The fixture carries `answer: "placeholder topic alpha"` (:6) — the judge
-    // grades the model answer against this gold. Pre-patch the field is dropped.
+    // grades the model answer against this gold, so the loader must surface it.
     expect(parsed.value.questions[0].answer).toBe("placeholder topic alpha");
   });
 
@@ -149,7 +150,7 @@ describe("loadLongMemEval (judge category + gold answer side-channel)", () => {
   });
 
   it("ANTI-LEAK: category/answer are NOT spliced into docs[].content", () => {
-    // The invariant is that the new `category`/`answer` side-channels stay on
+    // The invariant is that the `category`/`answer` side-channels stay on
     // the questions[] channel and are NEVER concatenated into doc.content —
     // content must remain byte-identical to JSON.stringify(stripHasAnswer(turns)).
     // (Note: the gold-answer PHRASE legitimately occurs inside the haystack

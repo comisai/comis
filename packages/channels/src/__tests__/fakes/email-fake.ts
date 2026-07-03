@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeEmailAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the Email DigestOnly renderer (§18.3 "fake adapter records every method call").
+ * the Email DigestOnly renderer; it records every method call.
  *
  * Mirrors `createFakeIMessageAdapter` (the send-only template) but for the
  * DigestOnly shape:
  *   - mints `email-msg-N` ids (Email's determinism source for byte-stable
- *     fixtures — Pitfall 2; clock-free, no wall-time call that would flap),
+ *     fixtures; clock-free, no wall-time call that would flap),
  *   - records NO `silent` flag on `send` (Email does not send a silent effect —
  *     DigestOnly emits at most one plain end-of-turn digest body), and
  *   - OMITS `editMessage` / `deleteMessage` entirely. Email is send-only; the

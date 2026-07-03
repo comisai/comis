@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs-explain-heuristics` — the deterministic root-cause heuristic registry
- * (Phase 153 centerpiece, X3).
+ * `obs-explain-heuristics` — the deterministic root-cause heuristic registry.
  *
  * An ordered, first-match-wins `ReadonlyArray<(IncidentSignals) => RootCause |
  * null>`. PURE: no LLM, no I/O, no globals — a post-mortem reproduces the same
  * `likelyRootCause` from the same log evidence forever. The registry keys ONLY
  * on the derived booleans/strings `toIncidentSignals` already computed from log
- * evidence (the 678 fixture has ZERO Phase-150 provenance fields, so the
+ * evidence (the 678 fixture has ZERO provenance fields, so the
  * misclassification signal is derived from `success:true` + repeated
  * `"Tool execution failed"` + a status/200/403 token in a failure body — never
  * from `classifiedFailureBy`).
@@ -17,35 +16,35 @@
  *      tripped on the MISCLASSIFIED successes ("DO NOT retry" is present too),
  *      so the misclassification must out-rank the breaker: it is upstream, the
  *      breaker is the downstream symptom.
- *   2. spend_exceeded (LIVE v2.28 260621) — the dollars kill-switch is an
+ *   2. spend_exceeded — the dollars kill-switch is an
  *      ADMINISTRATIVE pre-emption that aborts at admission, causally INDEPENDENT
  *      of tool failures (tool FAILURES return ~0 bytes / ~$0 and cannot drive
  *      cumulative spend). A live VPS incident showed a spend-killed session
  *      root-causing to the chronic breaker below — masking the acute kill that
  *      now blocks every new turn. So it sits ABOVE the breaker/degradation
- *      heuristics but BELOW #1 (the X3-frozen misclassification). Keyed on
+ *      heuristics but BELOW #1 (the frozen misclassification). Keyed on
  *      endReason "spend_exceeded" (frozen fixtures carry it not).
  *   3. breaker_opened_repeated_failure — the 503 root cause: a real transport
  *      failure (HTTP 503 → "overloaded") repeated until the per-tool breaker
  *      opened. The 503 has NO misclassification signal, so it falls through to
  *      here.
- *   3. tool_schema_unsupported (GBNF-02, Phase 175) — an acute, deterministic
+ *   3. tool_schema_unsupported — an acute, deterministic
  *      provider-schema rejection: upstream of any terminal state (out-ranks
- *      context_exhausted/output_starved) but downstream of the two X3-mandated
- *      codes, whose frozen fixtures carry no schema-rejection records (cannot
+ *      context_exhausted/output_starved) but downstream of the two frozen-fixture
+ *      codes, whose fixtures carry no schema-rejection records (cannot
  *      regress them). Fires only when the one-shot strip-retry did NOT
  *      recover — a recovered repair is evidence, not a verdict.
  *   4. context_bloat / exec_dependency / provider_timeout — three low-risk
- *      "insurance" codes that broaden 156/G1 corpus coverage. They never fire on
- *      the two X3 fixtures (the two above match first), so they cannot regress
- *      the phase-done gate.
- *   5. context_exhausted / output_starved (QT2/QT3 — the Glass Box degradation
- *      detectors) — the two NAMED terminal-state causes. They key on the
+ *      "insurance" codes that broaden corpus coverage. They never fire on
+ *      the two frozen fixtures (the two above match first), so they cannot
+ *      regress them.
+ *   5. context_exhausted / output_starved — the two NAMED terminal-state
+ *      degradation causes. They key on the
  *      metadata-derived `endReason` (threaded onto the signals by the handler),
  *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
  *      the terminal state and out-ranks them. They fire only when the run's
  *      mapped endReason IS the cause, and never on a clean session.
- *   6. prompt_timeout (LAT-04, Phase 177) / spend_exceeded (WR-4, 177-obs-loop) —
+ *   6. prompt_timeout / spend_exceeded —
  *      the NAMED terminal latency + SPEND causes, keyed on endReason "timeout" /
  *      "spend_exceeded". Same terminal band as #5 (the endReason keys are mutually
  *      exclusive); every tool-failure cause out-ranks them. prompt_timeout is
@@ -53,7 +52,8 @@
  *      in the sibling obs-explain-spend-verdict.ts. The frozen 678/503 fixtures
  *      carry neither endReason — cannot regress them.
  *
- * The two X3-mandated codes are #1 and #2; phase-done gates ONLY on X1/X2/X3.
+ * The frozen 678/503 fixtures pin codes #1 and #2; every later rule must leave
+ * their verdicts unchanged.
  *
  * @module
  */
@@ -67,16 +67,15 @@ import {
   breakerTool,
   hasModuleNotFound,
 } from "./obs-explain-heuristics-helpers.js";
-// OBS-02 (Phase 201): the two BENIGN learning verdicts (sibling — subdir cap).
-// userModelRevisedVerdict was deleted in Phase 226 (its 0-emit signal was removed).
+// The two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
-import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // WR-4: NAMED spend verdict (sibling — subdir cap)
-import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // RECALL-01 (sibling — subdir cap)
+import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
+import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
-import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // EVICT-01 reaper-killed drive (sibling — subdir cap)
+import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 
 // ---------------------------------------------------------------------------
-// Public shape: matches IncidentReport.likelyRootCause 1:1 (Plan 01).
+// Public shape: matches IncidentReport.likelyRootCause 1:1.
 // ---------------------------------------------------------------------------
 
 /**
@@ -95,7 +94,7 @@ export interface RootCause {
 
 /**
  * The ordered root-cause registry. First predicate to return a non-null
- * `RootCause` wins. Order is the X3 contract — see the module doc.
+ * `RootCause` wins. Order is a load-bearing contract — see the module doc.
  */
 export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null> = [
   // 1) content_heuristic_misclassification (678 — ROOT over the breaker symptom).
@@ -120,7 +119,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 2) spend_exceeded (LIVE v2.28 260621 — the dollars kill-switch is an
+  // 2) spend_exceeded (the dollars kill-switch is an
   //    ADMINISTRATIVE pre-emption at admission, NOT a downstream symptom of tool
   //    failures. Tool FAILURES return ~0 bytes / ~$0 and cannot drive cumulative
   //    spend, so the ceiling is causally INDEPENDENT of them. A live VPS incident
@@ -128,7 +127,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    ceiling, but the verdict reported breaker_opened_repeated_failure — chronic
   //    noise masking the acute kill that now blocks EVERY new turn. So it
   //    out-ranks the breaker/dependency/timeout/degradation heuristics below, but
-  //    stays BELOW #1, the X3-frozen misclassification verdict. Keyed strictly on
+  //    stays BELOW #1, the frozen misclassification verdict. Keyed strictly on
   //    endReason "spend_exceeded" (frozen 678/503 fixtures carry it not).
   spendExceededVerdict,
 
@@ -156,17 +155,17 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 3) tool_schema_unsupported (GBNF-02 — acute provider-schema rejection at
+  // 3) tool_schema_unsupported (acute provider-schema rejection at
   //    grammar-compile/unmarshal time). Fires ONLY on an UNRECOVERED one-shot
-  //    strip-retry: a recovered repair is evidence, not a verdict (T-175-19).
+  //    strip-retry: a recovered repair is evidence, not a verdict.
   //    Detail is assembled solely from Comis-registry tool names + the closed
-  //    keyword names — the signal carries no body fields by construction
-  //    (T-175-17). The WR-05 reason discriminator branches the wording: the
-  //    gate-closed terminal previously emitted the same payload as
+  //    keyword names — the signal carries no body fields by construction.
+  //    The reason discriminator branches the wording: the
+  //    gate-closed terminal would otherwise emit the same payload as
   //    nothing-to-strip, so a session that healed once and then hit the gate
-  //    produced a verdict claiming "nothing strippable" when stripping WAS
+  //    would produce a verdict claiming "nothing strippable" when stripping WAS
   //    performed earlier — the exact wrong-way pointer the troubleshooting
-  //    doctrine forbids. Absent reason (pre-WR-05 records) falls back to the
+  //    doctrine forbids. An absent reason falls back to the
   //    retried-based wording.
   (s) => {
     if (!s.toolSchemaUnsupported || s.toolSchemaUnsupported.succeeded) return null;
@@ -254,21 +253,21 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 7) context_exhausted (QT2 — the NAMED terminal degradation cause). Keyed on
+  // 7) context_exhausted (the NAMED terminal degradation cause). Keyed on
   //    the metadata-derived endReason, NOT a tool failure — so it sits BELOW the
   //    tool-failure rules above (a misclassification/breaker/dependency/timeout
   //    cause is upstream of, and out-ranks, the terminal state). Fires only when
   //    the run's mapped endReason IS the context-exhaustion cause.
   //
-  //    W3 (obs-llm-troubleshooting): when the trajectory carries the per-call
-  //    budget equation (`signals.contextBudget`, from the W2 context.budget
+  //    When the trajectory carries the per-call
+  //    budget equation (`signals.contextBudget`, from the context.budget
   //    event), the verdict is NUMBERS-BACKED — assembled vs window, the exact
   //    contextEngine.budget.* knob that clamped the window, the system+tools
-  //    share, and the kept-history count. The old static text speculated about
-  //    the summarizer/compaction and pointed at summarizerSpend, which actively
-  //    misdirected the live qwen3.6 incident (the real cause was the small-class
+  //    share, and the kept-history count. A generic static text that speculated
+  //    about the summarizer/compaction and pointed at summarizerSpend actively
+  //    misdirected a live qwen3.6 incident (the real cause was the small-class
   //    32K cap + 83 tool schemas at 80% of the window). The generic text remains
-  //    ONLY as the fallback for pre-W2 sessions with no budget evidence.
+  //    ONLY as the fallback for sessions with no budget evidence.
   (s) => {
     if (s.endReason !== "context_exhausted") return null;
     const b = s.contextBudget;
@@ -276,17 +275,17 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       const capped = b.windowCapSource !== "none";
       const systemSharePct =
         b.windowTokens > 0 ? Math.round((b.systemTokens / b.windowTokens) * 100) : 0;
-      // KNOB-02 (Phase 176): "served" is NOT a contextEngine.budget.* knob —
+      // "served" is NOT a contextEngine.budget.* knob —
       // templating it would render a nonsense config key (the union member name
       // suffixed onto the knob prefix) and misdirect the operator. The served
       // branch names the failure class (Ollama served a smaller window than
       // configured); the real knobs are in the suggested step below.
-      // WR-01: "capabilityClass" is ALSO not a budget knob — the executor-side
+      // "capabilityClass" is ALSO not a budget knob — the executor-side
       // DEFAULT_EFFECTIVE_CAP_BY_CLASS cap reads only the operator's
       // providers.entries.<id>.capabilities.capabilityClass pin, so the verdict
       // must name the PIN ("raise contextEngine.budget.effectiveContextCapSmall"
-      // changes nothing on that branch — the dead-knob misdirection this phase
-      // exists to kill). The genuine budget-knob branch stays byte-identical.
+      // changes nothing on that branch — the dead-knob misdirection this branch
+      // exists to prevent). The genuine budget-knob branch stays byte-identical.
       const capClause = capped
         ? (b.windowCapSource === "served"
             ? ` (model contextWindow ${String(b.rawContextWindowTokens)} but Ollama served a smaller window)`
@@ -331,7 +330,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 8) output_starved (QT3 — the NAMED terminal output-truncation cause). Same
+  // 8) output_starved (the NAMED terminal output-truncation cause). Same
   //    lowest-priority placement as context_exhausted: it explains the terminal
   //    state, so any tool-failure cause out-ranks it. Fires only when the mapped
   //    endReason IS the output-starvation cause (a terminal output-cap truncation
@@ -350,15 +349,16 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 9) prompt_timeout (LAT-04, Phase 177 — the NAMED terminal latency cause).
+  // 9) prompt_timeout (the NAMED terminal latency cause).
   //    Keyed on the metadata-derived endReason (END_REASON_MAP prompt_timeout →
-  //    "timeout", 177-04), NOT a tool failure — sits BELOW the tool-failure
-  //    rules: a session that died on a prompt timeout with CLEAN tools used to
-  //    fall through to NO verdict (rule 6 provider_timeout requires a tool
-  //    failure — research Critical Finding 7 point 6). Numbers-backed from the
+  //    "timeout"), NOT a tool failure — sits BELOW the tool-failure
+  //    rules: a session that died on a prompt timeout with CLEAN tools would
+  //    otherwise fall through to NO verdict (rule 6 provider_timeout requires a
+  //    tool failure). Numbers-backed from the
   //    enriched execution.prompt_timeout signal when present; bindingKnob is
   //    the PRE-RENDERED config-key string from the agent-side source→knob
-  //    table (never re-templated here — the KNOB-02 discipline; the only local
+  //    table (never re-templated here — templating a non-key source name would
+  //    render a nonsense knob; the only local
   //    templating is the agents.<id>.promptTimeout.* fallback, a REAL key
   //    family). Cannot regress the frozen 678/503 fixtures (no prompt_timeout
   //    records, no endReason "timeout" in them).
@@ -383,11 +383,11 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       if (t.limit === undefined) {
         // Whole-turn retry kill (`limit` ABSENT): rotation/fallback/short-
         // retry prompts race the NON-resettable retryPromptTimeoutMs — never
-        // framed as a stall kill, and the lever is the RETRY knob (177-REVIEW
-        // WR-01; the same branch the agent-side classify hint takes). The
+        // framed as a stall kill, and the lever is the RETRY knob (the same
+        // branch the agent-side classify hint takes). The
         // retry knob is a REAL agents.* key family, so local templating is
-        // sanctioned (the KNOB-02 fallback discipline) — deliberately NOT
-        // t.bindingKnob: pre-WR-01 rows on disk carry the wrong
+        // sanctioned — deliberately NOT
+        // t.bindingKnob: rows on disk can carry the wrong
         // promptTimeoutMs knob for exactly this class.
         return {
           code: "prompt_timeout",
@@ -414,8 +414,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
         ],
       };
     }
-    // Pre-extension session (endReason "timeout" but no enriched record on the
-    // trajectory): still name the cause, suggest the knob FAMILY, invent no numbers.
+    // No enriched record on the trajectory (endReason "timeout" only): still
+    // name the cause, suggest the knob FAMILY, invent no numbers.
     return {
       code: "prompt_timeout",
       detail: "prompt timed out (no enriched timeout record — pre-extension session)",
@@ -426,7 +426,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 9c) recall_miss (RECALL-01). A DEGRADED session whose memory recalls ALL
+  // 9c) recall_miss. A DEGRADED session whose memory recalls ALL
   //     returned zero injected memories AND that matched no tool/context/breaker
   //     cause above — the agent ran with no memory context. Low-noise by
   //     construction: requires EVERY recall to have missed (zeroHits === recalls),
@@ -443,7 +443,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     never fires on a non-terminal session (no 678/503 regression). Sibling file.
   terminalDriveNoTaskVerdict,
 
-  // 9e) terminal_drive_evicted (EVICT-01) — a durable drive was reaped by the idle-TTL or
+  // 9e) terminal_drive_evicted — a durable drive was reaped by the idle-TTL or
   //     wall-clock cap, cutting a (possibly still-working) autonomous drive short. AFTER
   //     9d: a drive opened-but-never-tasked THEN idle-reaped is rooted in the no-task
   //     stall (the eviction is its consequence); ABOVE the catch-all: a reaper kill is a
@@ -458,7 +458,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     above (not misclassification, breaker, schema-strip, context-bloat,
   //     module-not-found, or timeout) used to fall through to a NULL verdict —
   //     comis explain captured the per-tool {ok,failed} but root-caused nothing
-  //     (live C13 finding, 2026-06-12: memory_get + image_analyze both failed
+  //     (a live finding: memory_get + image_analyze both failed
   //     with errorKind=dependency on bad input). Keys on ACTUAL failures, never
   //     the endReason label alone, so a `completed_with_tool_errors` end state
   //     with no failure records (a degenerate/contradictory signal) still names
@@ -482,11 +482,10 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
 
   // 11/12) the BENIGN learning verdicts (sibling): after the acute tier, before #13
   // (specific-over-generic, yet Defer ≠ Retry — never masks an acute error).
-  // (userModelRevisedVerdict was deleted in Phase 226 with its 0-emit signal.)
   learnedSkillFailingVerdict,
   synthesisAbstainedVerdict,
 
-  // 13) outcome_unresolved (OBS-02, Phase 198 — LOWEST-priority, BENIGN, the
+  // 13) outcome_unresolved (LOWEST-priority, BENIGN, the
   //     generic learning catch-all). A finished trajectory the learning shadow saw
   //     but where NO signal tier resolved an outcome AND neither skill verdict
   //     fired. Defer ≠ Retry: dead-last (every acute cause + the two skill verdicts

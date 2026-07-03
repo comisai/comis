@@ -75,10 +75,10 @@ export interface HookRunner {
 /**
  * Options for creating a hook runner.
  *
- * The `hook:executed` observability event was removed (zero non-test
- * subscribers). The `eventBus` option remains for the live `audit:event`
- * emission via `emitAuditEvent` which fires when modifying hooks alter
- * agent prompts or delivery payloads.
+ * The `eventBus` option exists solely for the `audit:event` emission via
+ * `emitAuditEvent`, which fires when modifying hooks alter agent prompts or
+ * delivery payloads. There is deliberately no per-execution hook event —
+ * hook execution itself has no production subscribers to notify.
  */
 export interface HookRunnerOptions {
   /** Catch and log hook handler errors instead of propagating (default: true). */

@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for the per-`rootRunId` aggregate budget meter (Phase 213-04,
- * BUDGET-01/02/03).
+ * Contract for the per-`rootRunId` aggregate budget meter.
  *
  * The cost-bound limb of the bounded-autonomy floor: three limbs that abort a
  * self-spawning loop on ANY of $ / token / wall-clock. The $-limb REUSES the
- * shipped v2.28 3-state pricing gate (`checkSpendCeiling` + `resolvePricingState`)
+ * 3-state pricing gate (`checkSpendCeiling` + `resolvePricingState`)
  * VERBATIM — re-scoped to the `rootRunId` (scope `{ tenantId: "_root", agentId:
- * rootRunId }`) — so BUDGET-02 (unknown=uncountable, not $0) + BUDGET-03 (the
- * $-cap REFUSES on unknown pricing, fail-closed) are inherited, not re-implemented.
+ * rootRunId }`) — so the unknown=uncountable (not $0) behavior and the
+ * fail-closed $-cap refusal on unknown pricing are inherited, not re-implemented.
  * The NET-NEW value is (a) the per-root scope, (b) a token limb, (c) a per-root
- * wall-clock deadline — the three that bite a zero-price (subscription/Codex)
+ * wall-clock deadline — the three that bite a zero-price (subscription)
  * native-provider loop where the $-cap cannot.
  *
  * Pins:
@@ -20,7 +19,7 @@
  *     `clock.now() - startMs > wallClockMs` (FakeClock-driven, no Date.now),
  *   - the zero-price model (anthropic native + no catalog entry → "unknown"):
  *     the $-limb returns `unpriceable` (NOT $0), AND the token/wall-clock limbs
- *     STILL enforce — the BUDGET-02 invariant,
+ *     STILL enforce,
  *   - the free model (ollama → "free"): the $-limb never trips, but the
  *     token/wall-clock limbs STILL apply (a free model is not DoS-immune to time),
  *   - the priced reserve: under the caps → ok; over the $-cap → exceeded,
@@ -38,7 +37,7 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createPerRootBudget, type PerRootBudget } from "./per-root-budget.js";
 
 // Pricing-state fixtures (verified against resolvePricingState at HEAD):
-//   anthropic + a no-catalog model → "unknown" (the ffe11736 zero-price chimera)
+//   anthropic + a no-catalog model → "unknown" (the zero-price chimera)
 //   ollama + anything             → "free" (gateway/local — $0 is honest)
 //   anthropic + a catalog model    → "priced"
 const ZERO_PRICE_PROVIDER = "anthropic";
@@ -65,7 +64,7 @@ function makeBudget(
   return { budget, clock };
 }
 
-describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate (BUDGET-01/02/03)", () => {
+describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate", () => {
   it("trips the per-root token limb when the accumulated token total exceeds the cap", () => {
     const { budget } = makeBudget({ tokens: 1000 });
     budget.registerRoot("root-T");
@@ -101,8 +100,8 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
     }
   });
 
-  it("surfaces unpriceable for a zero-price native model while the token and wall-clock limbs still enforce (BUDGET-02/03)", () => {
-    // The ffe11736 case: a native provider with no catalog entry burning tokens.
+  it("surfaces unpriceable for a zero-price native model while the token and wall-clock limbs still enforce", () => {
+    // The zero-price chimera case: a native provider with no catalog entry burning tokens.
     const { budget, clock } = makeBudget({ tokens: 1000, wallClockMs: 60_000 });
     budget.registerRoot("root-Z");
 
@@ -165,12 +164,12 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
   });
 
   // -------------------------------------------------------------------------
-  // WR-05 (213-REVIEW): the per-root wall-clock anchor + token-total maps must
+  // The per-root wall-clock anchor + token-total maps must
   // be evictable so a for(;;)spawn / cron storm of distinct roots does not grow
   // them without bound. evictRoot clears a completed root's accounting; a later
   // re-registration starts fresh.
   // -------------------------------------------------------------------------
-  it("evictRoot clears a root's token total and wall-clock anchor so the maps do not grow unbounded (WR-05)", () => {
+  it("evictRoot clears a root's token total and wall-clock anchor so the maps do not grow unbounded", () => {
     const wallClockMs = 60_000;
     const { budget, clock } = makeBudget({ tokens: 1000, wallClockMs });
     budget.registerRoot("root-E");
@@ -200,12 +199,12 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
   });
 
   // -------------------------------------------------------------------------
-  // IN-02 (213-REVIEW): the wall-clock limb must bound an UNREGISTERED root too
+  // The wall-clock limb must bound an UNREGISTERED root too
   // — the first reserve persists the anchor, so a later call past the deadline
-  // trips. Pre-fix, an unregistered root re-anchored at now() every call, so the
-  // wall-clock limb was permanently inert for it.
+  // trips. Without this, an unregistered root re-anchors at now() every call, so
+  // the wall-clock limb stays permanently inert for it.
   // -------------------------------------------------------------------------
-  it("anchors the wall-clock deadline on the FIRST reserve for an unregistered root so the limb can still fire (IN-02)", () => {
+  it("anchors the wall-clock deadline on the FIRST reserve for an unregistered root so the limb can still fire", () => {
     const wallClockMs = 60_000;
     // NOTE: no registerRoot — the root is unregistered (e.g. holder absent at
     // resolver time). High token cap so ONLY the wall-clock limb can trip.
@@ -217,22 +216,22 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
     // Advance PAST the deadline measured from that first call.
     clock.advance(wallClockMs + 1);
 
-    // The wall-clock limb now fires (it would NOT have, pre-fix, because each
-    // call re-anchored at now() leaving elapsedMs ~0).
+    // The wall-clock limb now fires — without the persisted anchor each call
+    // would re-anchor at now(), leaving elapsedMs ~0 and the limb inert.
     expect(budget.reserveBudget("root-U", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).toBe("exceeded");
   });
 
   // -------------------------------------------------------------------------
-  // INTRO-01 (Phase 215-02): a PURE `remaining(rootRunId)` read accessor — the
-  // numbers the `capabilities.introspect` / `whoami` RPC reports. The 213 gate
-  // tracks `tokenTotals`/`rootStartMs`/the per-root $ accumulator internally but
-  // exposed NO read surface (RESEARCH Pitfall 3). `remaining` exposes the live
-  // remaining token / wall-clock / $ headroom as a READ-ONLY view: no mutation,
-  // no anchor write, no window reset (Pitfall 3 / T-215-05). The $ limb is a REAL
-  // number from the SAME `perRootUsdAccumulator` the gate enforces against (A3
-  // RESOLVED — not null), so the read matches the gate (T-215-06).
+  // A PURE `remaining(rootRunId)` read accessor — the numbers the
+  // `capabilities.introspect` / `whoami` RPC reports. The gate tracks
+  // `tokenTotals`/`rootStartMs`/the per-root $ accumulator internally but
+  // exposes NO write on this read path. `remaining` exposes the live remaining
+  // token / wall-clock / $ headroom as a READ-ONLY view: no mutation, no anchor
+  // write, no window reset. The $ limb is a REAL number from the SAME
+  // `perRootUsdAccumulator` the gate enforces against (not null), so the read
+  // matches the gate.
   // -------------------------------------------------------------------------
-  it("remaining(rootRunId) reports tokens/wall-clock/$ remaining as live deltas after a priced reserve (INTRO-01, A3: $ is a REAL number)", () => {
+  it("remaining(rootRunId) reports tokens/wall-clock/$ remaining as live deltas after a priced reserve", () => {
     // aggregateUsd 10, tokens 1000, wallClock 60_000. A priced model so the $
     // accumulator records a real consumed amount (NOT free/unpriceable).
     const { budget, clock } = makeBudget({ aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 });
@@ -250,12 +249,12 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
     expect(r.tokensRemaining).toBe(900);
     // Wall-clock limb: 60_000 - 10_000 elapsed (FakeClock-driven).
     expect(r.wallClockMsRemaining).toBe(50_000);
-    // $ limb: 10 - 4 consumed — a REAL number from the accumulator snapshot, NOT null (A3).
+    // $ limb: 10 - 4 consumed — a REAL number from the accumulator snapshot, NOT null.
     expect(r.usdRemaining).not.toBeNull();
     expect(r.usdRemaining).toBeCloseTo(6, 10);
   });
 
-  it("remaining() is a PURE read — it does not mutate the token total or anchor a window (T-215-05)", () => {
+  it("remaining() is a PURE read — it does not mutate the token total or anchor a window", () => {
     const wallClockMs = 60_000;
     const { budget, clock } = makeBudget({ tokens: 1000, wallClockMs });
     budget.registerRoot("root-PURE");
@@ -277,7 +276,7 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
     expect(budget.reserveBudget("root-PURE", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).toBe("exceeded");
   });
 
-  it("remaining() for an UNREGISTERED root returns the full allowance without anchoring a window (T-215-05)", () => {
+  it("remaining() for an UNREGISTERED root returns the full allowance without anchoring a window", () => {
     const wallClockMs = 60_000;
     const { budget, clock } = makeBudget({ aggregateUsd: 10, tokens: 1000, wallClockMs });
 

@@ -273,10 +273,10 @@ describe("classifyRpcError", () => {
     expect(result.hint).toBeTruthy();
   });
 
-  it("classifies SandboxDowngradeError as precondition error (warn level) — OBS-RPC-REFUSAL-CLASS", () => {
+  it("classifies SandboxDowngradeError as precondition error (warn level)", () => {
     // A fail-closed P0-C no-downgrade spawn refusal is an EXPECTED security precondition
     // failure, NOT an internal handler fault — it must classify warn/precondition so a
-    // fleet health sweep does not read it as an ERROR (orchestration-excellence-20260701).
+    // fleet health sweep does not read it as an ERROR.
     // The daemon classifies by Error.name (via @comis/core classifyTypedRpcError) — it no
     // longer imports the @comis/agent class. Construct exactly what the dispatch layer sees.
     const e = new Error('Spawn refused: child "x" sandbox posture is less confined than parent "p" on: exec.');
@@ -294,7 +294,7 @@ describe("classifyRpcError", () => {
     expect(result.hint).toBeTruthy();
   });
 
-  // OBS-10 (reflect-obs-20260627): an admin-trust denial is an EXPECTED authorization refusal, not an
+  // An admin-trust denial is an EXPECTED authorization refusal, not an
   // internal/handler fault — auth/warn, so an operator's wrong-trust call doesn't read as a fleet ERROR.
   it("classifies AuthorizationError as auth error (warn level), NOT internal/error", () => {
     const result = classifyRpcError(new AuthorizationError("Admin access required for obs.explain (admin-trust only)"));
@@ -579,11 +579,11 @@ describe("createRpcDispatch", () => {
   });
 
   // -----------------------------------------------------------------------
-  // WR-04: image.analyze (and other base64-bearing media methods) MUST NOT
+  // image.analyze (and other base64-bearing media methods) MUST NOT
   // log the raw base64 source/image/video bytes on a throw branch.
   // -----------------------------------------------------------------------
 
-  it("WR-04: image.analyze handler error — dispatcher must NOT emit the raw base64 source in the log payload", async () => {
+  it("image.analyze handler error — dispatcher must NOT emit the raw base64 source in the log payload", async () => {
     // The dispatcher logs `params` on every thrown handler error. For
     // image.analyze with source_type:"base64", params.source is the raw base64
     // image — Pino key-name redaction (apiKey/token/…) does NOT cover `source`,
@@ -614,14 +614,14 @@ describe("createRpcDispatch", () => {
       mockLogger.error.mock.calls[0] ?? mockLogger.warn.mock.calls[0];
     expect(logCall).toBeDefined();
     const logSerialized = JSON.stringify(logCall![0]);
-    // WR-04: the base64 bytes must be absent from the log payload.
+    // The base64 bytes must be absent from the log payload.
     expect(logSerialized).not.toContain(BASE64_SENTINEL);
     // The method + a non-binary param (prompt is small; kept) still aid triage,
     // but the load-bearing assertion is that the bytes are gone.
     expect(logSerialized).toContain("image.analyze");
   });
 
-  it("WR-04: a NON-media method still logs its params (the strip is scoped, not global)", async () => {
+  it("a NON-media method still logs its params (the strip is scoped, not global)", async () => {
     // Regression guard: the binary-strip must not eat ordinary RPC params —
     // only the known base64-bearing media methods are projected.
     const ID_SENTINEL = "cron-job-id-WR04-still-logged";
@@ -645,7 +645,7 @@ describe("createRpcDispatch", () => {
   });
 
   // -----------------------------------------------------------------------
-  // ORIGIN-01: the single deny-by-origin chokepoint in the dispatch closure.
+  // The single deny-by-origin chokepoint in the dispatch closure.
   //
   // CRITICAL: these tests call dispatch() DIRECTLY — i.e. they exercise the
   // IN-PROCESS dispatch path the agent's call actually traverses
@@ -665,7 +665,7 @@ describe("createRpcDispatch", () => {
       .map((c: unknown[]) => c[1] as Record<string, unknown>);
   }
 
-  it("ORIGIN-01: a NON-admin _agentId-carrying admin call on the IN-PROCESS dispatch path is denied + audited (the confused-deputy floor)", async () => {
+  it("a NON-admin _agentId-carrying admin call on the IN-PROCESS dispatch path is denied + audited (the confused-deputy floor)", async () => {
     const dispatch = await getDispatch();
     // secrets.set is admin-scoped. _trustLevel:"user" is a NON-admin agent turn —
     // deny-by-origin must fire (a guest/user/prompt-injected turn can never reach
@@ -681,7 +681,7 @@ describe("createRpcDispatch", () => {
     expect(audits[0]!.actionType).toBe("secrets.set");
   });
 
-  it("ORIGIN-01 (trust-tier, 30uc-20260624): an ADMIN-trust agent reaches an admin method (inherits the admin user's privileges, no deny audit)", async () => {
+  it("trust-tier: an ADMIN-trust agent reaches an admin method (inherits the admin user's privileges, no deny audit)", async () => {
     const dispatch = await getDispatch();
     // The agent acts for an admin-trust user (operator's senderTrustMap grant) →
     // it INHERITS admin and the deny-by-origin chokepoint passes it through to the
@@ -693,7 +693,7 @@ describe("createRpcDispatch", () => {
     expect(denials).toHaveLength(0);
   });
 
-  it("ORIGIN-01: the chokepoint denies a NON-admin agent across ≥3 DIFFERENT admin scope families (whole admin set, not a subset)", async () => {
+  it("the chokepoint denies a NON-admin agent across ≥3 DIFFERENT admin scope families (whole admin set, not a subset)", async () => {
     // Three admin methods from distinct domains: secrets.*, auth.*, mcp.* —
     // all contract-declared `scopes:["admin"]` and present in the mock maps. A
     // NON-admin agent origin (user trust) is denied on all of them.
@@ -711,7 +711,7 @@ describe("createRpcDispatch", () => {
     }
   });
 
-  it("ORIGIN-01 (Pitfall 2): a NON-admin self-scoped method with _agentId PASSES the chokepoint (agent self-reads still work)", async () => {
+  it("a NON-admin self-scoped method with _agentId PASSES the chokepoint (agent self-reads still work)", async () => {
     const dispatch = await getDispatch();
     // cron.list is scopes:["rpc"] (NON-admin) — the agent's own _agentId rides
     // it for tenant self-scoping and must NOT be denied. The chokepoint keys on
@@ -724,7 +724,7 @@ describe("createRpcDispatch", () => {
     expect(denials).toHaveLength(0);
   });
 
-  it("ORIGIN-01: an admin method WITHOUT _agentId (operator/gateway origin) passes the deny-by-origin chokepoint", async () => {
+  it("an admin method WITHOUT _agentId (operator/gateway origin) passes the deny-by-origin chokepoint", async () => {
     const dispatch = await getDispatch();
     // No _agentId == operator/gateway origin. The chokepoint must NOT throw the
     // deny-by-origin error (the mocked handler resolves normally).
@@ -736,7 +736,7 @@ describe("createRpcDispatch", () => {
   });
 
   // -----------------------------------------------------------------------
-  // 210-GAP CR-01/MD-01: the deny-by-origin chokepoint must NOT swallow an
+  // The deny-by-origin chokepoint must NOT swallow an
   // agent's OWN granted orchestration surface (message.send/reply/react +
   // skills.* mutating) nor its agent-self reads (message.fetch, session.list/
   // compact/reset). These are the orchestration plane the capability gate
@@ -744,12 +744,12 @@ describe("createRpcDispatch", () => {
   // call through the REAL createRpcDispatch closure and asserts it REACHES the
   // mocked handler (resolves), NOT a deny-by-origin throw.
   //
-  // This closes the test-layer gap the 210-REVIEW identified: the chokepoint
+  // This closes a test-layer gap: the chokepoint
   // (rpc-dispatch.test) and the per-handler cap gate (message-handlers.test)
   // were tested in two separate layers that never met — no test dispatched an
-  // _agentId-bearing call to an orch method through the full closure. RED on
-  // pre-fix HEAD (these methods are scopes:["admin"] → in ADMIN_METHODS →
-  // assertNotAgentOrigin throws before the handler).
+  // _agentId-bearing call to an orch method through the full closure. It fails
+  // if these methods are scopes:["admin"] → in ADMIN_METHODS →
+  // assertNotAgentOrigin throws before the handler.
   // -----------------------------------------------------------------------
 
   /** The orch-gated/agent-read methods that MUST stay reachable from an agent origin. */
@@ -774,7 +774,7 @@ describe("createRpcDispatch", () => {
     "session.reset",
   ];
 
-  it("210-GAP CR-01: an agent-origin call to its OWN orch-gated method (with the cap held) REACHES the handler, not a deny-by-origin throw", async () => {
+  it("an agent-origin call to its OWN orch-gated method (with the cap held) REACHES the handler, not a deny-by-origin throw", async () => {
     for (const [method, cap] of AGENT_REACHABLE_WITH_CAP) {
       vi.clearAllMocks();
       const dispatch = await getDispatch();
@@ -790,7 +790,7 @@ describe("createRpcDispatch", () => {
     }
   });
 
-  it("210-GAP MD-01: an agent-origin agent-self read (ungated) REACHES the handler, not a deny-by-origin throw", async () => {
+  it("an agent-origin agent-self read (ungated) REACHES the handler, not a deny-by-origin throw", async () => {
     for (const method of AGENT_REACHABLE_UNGATED) {
       vi.clearAllMocks();
       const dispatch = await getDispatch();
@@ -803,7 +803,7 @@ describe("createRpcDispatch", () => {
     }
   });
 
-  it("210-GAP: the two gates are DISTINGUISHABLE — an agent WITHOUT orch:message is denied by requireCapability (the cap gate), NOT deny-by-origin", async () => {
+  it("the two gates are DISTINGUISHABLE — an agent WITHOUT orch:message is denied by requireCapability (the cap gate), NOT deny-by-origin", async () => {
     // Wire the REAL requireCapability into the message.send mock so the cap gate
     // actually runs. Post-fix, message.send is rpc-scoped (NOT in ADMIN_METHODS),
     // so an agent origin PASSES deny-by-origin and reaches the handler; the
@@ -837,7 +837,7 @@ describe("createRpcDispatch", () => {
     expect(denials.filter((a) => a.metadata && (a.metadata as Record<string, unknown>).reason === "agent_origin_admin")).toHaveLength(0);
   });
 
-  it("210-GAP: the TRUE control plane (incl. arbitrary-session lifecycle) STILL denies an agent origin", async () => {
+  it("the TRUE control plane (incl. arbitrary-session lifecycle) STILL denies an agent origin", async () => {
     // These remain scopes:["admin"] + deny-by-origin: real control plane plus
     // the arbitrary-session lifecycle ops carrying an in-handler admin check
     // (session.delete/export/reset_conversation) and the message subset §3.5
@@ -869,9 +869,9 @@ describe("createRpcDispatch", () => {
   });
 
   // -----------------------------------------------------------------------
-  // AUDIT-01 (Phase 215 Plan 01 Task 2): the per-cap audit at the IN-PROCESS
+  // The per-cap audit at the IN-PROCESS
   // chokepoint — emitted for an ALLOWED *and* a DENIED capability-gated call.
-  // The in-process path has NO lease (chokepoint asymmetry G1): rootRunId comes
+  // The in-process path has NO lease (the chokepoint asymmetry): rootRunId comes
   // from the synthetic-root resolver (resolveRootRunId), leaseId is honestly
   // ABSENT (never fabricated). Content-free: ids/caps/method/decision ONLY.
   // -----------------------------------------------------------------------
@@ -886,7 +886,7 @@ describe("createRpcDispatch", () => {
 
   /**
    * Deps with a synthetic-root resolver wired (the in-process audit's rootRunId
-   * source, G1) + the tenant config the audit reads. Mirrors `mockDeps` plus
+   * source) + the tenant config the audit reads. Mirrors `mockDeps` plus
    * `resolveRootRunId` (the production resolver returns `root-session-<key>`).
    */
   function makeAuditDeps(): {
@@ -914,7 +914,7 @@ describe("createRpcDispatch", () => {
     };
   }
 
-  it("AUDIT-01: an ALLOWED in-process gated call emits audit:event (kind=audit, outcome=success, decision=allow, the mapped cap, synthetic rootRunId, NO leaseId)", async () => {
+  it("an ALLOWED in-process gated call emits audit:event (kind=audit, outcome=success, decision=allow, the mapped cap, synthetic rootRunId, NO leaseId)", async () => {
     const { deps, auditEvents } = makeAuditDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
@@ -939,11 +939,11 @@ describe("createRpcDispatch", () => {
     expect(md.capability).toBe("orch:message");
     expect(md.method).toBe("message.send");
     expect(md.rootRunId).toBe("root-session-tenant-a:user-7:chan-9");
-    // G1: the in-process path has NO lease — leaseId is honestly ABSENT.
+    // The in-process path has NO lease — leaseId is honestly ABSENT.
     expect("leaseId" in md).toBe(false);
   });
 
-  it("AUDIT-01: the same allowed call ALSO emits capability:audited (decision=allow, the cap, synthetic rootRunId, no leaseId) — the spawn-tree producer", async () => {
+  it("the same allowed call ALSO emits capability:audited (decision=allow, the cap, synthetic rootRunId, no leaseId) — the spawn-tree producer", async () => {
     const { deps, capAudited } = makeAuditDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
@@ -966,7 +966,7 @@ describe("createRpcDispatch", () => {
     expect(evt.parentLeaseId).toBeUndefined();
   });
 
-  it("AUDIT-01: a DENIED in-process gated call (handler throws CapabilityDeniedError) emits decision=deny, kind=capability_denied, outcome=denied", async () => {
+  it("a DENIED in-process gated call (handler throws CapabilityDeniedError) emits decision=deny, kind=capability_denied, outcome=denied", async () => {
     // Wire the REAL requireCapability into message.send so a missing cap throws.
     const { requireCapability } = await import("@comis/core");
     const { createMessageHandlers } = await import("./message-handlers.js");
@@ -1001,13 +1001,13 @@ describe("createRpcDispatch", () => {
     expect(treeDeny).toHaveLength(1);
   });
 
-  it("AUDIT-02 (WR-02): a gated in-process call with NO resolvable root still emits the durable audit:event security row — only the capability:audited tree producer needs a root", async () => {
+  it("a gated in-process call with NO resolvable root still emits the durable audit:event security row — only the capability:audited tree producer needs a root", async () => {
     const { deps, auditEvents, capAudited } = makeAuditDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
 
     // Agent-origin + cap-gated, but NO _callerSessionKey → no resolvable rootRunId
-    // (the tree-correlation path has a gap). The durable AUDIT-02 trail must NOT
+    // (the tree-correlation path has a gap). The durable audit trail must NOT
     // be coupled to that gap — a gated decision is a security fact regardless.
     await expect(
       dispatch("message.send", {
@@ -1029,7 +1029,7 @@ describe("createRpcDispatch", () => {
     expect(capAudited()).toHaveLength(0);
   });
 
-  it("AUDIT-01 (content-hygiene): the in-process audit metadata carries NO args/params/body/path/secret — only {capability, method, runId, rootRunId, decision}", async () => {
+  it("content-hygiene: the in-process audit metadata carries NO args/params/body/path/secret — only {capability, method, runId, rootRunId, decision}", async () => {
     const { deps, auditEvents, capAudited } = makeAuditDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
@@ -1057,7 +1057,7 @@ describe("createRpcDispatch", () => {
     }
   });
 
-  it("AUDIT-01: an UNGATED method (no AgentCapability mapping) emits NO per-cap audit — it is the per-CAPABILITY trail", async () => {
+  it("an UNGATED method (no AgentCapability mapping) emits NO per-cap audit — it is the per-CAPABILITY trail", async () => {
     const { deps, auditEvents, capAudited } = makeAuditDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
@@ -1071,7 +1071,7 @@ describe("createRpcDispatch", () => {
     expect(capAudited()).toHaveLength(0);
   });
 
-  it("AUDIT-01: the admin deny-by-origin path is NOT double-audited (only assertNotAgentOrigin fires, no per-cap deny)", async () => {
+  it("the admin deny-by-origin path is NOT double-audited (only assertNotAgentOrigin fires, no per-cap deny)", async () => {
     const { deps, auditEvents } = makeAuditDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
@@ -1089,21 +1089,21 @@ describe("createRpcDispatch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PHASE 217-05 (the keystone): the dispatch chokepoint's deny-catch wiring.
-//   - UNATT-01/03: an unattended would-ask deny ESCALATES (content-free, NEVER
+// The dispatch chokepoint's deny-catch wiring.
+//   - An unattended would-ask deny ESCALATES (content-free, NEVER
 //     awaited) AND re-throws (the run sees the deny, adapts, never hangs).
-//   - UNATT-02: the outward floor-block (orch:message quota → CapabilityDeniedError)
+//   - The outward floor-block (orch:message quota → CapabilityDeniedError)
 //     escalates CENTRALLY (escalate-not-ask), no parallel send path.
-//   - BREAK-02: the breaker counts ONLY CapabilityDeniedError floor-blocks; on the
+//   - The breaker counts ONLY CapabilityDeniedError floor-blocks; on the
 //     Nth consecutive → execution:aborted{denial_breaker} + killByRootRun + escalate.
-//   - EVICT-01/03/02: evicted → mode "default" at the NEXT gate; fail-closed.
+//   - Evicted → mode "default" at the NEXT gate; fail-closed.
 //
 // These tests drive dispatch() DIRECTLY (the in-process leg the agent traverses)
 // with stub denialBreaker/evictRegistry/escalate/subAgentRunner on deps, and a
 // REAL requireCapability inside message.send so a missing cap throws a genuine
 // CapabilityDeniedError at the chokepoint.
 // ---------------------------------------------------------------------------
-describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + breaker (217-05)", () => {
+describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + breaker", () => {
   const mockLogger = {
     debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
     fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
@@ -1114,7 +1114,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
   });
 
   /**
-   * Deps with the 217-05 autonomy control plane wired: a denialBreaker +
+   * Deps with the autonomy control plane wired: a denialBreaker +
    * evictRegistry (real stubs over a Map so consecutive counting + trip + reset
    * are exercised end-to-end), an escalate spy (the content-free NotifyFn), a
    * subAgentRunner.killByRootRun spy, the synthetic-root resolver (so rootRunId
@@ -1124,7 +1124,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     const emit = vi.fn();
     const escalate = vi.fn();
     const killByRootRun = vi.fn(() => ({ killed: 1 }));
-    // A REAL denial breaker (the Plan-02 service) so the trip / reset semantics are
+    // A REAL denial breaker (the production service) so the trip / reset semantics are
     // genuinely exercised (not a stub that always returns tripped:false).
     const n = opts.denialBreakerN ?? 5;
     const counts = new Map<string, number>();
@@ -1176,7 +1176,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
       denialBreaker,
       evictRegistry,
       abortEvents: () => pull("execution:aborted"),
-      // FLEET-02 (Phase 220-05): the dedicated content-free autonomy event the trip
+      // The dedicated content-free autonomy event the trip
       // emits BESIDE execution:aborted so `comis fleet` surfaces the denial-breaker
       // count (the abort reason is never a session endReason, so the fleet lens has
       // no other ingestion path).
@@ -1197,7 +1197,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     });
   }
 
-  it("UNATT-01/03: an unattended would-ask deny ESCALATES once (content-free) AND re-throws (the run continues, never hangs)", async () => {
+  it("an unattended would-ask deny ESCALATES once (content-free) AND re-throws (the run continues, never hangs)", async () => {
     await wireDenyingMessageSend();
     const { deps, escalate } = makeAutonomyDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
@@ -1230,7 +1230,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     }
   });
 
-  it("UNATT-01/03: escalate is NOT awaited — the re-throw propagates synchronously (a Promise escalate cannot stall the deny)", async () => {
+  it("escalate is NOT awaited — the re-throw propagates synchronously (a Promise escalate cannot stall the deny)", async () => {
     await wireDenyingMessageSend();
     // An escalate that returns a never-resolving Promise: if the chokepoint awaited
     // it, the dispatch would hang. It must NOT — the deny must re-throw regardless.
@@ -1252,7 +1252,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
   });
 
-  it("UNATT-02: the outward quota floor-block (CapabilityDeniedError orch:message) escalates centrally + re-throws — no parallel send path", async () => {
+  it("the outward quota floor-block (CapabilityDeniedError orch:message) escalates centrally + re-throws — no parallel send path", async () => {
     // enforceOutwardQuota throws CapabilityDeniedError("orch:message"); simulate it
     // directly at the handler (the SAME error class the chokepoint catches). The
     // chokepoint must escalate centrally — NOT trigger any auto-send.
@@ -1306,7 +1306,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(escalate).not.toHaveBeenCalled();
   });
 
-  it("BREAK-02: with denialBreakerN=3, three consecutive CapabilityDeniedError on one rootRunId → recordDenial 3x, trip on the 3rd → execution:aborted{denial_breaker} + autonomy:denial_breaker_tripped + killByRootRun + escalate", async () => {
+  it("with denialBreakerN=3, three consecutive CapabilityDeniedError on one rootRunId → recordDenial 3x, trip on the 3rd → execution:aborted{denial_breaker} + autonomy:denial_breaker_tripped + killByRootRun + escalate", async () => {
     const { deps, escalate, killByRootRun, denialBreaker, abortEvents, denialBreakerEvents } = makeAutonomyDeps({ denialBreakerN: 3 });
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
@@ -1342,7 +1342,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(aborts[0]!.agentId).toBe("agentA");
     expect(killByRootRun).toHaveBeenCalledTimes(1);
     expect(killByRootRun).toHaveBeenCalledWith("root-session-tenant-a:user-7:chan-9");
-    // FLEET-02: the trip ALSO emits the content-free autonomy:denial_breaker_tripped
+    // The trip ALSO emits the content-free autonomy:denial_breaker_tripped
     // event (the fleet-ingestion path — execution:aborted has none). It carries the
     // rootRunId (an id) + a timestamp ONLY — never the free-text deny reason.
     const denialEvents = denialBreakerEvents();
@@ -1357,7 +1357,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(tripEscalate).toBeDefined();
   });
 
-  it("BREAK count-only-floor-blocks: a deny-by-origin admin attempt (plain Error) does NOT call recordDenial", async () => {
+  it("count-only-floor-blocks: a deny-by-origin admin attempt (plain Error) does NOT call recordDenial", async () => {
     const { deps, denialBreaker } = makeAutonomyDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
@@ -1379,7 +1379,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(denialBreaker.recordDenial).not.toHaveBeenCalled();
   });
 
-  it("BREAK count-only-floor-blocks: a generic (non-capability) handler Error does NOT call recordDenial", async () => {
+  it("count-only-floor-blocks: a generic (non-capability) handler Error does NOT call recordDenial", async () => {
     const { createCronHandlers } = await import("./cron-handlers.js");
     (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       "cron.add": vi.fn(async () => {
@@ -1401,7 +1401,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(denialBreaker.recordDenial).not.toHaveBeenCalled();
   });
 
-  it("BREAK reset: a successful gated call (allow branch) calls recordAllow; 2 denies → 1 allow → 1 deny does NOT trip", async () => {
+  it("breaker reset: a successful gated call (allow branch) calls recordAllow; 2 denies → 1 allow → 1 deny does NOT trip", async () => {
     const { deps, killByRootRun, denialBreaker, abortEvents } = makeAutonomyDeps({ denialBreakerN: 3 });
     const { CapabilityDeniedError } = await import("@comis/core");
 
@@ -1439,19 +1439,19 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
 });
 
 // ---------------------------------------------------------------------------
-// PHASE 217-05 Task 3 (EVICT): the chokepoint effectiveMode read.
-//   - EVICT-03: an evicted rootRunId resolves to "default" at the NEXT gate
+// The chokepoint effectiveMode read.
+//   - An evicted rootRunId resolves to "default" at the NEXT gate
 //     decision (mid-run), overriding any injected/resolved mode — tested across
 //     two sequential calls (the operator's autonomy.evict between them).
-//   - EVICT-01: eviction DEMOTES (mode→default), it does NOT kill/abort.
-//   - EVICT-02: an absent/unparseable/unresolvable mode fail-closes to "default".
+//   - Eviction DEMOTES (mode→default), it does NOT kill/abort.
+//   - An absent/unparseable/unresolvable mode fail-closes to "default".
 //   - jail-leg server-resolve: no injected mode → deps.agents[agentOrigin] mode.
 //
 // effectiveMode is internal; it is OBSERVED behaviorally via escalate — an
 // unattended would-ask deny escalates, a default-mode deny does NOT (escalation
-// is unattended-specific, proven in Task 2).
+// is unattended-specific, proven in the deny-catch tests above).
 // ---------------------------------------------------------------------------
-describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote + fail-closed (217-05)", () => {
+describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote + fail-closed", () => {
   const mockLogger = {
     debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
     fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
@@ -1521,7 +1521,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
     _autonomyMode: "unattended",
   } as const;
 
-  it("EVICT-03 (mid-run, NEXT gate decision): call 1 escalates as unattended; after evictRegistry.mark, call 2 resolves 'default' (no unattended escalate)", async () => {
+  it("mid-run, NEXT gate decision: call 1 escalates as unattended; after evictRegistry.mark, call 2 resolves 'default' (no unattended escalate)", async () => {
     const { deps, escalate, evictRegistry } = makeEvictDeps();
     const { CapabilityDeniedError } = await import("@comis/core");
 
@@ -1549,7 +1549,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
     expect(unattendedEscalations2).toHaveLength(1);
   });
 
-  it("EVICT-01 (demote not abort): an evicted run's deny is NOT escalated-as-unattended AND the eviction itself does NOT kill the run", async () => {
+  it("demote not abort: an evicted run's deny is NOT escalated-as-unattended AND the eviction itself does NOT kill the run", async () => {
     const { deps, escalate, killByRootRun } = makeEvictDeps();
     const { CapabilityDeniedError } = await import("@comis/core");
     // Pre-evict the run.
@@ -1568,7 +1568,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
     expect(killByRootRun).not.toHaveBeenCalled();
   });
 
-  it("EVICT-02 (fail-closed, absent mode): NO _autonomyMode + an absent deps.agents entry → 'default' (no unattended escalate)", async () => {
+  it("fail-closed, absent mode: NO _autonomyMode + an absent deps.agents entry → 'default' (no unattended escalate)", async () => {
     const { deps, escalate } = makeEvictDeps({ agents: {} }); // agentA NOT present
     const { CapabilityDeniedError } = await import("@comis/core");
     await denyingSend();
@@ -1587,7 +1587,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
     ).toHaveLength(0);
   });
 
-  it("EVICT-02 (fail-closed, forged/unparseable mode): _autonomyMode:'bogus' → 'default' (no unattended escalate)", async () => {
+  it("fail-closed, forged/unparseable mode: _autonomyMode:'bogus' → 'default' (no unattended escalate)", async () => {
     const { deps, escalate } = makeEvictDeps();
     const { CapabilityDeniedError } = await import("@comis/core");
     await denyingSend();
@@ -1605,7 +1605,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
     ).toHaveLength(0);
   });
 
-  it("EVICT-02 (valid passthrough): a valid injected _autonomyMode:'unattended' → 'unattended' (escalates)", async () => {
+  it("valid passthrough: a valid injected _autonomyMode:'unattended' → 'unattended' (escalates)", async () => {
     const { deps, escalate } = makeEvictDeps();
     const { CapabilityDeniedError } = await import("@comis/core");
     await denyingSend();
@@ -1618,7 +1618,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
 
   it("jail-leg server-resolve: NO _autonomyMode but deps.agents[agentOrigin] resolves mode 'unattended' → 'unattended' (escalates)", async () => {
     // The jail leg injects no _autonomyMode; the chokepoint server-resolves it from
-    // deps.agents[agentOrigin].autonomy (Plan 03 Task 3). An unattended-profile agent
+    // deps.agents[agentOrigin].autonomy. An unattended-profile agent
     // resolves mode:"unattended".
     const { deps, escalate } = makeEvictDeps({
       agents: { agentA: { autonomy: { profile: "unattended" } } },
@@ -1641,16 +1641,16 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
 });
 
 // ---------------------------------------------------------------------------
-// TELEM-01 WIRING (the 172-WR-02 lesson, T-173-13): the createGraphHandlers
+// The createGraphHandlers
 // deps MUST actually carry a constructed `resolveCapabilityClass` — without it
 // every pipeline:authored emit fail-defaults to "unknown" and the small-model
 // authoring metric is permanently 0 / dead (a silent DoS on the gate). A typed-
 // but-never-constructed dep would pass tsc and ship a dead metric; this asserts
-// the production path at rpc-dispatch.ts:200 builds the resolver AND that it is
+// the production path builds the resolver AND that it is
 // LIVE (closes over deps.agents + getProviderCapabilityClass), not a no-op.
 // ---------------------------------------------------------------------------
 
-describe("createRpcDispatch — pipeline:authored tier resolver wiring (TELEM-01 / T-173-13)", () => {
+describe("createRpcDispatch — pipeline:authored tier resolver wiring", () => {
   const mockLogger = {
     debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
     fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
@@ -1705,13 +1705,13 @@ describe("createRpcDispatch — pipeline:authored tier resolver wiring (TELEM-01
     expect(factoryDeps.resolveCapabilityClass(undefined)).toBeUndefined();
   });
 
-  // AUTHOR-01 (174-03) wiring: createGraphHandlers MUST also carry the gate
+  // createGraphHandlers MUST also carry the gate
   // (authoringConfig, from container.config.orchestration.authoring) AND the
   // injected conservative repair matcher (repairMatch = matchRawGraphToTemplate
   // from @comis/agent — the daemon→agent boundary is crossed here, the
   // composition site, never inside the pure helper). A typed-but-unwired
   // repairMatch would make the repair branch permanently unreachable in prod.
-  it("constructs authoringConfig + repairMatch on the createGraphHandlers deps (AUTHOR-01 — repair branch is reachable in prod)", async () => {
+  it("constructs authoringConfig + repairMatch on the createGraphHandlers deps (repair branch is reachable in prod)", async () => {
     const { createGraphHandlers } = await import("./graph-handlers/index.js");
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
 
@@ -1740,15 +1740,15 @@ describe("createRpcDispatch — pipeline:authored tier resolver wiring (TELEM-01
 });
 
 // ---------------------------------------------------------------------------
-// INTRO-01/02 (Phase 215-04): capabilities.introspect dispatch wiring. The
+// capabilities.introspect dispatch wiring. The
 // capabilities-handlers module is NOT mocked, so the REAL createCapabilitiesHandlers
 // runs — this asserts the dispatch-level contract: registered UNCONDITIONALLY
-// (finding E, 30uc-20260624 — no longer gated on boundedAutonomy), agent-reachable
+// (NOT gated on boundedAutonomy), agent-reachable
 // (NOT denied by origin — it is scopes:["rpc"]/"ungated", not in ADMIN_METHODS),
 // and self-scoped to the caller's _agentId.
 // ---------------------------------------------------------------------------
 
-describe("createRpcDispatch — capabilities.introspect wiring (INTRO-01/02)", () => {
+describe("createRpcDispatch — capabilities.introspect wiring", () => {
   const mockLogger = {
     debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
     fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
@@ -1799,13 +1799,14 @@ describe("createRpcDispatch — capabilities.introspect wiring (INTRO-01/02)", (
     expect(result.caps).not.toEqual([]);
   });
 
-  it("capabilities.introspect IS registered (disabled-state) when boundedAutonomy is absent (finding E)", async () => {
+  it("capabilities.introspect IS registered (disabled-state) when boundedAutonomy is absent", async () => {
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     // The no-autonomy wiring: agents + defaultAgentId come from config and are
     // present, but NO agent resolves to an autonomy-bearing profile, so
-    // boundedAutonomy was never constructed. Pre-finding-E this gated the spread
-    // to {} and `comis whoami` died with "Unknown RPC method". It must now resolve
-    // to a clean disabled-state — registered unconditionally, budget omitted.
+    // boundedAutonomy was never constructed. Without unconditional registration
+    // this would gate the spread to {} and `comis whoami` would die with
+    // "Unknown RPC method". It must resolve to a clean disabled-state —
+    // registered unconditionally, budget omitted.
     const dispatch = createRpcDispatch({
       logger: mockLogger,
       container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} } } },

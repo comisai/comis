@@ -13,7 +13,7 @@
  *   - `fal`          — the explicit FAL queue backend: always prompts for a
  *                      `FAL_KEY` (no LLM provider supplies it).
  *   - `openai`       — OpenAI Images: reuses `OPENAI_API_KEY`. Prompts ONLY when
- *                      the main provider isn't already `openai` (CRED-01).
+ *                      the main provider isn't already `openai` (key reuse).
  *   - `google`       — Gemini image: reuses `GOOGLE_API_KEY`. Prompts ONLY when
  *                      the main provider isn't already `google`.
  *   - `openrouter`   — FLUX via OpenRouter: reuses `OPENROUTER_API_KEY`. Prompts
@@ -78,7 +78,7 @@ export const imageProvidersStep: WizardStep = {
       return updateState(state, { imageProvider: { provider } });
     }
 
-    // 3. CRED-01 reuse: if the agent's MAIN provider already supplies the exact
+    // 3. Key reuse: if the agent's MAIN provider already supplies the exact
     //    env key this backend needs (e.g. an openai main + openai images → both
     //    OPENAI_API_KEY), reuse it — no extra prompt.
     const mainProvidesKey =

@@ -2,26 +2,26 @@
 /**
  * Jailbreak phrase detection patterns.
  *
- * Covers both narrow tool-sanitizer patterns and broad external-content variants,
+ * Covers both narrow tool-output-safety patterns and broad external-content variants,
  * plus expanded patterns for role escalation, token delimiters,
  * context resets, rule replacement, and safety overrides.
  *
  * @module jailbreak
  */
 
-/** Exact tool-sanitizer.ts original: ignore (all) previous instructions (no optional quantifier group for ReDoS safety) */
+/** Narrow tool-output-safety.ts pattern: ignore (all) previous instructions (no optional quantifier group for ReDoS safety) */
 export const IGNORE_PREV_INSTRUCTIONS = /ignore\s{1,20}(?:all )?previous\s{1,10}instructions/gi;
 
-/** Exact tool-sanitizer.ts original: you are now */
+/** Narrow tool-output-safety.ts pattern: you are now */
 export const YOU_ARE_NOW = /you\s+are\s+now\s+/gi;
 
-/** Exact tool-sanitizer.ts original: forget (everything|all|your) */
+/** Narrow tool-output-safety.ts pattern: forget (everything|all|your) */
 export const FORGET_EVERYTHING = /forget\s+(everything|all|your)\s/gi;
 
-/** Exact tool-sanitizer.ts original: new instructions: */
+/** Narrow tool-output-safety.ts pattern: new instructions: */
 export const NEW_INSTRUCTIONS = /new\s+instructions?\s*:/gi;
 
-/** Exact tool-sanitizer.ts original: IMPORTANT: override */
+/** Narrow tool-output-safety.ts pattern: IMPORTANT: override */
 export const IMPORTANT_OVERRIDE = /IMPORTANT\s*:\s*override/gi;
 
 /** Broader external-content.ts variant: ignore (previous|prior|above) (instructions|prompts) (no optional quantifier group for ReDoS safety) */
@@ -64,7 +64,7 @@ export const RULE_REPLACEMENT = /(?:new|updated?|revised?)\s{1,10}(?:rules?|guid
 /** Safety override: "override/bypass/disable safety/security/filters/restrictions" */
 export const OVERRIDE_SAFETY = /(?:override|bypass|disable)\s{1,10}(?:safety|security|filters?|restrictions?)/gi;
 
-/** All jailbreak patterns (both narrow tool-sanitizer and broad external-content variants). */
+/** All jailbreak patterns (both narrow tool-output-safety and broad external-content variants). */
 export const JAILBREAK_PATTERNS: readonly RegExp[] = [
   IGNORE_PREV_INSTRUCTIONS,
   YOU_ARE_NOW,

@@ -154,7 +154,7 @@ describe("GraphNodeSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // tokenBudget (BUDGET-01) — per-node sub-agent token cap, like maxSteps.
+  // tokenBudget — per-node sub-agent token cap, like maxSteps.
   // -------------------------------------------------------------------------
 
   it("accepts a node with a positive-integer tokenBudget and preserves the value", () => {
@@ -257,12 +257,12 @@ describe("GraphNodeSchema typeId/typeConfig", () => {
     }
   });
 
-  // OR-01 (v2.19): a node that DECLARES a typed driver (typeId) but forgets its
+  // A node that DECLARES a typed driver (typeId) but forgets its
   // typeConfig must be told to ADD the config in the shape that driver needs —
   // NOT "omit both for a regular single-agent node", which would silently demote
-  // the user's debate/vote/etc. to a plain agent and destroy intent. This was the
-  // live attempt-1 failure: bull_bear_debate emitted type_id:"debate" with no config,
-  // the generic message advised demotion. See design/small-model-orchestration-fidelity.md §4.
+  // the user's debate/vote/etc. to a plain agent and destroy intent. This was a
+  // live failure: a debate node emitted type_id:"debate" with no config and the
+  // generic message advised demotion.
   it("rejects typeId without typeConfig with a TYPE-AWARE add-config message (debate)", () => {
     const result = GraphNodeSchema.safeParse({
       nodeId: "bull_bear_debate",

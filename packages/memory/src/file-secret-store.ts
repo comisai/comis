@@ -2,7 +2,7 @@
 // @allow-throw: createFileSecretStore path-containment guard; dataDir escaping the resolved base is a hard precondition violation (path traversal attack guard); the factory return type is SecretStorePort (not Result), so err() cannot be used here — this throw fires only for programmer errors at wiring time, never for user-supplied secret values.
 /**
  * FileSecretStore — SecretStorePort implementation with plaintext JSON storage.
- * File-mode is the documented plaintext-at-rest bargain (DESIGN §5.1).
+ * File-mode is the documented plaintext-at-rest bargain.
  * Writes are sync-atomic: unique-temp → O_NOFOLLOW open → fsync → rename → parent-dir fsync.
  * Single-writer invariant: all writes route through daemon-RPC.
  *

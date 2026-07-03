@@ -5,10 +5,10 @@ import type { MemorySearchResult } from "./memory.js";
 /**
  * MemoryPinnedStore: the SEGREGATED hexagonal boundary for pinned-memory recall.
  *
- * This is a NEW port — it deliberately does NOT widen the security-reviewed
- * `MemoryPort` (store/search/delete). Per design §3.2 that surface is never
+ * This is a deliberately separate port — it does NOT widen the security-reviewed
+ * `MemoryPort` (store/search/delete). That surface is never
  * widened for agent use; new capabilities arrive as their own segregated port
- * (the same pattern as `MemoryEntityStore` §6.5). The sole adapter is in
+ * (the same pattern as `MemoryEntityStore`). The sole adapter is in
  * @comis/memory (it owns the `db` handle and runs all SQL); the agent-side
  * read path (memory-recall) consumes this port TYPE from @comis/core — it
  * cannot import @comis/memory (the agent↛memory build cut). No new authority

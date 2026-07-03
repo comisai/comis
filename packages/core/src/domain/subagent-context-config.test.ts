@@ -30,7 +30,7 @@ describe("SubagentContextConfigSchema", () => {
       graphStuckKillThresholdMs: 600_000,
       stuckKillThresholdMs: 180_000,
     });
-    // condensationModel field has been deleted -- no longer in schema
+    // The schema deliberately has no condensationModel field.
     expect("condensationModel" in result).toBe(false);
   });
 

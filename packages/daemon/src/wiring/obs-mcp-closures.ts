@@ -6,7 +6,7 @@ import { ObsExplainContract, ObsFleetHealthContract } from "@comis/core";
  * (operator-allowlisted `obs_explain` / `obs_fleet_health` tools). Extracted from
  * daemon.ts `bootGateway` to keep daemon.ts within the ≤3000-line architecture cap.
  *
- * SECURITY (154-03 / 161-02): these closures run the SAME assemblers the admin RPC
+ * SECURITY: these closures run the SAME assemblers the admin RPC
  * handlers delegate to, DIRECTLY under daemon authority — they do NOT go through the
  * admin-gated obs.* RPC, do NOT inject `_trustLevel:"admin"`, and are NOT reached via
  * daemonRpcForMcpClient. The only authorization boundary is the per-client
@@ -22,9 +22,9 @@ import { ObsExplainContract, ObsFleetHealthContract } from "@comis/core";
  * — a "." crashes boot with PathTraversalError.
  *
  * `clock` is the SAME ClockPort wired into the RPC handler deps (load-bearing,
- * `deps.clock!`). `durableRuns` (FLEET-01/02/04, Phase 220-03) is the live durable-run
+ * `deps.clock!`). `durableRuns` is the live durable-run
  * store for the autonomy block — this closure bypasses buildRpcDispatchDeps (the RPC
- * path already wires it at daemon.ts:893), so it is the NET-NEW thread; pass
+ * path already wires it), so it is the NET-NEW thread; pass
  * `boot.durableRunStore`. Absent (durability off) ⇒ honest degradation (the autonomy
  * block is omitted), byte-identical with the offline path.
  */

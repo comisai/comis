@@ -2,16 +2,14 @@
 /**
  * Per-domain API dependency slices for daemon RPC handlers.
  *
- * The monolithic dispatcher-deps superset is replaced with 11 per-domain
- * cluster slices. Each handler factory consumes its narrow slice; the
- * ApiDispatchDeps aggregator (extends all 11) is consumed ONLY by the
- * dispatcher itself.
+ * The dispatcher deps are partitioned into 11 per-domain cluster slices.
+ * Each handler factory consumes its narrow slice; the ApiDispatchDeps
+ * aggregator (extends all 11) is consumed ONLY by the dispatcher itself.
  *
- * The field partition is exhaustive: every field on the legacy
- * dispatcher-deps interface maps to exactly one cluster slice. The
- * aggregator's `extends` clause unions all 11 slices back into the legacy
- * shape, preserving structural compatibility with the 27 still-legacy
- * `*HandlerDeps` interfaces in api/*-handlers.ts.
+ * The field partition is exhaustive: every dispatcher dep maps to exactly
+ * one cluster slice. The aggregator's `extends` clause unions all 11 slices
+ * into the full dispatch shape, preserving structural compatibility with
+ * the 27 `*HandlerDeps` interfaces in api/*-handlers.ts.
  *
  * @module
  */
@@ -80,7 +78,7 @@ export interface SessionsApiDeps {
     saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
   };
   crossSessionSender: ReturnType<typeof createCrossSessionSender>; subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string; // Phase 213 CR-01: tree-stable rootRunId resolver — session.spawn propagates ONE tree root so CEIL-01/killByRootRun work (see AUDIT-sessions.md). Absent ⇒ runner mints.
+  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string; // Tree-stable rootRunId resolver — session.spawn propagates ONE tree root so the spawn ceiling/killByRootRun work (see AUDIT-sessions.md). Absent ⇒ runner mints.
   securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
   tenantId: string;
   /** Structured logger threaded through every cluster slice (DaemonApiDeps
@@ -98,13 +96,13 @@ export interface SessionsApiDeps {
    *  consumes the derived field to filter to CONFIRMED-only messages, but the
    *  field is also useful to the dashboard / observers. */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
-  /** LCD lossless-store write+run surface — `session.reset_conversation` (164-06)
+  /** LCD lossless-store write+run surface — `session.reset_conversation`
    *  calls `deleteConversationLcd` in `runOnConversation` to clear lcd_* rows.
    *  Optional: the handler fails-closed (throws "LCD store not available") when
    *  absent, never a silent 0 count. Same instance as MemoryApiDeps; the copy here
    *  lets session-archive.ts access it without widening to the full MemoryApiDeps slice. */
   lcdStore?: import("@comis/core").ContextStorePort;
-  /** MemoryPort for session-archive --memory reset (DIST-05). The concrete
+  /** MemoryPort for session-archive --memory reset. The concrete
    *  adapter is SqliteMemoryAdapter (which implements MemoryPort) — it is the
    *  SAME object as MemoryApiDeps.memoryAdapter, threaded onto this slice at the
    *  composition root (daemon.ts) so the session.reset_conversation handler can
@@ -113,22 +111,22 @@ export interface SessionsApiDeps {
    *  --memory flag logs a not-available WARN and clears LCD + sessionStore only. */
   memoryPort?: import("@comis/core").MemoryPort;
   /** MemoryConsolidationStore for --memory consolidated-observation unlink /
-   *  --purge-derived (DIST-05). The SAME instance as MemoryApiDeps.consolidationStore.
+   *  --purge-derived. The SAME instance as MemoryApiDeps.consolidationStore.
    *  Optional for the same handler-test reason; absent ⇒ the unlink/purge steps are
    *  skipped (the by-session memory delete itself still runs). */
   consolidationStore?: import("@comis/core").MemoryConsolidationStore;
-  /** Runtime-layer (L3) destroy for `session.reset_conversation` — live finding
-   *  2026-06-11: clearing LCD + sessionStore alone resurrects (the surviving pi
+  /** Runtime-layer (L3) destroy for `session.reset_conversation` — clearing
+   *  LCD + sessionStore alone resurrects the conversation (the surviving pi
    *  runtime JSONL re-ingests wholesale via the lcd-ingest epoch rebase). Wired
    *  at the composition root from `createConversationReset(...).destroyRuntimeSession`
    *  bound to the default agent. Returns true when an adapter destroy ran.
    *  Optional: absent ⇒ the handler reports `runtimeSessionDestroyed: false`
    *  and WARNs with the resurrection consequence (honest degradation). */
   destroyRuntimeSession?: (formattedSessionKey: string) => Promise<boolean>;
-  /** Executor session-scoped state cleanup (175-REVIEW CR-02): wired at the
+  /** Executor session-scoped state cleanup: wired at the
    *  composition root (daemon.ts) to @comis/agent's clearSessionState — the
    *  single authoritative path that drops the per-key tool-schema snapshots,
-   *  the GBNF-02 strip-retry once-gate, JIT-guide delivery, cache latches,
+   *  the GBNF strip-retry once-gate, JIT-guide delivery, cache latches,
    *  etc. session.reset_conversation / session.delete call it so a reset or
    *  recreated session does not inherit the old key's executor state (the
    *  strip once-gate would otherwise terminal-fail the "fresh" session's
@@ -151,11 +149,7 @@ export interface SessionsApiDeps {
 // feature-switch documented row-by-row in packages/daemon/AUDIT-memory.md;
 // tightening them to required would force every dispatcher call site to
 // fabricate stubs. Splitting the slice would break the structural-subtyping
-// invariant the 27 legacy *HandlerDeps depend on (see ApiDispatchDeps).
-// (Phase 126: the context-DAG quartet — contextStore/store/config/
-// contextEngineConfig/resolveConversationId/rpcCall — was removed with the
-// deleted context-handlers; the governed expansion surface is rebuilt fresh
-// against the lcd_* store in Phase 131.)
+// invariant the 27 *HandlerDeps interfaces depend on (see ApiDispatchDeps).
 export interface MemoryApiDeps {
   /** memory-handlers + context-handlers read deps.defaultAgentId / deps.tenantId. */
   defaultAgentId: string;
@@ -235,13 +229,13 @@ export interface MemoryApiDeps {
   onSuspiciousContent?: import("@comis/core").WrapExternalContentOptions["onSuspiciousContent"];
   /** LCD lossless-store read surface — the `context.tree` handler resolves a
    *  conversation's context_items + summaries via `getContextItems` /
-   *  `getSummaries` (R4 agent+tenant scoped). The SAME ContextStorePort
+   *  `getSummaries` (agent+tenant scoped). The SAME ContextStorePort
    *  setup-memory builds (`lcdStore`). Optional so existing handler tests build
    *  deps without it; the context.* handlers fail-closed (empty result) when absent. */
   lcdStore?: import("@comis/core").ContextStorePort;
   /** LCD operator-browse read surface — the `context.conversations` handler
    *  enumerates the agent's distinct conversations via `listConversations`
-   *  (R4 agent+tenant scoped). Built by setup-memory (`createLcdBrowseStore`).
+   *  (agent+tenant scoped). Built by setup-memory (`createLcdBrowseStore`).
    *  Optional for the same handler-test reason; absent ⇒ empty result. */
   contextBrowse?: import("@comis/core").ContextBrowsePort;
 }
@@ -276,11 +270,11 @@ export interface ChannelsApiDeps {
   workspaceDirs: Map<string, string>;
   logger: ComisLogger;
   persistDeps?: PersistToConfigDeps;
-  /** Phase 213 (QUOTA-01/02): the bounded-autonomy service. message.send/reply/react consult `tryOutward` (origin/grant/per-hour/volume) before deliver. Optional; absent ⇒ inert. A daemon-initiated send (no `_agentId`) is never gated. */
+  /** The bounded-autonomy service. message.send/reply/react consult `tryOutward` (origin/grant/per-hour/volume) before deliver. Optional; absent ⇒ inert. A daemon-initiated send (no `_agentId`) is never gated. */
   boundedAutonomy?: import("../autonomy/bounded-autonomy.js").BoundedAutonomy;
-  /** Phase 216 ONCE-01/02: tree-stable rootRunId resolver (same as SessionsApiDeps.resolveRootRunId, already spread into the flat dispatch deps). message.send/reply/react derive the outward-ledger idempotency key from it; absent ⇒ the wrap is a pass-through. */
+  /** Tree-stable rootRunId resolver (same as SessionsApiDeps.resolveRootRunId, already spread into the flat dispatch deps). message.send/reply/react derive the outward-ledger idempotency key from it; absent ⇒ the wrap is a pass-through. */
   resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
-  /** Phase 216 ONCE-01: the three-state outward ledger; absent ⇒ no exactly-once wrap (older/non-autonomy daemon) */
+  /** The three-state outward ledger; absent ⇒ no exactly-once wrap (non-autonomy daemon) */
   outwardLedger?: import("@comis/core").OutwardSendLedgerPort;
 }
 
@@ -324,7 +318,7 @@ export interface AgentsApiDeps {
 /**
  * Dependencies for cron-handlers + graph-handlers + heartbeat-handlers + subagent-handlers
  * (cron.list/run, graph.list/run, heartbeat.list/run, subagent.list).
- * @optional-field-count: 14 — daemon-internal orchestration-plane slice; every optional gates on a daemon-global resource (graph coordinator, heartbeat runner, leaseManager/durableRuns, the Phase-217 autonomy plane denialBreaker/evictRegistry/escalate). daemon.ts supplies each from the cap-endpoint handle or config; a non-autonomy boot leaves them absent (byte-identical pre-217). Keep until a structural slice split.
+ * @optional-field-count: 14 — daemon-internal orchestration-plane slice; every optional gates on a daemon-global resource (graph coordinator, heartbeat runner, leaseManager/durableRuns, the autonomy plane denialBreaker/evictRegistry/escalate). daemon.ts supplies each from the cap-endpoint handle or config; a non-autonomy boot leaves them absent. Keep until a structural slice split.
  */
 export interface OrchestratorApiDeps {
   getAgentCronScheduler: (agentId: string) => CronScheduler;
@@ -353,14 +347,14 @@ export interface OrchestratorApiDeps {
   logger: ComisLogger;
   /** graph-handlers reads deps.dataDir for graph-runs output. */
   dataDir?: string;
-  /** subagent-handlers reads deps.subAgentRunner.list/kill/steer; autonomy-handlers (213-06) reads killByRootRun for run.kill. */
+  /** subagent-handlers reads deps.subAgentRunner.list/kill/steer; autonomy-handlers reads killByRootRun for run.kill. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  /** autonomy-handlers (213-06 REVOKE-01/03) revoke fan-outs. Optional: Plan 07 wires it; absent ⇒ handlers not registered. */ leaseManager?: import("@comis/infra").LeaseManager;
-  /** Phase 216 DUR-03: the durable-run store — autonomy-handlers ALSO calls invalidateForRevoke(rootRunId) on lease.revoke/run.kill so a restart cannot resume pre-revoke caps. Optional; absent ⇒ the persisted record is not poisoned (only matters when durability is enabled, which is when Plan 07 wires it). */ durableRuns?: import("@comis/core").DurableRunPort;
-  denialBreaker?: import("../autonomy/denial-breaker.js").DenialBreaker; // 217-05 BREAK-02 (see the @optional-field-count JSDoc above). OPTIONAL ⇒ pre-217 byte-identical.
-  evictRegistry?: import("../autonomy/evict-registry.js").EvictRegistry; // 217-05 EVICT-01/03: isEvicted→demote; flows into createAutonomyHandlers via `...deps` (activates autonomy.evict).
-  escalate?: import("../autonomy/durable-resume-engine.js").NotifyFn; // 217-05 UNATT-03: content-free NotifyFn, fired NEVER-awaited.
-  eventBus?: AppContainer["eventBus"]; // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
+  /** autonomy-handlers revoke fan-outs. Optional: wired at the composition root; absent ⇒ handlers not registered. */ leaseManager?: import("@comis/infra").LeaseManager;
+  /** The durable-run store — autonomy-handlers ALSO calls invalidateForRevoke(rootRunId) on lease.revoke/run.kill so a restart cannot resume pre-revoke caps. Optional; absent ⇒ the persisted record is not poisoned (only matters when durability is enabled, which is when the composition root wires it). */ durableRuns?: import("@comis/core").DurableRunPort;
+  denialBreaker?: import("../autonomy/denial-breaker.js").DenialBreaker; // See the @optional-field-count JSDoc above. OPTIONAL ⇒ absent on a non-autonomy boot.
+  evictRegistry?: import("../autonomy/evict-registry.js").EvictRegistry; // isEvicted→demote; flows into createAutonomyHandlers via `...deps` (activates autonomy.evict).
+  escalate?: import("../autonomy/durable-resume-engine.js").NotifyFn; // Content-free NotifyFn, fired NEVER-awaited.
+  eventBus?: AppContainer["eventBus"]; // graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
   getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;
 }
 
@@ -530,9 +524,9 @@ export interface AuthApiDeps {
  * Dependencies for media-handlers + image-handlers
  * (media.transcribe/extract_document/tts, image.generate).
  */
-/** OBS-03 (196): the boot-resolved voice (STT/TTS) selection threaded to the
+/** The boot-resolved voice (STT/TTS) selection threaded to the
  *  daemon RPC handlers for the trajectory emit — `provider`/`keyless`/`source` rung
- *  + the collected `onSkip` reasons (the OBS-03 selection observability). Resolved
+ *  + the collected `onSkip` reasons (the selection observability). Resolved
  *  ONCE at boot by `setupMedia` from the SAME `SttSelection`/`TtsSelection` the
  *  adapter construction used (no second source of truth). Optional — a selector-less
  *  boot leaves it undefined and the handler derives provider+keyless from config. */
@@ -543,7 +537,7 @@ export interface ResolvedVoiceSelection {
   onSkip?: string[];
 }
 
-// @optional-field-count: MediaApiDeps is the daemon media-RPC deps aggregate — every media handler family (vision, image-gen, video-gen+status, transcription/TTS, voice obs+selection) threads its deps through this one interface, and each is OPTIONAL because the corresponding handler is feature-gated (constructed only when its provider/registry is configured). Splitting would fragment the single dispatch-deps seam the RPC router resolves; the count grows with the media feature set, not with bloat. (v2.25 added voiceSelection + obsStore; mirrors the v2.24 IncidentSignals audit-stamp.)
+// @optional-field-count: MediaApiDeps is the daemon media-RPC deps aggregate — every media handler family (vision, image-gen, video-gen+status, transcription/TTS, voice obs+selection) threads its deps through this one interface, and each is OPTIONAL because the corresponding handler is feature-gated (constructed only when its provider/registry is configured). Splitting would fragment the single dispatch-deps seam the RPC router resolves; the count grows with the media feature set, not with bloat.
 export interface MediaApiDeps {
   visionRegistry?: Map<string, VisionProvider>;
   mediaConfig: {
@@ -553,9 +547,9 @@ export interface MediaApiDeps {
       defaultScopeAction: "allow" | "deny";
       defaultProvider?: string;
     };
-    /** OBS-03 (196): the STT (transcription) config slice. The runtime object is the
+    /** The STT (transcription) config slice. The runtime object is the
      *  full `integrations.media` config, so this is already present; declared here so
-     *  `media.test.stt` reports the STT provider (the :595 reads-TTS RED-proof fix). */
+     *  `media.test.stt` reports the STT provider (not the TTS one). */
     transcription: {
       provider?: string;
       model?: string;
@@ -589,17 +583,17 @@ export interface MediaApiDeps {
     logger: ComisLogger;
     /** Direct channel delivery -- resolve adapter by channel type. */
     getChannelAdapter: (channelType: string) => Pick<import("@comis/core").ChannelPort, "sendAttachment"> | undefined;
-    /** RES-01: resolve the agent's main provider in lockstep with the
-     *  completion path (I4 — delegates to the same resolveAgentModel). The
+    /** Resolve the agent's main provider in lockstep with the
+     *  completion path (delegates to the same resolveAgentModel). The
      *  handler uses this only for observability + lockstep verification; the
      *  provider INSTANCE is selected at wiring time (setup-image-provider.ts),
      *  never re-derived here (no second source of truth). */
     resolveAgentMainProvider: (agentId: string) => { providerId: string };
-    /** IN-01 (185): resolve a `reference_image` workspace file path under the
+    /** Resolve a `reference_image` workspace file path under the
      *  caller's agent dir (safePath confinement). Mirror MediaApiDeps:572-573. */
     workspaceDirs: Map<string, string>;
     defaultWorkspaceDir: string;
-    /** DEL-01 (186): the per-agent persistence getter. Persists the generated
+    /** The per-agent persistence getter. Persists the generated
      *  image buffer to the agent's confined workspace (`~/.comis/workspace/media/
      *  photos/`) via MediaPersistenceService — replacing the ephemeral tmpdir
      *  write+delete. The agentId resolves the workspace inside the getter
@@ -612,7 +606,7 @@ export interface MediaApiDeps {
       buffer: Buffer,
       opts: { mediaKind: "image"; mimeType: string },
     ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
-    /** OBS-04 (186): the per-session trajectory recorder registry. The handler
+    /** The per-session trajectory recorder registry. The handler
      *  resolves the recorder by `_callerSessionKey` and direct-emits the 4
      *  image.* lifecycle events via `getRecorder(sessionKey)?.recordEvent(...)`
      *  (the comis-session-manager.ts:298 precedent — the daemon RPC context has
@@ -620,7 +614,7 @@ export interface MediaApiDeps {
      *  a boot mode without a registry, and a null recorder is skipped. Read off
      *  the BootContext `c.trajectoryRegistry` (already a field). */
     trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
-    /** SEC-02 (186): the per-agent/hour USD cost ceiling. Optional — undefined
+    /** The per-agent/hour USD cost ceiling. Optional — undefined
      *  when `integrations.media.imageGeneration.maxCostPerHourUsd` is unset, in
      *  which case the ceiling check is skipped and only the count rate limit
      *  applies (no regression). When present, the handler pre-checks
@@ -629,45 +623,45 @@ export interface MediaApiDeps {
      *  rate limiter (maxPerHour) is RETAINED and orthogonal. Constructed in
      *  buildImageGenBundle (main-helpers.ts), gated on maxCostPerHourUsd. */
     costLimiter?: import("./image-cost-limiter.js").ImageCostLimiter;
-    /** OBS-03 (186, optional secondary): the typed event bus. After a successful
+    /** The typed event bus (optional secondary route). After a successful
      *  generation with a non-zero costUsd the handler emits a synthetic
      *  `observability:token_usage` (tokens all 0, cost.total = costUsd) so the
      *  image cost reaches sharedCostTracker + the token_usage SQLite table +
-     *  billing — the BINDING OBS-03 assertion is the trajectory `image.generated`
-     *  cost-carry (Route a), this is the secondary. Same shape as the
+     *  billing — the BINDING assertion is the trajectory `image.generated`
+     *  cost-carry, this is the secondary. Same shape as the
      *  MemoryApiDeps / WorkspaceApiDeps eventBus so the slices unify. */
     eventBus?: AppContainer["eventBus"];
   };
-  // Video generation deps (Phase 188 / Plan 04). The shape mirrors
-  // `imageHandlerDeps` above (retyped for video, with the DIVERGENCE-3 cost
+  // Video generation deps. The shape mirrors
+  // `imageHandlerDeps` above (retyped for video, with a per-agent cost
   // limiter + logger-only obs) but lives in a sibling leaf type module
   // (`./video-handler-deps.ts`) to keep THIS file under the 800-line cap; that
   // module imports nothing from the api/ handler graph, so it adds no madge
   // cycle. The dispatcher in api/rpc-dispatch.ts passes this through to
   // createVideoHandlers.
   videoHandlerDeps?: import("./video-handler-deps.js").VideoHandlerDepsShape;
-  /** Video status deps (Phase 189 / Plan 03 — JOB-04). The READ side of the
+  /** Video status deps. The READ side of the
    *  async lifecycle: `video.status` reads the agent-scoped job store the poller
    *  writes. Lives in the same sibling leaf module (`./video-handler-deps.ts`) to
    *  keep THIS file under the 800-line cap; the dispatcher passes it through to
    *  createVideoStatusHandlers. */
   videoStatusHandlerDeps?: import("./video-handler-deps.js").VideoStatusHandlerDepsShape;
-  /** VIS-01 (187): resolve the agent's MAIN provider id in lockstep with the
-   *  completion path (I4) — used for the obs label + the resolveVisionPath
+  /** Resolve the agent's MAIN provider id in lockstep with the
+   *  completion path — used for the obs label + the resolveVisionPath
    *  input. The provider INSTANCE/creds are resolved inside mainProviderVision
-   *  (no second source of truth — the 183 firewall). Top-level (the vision
+   *  (no second source of truth). Top-level (the vision
    *  handlers read `deps.X` directly, unlike image's nested imageHandlerDeps).
    *  Optional — absent on a boot mode without vision wiring → the handler treats
    *  the main as "unknown" (not vision-capable) and falls to the registry. */
   resolveAgentMainProvider?: (agentId: string) => { providerId: string };
-  /** VIS-01 (187): resolve the agent's MAIN model id, the SAME way
+  /** Resolve the agent's MAIN model id, the SAME way
    *  buildMediaVisionBundle resolves it (the single resolveAgentModel source of
    *  truth). The handler-side vision gate computes `isVisionCapable(getModel(
    *  main.providerId, mainModelIdFor(agentId)))` to short-circuit a non-vision
    *  main WITHOUT an LLM call (the setup-channels-media.ts:135 try/catch dance).
    *  Optional/undefined → the gate is conservative (not vision-capable). */
   mainModelIdFor?: (agentId: string) => string | undefined;
-  /** VIS-01 (187): the main-provider vision bridge — ONE bounded completeSimple
+  /** The main-provider vision bridge — ONE bounded completeSimple
    *  over a multimodal [text,image] message on the agent's MAIN model, reusing
    *  the main creds (no separate vision key). Returns the description + optional
    *  costUsd, or an honest err (errorKind). The handler tries this FIRST when
@@ -678,17 +672,16 @@ export interface MediaApiDeps {
       buffer: Buffer, prompt: string, mimeType: string, agentId: string,
     ): Promise<import("@comis/shared").Result<import("@comis/core").VisionResult & { costUsd?: number }, Error>>;
   };
-  /** VIS-04 (187, Plan 03 fills the emits): the per-session trajectory recorder
+  /** The per-session trajectory recorder
    *  registry — the handler resolves getRecorder(_callerSessionKey) and direct-
    *  emits the media.vision.* lifecycle (the comis-session-manager.ts:298
-   *  precedent — no eventBus bridge in the daemon RPC context). Declared now;
-   *  the emits land in Plan 03. */
+   *  precedent — no eventBus bridge in the daemon RPC context). */
   trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
-  /** OBS-03 (196): the boot-resolved voice selections the daemon voice handlers
+  /** The boot-resolved voice selections the daemon voice handlers
    *  thread onto the `media.stt.*`/`media.tts.*` trajectory via `wireVoiceObs`.
    *  Optional — undefined on a selector-less boot (handler derives from config). */
   voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
-  /** OBS-04 (196): the obs store the voice obs inserts a `voice_degraded`
+  /** The obs store the voice obs inserts a `voice_degraded`
    *  health_signal row into on a STT/TTS failure (feeds the `comis fleet`
    *  voice_health finding). Same instance as `ObservabilityApiDeps.obsStore`;
    *  declared here so the voice handlers' deps slice can read it. Optional. */
@@ -707,7 +700,7 @@ export interface MediaApiDeps {
 /**
  * Dependencies for obs-handlers (obs.usage/billing/diagnostics/budget/spend).
  * @optional-field-count: 14 — a composition-root deps bag; each optional field is a
- * distinct obs source present iff wired (absent ⇒ honest-degrade). +1 per new source (spendSnapshot 179; durableRuns 220-03 autonomy).
+ * distinct obs source present iff wired (absent ⇒ honest-degrade). +1 per new source.
  */
 export interface ObservabilityApiDeps {
   // Observability bridge deps
@@ -716,8 +709,8 @@ export interface ObservabilityApiDeps {
   channelActivityTracker: ChannelActivityTracker;
   deliveryTracer: DeliveryTracer;
   budgetGuards?: Map<string, { getSnapshot(): { perExecution: number; perHour: number; perDay: number } }>;
-  /** WEBUI-02 (179-04): reader for the LIVE daemon-wide spend the kill-switch enforces (locked
-   *  A1 — `getSnapshot()`, NOT the lagging SQL) + the ceilings, so `obs.spend.snapshot` computes
+  /** Reader for the LIVE daemon-wide spend the kill-switch enforces
+   *  (`getSnapshot()`, NOT the lagging SQL) + the ceilings, so `obs.spend.snapshot` computes
    *  headroom = ceiling − spend (the `budgetGuards` precedent). Absent ⇒ off → `enabled:false`. @optional-field */
   spendSnapshot?: () => {
     perAgent: ReadonlyMap<string, number>; perTenant: ReadonlyMap<string, number>; global: number;
@@ -751,12 +744,12 @@ export interface ObservabilityApiDeps {
    * Injected ClockPort for obs.fleet.health's `sinceHours` -> `sinceMs`
    * conversion (the globals gate forbids Date.now()/new Date() in the
    * handler/assembler). Populated by `buildRpcDispatchDeps` in daemon.ts
-   * (Phase 161-02) from `boot.clock`. Optional preserves existing handler
+   * from `boot.clock`. Optional preserves existing handler
    * tests that pass {} for deps; the fleet handler asserts `deps.clock!`
-   * because 161-02 always populates it, and the fleet tests inject a fakeClock.
+   * because buildRpcDispatchDeps always populates it, and the fleet tests inject a fakeClock.
    */
   clock?: import("@comis/core").ClockPort;
-  /** FLEET-01/02/04 (220-03): the durable-run store the fleet assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
+  /** The durable-run store the fleet assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
   /**
    * DI seam for the bundle pipeline.
    * Tests inject a stub that returns ok({ bundleDir: "/tmp/bundle", ... }).
@@ -786,10 +779,10 @@ export interface DaemonApiDeps {
  * architecture test bans handler-to-handler imports; aggregator narrowing is
  * structural and happens at the dispatcher boundary.
  *
- * Structural-typing invariant: the union of the 11 slices is structurally
- * IDENTICAL to the legacy aggregator. Every field name and type was
- * lifted verbatim and partitioned across slices with NO duplication. The
- * 27 legacy `*HandlerDeps` interfaces in api/*-handlers.ts remain assignable
+ * Structural-typing invariant: every field lives on exactly ONE slice
+ * (no duplication), and the union of the 11 slices is the full dispatch
+ * shape. The
+ * 27 `*HandlerDeps` interfaces in api/*-handlers.ts remain assignable
  * from ApiDispatchDeps via structural subtyping at every dispatcher call
  * site (createSessionHandlers(deps), createMemoryHandlers(deps), ...).
  */

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure sandbox-posture primitive (SANDBOX-01).
+ * Pure sandbox-posture primitive.
  *
  * One tested source of truth for the partial-order confinement semantics used
- * by the sub-agent spawn no-downgrade invariant (P0-C): a spawned child must
+ * by the sub-agent spawn no-downgrade invariant: a spawned child must
  * never be *less* confined than its spawner. This module is the dependency-free
  * foundation — no I/O, no event bus, no full daemon-config import. It is a
- * `@comis/agent` leaf so the daemon wiring can later INJECT a resolver into the
- * sub-agent runner (Plan 02) without inverting the dependency direction.
+ * `@comis/agent` leaf so the daemon wiring can INJECT a resolver into the
+ * sub-agent runner without inverting the dependency direction.
  *
  * ## The 4 config-derived dimensions (strict → loose)
  * Each dimension's enum labels are the EXACT operator-config strings from
@@ -24,21 +24,18 @@
  * total one): the child can tighten one dimension and loosen another and still be
  * a downgrade.
  *
- * ## Design-vs-config reconciliation (ROADMAP success-criterion 1)
- * The design doc (§5 P0-C) and ROADMAP criterion-1 describe a `broker-only > open`
- * exec-network dimension and a "sandboxed (broker-only) parent → open child"
- * example. **That dimension does NOT exist as operator config.**
+ * ## Why there is no `broker-only > open` exec-network dimension
  * `broker-only`/`open`/`none` are RUNTIME sandbox network *modes* derived at spawn
  * time (`packages/skills/src/tools/builtin/sandbox/types.ts:36`), not a Zod config
  * field; the config-level exec sandbox is ONLY `enabled: always|never`. The
- * criterion-1 "broker-only parent → open child refused" therefore maps to the real
+ * "broker-only parent → open child refused" intuition therefore maps to the real
  * config model as: **a more-confined parent (e.g. exec `always`) spawning a
- * less-confined child (exec `never`) is refused.** We deliberately do NOT model the
- * bogus `broker-only > open` config dimension — it would be unverifiable. If a
- * future "exec network mode" config field is added, the comparator extends
- * additively via a new rank map.
+ * less-confined child (exec `never`) is refused.** We deliberately do NOT model a
+ * `broker-only > open` config dimension — it would be unverifiable against real
+ * operator config. If a future "exec network mode" config field is added, the
+ * comparator extends additively via a new rank map.
  *
- * ## Missing-field-safe-default (threat T-172-01)
+ * ## Missing-field-safe-default
  * A missing/absent field on ANY dimension resolves to the MOST-confined enum
  * (highest rank) BEFORE comparison — a posture is NEVER inferred more permissive
  * than reality, so a config gap cannot silently open a downgrade.
@@ -51,9 +48,9 @@
  *
  * For the sub-agent spawn path, **exec is the active dimension** today;
  * `filesystem`/`network`/`uid` are present in the type so the comparator composes
- * when the deferred terminal-posture path lands (A1), but they resolve to their
+ * when the deferred terminal-posture path lands, but they resolve to their
  * most-confined default when absent (see {@link comparePosture}). The sub-agent
- * resolver ({@link resolvePostureFromSkills}) leaves them unset in P0-C scope.
+ * resolver ({@link resolvePostureFromSkills}) leaves them unset today.
  */
 export interface SandboxPosture {
   /** Exec sandbox enablement. `always` = sandbox wraps the command (more confined). */
@@ -135,11 +132,11 @@ const UID_MOST_CONFINED = 1; // "dedicated"
 /**
  * Rank a single dimension of a posture, folding an absent field to the
  * most-confined value (highest rank) BEFORE ranking. This is the load-bearing
- * safe default (T-172-01): a missing field is never read as more permissive than
+ * safe default: a missing field is never read as more permissive than
  * reality. The pre-map `?? <most-confined>` IS the safe default for an absent
  * field; the trailing `?? <most-confined>` is the fail-closed fallback for a
  * present-but-unknown enum value (unreachable via the Zod-validated config path,
- * but if a caller hand-builds a posture it must still fail CLOSED — IN-01).
+ * but if a caller hand-builds a posture it must still fail CLOSED).
  */
 function rankOf(posture: SandboxPosture, dimension: PostureDimension): number {
   switch (dimension) {
@@ -170,7 +167,7 @@ function rankOf(posture: SandboxPosture, dimension: PostureDimension): number {
  * dimension names) iff the child is strictly LESS confined than the parent on
  * ANY single dimension. Equal posture and a more-confined (upgrade) child both
  * compare as allowed. Absent fields on either side fold to the most-confined
- * value before comparison (T-172-01).
+ * value before comparison.
  *
  * Pure: no I/O, no config import, deterministic for a given input pair.
  */
@@ -199,9 +196,9 @@ export function comparePosture(
  * The minimal structural slice of an agent's skills config this resolver reads.
  *
  * Declared inline (NOT imported from the full daemon config) so this module
- * stays a `@comis/agent` leaf: Plan 02's daemon wiring injects a resolver closure
+ * stays a `@comis/agent` leaf: the daemon wiring injects a resolver closure
  * built over the per-agent skills config it holds, which structurally satisfies
- * this shape. Only `execSandbox.enabled` is consumed in P0-C scope.
+ * this shape. Only `execSandbox.enabled` is consumed today.
  */
 export interface SkillsPostureSlice {
   execSandbox?: {
@@ -212,7 +209,7 @@ export interface SkillsPostureSlice {
 /**
  * Fold an agent's skills config slice into a {@link SandboxPosture}.
  *
- * P0-C scope (A1): only the **exec** dimension is populated, from
+ * Only the **exec** dimension is populated, from
  * `skills.execSandbox.enabled`. An absent slice or absent `enabled` resolves to
  * `"always"` — the most-confined default, matching the schema default
  * (`ExecSandboxSchema.enabled.default("always")`). The `filesystem`/`network`/`uid`
@@ -228,23 +225,24 @@ export function resolvePostureFromSkills(
 ): SandboxPosture {
   return {
     exec: skills?.execSandbox?.enabled ?? "always",
-    // filesystem / network / uid intentionally unset (present-but-inert, A1).
+    // filesystem / network / uid intentionally unset (present-but-inert until the
+    // terminal-posture wiring populates them).
   };
 }
 
 /**
- * Thrown by the sub-agent spawn path (P0-C no-downgrade gate) when a child's
+ * Thrown by the sub-agent spawn path (the no-downgrade gate) when a child's
  * sandbox posture is strictly LESS confined than its spawner's on ≥1 dimension.
  *
  * A TYPED refusal (mirrors {@link RequiredToolsUnreachableError} in `@comis/core`):
  * the daemon's `classifyRpcError` matches it to `precondition`/**warn**, so this
  * fail-closed SECURITY refusal does NOT read as an `internal`/**error** handler
- * fault in an operator's ERROR-level health sweep (OBS-RPC-REFUSAL-CLASS,
- * orchestration-excellence-20260701). The refuse decision, the
+ * fault in an operator's ERROR-level health sweep. The refuse decision, the
  * `security:sandbox_downgrade_refused` event, and the message are all unchanged —
  * this only carries the type so the dispatch layer can classify it correctly.
  *
- * `violatedDimensions` are enum LABELS only (never posture values/paths/hosts, §2.7).
+ * `violatedDimensions` are enum LABELS only — never posture values, paths, or
+ * hosts, so no operator data leaks into the error payload.
  *
  * @allow-throw: spawn() is consumed exclusively by daemon RPC handlers
  * (@allow-throw boundary in sub-agent-runner.ts); rpc-dispatch converts this to a

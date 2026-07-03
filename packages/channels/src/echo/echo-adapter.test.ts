@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import type { NormalizedMessage } from "@comis/core";
 import { EchoChannelAdapter } from "./echo-adapter.js";
 
-/** Mirror the send-wrap content_digest: sha256(body).slice(0,16) (Plan 05). */
+/** Mirror the send-wrap content_digest: sha256(body).slice(0,16). */
 function digestOf(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }

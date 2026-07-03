@@ -65,18 +65,18 @@ import {
   type MediaPersistenceService,
   type TerminalSessionRegistry,
 } from "@comis/skills/tools";
-// Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
+// Terminal-driver wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireAgentTerminalTools, buildTerminalEgressDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
 import {
   buildTerminalWakeDurability,
   recreateStrandedTmuxServerForDataDir,
   type WakeDurabilityConfig,
 } from "./terminal-durable-wiring.js";
-// In-session expansion-loop (v2.12 Phase 131, E1/E2) dag-gated ctx_* wiring.
+// In-session expansion-loop dag-gated ctx_* wiring.
 import { maybeWireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
 import { setupToolAuditLogging } from "./setup-tool-audit.js";
-// Agent-scoped rpcCall factory (the _capabilities injection point, CAP-03)
+// Agent-scoped rpcCall factory (the _capabilities injection point)
 // extracted to setup-tools-capabilities.ts (file-size cap).
 import { makeCreateAgentRpcCall } from "./setup-tools-capabilities.js";
 
@@ -92,13 +92,13 @@ import {
 // existing imports of it from setup-tools.ts continue to resolve.
 export type { BrokerContextDeps } from "./setup-broker-activation.js";
 import type { BrokerContextDeps } from "./setup-broker-activation.js";
-// Phase 212 Gap 3: the KEPT cap-layer handle (leaseManager + capSocketPath +
+// The KEPT cap-layer handle (leaseManager + capSocketPath +
 // outputGuard) the dormancy activation threads in so an autonomy-bearing agent
-// mints a per-spawn lease + gets the orchestrate tool (Plan 04). The mint +
+// mints a per-spawn lease + gets the orchestrate tool. The mint +
 // orchestrate-assembly bodies are in setup-tools-autonomy.ts (file-size cap).
 import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js";
 import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
-import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // COORD-01 (218-01)
+import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // role:coordinator narrowing
 
 
 // Deps / Result types
@@ -110,14 +110,14 @@ import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tool
 export interface ToolsDeps {
   /** In-process RPC dispatcher. */
   rpcCall: RpcCall;
-  /** Phase 216 (HIGH-1 / NEW-4): durable store + rootRunId resolver → the agent
+  /** Durable store + rootRunId resolver → the agent
    *  rpcCall factory so an in-process OUTWARD send gets a monotonic `_outwardStepIndex`.
-   *  Both optional; absent ⇒ no index → the Plan-05 wrap is a pass-through (pre-216). */
+   *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
   durableRuns?: DurableRunPort;
   resolveRootRunId?: (sessionKey: SessionKey) => string;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
-  /** WR-04 (Phase 174-04): resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
+  /** Resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
   getProviderCapabilityClass?: (provider: string | undefined) => CapabilityClass | undefined;
   /** Default agent ID from routing config. */
   defaultAgentId: string;
@@ -171,11 +171,11 @@ export interface ToolsDeps {
   imageGenProvider?: ImageGenerationPort;
   /** Video generation provider (undefined when disabled -- video_generate tool not registered; the registry descriptor is gated on this context signal). */
   videoGenProvider?: VideoGenerationPort;
-  /** JOB-04 (189): truthy when the async video stack (store + poller) is wired — gates the video_status descriptor (SAME condition videoGenProvider uses). */
+  /** Truthy when the async video stack (store + poller) is wired — gates the video_status descriptor (SAME condition videoGenProvider uses). */
   videoStatusEnabled?: unknown;
   /** OS-level sandbox provider detected once at daemon startup. */
   sandboxProvider?: SandboxProvider;
-  namespacePreflightOk?: boolean; // PROFILE-05/JAIL-03: degrade orchestrate surface + lease mint when the host jail is unbuildable; absent ⇒ preflight-OK.
+  namespacePreflightOk?: boolean; // Degrade the orchestrate surface + lease mint when the host jail is unbuildable; absent ⇒ preflight-OK.
   /** Background task manager for background_tasks tool registration. */
   backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
   /** Per-session FileStateTracker pool. Required -- use createSessionTrackerRegistry(). */
@@ -186,16 +186,16 @@ export interface ToolsDeps {
    * Absent (undefined) → default open network, no proxy env, no regression.
    */
   brokerContext?: BrokerContextDeps;
-  /** The daemon's injected `TimerPort` — threaded toward the terminal reaper (124-09 WR-01
-   *  closure) so the idle-TTL/max-sessions sweep composes. Absent ⇒ no terminal reaper. */
+  /** The daemon's injected `TimerPort` — threaded toward the terminal reaper
+   *  closure so the idle-TTL/max-sessions sweep composes. Absent ⇒ no terminal reaper. */
   timers?: TimerPort;
   /** The concrete LCD `ContextStorePort` (`createLcdStore`) from setupMemory — injected so
-   *  assembleToolsForAgent wires the dag-mode `ctx_*` tools (E1/E2); the agent sees only the
+   *  assembleToolsForAgent wires the dag-mode `ctx_*` tools; the agent sees only the
    *  core port TYPE (the agent-to-store cut). Absent ⇒ ctx_* not wired. */
   lcdStore?: ContextStorePort;
-  /** Phase 212 Gap 3 — the KEPT capability-layer handle (lease + cap socket + outputGuard),
+  /** The KEPT capability-layer handle (lease + cap socket + outputGuard),
    *  present when ANY agent is autonomy-bearing. buildAutonomyToolWiring (setup-tools-autonomy.ts)
-   *  reads it to mint the per-spawn lease + assemble orchestrate. Absent ⇒ neither (no regression). */
+   *  reads it to mint the per-spawn lease + assemble orchestrate. Absent ⇒ neither. */
   capEndpointHandle?: CapabilityLayerHandle;
 }
 
@@ -239,13 +239,13 @@ export interface ToolsResult {
    * that silently no-op'd in production.
    */
   shutdownBackgroundProcesses: () => Promise<void>;
-  /** 124-09: the per-agent terminal registries map (closure-local) — the composition root
+  /** The per-agent terminal registries map (closure-local) — the composition root
    *  wires the one-per-daemon wake-FSM against the SAME registries (owner-scoped active-check). */
   terminalRegistries: ReadonlyMap<string, TerminalSessionRegistry>;
-  /** 124-09: resolve the per-agent terminal attention config (allow-entry autoAnswer/
+  /** Resolve the per-agent terminal attention config (allow-entry autoAnswer/
    *  hintPatterns + caps); read per-wake so a config swap applies; undefined ⇒ escalate. */
   getTerminalAttentionConfig: (agentId: string) => ReturnType<typeof deriveTerminalAttentionConfig>;
-  /** 165-07: the durable wake deps (journal store + checkLiveness + heartbeatMs/maxCostUsd)
+  /** The durable wake deps (journal store + checkLiveness + heartbeatMs/maxCostUsd)
    *  the composition root spreads into setupTerminalWake. */
   terminalDurability: ReturnType<typeof buildTerminalWakeDurability>;
 }
@@ -324,12 +324,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     return svc;
   }
 
-  // Agent-scoped rpcCall factory (the _capabilities injection point, CAP-03)
+  // Agent-scoped rpcCall factory (the _capabilities injection point)
   // extracted to setup-tools-capabilities.ts (file-size cap). createAgentRpcCall
   // is the per-agent builder; behavior is byte-identical to the prior inline form.
   const createAgentRpcCall = makeCreateAgentRpcCall({
     rpcCall, agents, defaultAgentId,
-    // Phase 216 (HIGH-1 / NEW-4): durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
+    // Durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
     ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
   });
@@ -473,7 +473,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         onSuspiciousContent,
         imageGenProvider: deps.imageGenProvider,
         videoGenProvider: deps.videoGenProvider,
-        videoStatusEnabled: deps.videoStatusEnabled, // JOB-04: gates the video_status descriptor
+        videoStatusEnabled: deps.videoStatusEnabled, // gates the video_status descriptor
         backgroundTaskManager: deps.backgroundTaskManager,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         contextEngineVersion: agentConfig?.contextEngine?.version ?? "pipeline",
@@ -529,7 +529,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         .map((d) => d.build(ctx))
         .filter((t): t is PlatformTool => t !== undefined);
 
-      // HOISTED (Phase 131) so BOTH the exec tool and the dag-gated ctx_* wiring (below) reuse
+      // HOISTED so BOTH the exec tool and the dag-gated ctx_* wiring (below) reuse
       // the ONE ALS-resolved session tool-results resolver.
       const agentWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
       const getToolResultsDir = (): string | undefined => {
@@ -575,7 +575,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         }
       }
 
-      // Phase 212 Gap 3 (dormancy activation, setup-tools-autonomy.ts): the per-spawn lease + the
+      // Dormancy activation (setup-tools-autonomy.ts): the per-spawn lease + the
       // orchestrate tool minted ONCE (SAME env for exec+orchestrate; both off w/o autonomy/handle/sandbox).
       const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring({
         agentConfig, agentId, agentWorkspaceDir, capEndpointHandle: deps.capEndpointHandle,
@@ -603,8 +603,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           // convention.
           toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
           approvalGate,                                      // Soft-stop override path
-          // Broker proxy env + (212) the minted cap lease — only present when the
-          // broker is wired and/or the agent is autonomy-bearing (Gap 3).
+          // Broker proxy env + the minted cap lease — only present when the
+          // broker is wired and/or the agent is autonomy-bearing.
           brokerSpawnEnv,
         }));
       }
@@ -625,18 +625,18 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Apply patch tool -- always included, gated by tool policy
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
 
-      // Sleep primitive (STREAM-03) -- always included; the model paces between
+      // Sleep primitive -- always included; the model paces between
       // turns (defers for the ~5-min cache TTL) instead of polling. Stateless; see sleep-tool.ts.
       tools.push(createSleepTool());
 
-      // Orchestrate tool (Phase 212 Plan 04, ORCH-01) — built by buildAutonomyToolWiring above.
+      // Orchestrate tool — built by buildAutonomyToolWiring above.
       if (orchestrateTool) tools.push(orchestrateTool);
 
-      // Terminal driver (v2.11): per-agent registry + nine never-export tools (165-07 durability
+      // Terminal driver: per-agent registry + nine never-export tools (durability
       // wired inside). wireAgentTerminalTools folds the base deps + operator config in one call.
       wireAgentTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers, agentWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir }, skillsConfig.terminal);
 
-      // Context expansion tools (v2.12 Phase 131): dag-gated ctx_* wiring — gate + WR-04/WR-05 in maybeWireContextTools (file-size cap; see its doc).
+      // Context expansion tools: dag-gated ctx_* wiring — the gate + depth resolution live in maybeWireContextTools (file-size cap; see its doc).
       maybeWireContextTools(tools, deps.lcdStore, agentId, agentConfig, {
         skillsLogger, nowMs: systemNowMs, getToolResultsDir, eventBus,
         capabilityClassOverride: deps.getProviderCapabilityClass?.(agentConfig?.provider),
@@ -645,7 +645,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       return tools;
     };
 
-    // COORD-01 (218-01): narrow a role:coordinator lead (selector + rationale in
+    // Narrow a role:coordinator lead (selector + rationale in
     // setup-tools-coordinator.ts). Narrows the TOOL SURFACE only — caps unchanged.
     const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
     const { effectiveGroups, narrowed: coordinatorNarrowed } = selectEffectiveToolGroups(resolvedAutonomy, toolGroups);
@@ -780,7 +780,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     processRegistries.clear();
   }
 
-  // RECUR-02 (live VPS 2026-06-17): BEFORE any registry's recover-on-boot, recreate the durable
+  // Observed on a live deployment: BEFORE any registry's recover-on-boot, recreate the durable
   // tmux server if it survived the restart into the PRIOR daemon generation's now-dismantled mount
   // namespace (systemd PrivateTmp/ProtectHome give each start a fresh ns; KillMode=process keeps the
   // old server). New `bwrap` sessions in that stranded ns die ~2.5s, so the server is torn down here;
@@ -788,7 +788,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   // (resumed on a fresh server in the live ns). A no-op on a normal first boot / a healthy server.
   recreateStrandedTmuxServerForDataDir(dataDir, skillsLogger);
 
-  // 165-07: the daemon-wide wake durability bundle spread into setupTerminalWake (built in the helper).
+  // The daemon-wide wake durability bundle spread into setupTerminalWake (built in the helper).
   const terminalDurability = buildTerminalWakeDurability({ dataDir, registries: terminalRegistries, nowMs: systemNowMs, config: agents[defaultAgentId]?.skills?.terminal as WakeDurabilityConfig | undefined });
 
   return {
@@ -796,10 +796,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     preprocessMessageText,
     shutdownBackgroundProcesses,
     terminalRegistries,
-    // 124-09: per-agent terminal attention config (allow-entry autoAnswer/hintPatterns + caps); read per-wake.
+    // Per-agent terminal attention config (allow-entry autoAnswer/hintPatterns + caps); read per-wake.
     getTerminalAttentionConfig: (agentId: string) =>
       deriveTerminalAttentionConfig((agents[agentId] ?? agents[defaultAgentId])?.skills?.terminal),
-    // 165-07: the durable wake deps the composition root spreads into setupTerminalWake.
+    // The durable wake deps the composition root spreads into setupTerminalWake.
     terminalDurability,
   };
 }

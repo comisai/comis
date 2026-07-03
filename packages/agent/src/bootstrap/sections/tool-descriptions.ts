@@ -593,8 +593,8 @@ export function getToolGuideWithSchema(toolName: string): string | undefined {
  * use of the trigger tool. Keyed by tool name (or sentinel key for sections
  * triggered by multiple tools).
  *
- * These sections were previously always-present in the system prompt but are
- * now deferred to save ~2,000 tokens at session start.
+ * Deferring these sections (rather than keeping them always-present in the
+ * system prompt) saves ~2,000 tokens at session start.
  *
  * IMPORTANT: This map must NOT import from tooling-sections.ts to avoid
  * circular dependency. All content is inlined as static strings.

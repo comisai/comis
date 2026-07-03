@@ -36,8 +36,8 @@ export interface StubFilterInjectorConfig {
  * Extract a tool's name across provider shapes: Anthropic puts it at top-level
  * `t.name`; OpenAI/Ollama (the /v1 tools array) nests it at `t.function.name`.
  * Checking only `t.name` silently no-ops the filter for OpenAI-format providers
- * (live finding, 2026-06-12: all deferred-tool stubs reached Ollama, nullifying
- * the small-class tool deferral and context-exhausting local models).
+ * (observed live: all deferred-tool stubs reached Ollama, nullifying the
+ * small-class tool deferral and context-exhausting local models).
  */
 function toolName(tool: Record<string, unknown>): string | undefined {
   if (typeof tool.name === "string") return tool.name;

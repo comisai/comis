@@ -209,7 +209,7 @@ describe("last-known-good config", () => {
         configPath: string;
         event: string;
       };
-      // Design §9.2: `source` is the fixed literal "config-io"; the call
+      // `source` is the fixed literal "config-io"; the call
       // site identity lives on `callerSource`.
       expect(record.source).toBe("config-io");
       expect(record.callerSource).toBe("last-known-good-save");
@@ -236,7 +236,7 @@ describe("last-known-good config", () => {
         callerSource: string;
         result: string;
       };
-      // Design §9.2: `source` is "config-io"; callerSource holds the legacy enum.
+      // `source` is "config-io"; callerSource holds the legacy enum.
       expect(record.source).toBe("config-io");
       expect(record.callerSource).toBe("last-known-good-restore");
       expect(record.result).toBe("rename");

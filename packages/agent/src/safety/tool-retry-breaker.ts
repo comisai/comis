@@ -2,17 +2,15 @@
 /**
  * Tool retry circuit breaker: per-tool-signature consecutive failure tracking.
  *
- * Prevents infinite retry loops (the original repro: 48-call MCP-server retry incident) by blocking
- * tool calls after repeated failures and providing actionable LLM guidance with
- * alternative tool suggestions.
+ * Prevents infinite retry loops (e.g. an agent re-calling a failing MCP server
+ * tool dozens of times) by blocking tool calls after repeated failures and
+ * providing actionable LLM guidance with alternative tool suggestions.
  *
  * Two-level tracking:
  * - **Signature-level** (tool + sorted-args fingerprint): blocks after N consecutive
  *   failures for the exact same tool+args combination.
  * - **Tool-level** (tool name only): blocks after M total failures across all args
  *   for the same tool name.
- *
-
  *
  * @module
  */
@@ -31,15 +29,15 @@ export interface ToolRetryVerdict {
 /**
  * Transition verdict returned by `recordResult` when a tool-WIDE failure
  * counter crosses (or recovers from) its threshold. The breaker stays
- * emitter-free (design §5 D3 / §9.6 — lowest blast radius): it RETURNS this
- * verdict and the bridge (the sole holder of the event bus) emits the
- * `tool:breaker_opened` / `tool:breaker_reset` events.
+ * emitter-free (lowest blast radius): it RETURNS this verdict and the bridge
+ * (the sole holder of the event bus) emits the `tool:breaker_opened` /
+ * `tool:breaker_reset` events.
  *
  * Only tool-WIDE transitions surface (tool-level total + error-pattern, both of
  * which make the tool unavailable to the model); the args-specific
- * signature-level counter does NOT produce a transition (A1). `reset` fires
+ * signature-level counter does NOT produce a transition. `reset` fires
  * only on a success that recovers a non-zero counter — never on the lifecycle
- * `reset()` full-clear (A2).
+ * `reset()` full-clear.
  */
 export interface ToolBreakerTransition {
   transition: "opened" | "reset";
@@ -82,7 +80,7 @@ export interface ToolRetryBreaker {
    * crossing (tool-level total or error-pattern threshold, by EXACT equality)
    * or on a success that recovers a non-zero failure counter; otherwise
    * `undefined`. The breaker emits nothing itself — the bridge consumes this
-   * verdict (design §5 D3).
+   * verdict and emits the corresponding events.
    */
   recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): ToolBreakerTransition | undefined;
   /** Return list of tool names that are fully blocked (tool-level). */
@@ -123,10 +121,10 @@ export function extractErrorTag(errorText: string): string {
   //    Every exec failure starts with that envelope, so without unwrapping
   //    the 80-char fallback below buckets structurally-identical-envelope
   //    errors under the same tag (`content_type_text_text_...`) even when
-  //    the inner stderr is completely different. That's what collapsed
-  //    exec in session 678314278 lines 40-51 — two `spawn sandbox-exec
-  //    ENOENT` failures triggered maxConsecutiveErrorPatterns, which then
-  //    also rejected an unrelated `python3 --version` probe. Unwrap up to
+  //    the inner stderr is completely different — e.g. two `spawn
+  //    sandbox-exec ENOENT` failures trip maxConsecutiveErrorPatterns and
+  //    the shared envelope tag then also rejects an unrelated
+  //    `python3 --version` probe, collapsing exec entirely. Unwrap up to
   //    2 levels deep (the breaker's own block message is a *second*
   //    envelope layer wrapping the inner tool failure).
   let unwrapped = errorText;
@@ -202,10 +200,9 @@ function peelEnvelope(text: string): string {
  * not tool-execution failures. These are corrective feedback — the agent
  * can fix them by changing its args on the next call — so they MUST NOT
  * count toward the breaker's signature, tool-total, or error-pattern
- * counters. Counting them collapsed exec entirely during a legitimate
- * Cloudflare Pages deploy attempt when the agent iterated through several
- * command shapes looking for one that cleared the shell-substitution +
- * env-allowlist guards (Telegram session 678314278, jsonl lines 86–105).
+ * counters. Counting them collapses exec entirely during legitimate work —
+ * e.g. an agent iterating through several command shapes looking for one
+ * that clears the shell-substitution + env-allowlist guards.
  *
  * Real tool-execution failures (`permission_denied`, `not_found`,
  * `conflict`, `timeout`, EPERM sandbox denies, etc.) are unchanged —
@@ -238,11 +235,10 @@ export function isParameterValidationTag(tag: string): boolean {
  * exit 1), NOT evidence that the `exec`/`process` tool is unavailable. The
  * agent fixes its input and re-runs, so — exactly like PARAMETER_VALIDATION_TAGS
  * — these MUST NOT count toward the breaker's signature, tool-total, or
- * error-pattern thresholds. Counting them shut exec down mid-task in Telegram
- * session 678314278 (daemon.1.log, 2026-06-06 20:27): repeated `npm run build`
- * exits of 2 tripped maxConsecutiveErrorPatterns and the breaker told the model
- * exec was "unavailable. DO NOT retry this tool", killing the edit→build→fix
- * loop and forcing a bluffed completion.
+ * error-pattern thresholds. Counting them shuts exec down mid-task: repeated
+ * `npm run build` exits of 2 trip maxConsecutiveErrorPatterns and the breaker
+ * tells the model exec is "unavailable. DO NOT retry this tool", killing the
+ * edit→build→fix loop and forcing a bluffed completion.
  *
  * The discriminator is deliberately `details.exitCode` — the SAME field the
  * pi-event bridge inspects to flip toolSuccess=false in the first place
@@ -341,7 +337,7 @@ function buildSandboxRedirectMessage(errorText: string | undefined): string | un
  * @param errorTag - Normalized error tag extracted from lastError (used to branch on validation errors)
  * @param isToolLevel - Whether this is a tool-level (total) or signature-level (consecutive) block
  *
- * Exported as a test seam for R10b — the recordResult accumulation path is
+ * Exported as a test seam — the recordResult accumulation path is
  * unreachable for parameter-validation tags (early-return on
  * `PARAMETER_VALIDATION_TAGS.has(errorTag)` in `recordResult`),
  * so tests call this function directly.
@@ -505,7 +501,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
         // never clears blockedTools. So a tool that has already crossed
         // maxToolFailures stays hard-blocked even after this success — emitting
         // `reset` here would assert the breaker is usable again while
-        // beforeToolCall still returns block:true (WR-151-03). Gate the reset
+        // beforeToolCall still returns block:true. Gate the reset
         // transition on the tool's actual availability: only report reset when
         // the success genuinely restores a usable tool (signature-level recovery
         // on a tool that is NOT tool-level blocked). The local counter cleanup
@@ -551,8 +547,8 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       // Check if tool-level threshold exceeded. The block stays `>=` (Set.add is
       // idempotent), but the OPEN transition fires on the EXACT crossing only —
       // `===` so the bridge emits `tool:breaker_opened` once per open, never on
-      // every later failure (Pitfall 1 / T-151-03; a `>=` verdict would inflate
-      // Phase 153's breakerTimeline).
+      // every later failure (a `>=` verdict would inflate the incident report's
+      // breakerTimeline).
       if (toolState.count >= maxToolFailures) {
         blockedTools.add(toolName);
       }
@@ -567,7 +563,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       errorPatternFailures.set(patternKey, patternState);
       const openedPattern = patternState.consecutiveFailures === maxErrorPatterns;
 
-      // Tool-WIDE open transition (A1): tool-level total OR error-pattern. The
+      // Tool-WIDE open transition: tool-level total OR error-pattern. The
       // args-specific signature-level counter does NOT emit a transition — it is
       // a narrower, self-healing state checked in beforeToolCall.
       if (openedToolLevel || openedPattern) {
@@ -575,13 +571,14 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
           transition: "opened",
           toolName,
           reason: openedToolLevel ? "tool_failure_threshold" : "error_pattern",
-          // Report the counter that actually crossed the threshold (WR-151-02).
+          // Report the counter that actually crossed the threshold.
           // A tool_failure_threshold open is driven by the tool-WIDE total
           // (`toolState.count`) crossing maxToolFailures across different args —
           // each individual signature may sit at consecutiveFailures===1. An
           // error_pattern open is driven by the per-pattern consecutive counter.
           // Reporting `sigState.consecutiveFailures` here mislabels an N-failure
-          // open as "opened after 1 failure" in Phase 153's breakerTimeline.
+          // open as "opened after 1 failure" in the incident report's
+          // breakerTimeline.
           consecutiveFailures: openedToolLevel
             ? toolState.count
             : patternState.consecutiveFailures,

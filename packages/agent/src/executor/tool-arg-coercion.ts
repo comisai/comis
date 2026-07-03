@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-field stringified-JSON tool-argument coercion (F-3, live 2026-06-12).
+ * Per-field stringified-JSON tool-argument coercion.
  *
  * Small models routinely emit a well-formed arguments object whose ONE
  * array/object field is a *stringified* JSON value, e.g.

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for relevance-scorer.ts — the RETR-01 pure shared RelevanceScorer.
+ * Unit tests for relevance-scorer.ts — the pure shared RelevanceScorer.
  *
  * The scorer is the SINGLE ranking primitive BOTH the recall path (memory-recall.ts)
- * and the assembly path (the Plan-03 arbiter) call. It is PURE: imports only
+ * and the assembly path (the margin arbiter) call. It is PURE: imports only
  * @comis/core types + in-package fuse/score (the agent↛memory architecture cut), no I/O,
  * no clock, input not mutated. The tests pin:
  *

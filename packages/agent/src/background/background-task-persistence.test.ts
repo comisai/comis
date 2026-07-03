@@ -269,7 +269,7 @@ describe("background-task-persistence", () => {
   describe("persistTaskSync persists dispatchState", () => {
     it("round-trips dispatchState='dispatched' through the BackgroundTask path (with _promise)", () => {
       // Use the BackgroundTask path (object has _promise) to exercise
-      // toPersistedState — the helper that strips unknown fields. Now that
+      // toPersistedState — the helper that strips unknown fields. Because
       // dispatchState is part of PersistedTaskState + toPersistedState, the
       // field survives the round-trip.
       const taskRecord: Record<string, unknown> = {

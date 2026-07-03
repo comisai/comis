@@ -77,9 +77,9 @@ describe("silent-failure-handlers.ts — rate_limited branch", () => {
   });
 });
 
-describe("silent-failure-handlers.ts — tool_schema_unsupported facade (GBNF-02)", () => {
-  // Dynamic imports so these tests fail INDIVIDUALLY pre-patch without
-  // crashing the pre-existing structural suites in this file. The handler
+describe("silent-failure-handlers.ts — tool_schema_unsupported facade re-export", () => {
+  // Dynamic imports so a missing re-export fails these tests INDIVIDUALLY
+  // without crashing the structural suites in this file. The handler
   // body lives in tool-schema-unsupported-handler.ts (the prompt-runner
   // directory has a 500-line file cap) and is re-exported here so the
   // dispatch in retry-loop.ts imports the whole silent-failure cascade from

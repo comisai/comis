@@ -67,7 +67,7 @@ export const DeliveryQueueConfigSchema = z.strictObject({
   drainOnStartup: z.boolean().default(true),
   /** Maximum time in milliseconds allowed for startup drain before continuing. */
   drainBudgetMs: z.number().int().positive().default(60_000),
-  /** Interval in milliseconds between recurring drain ticks after startup. Set tick cadence for SPEC-R1 continuous drainer. */
+  /** Interval in milliseconds between recurring drain ticks after startup. Sets the tick cadence for the continuous drainer. */
   drainIntervalMs: z.number().int().positive().default(1_000),
   /** Interval in milliseconds between automatic prune sweeps for expired entries. */
   pruneIntervalMs: z.number().int().positive().default(300_000),

@@ -8,7 +8,7 @@ import { TypedEventBus } from "./bus.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// Reproducible-RED guards (the 201-01 precedent, mirrored from events-learning.test.ts):
+// Reproducible-RED guards (mirrored from events-learning.test.ts):
 // `expectTypeOf` / typed-payload assertions compile away under vitest's esbuild
 // transform, so a pure type-level test passes GREEN on pre-patch HEAD. The genuine
 // RED signal comes from the source-grep guards below — they fail when the
@@ -29,40 +29,39 @@ describe("events-orchestration.ts source (reproducible RED guards)", () => {
     expect(src).toContain("OrchestrationEvents");
   });
 
-  it("documents repaired as P1-inert (always false) in the doc comment", () => {
+  it("documents repaired as always-false at the emit site in the doc comment", () => {
     const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
-    // The doc names the P1-inert contract so a future reader cannot mistake the
-    // field for a wired producer (Phase 174 / AUTHOR-01 ships the repair producer).
+    // The doc names the inert contract so a future reader cannot mistake the
+    // field for a wired producer (the repair producer emits graph:repaired instead).
     expect(src).toMatch(/repaired[\s\S]{0,200}?(always\s+false|ALWAYS\s+false)/i);
-    expect(src).toMatch(/Phase\s*174|AUTHOR-01/);
+    expect(src).toMatch(/graph:repaired/);
   });
 
-  // AUTHOR-01/02 (v2.27 P2, Phase 174): the two audit events Plans 03/04 emit on
-  // repair / synthesis. The reproducible RED signal is the source-grep (the
+  // The two authoring-audit events emitted on repair / synthesis. The
+  // reproducible RED signal is the source-grep (the
   // type-level assertions below compile away under esbuild, so they pass GREEN on
   // pre-patch HEAD — the genuine RED comes from these source guards).
-  it("declares the graph:repaired key on the OrchestrationEvents interface (AUTHOR-01)", () => {
+  it("declares the graph:repaired key on the OrchestrationEvents interface", () => {
     const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
     expect(src).toMatch(/interface\s+OrchestrationEvents/);
     expect(src).toContain('"graph:repaired"');
   });
 
-  it("declares the graph:synthesized_from_intent key on the OrchestrationEvents interface (AUTHOR-02)", () => {
+  it("declares the graph:synthesized_from_intent key on the OrchestrationEvents interface", () => {
     const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
     expect(src).toContain('"graph:synthesized_from_intent"');
   });
 
-  it("documents both AUTHOR events as DAEMON-emitted, counts/ids-only (§2.7)", () => {
+  it("documents both authoring-audit events as DAEMON-emitted, counts/ids-only (§2.7)", () => {
     const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
-    // Both events name AUTHOR-01/02 and the daemon-side emit + §2.7 discipline so a
+    // Both events name the daemon-side emit + §2.7 counts/ids-only discipline so a
     // future reader cannot mistake them for an agent-side body-carrying signal.
-    expect(src).toMatch(/AUTHOR-01/);
-    expect(src).toMatch(/AUTHOR-02/);
+    expect(src).toMatch(/Counts\/ids\/enums ONLY/);
     expect(src).toMatch(/DAEMON-SIDE/i);
   });
 });
 
-describe("graph:repaired authoring-audit event (AUTHOR-01 — counts/ids/enums only)", () => {
+describe("graph:repaired authoring-audit event (counts/ids/enums only)", () => {
   // The exact allowed payload key set — closed-enums/number/string-id ONLY
   // (AGENTS.md §2.7). Driven off the RUNTIME keys of a constructed sample so a
   // future widening to a body field (graph / type_config / task) fails this test.
@@ -75,7 +74,7 @@ describe("graph:repaired authoring-audit event (AUTHOR-01 — counts/ids/enums o
     "timestamp",
   ].sort();
 
-  // The §2.7 / D-EVENT forbidden body keys — none may ever appear on the payload.
+  // The §2.7 forbidden body keys — none may ever appear on the payload.
   const FORBIDDEN_BODY_KEYS = [
     "nodes",
     "graph",
@@ -150,7 +149,7 @@ describe("graph:repaired authoring-audit event (AUTHOR-01 — counts/ids/enums o
     expect(tiers).toContain("unknown");
   });
 
-  it("payload key set is EXACTLY the allowed counts/ids/enums set — no body field (§2.7 / D-EVENT no-leak)", () => {
+  it("payload key set is EXACTLY the allowed counts/ids/enums set — no body field (§2.7 no-leak)", () => {
     const keys = Object.keys(makeSample()).sort();
     expect(keys).toEqual(ALLOWED_KEYS);
   });
@@ -163,7 +162,7 @@ describe("graph:repaired authoring-audit event (AUTHOR-01 — counts/ids/enums o
   });
 });
 
-describe("graph:synthesized_from_intent authoring-audit event (AUTHOR-02 — counts/ids/enums only)", () => {
+describe("graph:synthesized_from_intent authoring-audit event (counts/ids/enums only)", () => {
   const ALLOWED_KEYS = ["pattern", "nodeCount", "agentId", "sessionKey", "timestamp"].sort();
 
   // The intent TEXT is the highest-risk leak for synthesis — it heads the forbidden set.
@@ -221,7 +220,7 @@ describe("graph:synthesized_from_intent authoring-audit event (AUTHOR-02 — cou
     void bad;
   });
 
-  it("payload key set is EXACTLY the allowed counts/ids/enums set — no intent text / body (§2.7 / D-EVENT no-leak)", () => {
+  it("payload key set is EXACTLY the allowed counts/ids/enums set — no intent text / body (§2.7 no-leak)", () => {
     const keys = Object.keys(makeSample()).sort();
     expect(keys).toEqual(ALLOWED_KEYS);
   });
@@ -248,7 +247,7 @@ describe("pipeline:authored authoring-telemetry event (counts/ids/enums only)", 
     "timestamp",
   ].sort();
 
-  // The §2.7 / D-EVENT forbidden body keys — none may ever appear on the payload.
+  // The §2.7 forbidden body keys — none may ever appear on the payload.
   const FORBIDDEN_BODY_KEYS = [
     "nodes",
     "graph",
@@ -306,7 +305,7 @@ describe("pipeline:authored authoring-telemetry event (counts/ids/enums only)", 
     void bad;
   });
 
-  it("admits the unknown capabilityClass fail-safe tier (Pitfall 2 — record honestly)", () => {
+  it("admits the unknown capabilityClass fail-safe tier (record honestly, never silently drop)", () => {
     const unknownTier = makeSample({ capabilityClass: "unknown" });
     expect(unknownTier.capabilityClass).toBe("unknown");
     // The full tier union: the four provider-family classes + the unresolved fail-safe.
@@ -320,7 +319,7 @@ describe("pipeline:authored authoring-telemetry event (counts/ids/enums only)", 
     expect(tiers).toContain("unknown");
   });
 
-  it("payload key set is EXACTLY the allowed counts/ids/enums set — no body field (§2.7 / D-EVENT no-leak)", () => {
+  it("payload key set is EXACTLY the allowed counts/ids/enums set — no body field (§2.7 no-leak)", () => {
     // Drive off RUNTIME keys (not types) so a future body-field widening trips here.
     const keys = Object.keys(makeSample()).sort();
     expect(keys).toEqual(ALLOWED_KEYS);
@@ -333,8 +332,8 @@ describe("pipeline:authored authoring-telemetry event (counts/ids/enums only)", 
     }
   });
 
-  it("repaired is P1-inert: the canonical authored sample is repaired:false", () => {
-    // The repair producer is deferred to Phase 174 / AUTHOR-01 — at P1 every
+  it("repaired is inert on pipeline:authored: the canonical authored sample is repaired:false", () => {
+    // The repair producer signals via the dedicated graph:repaired event — every
     // authored event records repaired:false. This pins the intent (the doc-comment
     // RED guard above asserts the contract is documented in source).
     expect(makeSample().repaired).toBe(false);
@@ -342,15 +341,15 @@ describe("pipeline:authored authoring-telemetry event (counts/ids/enums only)", 
 });
 
 // ---------------------------------------------------------------------------
-// STEER-01 (v2.27 P3, Phase 175): the subagent:steered event — emitted at the
-// inject site (Plan 02, subagent-handlers.ts / sub-agent-runner.ts) when a
+// The subagent:steered event — emitted at the
+// inject site (subagent-handlers.ts / sub-agent-runner.ts) when a
 // running child is steered in-flight (transcript preserved) instead of
 // kill+respawn. Counts/ids/typed-enum ONLY — NEVER the steer message body
 // (§2.7). The reproducible-RED signal is the source-grep (the type-level
-// assertions compile away under esbuild — the 173/174 precedent).
+// assertions compile away under esbuild).
 // ---------------------------------------------------------------------------
 
-describe("subagent:steered event source (reproducible RED guards — STEER-01)", () => {
+describe("subagent:steered event source (reproducible RED guards)", () => {
   it("declares the subagent:steered key on the OrchestrationEvents interface", () => {
     const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
     expect(src).toMatch(/interface\s+OrchestrationEvents/);
@@ -369,7 +368,7 @@ describe("subagent:steered event source (reproducible RED guards — STEER-01)",
     expect(steeredBlock).toMatch(/\bagentId\b/);
     expect(steeredBlock).toMatch(/\bmode\b/);
     expect(steeredBlock).toMatch(/\btimestamp\b/);
-    // The §2.7 / D-EVENT no-leak guard: NO message-body field may appear in the
+    // The §2.7 no-leak guard: NO message-body field may appear in the
     // event payload block (the steer message text is excluded).
     expect(steeredBlock).not.toMatch(/\b(message|text|body|content)\b/);
   });
@@ -382,8 +381,9 @@ describe("subagent:steered event source (reproducible RED guards — STEER-01)",
 
   it("documents subagent:steered as DAEMON-emitted, counts/ids-only (§2.7)", () => {
     const src = readFileSync(resolve(here, "events-orchestration.ts"), "utf8");
-    // The doc names STEER-01 + the counts/ids-only discipline so a future reader
-    // cannot mistake it for an agent-side body-carrying signal.
-    expect(src).toMatch(/STEER-01/);
+    // The doc names the daemon-side emit + the counts/ids-only discipline so a
+    // future reader cannot mistake it for an agent-side body-carrying signal.
+    expect(src).toMatch(/NEVER the steer message body/);
+    expect(src).toMatch(/DAEMON-SIDE at the inject site/);
   });
 });

@@ -374,17 +374,16 @@ describe("timeout resolution", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LAT-01: timeout binding provenance. `timeoutSource` labels WHICH of the four
+// Timeout binding provenance. `timeoutSource` labels WHICH of the four
 // resolver levels bound `timeoutMs` (operation_explicit > operation_default >
 // agent_config > builtin_default). It is born HERE where the chain branches —
 // producers thread it, decode merges it, hints render knobs from it. Deriving
 // it anywhere downstream cannot work: the cron producer materializes
 // `promptTimeout` unconditionally, collapsing "the 150s cron default applied"
-// into what looks like an explicit operator override (177-RESEARCH Critical
-// Finding 1).
+// into what looks like an explicit operator override.
 // ---------------------------------------------------------------------------
-describe("LAT-01 timeout binding provenance (timeoutSource)", () => {
-  it("LAT-01-1: explicit operationModels.verification.timeout binds with timeoutSource operation_explicit", () => {
+describe("timeout binding provenance (timeoutSource)", () => {
+  it("explicit operationModels.verification.timeout binds with timeoutSource operation_explicit", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "verification",
@@ -395,13 +394,13 @@ describe("LAT-01 timeout binding provenance (timeoutSource)", () => {
     expect(result.timeoutSource).toBe("operation_explicit");
   });
 
-  it("LAT-01-2: cron with NO entry timeout binds the 150s OPERATION_TIMEOUT_DEFAULTS.cron with timeoutSource operation_default", () => {
+  it("cron with NO entry timeout binds the 150s OPERATION_TIMEOUT_DEFAULTS.cron with timeoutSource operation_default", () => {
     const result = resolveOperationModel(baseParams({ operationType: "cron" }));
     expect(result.timeoutMs).toBe(150_000);
     expect(result.timeoutSource).toBe("operation_default");
   });
 
-  it("LAT-01-3: planning (absent from OPERATION_TIMEOUT_DEFAULTS) falls through to agentPromptTimeoutMs with timeoutSource agent_config", () => {
+  it("planning (absent from OPERATION_TIMEOUT_DEFAULTS) falls through to agentPromptTimeoutMs with timeoutSource agent_config", () => {
     const result = resolveOperationModel(
       baseParams({ operationType: "planning", agentPromptTimeoutMs: 200_000 }),
     );
@@ -409,7 +408,7 @@ describe("LAT-01 timeout binding provenance (timeoutSource)", () => {
     expect(result.timeoutSource).toBe("agent_config");
   });
 
-  it("LAT-01-4: planning with NO agent knob falls through to the 180s built-in with timeoutSource builtin_default", () => {
+  it("planning with NO agent knob falls through to the 180s built-in with timeoutSource builtin_default", () => {
     const result = resolveOperationModel(
       baseParams({ operationType: "planning", agentPromptTimeoutMs: undefined }),
     );
@@ -417,15 +416,15 @@ describe("LAT-01 timeout binding provenance (timeoutSource)", () => {
     expect(result.timeoutSource).toBe("builtin_default");
   });
 
-  it("LAT-01-5: a non-positive entry timeout (0) falls through the > 0 guard exactly as today — source labels the level that actually bound, never operation_explicit", () => {
+  it("a non-positive entry timeout (0) falls through the > 0 guard — source labels the level that actually bound, never operation_explicit", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "cron",
         operationModels: { cron: { timeout: 0 } } as OperationModels,
       }),
     );
-    // Value semantics unchanged: 0 is rejected by the > 0 guard, the cron
-    // operation default binds — and the label must say so.
+    // 0 is rejected by the > 0 guard, so the cron operation default binds —
+    // and the label must say so.
     expect(result.timeoutMs).toBe(150_000);
     expect(result.timeoutSource).toBe("operation_default");
     expect(result.timeoutSource).not.toBe("operation_explicit");
@@ -484,14 +483,14 @@ describe("resolveProviderFamily", () => {
   });
 
   it("passes 'anthropic-bedrock' through as-is (not a pi-ai KnownProvider alias; normalizeProviderId returns as-is)", () => {
-    // SA8: normalizeProviderId does not strip suffixes — it resolves ALIASES only.
+    // normalizeProviderId does not strip suffixes — it resolves ALIASES only.
     // "anthropic-bedrock" has no alias entry, so it passes through unchanged.
-    // "amazon-bedrock" is the canonical pi-ai ID (covered by SA8 tests below).
+    // "amazon-bedrock" is the canonical pi-ai ID (covered by the misroute tests below).
     expect(resolveProviderFamily("anthropic-bedrock")).toBe("anthropic-bedrock");
   });
 
-  it("passes 'google-vertex' through as canonical pi-ai KnownProvider (SA8: no suffix stripping)", () => {
-    // SA8: "google-vertex" is a native pi-ai KnownProvider in getProviders().
+  it("passes 'google-vertex' through as canonical pi-ai KnownProvider (no suffix stripping)", () => {
+    // "google-vertex" is a native pi-ai KnownProvider in getProviders().
     // normalizeProviderId("google-vertex") = "google-vertex" (no alias match).
     // Stripping to "google" was never correct for operation-tier lookup.
     expect(resolveProviderFamily("google-vertex")).toBe("google-vertex");
@@ -503,29 +502,30 @@ describe("resolveProviderFamily", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SA8: resolveProviderFamily Bedrock/Vertex misroute fix
+// resolveProviderFamily Bedrock/Vertex misroute guard
 //
-// BUG (pre-fix): "amazon-bedrock" → "amazon" (NOT a pi-ai KnownProvider →
-// resolveOperationDefaults returns {} → Level 5 silent fallback).
-// FIX: route through normalizeProviderId — both "amazon-bedrock" and
-// "google-vertex" are native pi-ai KnownProvider entries, no suffix stripping.
+// Suffix-stripping "amazon-bedrock" to "amazon" would yield a name that is
+// NOT a pi-ai KnownProvider, so resolveOperationDefaults returns {} and the
+// Level 5 silent fallback engages. Routing through normalizeProviderId is
+// correct: both "amazon-bedrock" and "google-vertex" are native pi-ai
+// KnownProvider entries — no suffix stripping.
 // ---------------------------------------------------------------------------
-describe("SA8 resolveProviderFamily Bedrock/Vertex misroute fix", () => {
-  it("SA8 resolveProviderFamily('amazon-bedrock') returns amazon-bedrock (pi-ai KnownProvider, no suffix strip)", () => {
+describe("resolveProviderFamily Bedrock/Vertex misroute guard", () => {
+  it("resolveProviderFamily('amazon-bedrock') returns amazon-bedrock (pi-ai KnownProvider, no suffix strip)", () => {
     expect(resolveProviderFamily("amazon-bedrock")).toBe("amazon-bedrock");
   });
 
-  it("SA8 resolveProviderFamily('google-vertex') returns google-vertex (pi-ai KnownProvider, symmetric fix)", () => {
+  it("resolveProviderFamily('google-vertex') returns google-vertex (pi-ai KnownProvider, symmetric to bedrock)", () => {
     expect(resolveProviderFamily("google-vertex")).toBe("google-vertex");
   });
 
-  it("SA8 resolveOperationDefaults for amazon-bedrock returns non-empty result (has fast or mid)", () => {
+  it("resolveOperationDefaults for amazon-bedrock returns non-empty result (has fast or mid)", () => {
     const family = resolveProviderFamily("amazon-bedrock");
     const defaults = resolveOperationDefaults(family);
     expect(defaults.fast ?? defaults.mid).toBeTruthy();
   });
 
-  it("SA8 resolveOperationModel for amazon-bedrock resolves to source='family_default' (not agent_primary)", () => {
+  it("resolveOperationModel for amazon-bedrock resolves to source='family_default' (not agent_primary)", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "heartbeat",
@@ -537,17 +537,17 @@ describe("SA8 resolveProviderFamily Bedrock/Vertex misroute fix", () => {
     expect(result.source).toBe("family_default");
   });
 
-  it("SA8 resolveOperationDefaults for google-vertex returns non-empty result (has fast or mid)", () => {
+  it("resolveOperationDefaults for google-vertex returns non-empty result (has fast or mid)", () => {
     const family = resolveProviderFamily("google-vertex");
     const defaults = resolveOperationDefaults(family);
     expect(defaults.fast ?? defaults.mid).toBeTruthy();
   });
 
-  it("SA8 resolveProviderFamily('bedrock') resolves alias to amazon-bedrock (via normalizeProviderId)", () => {
+  it("resolveProviderFamily('bedrock') resolves alias to amazon-bedrock (via normalizeProviderId)", () => {
     expect(resolveProviderFamily("bedrock")).toBe("amazon-bedrock");
   });
 
-  it("SA8 resolveProviderFamily('aws-bedrock') resolves alias to amazon-bedrock (via normalizeProviderId)", () => {
+  it("resolveProviderFamily('aws-bedrock') resolves alias to amazon-bedrock (via normalizeProviderId)", () => {
     expect(resolveProviderFamily("aws-bedrock")).toBe("amazon-bedrock");
   });
 });

@@ -31,7 +31,7 @@ export type InjectionRule =
 
 // ── Finalizer ────────────────────────────────────────────────────────────────
 
-/** Post-injection, body-aware finalizer (port of RequestFinalizer; SigV4 deferred — §2). */
+/** Post-injection, body-aware finalizer — runs after header/param injection with the buffered request body. */
 export type RequestFinalizer = { readonly kind: "awsSigV4" };
 
 // ── Static header ────────────────────────────────────────────────────────────

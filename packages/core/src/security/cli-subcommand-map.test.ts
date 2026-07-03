@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Coverage tests for CLI_SUBCOMMAND_MAP (CLI-01 / v8 §7 — the `comis-agent`
+ * Coverage tests for CLI_SUBCOMMAND_MAP (the `comis-agent`
  * subcommand→{tool|method} source-of-truth).
  *
  * Asserts the table is the tight 1:1 mapping of the FINAL subcommand set
  * (`skill` EXCLUDED — the denylisted orch:skill closed door; admin verbs
- * absent — CLI-03), that every target resolves to a real cap-map key (orch:*
+ * absent), that every target resolves to a real cap-map key (orch:*
  * or a self-scoped read, never admin/deny-by-origin), and that `list`/`status`
- * are BOTH flat enumerable entries (the same-gate predicate in Plan 05 iterates
+ * are BOTH flat enumerable entries (the same-gate arch-test predicate iterates
  * the flat values, so a target must never hide inside a nested value shape).
  *
- * The companion arch-test (Plan 05) consumes the SAME table to prove no
+ * The companion arch-test consumes the SAME table to prove no
  * subcommand reaches a weaker path AND that no target is denylisted at the cap
  * socket — so the CLI surface and the auditable cap-maps cannot drift.
  *
@@ -52,7 +52,7 @@ describe("CLI_SUBCOMMAND_MAP", () => {
     );
   });
 
-  it("maps each subcommand to its v8 §7 call target (1:1, cap never restated)", () => {
+  it("maps each subcommand to its designated call target (1:1, cap never restated)", () => {
     expect(CLI_SUBCOMMAND_MAP.spawn).toEqual({ kind: "method", method: "session.spawn" });
     expect(CLI_SUBCOMMAND_MAP.run).toEqual({ kind: "method", method: "graph.execute" });
     expect(CLI_SUBCOMMAND_MAP.schedule).toEqual({ kind: "method", method: "cron.add" });
@@ -73,7 +73,7 @@ describe("CLI_SUBCOMMAND_MAP", () => {
     expect((CLI_SUBCOMMAND_MAP as Record<string, unknown>).skill).toBeUndefined();
   });
 
-  it("has NO admin/control-plane subcommand (CLI-03)", () => {
+  it("has NO admin/control-plane subcommand", () => {
     for (const adminVerb of [
       "secrets",
       "config",
@@ -89,14 +89,14 @@ describe("CLI_SUBCOMMAND_MAP", () => {
     }
   });
 
-  it("routes every {kind:'tool'} entry to a real TOOL_CAPABILITY_MAP key (CLI-01)", () => {
+  it("routes every {kind:'tool'} entry to a real TOOL_CAPABILITY_MAP key", () => {
     for (const [sub, target] of Object.entries(CLI_SUBCOMMAND_MAP) as [string, CliCallTarget][]) {
       if (target.kind !== "tool") continue;
       expect(target.tool in TOOL_CAPABILITY_MAP, `${sub} → tool ${target.tool}`).toBe(true);
     }
   });
 
-  it("routes every {kind:'method'} entry to a real HANDLER_CAPABILITY_MAP key (CLI-01)", () => {
+  it("routes every {kind:'method'} entry to a real HANDLER_CAPABILITY_MAP key", () => {
     for (const [sub, target] of Object.entries(CLI_SUBCOMMAND_MAP) as [string, CliCallTarget][]) {
       if (target.kind !== "method") continue;
       expect(target.method in HANDLER_CAPABILITY_MAP, `${sub} → method ${target.method}`).toBe(true);

@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RETR-02/03/05 — the relevance-first eviction seam, extracted from `lcd-assembler.ts`
+ * The relevance-first eviction seam, extracted from `lcd-assembler.ts`
  * so the assembler stays under the 800-line file-size cap (the "keep the body THIN" rule;
  * mirrors `recall-provenance.ts` / `lcd-store-provenance.ts` extractions). The assembler
  * CALLS {@link evictUnderArbiter} on the relevance-first path and keeps the verbatim
- * `evictHistoryUnderBudget` call on the frontier/mid path (byte-identical, LOCKED #2).
+ * `evictHistoryUnderBudget` call on the frontier/mid path (a locked byte-identical contract).
  *
  * This module wraps the pure {@link marginArbitrate} allocator with the assembly-path
- * glue: it separates the S4 security-pinned items (RETR-05) out of the relevance-evictable
+ * glue: it separates the security-pinned items out of the relevance-evictable
  * band as unconditional floors (mirroring `lcd-preflight.ts:114-121`), passes EMPTY LTM/KG
- * candidate lanes (the C2 boundary — the assembler holds no cross-session LTM; the recall
+ * candidate lanes (the assembler holds no cross-session LTM; the recall
  * path owns LTM ranking), and builds the relevance query for the arbiter.
  *
  * Architecture cuts: lives in `context-engine/`, imports only `@comis/core` types +
  * in-package context-engine modules — never `@comis/memory` (agent↛memory) and never the
- * `rag/` layer (I2). The relevance scorer is INJECTED (`deps.relevanceScorer`); on the C2
+ * `rag/` layer (the context-engine ↮ rag cut). The relevance scorer is INJECTED
+ * (`deps.relevanceScorer`); on the
  * assembly path the LTM/KG lanes are empty so the scorer is never actually invoked.
  *
  * @module
@@ -34,12 +35,12 @@ import type { ContextEngineDeps } from "./types.js";
 
 /**
  * The absent-dep fallback scorer: an empty-result identity used ONLY when no `relevanceScorer`
- * dep is threaded. As of Phase 174 (DEPTH-01) the real injected `scoreRelevance` IS reachable —
- * the DEPTH-01 middle-band relevance pass (`rankMiddleBandByRelevance`, injected below as the
+ * dep is threaded. The real injected `scoreRelevance` IS reachable —
+ * the middle-band relevance pass (`rankMiddleBandByRelevance`, injected below as the
  * `middleBandRanker`) calls it over the FTS-the-band lane to re-rank the evictable middle band.
  * This noop remains the safe fallback for the (unit / mis-wired) case where the scorer dep is
  * absent: `rankMiddleBandByRelevance` ALSO degrades to the recency fill when `relevanceScorer`
- * is undefined, so a missing scorer can never break assembly. On the C2 assembly path the
+ * is undefined, so a missing scorer can never break assembly. On the assembly path the
  * LTM/KG candidate lanes are still EMPTY (the recall path owns LTM ranking), so the per-tier
  * `length > 0` guards keep the scorer out of the LTM/KG lanes — its live caller is the
  * middle-band pass, not the cross-session tiers.
@@ -55,23 +56,23 @@ export interface ArbiterSeamResult {
 
 /**
  * Run the margin arbiter at the eviction seam for a relevance-first class, and emit the
- * content-free `context:arbitrated` Glass-Box event.
+ * content-free `context:arbitrated` observability event.
  *
- * RETR-05: S4 security-pinned items (detected fail-closed by `isSecurityRelevantMessage`
+ * Security-pinned items (detected fail-closed by `isSecurityRelevantMessage`
  * against `deps.securityPinMarkers`) are excluded from the relevance-evictable band and
  * passed as UNCONDITIONAL floors. When no markers are threaded, nothing is pinned here
  * (the pre-flight harder-eviction remains the backstop).
  *
- * RETR-02 event: per-tier kept COUNTS + the discretionary pool TOKENS (OFFERED via
- * `discretionaryPoolTokens` AND CONSUMED via `poolTokensUsed`, WR-03) + the floor-token
- * weight + the kept LTM/KG ids (WR-02) + the relevanceFirst BOOLEAN + a timestamp ONLY —
- * NEVER message/memory/query content (AGENTS.md §2.2/§2.7; T-173-03-04; ids are opaque
+ * The event carries per-tier kept COUNTS + the discretionary pool TOKENS (OFFERED via
+ * `discretionaryPoolTokens` AND CONSUMED via `poolTokensUsed`) + the floor-token
+ * weight + the kept LTM/KG ids + the relevanceFirst BOOLEAN + a timestamp ONLY —
+ * NEVER message/memory/query content (AGENTS.md §2.2/§2.7; ids are opaque
  * memory keys). Reuses the caller's entry-clock read `startMs` (no new ambient clock —
  * the globals gate). Frontier/mid never call this → the event never fires for them.
  *
  * @param deps - the context-engine deps (relevanceScorer, securityPinMarkers, eventBus).
  * @param evictable - the evictable history band (T0/T1/T2) with supplied tokens.
- * @param poolTokens - the discretionary pool (budget.availableHistoryTokens, post-Fix-3).
+ * @param poolTokens - the discretionary pool (budget.availableHistoryTokens).
  * @param liveMessages - the live message array (source of the relevance query).
  * @param startMs - the assembler's entry-clock read, reused for the event timestamp.
  * @returns the kept history (the event is emitted as a side effect).
@@ -89,28 +90,29 @@ export function evictUnderArbiter(
         isSecurityRelevantMessage(it.msg as { content?: unknown; role?: string }, markers),
       )
     : [];
-  // DEPTH-01: build the live relevance query from the last ~3 user turns of liveMessages
+  // Build the live relevance query from the last ~3 user turns of liveMessages
   // (the within-history relevance signal) and inject the cache-stable middle-band ranker.
   const query = buildAssemblyRelevanceQuery(liveMessages);
   const arbitrated = marginArbitrate({
     historyItems: evictable,
-    ltmCandidates: [], // C2: the assembler holds no LTM candidates (recall owns LTM)
-    kgCandidates: [], // C2: no KG candidates on the assembly path
+    ltmCandidates: [], // the assembler holds no LTM candidates (recall owns LTM)
+    kgCandidates: [], // no KG candidates on the assembly path
     floors: { freshTailItems: [], pinnedItems },
     poolTokens,
     scorer: deps.relevanceScorer ?? NOOP_RELEVANCE_SCORER,
     query,
-    // DEPTH-01: the now-live within-history relevance pass. evictUnderArbiter holds `deps` +
+    // The within-history relevance pass. evictUnderArbiter holds `deps` +
     // `liveMessages`, so it constructs the ranker here and passes it as an injected dep —
-    // keeping marginArbitrate PURE and the I2 cut intact (the relevance scorer is INJECTED
-    // into rankMiddleBandByRelevance via deps.relevanceScorer, never imported by it).
+    // keeping marginArbitrate PURE and the context-engine ↮ rag cut intact (the relevance
+    // scorer is INJECTED into rankMiddleBandByRelevance via deps.relevanceScorer, never
+    // imported by it).
     middleBandRanker: (band, pool) => rankMiddleBandByRelevance(deps, band, pool, liveMessages, query),
   });
   deps.eventBus?.emit("context:arbitrated", {
     agentId: deps.agentId ?? "",
     sessionKey: deps.sessionKey ?? "",
     perTierKept: arbitrated.perTierKept,
-    // discretionaryPoolTokens = OFFERED; poolTokensUsed = CONSUMED (WR-03). The arbiter
+    // discretionaryPoolTokens = OFFERED; poolTokensUsed = CONSUMED. The arbiter
     // already computes both + the floor weight + the cross-tier winner ids — surface them
     // all (content-free) instead of dropping them at the emit boundary.
     discretionaryPoolTokens: poolTokens,
@@ -125,8 +127,8 @@ export function evictUnderArbiter(
 }
 
 /**
- * Emit the EXISTING content-free `context:evicted` event from the LCD eviction seam (O1;
- * parity with the pipeline engine) when eviction actually dropped history — shared by BOTH
+ * Emit the EXISTING content-free `context:evicted` event from the LCD eviction seam
+ * (parity with the pipeline engine) when eviction actually dropped history — shared by BOTH
  * the recency and the arbiter paths. `evictedChars` is derived ONLY from each dropped item's
  * pre-computed `tokens` (× CHARS_PER_TOKEN_RATIO) — the message text is NEVER read or emitted
  * (AGENTS.md §2.2 / the lossless store). Reuses the caller's entry-clock `startMs` (no new
@@ -161,19 +163,19 @@ export function emitEvictedEvent(
 }
 
 /**
- * Build the within-history relevance query for the assembly-path middle-band pass (DEPTH-01).
+ * Build the within-history relevance query for the assembly-path middle-band pass.
  *
  * The query is the content terms of the last ~{@link RELEVANCE_TURN_WINDOW} USER turns of the
  * live message array (the live intent the middle-band relevance ranking matches against), with
  * a small deictic stopword set dropped and the newest turn's terms first. It is `degraded`
  * (low-signal → the ranker falls back to recency) when fewer than 2 content terms remain.
  *
- * The I2 cut (context-engine ↮ rag) forbids importing `rag/relevance-scorer`'s
+ * The context-engine ↮ rag cut forbids importing `rag/relevance-scorer`'s
  * `buildRelevanceQuery`, so the minimal tokenize+stopword is replicated LOCALLY here (pure
  * string work, the same carve-out as the local `ArbiterRelevanceQuery` structural type). The
  * scorer's own low-signal fallback (the injected `scoreRelevance`) covers a degraded query, and
  * `rankMiddleBandByRelevance` short-circuits to recency on `degraded`, so a thin query is safe.
- * The LTM/KG lanes remain EMPTY on the C2 assembly path, so this query feeds ONLY the
+ * The LTM/KG lanes remain EMPTY on the assembly path, so this query feeds ONLY the
  * middle-band relevance pass (the cross-tier LTM ranking lives on the recall side).
  */
 function buildAssemblyRelevanceQuery(liveMessages: AgentMessage[]): ArbiterRelevanceQuery {
@@ -196,20 +198,20 @@ function buildAssemblyRelevanceQuery(liveMessages: AgentMessage[]): ArbiterRelev
 }
 
 /** The number of most-recent user turns the within-history query draws from (mirrors the rag
- *  scorer's RELEVANCE_TURN_WINDOW; replicated locally for the I2 cut). */
+ *  scorer's RELEVANCE_TURN_WINDOW; replicated locally for the context-engine ↮ rag cut). */
 const RELEVANCE_TURN_WINDOW = 3;
 
 /**
- * A small deictic/filler stopword set (the rag scorer's compact set, replicated for the I2
- * cut — bounded static map, not a generated stoplist). All lowercase.
+ * A small deictic/filler stopword set (the rag scorer's compact set, replicated for the
+ * context-engine ↮ rag cut — bounded static map, not a generated stoplist). All lowercase.
  *
- * SOURCE OF TRUTH (IN-03, Phase 174-04): `STOPWORDS` in `packages/agent/src/rag/relevance-scorer.ts`
+ * SOURCE OF TRUTH: `STOPWORDS` in `packages/agent/src/rag/relevance-scorer.ts`
  * is the canonical stoplist. This is a DELIBERATE carve-out copy (the context-engine must NOT
- * import the rag tokenizer — the I2 cut), so the two lists can drift; keep this subset in sync
+ * import the rag tokenizer), so the two lists can drift; keep this subset in sync
  * with the rag one when changing either, and prefer the rag list as the reference. This list is
  * the one feeding the LIVE FTS query (terms OR-joined into `lcd_messages_fts MATCH`).
  *
- * FTS5 OPERATOR GUARD (IN-04): `near` / `and` / `or` / `not` are stopped UNCONDITIONALLY so the
+ * FTS5 OPERATOR GUARD: `near` / `and` / `or` / `not` are stopped UNCONDITIONALLY so the
  * OR-join (`relevance-eviction.ts:132`) can never splice a bare FTS5 operator keyword into the
  * MATCH query (which could subtly alter FTS5 parsing). `tokenizeQuery` already strips quotes +
  * non-`\p{L}\p{N}`, so this stoplist is the remaining FTS5-safety surface.
@@ -219,11 +221,12 @@ const ASSEMBLY_STOPWORDS: ReadonlySet<string> = new Set([
   "do", "does", "did", "can", "could", "will", "would", "should", "but", "if",
   "so", "of", "to", "in", "on", "at", "by", "for", "with", "from", "yes", "no", "ok",
   "please", "just", "now", "here", "there", "what", "which", "how", "you", "i", "me", "my",
-  // FTS5 operator keywords (IN-04) — stopped so a bare operator can never reach the MATCH query.
+  // FTS5 operator keywords — stopped so a bare operator can never reach the MATCH query.
   "near", "and", "or", "not",
 ]);
 
-/** Lowercase + Unicode-aware tokenize (the buildFtsQuery shape; replicated for the I2 cut). */
+/** Lowercase + Unicode-aware tokenize (the buildFtsQuery shape; replicated for the
+ *  context-engine ↮ rag cut). */
 function tokenizeQuery(text: string): string[] {
   return text
     .toLowerCase()

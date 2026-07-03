@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * I2 — record a structured load-level `model_health` diagnostic at boot.
+ * Record a structured load-level `model_health` diagnostic at boot.
  *
  * Captures the three in-process load-level recall signals as a one-shot
  * `obs_diagnostics` row at startup, so a degraded-recall root cause (embedding
  * provider or reranker absent) is queryable cross-session via the fleet lens
- * (Phase 161) instead of living only as an ephemeral boot boolean + Pino line:
+ * instead of living only as an ephemeral boot boolean + Pino line:
  *   - `embeddingAvailable`    — the cached embedding wrapper is present
  *                               (derived `!!cachedPort` at the boot site).
  *   - `rerankerModelPresent`  — the no-download GGUF presence probe.
@@ -16,15 +16,15 @@
  * event would imply recurrence/streaming and go stale; a once-per-boot record
  * is the correct point-in-time model.
  *
- * EMB-01 adds two advisory signals — `embeddingMultilingual` and
- * `rerankerMultilingual` (each `true | false | "unknown"`) — so a degraded
+ * Two advisory signals — `embeddingMultilingual` and
+ * `rerankerMultilingual` (each `true | false | "unknown"`) — mean a degraded
  * non-Latin semantic-recall stack (an English-leaning embedder/reranker) is
  * named in one `comis fleet` look. They are ADVISORY ONLY: nothing gates search
- * or recall on them (I4; the FTS trigram floor carries recall regardless).
+ * or recall on them (the FTS trigram floor carries recall regardless).
  *
  * `details` carries ONLY the booleans / `"unknown"` markers — no provider
  * secrets, no model paths/URIs, no free text. A boolean or `"unknown"` cannot
- * leak a credential (bounded-payload discipline, §2.7; the I8 content-free
+ * leak a credential (bounded-payload discipline, §2.7; the content-free
  * contract). The native node-llama-cpp stdout tokenizer line is OUT of scope;
  * only the in-process flags we control are recorded.
  *
@@ -41,10 +41,10 @@ export interface ModelHealthSignals {
   rerankerModelPresent: boolean;
   /** The GGUF reranker provider loaded successfully (vs. unavailable). */
   rerankerBuilt: boolean;
-  /** EMB-01 advisory (true | false | "unknown", I8 content-free): the resolved
-   *  embedder model id reads multilingual. Advisory only — never gated (I4). */
+  /** Advisory (true | false | "unknown", content-free): the resolved
+   *  embedder model id reads multilingual. Advisory only — never gated. */
   embeddingMultilingual: boolean | "unknown";
-  /** EMB-01 advisory: the resolved reranker GGUF id reads multilingual. */
+  /** Advisory: the resolved reranker GGUF id reads multilingual. */
   rerankerMultilingual: boolean | "unknown";
 }
 
@@ -52,8 +52,8 @@ export interface ModelHealthSignals {
  * Write a one-shot `model_health` row to `obs_diagnostics` at boot.
  *
  * No-ops when `obsStore` is `undefined` (observability persistence disabled) —
- * the `?.` is mandatory so a disabled-persistence boot cannot crash startup
- * (Pitfall 5). Severity is `"info"` when the embedding provider is available,
+ * the `?.` is mandatory so a disabled-persistence boot cannot crash startup.
+ * Severity is `"info"` when the embedding provider is available,
  * `"warning"` when it is not (an absent embedding provider is the primary
  * degraded-recall cause). The timestamp comes from the injected `ClockPort` —
  * never `Date.now()` (globals gate).

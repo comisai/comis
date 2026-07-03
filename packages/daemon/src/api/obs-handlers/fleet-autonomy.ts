@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * FLEET-01/02/04 (Phase 220-03) autonomy slice + findings — all the cross-run
+ * Autonomy slice + findings — all the cross-run
  * AUTONOMY-health logic for the `comis fleet` report, extracted into this sibling
  * module to keep `fleet-health.ts` + `fleet-findings.ts` under the obs-handlers
  * per-subdirectory 500-line cap (the `obs-autonomy-rows.ts` / `fleet-findings-
@@ -13,14 +13,14 @@
  *   - {@link computeAutonomySlice} — the structured `autonomy` block (run counts +
  *     degradedRate from `DurableRunPort.countByStatus`, resumed/killed/worst-run id
  *     from the event-sourced `health_signal` rows, breaker/cost read back from the
- *     synthetic-excluded `reduceFleetWindow`). The worst rootRunId is FLEET-04.
+ *     synthetic-excluded `reduceFleetWindow`), including the worst rootRunId.
  *   - {@link buildAutonomyFindings} — the three dedicated findings (durable_orphaned
  *     / autonomy_revoked / autonomy_killed; kill separable from revoke).
  *
- * SECURITY INVARIANT (H1 + the 159 digest-only schema): counts + closed enums + the
+ * SECURITY INVARIANT (the digest-only report schema): counts + closed enums + the
  * worst rootRunId (an id) ONLY — NEVER the engine's free-text orphan reason (mapped
- * to a closed enum at the source, Plan 01 T-220-01), a lease bearer/selector
- * (T-220-02), or any body. Every `details` field is parsed via the defensive
+ * to a closed enum at the source), a lease bearer/selector,
+ * or any body. Every `details` field is parsed via the defensive
  * `*FromRow` extractors that never echo a body. Safe to paste into a review.
  *
  * @module
@@ -53,9 +53,9 @@ export interface AutonomySlice {
   revoked: number;
   killed: number;
   breakerTrips: number;
-  /** FLEET-02 (Phase 220-05): the capability-DENIAL breaker trip count (event-sourced
+  /** The capability-DENIAL breaker trip count (event-sourced
    *  from the `autonomy_denial_breaker` rows) — SEPARABLE from `breakerTrips` (the
-   *  tool-failure breaker read-back). The two are distinct mechanisms (Phase 217). */
+   *  tool-failure breaker read-back). The two are distinct mechanisms. */
   denialBreakerTrips: number;
   budgetBreaches: number;
   costUsd: number;
@@ -63,8 +63,8 @@ export interface AutonomySlice {
 }
 
 /**
- * Severity rank for the worst-rootRunId pick (FLEET-04): an ORPHANED run (died on
- * restart, did not recover) outranks a DENIAL-BREAKER-aborted run (FLEET-02 — the
+ * Severity rank for the worst-rootRunId pick: an ORPHANED run (died on
+ * restart, did not recover) outranks a DENIAL-BREAKER-aborted run (the
  * run burned its denial budget and was force-aborted, a robustness fault) outranks
  * a KILLED run (operator-intentional forced teardown) outranks a REVOKED run
  * (cooperative authority revoke). Higher = worse. Deterministic, no clock — the
@@ -102,7 +102,7 @@ function autonomyRevokedRootRunId(row: DiagnosticRow): string | null {
  * - `orphaned`/`revoked` come from the crash-surviving `countByStatus` (kill folds
  *   into the table's `revoked` status, so `revoked` is the cooperative+hard total in
  *   the durable table — but the `killed` COUNT is recovered separately from the
- *   event-sourced `autonomy_killed` rows, the only count separator Plan 01 provides).
+ *   event-sourced `autonomy_killed` rows, the only count separator available).
  * - `resumed` = the count of `durable_resumed` rows (healthy recovery — event-sourced).
  * - `killed` = the SUM of the `autonomy_killed` row counts (event-sourced).
  * - `total` = running + completed + orphaned + revoked; `degraded` = orphaned + revoked
@@ -161,7 +161,7 @@ export function computeAutonomySlice(input: {
       considerWorst("autonomy_killed", kill.rootRunId);
       continue;
     }
-    // FLEET-02 (Phase 220-05): the capability-denial breaker trip — SEPARABLE from
+    // The capability-denial breaker trip — SEPARABLE from
     // both the tool-failure breaker (breakerTrips read-back) and kill/revoke. Each
     // row is one trip (the count defaults to 1); the worst-run pick CAN promote it
     // (rank 3, above killed) since a denial-breaker abort is a robustness fault.
@@ -212,7 +212,7 @@ export function computeAutonomySlice(input: {
 /**
  * The three dedicated autonomy findings over the `health_signal` rows (the
  * node_budget_exceeded mold): durable_orphaned (reason-grouped), autonomy_revoked
- * and autonomy_killed (SEPARATE — the kill≠revoke separation Plan 01 enables). Each
+ * and autonomy_killed (SEPARATE — kill and revoke are distinct events). Each
  * has a zero-traffic guard, counts + a STATIC knob-naming hint ONLY. Returned as a
  * `Finding[]` the caller pushes into the report's findings (inheriting the
  * FLEET_FINDINGS_CAP bound + the highest-count-first sort).
@@ -224,7 +224,7 @@ export function buildAutonomyFindings(healthSignals: readonly DiagnosticRow[]): 
   // after a restart + the DOMINANT closed orphan reason (which un-resumable class).
   // Counts + the closed reason enum + a STATIC hint naming `comis explain <rootRunId>`
   // + the heartbeat knob ONLY — NEVER the engine's free-text orphan reason (mapped to
-  // a closed enum at the source, Plan 01 T-220-01). Zero-traffic guard.
+  // a closed enum at the source). Zero-traffic guard.
   let orphanedCount = 0;
   const byReason = new Map<string, number>();
   for (const row of healthSignals) {
@@ -249,10 +249,10 @@ export function buildAutonomyFindings(healthSignals: readonly DiagnosticRow[]): 
   }
 
   // autonomy_revoked — the SUM of the per-row revoked counts (a cooperative lease/tree
-  // revoke an admin must see). SEPARATE from autonomy_killed below — Plan 01 emits
+  // revoke an admin must see). SEPARATE from autonomy_killed below — the runtime emits
   // DISTINCT events because a kill and a revoke both flip the durable status to
   // 'revoked' in the table, so the EVENT is the only count separator (kill≠revoke).
-  // Counts + a STATIC hint ONLY — never a lease bearer/selector (T-220-02).
+  // Counts + a STATIC hint ONLY — never a lease bearer/selector.
   let revokedSum = 0;
   for (const row of healthSignals) {
     const parsed = autonomyRevokedFromRow(row);
@@ -286,8 +286,8 @@ export function buildAutonomyFindings(healthSignals: readonly DiagnosticRow[]): 
     });
   }
 
-  // autonomy_denial_breaker (FLEET-02, Phase 220-05) — the SUM of the per-row
-  // denial-breaker trip counts (a Phase-217 capability-denial breaker aborted +
+  // autonomy_denial_breaker — the SUM of the per-row
+  // denial-breaker trip counts (the capability-denial breaker aborted +
   // killed a run tree after N consecutive floor-blocks). DISTINCT from the
   // tool-failure breaker (breakerTripTotal) and from kill/revoke — this is the
   // capability-denial breaker, the only fleet-visible signal that an unattended run

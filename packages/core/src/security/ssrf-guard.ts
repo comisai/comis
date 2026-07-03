@@ -16,12 +16,12 @@
  *
  * Every web-facing tool must pass through validateUrl() before fetch.
  *
- * `validateLocalServerUrl` (SEC-02) is the co-located INVERSE: it guards an
+ * `validateLocalServerUrl` is the co-located INVERSE: it guards an
  * operator-configured LOCAL server URL (`transcription.local.baseUrl`) by
  * ALLOWING loopback + an explicit allowlist and DENYING public/arbitrary
  * egress — the opposite allow/deny of `validateUrl`, sharing the same
  * parse → protocol → DNS-resolve → ipaddr-classify flow and the
- * cloud-metadata deny. Its two SEC-02 consumers (the boot probe and the
+ * cloud-metadata deny. Its two consumers (the boot probe and the
  * explicit-local runtime fetch) pin the resolved IP via `fetchPinned`, so the
  * end-to-end rebinding property holds for them too.
  *
@@ -107,11 +107,11 @@ export type SsrfBlockReason =
   | "reserved";
 
 /**
- * SSRF-AUDIT (hermes-usecases obs-loop 2026-06-25): a fire-and-forget audit
- * side-channel. The daemon registers a hook (the audit-sink wiring) that emits a
- * content-free `security:ssrf_blocked` event so an SSRF block lands in the audit
- * log — previously such blocks were SILENT (a forensics blind spot), unlike the
- * destructive-command floor's `command:blocked`. Absent (unit tests / pre-wire) it
+ * A fire-and-forget audit side-channel. The daemon registers a hook (the
+ * audit-sink wiring) that emits a content-free `security:ssrf_blocked` event so
+ * an SSRF block lands in the audit log — without it a block would be SILENT (a
+ * forensics blind spot), unlike the destructive-command floor's
+ * `command:blocked`. Absent (unit tests / pre-wire) it
  * is a no-op. `validateUrl` stays a PURE Result-returning function: the hook NEVER
  * changes its return and NEVER throws (a broken audit sink must not break the guard).
  */
@@ -202,7 +202,7 @@ export async function validateUrl(
 }
 
 // ---------------------------------------------------------------------------
-// validateLocalServerUrl (SEC-02) — the INVERSE of validateUrl
+// validateLocalServerUrl — the INVERSE of validateUrl
 // ---------------------------------------------------------------------------
 
 /**
@@ -220,7 +220,7 @@ export async function validateUrl(
  * - **ALLOW** a host in the explicit `allowedHosts` allowlist (operator opt-in;
  *   default `[]` → loopback-only).
  * - **DENY** every other resolved range — private, public, link-local, etc.
- *   (the SEC-02 core inversion: no arbitrary egress through a local-server knob).
+ *   (the core inversion: no arbitrary egress through a local-server knob).
  * - **DENY** the `CLOUD_METADATA_IPS` regardless (defense-in-depth — a
  *   `local.baseUrl` must NEVER reach 169.254.169.254 even if mis-resolved).
  *
@@ -230,7 +230,7 @@ export async function validateUrl(
  *
  * @param urlString - The local server URL to validate
  * @param allowedHosts - Hostnames explicitly permitted beyond loopback (default
- *   `[]`). Matched against the URL's LITERAL `hostname` string (IN-01) — NOT the
+ *   `[]`). Matched against the URL's LITERAL `hostname` string — NOT the
  *   resolved IP and NOT a bracket-stripped IPv6 form. So to allow a LAN box at
  *   `http://my-box.lan` the entry must be `"my-box.lan"`, not its IP; IP-literal
  *   allowlisting (e.g. `"10.0.0.5"`) only matches a `baseUrl` whose hostname IS

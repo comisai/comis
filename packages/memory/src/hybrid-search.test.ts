@@ -218,19 +218,18 @@ describe("searchByText", () => {
   });
 });
 
-// ── searchByText script routing (FTS-01, plan 180-06) ────────────────
+// ── searchByText script routing (trigram lane) ───────────────────────
 //
-// RED proof (pre-patch `searchByText` runs ONLY the porter word lane via
-// buildFtsQuery → memory_fts MATCH): a non-Latin morphology query cannot bridge
-// the suffix/prefix even when a normalized memory_fts_tri twin row exists, so
-// every "tri-lane recall" case below returns [] until Task 2 routes the query
-// (routeSearchQuery) into the scope-free memory_fts_tri rowid-JOIN lane. The I1
-// all-Latin cases stay green on both sides (the word lane is untouched).
+// `searchByText` runs the porter word lane via buildFtsQuery → memory_fts
+// MATCH: a non-Latin morphology query cannot bridge the suffix/prefix even when
+// a normalized memory_fts_tri twin row exists, so a "tri-lane recall" case
+// returns rows only once routeSearchQuery routes the query into the scope-free
+// memory_fts_tri rowid-JOIN lane. All-Latin queries stay on the untouched word lane.
 //
 // These are UNIT fixtures: the memory row + a RAW normalized twin row are
 // inserted directly (the store()/insertMemoryRow twin-write path is exercised
 // end-to-end in sqlite-memory-adapter.test.ts). All non-Latin glyphs are built
-// from codepoints (WR-01 convention) so the source stays ASCII.
+// from codepoints so the source stays ASCII.
 describe("searchByText script routing (trigram lane)", () => {
   let db: Database.Database;
 
@@ -240,7 +239,7 @@ describe("searchByText script routing (trigram lane)", () => {
   });
 
   /** Insert a memory row AND a RAW normalized memory_fts_tri twin row sharing
-   *  its rowid — the index state Task 2's store()-side twin write produces. */
+   *  its rowid — the index state the store()-side twin write produces. */
   function insertWithTwin(id: string, content: string): void {
     insertMemory(db, id, content);
     db.prepare(
@@ -804,7 +803,7 @@ describe("hybridSearch occurredAtRange", () => {
   });
 });
 
-// ── The ALWAYS-APPLIED evicted_at IS NULL recall-exclusion filter (FORGET-01) ──
+// ── The ALWAYS-APPLIED evicted_at IS NULL recall-exclusion filter ─────────────
 // The single most overlookable correctness gap: setting evicted_at without this
 // filter evicts NOTHING observable (recall still returns the row). The filter MUST
 // be applied on EVERY recall path — both when a post-fusion option is present AND

@@ -13,8 +13,8 @@
  *
  * This file pins the structural invariants of the orchestrator: it imports
  * each phase module, it calls them in sequence, and it propagates early-
- * return outcomes. The byte-identity parity gate
- * (executor-prompt-runner.parity.test.ts) is the public-API contract.
+ * return outcomes. The public API surface is re-exported byte-identically
+ * via index.ts.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";

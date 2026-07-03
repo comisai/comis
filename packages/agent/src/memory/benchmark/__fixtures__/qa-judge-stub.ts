@@ -5,9 +5,9 @@
  * answer-prompt -> judge-prompt -> verdict-parse -> aggregate) WITHOUT a real
  * provider or the `COMIS_BENCH` gate.
  *
- * This is the ONLY genuinely new shape here: the repo has no shared
- * fake-`completeSimple` stub — LLM call sites are
- * mocked ad hoc per test. The return shape is dictated by pi-ai's
+ * The repo has no shared fake-`completeSimple` stub — LLM call sites are
+ * mocked ad hoc per test — so this fixture provides the one reusable
+ * stub. The return shape is dictated by pi-ai's
  * `AssistantMessage.content: (TextContent | ...)[]` with
  * `TextContent = { type: "text"; text: string }`
  * (node_modules/@earendil-works/pi-ai/dist/types.d.ts:143,189-191), so the value

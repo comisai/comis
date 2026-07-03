@@ -30,7 +30,7 @@
  *     `assemblerParams` MUST stay free of live-runtime accessors so the
  *     cached system-prompt prefix remains byte-identical when the skill
  *     registry reloads between turns. Only LIVE-RUNTIME accessors are
- *     forbidden; config-derived booleans no longer flow through
+ *     forbidden; config-derived booleans do not flow through
  *     `assemblerParams`.
  *   - `bootstrap/` and `workspace/` directories remain agent-owned.
  *     Both directories are executor support (LLM system-prompt assembly
@@ -151,7 +151,7 @@ describe("@comis/agent -- architecture invariants", () => {
       "scaffold-defaults.ts",      // JSDoc on SMALL_DEFAULT_ACTIVE_TOOL_CEILING: "defers cold long-tail behind discover_tools"
       "pi-executor.ts",            // JSDoc + comments referring to discover_tools as a known concept (mid-turn injection)
       "pi-executor-types.ts",      // PiExecutorDeps interface JSDoc references discover_tools concept
-      "viable-floor.ts",           // FLOOR-01 boot-WARN dominance hint names discover_tools as the discovery API (active-tool-ceiling lever)
+      "viable-floor.ts",           // boot-WARN dominance hint names discover_tools as the discovery API (active-tool-ceiling lever)
       // Anthropic payload-reshape identifiers.
       "tool-deferral-injection.ts", // payload reshape removes the client-side discover_tools tool name
       "stub-filter-injector.ts",   // JSDoc explaining stub-filter interaction with discover_tools removal
@@ -241,7 +241,7 @@ describe("@comis/agent -- architecture invariants", () => {
   //     servers connect/disconnect.)
   //
   // The grep below targets the LIVE-RUNTIME accessors only — config-derived
-  // booleans no longer flow through `assemblerParams`.
+  // booleans do not flow through `assemblerParams`.
 
   it("prompt-assembly.ts does NOT import capability-index-context or call live-runtime port accessors", () => {
     // The test scans the executor/ directory and filters for prompt-assembly.ts
@@ -318,7 +318,7 @@ describe("@comis/agent -- architecture invariants", () => {
   // ---------------------------------------------------------------------------
   // Logger contract types canonically live in @comis/core. Agent production
   // source must import them from @comis/core, not @comis/infra (the
-  // runtime-Pino package). The package no longer has an @comis/infra dep;
+  // runtime-Pino package). The package has no @comis/infra dep;
   // any production source with a stale `from "@comis/infra"` import would
   // fail `pnpm build`. This rule guards the regression at the source-grep
   // boundary so a future edit is caught pre-merge instead of pre-publish.
@@ -373,9 +373,8 @@ describe("@comis/agent -- architecture invariants", () => {
   // Agent has zero memory production imports.
   //
   // SessionStorePort + its 3 Session* row DTOs live in @comis/core; agent
-  // production source imports them from @comis/core. (The DAG ContextStorePort +
-  // the 9 Ctx*Row DTOs were removed in v2.12, Phase 126.) The OAuth credential
-  // store selector is rewritten to consume a daemon-injected encryptedStore
+  // production source imports them from @comis/core. The OAuth credential
+  // store selector consumes a daemon-injected encryptedStore
   // port, so no value-import into @comis/memory remains.
   // ---------------------------------------------------------------------------
 
@@ -567,8 +566,8 @@ describe("@comis/agent -- architecture invariants", () => {
   //
   // Agent production source has zero imports of proper-lockfile; FileLockPort
   // is injected through deps. proper-lockfile lives in `devDependencies`
-  // only. The `export { createFileLock } from "@comis/scheduler"` re-export
-  // was removed; the package-graph edge is severed.
+  // only. There is no `export { createFileLock } from "@comis/scheduler"`
+  // re-export; the package-graph edge is severed.
   //
   // @comis/scheduler is NOT promoted to HARD_FORBIDDEN here because agent
   // production source still consumes `computeNextRunAtMs`,

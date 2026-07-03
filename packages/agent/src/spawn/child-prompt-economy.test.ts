@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * STRIP-01 / STRIP-02 coverage for child-prompt-economy.
- *
- * Wave-0 new test file. Asserts:
+ * Coverage for child-prompt-economy. Asserts:
  *  - read-only child detection (conservative on unknown/mutating tools)
  *  - the heavy-inherited-section drop for a read-only child
- *  - the anti-injection safety core survives the drop (STRIP-5 / Pitfall 5)
+ *  - the anti-injection safety core survives the drop
  *
  * The "real assembled prompt" fixtures are produced by the actual
  * assembleRichSystemPrompt() so the drop is pinned against the live section
@@ -58,8 +56,8 @@ beforeAll(() => {
 /**
  * A realistic full-mode assembled prompt for a child that carries every heavy
  * block AND the full safety core. Mirrors how a frontier/mid read-only child's
- * prompt is assembled at HEAD (promptMode "full" — minimal does NOT drop the
- * heavy sections, confirmed by the Task-0 spike).
+ * prompt is assembled in production (promptMode "full" — no mode omits the
+ * heavy sections; "minimal" only shortens their text).
  */
 function assembleFullChildPrompt(overrides: Partial<AssemblerParams> = {}): string {
   return assembleRichSystemPrompt({
@@ -107,7 +105,7 @@ describe("isReadOnlyChild", () => {
   });
 
   it("returns false (conservative) when the child carries an unknown tool", () => {
-    // T-221-STRIP-02: an unknown tool ⇒ NOT read-only — never strip a child we
+    // An unknown tool ⇒ NOT read-only — never strip a child we
     // cannot prove is read-only.
     expect(isReadOnlyChild(["read", "some_unrecognised_tool"])).toBe(false);
   });
@@ -129,10 +127,10 @@ describe("isReadOnlyChild", () => {
 });
 
 // ---------------------------------------------------------------------------
-// economiseChildPrompt — STRIP-01 (drop the heavy inherited blocks)
+// economiseChildPrompt — drop the heavy inherited blocks
 // ---------------------------------------------------------------------------
 
-describe("economiseChildPrompt — heavy-section drop (STRIP-01)", () => {
+describe("economiseChildPrompt — heavy inherited sections are dropped", () => {
   it("drops project-context / workspace / skills / thinking / memory from a read-only child's prompt", () => {
     const full = assembleFullChildPrompt();
     // Pre-condition: the full prompt actually contains the heavy blocks.
@@ -179,10 +177,10 @@ describe("economiseChildPrompt — heavy-section drop (STRIP-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// economiseChildPrompt — STRIP-5 (the anti-injection safety core survives)
+// economiseChildPrompt — the anti-injection safety core survives the drop
 // ---------------------------------------------------------------------------
 
-describe("economiseChildPrompt — safety core preserved (STRIP-5 / Pitfall 5)", () => {
+describe("economiseChildPrompt — anti-injection safety core survives the drop", () => {
   it("keeps the full Safety section (the constitutional floor) after the drop", () => {
     const full = assembleFullChildPrompt();
     const stripped = economiseChildPrompt(full);
@@ -252,10 +250,10 @@ describe("economiseChildPrompt — safety core preserved (STRIP-5 / Pitfall 5)",
 });
 
 // ---------------------------------------------------------------------------
-// economiseForReadOnlyChild — the spawn-side wiring + STRIP-02 input window
+// economiseForReadOnlyChild — the spawn-side wiring + the child's input window
 // ---------------------------------------------------------------------------
 
-describe("economiseForReadOnlyChild — spawn-side input window (STRIP-02)", () => {
+describe("economiseForReadOnlyChild — spawn-side input window", () => {
   /** Build the assembled string + blocks the spawn side passes downstream. */
   function assembleChild(toolNames: string[]) {
     const params: AssemblerParams = {

@@ -1,6 +1,6 @@
 name: Bench Regression Gate
 
-# Phase 116 (GATE-01) — the per-release benchmark REGRESSION gate as SCHEDULED CI.
+# The per-release benchmark REGRESSION gate as SCHEDULED CI.
 #
 # Runs `scripts/bench-memory.sh gate`, which compares a run's per-category accuracy
 # against the COMMITTED J1 baseline
@@ -8,7 +8,7 @@ name: Bench Regression Gate
 # and FAILS on a real category regression (a drop below baseline beyond the tolerance
 # band AND statistically significant — packages/agent/src/memory/benchmark/regression-gate.ts).
 #
-# TWO HONEST MODES (never a success-shaped claim on a keyless run — WR-01):
+# TWO HONEST MODES (never a success-shaped claim on a keyless run):
 #   • KEYLESS (no benchmark secrets configured): the gate proves the
 #     compareToBaseline MECHANISM against the committed baseline (baseline-vs-itself
 #     = no regression; a synthetic significant drop is detected) and the append-only
@@ -124,7 +124,7 @@ jobs:
       - name: Keyless regression gate (mechanism proof; no regression-pass claim)
         if: env.BENCH_MODE == 'keyless'
         # No secrets configured: the gate proves the compareToBaseline + ledger
-        # MECHANISMS against the committed baseline and claims NO pass (WR-01). The
+        # MECHANISMS against the committed baseline and claims NO pass. The
         # bench env file is absent, so the runner runs fully keyless at $0.
         run: pnpm bench:memory gate
 

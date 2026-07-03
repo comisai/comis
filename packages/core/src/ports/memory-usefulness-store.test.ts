@@ -120,8 +120,8 @@ describe("MemoryUsefulnessStore — durable recall-utility port", () => {
  * Additive + forward-only: a `UsefulnessScope` carries an OPTIONAL `intent?:
  * string`. When present the read fetches / the write records the per-intent
  * usefulness signal (a memory's usefulness FOR THAT INTENT); when OMITTED the
- * adapter resolves the GLOBAL bucket (intent="") — byte-identical to the prior
- * behaviour, so today's callers compile unchanged. Because `readUsefulness` takes
+ * adapter resolves the GLOBAL bucket (intent="") — callers that never set
+ * intent get the global-bucket behaviour. Because `readUsefulness` takes
  * `Omit<UsefulnessScope, "now">`, the optional `intent` flows to BOTH the write
  * (`recordUsage`) AND the read automatically.
  *
@@ -156,8 +156,8 @@ describe("UsefulnessScope optional per-intent bucket", () => {
   });
 
   it("a UsefulnessScope WITHOUT intent is still valid (optionality / byte-identity)", () => {
-    // The pre-110 shape must still satisfy UsefulnessScope unchanged — omitting
-    // intent is byte-identical to the prior behaviour at the type level (degrade-to-global).
+    // A scope without intent must satisfy UsefulnessScope unchanged — omitting
+    // intent degrades to the global bucket at the type level.
     const scope: UsefulnessScope = { tenantId: "t", agentId: "a", now: 123 };
     expect(scope.intent).toBeUndefined();
   });

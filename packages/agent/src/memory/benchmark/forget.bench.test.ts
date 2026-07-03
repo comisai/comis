@@ -9,7 +9,7 @@
  * keyless evidence and a fresh one here would be fabricated).
  *
  * WHY THIS HARNESS EXISTS (the honest gap this gate must measure -- the SAME
- * structural finding the sibling IQ / learning-IQ / learning-rank gates verified): the
+ * structural gap the sibling IQ / learning-IQ gates verified): the
  * shipping QA + retrieval harnesses construct `createMemoryRecall`
  * with forget DEFAULT-OFF, so they exercise the decay NOT AT ALL. To measure the
  * decay + byte-identity claims HONESTLY and for FREE, this harness wires the

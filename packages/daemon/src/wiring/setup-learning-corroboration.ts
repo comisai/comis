@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * FORGET-03 corroboration gate — the anti-induced-eviction SECURITY control shared
+ * Corroboration gate — the anti-induced-eviction SECURITY control shared
  * by the learned-skill demote path and the memory failure-accrual path in
  * `setup-learning.ts`. Extracted to its own leaf (zero imports from setup-learning.ts
  * → no cycle) to keep `setup-learning.ts` under the 800-line cap. `setup-learning.ts`
@@ -9,13 +9,13 @@
  * @module
  */
 
-/** The DETERMINISTIC fused-verdict sources — a single one of these satisfies the FORGET-03 gate. */
+/** The DETERMINISTIC fused-verdict sources — a single one of these satisfies the corroboration gate. */
 const DETERMINISTIC_FUSION_SOURCES: ReadonlySet<string> = new Set(["tool", "pipeline"]);
 /** Independent (distinct-session) failures required to corroborate a NON-deterministic failure. */
 export const CORROBORATION_MIN_INDEPENDENT = 2;
 
 /**
- * WR-01 bound on the FORGET-03 corroboration tally — the max distinct memoryIds the
+ * Bound on the corroboration tally — the max distinct memoryIds the
  * `failureCorroborationTally` Map tracks before evicting the oldest. The tally is a
  * daemon-lifetime in-process gauge (resets on restart); without a cap a busy fleet (or
  * an adversary on rotating session keys) grows it unbounded. 50_000 mirrors the
@@ -25,7 +25,7 @@ export const CORROBORATION_MIN_INDEPENDENT = 2;
 export const MAX_TRACKED_FAILURE_MEMORIES = 50_000;
 
 /**
- * FORGET-03 anti-induced-eviction corroboration gate (a SECURITY control). A
+ * Anti-induced-eviction corroboration gate (a SECURITY control). A
  * `failure_count` accrual is permitted ONLY when corroborated:
  *  - (a) the fused verdict has a DETERMINISTIC source (`tool`/`pipeline`) — one
  *    suffices (it cannot be spoofed by an external sender), OR
@@ -33,13 +33,13 @@ export const MAX_TRACKED_FAILURE_MEMORIES = 50_000;
  *    memory within the subscriber's lifetime.
  * Below the gate → no accrual (Defer ≠ Retry — a single low-trust/`external` failure
  * is benign). Daemon-side half of the two-layer control; the high-proof/system/pinned
- * EVICTION exemption is store-side (Plan 05), so the daemon reads NO per-memory
+ * EVICTION exemption is store-side, so the daemon reads NO per-memory
  * proof/trust/pinned here (`ResolvedOutcome` carries none — no hot-path DB read).
  *
  * Mutates `tally` (memoryId → distinct sessionIds seen failing it) so the across-call
  * distinct-session count accumulates. Returns true when the accrual should fire.
  *
- * WR-01 BOUNDED (two caps, no daemon-lifetime growth): (1) the inner per-memory Set
+ * BOUNDED (two caps, no daemon-lifetime growth): (1) the inner per-memory Set
  * STOPS growing at `CORROBORATION_MIN_INDEPENDENT` (past the gate the exact count is
  * irrelevant); (2) the outer Map is capped at `maxTracked` (default
  * {@link MAX_TRACKED_FAILURE_MEMORIES}) and evicts the OLDEST-touched memoryId

@@ -9,7 +9,7 @@
  *   - encrypted-mode skip (store-direct, no SecretManager bootstrap)
  *   - ca-certificates probe + distro-aware install hints (5-distro switch)
  *   - HTTPS_PROXY env-var heuristic (warn when set, pass when unset)
- *   - TLS preflight delegation to @comis/agent (pass / tls-cert fail / network warn)
+ *   - TLS preflight delegation to @comis/core (pass / tls-cert fail / network warn)
  *   - --refresh-test default OFF + opt-in success/failure paths
  *   - NO TOKEN LEAKAGE invariant
  *
@@ -43,7 +43,7 @@ vi.mock("@comis/core", async () => {
   };
 });
 
-// OBS-4: encrypted-mode oauth check routes through the daemon auth.list RPC.
+// Encrypted-mode oauth check routes through the daemon auth.list RPC.
 vi.mock("../../sync-tooling/daemon-guard.js", () => ({
   isDaemonRunning: vi.fn(async () => false),
 }));
@@ -275,7 +275,7 @@ describe("oauthHealthCheck — schema mismatch", () => {
 // Encrypted-mode skip
 // ---------------------------------------------------------------------------
 
-describe("oauthHealthCheck — encrypted mode (OBS-4: route through daemon RPC)", () => {
+describe("oauthHealthCheck — encrypted mode routes profile reads through the daemon RPC", () => {
   const encryptedCtx: DoctorContext = {
     ...baseContext,
     config: { security: { storage: "encrypted" } } as unknown as DoctorContext["config"],
@@ -292,7 +292,7 @@ describe("oauthHealthCheck — encrypted mode (OBS-4: route through daemon RPC)"
   });
 
   it("daemon UP: reads profiles via auth.list RPC and reports per-profile expiry (NOT a skip)", async () => {
-    // Pre-OBS-4 this ALWAYS returned a single skip regardless of the daemon.
+    // Guards against regressing to an unconditional skip regardless of the daemon.
     vi.mocked(daemonGuard.isDaemonRunning).mockResolvedValue(true);
     vi.mocked(rpcClient.callTyped).mockResolvedValue({
       profiles: [

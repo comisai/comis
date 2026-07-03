@@ -26,23 +26,23 @@ export const isSynthPattern = (v: string): v is SynthPattern =>
 
 /** The authoring telemetry/audit helpers bound over GraphHandlerDeps. */
 export interface GraphMutateTelemetry {
-  /** TELEM-01: emit a counts-only `pipeline:authored` per authoring invocation. */
+  /** Emit a counts-only `pipeline:authored` per authoring invocation. */
   emitPipelineAuthored: (
     action: "define" | "execute",
     schemaValid: boolean,
     rawParams: Record<string, unknown>,
   ) => void;
-  /** AUTHOR-01: resolve the calling agent's tier SERVER-SIDE, gated on repairProducer. */
+  /** Resolve the calling agent's tier SERVER-SIDE, gated on repairProducer. */
   resolveAuthoringTier: (
     d: GraphHandlerDeps,
     rawParams: Record<string, unknown>,
   ) => "frontier" | "mid" | "small" | "nano" | undefined;
-  /** AUTHOR-01: assemble the repair context buildGraphInput needs for the gated branch. */
+  /** Assemble the repair context buildGraphInput needs for the gated branch. */
   repairContext: (
     d: GraphHandlerDeps,
     rawParams: Record<string, unknown>,
   ) => BuildGraphRepairContext;
-  /** AUTHOR-02: best-effort audit emit for a from_intent synthesis. */
+  /** Best-effort audit emit for a from_intent synthesis. */
   emitGraphSynthesized: (
     pattern: SynthPattern,
     nodeCount: number,
@@ -53,21 +53,20 @@ export interface GraphMutateTelemetry {
 /**
  * Build the authoring telemetry/audit helpers over the injected deps. The
  * emitters are best-effort (try/catch guarded) — telemetry can never break the
- * operation it measures (WR-01, Phase 173 review).
+ * operation it measures.
  */
 export function createGraphMutateTelemetry(deps: GraphHandlerDeps): GraphMutateTelemetry {
-  // TELEM-01 (Phase 173-02): emit a counts-only `pipeline:authored` per
-  // authoring invocation (define + execute), where schema validity and the
-  // resolved capabilityClass tier converge. Counts/ids/closed-enums ONLY — no
-  // node task, type_config value, label, or any pipeline body reaches the bus
-  // (§2.7 / D-EVENT). The tier is resolved DAEMON-SIDE from the RAW _agentId
-  // (Spoofing mitigation T-173-03) via the injected resolver — never a
-  // tool-supplied param — and fail-safes to "unknown" when unresolvable
-  // (Pitfall 2: record honestly, never silently drop, never default to
+  // Emit a counts-only `pipeline:authored` per authoring invocation (define +
+  // execute), where schema validity and the resolved capabilityClass tier
+  // converge. Counts/ids/closed-enums ONLY — no node task, type_config value,
+  // label, or any pipeline body reaches the bus (§2.7). The tier is resolved
+  // DAEMON-SIDE from the RAW _agentId (spoofing mitigation) via the injected
+  // resolver — never a tool-supplied param — and fail-safes to "unknown" when
+  // unresolvable (record honestly, never silently drop, never default to
   // "frontier"). `repaired` is the literal false: the weak-model repair
-  // producer is Phase 174 / AUTHOR-01 and is NOT wired here.
+  // producer is a separate path (see graph-repair.ts) and is NOT wired here.
   //
-  // METRIC DENOMINATOR (Phase 173 review WR-02): an authoring invocation is
+  // METRIC DENOMINATOR: an authoring invocation is
   // counted on every CONTRACT-PARSE-REACHABLE path — graph.define emits on a
   // strict-contract parse rejection AND a buildGraphInput throw; graph.execute
   // (a loose z.record contract) emits on the buildGraphInput throw. The bespoke
@@ -81,7 +80,7 @@ export function createGraphMutateTelemetry(deps: GraphHandlerDeps): GraphMutateT
     schemaValid: boolean,
     rawParams: Record<string, unknown>,
   ): void => {
-    // WR-01 (Phase 173 review): the emit MUST be best-effort — telemetry can
+    // The emit MUST be best-effort — telemetry can
     // never break the operation it measures. `deps.eventBus.emit` delegates to
     // Node's EventEmitter with NO listener error isolation, and the subscribed
     // `pipeline:authored` listener pushes into the obs diagnostic buffer whose
@@ -117,13 +116,13 @@ export function createGraphMutateTelemetry(deps: GraphHandlerDeps): GraphMutateT
     }
   };
 
-  // AUTHOR-01 (Phase 174-03): resolve the calling agent's capabilityClass tier
-  // for the buildGraphInput repair decision, GATED on repairProducer. When the
-  // gate is off (or absent) this returns undefined so buildGraphInput takes the
-  // capable direct path — byte-identical to pre-174 (D-GATED-OFF). The tier is
-  // resolved SERVER-SIDE from the RAW _agentId (Spoofing mitigation T-174-SPOOF /
-  // T-173-03), reusing 173's injected resolveCapabilityClass — the tool-supplied
-  // capabilityClass param is NEVER read for the tier.
+  // Resolve the calling agent's capabilityClass tier for the buildGraphInput
+  // repair decision, GATED on repairProducer. When the gate is off (or absent)
+  // this returns undefined so buildGraphInput takes the capable direct path —
+  // byte-identical to the ungated behavior. The tier is resolved SERVER-SIDE
+  // from the RAW _agentId (spoofing mitigation), reusing the injected
+  // resolveCapabilityClass — the tool-supplied capabilityClass param is NEVER
+  // read for the tier.
   const resolveAuthoringTier = (
     d: GraphHandlerDeps,
     rawParams: Record<string, unknown>,
@@ -132,7 +131,7 @@ export function createGraphMutateTelemetry(deps: GraphHandlerDeps): GraphMutateT
       ? d.resolveCapabilityClass?.(rawParams._agentId as string | undefined)
       : undefined;
 
-  // AUTHOR-01: assemble the repair context buildGraphInput needs for the gated
+  // Assemble the repair context buildGraphInput needs for the gated
   // weak-model branch (the injected matcher + gate + best-effort emit inputs).
   // Correlation ids ride from the RAW params (envelope-only — never body).
   const repairContext = (
@@ -147,8 +146,8 @@ export function createGraphMutateTelemetry(deps: GraphHandlerDeps): GraphMutateT
     sessionKey: rawParams._callerSessionKey as string | undefined,
   });
 
-  // AUTHOR-02 (Phase 174-04): best-effort audit emit for a from_intent synthesis
-  // (mirrors emitPipelineAuthored's WR-01 guard — telemetry never breaks the
+  // Best-effort audit emit for a from_intent synthesis
+  // (mirrors emitPipelineAuthored's guard — telemetry never breaks the
   // measured op). Counts/ids/closed-enums ONLY (pattern + GOVERNED node count +
   // correlation ids; NEVER the graph body / node task / one-line intent — §2.7).
   // Called AFTER buildGraphInput + validateTypeConfigs, so it reflects a GOVERNED graph.

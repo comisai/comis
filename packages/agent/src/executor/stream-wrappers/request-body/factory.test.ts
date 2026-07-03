@@ -290,10 +290,10 @@ describe("createRequestBodyInjector", () => {
     }
   });
 
-  it("getMessageRetention splits system vs conversation retention (W2: no tool breakpoint)", async () => {
+  it("getMessageRetention splits system vs conversation retention (no tool breakpoint)", async () => {
     const base = createMockStreamFn();
     // System breakpoints use "long" (1h), conversation breakpoints use "short" (5m)
-    // W2: Tool breakpoint removed -- tools no longer have cache_control
+    // Tool breakpoint removed -- tools no longer have cache_control
     const wrapper = createRequestBodyInjector(
       {
         getCacheRetention: () => "long",
@@ -323,7 +323,7 @@ describe("createRequestBodyInjector", () => {
 
     const result = await onPayload(payload, model);
 
-    // W2: No tool breakpoints should exist
+    // No tool breakpoints should exist
     const tools = result.tools as any[];
     const toolWithBreakpoint = tools.find((t: any) => t.cache_control);
     expect(toolWithBreakpoint).toBeUndefined();
@@ -339,11 +339,11 @@ describe("createRequestBodyInjector", () => {
     }
   });
 
-  it("TTL ordering maintained: system (1h) >= message breakpoints (5m) after escalation (W2: no tool breakpoint)", async () => {
+  it("TTL ordering maintained: system (1h) >= message breakpoints (5m) after escalation (no tool breakpoint)", async () => {
     const base = createMockStreamFn();
     // Simulates post-escalation state: system breakpoints use "long" (1h),
     // message breakpoints use "short" (5m) via getMessageRetention.
-    // W2: Tool breakpoint removed -- no tool-level cache_control.
+    // Tool breakpoint removed -- no tool-level cache_control.
     const wrapper = createRequestBodyInjector(
       {
         getCacheRetention: () => "long",
@@ -376,7 +376,7 @@ describe("createRequestBodyInjector", () => {
     // Collect all cache_control TTLs in request order: system -> messages
     const ttls: number[] = [];
 
-    // W2: No tool breakpoints -- skip tool check
+    // No tool breakpoints -- skip tool check
     const tools = result.tools as any[];
     const toolBreakpointCount = tools.filter((t: any) => t.cache_control).length;
     expect(toolBreakpointCount).toBe(0);
@@ -1044,7 +1044,7 @@ describe("createRequestBodyInjector", () => {
     const system = result.system as any[];
     expect(system[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
 
-    // W2: No tool breakpoints should exist
+    // No tool breakpoints should exist
     const tools = result.tools as any[];
     const toolWithBreakpoint = tools.find((t: any) => t.cache_control);
     expect(toolWithBreakpoint).toBeUndefined();
@@ -1123,7 +1123,7 @@ describe("createRequestBodyInjector", () => {
     expect(system[0].cache_control).toBeUndefined();
   });
 
-  it("full monotonicity chain system(1h) >= messages(5m) (W2: no tool breakpoint)", async () => {
+  it("full monotonicity chain system(1h) >= messages(5m) with no tool breakpoint", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -1164,7 +1164,7 @@ describe("createRequestBodyInjector", () => {
       }
     }
 
-    // W2: No tool breakpoints expected
+    // No tool breakpoints expected
     const tools = result.tools as any[];
     expect(tools.filter((t: any) => t.cache_control).length).toBe(0);
 
@@ -1316,7 +1316,7 @@ describe("Multi-block system prompt injection", () => {
     expect(system[2]!.text).toBe("my-dynamic");
   });
 
-  it("only last system block has cache_control after injection (W1)", async () => {
+  it("only last system block has cache_control after multi-block injection", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -1417,9 +1417,9 @@ describe("Multi-block system prompt injection", () => {
       }
     }
 
-    // W1: System should contribute exactly 1 (only last block has cache_control)
+    // System should contribute exactly 1 (only last block has cache_control)
     expect(system.filter(b => !!b.cache_control)).toHaveLength(1);
-    // W2: Tool breakpoint removed -- tools should NOT have cache_control
+    // Tool breakpoint removed -- tools should NOT have cache_control
     if (tools) {
       expect(tools.filter(t => !!t.cache_control)).toHaveLength(0);
     }
@@ -1495,7 +1495,7 @@ describe("Multi-block system prompt injection", () => {
     expect(system[0]!.text).toBe("new-prefix" + SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
     expect(system[1]!.text).toBe("new-attribution");
     expect(system[2]!.text).toBe("new-body");
-    // W1: Only last block should have cache_control
+    // Only last block should have cache_control
     expect(system[0]!.cache_control).toBeUndefined();
     expect(system[1]!.cache_control).toBeUndefined();
     expect(system[2]!.cache_control).toBeDefined();
@@ -1549,7 +1549,7 @@ describe("Multi-block system prompt injection", () => {
     expect(system[0]!.text).toBe("Original single block");
   });
 
-  it("W1: when retention is 'short', only last system block has cache_control without ttl", async () => {
+  it("when retention is 'short', only last system block has cache_control without ttl", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -1568,7 +1568,7 @@ describe("Multi-block system prompt injection", () => {
 
     const system = result.system as Array<Record<string, unknown>>;
     expect(system).toHaveLength(3);
-    // W1: Only last block has cache_control
+    // Only last block has cache_control
     expect(system[0]!.cache_control).toBeUndefined();
     expect(system[1]!.cache_control).toBeUndefined();
     expect(system[2]!.cache_control).toEqual({ type: "ephemeral" });
@@ -1645,7 +1645,7 @@ describe("breakpoint cap increase", () => {
     return indices;
   }
 
-  it("places 2 breakpoints on long conversation with compaction summary (cache C-FIX-4: anchor + recent)", async () => {
+  it("places 2 breakpoints on long conversation with compaction summary (anchor + recent)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long", cacheBreakpointStrategy: "multi-zone" }, logger);
     const wrappedFn = wrapper(base);
@@ -1673,7 +1673,7 @@ describe("breakpoint cap increase", () => {
     const payload = makeApiPayload(msgs, 1);
     const result = await onPayload(payload, model);
 
-    // C-FIX-4: Comis places at most 2 message markers (anchor + recent). Anthropic's 4-breakpoint
+    // Comis places at most 2 message markers (anchor + recent). Anthropic's 4-breakpoint
     // limit is otherwise blown by system + the SDK's auto last-message marker, which silently drops
     // the tail-reaching markers (the O(N²) freeze). Two markers keeps the total at ≤4.
     const msgBps = countMessageBreakpoints(result);
@@ -1708,7 +1708,7 @@ describe("breakpoint cap increase", () => {
     expect(msgBps).toBeLessThanOrEqual(2);
   });
 
-  it("places anchor + recent (no mid/bridge breakpoint) — recent reaches the tail (cache C-FIX-4)", async () => {
+  it("places anchor + recent (no mid/bridge breakpoint) — recent reaches the tail", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long", cacheBreakpointStrategy: "multi-zone" }, logger);
     const wrappedFn = wrapper(base);
@@ -1735,8 +1735,8 @@ describe("breakpoint cap increase", () => {
 
     const bpIndices = findBreakpointIndices(result);
 
-    // C-FIX-4: exactly 2 markers — anchor (compaction summary @0) + recent (second-to-last user).
-    // NO mid/bridge marker (those pushed the total over Anthropic's 4-limit and stranded the tail).
+    // Exactly 2 markers — anchor (compaction summary @0) + recent (second-to-last user).
+    // NO mid/bridge marker (those push the total over Anthropic's 4-limit and strand the tail).
     expect(bpIndices).toHaveLength(2);
     expect(bpIndices[0]).toBe(0); // anchor at compaction summary
     // The recent marker reaches the tail zone (second-to-last user = 26), not stranded mid-conversation.
@@ -1818,7 +1818,7 @@ describe("breakpoint cap increase", () => {
     expect(hasCacheControl).toBe(true);
   });
 
-  it("W12: onBreakpointsPlaced fires for SDK auto-marker even when no explicit breakpoints placed", async () => {
+  it("onBreakpointsPlaced fires for SDK auto-marker even when no explicit breakpoints placed", async () => {
     const base = createMockStreamFn();
     const onBreakpointsPlaced = vi.fn();
     const wrapper = createRequestBodyInjector(
@@ -1845,14 +1845,14 @@ describe("breakpoint cap increase", () => {
 
     await onPayload(payload, model);
 
-    // W12: onBreakpointsPlaced fires even with 0 explicit placements (SDK auto-marker found)
+    // onBreakpointsPlaced fires even with 0 explicit placements (SDK auto-marker found)
     expect(onBreakpointsPlaced).toHaveBeenCalledTimes(1);
     // Callback should receive index of last user message (index 2)
     const receivedIdx = onBreakpointsPlaced.mock.calls[0]![0] as number;
     expect(receivedIdx).toBe(2);
   });
 
-  it("W12-FALLBACK: onBreakpointsPlaced fires when slotsAvailable=0 but SDK auto-marker exists", async () => {
+  it("onBreakpointsPlaced fires via the fallback scan when slotsAvailable=0 but SDK auto-marker exists", async () => {
     const base = createMockStreamFn();
     const onBreakpointsPlaced = vi.fn();
     const wrapper = createRequestBodyInjector(
@@ -1886,13 +1886,13 @@ describe("breakpoint cap increase", () => {
 
     await onPayload(payload, model);
 
-    // W12-FALLBACK: Even with all slots consumed, SDK auto-marker scan fires callback
+    // Even with all slots consumed, the SDK auto-marker fallback scan fires the callback
     expect(onBreakpointsPlaced).toHaveBeenCalledTimes(1);
     const receivedIdx = onBreakpointsPlaced.mock.calls[0]![0] as number;
     expect(receivedIdx).toBe(2); // Index of last user message with SDK auto-marker
   });
 
-  it("W7: WARN emitted when breakpoint budget exhausted on conversation >= 20 messages", async () => {
+  it("WARN emitted when breakpoint budget exhausted on conversation >= 20 messages", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       { getCacheRetention: () => "long" },
@@ -1924,7 +1924,7 @@ describe("breakpoint cap increase", () => {
 
     await onPayload(payload, model);
 
-    // W7: WARN log should be emitted
+    // The budget-exhausted WARN log should be emitted
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         existingCount: 4,
@@ -1940,11 +1940,11 @@ describe("breakpoint cap increase", () => {
   // countCacheBreakpoints: tool-level cache_control (indirect tests)
   // -------------------------------------------------------------------------
 
-  // W2: Tool breakpoints are always stripped before budget accounting.
+  // Tool breakpoints are always stripped before budget accounting.
   // pi-ai 0.67.4+ auto-places cache_control on the last tool in convertTools().
-  // These tests verify the W2 guard strips any incoming tool cache_control so
-  // Comis's message-zone strategy keeps all 4 slots available.
-  it("strips externally-placed tool cache_control (W2 guard)", async () => {
+  // These tests verify the tool-marker strip guard removes any incoming tool
+  // cache_control so Comis's message-zone strategy keeps all 4 slots available.
+  it("strips externally-placed tool cache_control before budget accounting", async () => {
     const base = createMockStreamFn();
     const onBreakpointsPlaced = vi.fn();
     const wrapper = createRequestBodyInjector(
@@ -1975,7 +1975,7 @@ describe("breakpoint cap increase", () => {
 
     const result = await onPayload(payload, model);
 
-    // W2: all tool cache_control markers are stripped
+    // All tool cache_control markers are stripped
     const tools = result.tools as any[];
     expect(tools.filter((t: any) => t.cache_control).length).toBe(0);
 
@@ -2023,7 +2023,7 @@ describe("breakpoint cap increase", () => {
 
     const result = await onPayload(payload, model);
 
-    // W2: all tool markers stripped regardless of count
+    // All tool markers stripped regardless of count
     const tools = result.tools as any[];
     expect(tools.filter((t: any) => t.cache_control).length).toBe(0);
 
@@ -2081,7 +2081,7 @@ describe("tool definition caching", () => {
     return "x".repeat(tokens * 4);
   }
 
-  it("W2: no tool breakpoint placed -- tools cached via cumulative hash at system position", async () => {
+  it("no tool breakpoint placed -- tools cached via cumulative hash at system position", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long" }, logger);
     const wrappedFn = wrapper(base);
@@ -2107,14 +2107,14 @@ describe("tool definition caching", () => {
 
     const result = await onPayload(payload, model);
 
-    // W2: No tool should have cache_control (tool breakpoint removed)
+    // No tool should have cache_control (tool breakpoint removed)
     const tools = result.tools as any[];
     expect(tools[0].cache_control).toBeUndefined();
     expect(tools[1].cache_control).toBeUndefined();
     expect(tools[2].cache_control).toBeUndefined();
   });
 
-  it("W2 guard strips incoming tool cache_control in non-sub-agent flow", async () => {
+  it("tool-marker strip guard removes incoming tool cache_control in non-sub-agent flow", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long" }, logger);
     const wrappedFn = wrapper(base);
@@ -2140,7 +2140,7 @@ describe("tool definition caching", () => {
 
     const result = await onPayload(payload, model);
 
-    // W2: all tool cache_control stripped in normal (non-skipCacheWrite) flow
+    // All tool cache_control stripped in normal (non-skipCacheWrite) flow
     const tools = result.tools as any[];
     expect(tools.filter((t: any) => t.cache_control).length).toBe(0);
   });
@@ -2184,7 +2184,7 @@ describe("tool definition caching", () => {
     );
   });
 
-  it("W2: no tool breakpoint placed regardless of retention (long)", async () => {
+  it("no tool breakpoint placed regardless of retention (long)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long" }, logger);
     const wrappedFn = wrapper(base);
@@ -2206,11 +2206,11 @@ describe("tool definition caching", () => {
     const result = await onPayload(payload, model);
 
     const tools = result.tools as any[];
-    // W2: Tool breakpoint removed -- tools cached via cumulative hash
+    // Tool breakpoint removed -- tools cached via cumulative hash
     expect(tools[0].cache_control).toBeUndefined();
   });
 
-  it("W2: no tool breakpoint placed regardless of retention (short)", async () => {
+  it("no tool breakpoint placed regardless of retention (short)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "short" }, logger);
     const wrappedFn = wrapper(base);
@@ -2232,7 +2232,7 @@ describe("tool definition caching", () => {
     const result = await onPayload(payload, model);
 
     const tools = result.tools as any[];
-    // W2: Tool breakpoint removed -- tools cached via cumulative hash
+    // Tool breakpoint removed -- tools cached via cumulative hash
     expect(tools[0].cache_control).toBeUndefined();
   });
 });
@@ -2290,7 +2290,7 @@ describe("lookback window enforcement", () => {
     return indices;
   }
 
-  it("does NOT add bridge/mid markers on a long conversation — anchor + recent reach the tail (cache C-FIX-4)", async () => {
+  it("does NOT add bridge/mid markers on a long conversation — anchor + recent reach the tail", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long", cacheBreakpointStrategy: "multi-zone" }, logger);
     const wrappedFn = wrapper(base);
@@ -2304,10 +2304,10 @@ describe("lookback window enforcement", () => {
     const onPayload = receivedOptions.onPayload as (p: any, m: any) => Promise<any>;
 
     // 42-message conversation: compaction summary @0, last user @40, second-to-last user @38.
-    // The anchor→recent gap (38 blocks) far exceeds the 20-block window — but C-FIX-4 proved a
-    // fresh cache write at the recent marker caches the WHOLE prefix regardless of the gap, so NO
-    // bridge/mid marker is needed (and adding them blew Anthropic's 4-breakpoint limit, freezing
-    // the cache). Comis places exactly 2 markers; the gap is expected and benign.
+    // The anchor→recent gap (38 blocks) far exceeds the 20-block window — but live evidence
+    // proved a fresh cache write at the recent marker caches the WHOLE prefix regardless of the
+    // gap, so NO bridge/mid marker is needed (adding them blows Anthropic's 4-breakpoint limit,
+    // freezing the cache). Comis places exactly 2 markers; the gap is expected and benign.
     const msgs: Array<{ role: string; text: string }> = [];
     msgs.push({ role: "user", text: "<summary>" + textForTokens(2000) + "</summary>" });
     msgs.push({ role: "assistant", text: textForTokens(2000) });
@@ -2370,7 +2370,7 @@ describe("lookback window enforcement", () => {
     const onPayload = receivedOptions.onPayload as (p: any, m: any) => Promise<any>;
 
     // Build a long conversation with 4 system breakpoints consuming all slots.
-    // (W2 guard strips tool cache_control, so use system blocks to exhaust budget.)
+    // (The tool-marker strip guard removes tool cache_control, so use system blocks to exhaust budget.)
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 42; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
@@ -2548,8 +2548,8 @@ describe("breakpoint strategy config", () => {
     expect(msgBps).toBe(0);
   });
 
-  it("W11: auto default resolves to multi-zone for direct anthropic", async () => {
-    // W11: Without cacheBreakpointStrategy, auto resolves to "multi-zone" for ALL providers
+  it("auto default resolves to multi-zone for direct anthropic", async () => {
+    // Without cacheBreakpointStrategy, auto resolves to "multi-zone" for ALL providers
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long" }, logger);
     const wrappedFn = wrapper(base);
@@ -2572,7 +2572,7 @@ describe("breakpoint strategy config", () => {
     const payload = makeApiPayload(msgs, 1);
     const result = await onPayload(payload, model);
 
-    // W11: Multi-zone strategy places up to 3 breakpoints
+    // Multi-zone strategy places up to 3 breakpoints
     const msgBps = countMessageBreakpoints(result);
     expect(msgBps).toBeGreaterThanOrEqual(1);
     expect(msgBps).toBeLessThanOrEqual(3);
@@ -2602,7 +2602,7 @@ describe("breakpoint strategy config", () => {
     const payload = makeApiPayload(msgs, 1);
     const result = await onPayload(payload, model);
 
-    // Multi-zone places 2 breakpoints (anchor + recent) — cache C-FIX-4 capped Comis at 2 to stay
+    // Multi-zone places 2 breakpoints (anchor + recent) — Comis is capped at 2 to stay
     // within Anthropic's 4-breakpoint limit (system + SDK consume the other two).
     const msgBps = countMessageBreakpoints(result);
     expect(msgBps).toBe(2);
@@ -2624,7 +2624,7 @@ describe("breakpoint strategy config", () => {
     const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
 
     // Build payload with 4 system breakpoints consuming all slots.
-    // (W2 guard strips tool cache_control, so use system blocks to exhaust budget.)
+    // (The tool-marker strip guard removes tool cache_control, so use system blocks to exhaust budget.)
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 10; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
@@ -3665,7 +3665,7 @@ describe("createRequestBodyInjector — session latches", () => {
     const onPayload1 = opts1.onPayload as (payload: any, model: any) => Promise<any>;
     const payload1 = makePayloadForLatch();
     const result1 = await onPayload1(payload1, model);
-    // W1/W2: Verify via last system block (only block with cache_control after consolidation).
+    // Verify via last system block (only block with cache_control after consolidation).
     // With "long" retention, last system block gets TTL 1h.
     const system1 = result1.system as Array<Record<string, unknown>>;
     const lastBlock1 = system1[system1.length - 1]!;
@@ -3743,12 +3743,12 @@ describe("createRequestBodyInjector — session latches", () => {
     const wrappedFn = wrapper(base);
     const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as any;
 
-    // First call: "long" retention -> last system block gets TTL 1h (W1 consolidation)
+    // First call: "long" retention -> last system block gets TTL 1h (system-block consolidation)
     wrappedFn(model, makeContext([]), {});
     const opts1 = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload1 = opts1.onPayload as (payload: any, model: any) => Promise<any>;
     const result1 = await onPayload1(makePayloadForLatch(), model);
-    // W1/W2: Verify via last system block
+    // Verify via last system block (the only block with cache_control after consolidation)
     const system1 = result1.system as Array<Record<string, unknown>>;
     const lastBlock1 = system1[system1.length - 1]!;
     expect(lastBlock1.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
@@ -4514,7 +4514,7 @@ describe("selective tool-type clearing in microcompact", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (payload: any, model: any) => Promise<any>;
     const result = await onPayload(
-      // EFF-02: "exec" is Comis's emitted shell tool name (was "exec_tool", a dead alias).
+      // "exec" is Comis's emitted shell tool name ("exec_tool" is a dead alias).
       makePayloadWithNamedToolResult("exec", "tu_exec", "A".repeat(1500)),
       model,
     );
@@ -4591,7 +4591,7 @@ describe("dual-category tool clearing", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (payload: any, model: any) => Promise<any>;
     const result = await onPayload(
-      // EFF-02: "read" is Comis's emitted file-read tool name (was "file_read", a dead alias).
+      // "read" is Comis's emitted file-read tool name ("file_read" is a dead alias).
       makePayloadWithToolUseAndResult("read", "tu_read", { path: "/foo" }, "A".repeat(1500)),
       model,
     );
@@ -5434,7 +5434,7 @@ describe("clearStaleThinkingBlocks (integration)", () => {
     const firstAssistant = msgs[1];
     expect(firstAssistant.content.length).toBe(1);
     expect(firstAssistant.content[0].type).toBe("text");
-    // Second/active assistant: thinking ALSO cleared now — stripReplayThinking (#C2) runs
+    // Second/active assistant: thinking ALSO cleared — stripReplayThinking runs
     // before microcompact and strips thinking from EVERY replayed assistant regardless of
     // keepWindow (clearStaleThinkingBlocks is a no-op for thinking once stripReplayThinking ran).
     const secondAssistant = msgs[3];
@@ -5444,12 +5444,12 @@ describe("clearStaleThinkingBlocks (integration)", () => {
     expect(onContentModification).toHaveBeenCalled();
   });
 
-  it("strips ALL replayed thinking even when cache is warm (cache break #C1/#C2: consistent with LCD)", async () => {
-    // cache break #C1/#C2: thinking MUST be stripped from EVERY replayed assistant on every
+  it("strips ALL replayed thinking even when cache is warm (consistent with LCD)", async () => {
+    // Thinking MUST be stripped from EVERY replayed assistant on every
     // request — warm OR stale, historical AND the active/last one — because the durable LCD
-    // (parts-codec F3) always reconstructs assistant messages WITHOUT thinking. Keeping the
-    // last assistant's thinking (the earlier #C1 keep-last design) was exactly the residual
-    // inconsistency that mutated the cached prefix (#C2): cached WITH thinking while active,
+    // parts-codec always reconstructs assistant messages WITHOUT thinking. Keeping the
+    // last assistant's thinking (a keep-last exception) is exactly the residual
+    // inconsistency that mutates the cached prefix: cached WITH thinking while active,
     // re-sent WITHOUT once it goes historical → read collapse + re-write each turn boundary.
     const onContentModification = vi.fn();
     const base = createMockStreamFn();
@@ -5483,7 +5483,7 @@ describe("clearStaleThinkingBlocks (integration)", () => {
         ]},
         { role: "user", content: [{ type: "text", text: "Next" }] },
         { role: "assistant", content: [
-          { type: "thinking", thinking: "Active-cycle thinking — now ALSO stripped (#C2)" },
+          { type: "thinking", thinking: "Active-cycle thinking — also stripped, no keep-last exception" },
           { type: "text", text: "Latest" },
         ]},
       ],
@@ -5493,7 +5493,7 @@ describe("clearStaleThinkingBlocks (integration)", () => {
     // Historical assistant (idx 1): thinking STRIPPED even though warm → byte-stable cached prefix.
     expect(msgs[1].content.length).toBe(1);
     expect(msgs[1].content[0].type).toBe("text");
-    // LAST/active assistant (idx 3): thinking ALSO STRIPPED now (#C2) — no keep-last exception.
+    // LAST/active assistant (idx 3): thinking ALSO STRIPPED — no keep-last exception.
     expect(msgs[3].content.some((b: any) => b.type === "thinking")).toBe(false);
     expect(msgs[3].content.some((b: any) => b.type === "text")).toBe(true);
     // The deliberate strip notifies the cache-break detector (suppress the one-time read change).
@@ -5605,7 +5605,7 @@ describe("token-ceiling microcompact", () => {
         getCacheRetention: () => "short",
         getElapsedSinceLastResponse: () => 100_000,
         // keepWindow large enough to protect BOTH tool results, so neither the ceiling
-        // trigger NOR the every-turn pass (EFF-01) clears them — isolating the assertion
+        // trigger NOR the every-turn pass clears them — isolating the assertion
         // to "the ceiling trigger is inert when microcompactTokenCeiling is undefined".
         observationKeepWindow: 10,
         onContentModification,
@@ -6110,7 +6110,7 @@ describe("zone-aware retention", () => {
 // Token-density semi-stable placement tests
 // ---------------------------------------------------------------------------
 
-describe("stable semi-stable anchor (cache C-FIX-10)", () => {
+describe("stable semi-stable anchor (pinned, never drifting)", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
@@ -6182,8 +6182,8 @@ describe("stable semi-stable anchor (cache C-FIX-10)", () => {
     const result = await onPayload(payload, model);
 
     const bpIndices = findBreakpointIndices(result);
-    // cache C-FIX-10: the semi-stable anchor is PINNED to the 2nd user message (index 2),
-    // a fixed position — NOT the drifting 50%-token midpoint (which used to land near index 10).
+    // The semi-stable anchor is PINNED to the 2nd user message (index 2), a fixed
+    // position — NOT a drifting 50%-token midpoint (which would land near index 10).
     expect(bpIndices.length).toBeGreaterThanOrEqual(1);
     expect(bpIndices[0]).toBe(2);
   });
@@ -6203,8 +6203,8 @@ describe("stable semi-stable anchor (cache C-FIX-10)", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
 
-    // Token density front-loaded (first 4 messages huge) — the OLD 50%-token anchor would land
-    // at index ~2-4; C-FIX-10's fixed anchor ignores token density and stays at the 2nd user message.
+    // Token density front-loaded (first 4 messages huge) — a 50%-token anchor would land
+    // at index ~2-4; the fixed anchor ignores token density and stays at the 2nd user message.
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 4; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(5000) });
@@ -6241,8 +6241,8 @@ describe("stable semi-stable anchor (cache C-FIX-10)", () => {
       for (let i = 0; i < n; i++) msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(1500) });
       return makeApiPayload(msgs, 1);
     };
-    // Short conversation then a much longer one — the anchor must NOT move (the C-FIX-2b
-    // 50%→pinned re-anchor at the ~20-block threshold is eliminated).
+    // Short conversation then a much longer one — the anchor must NOT move (no
+    // 50%→pinned re-anchor regime jump at the ~20-block threshold).
     const r1 = await onPayload(mk(10), model);
     const r2 = await onPayload(mk(30), model);
     expect(findBreakpointIndices(r1)[0]).toBe(2);
@@ -6343,7 +6343,7 @@ describe("fence-aware microcompaction", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (p: any, m: any) => Promise<any>;
 
-    // Use "read" (in COMPACTABLE_TOOL_NAMES — EFF-02 emitted name) and role: "tool" (Anthropic API format)
+    // Use "read" (an emitted name in COMPACTABLE_TOOL_NAMES) and role: "tool" (Anthropic API format)
     const result = await onPayload({
       system: [{ type: "text", text: "System" }],
       tools: [],
@@ -6370,17 +6370,17 @@ describe("fence-aware microcompaction", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EFF-03: every-turn microcompact is clone-safe + cache-stable at the pipeline level
+  // Every-turn microcompact is clone-safe + cache-stable at the pipeline level
   // -------------------------------------------------------------------------
-  describe("every-turn microcompact in onPayload — clone-safe + byte-stable (EFF-03)", () => {
+  describe("every-turn microcompact in onPayload — clone-safe + byte-stable", () => {
     const longRead = "x".repeat(2000);
     const STALE_PLACEHOLDER = "[Stale tool result cleared: idle > TTL]";
 
     /**
      * A payload with stale `read` results beyond the keepWindow and NO TTL/ceiling
      * condition (no getElapsedSinceLastResponse over TTL, no microcompactTokenCeiling).
-     * Pre-EFF-01 the pipeline cleared nothing here; the every-turn pass clears the
-     * stale reads outside the keep window.
+     * Without the every-turn pass the pipeline would clear nothing here; the every-turn
+     * pass clears the stale reads outside the keep window.
      */
     function makeStaleReadPayload(): Record<string, unknown> {
       return {
@@ -6490,7 +6490,7 @@ describe("fence-aware microcompaction", () => {
     expect(auditPayload).toHaveProperty("systemBreakpoints");
     expect(auditPayload).toHaveProperty("toolBreakpoints");
     expect(auditPayload.systemBreakpoints).toBe(1);
-    // W2 guard strips tool cache_control in non-sub-agent flow -> audit sees 0
+    // The tool-marker strip guard removes tool cache_control in non-sub-agent flow -> audit sees 0
     expect(auditPayload.toolBreakpoints).toBe(0);
   });
 
@@ -6684,13 +6684,13 @@ describe("fence-aware microcompaction", () => {
       expect(countUnstableWarns(testLogger)).toBeGreaterThanOrEqual(1);
     });
 
-    it("WARN names the first divergent message index + its poison class (obs retro)", async () => {
+    it("WARN names the first divergent message index + its poison class", async () => {
       const testLogger = createMockLogger();
 
       // Mutate index 2 with a varying DATETIME-PREAMBLE each turn — a cache-poison
       // class that reaches the diagnostic (unlike the inline-recall block, which
-      // C-FIX-3 strips upstream). The diagnostic must identify WHICH message + WHAT
-      // content class, so the next incident needs no ad-hoc instrumentation.
+      // the recall strip removes upstream). The diagnostic must identify WHICH message +
+      // WHAT content class, so the next incident needs no ad-hoc instrumentation.
       for (let turn = 0; turn < 4; turn++) {
         const msgs = buildMessages(6);
         (msgs[2].content as any[])[0].text =
@@ -6709,8 +6709,8 @@ describe("fence-aware microcompaction", () => {
 
     it("WARN classifies a CONTENT-cleared structural delta (no content leak)", async () => {
       const testLogger = createMockLogger();
-      // NOTE: a thinking-cleared cached-prefix mutation can no longer be PRODUCED — cache break
-      // #C1/#C2 fixed it by stripping thinking from EVERY replayed assistant (stripReplayThinking). So
+      // NOTE: a thinking-cleared cached-prefix mutation can no longer be PRODUCED —
+      // stripReplayThinking strips thinking from EVERY replayed assistant. So
       // this exercises the classifier's other structural-delta branch: a large content SHRINK on a
       // historical assistant message (e.g. a cleared/offloaded tool_result) → "content-cleared".
       // The diagnostic reports the class from the structural delta (block count + length), WITHOUT
@@ -6758,7 +6758,7 @@ describe("fence-aware microcompaction", () => {
       );
     }
 
-    it("warns on a once-per-turn cache-region mutation in the newly-promoted region (#C2-class regression guard)", () => {
+    it("warns on a once-per-turn cache-region mutation in the newly-promoted region (replay-thinking-class regression guard)", () => {
       const testLogger = createMockLogger();
       const KEY = "direct-c2-regression";
       clearSessionPrefixStability(KEY);
@@ -6784,13 +6784,13 @@ describe("fence-aware microcompaction", () => {
       expect(String((warn![0] as Record<string, unknown>).mutationClass)).toContain("content-cleared");
     });
 
-    it("does NOT warn on inline-recall transitions (transient by design, C-FIX-3)", () => {
+    it("does NOT warn on inline-recall transitions (transient by design)", () => {
       const testLogger = createMockLogger();
       const KEY = "direct-recall-transient";
       clearSessionPrefixStability(KEY);
       // Same once-per-turn-different-message shape, but the shrinking content is the inline-recall
-      // block (C-FIX-3 strips it from a user message the turn after it carried the current turn's
-      // recall). The diagnostic must classify the r1→r0 transition as inline-recall and NOT
+      // block (the recall strip removes it from a user message the turn after it carried the current
+      // turn's recall). The diagnostic must classify the r1→r0 transition as inline-recall and NOT
       // accumulate it (it would otherwise read as content-cleared and warn — a false positive).
       const recall = "[Relevant context from memory: a durable fact (recorded 2026-01-01)]\n\n";
       const mk = (count: number, fence: number): Array<Record<string, unknown>> =>
@@ -6809,16 +6809,17 @@ describe("fence-aware microcompaction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// L1/L2/L7 — ModelProfile flag-based capability routing (Phase 155-01)
+// ModelProfile flag-based capability routing
 //
-// RED failures before implementation:
-//   Tests 1 & 2 (L2): factory reads isAnthropicFamily("anthropic")=true →
-//     onPayload IS installed → breakpoints ARE placed for large-enough payload →
-//     cache_control IS present → assertion "expect(count).toBe(0)" FAILS.
-//   Test 3 (L7): already passes pre-fix (Ollama passthrough) but pins the
-//     invariant against future regression.
-//   Test 4 (L1): injectToolDeferral reads supportsToolSearch(sonnetId)=true →
-//     swap occurs → assertion FAILS.
+// The ModelProfile capability flags — not the provider family or model ID —
+// are the routing authority:
+//   - supportsPromptCache=false must suppress cache_control placement even
+//     when isAnthropicFamily(provider) is true and the payload is large
+//     enough to trigger breakpoints.
+//   - Ollama passthrough stays single-block with zero cache_control and all
+//     safety sections intact.
+//   - supportsServerToolSearch=false must suppress the tool_search swap even
+//     when the model ID (Sonnet) would normally enable it.
 // ---------------------------------------------------------------------------
 
 /**
@@ -6903,17 +6904,15 @@ async function runInjectorOnPayload(
   return (transformed ?? initialPayload) as Record<string, unknown>;
 }
 
-describe("L2 — supportsPromptCache flag controls cache_control placement", () => {
+describe("supportsPromptCache flag controls cache_control placement", () => {
   /**
-   * Test 1 (L2): modelProfile.supportsPromptCache=false AND Anthropic provider
-   * with a large-enough payload to trigger breakpoints.
-   *
-   * RED: isAnthropicFamily("anthropic")=true → needsCacheBreakpoints=true →
-   *      onPayload installed → cache_control markers injected → count > 0 → FAILS.
-   * GREEN: config.modelProfile?.supportsPromptCache=false → needsCacheBreakpoints=false
-   *        → factory returns next() unchanged → count=0 → PASSES.
+   * modelProfile.supportsPromptCache=false AND Anthropic provider with a
+   * large-enough payload to trigger breakpoints: the flag must win —
+   * needsCacheBreakpoints=false → the factory returns next() unchanged →
+   * zero cache_control markers, even though isAnthropicFamily("anthropic")
+   * is true.
    */
-  it("L2: supportsPromptCache=false suppresses cache_control even for Anthropic provider (large payload)", async () => {
+  it("supportsPromptCache=false suppresses cache_control even for Anthropic provider (large payload)", async () => {
     const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: false } });
     const safetyLines = buildSafetySection(false);
     const payload = buildLargePayload(safetyLines.join("\n"));
@@ -6928,13 +6927,11 @@ describe("L2 — supportsPromptCache flag controls cache_control placement", () 
   });
 
   /**
-   * Test 2 (L2 + L7): supportsPromptCache=false → zero cache_control AND
-   *                     safety sections still present in the assembled block.
-   *
-   * RED: cache_control injected (isAnthropicFamily=true) → FAILS on count=0.
-   * GREEN: flag=false → no injection, safety text retained → PASSES.
+   * supportsPromptCache=false → zero cache_control AND the safety sections
+   * are still present in the assembled block: suppressing cache markers must
+   * not drop safety content.
    */
-  it("L2+L7: supportsPromptCache=false → zero cache_control AND safety text preserved", async () => {
+  it("supportsPromptCache=false yields zero cache_control AND safety text preserved", async () => {
     const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: false } });
     const safetyLines = buildSafetySection(false);
     const payload = buildLargePayload(safetyLines.join("\n"));
@@ -6945,10 +6942,10 @@ describe("L2 — supportsPromptCache flag controls cache_control placement", () 
       payload,
     );
 
-    // Zero cache_control fields anywhere in the output (L2 invariant)
+    // Zero cache_control fields anywhere in the output
     expect(countCacheControlsDeep(result)).toBe(0);
 
-    // Safety content is preserved in the system block (L7 invariant)
+    // Safety content is preserved in the system block
     const systemBlocks = result.system as Array<{ type: string; text?: string }>;
     const allText = systemBlocks.map(b => b.text ?? "").join("\n");
     expect(allText).toContain("## Safety");
@@ -6956,16 +6953,14 @@ describe("L2 — supportsPromptCache flag controls cache_control placement", () 
   });
 
   /**
-   * CR-02 (positive direction): modelProfile.supportsPromptCache=true AND
-   * Anthropic provider with a large-enough payload → cache_control markers ARE
-   * placed. No prior test covered this direction because resolveModelProfile
-   * hardcoded supportsPromptCache=false, so no code path ever produced a `true`
-   * and Anthropic caching was silently off. After CR-02 the flag is derived
-   * honestly (anthropic family → true) so prompt caching actually engages.
-   *
-   * GREEN: flag=true → needsCacheBreakpoints=true → cache_control injected.
+   * Positive direction: modelProfile.supportsPromptCache=true AND Anthropic
+   * provider with a large-enough payload → cache_control markers ARE placed.
+   * This direction is load-bearing: if resolveModelProfile ever hardcodes
+   * supportsPromptCache=false, no code path produces a `true` and Anthropic
+   * caching is silently off. The flag must be derived honestly (anthropic
+   * family → true) so prompt caching actually engages.
    */
-  it("CR-02: supportsPromptCache=true → cache_control IS placed for Anthropic (large payload)", async () => {
+  it("supportsPromptCache=true → cache_control IS placed for Anthropic (large payload)", async () => {
     const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: true } });
     const safetyLines = buildSafetySection(false);
     const payload = buildLargePayload(safetyLines.join("\n"));
@@ -6981,18 +6976,18 @@ describe("L2 — supportsPromptCache flag controls cache_control placement", () 
   });
 });
 
-describe("L7 — Ollama provider single-block invariant", () => {
+describe("Ollama provider single-block invariant", () => {
   /**
-   * Test 3 (L7): Ollama provider with supportsPromptCache=false.
+   * Ollama provider with supportsPromptCache=false.
    *
-   * Pins the L7 invariant: Ollama always gets a single block with zero
+   * Pins the invariant: Ollama always gets a single block with zero
    * cache_control overhead AND all security sections remain present.
    *
    * Today isAnthropicFamily("ollama")=false → factory passes through.
    * This test guards against regression where a future change might
    * accidentally inject cache_control for Ollama.
    */
-  it("L7: Ollama provider → zero cache_control AND safety sections present", async () => {
+  it("Ollama provider gets zero cache_control AND safety sections present", async () => {
     const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: false } });
     const safetyLines = buildSafetySection(false);
     const payload: Record<string, unknown> = {
@@ -7008,7 +7003,7 @@ describe("L7 — Ollama provider single-block invariant", () => {
       payload,
     );
 
-    // Zero cache_control overhead for Ollama (L7 invariant)
+    // Zero cache_control overhead for Ollama
     expect(countCacheControlsDeep(result)).toBe(0);
 
     // Security sections retained in the single block
@@ -7019,17 +7014,15 @@ describe("L7 — Ollama provider single-block invariant", () => {
   });
 });
 
-describe("L1 — supportsServerToolSearch flag controls tool_search injection", () => {
+describe("supportsServerToolSearch flag controls tool_search injection", () => {
   /**
-   * Test 4 (L1 tool_search): modelProfile.supportsServerToolSearch=false →
-   * injectToolDeferral exits early even when getDeferredToolNames returns a
-   * non-empty set AND the model ID normally enables tool_search (Sonnet).
-   *
-   * RED: injectToolDeferral reads supportsToolSearch(modelId) — Sonnet ID
-   *      returns true → swap occurs → payload changes → FAILS.
-   * GREEN: flag=false used as gate → exits early → payload byte-identical → PASSES.
+   * modelProfile.supportsServerToolSearch=false → injectToolDeferral exits
+   * early even when getDeferredToolNames returns a non-empty set AND the
+   * model ID normally enables tool_search (Sonnet). The flag — not
+   * supportsToolSearch(modelId) — is the gate; the payload must stay
+   * byte-identical.
    */
-  it("L1: supportsServerToolSearch=false suppresses tool_search even for Sonnet model ID", () => {
+  it("supportsServerToolSearch=false suppresses tool_search even for Sonnet model ID", () => {
     const tools: Array<Record<string, unknown>> = [
       { name: "file_ops" },
       { name: "discover_tools" },

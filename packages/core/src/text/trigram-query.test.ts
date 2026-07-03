@@ -3,41 +3,34 @@ import { describe, expect, it } from "vitest";
 import { routeSearchQuery } from "./trigram-query.js";
 
 // ---------------------------------------------------------------------------
-// FTS-01 — routeSearchQuery: script router + FTS5 trigram MATCH builder.
+// routeSearchQuery: script router + FTS5 trigram MATCH builder.
 //
-// The only genuinely new algorithmic surface in Phase 180. Its failure shapes
-// are fully probe-pinned (RESEARCH Probe Results 2, 3, 8 + Code Example 2,
-// live-verified against the bundled SQLite 3.53.1 this session):
+// The failure shapes below were live-verified against the bundled SQLite 3.53.1:
 //   - quoted whole token = substring semantics
 //   - a <3-codepoint token in an AND context returns ZERO ROWS (silent kill —
 //     the drop is correctness-critical, not hygiene)
 //   - builder-emitted parens are MATCH-legal; user parens are sanitizer-stripped
 //   - dangling operators are fts5 syntax errors → swept after token drops
 //
-// DECISION RECORD — Open Question 1 is resolved as **Option B**: OR-of-trigram
-// decomposition ONLY for suffixing-morphology scripts (cyrillic + greek);
-// whole-quoted tokens for hebrew/arabic/cjk/everything else. Rationale: RESEARCH
-// probe 2 proves a quoted whole token FAILS the pinned Russian criterion
-// (`книга` is not a substring of stored `книги`) while an OR-of-trigrams group
-// matches it; he/ar/CJK are prefix/substring cases that already pass with the
-// Hermes-proven whole-token shape. Where design §4 FTS-01 says "every other
-// token individually double-quoted", the probe correction supersedes it for
-// suffixing scripts. A cyrillic token directly governed by NOT stays
+// DECISION RECORD: OR-of-trigram decomposition ONLY for suffixing-morphology
+// scripts (cyrillic + greek); whole-quoted tokens for
+// hebrew/arabic/cjk/everything else. Rationale: a quoted whole token FAILS
+// inflected-suffix recall (`книга` is not a substring of stored `книги`) while
+// an OR-of-trigrams group matches it; he/ar/CJK are prefix/substring cases
+// that already pass with the whole-token shape, so those tokens stay
+// individually double-quoted. A cyrillic token directly governed by NOT stays
 // whole-quoted (an OR-group under NOT over-excludes — any shared trigram kills
 // a doc).
 //
 // Boundary / quote codepoints are built with String.fromCodePoint(...) — never
-// pasted glyphs (the WR-01 convention; also dodges the JS string-terminator
-// hazard for ASCII ").
-//
-// Pre-patch: stub module (routeSearchQuery throws) — every case below fails
-// with "not implemented" until Task 3 implements the router. RED proof.
+// pasted glyphs (keeps the exact codepoint under test explicit; also dodges
+// the JS string-terminator hazard for ASCII ").
 // ---------------------------------------------------------------------------
 
 const DQ = String.fromCodePoint(0x22); // "
 const q = (s: string): string => DQ + s + DQ; // whole-quoted FTS5 term
 
-describe("FTS-01 routeSearchQuery — lane routing", () => {
+describe("routeSearchQuery — lane routing", () => {
   it("all-Latin query → word lane, no match/scanTokens (caller keeps the original string)", () => {
     const r = routeSearchQuery("docker compose", { join: "and" });
     expect(r.lane).toBe("word");
@@ -74,7 +67,7 @@ describe("FTS-01 routeSearchQuery — lane routing", () => {
   });
 });
 
-describe("FTS-01 routeSearchQuery — operator handling", () => {
+describe("routeSearchQuery — operator handling", () => {
   it("uppercase AND / OR / NOT pass through bare as operators", () => {
     const r = routeSearchQuery("ספרים AND מלכים", { join: "and" });
     // ספרים → ספרימ, מלכים → מלכימ (finals fold), AND bare between them.
@@ -87,10 +80,10 @@ describe("FTS-01 routeSearchQuery — operator handling", () => {
   });
 });
 
-describe("FTS-01 routeSearchQuery — token quoting", () => {
+describe("routeSearchQuery — token quoting", () => {
   it("double-quotes every surviving non-operator term in the MATCH", () => {
     // ספר (3 cp) + ספרים (5 cp → ספרימ) + docker all survive the <3-cp drop;
-    // every emitted term is "…"-wrapped (probe: unquoted hyphen/comma → syntax error).
+    // every emitted term is "…"-wrapped (an unquoted hyphen/comma is an FTS5 syntax error).
     const r = routeSearchQuery("ספר ספרים docker", { join: "and" });
     expect(r.match).toBe(`${q("ספר")} ${q("ספרימ")} ${q("docker")}`);
   });
@@ -103,7 +96,7 @@ describe("FTS-01 routeSearchQuery — token quoting", () => {
 
   it("keeps a token with a trailing comma quoted phrase-safe", () => {
     const r = routeSearchQuery("ספרים,", { join: "and" });
-    // the comma rides inside the quotes — never a bare trailing comma (probe: syntax error).
+    // the comma rides inside the quotes — a bare trailing comma is an FTS5 syntax error.
     expect(r.match).toBe(q("ספרימ,"));
   });
 
@@ -116,7 +109,7 @@ describe("FTS-01 routeSearchQuery — token quoting", () => {
   });
 });
 
-describe("FTS-01 routeSearchQuery — short-token drop is correctness-critical (probe correction #2)", () => {
+describe("routeSearchQuery — short-token drop is correctness-critical", () => {
   it("drops a <3-cp token in an AND context (it would silently kill the whole query)", () => {
     // "ספרים גם" → ספרים matches; גם (2 cp) under AND returns ZERO rows → MUST drop it.
     const r = routeSearchQuery("ספרים גם", { join: "and" });
@@ -133,7 +126,7 @@ describe("FTS-01 routeSearchQuery — short-token drop is correctness-critical (
   });
 });
 
-describe("FTS-01 routeSearchQuery — OQ-1 Option B (probe correction #1)", () => {
+describe("routeSearchQuery — suffixing-script OR-of-trigram decomposition", () => {
   it("decomposes a ≥4-cp cyrillic token into a parenthesized OR-of-trigrams group", () => {
     // книга → ("кни" OR "ниг" OR "ига") — matches stored книги (2/3 trigrams).
     const r = routeSearchQuery("книга", { join: "and" });
@@ -168,7 +161,7 @@ describe("FTS-01 routeSearchQuery — OQ-1 Option B (probe correction #1)", () =
   });
 });
 
-describe("FTS-01 routeSearchQuery — normalize-then-split safety (U+FDFA edge)", () => {
+describe("routeSearchQuery — normalize-then-split safety (U+FDFA edge)", () => {
   it("keeps a token normalizing to a spaces-bearing string as ONE quoted phrase", () => {
     // U+FDFA NFKC-expands to "صلي الله عليه وسلم" (spaces) — must NOT re-split post-normalize.
     const r = routeSearchQuery(String.fromCodePoint(0xfdfa), { join: "and" });
@@ -177,7 +170,7 @@ describe("FTS-01 routeSearchQuery — normalize-then-split safety (U+FDFA edge)"
   });
 });
 
-describe("FTS-01 routeSearchQuery — DoS bounds", () => {
+describe("routeSearchQuery — DoS bounds", () => {
   it("caps query tokens at 16 (excess dropped, then swept)", () => {
     // 20 distinct ≥3-cp Hebrew tokens; only the first 16 survive.
     const tokens: string[] = [];
@@ -198,7 +191,7 @@ describe("FTS-01 routeSearchQuery — DoS bounds", () => {
   });
 });
 
-describe("FTS-01 routeSearchQuery — join modes", () => {
+describe("routeSearchQuery — join modes", () => {
   it("{join:'and'} space-joins terms (FTS5 implicit AND)", () => {
     const r = routeSearchQuery("ספר מלך", { join: "and" });
     expect(r.match).toBe(`${q("ספר")} ${q("מלכ")}`);

@@ -11,16 +11,16 @@ type PiModelRegistry = ReturnType<typeof createModelRegistryAdapter>;
 type ConvertTools = NonNullable<AgentBootWindowInfo["convertTools"]>;
 
 /**
- * KNOB-01 + FLOOR-01 (v2.21): served-window comparison + boot-window-info
+ * Served-window comparison + boot-window-info
  * collection beside the per-agent registry — the ONLY seam with the
  * registry-enriched "configured" the executor itself resolves (pi-executor
- * find + `?? 8_192`). Fail-open wholesale (FLOOR-01-16 / T-176-15): any error
+ * find + `?? 8_192`). Fail-open wholesale: any error
  * is WARN-logged and boot continues; turn-time guards still apply (dag:
- * CWF-02 preflight; pipeline: 85% compaction trigger + reactive
+ * context-window preflight; pipeline: 85% compaction trigger + reactive
  * classification).
  *
  * `convertTools` MUST be the same closure later bound into
- * `PiExecutorDeps.convertTools` — reference identity is the WR-03 corpus pin
+ * `PiExecutorDeps.convertTools` — reference identity is the corpus pin
  * (the boot floor measures the exact description set the turn ships).
  *
  * Extracted from setup-agents-runtime.ts (600-line subdirectory cap split).

@@ -34,8 +34,8 @@ export {
 // above already cover `systemSetInterval` / `systemSetTimeout`.
 export type { SystemIntervalHandle, SystemTimeoutHandle } from "../runtime/system-time.js";
 
-// Shared bounded-poll helper (DIVERGENCE 5). Authored in @comis/core/runtime so
-// BOTH the @comis/skills FAL adapter's inline execute() AND Phase 189's daemon
-// background poller import it without a package-boundary violation.
+// Shared bounded-poll helper. Authored in @comis/core/runtime so BOTH the
+// @comis/skills FAL adapter's inline execute() AND the daemon's background
+// poller import it without a package-boundary violation.
 export { createPollDeadline, pollUntilDone } from "../runtime/poll-deadline.js";
 export type { PollDeadline, PollOutcome } from "../runtime/poll-deadline.js";

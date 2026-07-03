@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * STREAM-02 — the `'later'`-priority between-turns queue (push-completion).
+ * The `'later'`-priority between-turns queue (push-completion).
  *
  * Paces work WITHOUT polling token-burn. In-turn (`'now'`) work runs inline;
  * `'later'` work is DEFERRED past the current turn and surfaced via
  * PUSH-COMPLETION — when a deferred item finishes, it ANNOUNCES on the injected
  * `onComplete` callback (the announce-on-done pattern), so the model is
- * NOTIFIED rather than re-prompting in a poll loop (T-221-STREAM-02: a poll
+ * NOTIFIED rather than re-prompting in a poll loop (a poll
  * loop burns tokens every turn it re-checks). The deferred fire is scheduled on
  * the injected {@link TimerPort} and `.unref()`'d, so a pending `'later'` item
- * never holds the event loop / blocks graceful daemon drain (T-221-STREAM-03).
+ * never holds the event loop / blocks graceful daemon drain.
  *
  * ---------------------------------------------------------------------------
- * Q-STREAM-1 Wave-0 SPIKE findings (Task 0) — recorded here per the plan so
- * Tasks 1-2 implement against a confirmed seam:
+ * Design notes — recorded here so changes build against a confirmed seam:
  *
- *   STREAM-01 ordering decision: ASSERT-ONLY (no net-new ordering buffer was
+ *   Ordering decision: ASSERT-ONLY (no net-new ordering buffer is
  *   needed at the message-array level). The SDK
  *   (@earendil-works/pi-coding-agent 0.79.3, exact-pinned in
  *   packages/agent/package.json) already "appends persisted tool results in
@@ -25,12 +24,12 @@
  *   `createMutationSerializer` (./tool-parallelism.ts:109) wraps `execute()`
  *   WITHOUT reordering results — read-only tools pass through concurrently
  *   (tool-parallelism.ts:116), stateful tools serialize through the mutex. So
- *   the cache-stable ordering holds. STREAM-01 therefore PINS that contract
+ *   the cache-stable ordering holds, and the contract is PINNED
  *   with an explicit, tested order-preserving collector
  *   (`createOrderPreservingResultBuffer`, ./tool-parallelism.ts) rather than
- *   adding a redundant message-array buffer.
+ *   a redundant message-array buffer.
  *
- *   STREAM-02 reuse decision: NET-NEW MODULE (this file), REUSING the
+ *   Reuse decision: NET-NEW MODULE (this file), REUSING the
  *   coordinator-progress-fork ANNOUNCE-ON-DONE pattern, not the fork module
  *   itself. coordinator-progress-fork.ts (../spawn/coordinator-progress-fork.ts)
  *   schedules on an injected TimerPort, `.unref()`s the handle
@@ -43,15 +42,10 @@
  *
  *   Pipeline hook: the mutation serializer is invoked via
  *   `applyMutationSerializer` (./executor-tool-pipeline.ts:329) at
- *   ./executor-tool-assembly.ts:776. STREAM-01's contract lives at that
+ *   ./executor-tool-assembly.ts:776. The ordering contract lives at that
  *   boundary. This `'later'` queue is a standalone between-turns scheduler the
  *   executor loop drives — it is NOT wired into the hot per-turn tool-assembly
  *   path, so it adds zero lines to that path.
- *
- *   Capped files confirmed UNTOUCHED: sub-agent-runner.ts (2643 lines, at its
- *   per-file cap) and prompt-assembly.ts (2035 lines, at its per-file cap)
- *   receive NO new lines — STREAM-01 lands in tool-parallelism.ts (231 lines)
- *   and STREAM-02 in this new file.
  * ---------------------------------------------------------------------------
  *
  * INTERNAL to @comis/agent — driven by the executor loop. Not re-exported from
@@ -99,7 +93,7 @@ export interface LaterCompletion<T = unknown> {
    */
   result?: T;
   /**
-   * The error the item's `run()` threw, if any (WR-03). Present ONLY on a failed
+   * The error the item's `run()` threw, if any. Present ONLY on a failed
    * item — a successful completion carries `result` and no `error`. This is the
    * error channel that lets a throwing item be ANNOUNCED (never swallowed, never
    * escaping enqueue/the timer) so the parent can distinguish failure from
@@ -120,7 +114,7 @@ export interface LaterQueueDeps<T = unknown> {
    * PUSH-COMPLETION callback (announce-on-done): invoked with the
    * {@link LaterCompletion} when an item finishes — for `'now'` items
    * synchronously at enqueue, for `'later'` items when the deferred timer
-   * fires. This is the "announce, don't poll" surface (T-221-STREAM-02).
+   * fires. This is the "announce, don't poll" surface.
    */
   onComplete: (completion: LaterCompletion<T>) => void;
   /** Override the between-turns deferral (default {@link DEFAULT_LATER_DELAY_MS}). */
@@ -150,7 +144,7 @@ export interface LaterQueue<T = unknown> {
 /**
  * Create a {@link LaterQueue}. See the module doc for the full
  * push-completion / no-poll / unref'd-timer / priority contract and the
- * Q-STREAM-1 spike findings.
+ * design notes.
  */
 export function createLaterQueue<T = unknown>(
   deps: LaterQueueDeps<T>,
@@ -162,7 +156,7 @@ export function createLaterQueue<T = unknown>(
   const pending = new Map<string, TimerHandle>();
 
   /**
-   * Run an item's `run()` and ANNOUNCE its outcome through `onComplete` (WR-03).
+   * Run an item's `run()` and ANNOUNCE its outcome through `onComplete`.
    * A thrown error is caught and announced as `{ id, error }` — it NEVER escapes
    * (so a 'now' throw cannot propagate out of enqueue into the executor loop, and
    * a 'later' throw cannot become an unhandled timer exception). A success
@@ -183,14 +177,14 @@ export function createLaterQueue<T = unknown>(
         // In-turn work: run inline, push-complete synchronously. This is why a
         // 'now' item enqueued AFTER a 'later' item still runs first — the
         // 'later' item is only scheduled, never run inline. A throw is isolated
-        // and announced as an error (WR-03) — it never escapes enqueue.
+        // and announced as an error — it never escapes enqueue.
         safeRun(item);
         return;
       }
 
       // 'later': defer past this turn on an unref'd, cancelable timer. When it
       // fires it runs the work and ANNOUNCES (push-completion) — no poll loop.
-      // A throw inside the deferred work is isolated + announced (WR-03), so the
+      // A throw inside the deferred work is isolated + announced, so the
       // item never strands silently and never crashes the timer.
       const handle = timers.setTimeout(() => {
         pending.delete(item.id);

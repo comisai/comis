@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for {@link buildBenchmarkReport} -- the
+ * Unit suite for {@link buildBenchmarkReport} -- the
  * reproducible benchmark report builder, and its LOAD-BEARING security
  * property: it structurally omits all secrets.
  *
@@ -9,12 +9,12 @@
  * `qa-report.ts` so it is never a 0%-coverage file under the agent all:true
  * floor.
  *
- * THE SECURITY GATE (Pitfall 6, ASVS V7): the report is written via
+ * THE SECURITY GATE (ASVS V7): the report is written via
  * writeRegularFile (NOT Pino), so Pino's credential redaction does NOT apply.
  * The builder MUST structurally select only `{ provider, modelId }` per model
  * role and NEVER spread the config -- so `JSON.stringify(report)` can contain no
  * `apiKey` / `sk-` / `Bearer` / `base_url` substring even when the input config
- * carries an apiKey. Test 3 below is that RED gate.
+ * carries an apiKey. Test 3 below is that gate.
  *
  * ARCHITECTURE: imports the in-package pure modules + `@comis/core` types only --
  * no @comis/memory.
@@ -26,7 +26,7 @@ import { aggregateAccuracy } from "./qa-accuracy.js";
 
 const NOW_MS = Date.UTC(2026, 4, 31, 12, 0, 0); // deterministic injected clock
 
-/** A representative metrics object (the corrected aggregator output). */
+/** A representative metrics object (the invalid-excluded-denominator aggregator output). */
 function sampleMetrics(): ReturnType<typeof aggregateAccuracy> {
   return aggregateAccuracy([
     { category: "single-session-user", correct: true, invalid: false },
@@ -53,7 +53,7 @@ function cleanConfig() {
       rerankEnabled: true,
       scoringAlphas: { recency: 0.25, temporal: 0.25, proof: 0.25, trust: 0.25 },
     },
-    harnessVersion: "phase-89-v1",
+    harnessVersion: "qa-harness-v1",
   };
 }
 
@@ -79,7 +79,7 @@ describe("buildBenchmarkReport -- reproducibility object", () => {
     expect(report.defaults.scoringAlphas).toEqual({ recency: 0.25, temporal: 0.25, proof: 0.25, trust: 0.25 });
     // results block + harnessVersion
     expect(report.results.overall).toBeDefined();
-    expect(report.harnessVersion).toBe("phase-89-v1");
+    expect(report.harnessVersion).toBe("qa-harness-v1");
   });
 
   it("Test 2: each models.* role records { provider, modelId } -- the comparability anchor", () => {
@@ -91,7 +91,7 @@ describe("buildBenchmarkReport -- reproducibility object", () => {
     expect(report.models.reranker.provider).toBe("local");
   });
 
-  it("Test 3 (THE SECURITY GATE, Pitfall 6): JSON.stringify(report) contains NO secret substrings even with a secret-bearing config", () => {
+  it("Test 3 (THE SECURITY GATE): JSON.stringify(report) contains NO secret substrings even with a secret-bearing config", () => {
     // A config whose model roles ALSO carry apiKey + base_url (as the live operator
     // config does) -- the builder must structurally drop them.
     const configWithSecrets = {
@@ -168,7 +168,7 @@ describe("buildBenchmarkReport -- reproducibility object", () => {
     // deterministic: same nowMs -> same timestamp.
     expect(report.timestamp).toBe(new Date(NOW_MS).toISOString());
     expect(buildBenchmarkReport(cleanConfig(), metrics, NOW_MS).timestamp).toBe(report.timestamp);
-    // results block mirrors the corrected aggregator output (invalid + validTotal carried).
+    // results block mirrors the aggregator output (invalid + validTotal carried).
     expect(report.results.overall).toBe(metrics.overall);
     expect(report.results.correct).toBe(metrics.correct);
     expect(report.results.total).toBe(metrics.total);
@@ -202,11 +202,10 @@ describe("buildBenchmarkReport -- reproducibility object", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // The manifest must also carry tokens/query (cost) +
-  // latency (p50/p95). RED-first — these assert fields the pre-patch builder does
-  // not yet produce. Mirrors the dataset.sha256 optional-field pattern above:
-  // additive, byte-identity when omitted, and structurally secret-free (pure
-  // numbers) so the Test-3/3b security gate still holds with them populated.
+  // The optional cost (tokens/query) + latency (p50/p95) blocks. Mirrors the
+  // dataset.sha256 optional-field pattern above: additive, byte-identity when
+  // omitted, and structurally secret-free (pure numbers) so the Test-3/3b
+  // security gate still holds with them populated.
   // ─────────────────────────────────────────────────────────────────────────
 
   /** A representative cost block (tokens/query, answer + judge). */
@@ -274,9 +273,9 @@ describe("buildBenchmarkReport -- reproducibility object", () => {
   });
 
   it("Test 8 (THE SECURITY GATE): the secret-omission gate still holds with cost + latency populated alongside a secret-bearing config", () => {
-    // Even with the new numeric fields populated, a secret-bearing model config must
-    // NOT leak into JSON.stringify(report). cost/latency are pure numbers — structurally
-    // secret-free — so they cannot reopen the Test-3/3b hole.
+    // Even with the cost/latency numeric fields populated, a secret-bearing model config
+    // must NOT leak into JSON.stringify(report). cost/latency are pure numbers —
+    // structurally secret-free — so they cannot reopen the Test-3/3b hole.
     const cfg = {
       ...cleanConfig(),
       models: {
@@ -295,16 +294,14 @@ describe("buildBenchmarkReport -- reproducibility object", () => {
     expect(serialized).not.toContain("base_url");
     expect(serialized).not.toContain("tok-embed-secret");
     expect(serialized).not.toContain("token=");
-    // The new numeric fields ARE present (proves they were recorded, not dropped).
+    // The cost/latency numeric fields ARE present (proves they were recorded, not dropped).
     expect(report.cost?.answerTokensPerQuery).toBe(812.5);
     expect(report.latency?.endToEndP50Ms).toBe(2272.3);
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // The manifest must ALSO carry a Letta-style
-  // filesystem-baseline CONTROL row — a labelled, full-haystack no-memory
-  // reference (NEVER Comis's own score). RED-first — these assert a `control?`
-  // field the cost/latency builder does not yet produce. Mirrors the
+  // The optional Letta-style filesystem-baseline CONTROL row — a labelled,
+  // full-haystack no-memory reference (NEVER Comis's own score). Mirrors the
   // cost/latency optional-field pattern above: additive, byte-identity when
   // omitted, and structurally secret-free (label string + pure AccuracyResult
   // numbers) so the Test-3/3b/8 security gate still holds with it populated.

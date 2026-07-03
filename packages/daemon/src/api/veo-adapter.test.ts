@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for createVeoVideoAdapter (VEO-01 / VEO-02 / SEC / job_timeout).
+ * Tests for createVeoVideoAdapter (submit/poll/fetchResult, error
+ * classification, secret hygiene, job_timeout).
  *
  * Mocks the `@google/genai` MODULE via the `vi.hoisted()` class-default idiom
- * (mirrors google-images-transport.test.ts:28-44 — the Phase-185 lesson: a plain
- * top-level const TDZs at hoist time). `generateVideos` / `getVideosOperation`
+ * (mirrors google-images-transport.test.ts:28-44 — a plain top-level const
+ * TDZs at hoist time). `generateVideos` / `getVideosOperation`
  * are controllable spies; global `fetch` is mocked for the URI download. NEVER a
  * real GOOGLE_API_KEY, NEVER the network.
  *
  * Observable oracles (deterministic): submit→op.name jobId; poll→.done/.error
  * map; fetchResult→Buffer (uri-with-key OR videoBytes base64); operation.error→
- * classified VideoGenError; download-before-return (DEL-01); the keyed URL +
- * apiKey never reach a logger (VPORT-03 + SEC); job_timeout on a stuck poll.
+ * classified VideoGenError; download-before-return; the keyed URL +
+ * apiKey never reach a logger; job_timeout on a stuck poll.
  * @module
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -86,7 +87,7 @@ beforeEach(() => {
 });
 
 describe("createVeoVideoAdapter", () => {
-  it("VEO-01 submit: generateVideos op.name becomes the jobId; ctor gets { apiKey }", async () => {
+  it("submit: generateVideos op.name becomes the jobId; ctor gets { apiKey }", async () => {
     genVideos.mockResolvedValue({ name: "operations/abc123", done: false });
     const adapter = makeAdapter();
 
@@ -101,18 +102,18 @@ describe("createVeoVideoAdapter", () => {
     expect(callArg).toHaveProperty("config");
   });
 
-  it("VEO-01 submit: a missing op.name is an error (no orphan jobId)", async () => {
+  it("submit: a missing op.name is an error (no orphan jobId)", async () => {
     genVideos.mockResolvedValue({ done: false }); // no name
     const adapter = makeAdapter();
     const r = await adapter.submit({ prompt: "x" });
     expect(r.ok).toBe(false);
   });
 
-  // IN-01 (A4): a referenceImage present adds the first-frame image as a
+  // A referenceImage present adds the first-frame image as a
   // TOP-LEVEL generateVideos({image}) arg (NOT a config field) on the SAME model
   // (Veo has no endpoint swap, unlike FAL). image = { imageBytes, mimeType } —
   // the SDK Image_2 shape (raw base64 bytes, NOT a data-URI).
-  it("IN-01: with a referenceImage, adds a top-level image arg { imageBytes, mimeType } on the same model", async () => {
+  it("with a referenceImage, adds a top-level image arg { imageBytes, mimeType } on the same model", async () => {
     genVideos.mockResolvedValue({ name: "operations/i2v", done: false });
     const adapter = makeAdapter();
 
@@ -124,13 +125,13 @@ describe("createVeoVideoAdapter", () => {
     const callArg = genVideos.mock.calls[0]?.[0];
     // Top-level image arg (a sibling of config), the SDK Image_2 raw-bytes shape.
     expect(callArg.image).toEqual({ imageBytes: "aGVsbG8=", mimeType: "image/png" });
-    // The image is NOT smuggled into config (A4 — config holds lastFrame/refs only).
+    // The image is NOT smuggled into config (config holds lastFrame/refs only).
     expect(callArg.config).not.toHaveProperty("image");
     expect(callArg.config).not.toHaveProperty("imageBytes");
   });
 
-  // IN-01 non-regression: WITHOUT a referenceImage there is NO top-level image arg.
-  it("IN-01: without a referenceImage, generateVideos receives no top-level image arg", async () => {
+  // Non-regression: WITHOUT a referenceImage there is NO top-level image arg.
+  it("without a referenceImage, generateVideos receives no top-level image arg", async () => {
     genVideos.mockResolvedValue({ name: "operations/t2v", done: false });
     const adapter = makeAdapter();
 
@@ -140,13 +141,13 @@ describe("createVeoVideoAdapter", () => {
     expect(callArg).not.toHaveProperty("image");
   });
 
-  // WR-03: a per-request input.model is the RESOLVED model the handler validated
+  // A per-request input.model is the RESOLVED model the handler validated
   // against (`params.model ?? config.model`); the adapter MUST render it so
-  // validation and execution AGREE. Pre-fix the adapter ignored input.model and
-  // used the construction-bound model, so a per-request override validated against
-  // one cell but rendered another. RED on pre-fix code: generateVideos gets the
-  // construction default, and job.model reflects it instead of input.model.
-  it("WR-03: a per-request input.model overrides the construction default model (validate↔execute agree)", async () => {
+  // validation and execution AGREE. If the adapter ignored input.model and
+  // used the construction-bound model, a per-request override would validate
+  // against one cell but render another. This guards that generateVideos gets
+  // input.model, and job.model reflects it.
+  it("a per-request input.model overrides the construction default model (validate↔execute agree)", async () => {
     genVideos.mockResolvedValue({ name: "operations/model-override", done: false });
     const adapter = makeAdapter(); // construction default veo-3.0-fast-generate-001
 
@@ -159,7 +160,7 @@ describe("createVeoVideoAdapter", () => {
     expect(r.value.model).toBe("veo-2.0-generate-001");
   });
 
-  it("VEO-01 poll: maps .done/.error to pending|done|failed", async () => {
+  it("poll: maps .done/.error to pending|done|failed", async () => {
     const adapter = makeAdapter();
     const job = { jobId: "operations/abc", provider: "veo", model: "m" };
 
@@ -175,16 +176,16 @@ describe("createVeoVideoAdapter", () => {
     r = await adapter.poll(job);
     expect(r.ok && r.value.state).toBe("failed");
 
-    // The polled operation is reconstructed from the jobId (the 189 poller only
-    // has { jobId }) — assert the SDK got { operation: { name } }.
+    // The polled operation is reconstructed from the jobId (the off-turn poller
+    // only has { jobId }) — assert the SDK got { operation: { name } }.
     expect(getOp).toHaveBeenLastCalledWith({ operation: { name: "operations/abc" } });
   });
 
-  // WR-01 (Phase 190): the off-turn poller drives poll() (NOT execute()); poll()
+  // The off-turn poller drives poll() (NOT execute()); poll()
   // must carry the CLASSIFIED kind+hint on a terminal operation.error so the
   // poller persists the right errorKind/hint instead of collapsing to
-  // empty_response. RED on pre-fix code: poll() returned `{ state:"failed" }` only.
-  it("WR-01 poll: a terminal operation.error carries the classified errorKind + hint on the snapshot", async () => {
+  // empty_response (without this, poll() would return `{ state:"failed" }` only).
+  it("poll: a terminal operation.error carries the classified errorKind + hint on the snapshot", async () => {
     const adapter = makeAdapter();
     const job = { jobId: "operations/blocked", provider: "veo", model: "m" };
 
@@ -214,7 +215,7 @@ describe("createVeoVideoAdapter", () => {
     expect(r.ok && r.value.hint).toBeUndefined();
   });
 
-  it("VEO-01 fetchResult (uri path): downloads via fetch(uri + &key=) with redirect:error", async () => {
+  it("fetchResult (uri path): downloads via fetch(uri + &key=) with redirect:error", async () => {
     const bytes = Buffer.from("VIDEOBYTES");
     getOp.mockResolvedValue({
       done: true,
@@ -241,7 +242,7 @@ describe("createVeoVideoAdapter", () => {
     expect(init).toMatchObject({ redirect: "error" });
   });
 
-  it("VEO-01 fetchResult (videoBytes path): decodes base64 WITHOUT calling fetch", async () => {
+  it("fetchResult (videoBytes path): decodes base64 WITHOUT calling fetch", async () => {
     const bytes = Buffer.from("INLINEVIDEO");
     getOp.mockResolvedValue({
       done: true,
@@ -260,7 +261,7 @@ describe("createVeoVideoAdapter", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("VEO-02 config: builds durationSeconds as a NUMBER and omits absent fields", async () => {
+  it("config: builds durationSeconds as a NUMBER and omits absent fields", async () => {
     genVideos.mockResolvedValue({ name: "operations/cfg", done: false });
     const adapter = makeAdapter();
 
@@ -287,7 +288,7 @@ describe("createVeoVideoAdapter", () => {
     expect(typeof config.durationSeconds).toBe("number");
   });
 
-  it("VEO-02 config: omits every field absent from the input (no undefined keys)", async () => {
+  it("config: omits every field absent from the input (no undefined keys)", async () => {
     genVideos.mockResolvedValue({ name: "operations/min", done: false });
     const adapter = makeAdapter();
     await adapter.submit({ prompt: "only prompt" });
@@ -297,7 +298,7 @@ describe("createVeoVideoAdapter", () => {
     expect(Object.keys(config)).not.toContain("seed");
   });
 
-  it("VEO-02 operation.error → classified VideoGenError via execute()", async () => {
+  it("operation.error → classified VideoGenError via execute()", async () => {
     genVideos.mockResolvedValue({ name: "operations/err", done: false });
     getOp.mockResolvedValue({ done: true, error: { code: 7, message: "permission denied" } });
 
@@ -310,13 +311,13 @@ describe("createVeoVideoAdapter", () => {
     expect((r.error as { hint?: string }).hint).toContain("GOOGLE_API_KEY");
   });
 
-  // WR-04: execute() polls the operation to `done`, then re-reads it AGAIN inside
-  // fetchResult — a redundant getVideosOperation round-trip on the hot path. The
-  // fix threads the terminal operation from the poll loop into fetchResult so
-  // execute() makes exactly ONE getVideosOperation call for a job done on the
-  // first poll (the download fetch is separate). RED on pre-fix code: getOp is
-  // called TWICE (once in the poll loop, once in fetchResult).
-  it("WR-04: execute() on a job done-on-first-poll calls getVideosOperation exactly once (no re-poll in fetchResult)", async () => {
+  // execute() polls the operation to `done`, then must NOT re-read it inside
+  // fetchResult (that would be a redundant getVideosOperation round-trip on the
+  // hot path). The terminal operation from the poll loop is threaded into
+  // fetchResult so execute() makes exactly ONE getVideosOperation call for a job
+  // done on the first poll (the download fetch is separate). This guards that
+  // getOp is called ONCE, not twice.
+  it("execute() on a job done-on-first-poll calls getVideosOperation exactly once (no re-poll in fetchResult)", async () => {
     genVideos.mockResolvedValue({ name: "operations/done1", done: false });
     // Every getVideosOperation returns a terminal done-with-uri operation.
     getOp.mockResolvedValue({
@@ -339,10 +340,10 @@ describe("createVeoVideoAdapter", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  // WR-04 non-regression: a standalone fetchResult (the Phase-189 off-turn poller
-  // path, which calls poll() then fetchResult() with NO snapshot) must STILL poll
-  // once to obtain the download uri — the re-poll elimination is execute()-only.
-  it("WR-04: a standalone fetchResult (no terminal snapshot) still reads the operation once (poller path intact)", async () => {
+  // Non-regression: a standalone fetchResult (the off-turn poller path, which
+  // calls poll() then fetchResult() with NO snapshot) must STILL poll once to
+  // obtain the download uri — the re-poll elimination is execute()-only.
+  it("a standalone fetchResult (no terminal snapshot) still reads the operation once (poller path intact)", async () => {
     getOp.mockResolvedValue({
       done: true,
       response: { generatedVideos: [{ video: { uri: "https://example/v.mp4" } }] },
@@ -359,7 +360,7 @@ describe("createVeoVideoAdapter", () => {
     expect(getOp).toHaveBeenCalledTimes(1);
   });
 
-  it("VEO-02 download-before-return (DEL-01): fetch resolves before fetchResult resolves", async () => {
+  it("download-before-return: fetch resolves before fetchResult resolves", async () => {
     const bytes = Buffer.from("ORDERED");
     getOp.mockResolvedValue({
       done: true,

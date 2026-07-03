@@ -172,12 +172,12 @@ export class EchoChannelAdapter implements ChannelPort {
   }
 
   /**
-   * Reconcile a crash-interrupted outward send (Phase 216, ONCE-03).
+   * Reconcile a crash-interrupted outward send.
    *
    * Echo is the deterministic test channel — it has perfect, in-memory
    * visibility of every send, so a confirmed absence IS `not_sent` (it can
-   * never return `unresolved`). This is the channel the Plan 08 chaos test
-   * drives: a controllable reconcile oracle.
+   * never return `unresolved`). This is the channel the chaos tests drive:
+   * a controllable reconcile oracle.
    *
    * Matches by channelId + send-window + recomputed content digest
    * (sha256(text).slice(0,16)) — the same content_digest the send-wrap stored.

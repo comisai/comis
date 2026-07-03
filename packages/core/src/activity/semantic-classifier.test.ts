@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for classifySemanticPhase — the pure tool-name → SemanticPhase mapping
- * (spec §17.1 line 1758). Prefix rules: mcp_* → tool, memory_* →
+ * Tests for classifySemanticPhase — the pure tool-name → SemanticPhase mapping.
+ * Prefix rules: mcp_* → tool, memory_* →
  * memory, web_search* → web, everything else → tool.
  */
 import { describe, it, expect } from "vitest";

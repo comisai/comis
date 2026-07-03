@@ -19,7 +19,7 @@
  *     message stream the DAG measures as history.
  *   - executor-tool-assembly.ts computes `cachedSystemTokensEstimate` (= S, the
  *     value the DAG subtracts via getSystemTokensEstimate) from ONLY
- *     `promptResult.systemPrompt` + `toolDefOverheadChars` (since Phase 179 via
+ *     `promptResult.systemPrompt` + `toolDefOverheadChars` (via
  *     the shared `estimateSystemTokensFactored` helper — script-aware divisor,
  *     same two inputs) — it EXCLUDES `dynamicPreamble`/`inlineMemory`.
  *
@@ -32,7 +32,7 @@
  * Source-grep style matches the sibling envelope-wrapper.test.ts: wrapEnvelope
  * has a large RunPromptParams surface, so structural locks pin the two source
  * sites. The behavioral question they raise — is the injected memory budgeted? —
- * was traced and RESOLVED (2026-06-02): it is absorbed by the token-budget
+ * was traced to ground: it is absorbed by the token-budget
  * cushion BY DESIGN, and the INVARIANT test below guards that coupling.
  */
 import { describe, it, expect } from "vitest";
@@ -54,7 +54,7 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
       "messageText = `[System context]\\n${fullDynamicPreamble}\\n[End system context]\\n\\n${messageText}`",
     );
     // fullDynamicPreamble is the dynamicPreamble (first element of the concat).
-    // ISSUE #2: the capability-index/deferred components are now passed through the
+    // The capability-index/deferred components are passed through the
     // tight-window drop first (keptCapabilityIndex/keptDeferred); dynamicPreamble (which
     // carries the recalled-memory block) is ALWAYS the first element and is never dropped,
     // so the recall→H budgeting invariant this test guards is unchanged.
@@ -73,9 +73,9 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
     // This is the value the DAG subtracts as systemTokens (getSystemTokensEstimate
     // → cachedSystemTokensEstimate). It deliberately does not see the dynamic
     // preamble / inline memory, because those are budgeted as history instead.
-    // Since the live UC-2 fix (8e988e2f) S is assigned TWICE: a pre-deferral
+    // S is assigned TWICE: a pre-deferral
     // estimate (`let`) and a post-deferral recompute over the tools that
-    // actually ship. Since Phase 179 (TOK-01) BOTH sites route through the ONE
+    // actually ship. BOTH sites route through the ONE
     // shared estimateSystemTokensFactored helper — same two inputs (frozen
     // system prompt + aggregate tool-overhead chars), script-aware divisor —
     // so the partition AND the factoring cannot drift between the sites.
@@ -87,7 +87,7 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
       /cachedSystemTokensEstimate = estimateSystemTokensFactored\(\s*promptResult\.systemPrompt,\s*toolDefOverheadChars\(mergedCustomTools\),\s*\)/,
     );
     // The helper's body: system prompt (factored effective chars) + flat tool
-    // overhead ONLY — the shared tool-overhead.ts reduce (FLOOR-01/I8 extraction).
+    // overhead ONLY — the shared tool-overhead.ts reduce.
     expect(toolAssemblySource).toContain(
       "(systemPrompt.length / scriptTokenFactor(systemPrompt) + toolOverheadChars) / CHARS_PER_TOKEN_RATIO",
     );
@@ -106,14 +106,14 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
       const estimateExpr = toolAssemblySource.slice(site.index, end);
       expect(estimateExpr).not.toMatch(/dynamicPreamble|inlineMemory/);
     }
-    // And the shared helper body itself (TOK-01): systemPrompt + toolOverheadChars only.
+    // And the shared helper body itself: systemPrompt + toolOverheadChars only.
     const helperIdx = toolAssemblySource.indexOf("function estimateSystemTokensFactored(");
     expect(helperIdx).toBeGreaterThan(-1);
     const helperBody = toolAssemblySource.slice(helperIdx, toolAssemblySource.indexOf("}", helperIdx));
     expect(helperBody).not.toMatch(/dynamicPreamble|inlineMemory/);
   });
 
-  // RESOLVED (2026-06-02): the open behavioral question was traced to ground.
+  // The open behavioral question was traced to ground.
   // The DAG ingestion hook (installDagIngestionHook, dag-reconciliation.ts:353)
   // stores the RAW conversation message — the preamble + inlineMemory are a
   // send-time decoration on the OUTGOING prompt, never persisted — so the

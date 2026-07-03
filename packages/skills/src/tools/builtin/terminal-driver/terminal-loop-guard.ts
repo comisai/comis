@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The normalized region-scoped loop/stuck guard (spec §4.6; SEC-11).
+ * The normalized region-scoped loop/stuck guard.
  *
  * `createLoopGuard({ nowMs, windowMs?, maxRepeats? })` detects an auto-answer loop on a
  * RE-RENDERED prompt: the same *logical* prompt presented again is caught even when its
@@ -9,16 +9,16 @@
  * (strip the volatile bits, collapse whitespace), hashes the stable remainder, tracks
  * recent (hash, ts) per session in a window, and returns a typed
  * `{ repeat: true, reason: "loop_detected" }` once a normalized hash recurs within the
- * window — otherwise `{ repeat: false }`. The caller (124-09) escalates on a repeat
- * (`terminal:escalated`, reason `loop_detected`).
+ * window — otherwise `{ repeat: false }`. The caller (the woken-turn driver) escalates
+ * on a repeat (`terminal:escalated`, reason `loop_detected`).
  *
- * COMPOSES WITH (does NOT duplicate) the P4 `maxInteractions` cap (terminal-caps.ts):
+ * COMPOSES WITH (does NOT duplicate) the `maxInteractions` cap (terminal-caps.ts):
  * the cap EVICTs the session independently when its interaction budget is spent (via the
  * single audited `registry.evict(..., "max_interactions")` path); this guard is the
  * ADDITIVE detector that catches a tight re-render loop BEFORE the budget runs out, and
  * escalates to a human rather than evicting. Two independent defenses, no shared state.
  *
- * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors
+ * Architecture invariants (binding — AGENTS.md; mirrors
  * `terminal-caps.ts` / `terminal-ipc.ts`):
  *   - NO module-global mutable state. The recent-hash ring is a CLOSURE-local
  *     `Map<sessionId, RecentHash[]>` created inside the factory — two `createLoopGuard`
@@ -62,7 +62,7 @@ export interface LoopGuardDeps {
   maxRepeats?: number;
 }
 
-/** The loop guard's surface — exactly what the woken turn (124-09) consumes. */
+/** The loop guard's surface — exactly what the woken turn consumes. */
 export interface LoopGuard {
   /**
    * Record a settled prompt region and report whether it is a (normalized) repeat

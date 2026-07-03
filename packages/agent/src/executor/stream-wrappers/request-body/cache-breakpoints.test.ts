@@ -24,7 +24,7 @@ import {
 } from "./index.js";
 import { maybePromoteBreakpoints } from "./cache-breakpoints.js";
 
-describe("maybePromoteBreakpoints — non-Anthropic body (codex turn-abort regression 2026-06-14)", () => {
+describe("maybePromoteBreakpoints — non-Anthropic body (codex turn-abort regression)", () => {
   // The openai-codex (OpenAI responses) request body has `input`, not a
   // `messages` array, so result.messages is undefined at the call site
   // (factory.ts: the maybePromoteBreakpoints call lacked the Array.isArray

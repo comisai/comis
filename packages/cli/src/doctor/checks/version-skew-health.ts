@@ -3,19 +3,19 @@
  * CLI <-> daemon version-skew check for `comis doctor`.
  *
  * Detects when the `comis` CLI binary running this command is out of sync with
- * the daemon it is talking to. Motivating incident: a stale global `comis`
- * (`npm i -g comisai` at v1.0.42) earlier on PATH than a freshly-built ~2.30
- * daemon validated config against an OLD schema and reported PHANTOM failures
+ * the daemon it is talking to. Motivating failure mode: a stale global `comis`
+ * (from `npm i -g comisai`) earlier on PATH than a freshly-built daemon
+ * validates config against an OLD schema and reports PHANTOM failures
  * (a valid `agents.default.autonomy` flagged "Unrecognized key", "No OAuth
- * profiles stored"). Nothing surfaced the version mismatch, so the diagnosis
- * took far longer than it should have. This check makes the skew explicit.
+ * profiles stored"). Without this check nothing surfaces the version mismatch,
+ * making that diagnosis needlessly slow. This check makes the skew explicit.
  *
  * Behaviour:
  *   - PASS when the CLI version equals the daemon's reported version.
  *   - WARN when they differ; a major.minor mismatch gets a stronger,
  *     remediation-bearing message naming the stale-global-`comis` failure mode.
  *   - SKIP (never fail, never throw) when the daemon is unreachable or does not
- *     report a version (an older daemon's `gateway.status` lacks the field).
+ *     report a version (`version` is optional on the `gateway.status` contract).
  *
  * The CLI version is threaded in via `context.cliVersion` (set by the doctor
  * command from `packages/cli/package.json`) so this check is deterministic and
@@ -97,8 +97,8 @@ export const versionSkewHealthCheck: DoctorCheck = {
       const status = await withClient((client) =>
         callTyped(client, GatewayStatusContract, {}),
       );
-      // `version` is optional on the contract: an older daemon predating this
-      // field returns a status payload without it.
+      // `version` is optional on the contract: a daemon may return a status
+      // payload without it, and that is a skip — not a skew verdict.
       daemonVersion =
         typeof status.version === "string" ? status.version : undefined;
     } catch (e) {
@@ -143,9 +143,9 @@ export const versionSkewHealthCheck: DoctorCheck = {
       ];
     }
 
-    // Versions differ. A major.minor mismatch is the dangerous case (the real
-    // incident): an old global `comis` validates config against a stale schema
-    // and reports phantom failures. Call it out explicitly with remediation.
+    // Versions differ. A major.minor mismatch is the dangerous case: an old
+    // global `comis` validates config against a stale schema and reports
+    // phantom failures. Call it out explicitly with remediation.
     const majorMinorMismatch = majorMinor(cliVersion) !== majorMinor(daemonVersion);
     if (majorMinorMismatch) {
       return [

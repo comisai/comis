@@ -9,9 +9,9 @@
  * Follows the createProcessMonitor() factory pattern: closure state,
  * setInterval + unref(), typed event bus emission.
  *
- * Note: recordRunStart/recordRunEnd are infrastructure-ready. They are fully
- * implemented but not wired to EventBus agent execution events in this plan.
- * activeRuns will be 0 in production until a follow-up phase wires them.
+ * Note: recordRunStart/recordRunEnd are fully implemented but nothing wires
+ * them to EventBus agent execution events yet, so activeRuns is always 0 in
+ * production until a caller invokes them.
  *
  * @module
  */

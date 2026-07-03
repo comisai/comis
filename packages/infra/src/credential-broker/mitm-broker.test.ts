@@ -6,9 +6,6 @@
  * and manual TCP CONNECT clients to assert fail-closed behavior.
  * No real network — all fixtures bind to 127.0.0.1:0.
  *
- * RED-first TDD: these tests are written before the implementation.
- * Every test in this file MUST fail before mitm-broker.ts exists.
- *
  * @module
  */
 import "reflect-metadata"; // required when createNodeCaManager is used in the TLS-upgrade tests
@@ -1648,10 +1645,7 @@ describe("Edge cases — error paths and coverage branches", () => {
   });
 });
 
-// ── Regression tests — review findings ───────────────────────────────────────
-//
-// These tests are written first (RED) and MUST FAIL on the pre-fix code.
-// The production patches (GREEN) follow in separate commits.
+// ── Regression tests ────────────────────────────────────────────────────────
 
 /**
  * makeBodyUpstreamFixture — like makeUpstreamFixture but also captures request
@@ -3008,7 +3002,7 @@ describe("WebSocket upgrade guard", () => {
     upstream.server.close();
   });
 
-  it("inner request with Upgrade: h2c (non-WebSocket upgrade) → NOT 501 (Pitfall 5 guard)", async () => {
+  it("inner request with Upgrade: h2c (non-WebSocket upgrade) → NOT 501", async () => {
     const upstream = await makeUpstreamFixture();
     const deps = makeDeps();
     const broker = createMitmBroker(deps);
@@ -3978,8 +3972,6 @@ describe("E2E-01 — in-process broker end-to-end", () => {
 // - session lifecycle balance (session_closed must fire on ALL exit paths)
 // - clock snapshot in teardown (timestamp - durationMs == sessionStartedAt)
 // - emitEgressBlocked on pre-flight no_binding denial (Step 2.5)
-//
-// These tests MUST FAIL on the pre-fix code and turn GREEN after the fix.
 
 describe("broker:session_closed must be emitted on ALL exit paths (session lifecycle balance)", () => {
   it("no_binding 403 (unknown host, post-CONNECT): session_opened AND session_closed both emitted", async () => {

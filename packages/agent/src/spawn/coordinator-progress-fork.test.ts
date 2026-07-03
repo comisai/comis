@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * COORD-03: the ~30s read-only progress fork (coordinator-progress-fork.ts).
+ * The ~30s read-only progress fork (coordinator-progress-fork.ts).
  *
  * Proves the fork is:
  *   - a READ-ONLY state summary — it emits a content-free
  *     `session:sub_agent_progress` on a ~30s interval and NEVER re-executes the
- *     child / calls a tool / spawns (T-218-13: no fork-bomb / budget burn);
+ *     child / calls a tool / spawns (no fork-bomb / budget burn);
  *   - content-free — the emitted event carries only a short status line + counts
- *     (T-218-14, §2.7), never the child's output;
+ *     (AGENTS.md §2.7), never the child's output;
  *   - leak-free — `stop()` cancels the interval; a later advance emits nothing
- *     and the FakeTimers record shows the interval cancelled (T-218-15);
+ *     and the FakeTimers record shows the interval cancelled;
  *   - globals-free — driven entirely by the injected ClockPort + TimerPort
  *     (no setInterval/Date.now global; the globals.test.ts arch-gate).
- *
- * RED before the helper existed: `createCoordinatorProgressFork` is unresolved.
  */
 import { describe, it, expect, vi } from "vitest";
 import type { EventMap } from "@comis/core";
@@ -28,7 +26,7 @@ function makeEventBus() {
   return { emit } as { emit: ReturnType<typeof vi.fn> };
 }
 
-describe("createCoordinatorProgressFork (COORD-03 read-only 30s progress)", () => {
+describe("createCoordinatorProgressFork (read-only ~30s progress)", () => {
   it("emits exactly one content-free session:sub_agent_progress after a ~30s tick", () => {
     const clock = createFakeClock(1_000);
     const timers = createFakeTimers(1_000);
@@ -143,7 +141,7 @@ describe("createCoordinatorProgressFork (COORD-03 read-only 30s progress)", () =
     timers.advance(60_000);
     expect(eventBus.emit).toHaveBeenCalledTimes(1);
 
-    // The interval entry is recorded as cancelled (no leak) — T-218-15.
+    // The interval entry is recorded as cancelled (no leak).
     const intervals = timers.unrefRecord().filter((e) => e.kind === "interval");
     expect(intervals.length).toBe(1);
     expect(intervals[0]!.cancelled).toBe(true);

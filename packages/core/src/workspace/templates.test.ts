@@ -14,12 +14,11 @@ import {
 // ---------------------------------------------------------------------------
 // Prose invariants for the workspace AGENTS.md template.
 //
-// These tests lock the 2026-05-20 fix for the false-promise venv prose:
-// before this fix, the template advertised a "Pre-warmed Python env
-// (matplotlib, numpy, pandas on PATH)" that no code actually provisioned.
-// Sub-agents read the lie, attempted `venv/bin/python3`, hit exit-127, and
-// cascaded into the 5-failure exec kill-switch. The replacement prose tells
-// the agent to create the venv on demand with `python3 -m venv venv`.
+// The template must never advertise a "Pre-warmed Python env (matplotlib,
+// numpy, pandas on PATH)" that no code actually provisions: a sub-agent that
+// reads that promise attempts `venv/bin/python3`, hits exit-127, and cascades
+// into the 5-failure exec kill-switch. The prose instead tells the agent to
+// create the venv on demand with `python3 -m venv venv`.
 // ---------------------------------------------------------------------------
 
 describe("DEFAULT_TEMPLATES workspace prose invariants", () => {
@@ -40,12 +39,12 @@ describe("DEFAULT_TEMPLATES workspace prose invariants", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2026-06-04 fix: the workspace templates used to instruct the agent to
-  // `read` the four identity files (SOUL/IDENTITY/USER/BOOTSTRAP) that are
-  // ALREADY inlined into the system prompt. A model took that literally and
-  // looped ~150 identical reads in one turn until it hit maxSteps. These
-  // invariants lock the reworded prose: reference the inlined files in
-  // context, never tool-read them; still WRITE IDENTITY.md / USER.md.
+  // The templates must never instruct the agent to `read` the identity files
+  // (SOUL/IDENTITY/USER/BOOTSTRAP) that are ALREADY inlined into the system
+  // prompt: a model that takes such an instruction literally can loop ~150
+  // identical reads in one turn until it hits maxSteps. These invariants lock
+  // the required prose: reference the inlined files in context, never
+  // tool-read them; still WRITE IDENTITY.md / USER.md.
   // -------------------------------------------------------------------------
 
   it("AGENTS.md template must not instruct reading the inlined identity files with the read tool", () => {
@@ -90,7 +89,7 @@ describe("DEFAULT_TEMPLATES workspace prose invariants", () => {
     }
   });
 
-  it("core templates.ts and agent templates.ts remain byte-identical duplicates after the edit", () => {
+  it("core templates.ts and agent templates.ts remain byte-identical duplicates", () => {
     // The duplicate is intentional and tracked here.
     // From packages/core/src/workspace/templates.test.ts navigate up to the
     // repo root, then sibling-package into agent's copy.

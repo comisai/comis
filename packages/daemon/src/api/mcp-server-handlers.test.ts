@@ -52,11 +52,11 @@ const stubRegistry = new Map<string, StubMeta>([
     },
   ],
   ["memory_get", { mcpExportPolicy: "permission-gated" }],
-  // obs_explain (154-03): permission-gated. Its dispatch branch invokes the
+  // obs_explain: permission-gated. Its dispatch branch invokes the
   // INJECTED obsExplainForMcpClient assembler DIRECTLY (NOT daemonRpcForMcpClient)
   // and feeds the result into the SAME wrapExternalContent wrap.
   ["obs_explain", { mcpExportPolicy: "permission-gated" }],
-  // obs_fleet_health (161-02): permission-gated SIBLING of obs_explain. Its
+  // obs_fleet_health: permission-gated SIBLING of obs_explain. Its
   // dispatch branch invokes the INJECTED obsFleetHealthForMcpClient assembler
   // DIRECTLY (NOT daemonRpcForMcpClient), never injecting admin, and feeds the
   // result into the SAME wrapExternalContent wrap.
@@ -747,9 +747,10 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   // ------------------------------------------------------------------------
   // Raw daemon RPC error message leak guard
   //
-  // Previously the dispatcher returned `[dispatch_error] ${err.message}` --
-  // exposing whatever the daemon RPC handler threw (session keys, user
-  // IDs, internal hints, file paths). The WS RPC path emits a generic
+  // Guards the regression where the dispatcher returns
+  // `[dispatch_error] ${err.message}` -- exposing whatever the daemon RPC
+  // handler threw (session keys, user IDs, internal hints, file paths).
+  // The WS RPC path emits a generic
   // "Internal error" message for uncaught errors (ws-handler.ts:384) --
   // mirror that posture on the MCP boundary.
   //
@@ -908,8 +909,8 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       );
 
       const cb = capturedCallback["memory_search"]!;
-      // The dispatcher must NOT throw. On the pre-fix code, await cb(...)
-      // rejects with TypeError: Cannot read properties of undefined
+      // The dispatcher must NOT throw. In the guarded failure mode, await
+      // cb(...) rejects with TypeError: Cannot read properties of undefined
       // (reading 'replace') inside wrapExternalContent's replaceMarkers.
       // The SDK then catches and surfaces the raw message to the external
       // MCP client (information disclosure).
@@ -939,9 +940,9 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   });
 
   // ------------------------------------------------------------------------
-  // obs_explain (154-03) — direct-assembler dispatch under daemon authority
+  // obs_explain — direct-assembler dispatch under daemon authority
   //
-  // The SECURITY-CRITICAL path: obs_explain reaches the Phase-153 IncidentReport
+  // The SECURITY-CRITICAL path: obs_explain reaches the IncidentReport assembler
   // over POST /mcp/v1 with NO new privilege. Its dispatch branch invokes the
   // INJECTED obsExplainForMcpClient assembler DIRECTLY (NOT daemonRpcForMcpClient
   // -> the admin-gated obs.explain RPC, NOT a trust-isolated indirection) and feeds the result
@@ -1098,7 +1099,7 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   });
 
   // ------------------------------------------------------------------------
-  // obs_fleet_health (161-02) — direct-assembler dispatch under daemon authority
+  // obs_fleet_health — direct-assembler dispatch under daemon authority
   //
   // The SECURITY-CRITICAL fleet sibling of obs_explain. Its dispatch branch
   // invokes the INJECTED obsFleetHealthForMcpClient assembler DIRECTLY (NOT
@@ -1106,7 +1107,7 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   // result into the SAME Step-5 wrapExternalContent wrap. Authorization is the
   // per-client mcpClient.allowlist + the digest-only/bounded report.
   //
-  // Required invariants (H1-MCP):
+  // Required invariants:
   //   - never-inject-admin: obsFleetHealthForMcpClient called with params that
   //     DO NOT contain _trustLevel (stripTrustLevel ran); the result is wrapped.
   //   - fail-closed: undefined closure -> generic dispatch_error, no crash, no
@@ -1225,7 +1226,7 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   });
 
   it("buildMcpServerForClient obs_fleet_health returns a generic dispatch_error (no raw err.message leak) when the assembler throws", async () => {
-    // Error-opacity (T-161-08): a throwing assembler must NOT surface its raw
+    // Error-opacity: a throwing assembler must NOT surface its raw
     // message (it can carry sessionKeys/file paths). The on-wire response is a
     // generic sentinel; the structured err is captured on the WARN log only.
     const { logger } = makeCapturingLogger();
@@ -1283,9 +1284,9 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
 //
 // Criterion: after one `buildMcpServerForClient` call, then
 // `_resetRateLimitStateForTest()`, then a second build, the
-// `systemSetInterval` mock must have been called TWICE. On the pre-fix code
-// it is called only once (the second build hits the `if (prunerStarted)
-// return;` short-circuit).
+// `systemSetInterval` mock must have been called TWICE. If the reset does
+// not clear `prunerStarted`, it is called only once (the second build hits
+// the `if (prunerStarted) return;` short-circuit).
 //
 // The @comis/core mock at top-of-file is augmented here for this single
 // test by spreading `systemSetInterval: vi.fn(...)` into the returned
@@ -1326,14 +1327,13 @@ describe("buildMcpServerForClient -- _resetRateLimitStateForTest also resets pru
     }
     expect(systemSetIntervalSpy).toHaveBeenCalledTimes(1);
 
-    // Reset state again. On the pre-fix code this clears buckets but
-    // leaves prunerStarted=true; on the post-fix code prunerStarted is
-    // reset to false.
+    // Reset state again. The reset must clear prunerStarted to false, not
+    // just the buckets.
     _resetRateLimitStateForTest();
 
-    // Second build after reset. On the pre-fix code, ensurePrunerStarted
-    // short-circuits because prunerStarted is still true -> spy stays at
-    // 1 call. On the post-fix code, the spy fires again -> 2 calls.
+    // Second build after reset. If prunerStarted were still true,
+    // ensurePrunerStarted would short-circuit and the spy would stay at
+    // 1 call; with the reset working, the spy fires again -> 2 calls.
     const { restore: restore2 } = spyOnRegisterTool();
     try {
       buildMcpServerForClient(

@@ -104,13 +104,13 @@ describe("ObservabilityConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("back-compat: omitting trajectory produces trajectory:{}", () => {
+  it("omitting trajectory produces trajectory:{} (an absent block still parses)", () => {
     const result = ObservabilityConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
       // trajectory must exist (with default {}) and dirOverride must be
-      // undefined (not set) — proves existing YAML without observability.trajectory
-      // still parses and the schema is back-compat.
+      // undefined (not set) — proves a YAML without observability.trajectory
+      // still parses.
       expect(result.data).toHaveProperty("trajectory");
       expect(result.data.trajectory?.dirOverride).toBeUndefined();
     }
@@ -221,7 +221,7 @@ describe("ObservabilityConfigSchema", () => {
     });
   });
 
-  // audit key + persistence.cacheBreaks (PERSIST-01 / AUDIT-01).
+  // audit key + persistence.cacheBreaks.
   describe("audit + persistence.cacheBreaks", () => {
     it("parses audit:{persist,sink} + persistence:{cacheBreaks} on the strictObject", () => {
       const result = ObservabilityConfigSchema.safeParse({
@@ -256,10 +256,10 @@ describe("ObservabilityConfigSchema", () => {
     });
   });
 
-  // spend key (SPEND-01) — the kill-switch opt-in surface. Ships OFF: all
+  // spend key — the kill-switch opt-in surface. Ships OFF: all
   // three ceilings default null, action 'warn'. Mirrors the audit block's
   // default + strict-reject + enum-validation shape.
-  describe("spend (SPEND-01)", () => {
+  describe("spend — the kill-switch opt-in surface", () => {
     it("resolves safe defaults: all three ceilings null (off), action 'warn', warnAtFraction 0.8, perTurnMax 0.5, pricingFallback 'snapshot', onUnknownPricing 'warn'", () => {
       const result = ObservabilityConfigSchema.safeParse({});
       expect(result.success).toBe(true);
@@ -343,10 +343,10 @@ describe("ObservabilityConfigSchema", () => {
     });
   });
 
-  // otel key (OTEL-01/02/03) — the OTLP push surface opt-in. Ships OFF
+  // otel key — the OTLP push surface opt-in. Ships OFF
   // (enabled:false); content-free by default (captureContent:false,
-  // genaiSemconv:false). LOCKED shape: design §9/§14 + 178-RESEARCH §14.
-  describe("otel (OTEL-01/02/03)", () => {
+  // genaiSemconv:false). LOCKED shape: this suite pins every field + default.
+  describe("otel — the OTLP push opt-in surface", () => {
     it("resolves safe defaults: enabled false, endpoint '', protocol 'http/protobuf', traces/metrics/logs true, genaiSemconv/captureContent false", () => {
       const result = ObservabilityConfigSchema.safeParse({});
       expect(result.success).toBe(true);
@@ -386,7 +386,7 @@ describe("ObservabilityConfigSchema", () => {
       }
     });
 
-    it("accepts protocol 'grpc' (validates; falls back to -proto with a WARN at runtime — a documented later addition)", () => {
+    it("accepts protocol 'grpc' (validates; falls back to -proto with a WARN at runtime — grpc transport not implemented)", () => {
       const result = ObservabilityConfigSchema.safeParse({ otel: { protocol: "grpc" } });
       expect(result.success).toBe(true);
       if (result.success) {
@@ -405,10 +405,10 @@ describe("ObservabilityConfigSchema", () => {
     });
   });
 
-  // prometheus key (PROM-01) — the standalone /metrics pull surface. INDEPENDENT
+  // prometheus key — the standalone /metrics pull surface. INDEPENDENT
   // of otel.enabled. Ships OFF (enabled:false); loopback-bound (127.0.0.1:9464);
-  // trusted-operator posture. LOCKED shape: design §9/§14 + 178-RESEARCH §14.
-  describe("prometheus (PROM-01)", () => {
+  // trusted-operator posture. LOCKED shape: this suite pins every field + default.
+  describe("prometheus — the standalone /metrics pull surface", () => {
     it("resolves safe defaults: enabled false, host 127.0.0.1, port 9464, path /metrics, auth trusted-operator, exemplars true, cardinalityCap 10000", () => {
       const result = ObservabilityConfigSchema.safeParse({});
       expect(result.success).toBe(true);
@@ -469,11 +469,11 @@ describe("ObservabilityConfigSchema", () => {
     });
   });
 
-  // COST-01/COST-03 (Phase 179 P3): the two NEW additive config keys this
-  // milestone's P3 owns. costGranularity (WS4) + export (WS6) both ship ON.
+  // costGranularity + export: the two cost-attribution config keys,
+  // both shipping ON.
   // Mounted with the spend/prometheus `.default(() => Schema.parse({}))` form so
   // an absent observability: block still parses; strictObject preserved.
-  describe("costGranularity + export (COST WS4/WS6)", () => {
+  describe("costGranularity + export — the cost-attribution keys", () => {
     it("defaults: costGranularity {perTool:true, subagentRollup:true} present from an empty object", () => {
       const result = ObservabilityConfigSchema.safeParse({});
       expect(result.success).toBe(true);
@@ -492,7 +492,7 @@ describe("ObservabilityConfigSchema", () => {
       }
     });
 
-    it("accepts per-field overrides on both new keys", () => {
+    it("accepts per-field overrides on both cost-attribution keys", () => {
       const result = ObservabilityConfigSchema.safeParse({
         costGranularity: { perTool: false },
         export: { quarterHourBuckets: false },

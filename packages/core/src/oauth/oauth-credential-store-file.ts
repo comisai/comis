@@ -27,7 +27,8 @@
  * depend on `@comis/scheduler` at the import boundary.
  *
  * Schema versioning: single integer version at top level. Hard-fail on
- * mismatch — pre-1.0 software, no migration plumbing.
+ * mismatch — there is no migration plumbing; the store is recreated by
+ * re-running `comis auth login`.
  *
  * @module
  */

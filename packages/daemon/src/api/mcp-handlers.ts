@@ -120,7 +120,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     [McpStatusContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guard — produces the legacy "Missing required
+      // Bespoke pre-Zod guard — produces the user-friendly "Missing required
       // parameter: server_name" UX, which is more actionable than Zod's
       // noisier `.min(1)` error. The contract's `z.string().min(1)` is
       // defense-in-depth.
@@ -166,7 +166,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     [McpConnectContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guard for legacy "Missing required parameter:
+      // Bespoke pre-Zod guard for the user-friendly "Missing required parameter:
       // server_name" UX. Contract's .min(1) + enum gating is defense-in-depth.
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
@@ -323,8 +323,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       // Build + persist the auth:"oauth" entry and throw the structured
       // needs_oauth_login signal. Used by:
-      //   - Fix 4 pre-check  (token store has no tokens for this server yet)
-      //   - Fix 2 post-fail  (manager.connect surfaced a NeedsOAuthLoginError)
+      //   - the token-aware pre-check  (token store has no tokens for this server yet)
+      //   - the post-fail branch  (manager.connect surfaced a NeedsOAuthLoginError)
       // Without persistence, the subsequent mcp.oauth_login at
       // mcp-oauth-handlers.ts:135 cannot find the entry in
       // container.config.integrations.mcp.servers.
@@ -363,12 +363,12 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         throw structured;
       };
 
-      // Fix 4 — token-aware short-circuit. When auth==="oauth" AND no token
+      // Token-aware short-circuit. When auth==="oauth" AND no token
       // exists yet, manager.connect is doomed (the SDK's DCR runs with
       // redirect_uris=[] — the loopback only exists during mcp.oauth_login — so
-      // a spec provider returns 400, masking the real "run mcp_login" signal).
-      // createTokenStore is undefined in some test harnesses (pre-check no-ops;
-      // Fix 2 below handles it). The mode-selected pass-through is defined but
+      // a spec-compliant provider returns 400, masking the real "run mcp_login"
+      // signal). createTokenStore is undefined in some test harnesses (pre-check
+      // no-ops; the post-fail branch below handles it). The mode-selected pass-through is defined but
       // RETURNS undefined in env mode — read it into a local so that case is
       // treated as "no token" without a deref-of-undefined or a disk fallback.
       if (params.auth === "oauth" && deps.createTokenStore !== undefined) {
@@ -382,7 +382,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const result = await manager.connect(config);
       if (!result.ok) {
-        // Fix 2: when connectServer surfaced a NeedsOAuthLoginError
+        // Post-fail branch: when connectServer surfaced a NeedsOAuthLoginError
         // (UnauthorizedError / StreamableHTTPError(401)) AND the operator
         // opted in with auth:"oauth", persist the entry before throwing the
         // structured signal so mcp_login finds it. mcp-handlers.ts.test.ts
@@ -468,7 +468,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     [McpDisconnectContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guard — produces the legacy "Missing required
+      // Bespoke pre-Zod guard — produces the user-friendly "Missing required
       // parameter: server_name" UX. The contract's `.min(1)` is
       // defense-in-depth.
       const nameRaw = rawParams.server_name as string | undefined;
@@ -522,7 +522,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     [McpTestContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guards — produce legacy "Missing required
+      // Bespoke pre-Zod guards — produce the user-friendly "Missing required
       // parameter: ..." UX (note the test handler reads `name`, NOT
       // `server_name`). Contract's `.min(1)` + enum gating is
       // defense-in-depth.
@@ -699,7 +699,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     [McpReconnectContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guard — produces the legacy "Missing required
+      // Bespoke pre-Zod guard — produces the user-friendly "Missing required
       // parameter: server_name" UX. The contract's `.min(1)` is
       // defense-in-depth.
       const nameRaw = rawParams.server_name as string | undefined;

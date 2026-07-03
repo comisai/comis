@@ -139,7 +139,7 @@ function createFakeSessionStore(): SessionStore & {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("— Identity persistence across messages", () => {
+describe("Identity persistence across messages", () => {
   let workspaceDir: string;
 
   beforeEach(async () => {

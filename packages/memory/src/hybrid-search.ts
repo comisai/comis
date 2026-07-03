@@ -106,7 +106,7 @@ export function buildFtsQuery(raw: string): string | null {
   return meaningful.map((t) => `"${t}"`).join(" OR ");
 }
 
-// ── Trigram lane availability probe (FTS-01, plan 180-06) ────────────
+// ── Trigram lane availability probe ──────────────────────────────────
 
 /**
  * Probe-once-per-db cache for the `memory_fts_tri` trigram twin (mirrors the
@@ -168,17 +168,16 @@ function searchByTrigram(
  * Search memories using FTS5 BM25 ranking.
  *
  * The single LTM chokepoint for BOTH `search()` (via hybridSearch) and
- * `searchLanes()` (via the adapter). Script routing (FTS-01, plan 180-06) wraps
- * the existing porter word lane: an all-Latin query (and the all-short "scan"
- * lane, which LTM has no machinery for) takes today's EXACT path — buildFtsQuery
- * → memory_fts MATCH, byte-identical SQL (I1); a non-Latin query routes to the
- * `memory_fts_tri` trigram twin when it is available, falling through to the
- * word lane on a trigram-absent host (status quo — preserves pre-existing
- * exact-word non-Latin matches). The trigram rank list has the same
- * `{id, rank}[]` shape, so it flows into computeRRF / hydrateLane unchanged.
+ * `searchLanes()` (via the adapter). Script routing wraps the porter word lane:
+ * an all-Latin query (and the all-short "scan" lane, which LTM has no machinery
+ * for) takes the word path — buildFtsQuery → memory_fts MATCH; a non-Latin query
+ * routes to the `memory_fts_tri` trigram twin when it is available, falling
+ * through to the word lane on a trigram-absent host (which preserves exact-word
+ * non-Latin matches). The trigram rank list has the same `{id, rank}[]` shape,
+ * so it flows into computeRRF / hydrateLane unchanged.
  *
- * LTM short-token-drop limitation (WR-02): the 180-01 router DROPS any
- * <3-codepoint normalized token from the trigram MATCH (a sub-floor token in an
+ * LTM short-token-drop limitation: the router DROPS any <3-codepoint normalized
+ * token from the trigram MATCH (a sub-floor token in an
  * AND/OR group cannot form a trigram and would contribute nothing). For the LCD
  * lane the dropped short token is preserved in `route.scanTokens` and the bounded
  * scan floor recovers it — but LTM has NO scan machinery and IGNORES `scanTokens`,
@@ -348,7 +347,7 @@ export interface HybridSearchOptions {
    * Read-side NL temporal-range filter. Epoch ms. ANDed onto the
    * post-fusion WHERE as `occurred_at BETWEEN ? AND ?` (bound params) — it
    * composes with the existing (tenant_id, agent_id) scope via ` AND `, so it
-   * can only NARROW, never widen scope (§5.2). NULL `occurred_at` rows fail
+   * can only NARROW, never widen scope. NULL `occurred_at` rows fail
    * BETWEEN and drop out (no event time ⇒ not in any range). Absent → no range
    * filter. NOT the temporal LANE (a post-search spread); this is a
    * pre-fetch filter — they compose, no double-apply.
@@ -423,7 +422,7 @@ export function hybridSearch(
 
   // ── Post-fusion filtering ──
   //
-  // `evicted_at IS NULL` is an ALWAYS-APPLIED base condition (FORGET-01): a
+  // `evicted_at IS NULL` is an ALWAYS-APPLIED base condition: a
   // soft-evicted memory (evicted_at set by the lifecycle sweep) is EXCLUDED from
   // EVERY recall path. This is the single most overlookable correctness gap — the
   // lifecycle sweep marking evicted_at is a silent no-op unless recall actually

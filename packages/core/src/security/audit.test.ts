@@ -181,17 +181,17 @@ describe("AuditEventSchema", () => {
 });
 
 // =====================================================================
-// AUDIT-03 / E4 — the schema↔pipeline reshape (RED-first).
+// The kind union + optional classification split.
 //
-// The required `classification: read|mutate|destructive` enum was VIOLATED
-// by 6 live `audit:event` emit sites passing "security"×3 / "write" /
-// "neutral"×2. The reshape splits a closed `kind` (event family) from an
-// OPTIONAL `classification`. These tests pin every live value so the
-// schema/pipeline can never re-divorce (T-176-05/T-176-06).
+// A required `classification: read|mutate|destructive` enum cannot represent
+// the 6 live `audit:event` emit sites, which pass "security"×3 / "write" /
+// "neutral"×2. The schema therefore splits a closed `kind` (event family)
+// from an OPTIONAL `classification`. These tests pin every live value so the
+// schema and the emit pipeline can never diverge.
 // =====================================================================
-describe("AuditEventSchema reshape (kind union + optional classification)", () => {
-  // Test 1: a record with a kind and NO classification parses (optional).
-  it("Test 1 — parses with a kind and NO classification (classification is optional)", () => {
+describe("AuditEventSchema kind union + optional classification", () => {
+  // A record with a kind and NO classification parses (optional).
+  it("parses with a kind and NO classification (classification is optional)", () => {
     const event = createAuditEvent({
       tenantId: "t",
       agentId: "a",
@@ -206,8 +206,8 @@ describe("AuditEventSchema reshape (kind union + optional classification)", () =
     expect(AuditEventSchema.safeParse(event).success).toBe(true);
   });
 
-  // Test 2: the `audit` kind keeps an access-class classification.
-  it("Test 2 — the audit kind keeps an optional classification (audit + destructive)", () => {
+  // The `audit` kind keeps an access-class classification.
+  it("the audit kind keeps an optional classification (audit + destructive)", () => {
     const event = createAuditEvent({
       tenantId: "t",
       agentId: "a",
@@ -221,10 +221,10 @@ describe("AuditEventSchema reshape (kind union + optional classification)", () =
     expect(event.classification).toBe("destructive");
   });
 
-  // Test 3 (load-bearing): every one of the 6 live violating values
-  // round-trips through createAuditEvent mapped to a kind, classification
-  // UNSET, with NO schema throw. Re-grep-confirmed against HEAD.
-  it("Test 3 — all 6 live violating classification values round-trip as a kind with no throw", () => {
+  // Load-bearing: every one of the 6 live emit-site values round-trips
+  // through createAuditEvent mapped to a kind, classification UNSET, with
+  // NO schema throw. The file:line notes name the emit sites.
+  it("all 6 live emit-site classification values round-trip as a kind with no throw", () => {
     const liveSites: { actionType: string; kind: AuditKind }[] = [
       // classification:"security" ×3
       { actionType: "injection_rate_exceeded", kind: "injection_rate_exceeded" }, // executor-input-guard.ts:189
@@ -253,8 +253,8 @@ describe("AuditEventSchema reshape (kind union + optional classification)", () =
     }
   });
 
-  // Test 4: kind is a CLOSED union — an unknown string is rejected.
-  it("Test 4 — kind rejects an unknown string (closed union, not kind: string)", () => {
+  // kind is a CLOSED union — an unknown string is rejected.
+  it("kind rejects an unknown string (closed union, not kind: string)", () => {
     const result = AuditEventSchema.safeParse({
       id: "550e8400-e29b-41d4-a716-446655440000",
       timestamp: "2026-01-01T00:00:00.000Z",
@@ -269,19 +269,19 @@ describe("AuditEventSchema reshape (kind union + optional classification)", () =
     expect(result.success).toBe(false);
   });
 
-  // Test 5: createAuditEvent remains the sole constructor — VALID_PARAMS
-  // still produces a parsed event with the reshaped params.
-  it("Test 5 — createAuditEvent remains the sole constructor (reshaped VALID_PARAMS)", () => {
+  // createAuditEvent remains the sole constructor — VALID_PARAMS still
+  // produces a parsed event under the kind + optional-classification schema.
+  it("createAuditEvent remains the sole constructor (VALID_PARAMS still parses)", () => {
     const event = createAuditEvent(VALID_PARAMS);
     expect(event.kind).toBe("audit");
     expect(event.classification).toBe("read");
     expect(AuditEventSchema.safeParse(event).success).toBe(true);
   });
 
-  // Test 6 (type-level): the audit:event event-bus payload accepts an
-  // optional kind?: AuditKind, and kind is the closed AuditKind union
-  // (NOT string). Co-located here (the events-agent payload has no test).
-  it("Test 6 — the audit:event payload accepts an optional kind?: AuditKind (closed union)", () => {
+  // Type-level: the audit:event event-bus payload accepts an optional
+  // kind?: AuditKind, and kind is the closed AuditKind union (NOT string).
+  // Co-located here (the events-agent payload has no test).
+  it("the audit:event payload accepts an optional kind?: AuditKind (closed union)", () => {
     type AuditEventPayload = EventMap["audit:event"];
     // The payload carries an optional `kind` typed as the closed AuditKind.
     expectTypeOf<AuditEventPayload>().toHaveProperty("kind");
@@ -300,15 +300,15 @@ describe("AuditEventSchema reshape (kind union + optional classification)", () =
 });
 
 // =====================================================================
-// Phase 210 — capability_denied AuditKind (T-210-03).
+// The capability_denied AuditKind.
 //
-// A denied capability / deny-by-origin gate (emitted by Plans 04/05) must be
-// a durable, content-free SECURITY signal. The closed-union exhaustiveness
-// guard (`const _exhaustive: never`) fails the BUILD until the new member is
-// classified in kindIsSecuritySignal — that structural gate IS the RED→GREEN
-// for the member; this test pins the classification at the test level too.
+// A denied capability / deny-by-origin gate must be a durable, content-free
+// SECURITY signal. The closed-union exhaustiveness guard
+// (`const _exhaustive: never`) fails the BUILD until the member is
+// classified in kindIsSecuritySignal — that structural gate enforces the
+// classification; this test pins it at the test level too.
 // =====================================================================
-describe("kindIsSecuritySignal — capability_denied (Phase 210)", () => {
+describe("kindIsSecuritySignal — capability_denied", () => {
   it("classifies capability_denied as a security signal", () => {
     expect(kindIsSecuritySignal("capability_denied")).toBe(true);
   });

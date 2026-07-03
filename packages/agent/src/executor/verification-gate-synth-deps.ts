@@ -8,10 +8,10 @@
  * ModelProfile derives capacity/security from capabilityClass (the hook has no
  * resolved ModelProfile in scope).
  *
- * WR-02: apiKey:"" is SAFE here because shouldRunCritic (verification-gate.ts)
+ * apiKey:"" is SAFE here because shouldRunCritic (verification-gate.ts)
  * gates the critic to keyless providers (ollama/lm-studio) — a key-requiring
- * cloud provider is skipped-with-WARN upstream and never reaches this builder.
- * Cloud apiKey threading is deferred to Phase 155.
+ * cloud provider is skipped-with-WARN upstream and never reaches this builder,
+ * so no cloud apiKey threading exists here.
  *
  * Forbidden: Date.now(), raw setTimeout/clearTimeout, new Date().
  * Invariant: no compatibility shims, no deprecated annotations.
@@ -39,7 +39,7 @@ export function buildSyntheticCriticDeps(params: {
     deps: {
       provider: params.provider,
       modelId: params.modelId,
-      apiKey: "", // WR-02: keyless-only (gated by shouldRunCritic); cloud → Phase 155
+      apiKey: "", // keyless-only (gated by shouldRunCritic); cloud providers never reach here
       clock: params.clock,
       logger: params.logger,
       agentId: params.agentId,

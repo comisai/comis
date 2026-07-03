@@ -101,8 +101,8 @@ export function captureRecallObservability(
       }),
     );
   } catch (e) {
-    // PROMOTE-01 (§2.7 / invariant I4): a failing recall-trace recorder silently
-    // BLINDS the recall lens (RECALL-02 reads this trace). It is a failure branch
+    // A failing recall-trace recorder silently BLINDS the recall lens (the recall
+    // diagnostics read this trace). It is a failure branch
     // carrying hint+errorKind, so it belongs at WARN — diagnosable at the DEFAULT
     // level, not contingent on logLevel:debug having been set before the incident.
     deps.logger.warn(
@@ -129,7 +129,7 @@ export function captureRecallObservability(
     (ctx.entityCandidates > 0 ? 1 : 0) +
     // Include the temporal lane so the counts-only memory:recalled event no longer
     // under-reports the active lane count by one when the temporal lane contributes. The
-    // rich recall-trace record already counts lanes.temporal (:575); this aligns the event.
+    // rich recall-trace record already counts lanes.temporal; this aligns the event.
     (ctx.temporalCandidates > 0 ? 1 : 0) +
     // Likewise include the causal lane so the event's lane count counts the 5th
     // lane when it contributes (the rich trace record already counts lanes.causal).
@@ -166,9 +166,8 @@ export function captureRecallObservability(
       });
     }
   } catch (e) {
-    // PROMOTE-01 (§2.7 / invariant I4): a failing memory:recalled/reranked emit blinds
-    // the trajectory + fleet recall signals (RECALL-01). Failure branch with hint+
-    // errorKind → WARN, visible at the default level.
+    // A failing memory:recalled/reranked emit blinds the trajectory + fleet recall
+    // signals. Failure branch with hint+errorKind → WARN, visible at the default level.
     deps.logger.warn(
       {
         agentId: ctx.agentId,

@@ -53,7 +53,7 @@ interface WarnFields {
 }
 
 // ---------------------------------------------------------------------------
-// compareServedWindowForProvider — KNOB-01
+// compareServedWindowForProvider
 // ---------------------------------------------------------------------------
 
 describe("compareServedWindowForProvider", () => {
@@ -61,7 +61,7 @@ describe("compareServedWindowForProvider", () => {
     resetServedWindowWarnForTest();
   });
 
-  it("KNOB-01-1: served 8192 < configured 131072 → ONE WARN naming both numbers, both Ollama knobs, the probed model, and the opt-out", () => {
+  it("served 8192 < configured 131072 → ONE WARN naming both numbers, both Ollama knobs, the probed model, and the opt-out", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findModel } = createRecordingFindModel({ contextWindow: 131_072 });
 
@@ -99,7 +99,7 @@ describe("compareServedWindowForProvider", () => {
     expect(hint).toContain("config-yaml");
   });
 
-  it("KNOB-01-2: served === configured (131072) → belowConfigured false and ZERO warns (healthy boot silent, R-4)", () => {
+  it("served === configured (131072) → belowConfigured false and ZERO warns (healthy boot silent)", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findModel } = createRecordingFindModel({ contextWindow: 131_072 });
 
@@ -121,7 +121,7 @@ describe("compareServedWindowForProvider", () => {
     expect(warnCalls).toHaveLength(0);
   });
 
-  it("KNOB-01-3: served 200000 above configured 131072 → belowConfigured false and ZERO warns", () => {
+  it("served 200000 above configured 131072 → belowConfigured false and ZERO warns", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findModel } = createRecordingFindModel({ contextWindow: 131_072 });
 
@@ -139,7 +139,7 @@ describe("compareServedWindowForProvider", () => {
     expect(warnCalls).toHaveLength(0);
   });
 
-  it("KNOB-01-4: probe absent (served undefined) → returns undefined, ZERO warns, no registry lookup (absent = no comparison, not zero-served)", () => {
+  it("probe absent (served undefined) → returns undefined, ZERO warns, no registry lookup (absent = no comparison, not zero-served)", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findCalls, findModel } = createRecordingFindModel({ contextWindow: 131_072 });
 
@@ -156,7 +156,7 @@ describe("compareServedWindowForProvider", () => {
     expect(findCalls).toHaveLength(0);
   });
 
-  it("KNOB-01-5: two under-served calls for the SAME provider → ONE WARN total (per-provider latch) but BOTH calls return the comparison", () => {
+  it("two under-served calls for the SAME provider → ONE WARN total (per-provider latch) but BOTH calls return the comparison", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findModel } = createRecordingFindModel({ contextWindow: 131_072 });
 
@@ -177,7 +177,7 @@ describe("compareServedWindowForProvider", () => {
     expect(second?.belowConfigured).toBe(true);
   });
 
-  it("KNOB-01-6: after resetServedWindowWarnForTest() the same provider WARNs again (latch reset)", () => {
+  it("after resetServedWindowWarnForTest() the same provider WARNs again (latch reset)", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findModel } = createRecordingFindModel({ contextWindow: 131_072 });
 
@@ -197,7 +197,7 @@ describe("compareServedWindowForProvider", () => {
     expect(warnCalls).toHaveLength(2);
   });
 
-  it("KNOB-01-7: findModel yields no contextWindow → configured falls back to 8192 (executor's ?? 8_192 parity); served 4096 WARNs against 8192", () => {
+  it("findModel yields no contextWindow → configured falls back to 8192 (executor's ?? 8_192 parity); served 4096 WARNs against 8192", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findModel } = createRecordingFindModel({ contextWindow: undefined });
 
@@ -215,7 +215,7 @@ describe("compareServedWindowForProvider", () => {
     expect((warnCalls[0]![0] as WarnFields).configured).toBe(8_192);
   });
 
-  it("KNOB-01-8: defaultModel takes precedence over models[0].id for the probed model (same expression as the probe)", () => {
+  it("defaultModel takes precedence over models[0].id for the probed model (same expression as the probe)", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findCalls, findModel } = createRecordingFindModel({ contextWindow: 131_072 });
 
@@ -232,7 +232,7 @@ describe("compareServedWindowForProvider", () => {
     expect(warnCalls).toHaveLength(0);
   });
 
-  it("KNOB-01-9: providerEntry undefined → probedModelId '' used for the registry lookup; comparison still runs against the findModel result", () => {
+  it("providerEntry undefined → probedModelId '' used for the registry lookup; comparison still runs against the findModel result", () => {
     const { warnCalls, logger } = createRecordingLogger();
     const { findCalls, findModel } = createRecordingFindModel({ contextWindow: 131_072 });
 

@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `TOOL_CAPABILITY_MAP` + `TOOL_ROUTE_MAP` — the §3.6 curated tool→cap
- * allow-list and tool→route table; the SINGLE source for the `tool.invoke`
- * gate (Plan 02), the lease audience (Plan 02), and the `comis_tools` SDK
- * codegen (Plan 03). Default-deny: a tool absent from this map is
- * undispatchable. Defined in @comis/core so daemon + the codegen import it
- * without a package cycle (NO imports from @comis/skills / @comis/agent /
- * @comis/daemon — pure static data, mirroring `sub-agent-tool-denylist.ts`
- * and `handler-capability-map.ts`).
+ * `TOOL_CAPABILITY_MAP` + `TOOL_ROUTE_MAP` — the curated tool→cap allow-list
+ * and tool→route table; the SINGLE source for the `tool.invoke` gate, the
+ * lease audience, and the `comis_tools` SDK codegen. Default-deny: a tool
+ * absent from this map is undispatchable. Defined in @comis/core so daemon +
+ * the codegen import it without a package cycle (NO imports from
+ * @comis/skills / @comis/agent / @comis/daemon — pure static data, mirroring
+ * `sub-agent-tool-denylist.ts` and `handler-capability-map.ts`).
  *
- * This is the §3.6 read/web tool-surface completion of the sibling
+ * This is the read/web tool-surface completion of the sibling
  * `HANDLER_CAPABILITY_MAP` (which classifies the orchestration-CORE RPC
  * methods). Both use the same `as const satisfies` discipline so the literal
  * cap strings stay exact at the type level. Four consumers must never drift
  * from this one table — the gate, the lease audience, the SDK codegen, and the
  * arch-tests (`tool-invoke-cap-map.test.ts` / `tool-invoke-default-deny.test.ts`).
  *
- * Two route kinds (the load-bearing Gap-1 split):
+ * Two route kinds (the load-bearing split):
  *   - `{kind:"rpc", method}` — the tool maps to an EXISTING registered RPC
  *     handler (`memory.*`, `media.extract_document`, `session.*`). The dispatch
  *     strips-then-injects `_agentId`/`_capabilities` and forwards to the sink;
@@ -27,13 +26,13 @@
  *     failure, not a VPS-only runtime 404.
  *   - `{kind:"executor"}` — the tool is an in-process AgentTool with NO RPC
  *     registration (`read`/`grep`/`find`/`ls`/`jq`/`sql`/`jsonpath`, the
- *     daemon-side `web_search`/`web_fetch`). Plan 02's daemon-side executor runs
- *     it under the agent's jailed workspace (DNS-pinned for the web pair).
+ *     daemon-side `web_search`/`web_fetch`). The daemon-side executor runs it
+ *     under the agent's jailed workspace (DNS-pinned for the web pair).
  *
  * @allow-throw: module-load invariant (mirrors handler-capability-map.ts +
  * setup-capability-endpoint.ts:171-177). The assertion block below throws at
- * import if a cap-mapped tool is denylisted (DISPATCH-03 fail-loud) or missing
- * a route — a fail-fast that the arch-tests also pin at build time.
+ * import if a cap-mapped tool is denylisted (fail-loud) or missing a route —
+ * a fail-fast that the arch-tests also pin at build time.
  *
  * @module
  */
@@ -42,12 +41,12 @@ import { SUB_AGENT_TOOL_DENYLIST } from "../domain/sub-agent-tool-denylist.js";
 
 /**
  * Tool name → required {@link AgentCapability}. The curated allow-list: a tool
- * absent from this map has NO capability and is undispatchable (DISPATCH-02 —
- * default-deny by absence). `as const satisfies Record<string, AgentCapability>`
+ * absent from this map has NO capability and is undispatchable
+ * (default-deny by absence). `as const satisfies Record<string, AgentCapability>`
  * keeps the literal cap strings exact at the type level (the no-typo'd-cap
  * invariant) while typing the whole table.
  *
- * SCOPE: the §3.6 read/web surface only — `orch:read` (RPC-backed reads +
+ * SCOPE: the read/web surface only — `orch:read` (RPC-backed reads +
  * in-process workspace builtins) and `orch:web` (daemon-side, DNS-pinned).
  * Admin/management tools (`mcp_manage`, `gateway`, `agents_create`, …) are
  * NEVER mapped: they stay unreachable via this curated surface, and the
@@ -68,7 +67,7 @@ export const TOOL_CAPABILITY_MAP = {
   find: "orch:read",
   ls: "orch:read",
   jq: "orch:read",
-  // orch:read — the full ResultRef query engine (QRY-01/02): DuckDB-SQL over
+  // orch:read — the full ResultRef query engine: DuckDB-SQL over
   // CSV/JSONL + JSONPath over JSON, run DAEMON-side (like jq) over the
   // run-scoped results/ file; only the slice re-enters context. Read-only —
   // the daemon-side DuckDB is CONFINED to the run's workspace
@@ -77,7 +76,7 @@ export const TOOL_CAPABILITY_MAP = {
   // (--readonly :memory:, no autoload, INSTALL/LOAD/ATTACH/COPY/EXPORT, the
   // pure-exfil readers read_text/read_blob/glob/getenv, and url-readers
   // rejected before spawn) so this cap can never read a host file outside the
-  // workspace or become an SSRF/exfil egress (T-221-QRY-01..06 / CR-01).
+  // workspace or become an SSRF/exfil egress.
   sql: "orch:read",
   jsonpath: "orch:read",
   // orch:web — daemon-side, DNS-pinned (the jail stays --unshare-net)
@@ -99,8 +98,8 @@ export type ToolRoute = { kind: "rpc"; method: string } | { kind: "executor" };
  *     read (contract `api-contracts/sessions.ts:110`, classified `ungated` at
  *     `handler-capability-map.ts:81`, implemented in `session-handlers/session-read.ts`).
  *   - `session.get` is NOT registered (only `action-classifier.ts` + a test
- *     mock) — routing to it would 404 at the sink's `!handler` throw
- *     (Gap 1 / T-212-03). Do NOT route a builtin via `{kind:"rpc"}`.
+ *     mock) — routing to it would 404 at the sink's `!handler` throw.
+ *     Do NOT route a builtin via `{kind:"rpc"}`.
  */
 export const TOOL_ROUTE_MAP = {
   memory_search: { kind: "rpc", method: "memory.search_files" },
@@ -122,15 +121,15 @@ export const TOOL_ROUTE_MAP = {
 } as const satisfies Record<ToolName, ToolRoute>;
 
 // ---------------------------------------------------------------------------
-// Module-load soundness assertions (DISPATCH-03 + route completeness).
+// Module-load soundness assertions (denylist disjointness + route completeness).
 // Mirrors handler-capability-map.ts's discipline + setup-capability-endpoint.ts:171-177:
 // assert-at-load so a denylist rename or a missing route fails LOUD at import,
 // not silently at the VPS. The arch-tests pin the same invariants at build time.
 // ---------------------------------------------------------------------------
 
 /**
- * Assert the cap-map ↔ denylist ↔ route-map soundness invariants (DISPATCH-03 +
- * route completeness). Pure: takes the three tables explicitly so the invariant
+ * Assert the cap-map ↔ denylist ↔ route-map soundness invariants (denylist
+ * disjointness + route completeness). Pure: takes the three tables explicitly so the invariant
  * is independently unit-testable over a poisoned copy (the throw branches are
  * the security fail-loud paths — they MUST be covered). Throws a descriptive
  * `Error` on the first violation.

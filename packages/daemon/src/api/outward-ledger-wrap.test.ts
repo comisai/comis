@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first tests for {@link wrapOutwardSend} — the three-state outward-send
- * ledger wrapper (Phase 216, ONCE-01/02/04).
+ * Tests for {@link wrapOutwardSend} — the three-state outward-send
+ * ledger wrapper.
  *
  * The wrap sits AFTER enforceOutwardQuota at the message.send/reply/react site
  * and turns an irreversible platform call into an exactly-once side effect:
  *   begin (send_attempt_started) → markUnknown (unknown_after_send) → doSend →
  *   commit(platformMessageId).
  *
- * These tests assert the call ORDER, the committed-replay no-op (ONCE-02), the
+ * These tests assert the call ORDER, the committed-replay no-op, the
  * begin-collision "already in flight" (no double send), the permanent-error
- * markFailed-without-retry (ONCE-04), the transient leave-unknown-for-recovery,
- * the content-free digest (no body reaches the ledger, T-216-03), and the two
- * pass-through guards (no rootRunId; no outwardStepIndex — HIGH-1: never default
+ * markFailed-without-retry, the transient leave-unknown-for-recovery,
+ * the content-free digest (no body reaches the ledger), and the two
+ * pass-through guards (no rootRunId; no outwardStepIndex — never default
  * a missing index to 0).
  *
  * @module
@@ -140,12 +140,12 @@ describe("wrapOutwardSend", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.messageId).toBe("platform-msg-99");
-    // begin BEFORE markUnknown BEFORE doSend BEFORE commit (ONCE-01 ordering).
+    // begin BEFORE markUnknown BEFORE doSend BEFORE commit (the required ordering).
     expect(calls).toEqual(["lookup", "begin", "markUnknown", "doSend", "commit"]);
     expect(doSend).toHaveBeenCalledTimes(1);
   });
 
-  it("ONCE-02 committed replay → no-op: doSend is NEVER called and the prior platformMessageId is returned", async () => {
+  it("committed replay → no-op: doSend is NEVER called and the prior platformMessageId is returned", async () => {
     const { ledger, calls } = makeStubLedger({ lookupResult: ok(committedRow("prior-msg-7")) });
     const doSend = vi.fn(async (): Promise<Result<{ messageId: string }, Error>> => {
       calls.push("doSend");
@@ -161,7 +161,7 @@ describe("wrapOutwardSend", () => {
     expect(ledger.begin).not.toHaveBeenCalled();
   });
 
-  it("ONCE-02 begin-collision (UNIQUE) → already-in-flight: doSend is NOT called (no double send)", async () => {
+  it("begin-collision (UNIQUE) → already-in-flight: doSend is NOT called (no double send)", async () => {
     const { ledger, calls } = makeStubLedger({
       lookupResult: ok(undefined),
       beginResult: err(new Error("UNIQUE constraint failed: outward_send_ledger.root_run_id")),
@@ -181,7 +181,7 @@ describe("wrapOutwardSend", () => {
     expect(ledger.markUnknown).not.toHaveBeenCalled();
   });
 
-  it("ONCE-04 permanent error → markFailed and NO retry (the wrap does not loop)", async () => {
+  it("permanent error → markFailed and NO retry (the wrap does not loop)", async () => {
     const { ledger, calls } = makeStubLedger();
     const doSend = vi.fn(async (): Promise<Result<{ messageId: string }, Error>> => {
       calls.push("doSend");
@@ -208,13 +208,13 @@ describe("wrapOutwardSend", () => {
     const result = await wrapOutwardSend({ ledger, ...BASE, doSend, logger: makeLogger() });
 
     expect(result.ok).toBe(false);
-    // The row is left in unknown_after_send: recovery (Plan 04) reconciles it.
+    // The row is left in unknown_after_send: recovery reconciles it.
     expect(ledger.commit).not.toHaveBeenCalled();
     expect(ledger.markFailed).not.toHaveBeenCalled();
     expect(calls).toEqual(["lookup", "begin", "markUnknown", "doSend"]);
   });
 
-  it("content-free: the contentDigest is the sha256 slice of the text and the raw text is NEVER passed to any ledger method (T-216-03)", async () => {
+  it("content-free: the contentDigest is the sha256 slice of the text and the raw text is NEVER passed to any ledger method", async () => {
     const stub = makeStubLedger();
     const text = "secret message body that must not be persisted";
     const doSend = vi.fn(async (): Promise<Result<{ messageId: string }, Error>> => ok({ messageId: "m1" }));
@@ -254,7 +254,7 @@ describe("wrapOutwardSend", () => {
     expect(ledger.begin).not.toHaveBeenCalled();
   });
 
-  it("no outwardStepIndex → pass-through (HIGH-1): doSend once, ledger untouched — it does NOT default to index 0", async () => {
+  it("no outwardStepIndex → pass-through: doSend once, ledger untouched — it does NOT default to index 0", async () => {
     const { ledger, calls } = makeStubLedger();
     const doSend = vi.fn(async (): Promise<Result<{ messageId: string }, Error>> => {
       calls.push("doSend");
@@ -296,8 +296,8 @@ describe("wrapOutwardSend", () => {
   });
 
   // -------------------------------------------------------------------------
-  // MED-6 test-only crash hook (Phase 216 Plan 08): the seam the exactly-once
-  // chaos test arms to crash in the invariant-#12 window (between markUnknown
+  // Test-only crash hook: the seam the exactly-once
+  // chaos test arms to crash in the crash window (between markUnknown
   // and commit), leaving a real unknown_after_send row from the REAL code path.
   // -------------------------------------------------------------------------
 

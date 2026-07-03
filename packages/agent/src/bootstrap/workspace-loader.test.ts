@@ -258,7 +258,7 @@ describe("buildBootstrapContextFiles", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildBootstrapContextFiles — totalMaxChars budget (F2)
+// buildBootstrapContextFiles — totalMaxChars budget
 // ---------------------------------------------------------------------------
 
 describe("buildBootstrapContextFiles — totalMaxChars budget", () => {

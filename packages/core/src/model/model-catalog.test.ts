@@ -208,7 +208,7 @@ describe("ModelCatalog", () => {
       expect(first).toEqual(second);
     });
 
-    // 49-01: cacheWrite1h SDK-preference guard
+    // cacheWrite1h SDK-preference guard: prefer an SDK-supplied rate, else 2x input.
     it("returns cacheWrite1h = 2x input when SDK has no cacheWrite1h field", () => {
       const rates = resolveModelPricing("anthropic", "claude-sonnet-4-5-20250929");
       // cacheWrite1h should be derived as 2x input (per-token rate)
@@ -227,13 +227,13 @@ describe("ModelCatalog", () => {
     });
   });
 
-  // PERSIST-03 (observability-excellence E1) — the three-state honest-pricing
-  // signal. A NEW function alongside resolveModelPricing (whose 5 production
-  // callers + return type must stay untouched — Landmine L3). The discriminator
+  // The three-state honest-pricing
+  // signal. A separate function alongside resolveModelPricing (whose 5 production
+  // callers + return type must stay untouched). The discriminator
   // is provider-family membership (model-family.ts NATIVE_PROVIDER_FAMILY), NOT a
   // bare catalog-presence boolean: a native provider with no catalog entry is the
-  // dangerous ffe11736 fail-open (returns "unknown", never "free").
-  describe("resolvePricingState (PERSIST-03)", () => {
+  // dangerous silent-$0 fail-open (returns "unknown", never "free").
+  describe("resolvePricingState (three-state pricing signal)", () => {
     it("returns 'priced' for a native provider model with a catalog entry", () => {
       // claude-sonnet-4-5 is a known anthropic model with non-zero cost.
       expect(resolvePricingState("anthropic", "claude-sonnet-4-5-20250929")).toBe("priced");
@@ -244,7 +244,7 @@ describe("ModelCatalog", () => {
       expect(resolvePricingState("ollama", "qwen3:8b")).toBe("free");
     });
 
-    it("returns 'unknown' for a NATIVE provider with no catalog entry (the ffe11736 chimera case)", () => {
+    it("returns 'unknown' for a NATIVE provider with no catalog entry (the chimeric silent-$0 case)", () => {
       // anthropic IS in NATIVE_PROVIDER_FAMILY but this model id has no catalog
       // entry → the dangerous silent-$0 fail-open must surface as "unknown".
       expect(resolvePricingState("anthropic", "some-model-not-in-catalog")).toBe("unknown");
@@ -254,12 +254,12 @@ describe("ModelCatalog", () => {
       expect(resolvePricingState("openrouter", "anything")).toBe("free");
     });
 
-    // LOW-2 (177-obs-loop): the documented-but-untested branch — a catalog entry
+    // The all-zero-rate branch: a catalog entry
     // that IS PRESENT but carries ALL-ZERO rates (e.g. a scanned custom model) is
     // treated as NOT-priced and FALLS THROUGH to the provider-family discriminator
     // (model-catalog.ts:267-278). The result then depends ONLY on whether the
-    // provider is native: native → unknown (the ffe11736 silent-$0 danger), gateway
-    // → free ($0 is honest for a local runtime). Both directions are now pinned.
+    // provider is native: native → unknown (the silent-$0 danger), gateway
+    // → free ($0 is honest for a local runtime). Both directions are pinned.
     const zeroRateEntry = (provider: string, modelId: string): CatalogEntry => ({
       provider,
       modelId,
@@ -273,7 +273,7 @@ describe("ModelCatalog", () => {
       validatedAt: 1,
     });
 
-    it("LOW-2: a PRESENT all-zero-rate catalog entry on a NATIVE provider falls through to 'unknown'", () => {
+    it("a PRESENT all-zero-rate catalog entry on a NATIVE provider falls through to 'unknown'", () => {
       const c = createModelCatalog();
       c.mergeScanned([zeroRateEntry("anthropic", "custom-uncosted-model")]);
       // The entry exists, but all rates are 0 → not "priced"; anthropic is native
@@ -282,7 +282,7 @@ describe("ModelCatalog", () => {
       expect(resolvePricingState("anthropic", "custom-uncosted-model", c)).toBe("unknown");
     });
 
-    it("LOW-2: a PRESENT all-zero-rate catalog entry on a GATEWAY provider falls through to 'free'", () => {
+    it("a PRESENT all-zero-rate catalog entry on a GATEWAY provider falls through to 'free'", () => {
       const c = createModelCatalog();
       c.mergeScanned([zeroRateEntry("ollama", "qwen3:custom")]);
       // The entry exists with all-zero rates; ollama is a local runtime (absent

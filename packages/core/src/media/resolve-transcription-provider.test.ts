@@ -5,16 +5,16 @@ import { resolveTranscriptionProvider } from "./resolve-transcription-provider.j
 /**
  * resolveTranscriptionProvider is a PURE keyless-first priority resolver (no
  * I/O) for STT provider selection. Purity is preserved by injecting two boolean
- * predicates the daemon supplies (`localEngineAvailable` — FALSE until Phase 194
- * wires an engine; `audioKeyAvailable` — a SecretManager lookup, FALSE for
+ * predicates the daemon supplies (`localEngineAvailable` — FALSE when no local
+ * engine is wired; `audioKeyAvailable` — a SecretManager lookup, FALSE for
  * OAuth-only mains) and an optional `onSkip` callback. The resolver never
  * touches SecretManager, OAuthTokenManager, process.env, or the network.
  *
- * Covers RES-01 (numbered keyless-first priority + discriminated result),
- * RES-04 (fallbackProviders only after keyless+follow-main, each skip reported),
- * RES-05 (no throws), STEER-01/02 (Codex steered to honest-unavailable, never a
- * keyed openai adapter; hint names the real remedy), and CRED-01 (follow-main
- * only when the key genuinely exists).
+ * Covers the numbered keyless-first priority + discriminated result,
+ * fallbackProviders (only after keyless+follow-main, each skip reported),
+ * the no-throw guarantee, Codex steering (honest-unavailable, never a
+ * keyed openai adapter; hint names the real remedy), and follow-main
+ * only when the key genuinely exists.
  */
 describe("resolveTranscriptionProvider", () => {
   const LOCAL_OFF = (): boolean => false;
@@ -22,7 +22,7 @@ describe("resolveTranscriptionProvider", () => {
   const NO_AUDIO_KEY = (): boolean => false;
   const HAS_AUDIO_KEY = (): boolean => true;
 
-  it("steers an OAuth-only codex main to honest-unavailable, never a keyed openai adapter (STEER-01/02)", () => {
+  it("steers an OAuth-only codex main to honest-unavailable, never a keyed openai adapter", () => {
     const sel = resolveTranscriptionProvider({ provider: "auto" }, "openai-codex", LOCAL_OFF, NO_AUDIO_KEY);
     expect(sel.ok).toBe(false);
     if (!sel.ok) {
@@ -34,29 +34,29 @@ describe("resolveTranscriptionProvider", () => {
     }
   });
 
-  it("resolves keyless-local FIRST when the engine is available, even if the main has no key (RES-01)", () => {
+  it("resolves keyless-local FIRST when the engine is available, even if the main has no key", () => {
     const sel = resolveTranscriptionProvider({ provider: "auto" }, "openai", LOCAL_ON, NO_AUDIO_KEY);
     expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true, source: "keyless-local" });
   });
 
-  it("keyless-local wins over a present main key (the default ordering, Hermes parity)", () => {
+  it("keyless-local wins over a present main key (the default ordering)", () => {
     const sel = resolveTranscriptionProvider({ provider: "auto" }, "openai", LOCAL_ON, HAS_AUDIO_KEY);
     expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true, source: "keyless-local" });
   });
 
-  it("follows the main key only when it genuinely exists (CRED-01/RES-01)", () => {
+  it("follows the main key only when it genuinely exists", () => {
     const sel = resolveTranscriptionProvider({ provider: "auto" }, "openai", LOCAL_OFF, HAS_AUDIO_KEY);
     expect(sel).toMatchObject({ ok: true, provider: "openai", keyless: false, source: "follow-main-key" });
   });
 
-  it("NEVER follows-main when the audio key is absent — the codex case proves no phantom reuse (STEER-01)", () => {
+  it("NEVER follows-main when the audio key is absent — the codex case proves no phantom reuse", () => {
     // openai main, but audioKeyAvailable false → must NOT resolve to a keyed openai adapter.
     const sel = resolveTranscriptionProvider({ provider: "auto" }, "openai", LOCAL_OFF, NO_AUDIO_KEY);
     expect(sel.ok).toBe(false);
     if (!sel.ok) expect(sel.errorKind).toBe("no_keyless_engine");
   });
 
-  it("resolves an explicit keyed provider with a present key as explicit (success-criterion #4)", () => {
+  it("resolves an explicit keyed provider with a present key as an explicit selection", () => {
     const sel = resolveTranscriptionProvider({ provider: "openai" }, "ollama", LOCAL_OFF, HAS_AUDIO_KEY);
     expect(sel).toMatchObject({ ok: true, provider: "openai", keyless: false, source: "explicit" });
   });
@@ -75,7 +75,7 @@ describe("resolveTranscriptionProvider", () => {
     expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true, source: "explicit" });
   });
 
-  it("consults fallback only after keyless+follow-main fail, reporting follow-main FIRST (RES-04)", () => {
+  it("consults fallback only after keyless+follow-main fail, reporting follow-main FIRST", () => {
     const onSkip = vi.fn();
     // main codex (no audio key), local off, audio key present only for "groq".
     const sel = resolveTranscriptionProvider(
@@ -91,7 +91,7 @@ describe("resolveTranscriptionProvider", () => {
     expect(onSkip.mock.calls[0]?.[0]).toMatch(/keyless-local unavailable|follow-main|no usable audio key/i);
   });
 
-  it("reports a fallback entry with no key as skipped, never silently falling through (RES-04)", () => {
+  it("reports a fallback entry with no key as skipped, never silently falling through", () => {
     const onSkip = vi.fn();
     const sel = resolveTranscriptionProvider(
       { provider: "auto", fallbackProviders: ["openai", "groq"] },
@@ -105,7 +105,7 @@ describe("resolveTranscriptionProvider", () => {
     expect(reasons.some((r) => r.includes("openai") && /no key/i.test(r))).toBe(true);
   });
 
-  it("resolves a keyless fallback entry without a key (VOICE_KEYLESS short-circuit, RES-04)", () => {
+  it("resolves a keyless fallback entry without a key (VOICE_KEYLESS short-circuit)", () => {
     const sel = resolveTranscriptionProvider(
       { provider: "auto", fallbackProviders: ["local"] },
       "openai-codex",
@@ -115,7 +115,7 @@ describe("resolveTranscriptionProvider", () => {
     expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true, source: "fallback" });
   });
 
-  it("never throws for an empty/unknown/exhausted config (RES-05)", () => {
+  it("never throws for an empty/unknown/exhausted config", () => {
     expect(() => resolveTranscriptionProvider({ provider: "auto" }, "", LOCAL_OFF, NO_AUDIO_KEY)).not.toThrow();
     expect(() =>
       resolveTranscriptionProvider({ provider: "totally-bogus" }, "ollama", LOCAL_OFF, NO_AUDIO_KEY),

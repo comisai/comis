@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * GENQ-01: the shared, guarded emit helper for `memory:generation_quality`.
+ * The shared, guarded emit helper for `memory:generation_quality`.
  *
  * The single call site every memory-generation pass (consolidation, reasoning,
  * user-representation) routes through, mirroring the context-engine's
- * `emitSummaryLanguageMismatch` (OBS-01). It runs the pure single-source
- * `classifyGenerationQuality` (I7) over the pass's (source → output) text pair
+ * `emitSummaryLanguageMismatch`. It runs the pure single-source
+ * `classifyGenerationQuality` over the pass's (source → output) text pair
  * and, ONLY when a quality issue is present, emits a content-free event so the
- * F-ML1 regression class (a weak local model translating non-Latin source
- * memories into a Latin output) becomes a counted `comis fleet` finding instead
- * of an offline-probe finding.
+ * language-mismatch regression class (a weak local model translating non-Latin
+ * source memories into a Latin output) becomes a counted `comis fleet` finding
+ * instead of an offline-probe finding.
  *
  * VISIBILITY ONLY — never gates the generation. The emit is strictly additive and
  * GUARDED: a throwing subscriber NEVER fails the (cron) generation pass. The
  * payload carries the closed `GenerationPass` + `ScriptClass` enums + booleans +
- * the agentId ONLY — NEVER the source or generated body (§2.7).
+ * the agentId ONLY — NEVER the source or generated body (AGENTS.md §2.7).
  * @module
  */
 import { classifyGenerationQuality, type GenerationPass } from "@comis/core";
@@ -80,7 +80,7 @@ export function emitGenerationQuality(
     eventBus?.emit("memory:generation_quality", payload);
   } catch (err) {
     // Guarded-emit (the emitSummaryLanguageMismatch isolation pattern):
-    // observability NEVER fails the generation pass. Content-free WARN (§2.7).
+    // observability NEVER fails the generation pass. Content-free WARN (AGENTS.md §2.7).
     logger.warn(
       {
         err: err instanceof Error ? err.message : String(err),

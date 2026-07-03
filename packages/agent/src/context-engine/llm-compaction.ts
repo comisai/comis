@@ -67,16 +67,16 @@ export interface CompactionLayerConfig {
   /** Turns to wait before re-triggering compaction. */
   compactionCooldownTurns: number;
   /** Number of user-turn cycles at conversation head to preserve during compaction.
-   *  0 = old behavior (tail-only). */
+   *  0 = tail-only compaction (no preserved head). */
   compactionPrefixAnchorTurns: number;
-  // C4: capability-routed compaction
+  // Capability-routed compaction
   /** The agent's capability class (from ModelProfile). Defaults to "frontier" (unchanged behavior). */
   capabilityClass?: CapabilityClass;
   /** Route small/nano to eviction instead of LLM summarization. Defaults to true. */
   preferEvictionByCapability?: boolean;
   /** If set, small/nano use this stronger model for summarization instead of eviction. */
   strongerSummarizerModel?: string;
-  // S4: security context pinning
+  // Security context pinning
   /** Security pin markers for identifying messages that must never be evicted. */
   securityMarkers?: SecurityPinMarkers;
 }
@@ -162,14 +162,14 @@ export function validateCompactionSummary(summary: string): {
  * (or at the very front when `headCount === 0`), removes EXACTLY the message
  * entries named by `removeMessageOrdinals`, and calls `_rewriteFile()` once.
  *
- * Review WR-01: removal is by IDENTITY — the caller passes the file-order
- * message ordinals of the SUMMARIZED span — never by count. The previous
- * count-based removal took the first (pinned + span) middle entries
- * positionally, which deleted un-summarized REMAINDER entries from the durable
- * session file whenever an S4-pinned message sat later in the middle: durable
- * history deletion the summary does not cover (Pitfall 3). With identity
- * removal, pinned messages AND the remainder survive in the file regardless of
- * interleaving; only content the summary actually covers is removed.
+ * Removal is by IDENTITY — the caller passes the file-order message ordinals
+ * of the SUMMARIZED span — never by count. A count-based removal would take
+ * the first (pinned + span) middle entries positionally, which deletes
+ * un-summarized REMAINDER entries from the durable session file whenever a
+ * security-pinned message sits later in the middle: durable history deletion
+ * the summary does not cover. With identity removal, pinned messages AND the
+ * remainder survive in the file regardless of interleaving; only content the
+ * summary actually covers is removed.
  *
  * This is safe because `transformContext` runs within the `withSession()` write lock.
  */
@@ -197,8 +197,8 @@ function persistCompaction(
   };
 
   // Single walk over fileEntries: drop the named message ordinals, insert the
-  // compaction entry immediately after the headCount-th message entry (the
-  // pre-existing placement), or prepend when there is no preserved head.
+  // compaction entry immediately after the headCount-th message entry, or
+  // prepend when there is no preserved head.
   const newEntries: unknown[] = [];
   let inserted = false;
   if (headCount === 0) {
@@ -276,7 +276,7 @@ export function createLlmCompactionLayer(
           /* eslint-disable @typescript-eslint/no-explicit-any */
           const contextChars = estimateContextCharsWithDualRatio(messages as any);
           /* eslint-enable @typescript-eslint/no-explicit-any */
-          // flat-by-design: aggregate cold-start compare, no text in scope; anti-conservative for ONE unanchored turn — estimateWithAnchor self-corrects from turn 2 (TOK-01, design §4)
+          // flat-by-design: aggregate cold-start compare, no text in scope; anti-conservative for ONE unanchored turn — estimateWithAnchor self-corrects from turn 2
           const charBasedTokens = Math.ceil(contextChars / CHARS_PER_TOKEN_RATIO);
           const anchor = deps.getTokenAnchor?.() ?? null;
           contextTokens = estimateWithAnchor(anchor, messages as unknown as Message[], charBasedTokens);
@@ -287,8 +287,8 @@ export function createLlmCompactionLayer(
           }
         }
 
-        // Step 4: Resolve model. INT-W1: the served-window truth rides the SAME
-        // branch as the model selection (gated per candidate at the wiring site).
+        // Step 4: Resolve model. The served-window truth rides the SAME branch
+        // as the model selection (gated per candidate at the wiring site).
         /* eslint-disable @typescript-eslint/no-explicit-any */
         let model: any;
         let apiKey: string;
@@ -379,9 +379,9 @@ export function createLlmCompactionLayer(
           return messages;
         }
 
-        // S4: filter security-pinned messages out of the middle zone.
+        // Filter security-pinned messages out of the middle zone.
         // pinned[] is hoisted to outer scope so the output assembly can re-insert them
-        // (see result assembly below — S4 invariant: pinned messages MUST appear in output).
+        // (see result assembly below — invariant: pinned messages MUST appear in output).
         // Must run before the capability gate so pinnedCount is accurate for the event.
         const pinned: AgentMessage[] = [];
         let evictableMiddle = middleMessages;
@@ -401,7 +401,7 @@ export function createLlmCompactionLayer(
           evictableMiddle = evictable;
         }
 
-        // C4: resolve the compaction strategy based on capability class.
+        // Resolve the compaction strategy based on capability class.
         const compactionStrategy = resolveCompactionStrategy(
           config.capabilityClass ?? "frontier",
           config.preferEvictionByCapability ?? true,
@@ -438,27 +438,26 @@ export function createLlmCompactionLayer(
           return messages;
         }
 
-        // SUMW-01 (Phase 178): clamp the summarized span to the RESOLVED
-        // summarizer's window. Reads the LOCAL `model` resolved at Step 4 — the
-        // SAME variable handed to generateSummary (the try/catch override
-        // fallback already decided which model summarizes; re-resolving here
-        // could disagree — Pitfall 2). With an `operationModels.compaction`
-        // override the summarizer's window (e.g. 8K) can be far smaller than
-        // the middle zone — feeding the whole span is a provider overflow.
-        // INT-W1: the configured window is min()'d with the Phase-176 SERVED
-        // window bound to the SAME Step-4 candidate (a served-bound PRIMARY —
-        // num_ctx 8_192 under a configured 131_072 — clamps too, not just
-        // overrides). Neither valid → clamp OFF (never invent a window). The 85%
-        // trigger + cooldown re-fire until the remainder backlog drains (the
-        // cut===0 escalation guarantees every evaluation makes progress).
+        // Clamp the summarized span to the RESOLVED summarizer's window. Reads
+        // the LOCAL `model` resolved at Step 4 — the SAME variable handed to
+        // generateSummary (the try/catch override fallback already decided
+        // which model summarizes; re-resolving here could disagree). With an
+        // `operationModels.compaction` override the summarizer's window (e.g.
+        // 8K) can be far smaller than the middle zone — feeding the whole span
+        // is a provider overflow. The configured window is min()'d with the
+        // SERVED window bound to the SAME Step-4 candidate (a served-bound
+        // PRIMARY — num_ctx 8_192 under a configured 131_072 — clamps too, not
+        // just overrides). Neither valid → clamp OFF (never invent a window).
+        // The 85% trigger + cooldown re-fire until the remainder backlog drains
+        // (the cut===0 escalation guarantees every evaluation makes progress).
         const summarizerWindow = effectiveSummarizerWindow(
           (model as { contextWindow?: number } | undefined)?.contextWindow, servedSummarizerWindow,
         );
-        // Review CR-01: the summary-output reserve must be SUMMARIZER-sized, not
+        // The summary-output reserve must be SUMMARIZER-sized, not
         // session-sized — subtracting the session's outputReserveTokens (8_192 on
         // any frontier session) from an 8K summarizer's window goes permanently
-        // negative and silently disables compaction forever (a regression vs the
-        // pre-clamp Level-2/3 floor). Reserve at most a QUARTER of the resolved
+        // negative and silently disables compaction forever (losing even the
+        // Level-2/3 fallback floor). Reserve at most a QUARTER of the resolved
         // summarizer's own window, and pass the SAME value to compactWithFallback
         // below so the clamp and the generateSummary reserveTokens agree.
         const summaryReserve =
@@ -471,17 +470,17 @@ export function createLlmCompactionLayer(
           const maxSpanTokens =
             summarizerWindow - summaryReserve - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
           // Oldest-first prefix walk over the evictable middle: cut at the
-          // first message that would exceed maxSpanTokens. Review WR-04: each
-          // message is measured with the SAME dual-ratio estimate the layer's
-          // own 85% trigger uses (toolResult chars weighted ×2 before the 3.5
+          // first message that would exceed maxSpanTokens. Each message is
+          // measured with the SAME dual-ratio estimate the layer's own 85%
+          // trigger uses (toolResult chars weighted ×2 before the 3.5
           // divide) — a flat chars/3.5 walk under-counts structured content by
           // ~15-17%, re-opening the provider-overflow class on toolResult-heavy
           // middles. One estimator per layer (single-sourced with the trigger).
-          // TOK-01 (Phase 179): the divisor is modulated by scriptTokenFactor
-          // over the message's extracted text — a Hebrew message carries ~1.8×
-          // the tokens the flat measure admits, the same under-count class the
-          // WR-04 dual-ratio fix closed for toolResults. The dual-ratio CHAR
-          // walk stays authoritative (ASCII factor 1.0 → byte-identical cut).
+          // The divisor is modulated by scriptTokenFactor over the message's
+          // extracted text — a Hebrew message carries ~1.8× the tokens the
+          // flat measure admits, the same under-count class the dual-ratio
+          // estimate closes for toolResults. The dual-ratio CHAR walk stays
+          // authoritative (ASCII factor 1.0 → byte-identical cut).
           let spanTokens = 0;
           let cut = 0;
           for (const m of evictableMiddle) {
@@ -497,7 +496,7 @@ export function createLlmCompactionLayer(
             cut++;
           }
           if (cut === 0) {
-            // Review CR-01 (convergence): even the OLDEST evictable message alone
+            // Convergence guarantee: even the OLDEST evictable message alone
             // exceeds the span budget (or the window is below reserve + overhead).
             // Skipping here would disarm compaction PERMANENTLY — the oldest
             // message never leaves the middle's head, so every later evaluation
@@ -566,11 +565,11 @@ export function createLlmCompactionLayer(
         );
 
         // Step 7: Summarize ONLY the clamped middle span (do NOT pass head or tail
-        // to generateSummary). spanToSummarize is the SUMW-01 oldest-first prefix of
+        // to generateSummary). spanToSummarize is the oldest-first prefix of
         // evictableMiddle that fits the resolved summarizer's window (security-pinned
-        // messages already excluded via S4 filtering above); when the clamp does not
+        // messages already excluded via the filtering above); when the clamp does not
         // bind it IS evictableMiddle. summaryReserve is the SAME summarizer-sized
-        // reserve the clamp budgeted (review CR-01) — clamp and call always agree.
+        // reserve the clamp budgeted — clamp and call always agree.
         const compactionResult = await compactWithFallback(
           spanToSummarize,
           model,
@@ -579,7 +578,7 @@ export function createLlmCompactionLayer(
           deps.logger,
         );
 
-        // OBS-01 (Phase 180): the small-model G4 detector at the PIPELINE site
+        // Small-model language-drift detection at the PIPELINE site
         // (depth -1). The summary is now final (post-validate inside
         // compactWithFallback); when a non-Latin source span produced a Latin
         // summary, emit context:summary_language_mismatch. Source = the SAME span
@@ -606,13 +605,13 @@ export function createLlmCompactionLayer(
         } as unknown as AgentMessage;
 
         // Assemble: head + pinned + summary + remainingMiddle + tail
-        // S4: pinned messages from the middle zone are excluded from summarization
+        // Security-pinned messages from the middle zone are excluded from summarization
         // but MUST be preserved in the output so they are never evicted from context.
         // They are placed before the summary (surviving context, not part of the summary).
-        // SUMW-01: the un-summarized remainder of the middle zone is NEVER dropped
-        // (Pitfall 3 — a dropped remainder is silent, unrecoverable history deletion);
+        // The un-summarized remainder of the middle zone is NEVER dropped
+        // (a dropped remainder is silent, unrecoverable history deletion);
         // it sits between the summary and the tail in original order. When the clamp
-        // does not bind, remainingMiddle is [] → output identical to before SUMW-01.
+        // does not bind, remainingMiddle is [] → output identical to an unclamped run.
         // head stays at original positions for cache prefix stability.
         const headMessages = messages.slice(0, headEndIndex);
         const tailMessages = messages.slice(tailStartIndex);
@@ -625,13 +624,13 @@ export function createLlmCompactionLayer(
         ];
 
         // Step 8: Persist compaction to SessionManager
-        // SUMW-01 / review WR-01: durable-side conservation is by IDENTITY —
+        // Durable-side conservation is by IDENTITY —
         // messages[i] corresponds 1:1 to the i-th message entry in fileEntries
         // (the positional model the head/tail counts already relied on), so we
         // remove EXACTLY the summarized span's entries. Pinned messages and the
         // un-summarized remainder survive in the durable file regardless of how
         // they interleave; removing anything else would be durable history
-        // deletion the summary does not cover (the Pitfall-3 data loss).
+        // deletion the summary does not cover — silent data loss.
         try {
           const sm = deps.getSessionManager();
           if (sm) {
@@ -664,7 +663,7 @@ export function createLlmCompactionLayer(
             originalMessages: messages.length,
             keptHeadMessages: headMessages.length,
             keptTailMessages: tailMessages.length,
-            // SUMW-01: counts reflect the CLAMPED span actually summarized, plus
+            // Counts reflect the CLAMPED span actually summarized, plus
             // the preserved un-summarized remainder (counts only — never content).
             middleSummarized: spanToSummarize.length,
             middleRemainder: remainingMiddle.length,

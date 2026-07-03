@@ -32,11 +32,11 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | secretManager | optional | mcp-handlers' env-ref validation is skipped (`mcp-handlers` reads `deps.secretManager?.has`); MCP server configs with missing env refs fail later at connect time | packages/daemon/src/api/types.ts:295 |
 | secretStore | required | — | packages/daemon/src/api/types.ts:304 |
 | persistDeps | optional | mcp-handlers' YAML writes via `persistMcpServers` become best-effort no-ops; MCP server registrations succeed at runtime but do not persist to `config.yaml`, so subsequent daemon restarts forget them | packages/daemon/src/api/types.ts:293 |
-| createTokenStore | optional | mcp-handlers' Fix-4 token-aware short-circuit for `auth:"oauth"` connects is skipped; `manager.connect` runs blind even when no token exists, the SDK's DCR fails with `invalid_redirect_uri` (Comis only carries a real redirect URI during `mcp.oauth_login`), and the user gets the raw error instead of the `needs_oauth_login` hint. Test harnesses omit this field and rely on the post-failure persist path | packages/daemon/src/api/types.ts:319 |
+| createTokenStore | optional | mcp-handlers' token-aware short-circuit for `auth:"oauth"` connects is skipped; `manager.connect` runs blind even when no token exists, the SDK's DCR fails with `invalid_redirect_uri` (Comis only carries a real redirect URI during `mcp.oauth_login`), and the user gets the raw error instead of the `needs_oauth_login` hint. Test harnesses omit this field and rely on the post-failure persist path | packages/daemon/src/api/types.ts:319 |
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. `approvalGate`, `skillRegistries`, `notificationService` are configurable subsystems with explicit fallback behavior; `eventBus` and `secretManager` are observability / validation hooks that the handlers query defensively with `?.` so absence is non-fatal. `secretStore` is required (Plan 02-04) — always wired with file/encrypted/env adapter so mcp-handlers always have a backend for static-secret header extraction.
+**None.** Every optional field corresponds to a feature-gate documented above. `approvalGate`, `skillRegistries`, `notificationService` are configurable subsystems with explicit fallback behavior; `eventBus` and `secretManager` are observability / validation hooks that the handlers query defensively with `?.` so absence is non-fatal. `secretStore` is required — always wired with a file/encrypted/env adapter so mcp-handlers always have a backend for static-secret header extraction.
 
 ## Summary
 

@@ -189,20 +189,20 @@ describe("createLlmCompactionLayer", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 1b. FLOOR-02 (Phase 176) — the pipeline-path parity verdict pins.
+  // 1b. Pipeline-path parity pins for the budget-aware compaction trigger.
   //
-  // The "pipeline" context engine has no CWF-02 preflight, no output-headroom
-  // enforcement, and no proactive exhaustion classification (those are
-  // dag-only). Its de-facto fit guard is THIS budget-aware 85% compaction
-  // trigger (llm-compaction.ts: thresholdTokens =
+  // The "pipeline" context engine has no context-window-fit preflight, no
+  // output-headroom enforcement, and no proactive exhaustion classification
+  // (those are dag-only). Its de-facto fit guard is THIS budget-aware 85%
+  // compaction trigger (llm-compaction.ts: thresholdTokens =
   // floor(budget.windowTokens * COMPACTION_TRIGGER_PERCENT / 100)). These are
-  // CHARACTERIZATION pins of existing behavior — the written half of the
-  // FLOOR-02 verdict (the doc half lives in docs/reference/config-yaml.mdx).
+  // CHARACTERIZATION pins of existing behavior — the code half of the parity
+  // contract (the doc half lives in docs/reference/config-yaml.mdx).
   // The below-threshold direction is pinned above; these pin the other
   // direction (arms at threshold) and the threshold's derivation source.
   // -------------------------------------------------------------------------
 
-  it("FLOOR-02-1: arms compaction when above 85% of budget.windowTokens (pipeline de-facto fit guard — parity verdict pin)", async () => {
+  it("arms compaction when above 85% of budget.windowTokens (the pipeline path's de-facto fit guard)", async () => {
     const { deps, logger } = createMockDeps();
     const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
     // 10 text messages × ~50K chars ≈ 500K chars ≈ 143K tokens (ratio 3.5) —
@@ -237,7 +237,7 @@ describe("createLlmCompactionLayer", () => {
     );
   });
 
-  it("FLOOR-02-2: threshold derives from budget.windowTokens, not the model's configured contextWindow", async () => {
+  it("derives the trigger threshold from budget.windowTokens, not the model's configured contextWindow", async () => {
     const { deps, logger } = createMockDeps();
     // The deps' model declares contextWindow 128_000 (createMockDeps), but the
     // budget handed to the layer carries a SMALLER windowTokens — the shape a
@@ -850,9 +850,8 @@ describe("discoveredTools metadata in compaction", () => {
 // Resolver-integrated compaction model (overrideModel contract)
 // ---------------------------------------------------------------------------
 // These tests verify the downstream consumption contract that pi-executor's
-// resolver-based getCompactionDeps relies on. The overrideModel is now
-// populated by resolveOperationModel in pi-executor, rather than
-// ad-hoc string parsing. These tests verify:
+// resolver-based getCompactionDeps relies on. The overrideModel is
+// populated by resolveOperationModel in pi-executor. These tests verify:
 // 1. overrideModel.model is used for generateSummary when present
 // 2. Fallback to getModel() when overrideModel is absent
 // 3. overrideModel.getApiKey is used instead of primary getApiKey
@@ -1157,7 +1156,7 @@ describe("three-zone middle-out compaction", () => {
     expect(lastResult).toBe(messages[messages.length - 1]);
   });
 
-  it("prefixAnchorTurns=0 uses tail-only behavior (backward compatible)", async () => {
+  it("prefixAnchorTurns=0 uses tail-only behavior (no preserved head)", async () => {
     const { deps } = createMockDeps();
     const layer = createLlmCompactionLayer(
       { compactionCooldownTurns: 0, compactionPrefixAnchorTurns: 0 },
@@ -1239,7 +1238,7 @@ describe("three-zone middle-out compaction", () => {
     expect(mockGenerateSummary).not.toHaveBeenCalled();
     expect(result).toBe(messages);
 
-    // V5 regression: when compaction is structurally infeasible (middle too small),
+    // Regression: when compaction is structurally infeasible (middle too small),
     // the trigger warn must NOT fire — otherwise we get a per-turn warn storm.
     const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
     const triggerWarnCalls = warnCalls.filter(
@@ -1369,7 +1368,7 @@ describe("three-zone middle-out compaction", () => {
     expect(mockGenerateSummary).not.toHaveBeenCalled();
     expect(result).toBe(messages);
 
-    // V5 regression: trigger warn must not fire when nothing was compacted.
+    // Regression: trigger warn must not fire when nothing was compacted.
     const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
     const triggerWarnCalls = warnCalls.filter(
       (c) => typeof c[1] === "string" && c[1].includes("LLM compaction triggered"),
@@ -1378,11 +1377,11 @@ describe("three-zone middle-out compaction", () => {
   });
 
   it("does not warn-storm when block_count exceeds threshold but middle is structurally empty", async () => {
-    // Reproduces the V5 production incident:
+    // Reproduces a production incident:
     //   messageCount climbs past CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD (60)
     //   while every message is small enough that head+tail absorbs everything,
-    //   leaving middle empty. Previously, every apply() call logged the trigger
-    //   warn; we observed 19 warns in 90s while the count climbed 61 -> 113.
+    //   leaving middle empty. Unguarded, every apply() call logs the trigger
+    //   warn — observed as 19 warns in 90s while the count climbed 61 -> 113.
     const { deps, logger } = createMockDeps();
     const layer = createLlmCompactionLayer(
       // cooldown=0 so the storm path is exercised on every call
@@ -1433,7 +1432,7 @@ describe("three-zone middle-out compaction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// C4/S4: capability-routed compaction + security pinning (pipeline layer)
+// Capability-routed compaction + security pinning (pipeline layer)
 // ---------------------------------------------------------------------------
 
 import type { TypedEventBus } from "@comis/core";
@@ -1450,7 +1449,7 @@ function makeEventBus(): { bus: TypedEventBus; emits: Array<{ event: string; pay
   return { bus, emits };
 }
 
-describe("C4: capability-routed compaction (pipeline layer)", () => {
+describe("capability-routed compaction (pipeline layer)", () => {
   beforeEach(() => {
     mockGenerateSummary.mockReset();
   });
@@ -1479,7 +1478,7 @@ describe("C4: capability-routed compaction (pipeline layer)", () => {
     expect(mockGenerateSummary).not.toHaveBeenCalled();
     // Returns messages unchanged
     expect(result).toBe(largeMessages);
-    // WARN logged with C4 indicator
+    // WARN logged with the capability-gate hint
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         hint: expect.stringContaining("C4"),
@@ -1570,7 +1569,7 @@ describe("C4: capability-routed compaction (pipeline layer)", () => {
   });
 });
 
-describe("S4: security context pinning (pipeline layer)", () => {
+describe("security context pinning (pipeline layer)", () => {
   const MARKERS: SecurityPinMarkers = {
     canaryToken: "CANARY_xyzw1234",
     contentDelimiter: "UNTRUSTED_BEGIN_abc",
@@ -1649,12 +1648,12 @@ describe("S4: security context pinning (pipeline layer)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CR-01 regression: pinned messages MUST appear in the returned array
+  // Regression: pinned messages MUST appear in the returned array
   // -------------------------------------------------------------------------
 
-  it("CR-01: security-pinned middle-zone messages ARE PRESENT in the returned array after compaction", async () => {
-    // This is the membership assertion the prior tests missed.
-    // Verifies S4 invariant: pinned messages are never evicted from the context.
+  it("security-pinned middle-zone messages ARE PRESENT in the returned array after compaction", async () => {
+    // This is the membership assertion the event-count tests above do not cover.
+    // Verifies the security-pinning invariant: pinned messages are never evicted from the context.
     //
     // Design: use very large messages (200K chars each) so the tail budget of
     // ~305K chars only holds 1-2 messages. This ensures the pinned messages
@@ -1713,7 +1712,7 @@ describe("S4: security context pinning (pipeline layer)", () => {
     expect(result).not.toBe(messages);
 
     // Both pinned messages MUST be present in the returned array (by identity).
-    // This is the CR-01 membership assertion: pinned messages never disappear.
+    // This is the core membership assertion: pinned messages never disappear.
     expect(result).toContain(pinnedCanary);
     expect(result).toContain(pinnedDelimiter);
 
@@ -1732,7 +1731,7 @@ describe("S4: security context pinning (pipeline layer)", () => {
     expect(delimIdx).toBeLessThan(summaryIdx);
   });
 
-  it("CR-01: pinned messages preserved with prefixAnchorTurns set (three-zone compaction)", async () => {
+  it("preserves pinned messages with prefixAnchorTurns set (three-zone compaction)", async () => {
     // Ensure pinned messages survive even in three-zone (head + pinned-middle + summary + tail) mode.
     const { deps } = createMockDeps();
     const layer = createLlmCompactionLayer(
@@ -1774,27 +1773,26 @@ describe("S4: security context pinning (pipeline layer)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SUMW-01 (Phase 178): pipeline span clamp — the compaction input span must
-// never exceed the RESOLVED summarizer's window minus output reserve minus
-// prompt overhead. Today the layer feeds the WHOLE evictableMiddle to SDK
+// Pipeline span clamp — the compaction input span must never exceed the
+// RESOLVED summarizer's window minus output reserve minus prompt overhead.
+// Unclamped, the layer would feed the WHOLE evictableMiddle to SDK
 // generateSummary (:550 → compactWithFallback), unbounded relative to the
 // summarizer — an `operationModels.compaction` 8K model handed a ~20K-token
-// span is a provider overflow. These fixtures pin BOTH halves of the fix:
+// span is a provider overflow. These fixtures pin BOTH halves of the contract:
 //   1. the clamp keys on the LOCAL resolved `model` (the same variable fed to
-//      generateSummary — override wins over the session primary, Pitfall 2);
+//      generateSummary — override wins over the session primary);
 //   2. the un-summarized remainder of the middle zone is PRESERVED in the
-//      output between the summary and the tail (:574 assembly — Pitfall 3:
+//      output between the summary and the tail (:574 assembly —
 //      a dropped remainder is silent, unrecoverable history deletion).
 // Span budget arithmetic (values pinned deliberately — SUMMARIZER_PROMPT_
-// OVERHEAD_TOKENS = 2_048, plan-adopted research A1; review CR-01 replaced the
-// session outputReserveTokens with a SUMMARIZER-sized reserve so small windows
-// never go permanently negative):
+// OVERHEAD_TOKENS = 2_048; the reserve is SUMMARIZER-sized rather than the
+// session outputReserveTokens so small windows never go permanently negative):
 //   summaryReserve = min(budget.outputReserveTokens, max(1, ⌊W/4⌋))
 //   maxSpanTokens  = W − summaryReserve − 2_048
 //   8K override:   8_000 − 2_000 − 2_048 = 3_952  (the binding fixture)
-//   200K override: 200_000 − 4_096 − 2_048 = 193_856 (the no-op I3 pin)
+//   200K override: 200_000 − 4_096 − 2_048 = 193_856 (the no-op pin)
 //   3K override:   3_000 − 750 − 2_048 = 202     (oldest msg alone exceeds →
-//                  CR-01 single-message escalation, never a permanent skip)
+//                  single-message escalation, never a permanent skip)
 // ---------------------------------------------------------------------------
 
 import type { Message } from "@earendil-works/pi-ai";
@@ -1802,13 +1800,13 @@ import { scriptTokenFactor } from "@comis/core";
 import { estimateMessageChars, estimateContextCharsWithDualRatio } from "../safety/token-estimator.js";
 import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
 
-describe("SUMW-01: pipeline span clamp", () => {
+describe("pipeline span clamp to the resolved summarizer window", () => {
   beforeEach(() => {
     mockGenerateSummary.mockReset();
   });
 
-  /** The FLOOR-02-2 budget shape: a served/capability-capped small budget whose
-   *  85% trigger threshold is floor(32_000 × 85 / 100) = 27_200 tokens. */
+  /** A served/capability-capped small budget whose 85% trigger threshold is
+   *  floor(32_000 × 85 / 100) = 27_200 tokens. */
   const smallBudget: TokenBudget = {
     windowTokens: 32_000,
     systemTokens: 2_000,
@@ -1872,7 +1870,7 @@ describe("SUMW-01: pipeline span clamp", () => {
     });
   }
 
-  it("SUMW-01-P1: clamps the summarized span to the OVERRIDE summarizer's 8K window, not the primary's 128K", async () => {
+  it("clamps the summarized span to the OVERRIDE summarizer's 8K window, not the primary's 128K", async () => {
     const { deps } = make8kOverrideDeps(); // primary getModel() stays at 128_000
     const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
     const messages = buildSpanClampConversation();
@@ -1886,16 +1884,16 @@ describe("SUMW-01: pipeline span clamp", () => {
     // The span fed to the summarizer fits the RESOLVED (override) window:
     // ≤ 8_000 − 2_000 − 2_048 = 3_952 tokens. A clamp keyed to the primary's
     // 128_000 would allow 121_856 tokens — i.e. the whole ~19.4K-token middle —
-    // so this bound also proves override-keying (Pitfall 2).
+    // so this bound also proves override-keying.
     expect(spanArg.length).toBeGreaterThanOrEqual(1);
     const spanTokens = spanTokensOf(spanArg);
     expect(spanTokens).toBeGreaterThan(0);
     expect(spanTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
-    // Strict subset: the clamp actually bound (pre-patch the WHOLE middle is passed).
+    // Strict subset: the clamp actually bound (unclamped, the WHOLE middle would pass).
     expect(spanArg.length).toBeLessThan(middleCount);
   });
 
-  it("SUMW-01-P2: the un-summarized remainder is PRESERVED between summary and tail — kept ∪ summarized == middle, disjoint", async () => {
+  it("preserves the un-summarized remainder between summary and tail — kept ∪ summarized == middle, disjoint", async () => {
     const { deps } = make8kOverrideDeps();
     const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
     const messages = buildSpanClampConversation();
@@ -1906,12 +1904,12 @@ describe("SUMW-01: pipeline span clamp", () => {
 
     const result = await layer.apply(messages, smallBudget);
 
-    // The span side of the invariant (RED pre-patch: the whole middle violates it).
+    // The span side of the invariant (feeding the whole middle would violate it).
     const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
     expect(spanTokensOf(spanArg)).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
 
     // Partition: every middle message is EITHER fed to the summarizer OR kept
-    // in the output — never both, never neither (the Pitfall-3 conservation).
+    // in the output — never both, never neither (the conservation invariant).
     const summarized = new Set(spanArg);
     for (const m of middle) {
       const inSummarized = summarized.has(m);
@@ -1936,7 +1934,7 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
-  it("SUMW-01-P3: S4 interplay — a security-pinned mid-middle message survives in the output when the clamp binds", async () => {
+  it("a security-pinned mid-middle message survives in the output when the clamp binds", async () => {
     const MARKERS: SecurityPinMarkers = {
       canaryToken: "CANARY_sumw01_777",
       contentDelimiter: "UNTRUSTED_BEGIN_sumw01",
@@ -1955,7 +1953,7 @@ describe("SUMW-01: pipeline span clamp", () => {
 
     const result = await layer.apply(messages, smallBudget);
 
-    // The clamp bound (the interplay under test is S4 + binding clamp).
+    // The clamp bound (the interplay under test is security pinning + a binding clamp).
     const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
     expect(spanTokensOf(spanArg)).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
 
@@ -1964,7 +1962,7 @@ describe("SUMW-01: pipeline span clamp", () => {
       expect(call[0] as AgentMessage[]).not.toContain(pinnedMsg);
     }
     expect(result).toContain(pinnedMsg);
-    // Pinned placement unchanged: before the summary message (S4 convention).
+    // Pinned placement unchanged: before the summary message (the pinning convention).
     const summaryIdx = result.findIndex(
       (m) => (m as unknown as { compactionSummary?: boolean }).compactionSummary === true,
     );
@@ -1972,7 +1970,7 @@ describe("SUMW-01: pipeline span clamp", () => {
     expect(result.indexOf(pinnedMsg)).toBeLessThan(summaryIdx);
   });
 
-  it("SUMW-01-P4: no-op pin (I3) — a large-window summarizer receives the FULL middle and the output has no remainder elements", async () => {
+  it("no-op pin — a large-window summarizer receives the FULL middle and the output has no remainder elements", async () => {
     const { deps } = createMockDeps({
       overrideModel: {
         model: { id: "frontier-summarizer", provider: "anthropic", contextWindow: 200_000 },
@@ -1997,7 +1995,7 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
 
     // Output shape EXACTLY [...head(0), ...pinned(0), summary, ...tail] —
-    // no remainder elements inserted (byte-identical to today's assembly).
+    // no remainder elements inserted (identical to assembly with no binding clamp).
     expect(result).toHaveLength(1 + tail.length);
     expect(
       (result[0] as unknown as { compactionSummary?: boolean }).compactionSummary,
@@ -2007,19 +2005,19 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
-  // INT-W1 (milestone integration WARNING 1): the served-window truth must
-  // reach the pipeline Step-4 clamp too. Arithmetic for the served-bound
+  // The served-window truth must reach the pipeline Step-4 clamp too.
+  // Arithmetic for the served-bound
   // primary (configured 128_000 from getModel(), served 8_192):
   //   summarizerWindow = min(128_000, 8_192) = 8_192
   //   summaryReserve   = min(4_096, ⌊8_192/4⌋ = 2_048) = 2_048
   //   maxSpanTokens    = 8_192 − 2_048 − 2_048 = 4_096
   const MAX_SPAN_TOKENS_SERVED_8K = 8_192 - 2_048 - 2_048; // = 4_096
 
-  it("INT-W1-P1 (flagship): a served-bound PRIMARY (no override, served 8_192) clamps the pipeline span to the SERVED window, not the configured 128K", async () => {
-    // Pre-INT-W1: the Step-4 model is getModel() (configured 128_000) →
-    // maxSpan 121_856 → the WHOLE ~19.4K-token middle in one call to a
-    // provider serving 8K — silent input truncation of the summary source
-    // (RED: the strict-subset assertion below fails).
+  it("a served-bound PRIMARY (no override, served 8_192) clamps the pipeline span to the SERVED window, not the configured 128K", async () => {
+    // Without the served-window wiring the Step-4 model is getModel()
+    // (configured 128_000) → maxSpan 121_856 → the WHOLE ~19.4K-token middle
+    // in one call to a provider serving 8K — silent input truncation of the
+    // summary source (the strict-subset assertion below catches it).
     const { deps } = createMockDeps();
     deps.primaryServedWindow = 8_192; // the executor-reconcile-gated windowProvenance.served
     const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
@@ -2035,16 +2033,16 @@ describe("SUMW-01: pipeline span clamp", () => {
     const spanTokens = spanTokensOf(spanArg);
     expect(spanTokens).toBeGreaterThan(0);
     expect(spanTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_SERVED_8K);
-    // Strict subset: the served clamp actually bound (pre-INT-W1 the whole
+    // Strict subset: the served clamp actually bound (without it the whole
     // middle is passed).
     expect(spanArg.length).toBeLessThan(middleCount);
   });
 
-  it("INT-W1-P2 (provider scoping, WR-02): a cloud override summarizer is NOT clamped by the primary provider's served window", async () => {
+  it("provider scoping: a cloud override summarizer is NOT clamped by the primary provider's served window", async () => {
     // The wiring site attaches NO servedWindow to a cross-provider override —
     // the override's own 200K window governs and the full middle is summarized
-    // in one call (byte-identical to SUMW-01-P4). Pins that primaryServedWindow
-    // can never leak onto an override candidate.
+    // in one call (byte-identical to the no-op pin above). Pins that
+    // primaryServedWindow can never leak onto an override candidate.
     const { deps } = createMockDeps({
       overrideModel: {
         model: { id: "cloud-summarizer", provider: "anthropic", contextWindow: 200_000 },
@@ -2063,11 +2061,12 @@ describe("SUMW-01: pipeline span clamp", () => {
     expect(spanArg).toHaveLength(middleCount); // full middle — no served clamp
   });
 
-  it("INT-W1-P3: when the override key fails and Step 4 falls back to the PRIMARY, the primary's served window binds the clamp (clamp/call agreement)", async () => {
+  it("when the override key fails and Step 4 falls back to the PRIMARY, the primary's served window binds the clamp (clamp/call agreement)", async () => {
     // The Step-4 try/catch decides WHICH model summarizes; the served value
     // must ride the SAME branch. Override (200K, key throws) → fallback model
     // = getModel() (128K) + primaryServedWindow 8_192 → span ≤ 4_096 tokens.
-    // Pre-INT-W1: fallback window 128_000 → whole middle (RED).
+    // If the served value did not ride the fallback branch, the window would
+    // be 128_000 → whole middle.
     const { deps } = createMockDeps({
       overrideModel: {
         model: { id: "cloud-summarizer", provider: "anthropic", contextWindow: 200_000 },
@@ -2088,7 +2087,7 @@ describe("SUMW-01: pipeline span clamp", () => {
     expect(spanArg.length).toBeLessThan(middleCount);
   });
 
-  it("SUMW-01-P5 (review CR-01): degenerate summarizer — the single oldest message escalates through the ladder, remainder conserved, never a permanent skip", async () => {
+  it("degenerate summarizer — the single oldest message escalates through the ladder, remainder conserved, never a permanent skip", async () => {
     const { deps } = createMockDeps({
       overrideModel: {
         // maxSpanTokens = 3_000 − min(4_096, 750) − 2_048 = 202 — even the
@@ -2106,10 +2105,10 @@ describe("SUMW-01: pipeline span clamp", () => {
 
     const result = await layer.apply(messages, smallBudget);
 
-    // The pre-review code returned `messages` unchanged here (cut===0 skip) —
+    // A cut===0 skip would return `messages` unchanged here —
     // PERMANENTLY, since the oldest message never leaves the middle's head.
-    // CR-01: that one message is escalated through compactWithFallback's
-    // pre-existing Level-1/2/3 ladder instead — bounded (one message) and
+    // Instead that one message is escalated through compactWithFallback's
+    // Level-1/2/3 ladder — bounded (one message) and
     // ALWAYS shrinking (Level 3 is the guaranteed count-only note).
     expect(result).not.toBe(messages);
     expect(mockGenerateSummary).toHaveBeenCalled();
@@ -2129,13 +2128,13 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
-  it("WR-01: durable-side conservation — remainder entries survive in fileEntries when an S4-pinned message interleaves LATE in the middle", async () => {
-    // persistCompaction removed entries POSITIONALLY: the first
+  it("durable-side conservation — remainder entries survive in fileEntries when a security-pinned message interleaves LATE in the middle", async () => {
+    // A positional persistCompaction would remove the first
     // (pinned + span) middle message entries in file order. With a pinned
-    // message sitting AFTER the span cut, the count-based removal reached past
+    // message sitting AFTER the span cut, that count-based removal reaches past
     // the span into un-summarized REMAINDER entries — durable history deletion
-    // the summary does not cover (exactly the Pitfall-3 loss the in-memory
-    // conservation test P2 guards on the live side). Removal must be by
+    // the summary does not cover (exactly the loss the in-memory
+    // conservation test above guards on the live side). Removal must be by
     // IDENTITY: exactly the summarized span's entries, nothing else.
     const MARKERS: SecurityPinMarkers = {
       canaryToken: "CANARY_wr01_late",
@@ -2183,11 +2182,11 @@ describe("SUMW-01: pipeline span clamp", () => {
     expect(summaryEntries).toHaveLength(1);
   });
 
-  it("WR-04: a toolResult-heavy span is measured with the layer's own dual-ratio estimate — every summarized span fits the budget in trigger units", async () => {
-    // The clamp walk used a FLAT chars/3.5 per message while the layer's own
-    // 85% trigger weights toolResult chars ×2 (estimateContextCharsWithDualRatio)
-    // — so a toolResult-heavy span passed the walk at roughly HALF its
-    // trigger-unit size and overflowed the summarizer (the SUMW-01 target
+  it("a toolResult-heavy span is measured with the layer's own dual-ratio estimate — every summarized span fits the budget in trigger units", async () => {
+    // A FLAT chars/3.5 clamp walk, while the layer's own 85% trigger
+    // weights toolResult chars ×2 (estimateContextCharsWithDualRatio),
+    // would pass a toolResult-heavy span at roughly HALF its
+    // trigger-unit size and overflow the summarizer (the provider-overflow
     // failure class recurring on structured-heavy middles). 18 triples
     // [user 200ch, assistant 200ch, toolResult 5_000ch]: dual total ≈ 53K
     // tokens > the 27_200 trigger; the raw-chars tail walk keeps ~10 triples,
@@ -2207,7 +2206,7 @@ describe("SUMW-01: pipeline span clamp", () => {
 
     expect(mockGenerateSummary).toHaveBeenCalled();
     // EVERY summarize call's span fits maxSpanTokens measured in the SAME
-    // dual-ratio units the trigger uses. RED pre-fix: the flat walk admits
+    // dual-ratio units the trigger uses. A flat walk would admit
     // two toolResults whose dual-unit size (~6K) exceeds the 3_952 budget.
     for (const call of mockGenerateSummary.mock.calls) {
       const span = call[0] as AgentMessage[];
@@ -2218,13 +2217,13 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
-  it("CR-01: the playbook 8K summarizer under a frontier-session output reserve (8_192) compacts and CONVERGES below the 85% trigger", async () => {
-    // THE review-CR-01 regression case: outputReserveTokens = 8_192 (the
+  it("an 8K summarizer under a frontier-session output reserve (8_192) compacts and CONVERGES below the 85% trigger", async () => {
+    // The session-sized-reserve regression case: outputReserveTokens = 8_192 (the
     // OUTPUT_RESERVE_TOKENS default for any session whose model maxTokens ≥ 8_192)
-    // makes the pre-review span budget 8_000 − 8_192 − 2_048 = −2_240 — NEGATIVE,
-    // so every evaluation took the cut===0 skip: zero LLM calls, context grows
-    // unboundedly, and the code/docs convergence claim was false. Post-fix the
-    // reserve is summarizer-sized (min(8_192, 2_000) = 2_000 → budget 3_952) and
+    // would make a session-reserve span budget 8_000 − 8_192 − 2_048 = −2_240 — NEGATIVE,
+    // so every evaluation takes the cut===0 skip: zero LLM calls, context grows
+    // unboundedly, and the convergence guarantee is false. With the
+    // reserve summarizer-sized (min(8_192, 2_000) = 2_000 → budget 3_952),
     // the backlog drains across re-fires until the 85% trigger goes quiet.
     const frontierReserveBudget: TokenBudget = { ...smallBudget, outputReserveTokens: 8_192 };
     const { deps } = make8kOverrideDeps();
@@ -2236,12 +2235,13 @@ describe("SUMW-01: pipeline span clamp", () => {
     let current = buildSpanClampConversation();
     for (let i = 0; i < 20; i++) {
       const next = await layer.apply(current, frontierReserveBudget);
-      if (next === current) break; // below threshold — drained (or, pre-fix, the permanent skip)
+      if (next === current) break; // below threshold — drained (or a permanent skip, which the assertions below reject)
       current = next;
     }
 
-    // RED pre-fix: the FIRST apply returns the same reference with ZERO LLM
-    // calls and the context still above the trigger — nothing ever drains.
+    // With a negative span budget the FIRST apply would return the same
+    // reference with ZERO LLM calls and the context still above the trigger —
+    // nothing ever drains.
     expect(mockGenerateSummary).toHaveBeenCalled();
     // Every generateSummary call received the SUMMARIZER-sized reserve (the same
     // value the clamp budgeted), never the session's 8_192.
@@ -2257,12 +2257,12 @@ describe("SUMW-01: pipeline span clamp", () => {
   });
 
   // -------------------------------------------------------------------------
-  // TOK-01 (Phase 179): the per-message clamp walk must be script-aware. The
+  // The per-message clamp walk must be script-aware. The
   // flat dual-chars/3.5 measure under-counts a Hebrew message by ~1.8×, so a
   // Hebrew-heavy span passes the walk at ~0.55× its honest size and overflows
-  // the summarizer — the SAME failure class WR-04 above closed for toolResults,
-  // recurring on dense scripts. The dual-ratio CHAR walk stays authoritative;
-  // only the divisor gains the per-message script factor.
+  // the summarizer — the SAME failure class the dual-ratio test above closes
+  // for toolResults, recurring on dense scripts. The dual-ratio CHAR walk
+  // stays authoritative; only the divisor gains the per-message script factor.
   // -------------------------------------------------------------------------
 
   /** Mirror of the production clamp's per-message factor text: string content,
@@ -2290,10 +2290,10 @@ describe("SUMW-01: pipeline span clamp", () => {
       .join("");
   }
 
-  it("TOK-01: a Hebrew-heavy middle is clamped script-aware — every summarized span fits the budget in FACTORED units", async () => {
-    // Pre-patch: the prefix walk admits ~3 × 4_200-char Hebrew messages (flat
+  it("a Hebrew-heavy middle is clamped script-aware — every summarized span fits the budget in FACTORED units", async () => {
+    // A script-blind prefix walk admits ~3 × 4_200-char Hebrew messages (flat
     // ≈ 1_200 tokens each) under the 3_952 budget, but their factored size is
-    // ≈ 2_182 tokens each → the span overflows the summarizer ~1.8× → RED.
+    // ≈ 2_182 tokens each → the span overflows the summarizer ~1.8×.
     const he = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ";
     const messages: AgentMessage[] = [];
     for (let i = 0; i < 15; i++) {
@@ -2326,9 +2326,9 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
-  it("TOK-01 I1: a pure-ASCII middle clamps at the byte-identical flat cut point (factor 1.0 — Latin unchanged)", async () => {
-    // The Latin guarantee: scriptTokenFactor(ascii) === 1 → the factored walk IS
-    // today's flat walk. Mirror the production prefix walk with TODAY'S flat
+  it("a pure-ASCII middle clamps at the byte-identical flat cut point (factor 1.0 — Latin unchanged)", async () => {
+    // The Latin guarantee: scriptTokenFactor(ascii) === 1 → the factored walk
+    // IS the flat walk. Mirror the production prefix walk with the flat
     // math; the admitted span must be exactly that cut.
     const { deps } = make8kOverrideDeps();
     const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
@@ -2355,15 +2355,14 @@ describe("SUMW-01: pipeline span clamp", () => {
 });
 
 // ===========================================================================
-// OBS-01 (Phase 180-08): summary_language_mismatch at the PIPELINE site (depth -1)
+// summary_language_mismatch at the PIPELINE site (depth -1)
 // ===========================================================================
 //
-// The requirement's four-row matrix at the pipeline compaction site. The SOURCE
+// The four-row detection matrix at the pipeline compaction site. The SOURCE
 // is the summarized span (the middle-zone messages handed to generateSummary);
 // the SUMMARY is the validated mock summary. depth is -1 (pipeline has no depth
-// concept). RED on pre-patch: createLlmCompactionLayer emits NO
-// summary_language_mismatch. Hebrew glyphs are built from String.fromCodePoint.
-describe("createLlmCompactionLayer — summary_language_mismatch (OBS-01, depth -1)", () => {
+// concept). Hebrew glyphs are built from String.fromCodePoint.
+describe("createLlmCompactionLayer — summary_language_mismatch (depth -1)", () => {
   const HEBREW_WORD = String.fromCodePoint(0x05e1, 0x05e4, 0x05e8); // ספר
 
   /** A bus-capturing deps factory (createMockDeps does not wire the bus). */
@@ -2426,7 +2425,7 @@ describe("createLlmCompactionLayer — summary_language_mismatch (OBS-01, depth 
   /**
    * A valid summary (the 9 required sections) whose section BODIES are all
    * Hebrew, so dominantScript(summary) === "hebrew" (the ASCII `##` headings are
-   * a minority of the codepoints — verified). This is what GEN-01's
+   * a minority of the codepoints — verified). This is what the
    * headings-exempt instruction produces on a Hebrew conversation.
    */
   function buildHebrewSummary(): string {
@@ -2528,12 +2527,12 @@ describe("createLlmCompactionLayer — summary_language_mismatch (OBS-01, depth 
   });
 });
 
-describe("GEN-01: pipeline customInstructions carry the shared sentence + headings-verbatim clause", () => {
+describe("pipeline customInstructions carry the shared sentence + headings-verbatim clause", () => {
   beforeEach(() => {
     mockGenerateSummary.mockReset();
   });
 
-  // Load-bearing fragments of the single shared sentence (design §4 GEN-01, I7).
+  // Load-bearing fragments of the single shared language-preservation sentence.
   const NO_TRANSLATE_FRAGMENT = "never translate";
   const VERBATIM_FRAGMENT =
     "Keep code identifiers, file paths, tool names, and error strings verbatim.";
@@ -2544,8 +2543,8 @@ describe("GEN-01: pipeline customInstructions carry the shared sentence + headin
     "only the section CONTENT follows the source language";
 
   /**
-   * buildComisCompactionInstructions is PRIVATE (no export — the no-BC / public-surface
-   * gates dislike dead exports). Drive a Level-1 compaction and capture the `instructions`
+   * buildComisCompactionInstructions is PRIVATE (no export — the public-surface
+   * gates reject dead exports). Drive a Level-1 compaction and capture the `instructions`
    * the SDK actually received: arg index 6 (the 7th positional `instructions` parameter of
    * generateSummary per llm-compaction.ts:725-728). This is exactly the customInstructions
    * the SDK sees — the same indirect path the :314-339 Level-1 test drives.
@@ -2589,14 +2588,14 @@ describe("GEN-01: pipeline customInstructions carry the shared sentence + headin
 
   it("validateCompactionSummary still passes a valid 9-heading summary (scaffolding contract intact)", () => {
     // The clause must not corrupt the machine-parsed heading contract: a localized
-    // heading would fail validation → fallback ladder → invert GEN-01's goal.
+    // heading would fail validation → fallback ladder → invert the language-preservation goal.
     expect(validateCompactionSummary(buildValidSummary())).toEqual({
       valid: true,
       missingSections: [],
     });
   });
 
-  it("the shared sentence is imported, not redefined in llm-compaction (single source, I7)", async () => {
+  it("the shared sentence is imported, not redefined in llm-compaction (single source)", async () => {
     // The captured pipeline instructions carry the SAME sentence the dag templates use.
     // (The single-source guarantee is enforced structurally by the import; this asserts
     // the pipeline output is byte-consistent with that shared sentence's fragments.)

@@ -35,7 +35,7 @@ describe("createStubFilterInjector", () => {
   });
 
   it("filters stubs from the OpenAI/Ollama nested function.name tool shape", async () => {
-    // Live finding (2026-06-12 Ollama-models run): Ollama's OpenAI-compatible
+    // Observed live with Ollama models: Ollama's OpenAI-compatible
     // API receives tools as {type:"function", function:{name,...}} — the name is
     // NESTED, not top-level. The filter checked only t.name (undefined here), so
     // ZERO stubs were removed and all deferred-tool schemas reached the model,

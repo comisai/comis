@@ -20,7 +20,7 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: true,
     fetchHistory: false,
     attachments: true,
-    // §17.2: WhatsApp EditPlace (windowed) — typing, no threads, no buttons.
+    // WhatsApp EditPlace (windowed) — typing, no threads, no buttons.
     typing: true,
     threads: false,
     buttons: "none",

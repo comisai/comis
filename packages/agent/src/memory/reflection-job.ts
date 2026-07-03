@@ -1,32 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The reflection engine (v2.31 Reflection, Phase 223, REFLECT-01/03/04/05/06) —
- * the ONE outcome-gated job that REPLACES the dead embedding-clustering
- * `runSkillSynthesis`. It runs as an offline cron (wired daemon-side, Plan 05 —
- * NOT the hot path). One pass over the injected source trajectories:
+ * The reflection engine — the ONE outcome-gated job that distils finished source
+ * trajectories into learned advisory docs. It runs as an offline cron (wired
+ * daemon-side — NOT the hot path). One pass over the injected source trajectories:
  *
- *  1. **SELECT** (fail-closed, REFLECT-01 / INV-5): for each source,
+ *  1. **SELECT** (fail-closed): for each source,
  *     `OutcomeSignalPort.resolve`; keep ONLY `outcome === "success" && confidence
- *     >= minConfidence` AND BOTH anti-poison axes (FOLD-04): `source.trustedOrigin`
- *     (axis 1 — daemon-derived SESSION origin, INV-5/D-04) AND
+ *     >= minConfidence` AND BOTH anti-poison axes: `source.trustedOrigin`
+ *     (axis 1 — daemon-derived SESSION origin) AND
  *     `!source.sourceTrustExternal` (axis 2 — the per-MEMORY source-trust belt; a
- *     planted `external` memory riding a trusted session seeds nothing, Pitfall 2).
+ *     planted `external` memory riding a trusted session seeds nothing).
  *     An untrusted-origin OR external-trust source NEVER seeds a doc. An unresolved
  *     outcome is fail-closed `continue`.
- *  2. **GROUP** (replaces `clusterSuccesses`, REFLECT-02): `Map<topicKey,
+ *  2. **GROUP**: `Map<topicKey,
  *     members[]>` via `normalizeOpeningRequest(source.signature)` — a deterministic,
  *     keyless, content-light token-SET hash (NO embeddings). An empty topicKey
  *     (`""`, ungroupable) is skipped.
- *  3. **GATE** (anti-domination, REFLECT-03 / INV-2): `distinctSenderCardinality(
+ *  3. **GATE** (anti-domination): `distinctSenderCardinality(
  *     members) >= 2` — N repeats of one `(sessionId, sender)` count as 1, so an
  *     attacker cannot corroborate a doc by repeating one success. Bounded by
  *     `maxDocsPerRun`.
- *  4. **REFLECT** (REFLECT-04): `store.get(docName)` → its `structuredBody`. New
+ *  4. **REFLECT**: `store.get(docName)` → its `structuredBody`. New
  *     (no prior AST) → reflect a FRESH section list, `renderStructuredBody`.
  *     Exists → reflect delta-ops, `applyDeltaOps(prior, ops)` (untargeted sections
- *     byte-identical — Hindsight's drift-killer), `renderStructuredBody`. ONE cheap
- *     LLM call per topic via the injected adapter.
- *  5. **GUARD + ADMIT** (REFLECT-05/06): an empty/failed reflection → record
+ *     stay byte-identical, so a refresh cannot drift text it did not target),
+ *     `renderStructuredBody`. ONE cheap LLM call per topic via the injected adapter.
+ *  5. **GUARD + ADMIT**: an empty/failed reflection → record
  *     `empty_reflection`, SKIP `store.admit` (the guard lives HERE — the store
  *     upsert overwrites `body` unconditionally on conflict, so the prior doc only
  *     survives if we skip the call). Else `validateLearnedDocBody({name,body,
@@ -35,16 +34,16 @@
  *     proofCount: LOW_PROOF_COUNT, ... })` — at `trust=learned`/`state=candidate`
  *     (store-forced) and idempotent on the deterministic id.
  *
- * Kind-generic-READY: the engine populates only `kind:"skill"` in 223, but the
- * SELECT/GROUP/REFLECT seams are kind-agnostic so Phase 225 adds profile/topic by
- * varying select/group/prompt, not by adding a new engine.
+ * Kind-generic: the SELECT/GROUP/REFLECT seams are kind-agnostic, so the
+ * profile/topic doc families ride the SAME engine by varying select/group/prompt,
+ * not by adding a new engine.
  *
  * Closed graph: this job consumes `@comis/core` PORT TYPES + the static
  * `validateLearnedDocBody` keystone + the pure `applyDeltaOps`/`renderStructuredBody`
  * (agent→core is ALLOWED) + the injected source/store/adapter/clock. It imports NO
  * `@comis/memory` / `@comis/skills` value (the agent↛memory / agent↛skills build
  * cut). It emits NO `learning:skill_*` bus event — the daemon emits the counts
- * after the job returns (Plan 05).
+ * after the job returns.
  *
  * @module
  */
@@ -79,7 +78,7 @@ const DEFAULT_MAX_DOCS_PER_RUN = 10;
  * task never corroborate; this floor lets near-identical task signatures (sharing
  * ≥50% of their unique content tokens) merge — differently-worded analogues reach
  * the ≥2 gate, while genuinely-different tasks (low overlap) stay separate. Keyless,
- * deterministic, NO embeddings (the v2.31 collapse removed those deliberately). 0.5
+ * deterministic, NO embeddings (embeddings are deliberately out of scope here). 0.5
  * is the collision-maximizing midpoint the topic-key SET decision already favors;
  * a higher value merges less (more conservative).
  */
@@ -87,9 +86,9 @@ const DEFAULT_MERGE_SIMILARITY_THRESHOLD = 0.5;
 
 /**
  * The LOW proof-count cap a reflected doc is admitted at, REGARDLESS of
- * corroboration group size — the INV-2 anti-domination belt (the real guard,
+ * corroboration group size — the anti-domination belt (the real guard,
  * independent of `(sessionId, sender)` precision). A reflected doc seeds at
- * `candidate` and earns promotion only through the reuse-outcome loop (Loop C).
+ * `candidate` and earns promotion only through the reuse-outcome loop.
  */
 const LOW_PROOF_COUNT = 1;
 
@@ -102,12 +101,12 @@ const REFLECT_ADMISSION_CONFIDENCE = 0.7;
 
 /**
  * One finished source trajectory the job selects + groups over. The daemon
- * (Plan 05) builds these from the LCD-merged review source and injects them.
+ * builds these from the LCD-merged review source and injects them.
  * `text` is the flattened transcript the reflect adapter wraps; `signature` is the
  * envelope-stripped user-role text the topicKey is computed from; `sender` is the
  * message author the anti-domination cardinality counts on. `trustedOrigin` is
  * derived DAEMON-SIDE (the daemon has the session/sender-trust context — the
- * `ResolvedOutcome` does NOT carry it; Research A2) — the job FILTERS on it, it
+ * `ResolvedOutcome` does NOT carry it) — the job FILTERS on it, it
  * does NOT compute trust itself.
  */
 export interface ReflectionSourceTrajectory {
@@ -122,25 +121,25 @@ export interface ReflectionSourceTrajectory {
   /** The envelope-stripped user-role text → `normalizeOpeningRequest` (the topicKey). */
   signature: string;
   /**
-   * FOLD-04 ANTI-POISON AXIS 1 (the 223 session-origin belt). INV-5/D-04: false ⇒
+   * ANTI-POISON AXIS 1 (the session-origin belt). false ⇒
    * this success NEVER seeds a doc (daemon-derived SESSION/sender origin trust). A
    * per-TRAJECTORY boolean — NOT a per-memory trust level.
    */
   trustedOrigin: boolean;
   /**
-   * FOLD-04 ANTI-POISON AXIS 2 (Phase 225, the per-MEMORY source-trust belt —
-   * GAP-3, the OLD user-rep layer-1 firewall, memory-user-representation-job.ts:322
-   * `s.trustLevel !== "external"`). true ⇒ this source carries an `external`-trust
+   * ANTI-POISON AXIS 2 (the per-MEMORY source-trust belt, mirroring the
+   * `trustLevel !== "external"` firewall the memory pipeline applies to source
+   * memories). true ⇒ this source carries an `external`-trust
    * memory and NEVER seeds a doc, even riding a `trustedOrigin:true` session
-   * (Pitfall 2: a planted external memory can ride a trusted session — the two axes
-   * are DISTINCT and must BOTH pass). The daemon (Plan 04) sets it from the
+   * (a planted external memory can ride a trusted session — the two axes
+   * are DISTINCT and must BOTH pass). The daemon sets it from the
    * per-memory `trustLevel === "external"`; for kind:skill the daemon sets it false
    * (skill sources are outcome trajectories, not source memories).
    */
   sourceTrustExternal: boolean;
 }
 
-/** The config slice the job reads (a structural subset; Phase 226 collapses to learning.reflect). */
+/** The config slice the job reads (a structural subset of the learning reflect config). */
 export interface RunReflectionConfig {
   enabled: boolean;
   minConfidence: number;
@@ -163,18 +162,18 @@ export interface RunReflectionDeps {
   /** The (tenant, agent) isolation boundary every read/write rebinds to. */
   scope: LearningScope;
   /**
-   * The doc family this run reflects (Phase 225 FOLD — the I7 kind-parameter).
+   * The doc family this run reflects (the kind-parameter).
    * Threaded onto the admitted doc's `kind` and into the doc-name prefix
    * (`<kind>-<topicKey>`) so the engine is ONE engine across skill/profile/topic.
-   * Omitted ⇒ `"skill"` (a skill run is byte-identical to the 223 behavior).
+   * Omitted ⇒ `"skill"` (the default skill behavior).
    */
   kind?: "skill" | "profile" | "topic";
   /**
-   * The per-kind GROUP key (Phase 225 FOLD). Maps a source to its corroboration
+   * The per-kind GROUP key. Maps a source to its corroboration
    * group: kind:skill keys on the normalized opening-request signature (the
    * default), kind:profile groups by user (one doc per user), kind:topic groups
    * its surprisal/observation clusters. Omitted ⇒ `normalizeOpeningRequest(
-   * t.signature)` (byte-identical for kind:skill). An empty key (`""`) is
+   * t.signature)` (identical for kind:skill). An empty key (`""`) is
    * ungroupable and skipped (never corroborates — a singleton).
    */
   groupKey?: (t: ReflectionSourceTrajectory) => string;
@@ -188,17 +187,17 @@ export interface RunReflectionDeps {
   /**
    * The mental-model store (injected from @comis/memory). `get` reads the prior doc
    * for delta-ops; `admit` is the idempotent candidate write (a NEW doc, or a skill
-   * doc — byte-identical with 223). `supersede` (Phase 225 FOLD-01) is the bi-temporal
+   * doc). `supersede` is the bi-temporal
    * history-append a profile/topic CORRECTION of an EXISTING doc routes through (the
    * prior body is preserved in `history`, never overwritten). Optional with a
-   * skill-default posture: omitted ⇒ no doc supersedes (every kind admits, the 223
-   * behavior); kind:skill NEVER supersedes even when wired.
+   * skill-default posture: omitted ⇒ no doc supersedes (every kind admits);
+   * kind:skill NEVER supersedes even when wired.
    */
   mentalModelStore: Pick<MentalModelStorePort, "get" | "admit"> &
     Partial<Pick<MentalModelStorePort, "supersede">>;
   /** Wall-clock reads — durations + the admit timestamp. NEVER a wall-clock global. */
   clock: { now: () => number };
-  /** Counts/ids-only event bus (the daemon emits the learning:skill_* events, Plan 05). */
+  /** Counts/ids-only event bus (the daemon emits the learning:skill_* events). */
   eventBus: { emit(event: string, payload: unknown): void };
   logger: RunReflectionJobLogger;
 }
@@ -206,9 +205,9 @@ export interface RunReflectionDeps {
 /**
  * The ACUTE reason a reflection run admitted nothing (or did) — a closed,
  * content-free enum so "why didn't a doc get learned?" is ONE readable field on
- * the funnel (the RC-4 diagnosability the synthesis-job established).
+ * the funnel.
  *
- * IN-02: the canonical definition moved to `@comis/core` (events-learning.ts) so
+ * The canonical definition lives in `@comis/core` (events-learning.ts) so
  * the `reflect:funnel.admissionOutcome` event payload is typed to the SAME closed
  * union (core cannot import @comis/agent — the agent→core direction only). This
  * job's `classifyReflectOutcome` produces it; the daemon emit assigns it onto the
@@ -220,16 +219,15 @@ export interface RunReflectionDeps {
  * - `uncorroborated`       — topics grouped but `maxTopicCardinality < 2` (the
  *                            anti-domination gate: needs ≥2 distinct (session,sender)).
  * - `empty_reflection`     — a corroborated topic reflected empty/failed (the
- *                            REFLECT-05 guard skipped the admit; the prior doc survives).
+ *                            empty-content guard skipped the admit; the prior doc survives).
  * - `rejected_validation`  — a reflected body failed `validateLearnedDocBody`
  *                            (a poison/secret body rejected before durable storage).
- * - `rejected_name_length` — a reflected doc's NAME exceeded `MAX_DOC_NAME_LENGTH`
- *                            (the 225 WR-01 gap: previously mis-reported as
- *                            `rejected_validation`). Reported as its own reason so an
+ * - `rejected_name_length` — a reflected doc's NAME exceeded `MAX_DOC_NAME_LENGTH`.
+ *                            Reported as its own reason so an
  *                            operator distinguishes a name-length over-cap from a poison
  *                            verdict (counts-only — never the offending name).
  * - `untrusted_origin`     — every selected success was dropped at SELECT for an
- *                            untrusted origin / external-trust source (D5 salvage): the
+ *                            untrusted origin / external-trust source: the
  *                            specific "nothing trusted survived" reason, out-ranking the
  *                            generic `no_successes`.
  * - `admitted`             — ≥1 doc admitted.
@@ -265,13 +263,13 @@ export interface RunReflectionResult {
    */
   emptyReflections: number;
   /**
-   * Phase 226 (D5 salvage): how many `success` sources were dropped at SELECT for an
-   * untrusted origin (FOLD-04 axis 1) or external-trust source (axis 2). Counts only.
+   * How many `success` sources were dropped at SELECT for an
+   * untrusted origin (axis 1) or external-trust source (axis 2). Counts only.
    * Lets the daemon emit `untrusted_origin` when this is the acute reason nothing seeded.
    */
   untrustedDrops: number;
   /**
-   * Phase 226 (the 225 WR-01 gap): how many corroborated topics had their reflected doc
+   * How many corroborated topics had their reflected doc
    * rejected for a NAME-length over-cap (distinct from a poison `rejected_validation`).
    * Counts only — never the offending name.
    */
@@ -291,7 +289,7 @@ export interface RunReflectionResult {
 }
 
 // ---------------------------------------------------------------------------
-// Anti-domination cardinality (the ≥2-distinct corroboration metric, INV-2)
+// Anti-domination cardinality (the ≥2-distinct corroboration metric)
 // ---------------------------------------------------------------------------
 
 /** Distinct (sessionId, sender) cardinality of a member set (the anti-domination metric). */
@@ -314,19 +312,19 @@ export function classifyReflectOutcome(f: {
   maxTopicCardinality: number;
   admitted: number;
   emptyReflections: number;
-  /** Phase 226: success sources dropped at SELECT for untrusted origin / external-trust. */
+  /** Success sources dropped at SELECT for untrusted origin / external-trust. */
   untrustedDrops?: number;
-  /** Phase 226: corroborated topics rejected for a doc-name over-cap (the 225 WR-01 gap). */
+  /** Corroborated topics rejected for a doc-name over-cap. */
   nameLengthRejections?: number;
 }): ReflectAdmissionOutcome {
   if (f.admitted > 0) return "admitted";
-  // D5 salvage: when SELECT kept NOTHING but some success was dropped for an untrusted
+  // When SELECT kept NOTHING but some success was dropped for an untrusted
   // origin / external-trust source, that is the SPECIFIC reason — out-rank no_successes.
   if (f.selected === 0 && (f.untrustedDrops ?? 0) > 0) return "untrusted_origin";
   if (f.selected === 0) return "no_successes";
   if (f.maxTopicCardinality < 2) return "uncorroborated";
   if (f.emptyReflections > 0) return "empty_reflection";
-  // The 225 WR-01 gap: a name-length over-cap rejection is reported as ITS OWN reason
+  // A name-length over-cap rejection is reported as ITS OWN reason
   // rather than mis-attributed to the poison verdict below.
   if ((f.nameLengthRejections ?? 0) > 0) return "rejected_name_length";
   return "rejected_validation";
@@ -344,11 +342,11 @@ function groupText(members: ReflectionSourceTrajectory[]): string {
 /**
  * The deterministic doc NAME a topicKey reflects into. The store keys a row on
  * `(tenant, agent, kind, topicKey, name)`, so a STABLE name per topicKey makes a
- * re-run hit the SAME row (idempotent re-admit, REFLECT-06). Content-light — the
- * topicKey is already a sha256 hex of the normalized intent (INV-6), never the raw
+ * re-run hit the SAME row (idempotent re-admit). Content-light — the
+ * topicKey is already a sha256 hex of the normalized intent, never the raw
  * transcript; the `skill-` prefix keeps the kebab-case lookup-name contract.
  *
- * WR-01 (Phase 223 review): the name embeds the FULL topicKey (NOT a 16-char/64-bit
+ * The name embeds the FULL topicKey (NOT a 16-char/64-bit
  * truncation), so name↔topicKey is bijective. The store's name-keyed `get`/`promoteByName`/
  * `demoteByName` resolve on name alone — a truncated name let two distinct
  * topicKeys (colliding on their first 16 hex chars) produce the SAME name with
@@ -357,11 +355,11 @@ function groupText(members: ReflectionSourceTrajectory[]): string {
  * cross-wired BOTH. The full topicKey makes `(tenant, agent, kind, name)` unique,
  * so the name-keyed lifecycle is unambiguous.
  *
- * Phase 225 FOLD: the prefix is the KIND (`<kind>-<topicKey>`) — `profile-`/
+ * The prefix is the KIND (`<kind>-<topicKey>`) — `profile-`/
  * `topic-` keep `(tenant, agent, kind, name)` unique ACROSS kinds (a profile and a
  * skill that happen to share a topicKey get distinct names).
  *
- * WR-01 (Phase 225 review): unlike skill/topic — whose topicKey is ALWAYS a 64-char
+ * Unlike skill/topic — whose topicKey is ALWAYS a 64-char
  * sha256 hex (`normalizeOpeningRequest`), so the name is 70 chars, bounded — the
  * PROFILE group key is the RAW userId (the daemon sets `groupKey: (t) => t.sender`).
  * A long sender id (a namespaced/email-channel address) makes `profile-<rawUserId>`
@@ -403,7 +401,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   // `reflectionAdapter` + `mentalModelStore` are destructured (and used) inside the
   // per-topic `reflectTopic` helper off the same `deps`, not in this function body.
   const { agentId, scope, config, sourceTrajectories, outcomeSignal, clock, logger } = deps;
-  // The per-kind group function (Phase 225 FOLD) — defaults to the skill behavior.
+  // The per-kind group function — defaults to the skill behavior.
   const groupKey = deps.groupKey ?? defaultGroupKey;
 
   const startMs = clock.now();
@@ -411,12 +409,12 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
 
   // 1. SELECT (fail-closed): keep only trusted-origin `success` >= minConfidence.
   const selected: ReflectionSourceTrajectory[] = [];
-  // Phase 226 (D5 salvage): count the successes dropped at SELECT for an untrusted origin
+  // Count the successes dropped at SELECT for an untrusted origin
   // (axis 1) / external-trust source (axis 2). Counts only — feeds the `untrusted_origin`
   // verdict when this is the acute reason nothing seeded.
   let untrustedDrops = 0;
   for (const t of sourceTrajectories) {
-    // FOLD-04 AXIS 1 (INV-5/D-04 — the 223 session-origin belt): an untrusted-origin
+    // ANTI-POISON AXIS 1 (the session-origin belt): an untrusted-origin
     // success NEVER seeds a doc. Filter FIRST (cheap, before the outcome resolve) — a
     // planted/untrusted trajectory cannot even reach the corroboration gate.
     if (!t.trustedOrigin) {
@@ -433,11 +431,11 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
       );
       continue;
     }
-    // FOLD-04 AXIS 2 (Phase 225 GAP-3 — the per-MEMORY source-trust belt, the OLD
-    // user-rep layer-1 firewall). A source carrying an `external`-trust memory NEVER
-    // seeds a doc, even riding a `trustedOrigin:true` session (Pitfall 2: a planted
+    // ANTI-POISON AXIS 2 (the per-MEMORY source-trust belt). A source
+    // carrying an `external`-trust memory NEVER
+    // seeds a doc, even riding a `trustedOrigin:true` session (a planted
     // external memory can ride a trusted session — the two axes are DISTINCT and must
-    // BOTH pass). The daemon (Plan 04) sets `sourceTrustExternal` from the per-memory
+    // BOTH pass). The daemon sets `sourceTrustExternal` from the per-memory
     // `trustLevel === "external"`; for kind:skill it is always false. SECOND fail-closed
     // exclude AFTER axis 1 so the two compose.
     if (t.sourceTrustExternal) {
@@ -489,15 +487,15 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   const totalSourceChars = selected.reduce((n, t) => n + t.text.length, 0);
 
   if (selected.length === 0) {
-    // D5 salvage: when nothing survived SELECT, the acute reason is `untrusted_origin` if
+    // When nothing survived SELECT, the acute reason is `untrusted_origin` if
     // some success was dropped for an untrusted origin / external-trust source, else `no_successes`.
     const emptyOutcome = classifyReflectOutcome({ selected: 0, maxTopicCardinality: 0, admitted: 0, emptyReflections: 0, untrustedDrops });
     logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0 });
     return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
   }
 
-  // 2. GROUP (replaces clusterSuccesses): Map<topicKey, members[]> via the per-kind
-  //    group function (Phase 225 FOLD — defaults to the skill normalizeOpeningRequest).
+  // 2. GROUP: Map<topicKey, members[]> via the per-kind
+  //    group function (defaults to the skill normalizeOpeningRequest).
   const groups = new Map<string, ReflectionSourceTrajectory[]>();
   for (const t of selected) {
     const key = groupKey(t);
@@ -548,7 +546,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   let admitted = 0;
   let skipped = 0;
   let emptyReflections = 0;
-  // Phase 226 (the 225 WR-01 gap): corroborated topics whose reflected doc NAME was over-cap.
+  // Corroborated topics whose reflected doc NAME was over-cap.
   let nameLengthRejections = 0;
   let maxTopicCardinality = 0;
   let reflectedTopics = 0;
@@ -556,7 +554,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   for (const [topicKey, members] of corroborationGroups) {
     const cardinality = distinctSenderCardinality(members);
     maxTopicCardinality = Math.max(maxTopicCardinality, cardinality);
-    // INV-2/D-05: a topic needs >=2 distinct (sessionId, sender) to corroborate.
+    // Anti-domination: a topic needs >=2 distinct (sessionId, sender) to corroborate.
     if (cardinality < 2) continue;
 
     // Bound the number of LLM calls per run.
@@ -607,18 +605,18 @@ interface ReflectTopicArgs {
 
 /**
  * Reflect ONE corroborated topic into a doc: read the prior AST, reflect (fresh
- * synth or delta-ops), GUARD the empty-content case (skip admit — REFLECT-05),
- * validate (reject critical — REFLECT-06), then admit at candidate/learned/proof=1.
+ * synth or delta-ops), GUARD the empty-content case (skip admit),
+ * validate (reject critical), then admit at candidate/learned/proof=1.
  */
 async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   const { deps, topicKey, members } = args;
   const { agentId, scope, reflectionAdapter, mentalModelStore, clock, logger } = deps;
-  // The doc family (Phase 225 FOLD) — defaults to skill (a skill run is unchanged).
+  // The doc family — defaults to skill.
   const kind = deps.kind ?? "skill";
 
   const docName = docNameForTopic(kind, topicKey);
 
-  // 4a. Read the prior doc's structured AST (absent ⇒ a NEW doc — synthesize fresh, A6).
+  // 4a. Read the prior doc's structured AST (absent ⇒ a NEW doc — synthesize fresh).
   const priorRes = await fromPromise(mentalModelStore.get(docName, scope));
   if (!priorRes.ok || !priorRes.value.ok) {
     logger.warn(
@@ -636,14 +634,14 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   const prior = priorRes.value.value; // MentalModel | undefined
   const priorSections: DocSection[] = prior?.structuredBody?.sections ?? [];
 
-  // 4b. ONE cheap LLM call per topic (the adapter wraps the UNTRUSTED transcript, INV-5).
+  // 4b. ONE cheap LLM call per topic (the adapter wraps the UNTRUSTED transcript).
   const reflectRes = await fromPromise(
     reflectionAdapter.reflect({ trajectoryText: groupText(members), currentSections: priorSections }),
   );
   if (!reflectRes.ok || !reflectRes.value.ok) {
     // A per-topic reflect fault (transport / model error). NON-FATAL: the topic is
     // skipped and the prior doc survives (the adapter already WARNed with the
-    // network/dependency errorKind). Treated as empty-content (REFLECT-05): NO admit.
+    // network/dependency errorKind). Treated as empty-content: NO admit.
     logger.debug(
       { agentId, step: "reflect" as const, topicKey, hint: "reflect call faulted — topic skipped, prior doc survives (REFLECT-05)" },
       "reflection call faulted for topic, skipping",
@@ -656,7 +654,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   //     or the fresh section list (new doc).
   const nextBody = buildNextBody(prior?.structuredBody, reflection);
 
-  // 5a. EMPTY-CONTENT GUARD (REFLECT-05) — the guard lives HERE, NOT the store (the
+  // 5a. EMPTY-CONTENT GUARD — the guard lives HERE, NOT the store (the
   //     store upsert overwrites `body` unconditionally on conflict, so the prior doc
   //     survives ONLY if we skip the admit CALL). An empty next body (no sections, or
   //     an existing-doc refresh that produced no change) is skipped, reason-coded.
@@ -677,17 +675,17 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   // into `body` (renderStructuredBody ignores topicTokens).
   // Only SKILL docs are reuse-attributed by topic-match (topicMatchedSkillNames matches surfaced
   // SKILLS); profile/topic docs carry a custom non-signature groupKey, so a "common core" of their
-  // members is noise — leave their structuredBody untouched (byte-identical with 225).
+  // members is noise — leave their structuredBody untouched.
   const coreTokens = kind === "skill" ? commonCoreTokens(members.map((m) => m.signature)) : [];
   const structuredBody: StructuredBody = coreTokens.length > 0 ? { ...nextBody, topicTokens: coreTokens } : nextBody;
   const body = renderStructuredBody(structuredBody);
   const description = deriveDescription(nextBody);
 
-  // 5b. STATIC GUARD (REFLECT-06): validateLearnedDocBody is ALL the validation an
-  //     advisory doc receives (INV-3) — a CRITICAL poison/secret in name/body/desc rejects.
+  // 5b. STATIC GUARD: validateLearnedDocBody is ALL the validation an
+  //     advisory doc receives — a CRITICAL poison/secret in name/body/desc rejects.
   const validation = validateLearnedDocBody({ name: docName, body, description });
   if (!validation.ok) {
-    // Phase 226 (the 225 WR-01 gap): distinguish a NAME-length over-cap rejection from a
+    // Distinguish a NAME-length over-cap rejection from a
     // poison/secret rejection so the funnel verdict reports the SPECIFIC reason instead of
     // mis-attributing it to `rejected_validation`. (docNameForTopic hashes an over-cap name,
     // so in the normal flow this never fires — but if a name-length finding ever occurs the
@@ -713,10 +711,10 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   }
 
   // 5c. WRITE. A profile/topic CORRECTION of an EXISTING doc routes through
-  //     `supersede` (FOLD-01) — the bi-temporal history-append that preserves the prior
+  //     `supersede` — the bi-temporal history-append that preserves the prior
   //     body in `history` rather than the destructive `admit` upsert (which overwrites
   //     `body` + nulls `history` on conflict). A NEW doc (no prior) ALWAYS admits; a
-  //     SKILL doc ALWAYS admits (byte-identical with 223 — skill never supersedes,
+  //     SKILL doc ALWAYS admits (skill never supersedes,
   //     even when `supersede` is wired). On a `not-found` supersede (the doc was
   //     evicted between the `get` and the supersede — a race) we FALL BACK to admit so
   //     the correction is never silently lost.
@@ -745,7 +743,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   }
 
   // ADMIT at trust=learned / state=candidate (store-forced) / LOW proof_count /
-  // deterministic id (idempotent re-admit, REFLECT-06). The NEW-doc path for every kind,
+  // deterministic id (idempotent re-admit). The NEW-doc path for every kind,
   // the skill path always, and the profile/topic supersede `not-found` fallback.
   const admitRes = await fromPromise(
     mentalModelStore.admit(
@@ -754,10 +752,10 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
         description,
         body,
         structuredBody,
-        kind, // Phase 225 FOLD — the threaded doc family (skill default)
+        kind, // the threaded doc family (skill default)
         topicKey,
-        mutating: false, // advisory doc — never state-mutating (INV-3); read-only auto-surfaces
-        proofCount: LOW_PROOF_COUNT, // INV-2 anti-domination cap, regardless of cardinality
+        mutating: false, // advisory doc — never state-mutating; read-only auto-surfaces
+        proofCount: LOW_PROOF_COUNT, // anti-domination cap, regardless of cardinality
         confidence: REFLECT_ADMISSION_CONFIDENCE,
         sourceTrajIds,
         createdAt: clock.now(),
@@ -804,7 +802,7 @@ function deriveDescription(body: StructuredBody): string {
   return text.length > 0 ? text.slice(0, 200) : first.heading;
 }
 
-/** Emit the once-per-run INFO summary line (the RC-4 grep-able "why 0 admitted" verdict). */
+/** Emit the once-per-run INFO summary line (the grep-able "why 0 admitted" verdict). */
 function logRunComplete(
   deps: RunReflectionDeps,
   startMs: number,
@@ -834,7 +832,7 @@ function logRunComplete(
       admitted: counts.admitted,
       maxTopicCardinality: counts.maxTopicCardinality,
       skipped: counts.skipped,
-      admissionOutcome, // RC-4: the readable "why 0 admitted" verdict, grep-able in the log
+      admissionOutcome, // the readable "why 0 admitted" verdict, grep-able in the log
       durationMs: deps.clock.now() - startMs,
     },
     // Distinct per-kind JOB-layer message so a grep for the canonical aggregate "Reflection complete

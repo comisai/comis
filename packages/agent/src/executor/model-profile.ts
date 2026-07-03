@@ -67,12 +67,12 @@ const SECURITY_FOR: Readonly<Record<CapabilityClass, SecurityLevel>> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Unknown model → most-scaffolded, most-locked (K2: fail-closed).
+ * Unknown model → most-scaffolded, most-locked (fail-closed).
  *
  * Note: supportsTools is true because the executor still routes calls through
  * the tool policy gates; supportsTools is a capability declaration, not a
- * policy gate. If a future phase uses supportsTools as a policy gate, revisit
- * this default (IN-02).
+ * policy gate. If supportsTools ever becomes a policy gate, revisit this
+ * default.
  */
 export const FAIL_CLOSED_PROFILE: Readonly<ModelProfile> = {
   contextWindow: 8_192,
@@ -90,15 +90,16 @@ export const FAIL_CLOSED_PROFILE: Readonly<ModelProfile> = {
 
 /**
  * Resolve a CapabilityClass from a provider string via the provider-family heuristic ALONE
- * (no model entry, no contextWindow — K2 invariant). The same family mapping resolveModelProfile
- * uses: anthropic / openai family → "frontier"; google family → "mid"; all others → "small".
+ * (no model entry, no contextWindow — contextWindow must NEVER derive capability). The same
+ * family mapping resolveModelProfile uses: anthropic / openai family → "frontier"; google
+ * family → "mid"; all others → "small".
  * Returns undefined for an undefined provider (the caller decides the fail-safe). Single-sourced
  * to resolveProviderCapabilities so canonical aliases (amazon-bedrock→anthropic, google-vertex→
  * google, azure-openai-responses→openai) resolve correctly.
  *
  * This is the standalone heuristic the daemon-side resolvers fall back to when no operator
  * `providers.entries.<p>.capabilities.capabilityClass` override is pinned — without it the
- * `pipeline:authored` telemetry tier (TELEM-01) and AUTHOR-01 repair routing silently
+ * `pipeline:authored` telemetry tier and the authored-model repair routing silently
  * fail-default to "unknown"/undefined for every un-pinned config (i.e. the common case).
  */
 export function capabilityClassFromProvider(provider: string | undefined): CapabilityClass | undefined {
@@ -129,10 +130,10 @@ export function capabilityClassFromProvider(provider: string | undefined): Capab
  *
  * Provider-family resolution is single-sourced to capabilities.ts so all
  * canonical aliases (amazon-bedrock → anthropic, google-vertex → google,
- * azure-openai-responses → openai) are handled automatically (CR-01).
+ * azure-openai-responses → openai) are handled automatically.
  *
  * This ensures a 256K ollama model resolves capabilityClass="small", never "frontier".
- * The contextWindow is NEVER used to derive capabilityClass (K2 invariant).
+ * The contextWindow is NEVER used to derive capabilityClass.
  */
 export function resolveModelProfile(
   resolvedModel:
@@ -142,10 +143,10 @@ export function resolveModelProfile(
         contextWindow?: number;
         maxTokens?: number;
         reasoning?: boolean;
-        // CR-02: widened to readonly string[] | undefined so ("text"|"image")[]
+        // Widened to readonly string[] | undefined so ("text"|"image")[]
         // (the SDK's actual type) is assignable without a double-cast at the call site.
         input?: readonly string[] | string[];
-        // SA7: optional SDK fields for prompt-cache enrichment.
+        // Optional SDK fields for prompt-cache enrichment.
         // compat is typed loosely (unknown) so that any of the SDK's three compat
         // union members (OpenAICompletionsCompat / OpenAIResponsesCompat /
         // AnthropicMessagesCompat) is structurally assignable without an index
@@ -172,7 +173,7 @@ export function resolveModelProfile(
 
   // -----------------------------------------------------------------------
   // Capability axis: capabilityClass derivation
-  // NEVER reads contextWindow — K2 invariant
+  // NEVER reads contextWindow — capacity must not imply capability
   // -----------------------------------------------------------------------
   let capabilityClass: CapabilityClass;
 
@@ -180,7 +181,7 @@ export function resolveModelProfile(
     // Explicit config override wins unconditionally
     capabilityClass = capabilityClassOverride;
   } else {
-    // CR-01: provider-family mapping (single-sourced via capabilityClassFromProvider →
+    // Provider-family mapping (single-sourced via capabilityClassFromProvider →
     // resolveProviderCapabilities) so all aliases (amazon-bedrock, google-vertex,
     // azure-openai-responses, bedrock, gcp-vertex, etc.) map to their correct family.
     // resolvedModel.provider is always defined here; "small" is the fail-safe direction.
@@ -197,13 +198,13 @@ export function resolveModelProfile(
   const supportsVision = resolvedModel.input?.includes("image") === true;
   const reasoningStyle: ReasoningStyle = resolvedModel.reasoning === true ? "native" : "none";
 
-  // SA7: Derive supportsPromptCache from SDK Model metadata when available,
+  // Derive supportsPromptCache from SDK Model metadata when available,
   // with providerFamily="anthropic" as the fallback for call sites without
   // the full Model object. Fail-safe direction: prefer false-negative
   // (no cache_control injection) over false-positive (inject into a
   // non-caching provider). Three signals — any one is sufficient:
   //   1. providerFamily = "anthropic" (anthropic, amazon-bedrock, and aliases —
-  //      CR-02 family fallback; preserves all existing behavior)
+  //      the family fallback)
   //   2. Model.compat.cacheControlFormat = "anthropic" (openai-compat providers
   //      like Fireworks/OpenRouter that inject Anthropic-style cache_control)
   //   3. Model.cost.cacheRead > 0 (native caching signal from SDK catalog;
@@ -230,7 +231,7 @@ export function resolveModelProfile(
   // catalog entries now carry cacheRead > 0 (e.g. gpt-5.5 cacheRead 0.5). Letting
   // the signal fire for them runs the cache_control machinery on their request
   // body and strips the responses-API tool `type:"function"` → the backend 400
-  // "Unsupported tool type: None" / silent turn abort (fresh VPS 2026-06-14).
+  // "Unsupported tool type: None" / silent turn abort (observed live).
   // So the cacheRead signal is Anthropic-cache_control-only — scope it out of the
   // automatic-caching families (#1 anthropic + #2 anthropic-compat still win).
   const usesCacheControlCaching =

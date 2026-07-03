@@ -236,17 +236,17 @@ export function resolveModelPricing(
 }
 
 /**
- * The honest three-state pricing signal (PERSIST-03 / observability-excellence
- * E1). Derives whether a provider/model's cost is `priced` (a real catalog rate),
+ * The honest three-state pricing signal.
+ * Derives whether a provider/model's cost is `priced` (a real catalog rate),
  * `free` (a gateway/local runtime where $0 is correct), or `unknown` (a native
- * provider with NO catalog entry — the dangerous `ffe11736` fail-open where
+ * provider with NO catalog entry — the dangerous fail-open where
  * {@link resolveModelPricing} silently returns {@link ZERO_COST}, masking a phantom
  * cost as if it were free).
  *
- * This is a NEW function, deliberately SEPARATE from {@link resolveModelPricing}
+ * Deliberately SEPARATE from {@link resolveModelPricing}
  * (whose return type {@link PerTokenCostRates} + 5 production callers stay
- * untouched). P0 only PERSISTS this signal as `pricing_state`; the P1 spend
- * kill-switch (Phase 177) consumes it.
+ * untouched). The signal is persisted as `pricing_state`; the spend
+ * kill-switch consumes it.
  *
  * The discriminator is provider-family membership ({@link isNativeProvider} over
  * model-family.ts's `NATIVE_PROVIDER_FAMILY`), NOT a bare catalog-presence boolean:
@@ -273,7 +273,7 @@ export function resolvePricingState(
   //    free. $0 is correct for these runtimes.
   if (!isNativeProvider(provider)) return "free";
 
-  // 3. A NATIVE single-family provider with no catalog entry → unknown (the
-  //    ffe11736 chimera: a phantom $0 that must NOT be reported as free).
+  // 3. A NATIVE single-family provider with no catalog entry → unknown (a
+  //    provider↔model chimera: a phantom $0 that must NOT be reported as free).
   return "unknown";
 }

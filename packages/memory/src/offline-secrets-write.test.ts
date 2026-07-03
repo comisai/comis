@@ -196,12 +196,12 @@ describe("offlineSecretsList", () => {
 });
 
 // ---------------------------------------------------------------------------
-// W15 (obs-llm-troubleshooting): offlineSecretGet — the daemon-free read that
-// breaks the gateway-token chicken-and-egg (`secrets get COMIS_GATEWAY_TOKEN`
-// needed the daemon RPC, which needed the token).
+// offlineSecretGet — the daemon-free read that breaks the gateway-token
+// chicken-and-egg (`secrets get COMIS_GATEWAY_TOKEN` needed the daemon RPC,
+// which needed the token).
 // ---------------------------------------------------------------------------
 
-describe("offlineSecretGet (W15)", () => {
+describe("offlineSecretGet", () => {
   it("round-trips a value written by offlineSecretSet without a daemon", () => {
     const { dataDir, envFilePath } = makeTmpDir();
     const masterKey = generateMasterKey();

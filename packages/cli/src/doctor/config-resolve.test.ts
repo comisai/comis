@@ -8,9 +8,9 @@
  * with their config path and var name, and load-stage failures are
  * distinguished from validation failures.
  *
- * Live finding (2026-06-12 C1 smoke run): the raw `${COMIS_GATEWAY_TOKEN}`
- * placeholder failed the >=32-char token gate, buildDoctorContext silently
- * dropped the config, and doctor claimed "No gateway URL configured" /
+ * Motivating failure mode: without this, the raw `${COMIS_GATEWAY_TOKEN}`
+ * placeholder fails the >=32-char token gate, buildDoctorContext silently
+ * drops the config, and doctor claims "No gateway URL configured" /
  * "No channels configured" against a live, fully configured daemon.
  *
  * @module

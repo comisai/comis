@@ -49,8 +49,8 @@
  *   From env-handlers.ts (2 env.* methods):
  *
  *   - `env.set`         (admin) — write a secret to the encrypted
- *                                  SecretStorePort OR the legacy .env
- *                                  file. Triggers SIGUSR2 restart.
+ *                                  SecretStorePort OR the plaintext
+ *                                  .env file. Triggers SIGUSR2 restart.
  *   - `env.list`        (admin) — enumerate secret NAMES (with optional
  *                                  glob filter). Values are NEVER
  *                                  returned — the response schema
@@ -59,8 +59,8 @@
  *                                  dev-mode `response.parse(...)` time
  *                                  (residency canary).
  *
- * All 12 contracts have `scopes: ["admin"] as const`. Two registration
- * planes:
+ * All contracts in this file have `scopes: ["admin"] as const`. Two
+ * registration planes:
  *   - `config.*` + `gateway.*` are registered via
  *     `registerRpcPassthrough(..., "admin")` in
  *     `packages/daemon/src/wiring/setup-gateway-api.ts` lines 80-84 +
@@ -173,7 +173,7 @@ const ConfigHistoryEntrySchema = z.object({
 
 /**
  * Per-secret row returned by `env.list`. Mirrors the projection at
- * `env-handlers.ts:294-300`: legacy .env-file secrets carry only
+ * `env-handlers.ts:294-300`: plaintext .env-file secrets carry only
  * `{ name, source: "envfile" }`; secrets backed by the
  * SecretStorePort carry the metadata bundle (provider, description,
  * timestamps, expiresAt). The contract MUST NOT include
@@ -347,7 +347,8 @@ export const ConfigApplyContract = defineContract({
  * Request: `{ limit?, section? }`.
  *
  * Response: `{ entries: ConfigHistoryEntry[], error? }`. Each entry
- * carries `{ sha, date, message, author? }`.
+ * carries `{ sha, timestamp, message, metadata }` (see
+ * `ConfigHistoryEntrySchema` above).
  */
 export const ConfigHistoryContract = defineContract({
   method: "config.history",

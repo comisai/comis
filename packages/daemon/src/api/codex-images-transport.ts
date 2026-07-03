@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Custom Codex Responses image transport (CDX-02 + CDX-03).
+ * Custom Codex Responses image transport.
  *
  * pi-ai's IMAGES registry ships only the built-in `openrouter-images`
  * transport, so the Codex (ChatGPT-login) IMAGE path is custom: it POSTs the
  * Responses-API hosted `image_generation` tool to the ChatGPT-backend Codex
  * endpoint (`https://chatgpt.com/backend-api/codex/responses`), sends the
  * first-party Cloudflare request identity, and parses the image SSE to base64.
- * It is registered into pi-ai's module-level registry (PI-02 seam, Plan 02)
+ * It is registered into pi-ai's module-level registry
  * under the `openai-codex-images` api and dispatched through the ONE
  * `generateImages()` call site.
  *
- * In-repo analog (WR-01 / IN-02, 184-REVIEW): pi-ai ALSO ships a Codex
+ * In-repo analog: pi-ai ALSO ships a Codex
  * *Responses* TEXT transport — `@earendil-works/pi-ai/.../openai-codex-responses.js`
  * (`buildBaseCodexHeaders`/`buildSSEHeaders`/`extractAccountId`) — against the
  * SAME endpoint. It is not an image transport (it parses message SSE, not
@@ -22,31 +22,31 @@
  * Design boundaries:
  *   - `generateImagesCodex` is an `ImagesApiFunction` (pi-ai contract). It
  *     reads the bearer from `options.apiKey` and the CF headers from
- *     `options.headers` (both supplied by the per-call adapter — Plan 02).
+ *     `options.headers` (both supplied by the per-call adapter).
  *   - It NEVER throws out of the transport: any miss (no bearer, non-2xx, empty
  *     SSE, malformed body, thrown fetch) returns `stopReason:"error"` (or
  *     `"aborted"`) with an `errorMessage` the SHIPPED `classifyImageError`
  *     (`pi-image-adapter.ts`) maps (`401|403|auth` → `auth_required`,
- *     content/quota → `content_blocked`/`quota_exceeded` via WR-04, else
+ *     content/quota → `content_blocked`/`quota_exceeded`, else
  *     → `empty_response`). So this file needs NO `@allow-throw`.
- *   - SEC-03 (Pitfall 3): NEVER log the `headers` object, the bearer, or the
+ *   - Secret-logging discipline: NEVER log the `headers` object, the bearer, or the
  *     `ChatGPT-Account-ID` (the account-id is NOT in the redaction set). If a
  *     logger is threaded for diagnostics, log only `{ step, errorKind }`.
  *
- * The header VALUES are an authorized compatibility shim (CONTEXT
- * §security-framing): they reproduce the OFFICIAL `openai/codex` (codex-rs)
+ * The header VALUES are an authorized compatibility shim, not detection
+ * evasion: they reproduce the OFFICIAL `openai/codex` (codex-rs)
  * first-party CLI's wire identity using the operator's OWN ChatGPT/Codex OAuth
  * credentials against the SAME endpoint that client uses — NOT detection
  * evasion. `originator: "codex_cli_rs"` is the official codex-rs originator
  * (pi-mono #1828 documents that pi-ai's `originator:"pi"` is Cloudflare-403'd;
  * Comis's own login-flow `ORIGINATOR="comis"` is a different concern).
  *
- * LIVE-UNVERIFIED (Assumption A1, 184-RESEARCH): the EXACT header set + values
+ * LIVE-UNVERIFIED: the EXACT header set + values
  * for the codex-backend IMAGE round-trip can only be confirmed by an operator
  * UAT with a real ChatGPT login — the fetch-boundary mocks here cannot prove
  * Cloudflare accepts them. The values match the SDK's proven codex TEXT path
  * (`buildSSEHeaders`) and #1828's originator, but if a live UAT 403s, the
- * documented escape hatch is `provider:"openrouter"` (design Risk).
+ * documented escape hatch is `provider:"openrouter"`.
  *
  * @module
  */
@@ -58,7 +58,7 @@ import { randomUUID } from "node:crypto";
 /**
  * Cosmetic version string in the codex `User-Agent`. pi-mono #1828 indicates
  * Cloudflare gates on the `codex_cli_rs` originator/prefix; the exact UA
- * version is BELIEVED cosmetic (Assumption A3, 184-RESEARCH — live-unverified),
+ * version is BELIEVED cosmetic (live-unverified),
  * so this is a stable constant. Bump only if a future gate tightens on the UA
  * version.
  */
@@ -68,7 +68,7 @@ export const CODEX_UA_VERSION = "0.0.1";
 const CODEX_AUTH_CLAIM = "https://api.openai.com/auth";
 
 /**
- * IN-01 (184-REVIEW): cap the SSE line buffer so a hostile/huge no-newline
+ * Cap the SSE line buffer so a hostile/huge no-newline
  * stream cannot grow memory without bound. A complete `response.completed`
  * event can legitimately carry a multi-MB base64 image inline, so the ceiling
  * is generous (32 MiB); past it the parser bails to `empty_response` (honest
@@ -79,15 +79,15 @@ export const CODEX_SSE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 /**
  * Build the first-party Codex Cloudflare/request headers from the freshly-
- * resolved access-token JWT (CDX-02), reconciled against the SDK's proven codex
- * Responses path (`openai-codex-responses.js` `buildSSEHeaders`) — WR-01.
+ * resolved access-token JWT, reconciled against the SDK's proven codex
+ * Responses path (`openai-codex-responses.js` `buildSSEHeaders`).
  *
  * The account-id is decoded from the SAME bearer used for the request (one JWT
  * → its own `chatgpt_account_id`, so the identity can never diverge from the
- * credential — T-184-05). The `Authorization: Bearer <token>` header is set by
+ * credential). The `Authorization: Bearer <token>` header is set by
  * the transport from `options.apiKey`; it is deliberately NOT set here.
  *
- * Header values (LIVE-UNVERIFIED — Assumption A1, see the module docstring):
+ * Header values (LIVE-UNVERIFIED — see the module docstring):
  *   - `originator: "codex_cli_rs"` — the OFFICIAL `openai/codex` (codex-rs)
  *     originator (pi-mono #1828: the SDK's `originator:"pi"` is Cloudflare-
  *     403'd). NOT "comis" (that is Comis's OAuth login-flow originator).
@@ -98,8 +98,8 @@ export const CODEX_SSE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
  *     SDK uses lowercase `chatgpt-account-id` to the same effect. Omitted (not
  *     empty) when the JWT carries no account claim.
  *   - `session-id` + `x-client-request-id` — the SDK's `buildSSEHeaders` sends
- *     BOTH (equal) as part of the first-party SSE request identity; this
- *     transport previously sent NEITHER (WR-01). One fresh UUID per request
+ *     BOTH (equal) as part of the first-party SSE request identity, so this
+ *     transport must too. One fresh UUID per request
  *     (mirrors the SDK's `createCodexRequestId()` → both headers).
  *
  * @param bearer - The Codex OAuth access token (a JWT). Never logged.
@@ -126,7 +126,7 @@ function extractPrompt(input: readonly { type: string; text?: string }[]): strin
   return textItem?.text ?? "";
 }
 
-/** Build the Responses `image_generation` request body (CDX-03). */
+/** Build the Responses `image_generation` request body. */
 function buildRequestBody(modelId: string, prompt: string): string {
   // The body MIRRORS pi-ai's proven codex TEXT body (openai-codex-responses.js
   // buildRequestBody) for the fields the ChatGPT backend REQUIRES, plus the
@@ -148,12 +148,12 @@ function buildRequestBody(modelId: string, prompt: string): string {
 }
 
 /**
- * Tolerantly parse the Codex image SSE stream to a base64 image (CDX-03).
+ * Tolerantly parse the Codex image SSE stream to a base64 image.
  *
  * Read-loop / line-buffer / blank-line-boundary mechanics copied from the only
  * in-repo SSE reader (`signal-client.ts:266-309`); the event handling is codex
  * image-specific. Per-line `JSON.parse` is wrapped in try/catch so a malformed
- * `data:` line is skipped, never thrown (T-184-04). Accumulation rules:
+ * `data:` line is skipped, never thrown. Accumulation rules:
  *   - `response.image_generation_call.partial_image` → `partial_image_b64`,
  *     keyed by `partial_image_index` (highest index wins).
  *   - `response.image_generation_call.completed` → `b64_json` (PREFERRED final).
@@ -162,7 +162,7 @@ function buildRequestBody(modelId: string, prompt: string): string {
  *
  * @returns A result carrying the completed b64 (else the highest-index
  *   partial, else `undefined`) plus any terminal `response.failed` cause
- *   message. WR-04 (184-REVIEW): the `failedMessage` lets the caller surface
+ *   message. The `failedMessage` lets the caller surface
  *   the REAL failure cause (quota / content policy / auth) to the shipped
  *   `classifyImageError` instead of collapsing everything to `empty_response`.
  *   It is NEVER logged — `classifyImageError` only scans it.
@@ -186,7 +186,7 @@ async function parseCodexImageSse(
   // (out-of-order) does not clobber a better one.
   let bestPartialIndex = -1;
   let bestPartial: string | undefined;
-  // WR-04: capture the terminal failure cause so the caller can classify it.
+  // Capture the terminal failure cause so the caller can classify it.
   let failedMessage: string | undefined;
 
   const consumeEvent = (raw: string): void => {
@@ -227,7 +227,7 @@ async function parseCodexImageSse(
       return;
     }
     if (type === "response.failed") {
-      // WR-04: the Codex Responses API emits the real cause (quota / content
+      // The Codex Responses API emits the real cause (quota / content
       // policy / auth / server error) in response.error.message. Capture it so
       // the caller surfaces it to classifyImageError (quota_exceeded /
       // content_blocked / auth_required) instead of the generic empty_response.
@@ -238,7 +238,7 @@ async function parseCodexImageSse(
     }
   };
 
-  // IN-01: set when the un-drained buffer exceeds the cap — bail to a miss
+  // Set when the un-drained buffer exceeds the cap — bail to a miss
   // (empty_response) rather than grow without bound on a no-newline stream.
   let oversized = false;
   try {
@@ -254,7 +254,7 @@ async function parseCodexImageSse(
         if (line !== "" && !line.startsWith(":")) consumeEvent(line);
         lineEnd = buffer.indexOf("\n");
       }
-      // IN-01: after draining every complete line, the residue is one
+      // After draining every complete line, the residue is one
       // unterminated line. If it alone exceeds the cap, the stream is sending
       // an unbounded no-newline body — stop reading and degrade honestly.
       if (buffer.length > CODEX_SSE_MAX_BUFFER_BYTES) {
@@ -273,9 +273,9 @@ async function parseCodexImageSse(
 }
 
 /**
- * The custom `openai-codex-images` transport (CDX-03).
+ * The custom `openai-codex-images` transport.
  *
- * Registered into pi-ai's registry (Plan 02) and dispatched through the single
+ * Registered into pi-ai's registry and dispatched through the single
  * `generateImages()` call site. Reads the bearer from `options.apiKey` and the
  * CF headers from `options.headers`; NEVER throws out (every failure → an
  * `AssistantImages` with `stopReason:"error"`/`"aborted"` the shipped
@@ -334,7 +334,7 @@ export const generateImagesCodex: ImagesApiFunction = async (
       // OBS: read the error body (truncated) so the REAL 4xx reason (e.g. an
       // invalid model or unsupported tool) reaches the caller — it was just
       // "codex <status>" with no reason, which the classifier collapsed into a
-      // generic "non-image response" (the HTTP-400 incident, where the cause —
+      // generic "non-image response" (a live HTTP 400 incident, where the cause —
       // the gpt-image-1 model id — was invisible). The body is the API error
       // description (no secret: the bearer/CF headers are request-side, never
       // echoed). Best-effort; a body read that throws degrades to the bare status.
@@ -351,7 +351,7 @@ export const generateImagesCodex: ImagesApiFunction = async (
     const { b64, failedMessage } = await parseCodexImageSse(resp.body, options?.signal);
     if (!b64) {
       out.stopReason = "error";
-      // WR-04: prefer the terminal response.failed cause (quota / content /
+      // Prefer the terminal response.failed cause (quota / content /
       // auth) so the shipped classifier maps the RIGHT kind; only a genuinely
       // empty/unparseable stream falls back to empty_response. The cause is
       // surfaced via errorMessage for classification (+ the adapter's WARN),

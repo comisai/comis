@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `emitAutonomyBootLog` — the legible resolved-autonomy boot-log emission
- * (PROFILE-03 / 210-06), extracted from `daemon.ts`'s `emitStartupBanner`
- * WITHOUT behavior change (daemon.ts line-cap, arch invariant ≤ 3000).
+ * `emitAutonomyBootLog` — the legible resolved-autonomy boot-log emission,
+ * extracted from `daemon.ts`'s `emitStartupBanner` WITHOUT behavior change
+ * (daemon.ts line-cap, arch invariant ≤ 3000).
  *
  * Emits one INFO line per agent stating the resolved autonomy profile, the
  * caps it enabled, the budget ceiling, and the ONE field to change it
- * (`autonomy.profile`) plus the M1 over-grant notice; then, when the host
+ * (`autonomy.profile`) plus the over-grant notice; then, when the host
  * namespace preflight failed, a single WARN naming the downshift to the
  * `assistant` profile (a doctor finding — autonomy degrades, the daemon still
  * serves; no silent unjailed fallback). Promoted to INFO per CLAUDE.md: an
@@ -26,10 +26,9 @@ export interface AutonomyBootLogDeps {
   /** The daemon's agents config map (only `autonomy` is read). */
   readonly agents: Parameters<typeof buildAutonomyBootLog>[0];
   /**
-   * PROFILE-03 host preflight RESULT — whether the unprivileged-user-namespace
-   * preflight passed. Defaults to `true` in M1 (no probe yet); Phase 211
-   * (JAIL-03) supplies the real value. `false` triggers the autonomy-downshift
-   * WARN naming the fall to `assistant`.
+   * Host preflight RESULT — whether the unprivileged-user-namespace preflight
+   * passed. Defaults to `true` when no namespace probe has run. `false`
+   * triggers the autonomy-downshift WARN naming the fall to `assistant`.
    */
   readonly namespacePreflightOk?: boolean;
 }
@@ -37,9 +36,9 @@ export interface AutonomyBootLogDeps {
 /**
  * Emit the per-agent autonomy INFO lines and the optional downshift WARN.
  *
- * The preflight RESULT is an input that defaults to OK in M1; the
- * bubblewrap/namespace probe that fills it is Phase 211 (JAIL-03), wired
- * through `namespacePreflightOk` without re-plumbing here.
+ * The preflight RESULT is an input that defaults to OK; the
+ * bubblewrap/namespace probe that fills it is wired through
+ * `namespacePreflightOk` without re-plumbing here.
  */
 export function emitAutonomyBootLog(deps: AutonomyBootLogDeps): void {
   const { daemonLogger, agents } = deps;

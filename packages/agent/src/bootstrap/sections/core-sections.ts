@@ -99,7 +99,8 @@ export function buildRuntimeMetadataSection(
   if (info.nodeVersion) parts.push(`node=${info.nodeVersion}`);
   if (info.shell) parts.push(`shell=${info.shell}`);
   if (info.defaultModel) parts.push(`default_model=${info.defaultModel}`);
-  // channel relocated to dynamic preamble (changes on cross-session relay)
+  // channel is rendered in the dynamic preamble, never here (it changes on
+  // cross-session relay and would destabilize this cache-stable section).
   // if (info.channel) parts.push(`channel=${info.channel}`);
   if (info.channelCapabilities) parts.push(`capabilities=${info.channelCapabilities}`);
 

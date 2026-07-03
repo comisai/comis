@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * iMessage wrapper elapsed-fallback wiring (§8.5).
+ * iMessage wrapper elapsed-fallback wiring.
  * Regression-locks the LIVE production path: when the daemon injects a
  * `ClockPort` into the wrapper deps, the wrapper MUST forward it into
  * `createAppendOnlyRenderer({...clock})` so the strategy's first-apply `startedAtMs`
@@ -8,12 +8,11 @@
  * fallback.
  *
  * Without the wrapper forward, `deps.clock` is dropped at the wrapper layer →
- * startedAtMs stays undefined → elapsedMs stays undefined → the §8.5 fallback is
- * silently inert in iMessage production. The combined RED+GREEN of this file +
- * imessage-activity.ts (AGENTS.md §2.10 escape: the wrapper's deps shape
- * `{ markers? }` did NOT include `clock?: ClockPort` before this fix, so the
- * `createIMessageActivityRenderer(fake, "chat-1", { clock })` call below would not
- * compile against pre-patch code) is the regression lock.
+ * startedAtMs stays undefined → elapsedMs stays undefined → the elapsed
+ * fallback is silently inert in iMessage production. The wrapper's deps shape
+ * must therefore include `clock?: ClockPort`, or the
+ * `createIMessageActivityRenderer(fake, "chat-1", { clock })` call below does
+ * not compile.
  *
  * AppendOnly posts ONCE — the elapsed fallback only ever appears on the first
  * (and only) send, exactly when the daemon has constructed the wrapper but SEP has
@@ -68,10 +67,10 @@ describe("iMessage wrapper forwards deps.clock into AppendOnly", () => {
   it("forwards deps.clock → AppendOnly: opening status carries '(running 0 s)' on the first frame (no SEP plan)", async () => {
     const fake = createFakeIMessageAdapter();
     const clock = createFakeClock(1000);
-    // The wrapper's deps shape MUST accept `clock?: ClockPort` (added in this commit)
-    // AND forward it into `createAppendOnlyRenderer({...clock})`. Without the forward,
-    // startedAtMs would stay undefined in the strategy → elapsedMs undefined → fallback
-    // skipped → this assertion fails. Regression-lock for the iter-1 wrapper fix.
+    // The wrapper's deps shape MUST accept `clock?: ClockPort` AND forward it
+    // into `createAppendOnlyRenderer({...clock})`. Without the forward,
+    // startedAtMs would stay undefined in the strategy → elapsedMs undefined →
+    // fallback skipped → this assertion fails.
     const r = createIMessageActivityRenderer(fake, "chat-1", { clock });
 
     await r.apply(frameNoPlan("running tool"));
@@ -95,9 +94,9 @@ describe("iMessage wrapper forwards deps.clock into AppendOnly", () => {
     const sends = fake.recorded.calls.filter((c) => c.op === "send");
     expect(sends).toHaveLength(1);
     if (sends[0]?.op === "send") {
-      // [Rule 1 — bug fix, quick-260528-nsv] Tool-event line carries the
-      // running 🔧 marker (the per-step glyph); the no-elapsed-fallback
-      // invariant (`(running …)` absent) is the load-bearing assertion.
+      // The tool-event line carries the running 🔧 marker (the per-step
+      // glyph); the no-elapsed-fallback invariant (`(running …)` absent) is
+      // the load-bearing assertion.
       expect(sends[0].text).not.toContain("(running");
       expect(sends[0].text).toBe("🔧 running tool");
     }
@@ -108,8 +107,8 @@ describe("iMessage wrapper forwards deps.clock into AppendOnly", () => {
     const clock = createFakeClock(1000);
     const r = createIMessageActivityRenderer(fake, "chat-1", { clock });
 
-    // The plan header above the events satisfies SPEC-§8.5's first half — the
-    // elapsed fallback (second half) is suppressed to avoid double-display.
+    // The plan header above the events already shows progress — the
+    // elapsed fallback is suppressed to avoid double-display.
     await r.apply(frameWithPlan("running tool"));
 
     const sends = fake.recorded.calls.filter((c) => c.op === "send");

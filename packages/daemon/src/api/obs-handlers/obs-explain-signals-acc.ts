@@ -3,7 +3,7 @@
  * The internal mutable accumulator for `toIncidentSignals` (obs-explain-signals.ts):
  * every record handler folds into this, and it is collapsed into the public
  * `IncidentSignals` at the end. Extracted to keep obs-explain-signals.ts under the
- * obs-handlers per-subdirectory file-size cap (the ORCH-OBS nodeBudgetBreaches field
+ * obs-handlers per-subdirectory file-size cap (the nodeBudgetBreaches field
  * pushed it over). Type-only; no behavior change.
  *
  * @module
@@ -23,7 +23,7 @@ import type {
 } from "./obs-explain-signals-fields.js";
 import type { LearningFoldState } from "./obs-explain-signal-folds.js";
 
-/** TREE (215-03): the per-node working shape the `capability.audited` fold
+/** The per-node working shape the `capability.audited` fold
  *  accumulates into (one per leaseId). Materialized into
  *  `IncidentSignals["spawnTree"]` at the end of `toIncidentSignals`. */
 export type SpawnNode = NonNullable<IncidentSignals["spawnTree"]>[number];
@@ -40,7 +40,7 @@ export interface Acc {
   breakerEvents: IncidentSignals["breakerEvents"];
   offloads: IncidentSignals["offloads"];
   nodeBudgetBreaches: IncidentSignals["nodeBudgetBreaches"];
-  /** TREE (215-03): the `capability.audited` fold groups nodes by leaseId
+  /** The `capability.audited` fold groups nodes by leaseId
    *  (in-process records key on the synthetic rootRunId). Materialized into
    *  `spawnTree` at the end; absent → the section is omitted. */
   spawnNodesByLease: Map<string, SpawnNode>;
@@ -53,51 +53,51 @@ export interface Acc {
   synthesizedBreakerTools: Set<string>;
   /** Per-tool: did any failure body carry a status/200/403 token? */
   misclassTokenByTool: Map<string, string>;
-  /** W3: the LAST context.budget trajectory record (the terminal fit check). */
+  /** The LAST context.budget trajectory record (the terminal fit check). */
   contextBudget?: IncidentContextBudget;
-  /** E2: the per-turn context-budget CASCADE (the progression toward `contextBudget`). Deduped on
+  /** The per-turn context-budget CASCADE (the progression toward `contextBudget`). Deduped on
    *  transition + most-recent-40 capped (see the context.budget fold). Surfaced only when ≥2 states. */
   contextBudgetHistory: IncidentContextBudgetHistoryEntry[];
-  /** LAT-04: the LAST execution.prompt_timeout record (the terminal kill
+  /** The LAST execution.prompt_timeout record (the terminal kill
    *  explains the end state — a retry-path kill earlier in the session is
    *  superseded by the kill that actually ended it). */
   promptTimeout?: IncidentPromptTimeout;
-  /** GBNF-02: the LAST `execution.tool_schema_unsupported` record — the
+  /** The LAST `execution.tool_schema_unsupported` record — the
    *  strip-retry self-heal outcome (one strip-retry per session means at most
    *  a handful; the terminal repair state explains the end). */
   toolSchemaUnsupported?: IncidentSignals["toolSchemaUnsupported"];
-  /** RECALL-01: aggregated over `memory.recalled` records — how many recalls ran,
+  /** Aggregated over `memory.recalled` records — how many recalls ran,
    *  how many returned zero injected memories, and the TERMINAL recall's shape. */
   recallCount: number;
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
-  /** PERSIST-01 (176-05): cache breaks folded per-reason from `cache.break` records
-   *  (Plan 04) — `{count, estCostUsd}` summed per closed reason. Counts + a number
+  /** Cache breaks folded per-reason from `cache.break` records
+   *  — `{count, estCostUsd}` summed per closed reason. Counts + a number
    *  ONLY (never the changed tool names — the trajectory carries only the digest). */
   cacheBreaksByReason: Map<string, { count: number; estCostUsd: number }>;
-  /** SPEND (WEBUI-04, 179-04): the LAST `spend.exceeded` trajectory record's breach
+  /** The LAST `spend.exceeded` trajectory record's breach
    *  (the terminal kill explains the end state — a warn earlier in the session is
    *  superseded by the breach that actually killed it). `totalUsd` is the record's
    *  `spentUsd`; `capUsd` its ceiling. Content-free (a scope enum + two numbers). */
   spend?: { scope: string; totalUsd: number; capUsd: number };
-  /** OBS-3: the per-ROOT autonomy.budget limb that tripped (from the terminal
+  /** The per-ROOT autonomy.budget limb that tripped (from the terminal
    *  `execution.aborted` record's `perRootBudget`). DISTINCT from `spend` (the
    *  priced observability.spend $-ceiling): the token / wall-clock limbs carry
    *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
    *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
-  /** BUDGET-LIMB-OBS (memory-learning-stress-catalog-20260629): the terminal
+  /** The terminal
    *  `execution.aborted` record's `reason` (e.g. "spend_exceeded"). A HARD abort
    *  skips the clean `sessionEnd` rollup, so the assembler's metadata-derived
    *  `endReason` falls through to "unknown" and the spend-verdict (gated on
    *  endReason==="spend_exceeded") never fires; this lets the assembler use the
    *  abort reason as the endReason fallback. Content-free (a closed reason enum). */
   abortReason?: string;
-  learning: LearningFoldState; // OBS-02 (198): see obs-explain-learning-fold.ts
-  /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
+  learning: LearningFoldState; // see obs-explain-signal-folds.ts
+  /** The image / vision / video / voice turns reconstructed
    *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts
    *  records (folded by `applyMediaRecord`). Each is undefined until its record class
-   *  is seen. The paired *OutcomeSeq makes each fold seq-aware (IN-04 — a stale
+   *  is seen. The paired *OutcomeSeq makes each fold seq-aware (a stale
    *  lower-seq terminal never overwrites a newer one). */
   image?: IncidentImageSignal;
   imageOutcomeSeq: number;
@@ -107,10 +107,10 @@ export interface Acc {
   videoOutcomeSeq: number;
   voice?: IncidentVoiceSignal;
   voiceOutcomeSeq: number;
-  /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
+  /** Event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
-  /** OBS-4 (openclaw-usecases 2026-06-25): the distinct turn ids (envelope `traceId`,
+  /** The distinct turn ids (envelope `traceId`,
    *  one per agent turn) seen in the trajectory. The session trajectory JSONL is
    *  APPEND-ONLY across `session.reset_conversation` severs, so a single file (and the
    *  whole-session `toolStats` derived from it) can span MANY turns — counting these
@@ -118,17 +118,17 @@ export interface Acc {
    *  this-turn (the near-miss that cost a cycle: a `toolStats` count read as one turn
    *  was actually the sum across several). */
   turnTraceIds: Set<string>;
-  /** W8: agentId from the first record envelope that carries one. */
+  /** agentId from the first record envelope that carries one. */
   agentId?: string;
-  /** W8: channel identity from the session.started record's data. */
+  /** Channel identity from the session.started record's data. */
   channel?: { type: string; id: string };
   sessionKey: string;
   seq: number;
-  /** DRIVE-02: the LAST `terminal.drive_promoted` reason seen (mode_detached |
+  /** The LAST `terminal.drive_promoted` reason seen (mode_detached |
    *  producing), and how many promotions fired. Folded into `terminalDrivePromoted`. */
   terminalDrivePromotedReason?: string;
   terminalDrivePromotedCount: number;
-  /** EVICT-01: the LAST `terminal.session_evicted` reason (idle | max_sessions |
+  /** The LAST `terminal.session_evicted` reason (idle | max_sessions |
    *  wall_clock | max_interactions) + the session lifetime at that eviction. Folded into
    *  `terminalDriveEvicted`; `wasProducing` is derived from `terminalDrivePromotedReason`. */
   terminalDriveEvictedReason?: string;

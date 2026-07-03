@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * EgressControlPort: the SEGREGATED hexagonal boundary for the terminal driver's
- * `network: listed-hosts` egress filter (§3.5). It materializes a
+ * `network: listed-hosts` egress filter. It materializes a
  * **no-secret host-allowlist CONNECT proxy** bound to the entry's `scope.hosts[]`
- * and returns a unix socket to bind-mount into the jail. A spike PROVED the
- * transport end-to-end on the VPS (allowlisted host -> 200, non-listed
+ * and returns a unix socket to bind-mount into the jail. The transport is
+ * proven end-to-end (allowlisted host -> 200, non-listed
  * -> 403, direct `--unshare-net` bypass -> rc=7, no route): a host-side allowlist
  * proxy on a unix socket, bridged into the jail by an in-jail loopback relay
  * exposed to the driven CLI as `HTTPS_PROXY=http://127.0.0.1:<port>`.
  *
- * This is DISTINCT from the credential broker (§3.9, an optional tier). The
+ * This is DISTINCT from the credential broker (an optional tier). The
  * broker injects an Authorization header to mint scoped credentials; this port
  * injects NOTHING into the stream — it is a pure CONNECT relay whose only job is
  * to gate the destination host against the operator allowlist. The two never

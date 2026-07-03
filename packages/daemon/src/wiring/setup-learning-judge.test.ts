@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Neighbor tests for the OUTCOME-04 LLM-judge conversational-breadth fallback
+ * Neighbor tests for the LLM-judge conversational-breadth fallback
  * (`maybeUpgradeWithJudge`), extracted into its own leaf to keep setup-learning.ts /
  * setup-learning-reactions.ts under the 800-line cap. Pins: upgrade-on-unknown,
  * skip-on-resolved, byte-identical-when-disabled/absent, and non-fatal-on-throw.
@@ -22,7 +22,7 @@ const noopLogger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(
 const clock = { now: () => 1000 } as never;
 const UNKNOWN = { outcome: "unknown" as const, confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] };
 
-describe("maybeUpgradeWithJudge — OUTCOME-04 conversational-breadth fallback", () => {
+describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
   it("upgrades an UNKNOWN verdict to the judge's success (observe source:judge + re-resolve)", async () => {
     const observe = vi.fn(async () => ({ ok: true as const, value: undefined }));
     const resolve = vi.fn(async () => ({ ok: true as const, value: { outcome: "success" as const, confidence: 0.7, sources: ["judge" as const], recalledIds: [], usedSkillIds: [] } }));
@@ -114,13 +114,13 @@ describe("maybeUpgradeWithJudge — OUTCOME-04 conversational-breadth fallback",
 // buildOutcomeJudgeWiring — daemon construction behind the byte-identity gate
 // ===========================================================================
 
-describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identity gate (OUTCOME-04)", () => {
+describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identity gate", () => {
   function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; secrets?: Record<string, string>; entries?: Record<string, unknown> } = {}) {
     const secrets = over.secrets ?? {};
     return {
       config: {
         agents: over.agents ?? {},
-        // Phase 226: the master kill-switch is `memory.enabled` (was memory.costFeatures.enabled).
+        // The master kill-switch is `memory.enabled`.
         memory: { enabled: over.costFeatures ?? true },
         providers: { entries: over.entries ?? {} },
       },
@@ -256,19 +256,16 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
   });
 
   // -------------------------------------------------------------------------
-  // H-1 (Phase 226): the master-kill-switch rename `memory.costFeatures.enabled`
-  // → `memory.enabled` MUST NOT silently invert the gate. The reader here once
-  // declared a LOOSE local type `memory?: { costFeatures?: { enabled?: boolean } }`
-  // and gated on `memory?.costFeatures?.enabled !== false`. After the schema
-  // collapse deletes `costFeatures`, a config carrying ONLY `memory.enabled:false`
-  // (the NEW shape) would read `undefined !== false === true` → FORCE-ENABLED (the
-  // kill-switch inverts), and tsc does NOT catch it (the loose optional type
-  // tolerates the missing key). This test pins the CORRECT post-rename behavior
-  // (force-DISABLE on memory.enabled:false) — it fails RED against the pre-rename
-  // loose reader. The fix re-points the local slice to the real MemoryConfig type
-  // (tsc then enforces the rename) AND this explicit guard is the belt.
+  // The master kill-switch `memory.enabled` MUST NOT silently invert the gate.
+  // A LOOSE local slice type (e.g. `memory?: { costFeatures?: { enabled?: boolean } }`)
+  // would let a config carrying ONLY `memory.enabled:false` read a missing key as
+  // `undefined !== false === true` → FORCE-ENABLED (the kill-switch inverts), and
+  // tsc would NOT catch it (a loose optional type tolerates the missing key). This
+  // test pins the correct behavior (force-DISABLE on memory.enabled:false); the
+  // local slice points at the real MemoryConfig type so tsc enforces it, and this
+  // explicit guard is the belt.
   // -------------------------------------------------------------------------
-  it("H-1: memory.enabled:false (the renamed master kill-switch) force-DISABLES the judge for every agent", () => {
+  it("memory.enabled:false (the master kill-switch) force-DISABLES the judge for every agent", () => {
     const built = buildOutcomeJudgeWiring(
       // The NEW shape: memory.enabled is the master gate; NO costFeatures key exists.
       {
@@ -284,7 +281,7 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
       makeLcdStore(),
     );
     // The master kill-switch is OFF → the judge gate must be closed for every agent.
-    // (Pre-rename: reads costFeatures (absent) → undefined !== false === true → force-ENABLED → RED.)
+    // (A loose slice type would misread this as force-ENABLED — the fail-open this guards against.)
     expect(built.learningOutcomeJudgeEnabled("a1")).toBe(false);
     // And byte-identity: no seam/reader is constructed when the master switch is off.
     expect(built.outcomeJudge).toBeUndefined();

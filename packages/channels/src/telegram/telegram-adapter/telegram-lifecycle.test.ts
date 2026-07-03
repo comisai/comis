@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for telegram lifecycle runner opt-in (REACT-01, Pitfall 1).
+ * Unit tests for the telegram lifecycle runner allowed_updates opt-in.
  *
  * Asserts that startLifecycle boots the grammy runner with an `allowed_updates`
  * list that includes "message_reaction" WITHOUT dropping any of the four

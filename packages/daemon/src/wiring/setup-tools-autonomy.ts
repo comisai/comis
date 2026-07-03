@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `setup-tools-autonomy` — the Phase-212 Gap-3 dormancy-activation tool wiring,
+ * `setup-tools-autonomy` — the dormancy-activation tool wiring,
  * extracted from `setup-tools.ts` to keep it under the 800-line cap (mirrors the
  * `setup-broker-activation` / `setup-terminal-tools` / `setup-context-tools`
  * extractions). It owns the per-assembly cap-lease MINT + the `orchestrate` tool
@@ -10,11 +10,12 @@
  *   - {@link buildCapabilityMint}: from the KEPT cap-layer handle
  *     (`constructCapabilityLayer`) + the agent's resolved autonomy caps, build the
  *     `CapabilityMintDeps` that `buildBrokerSpawnEnv`'s 3rd arg consumes (mints the
- *     per-spawn lease, registers the bearer in OutputGuard — Pitfall 1, injects
+ *     per-spawn lease, registers the bearer in OutputGuard so it is scrubbed from
+ *     agent-visible output, injects
  *     `COMIS_CAP_LEASE`/`COMIS_ORCH_SOCKET`). `undefined` for a non-autonomy agent
  *     (or no handle) → `buildBrokerSpawnEnv`'s 2-arg behavior holds (no regression).
- *   - {@link maybeBuildOrchestrateTool}: assemble the Surface-2 `orchestrate` runner
- *     (Plan 04) when the agent is autonomy-bearing AND a sandbox provider exists
+ *   - {@link maybeBuildOrchestrateTool}: assemble the `orchestrate` runner
+ *     when the agent is autonomy-bearing AND a sandbox provider exists
  *     (the jail is buildable). The autonomy resolver IS the gate — no speculative
  *     `builtinTools.orchestrate` flag (AGENTS §2.3). The runner gets the cap socket,
  *     the SAME minted `brokerSpawnEnv` (so its jailed SDK authenticates), and a
@@ -62,7 +63,7 @@ export interface AutonomyToolInputs {
   /** The OS sandbox provider — REQUIRED for the orchestrate jail; absent ⇒ no orchestrate tool. */
   readonly sandboxProvider: SandboxProvider | undefined;
   /**
-   * PROFILE-05/JAIL-03/JAIL-05 — the host namespace preflight RESULT (the
+   * The host namespace preflight RESULT (the
    * unprivileged-userns + `--unshare-net` probe `constructCapabilityLayer` runs
    * once at boot). `false` means the jail CANNOT be built on this host, so the
    * autonomy surface must genuinely degrade to `assistant` here (no orchestrate
@@ -75,16 +76,16 @@ export interface AutonomyToolInputs {
   /** The session key the lease is minted for, or undefined (heartbeat/cron). */
   readonly sessionKey: SessionKey | undefined;
   /**
-   * The CALLER's tree-stable rootRunId (Phase 213 CEIL-01/BUDGET), when this
+   * The CALLER's tree-stable rootRunId, when this
    * assembly is itself a sub-agent whose spawn metadata carried one. When present
-   * the minted lease INHERITS it (so the whole tree shares one id — RESEARCH
-   * Pitfall 1, the silent under-count). Absent ⇒ this is a tree root and a fresh
-   * id is minted here.
+   * the minted lease INHERITS it — the whole tree must share one id, or the
+   * per-tree budget/semaphore accounting silently under-counts. Absent ⇒ this is
+   * a tree root and a fresh id is minted here.
    */
   readonly callerRootRunId?: string;
   /** The skills-scoped logger (instrument the runner + the store). */
   readonly logger: ComisLogger;
-  /** The filtered inherited env the runner scrubs (ORCH-02); the lease vars ride placeholders. */
+  /** The filtered inherited env the runner scrubs; the lease vars ride placeholders. */
   readonly baseEnv: Record<string, string | undefined> | undefined;
 }
 
@@ -97,19 +98,19 @@ export interface AutonomyToolWiring {
 }
 
 /**
- * The Phase-212 Gap-3 autonomy tool wiring for one agent assembly: mint the
+ * The autonomy tool wiring for one agent assembly: mint the
  * per-spawn lease ONCE (the SAME env feeds exec + orchestrate, one lease per
  * assembly — mirrors the broker token's per-assembly lifecycle) and assemble the
  * `orchestrate` tool when the agent is autonomy-bearing AND a sandbox provider
  * exists (the jail is buildable). `capMint`/`orchestrateTool` are `undefined` for
  * a non-autonomy agent, no handle, or no sandbox → `buildBrokerSpawnEnv`'s 2-arg
- * behavior + NO orchestrate tool (never an unjailed run; no regression — 211-06
- * covered both broker paths). The autonomy resolver IS the gate (no speculative
+ * behavior + NO orchestrate tool (never an unjailed run; both broker paths keep
+ * their existing behavior). The autonomy resolver IS the gate (no speculative
  * `builtinTools.orchestrate` flag — AGENTS §2.3); the runner's `resolveJailNode`
  * honest-degrade is the second line behind the sandbox gate.
  */
 export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyToolWiring {
-  // PROFILE-05 / JAIL-03 / JAIL-05 — the honest-degrade must gate the SURFACE, not
+  // The honest-degrade must gate the SURFACE, not
   // just the boot log. When the host namespace preflight failed the jail cannot be
   // built, so `degradeAutonomy` downshifts the resolved posture to `assistant`
   // (enabled:false, zero caps) HERE — the SAME shipped single-source-of-truth the
@@ -123,9 +124,10 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
     namespacePreflightOk: input.namespacePreflightOk ?? true,
   }).resolved;
   const handle = input.capEndpointHandle;
-  // Tree-stable rootRunId (Phase 213 — RESEARCH Pitfall 1): INHERIT the caller's
+  // Tree-stable rootRunId: INHERIT the caller's
   // id when this assembly is a sub-agent (so the whole tree shares one id the
-  // semaphore/budget/kill key on); mint a fresh root id ONLY when there is no
+  // semaphore/budget/kill key on — a fresh id per sub-agent would silently
+  // under-count the tree); mint a fresh root id ONLY when there is no
   // caller id (the tree root). Uses systemNowMs (the sanctioned-root time helper).
   const rootRunId =
     input.callerRootRunId ?? `root-${input.agentId}-${systemNowMs().toString(36)}`;
@@ -136,7 +138,7 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           outputGuard: handle.outputGuard,
           capSocketPath: handle.capSocketPath,
           resolvedCaps: resolved.capabilities,
-          // budgetRef is the Phase-213 budget seam; an M1 per-assembly id.
+          // budgetRef is the budget-accounting seam; a per-assembly id.
           budgetRef: `run-${input.agentId}-${systemNowMs().toString(36)}`,
           sessionKey: input.sessionKey ? formatSessionKey(input.sessionKey) : input.agentId,
           rootRunId,

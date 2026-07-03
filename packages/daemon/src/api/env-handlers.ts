@@ -7,7 +7,7 @@
  *   - `env.list` -- enumerate secret NAMES (admin-only, read-only, values never returned)
  *
  * Storage backend: SecretStorePort (encrypted secrets.db via AES-256-GCM).
- * The legacy .env-file fallback is gone; env.set rejects with an
+ * There is no .env-file fallback; env.set rejects with an
  * actionable error when the daemon was booted without
  * SECRETS_MASTER_KEY (same posture as secrets-handlers.ts).
  *

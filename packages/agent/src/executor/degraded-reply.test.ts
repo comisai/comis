@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Pure-builder unit tests for degraded-reply.ts (CWF-05-D, CWF-05-E).
+// Pure-builder unit tests for degraded-reply.ts.
 //
 // These tests assert that:
 //   - buildDegradedReply is deterministic (same input → same output)
@@ -10,7 +10,7 @@
 //   - vocabulary alignment: output_starved annotation contains "output limit" or "cut off"
 //   - vocabulary alignment: context_exhausted reply contains "context window"
 //   - security: context_exhausted reply does NOT contain "[Stopped:" (operator redirect leak)
-//   - security: context_exhausted reply does NOT contain "too large" (Phase-166 placeholder echo)
+//   - security: context_exhausted reply does NOT contain "too large" (must not read like the generic message-size rejection)
 
 import { describe, it, expect } from "vitest";
 import {
@@ -25,7 +25,7 @@ import {
   selectLoopDetectedReply,
 } from "./degraded-reply-i18n.js";
 
-describe("buildDegradedReply — deterministic per endReason (CWF-05-D, CWF-05-E)", () => {
+describe("buildDegradedReply — deterministic per endReason", () => {
   it("output_starved → returns the annotation string (non-empty)", () => {
     const annotation = buildDegradedReply("output_starved");
     expect(annotation).toBeDefined();
@@ -100,7 +100,7 @@ describe("buildContextExhaustedReply — vocabulary + security invariants", () =
     expect(reply).not.toContain("[Stopped:");
   });
 
-  it("does NOT contain 'too large' (must not echo Phase-166 placeholder)", () => {
+  it("does NOT contain 'too large' (must not read like the generic message-size rejection)", () => {
     const reply = buildContextExhaustedReply();
     expect(reply.toLowerCase()).not.toContain("too large");
   });
@@ -111,13 +111,13 @@ describe("buildContextExhaustedReply — vocabulary + security invariants", () =
 });
 
 // ---------------------------------------------------------------------------
-// W4 (obs-llm-troubleshooting): the reply must name the exact cap knob for
-// small/nano models and carry an incident ref. The live incident's reply said
+// The reply must name the exact cap knob for
+// small/nano models and carry an incident ref. Without them the reply says only
 // "raise the agent's context engine settings" — no knob, no pointer — so
-// root-causing started from a chat message with zero handles.
+// root-causing starts from a chat message with zero handles.
 // ---------------------------------------------------------------------------
 
-describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () => {
+describe("buildContextExhaustedReply — knob naming + incident ref", () => {
   it("small capability class names the small cap knob with the 0-uncapped hint", () => {
     const reply = buildContextExhaustedReply({ capabilityClass: "small" });
     expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
@@ -163,11 +163,11 @@ describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () =>
     expect(reply).toContain("abc-123");
   });
 
-  // Issue-6 (small-model e2e 2026-06-12 UC-3): the advice must name the remedy
-  // that actually applies. After the Issue-1 brick, a tiny follow-up got
-  // "…or narrow the ask." — but the ask WAS tiny; the offender was a persisted
-  // oversized message in history.
-  describe("cause-branched advice (Issue 6)", () => {
+  // The advice must name the remedy
+  // that actually applies. When a persisted oversized message in history is the
+  // offender, a tiny follow-up would otherwise get
+  // "…or narrow the ask." — but the ask WAS tiny; the history message was the problem.
+  describe("cause-branched advice (the remedy names the actual offender)", () => {
     it("oversized_input: tells the user their MESSAGE is too large — shortening/splitting applies", () => {
       const reply = buildContextExhaustedReply({ capabilityClass: "small", cause: "oversized_input" });
       expect(reply.toLowerCase()).toContain("your message");
@@ -181,13 +181,13 @@ describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () =>
       });
       expect(reply.toLowerCase()).toContain("previous message");
       expect(reply.toLowerCase()).toContain("reset the session");
-      // The misleading clause from the live incident must be gone for this cause.
+      // The misleading narrow-the-ask clause must be gone for this cause.
       expect(reply.toLowerCase()).not.toContain("narrow");
       // The knob is still named as the alternative lever.
       expect(reply).toContain("effectiveContextCapSmall");
     });
 
-    it("aggregate / omitted cause: byte-identical to the historical reply", () => {
+    it("aggregate / omitted cause: byte-identical to the baseline reply", () => {
       const explicit = buildContextExhaustedReply({ capabilityClass: "small", cause: "aggregate" });
       const omitted = buildContextExhaustedReply({ capabilityClass: "small" });
       expect(explicit).toBe(omitted);
@@ -212,9 +212,9 @@ describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () =>
     });
   });
 
-  // F-15 (live 2026-06-12): loop_detected must yield an HONEST reply (not a silent
+  // loop_detected must yield an HONEST reply (not a silent
   // empty) when the loop-guard halts a no-progress repeat.
-  describe("loop_detected (F-15)", () => {
+  describe("loop_detected yields an honest reply", () => {
     it("returns a non-empty honest reply naming the no-progress/looping cause", () => {
       const reply = buildDegradedReply("loop_detected");
       expect(reply).toBeDefined();
@@ -234,13 +234,13 @@ describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// GEN-02 (Phase 181-03): the builders gain an optional `language` tag and
+// The builders take an optional `language` tag and
 // DELEGATE string selection to degraded-reply-i18n.ts. A he/ar/ru tag yields
 // the localized reply (deep-equal to the matching selector); NO language arg
-// stays English byte-identical (I1) — the existing pins above already lock the
+// stays English byte-identical — the existing pins above already lock the
 // English vocabulary/security invariants and must stay green.
 // ---------------------------------------------------------------------------
-describe("GEN-02 — builders consume the resolved language tag (delegate to i18n)", () => {
+describe("builders consume the resolved language tag (delegate to i18n)", () => {
   // The warning marker (U+26A0 U+FE0F) — referenced via codepoints, never pasted.
   const WARNING_MARKER = String.fromCodePoint(0x26a0, 0xfe0f);
 
@@ -263,14 +263,14 @@ describe("GEN-02 — builders consume the resolved language tag (delegate to i18
     );
   });
 
-  it("a he context-exhausted reply still names the cap knob path + (0 = uncapped) verbatim (I5)", () => {
+  it("a he context-exhausted reply still names the cap knob path + (0 = uncapped) verbatim", () => {
     const reply = buildContextExhaustedReply({ capabilityClass: "small", language: "he" });
     expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
     expect(reply).toContain("(0 = uncapped)");
   });
 
-  it("no language arg returns the English string byte-identical (I1) — context_exhausted", () => {
-    // The historical English reply, pinned literally (the byte-identical guard).
+  it("no language arg returns the English string byte-identical — context_exhausted", () => {
+    // The canonical English reply, pinned literally (the byte-identical guard).
     expect(buildContextExhaustedReply()).toBe(
       "I was unable to process your request — the context window was exhausted " +
         "before the model could run. Try raising the agent's context engine settings " +
@@ -280,7 +280,7 @@ describe("GEN-02 — builders consume the resolved language tag (delegate to i18
     expect(buildContextExhaustedReply()).toBe(selectContextExhaustedReply("en", {}));
   });
 
-  it("no language arg returns the English string byte-identical (I1) — output_starved + loop_detected", () => {
+  it("no language arg returns the English string byte-identical — output_starved + loop_detected", () => {
     expect(buildOutputStarvedAnnotation()).toBe(selectOutputStarvedAnnotation("en"));
     expect(buildLoopDetectedReply()).toBe(selectLoopDetectedReply("en", {}));
   });

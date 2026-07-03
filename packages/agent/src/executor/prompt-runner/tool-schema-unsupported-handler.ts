@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * handleToolSchemaUnsupported — GBNF-02's strip-`pattern`/`format`-and-retry
+ * handleToolSchemaUnsupported — the strip-`pattern`/`format`-and-retry repair
  * for grammar-400s surfacing on the SILENT path (pi-ai catches the provider
  * error in-stream, the SDK's retryable-regex does not match, `prompt()`
  * RESOLVES; the error lands in `bridge.lastLlmErrorMessage` and is
@@ -13,17 +13,17 @@
  * whole cascade from one module. Mirrors `handleSignedReplay`'s structural
  * skeleton (mutate state → WARN with hint/errorKind → ONE `invokeRetry` →
  * post-retry empty-check → event emit → success/failure log pair) with two
- * deviations: a session-keyed ONCE-GATE (T-175-14 — bounded at +1 prompt
+ * deviations: a session-keyed ONCE-GATE (bounded at +1 prompt
  * per session, set BEFORE the retry so re-entry during the retry cannot
  * loop) and NO settle delay (a grammar-400 is a deterministic schema
  * failure, not a transient provider condition).
  *
- * The retry's `invokeRetry` path re-enters `runWithModelRetry`; Plan 175-02's
- * ladder classify-guard guarantees a second grammar-400 inside that retry
+ * The retry's `invokeRetry` path re-enters `runWithModelRetry`; the retry
+ * ladder's classify-guard guarantees a second grammar-400 inside that retry
  * returns immediately — zero rotation/fallback/LKW burn. The once-gate
  * guarantees the cascade never re-strips.
  *
- * I7: the new WARN/event lines carry tool + keyword NAMES only — never
+ * PRIVACY: the WARN/event lines carry tool + keyword NAMES only — never
  * schema bodies and never the raw provider body (llama-server bodies embed
  * full schema dumps; the raw error already reaches operator logs via the
  * existing failure-path `err` serializer).
@@ -62,13 +62,13 @@ type RetryInvoker = (
 /**
  * The once-gate lives in executor-session-state.ts as a SESSION-LIFETIME
  * flag (`sessionReactiveSchemaStrip`, keyed by `formatSessionKey` — the
- * schema-snapshot / deliveredGuides precedent), NOT a process-lifetime Set
- * (175-REVIEW CR-02): clearSessionState (session:expired +
+ * schema-snapshot / deliveredGuides precedent), NOT a process-lifetime Set:
+ * clearSessionState (session:expired +
  * session.reset_conversation / session.delete) clears it so a reset session
  * gets a fresh repair attempt, and the SAME flag drives the per-turn
  * persisted strip (`applyPersistedReactiveStrip`) so a heal survives the
  * snapshot→normalize rebuild on later turns. The key is armed BEFORE the
- * retry fires so re-entry during the retry cannot loop (T-175-14).
+ * retry fires so re-entry during the retry cannot loop.
  */
 
 /** Test hook: clears the session-keyed once-gate between test cases. */
@@ -96,7 +96,7 @@ export async function handleToolSchemaUnsupported(
 ): Promise<void> {
   const { session, sessionKey, agentId, bridge, deps } = params;
   // Silent path: the bridge recorded the in-stream provider error. THROWN
-  // path (WR-01): the error never reached the bridge — fall back to the
+  // path: the error never reached the bridge — fall back to the
   // thrown error already captured in retryState so terminal failures keep a
   // classifiable source (an empty string would classify "unknown" and lose
   // the canned tool_schema_unsupported userMessage).
@@ -130,7 +130,7 @@ export async function handleToolSchemaUnsupported(
       strippedKeywords: [],
       retried: false,
       succeeded: false,
-      // WR-05: distinguishable from nothing_to_strip — a repair WAS
+      // Distinguishable from nothing_to_strip — a repair WAS
       // attempted earlier this session.
       reason: "gate_closed",
       timestamp: deps.clock.now(),
@@ -157,7 +157,7 @@ export async function handleToolSchemaUnsupported(
         strippedKeywords: [],
         provider,
         modelId,
-        // WR-03: true when a tool's schema exceeded the strip walk's depth
+        // True when a tool's schema exceeded the strip walk's depth
         // cap — keywords may survive below the cut (fail-safe pass-through).
         depthLimited,
         hint: 'Provider rejected a tool schema but no pattern/format keywords were strippable; failing honestly. Durable fix: models[].comisCompat.toolSchemaProfile: "gbnf" (auto-enabled for provider type "ollama")',
@@ -180,8 +180,8 @@ export async function handleToolSchemaUnsupported(
   }
 
   // Strippable branch. The raw provider body is deliberately NOT attached to
-  // this WARN: llama-server bodies embed full schema dumps (I7 forbids
-  // bodies in the new lines; the existing failure-path err serializer
+  // this WARN: llama-server bodies embed full schema dumps (these lines carry
+  // names only, never bodies; the existing failure-path err serializer
   // already surfaces the raw error to operator logs).
   deps.logger.warn(
     {
@@ -189,7 +189,7 @@ export async function handleToolSchemaUnsupported(
       strippedKeywords,
       provider,
       modelId,
-      // WR-03: true when a tool's schema exceeded the strip walk's depth cap
+      // True when a tool's schema exceeded the strip walk's depth cap
       // — keywords may survive below the cut, so a failed retry on a
       // depth-limited toolset points at the oversized MCP schema itself.
       depthLimited,

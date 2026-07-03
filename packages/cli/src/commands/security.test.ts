@@ -56,7 +56,7 @@ describe("registerSecurityCommand", () => {
   it("has the audit, audit-log, and fix subcommands under security", () => {
     const securityCmd = program.commands.find((c) => c.name() === "security");
     const subcommands = securityCmd!.commands.map((c) => c.name()).sort();
-    // audit-log (AUDIT-05, Phase 176) is the durable security-decision audit query.
+    // audit-log is the durable security-decision audit query.
     expect(subcommands).toEqual(["audit", "audit-log", "fix"]);
   });
 

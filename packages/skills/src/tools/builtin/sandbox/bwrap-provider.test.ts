@@ -269,7 +269,7 @@ describe("BwrapProvider", () => {
       expect(args).toContain("/home/testuser/.gitconfig");
     });
 
-    // WR-05: the JAIL-03 credential-denylist base is the EXPLICIT `opts.home`,
+    // The credential-denylist base is the EXPLICIT `opts.home`,
     // not the ambient `os.homedir()`. A caller-supplied shared path that is a
     // credential dir under the INJECTED home (~/.ssh) must be screened and
     // rejected — proving buildArgs screens against opts.home. The ambient
@@ -290,7 +290,7 @@ describe("BwrapProvider", () => {
       expect(() => provider.buildArgs(opts)).toThrow(/refusing unsafe jail bind/);
     });
 
-    // WR-05: with opts.home supplied the generator does NOT consult the ambient
+    // With opts.home supplied the generator does NOT consult the ambient
     // homedir at all — the screen-vs-bind interaction is deterministic without
     // mocking process env. A safe bind under the injected home is emitted, and a
     // credential dir under the AMBIENT home (which buildArgs must ignore) is NOT
@@ -487,7 +487,7 @@ describe("BwrapProvider", () => {
       expect(args).toContain("--new-session");
     });
 
-    // -- Network modes (ENDPOINT-03: cap-socket bind for the lease endpoint) --
+    // -- Network modes (cap-socket bind for the lease endpoint) --
 
     describe("network modes", () => {
       /** Locate the index of the "--bind <path> <path>" triple, or -1. */
@@ -501,7 +501,7 @@ describe("BwrapProvider", () => {
       }
 
       it("cap-socket mode binds the socket after --unshare-all then --unshare-net (arg-order)", () => {
-        // ENDPOINT-03: the lease endpoint listens on a unix socket the jailed
+        // The lease endpoint listens on a unix socket the jailed
         // child must reach. netns affects IP sockets only, so a bound unix path
         // stays reachable under --unshare-net — but the --bind MUST follow the
         // --unshare-net so bwrap applies it inside the new namespace (mirrors
@@ -572,9 +572,9 @@ describe("BwrapProvider", () => {
       });
     });
 
-    // -- §4.7 hardening: --seccomp fd (JAIL-01) --
+    // -- Hardening: --seccomp fd --
 
-    describe("--seccomp fd emission (JAIL-01)", () => {
+    describe("--seccomp fd emission", () => {
       it("emits --seccomp <fd> when a seccomp fd is provided", () => {
         // The provider/caller resolves the fd via loadSeccompProfileFd() and
         // passes it in; buildArgs is PURE (no live fs probe). The fd rides
@@ -591,7 +591,7 @@ describe("BwrapProvider", () => {
 
       it("OMITS --seccomp when no fd is provided (degrade, not crash)", () => {
         // loadSeccompProfileFd returns null when the BPF blob is absent →
-        // buildArgs must omit --seccomp entirely; the other §4.7 controls hold.
+        // buildArgs must omit --seccomp entirely; the other hardening controls hold.
         vi.mocked(existsSync).mockReturnValue(false);
 
         const provider = createAvailableProvider();
@@ -610,9 +610,9 @@ describe("BwrapProvider", () => {
       });
     });
 
-    // -- §4.7 hardening: validateBindMount screening (JAIL-03) --
+    // -- Hardening: validateBindMount screening --
 
-    describe("validateBindMount screening (JAIL-03)", () => {
+    describe("validateBindMount screening of caller binds", () => {
       it("THROWS at jail construction when a host bind resolves into a denylisted dir", () => {
         // A denylisted bind (here a system /etc/* path supplied as a shared path)
         // is a misconfig that must FAIL LOUD — never silently emitted as a hole.
@@ -643,16 +643,15 @@ describe("BwrapProvider", () => {
       });
     });
 
-    // -- §4.7 hardening: writable-path audit (JAIL-02) --
+    // -- Hardening: writable-path audit --
     //
     // The audit asserts the emitted bind list for a typical autonomy jail does
-    // NOT RW-bind any host-trusted writable path enumerated by ROADMAP
-    // success-criterion 4 / JAIL-02. Each ROADMAP target is a NAMED case (no
-    // shorthand subset): config, hooks, cron, ~/.nvm, learned-memory/skill,
+    // NOT RW-bind any host-trusted writable path. Each target is a NAMED case
+    // (no shorthand subset): config, hooks, cron, ~/.nvm, learned-memory/skill,
     // execPath. AND a RO-bound parent must not let a nonexistent child config be
     // created (the CVE-2026-25725 hole).
 
-    describe("writable-path audit (JAIL-02) — full ROADMAP success-criterion-4 enumeration", () => {
+    describe("writable-path audit — full host-trusted writable-target enumeration", () => {
       const HOME = "/home/testuser";
 
       /** True iff `target` appears as the source of a `--bind` (RW) triple. */
@@ -725,7 +724,7 @@ describe("BwrapProvider", () => {
       it("does NOT RW-bind the bound execPath (the Node binary is never writable)", () => {
         // A writable interpreter binary is a host-RCE vector. The default
         // autonomy jail never RW-binds the daemon's process.execPath. (The
-        // JAIL-04 bind mode that RO-binds execPath when node is absent on the
+        // jailNode bind mode that RO-binds execPath when node is absent on the
         // jail PATH is asserted in the Node-runtime-honesty suite.)
         const args = autonomyJailArgs();
         expect(isRwBound(args, process.execPath)).toBe(false);
@@ -752,9 +751,9 @@ describe("BwrapProvider", () => {
       });
     });
 
-    // -- §4.6 Node-runtime honesty (JAIL-04): buildArgs binds execPath on "bind" --
+    // -- Node-runtime honesty: buildArgs binds execPath on "bind" --
 
-    describe("Node-runtime bind in buildArgs (JAIL-04)", () => {
+    describe("Node-runtime bind in buildArgs", () => {
       it("RO-binds execPath when jailNode mode is 'bind'", () => {
         vi.mocked(existsSync).mockReturnValue(false);
 
@@ -801,9 +800,9 @@ describe("BwrapProvider", () => {
       });
     });
 
-    // -- §4.7 comis-agent CLI bind in buildArgs (CLI-05): --ro-bind the binary --
+    // -- comis-agent CLI bind in buildArgs: --ro-bind the binary --
 
-    describe("comis-agent CLI bind in buildArgs (CLI-05)", () => {
+    describe("comis-agent CLI bind in buildArgs", () => {
       const binPath = "/x/comis-agent-entry.js";
 
       function hasRoBind(args: string[], target: string): boolean {
@@ -1068,12 +1067,12 @@ describe("BwrapProvider", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolveJailNode (JAIL-04 / v8 §4.6) — Node-runtime honesty.
+// resolveJailNode — Node-runtime honesty.
 // PURE three-mode resolver: probe node on the jail PATH → bind execPath →
 // mark unavailable. macOS-unit-testable via an injected `exists` predicate.
 // ---------------------------------------------------------------------------
 
-describe("resolveJailNode (JAIL-04) — Node-runtime honesty", () => {
+describe("resolveJailNode — Node-runtime honesty", () => {
   it("mode 'path' when a node executable resolves under the bound RO pathDirs", () => {
     const result = resolveJailNode({
       pathDirs: ["/usr/bin", "/usr/local/bin"],
@@ -1115,7 +1114,8 @@ describe("resolveJailNode (JAIL-04) — Node-runtime honesty", () => {
     expect(result.mode).toBe("unavailable");
     if (result.mode === "unavailable") {
       const h = result.hint.toLowerCase();
-      // Must explicitly DENY a bundled Node (the spoofing class T-211-21).
+      // Must explicitly DENY a bundled Node (a bundled-Node claim would spoof
+      // containment that does not exist).
       expect(h).toContain("bundled");
       // Names the remediation (install node / make the daemon binary bindable)
       // and which surfaces degrade.
@@ -1145,13 +1145,13 @@ describe("resolveJailNode (JAIL-04) — Node-runtime honesty", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolveJailAgentCli (CLI-05/06) — the comis-agent binary honest-degrade.
+// resolveJailAgentCli — the comis-agent binary honest-degrade.
 // PURE three-mode resolver: hash-verify the bound binary against the manifest
 // pin → bind / unavailable-missing / unavailable-hash-mismatch. macOS-unit-
 // testable via injected `exists` + `readFile` (no real fs, no real binary).
 // ---------------------------------------------------------------------------
 
-describe("resolveJailAgentCli (CLI-05/06) — comis-agent binary honest-degrade", () => {
+describe("resolveJailAgentCli — comis-agent binary honest-degrade", () => {
   const binPath = "/opt/skills/dist/.../comis-agent-entry.js";
   const bytes = "the-real-comis-agent-entry-bytes";
   const expectedSha = shaHex(bytes);
@@ -1201,7 +1201,7 @@ describe("resolveJailAgentCli (CLI-05/06) — comis-agent binary honest-degrade"
     }
   });
 
-  it("the unavailable hint NEVER echoes the expected hash or the binary bytes (content-free §2.7)", () => {
+  it("the unavailable hint NEVER echoes the expected hash or the binary bytes (content-free)", () => {
     const result = resolveJailAgentCli({
       binPath,
       expectedSha,

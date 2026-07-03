@@ -63,10 +63,10 @@ export interface RecallLaneCounts {
   vector: number;
   entity: number;
   /** Temporal-spread lane candidate count (append-only). 0 when the lane is
-   *  off / not pushed (default) — byte-identical to before this plan. */
+   *  off / not pushed (default) — the record shape is unchanged by the lane. */
   temporal: number;
   /** Causal one-hop lane candidate count (append-only). 0 when the lane is
-   *  off / not pushed (default) — byte-identical to before this plan. */
+   *  off / not pushed (default) — the record shape is unchanged by the lane. */
   causal: number;
 }
 
@@ -96,7 +96,7 @@ export interface RecallObservations {
   durationMs: number;
   /** Reasoning-tree provenance: each cited claim → its recalled id →
    *  its sourceIds. IDS ONLY (redaction-safe). Absent/empty on every non-dialectic recall,
-   *  so the on-disk line stays byte-identical to before this plan (omitted by buildRecallRecord). */
+   *  so the on-disk line carries no citations cluster (omitted by buildRecallRecord). */
   citations?: RecallCitationChain[];
 }
 
@@ -138,8 +138,8 @@ export function buildRecallRecord(obs: RecallObservations): Record<string, unkno
   };
   if (obs.degradations.length > 0) record.degradations = obs.degradations;
   // Reasoning-tree provenance — each cited claim → its recalled id → its sourceIds.
-  // Added ONLY when present + non-empty so the default (non-dialectic) recall line is
-  // byte-identical to before this plan. The chain is IDS ONLY (no memory body).
+  // Added ONLY when present + non-empty so the default (non-dialectic) recall line
+  // carries no citations cluster. The chain is IDS ONLY (no memory body).
   if (obs.citations && obs.citations.length > 0) record.citations = obs.citations;
   return record;
 }

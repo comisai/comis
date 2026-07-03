@@ -69,10 +69,10 @@ describe("bridge-metrics shape regression guard", () => {
     expect(r.totalCostCorrectionDeltaUsd).toBe(0.00042);
   });
 
-  // Phase 152 (F1) — the bridge must accumulate breakerTripCount + per-tool
-  // errorKind so the session-health rollup (Plan 03) is a pure reduce. These
-  // two signals had NO source before this plan: the breaker-open transition was
-  // emitted but counted nowhere, and m.toolExecResults recorded only errorText.
+  // The bridge must accumulate breakerTripCount + per-tool errorKind so the
+  // session-health rollup is a pure reduce over the bridge result. These two
+  // signals have no other durable source: the breaker-open transition is only
+  // an event, and errorText alone carries no failure classification.
   it("buildBridgeResult forwards breakerTripCount and per-tool errorKind from metrics state", () => {
     const m = createBridgeMetrics();
     // Simulate the bridge's accumulation: one breaker trip + a failed tool that

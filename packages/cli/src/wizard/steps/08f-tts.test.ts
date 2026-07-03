@@ -61,7 +61,7 @@ describe("ttsStep", () => {
     );
   });
 
-  it("defaults to the keyless edge provider on a first-time run (WIZ-02)", async () => {
+  it("defaults to the keyless edge provider on a first-time run", async () => {
     const prompter = createMockPrompter();
     await ttsStep.execute(baseState(), prompter);
     expect(prompter.select).toHaveBeenCalledWith(
@@ -69,7 +69,7 @@ describe("ttsStep", () => {
     );
   });
 
-  it("edge and local are keyless and prompt for no API key (WIZ-02)", async () => {
+  it("edge and local are keyless and prompt for no API key", async () => {
     for (const id of ["edge", "local"]) {
       const prompter = createMockPrompter({ select: [id] });
       const result = await ttsStep.execute(baseState(), prompter);
@@ -78,7 +78,7 @@ describe("ttsStep", () => {
     }
   });
 
-  it("offers edge-first then local as keyless-first ordered options (WIZ-04 drift mirror)", () => {
+  it("offers edge-first then local as keyless-first ordered options (drift mirror of the supported list)", () => {
     expect(SUPPORTED_TTS_PROVIDERS.map((t) => t.id)).toEqual([
       "edge",
       "openai",

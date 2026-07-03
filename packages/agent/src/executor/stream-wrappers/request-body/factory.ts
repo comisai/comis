@@ -89,15 +89,16 @@ export function createRequestBodyInjector(
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
 
       // ALL OpenAI Responses-family providers drive the same `input` item array and need the
-      // auto-cached prefix stabilised (cache #C4-OAI): native openai (`openai-responses`),
+      // auto-cached prefix stabilised: native openai (`openai-responses`),
       // Azure (`azure-openai-responses`), and codex (`openai-codex-responses` /
       // provider:"openai-codex"). The cache-breakpoint machinery is correctly skipped for them
       // (running cache_control on a Responses body strips type:"function" tools -> backend 400);
       // we install onPayload only to defer the per-turn inline-recall block off the user turns
       // onto an uncached trailing item so the prefix does not collapse to the instructions+tools
-      // floor every time the recalled memory rotates (see the deferral block below). NOTE: this
-      // was previously gated `provider === "openai-codex"` only, which left the native `openai`
-      // provider (gpt-5.5 -> openai-responses) unstabilised — 5 floor-collapses live.
+      // floor every time the recalled memory rotates (see the deferral block below). NOTE: the
+      // gate must cover the whole Responses family — gating on `provider === "openai-codex"`
+      // alone leaves the native `openai` provider (gpt-5.5 -> openai-responses) unstabilised
+      // (5 floor-collapses observed live).
       const needsResponsesInputStabilizer = usesResponsesInputApi(model as { api?: string; provider?: string });
 
       if (!needsCacheBreakpoints && !needsResponsesApiInjection && !needsResponsesInputStabilizer) {
@@ -220,7 +221,7 @@ export function createRequestBodyInjector(
                 "Stripped transient inline-recall from cached prefix",
               );
             }
-            // cache break #C1/#C2: strip thinking from EVERY replayed assistant message
+            // Strip thinking from EVERY replayed assistant message
             // (including the active/last one) so the cached prefix matches the durable (LCD)
             // no-thinking form and never mutates when an assistant transitions active→historical.
             const thinkingStripped = stripReplayThinking(result.messages as Array<Record<string, unknown>>);
@@ -234,9 +235,9 @@ export function createRequestBodyInjector(
                 "Stripped replay thinking from cached prefix",
               );
             }
-            // cache #C4: move the current turn's inline-recall block onto the UNCACHED tail
+            // Move the current turn's inline-recall block onto the UNCACHED tail
             // (a trailing block after the cache fence) so it's visible to the model but never
-            // cached — preventing the prefix mutation when C-FIX-3 strips it next turn.
+            // cached — preventing the prefix mutation when the history strip removes it next turn.
             const recallDeferred = deferRecallToUncachedTail(result.messages as Array<Record<string, unknown>>);
             if (recallDeferred > 0) {
               logger.debug(
@@ -296,8 +297,8 @@ export function createRequestBodyInjector(
           // Token-ceiling microcompact (size trigger)
           if (needsCacheBreakpoints) runTokenCeilingMicrocompact(result, config, logger);
 
-          // Every-turn microcompact (EFF-01) -- unconditional Tier-0 pass, fence-protected
-          // (EFF-03). Keeps the coordinator's context flat every turn, not just after an
+          // Every-turn microcompact -- unconditional Tier-0 pass, fence-protected.
+          // Keeps the coordinator's context flat every turn, not just after an
           // idle gap; cache-stable (clears nothing at/below the fence; byte-stable placeholder).
           if (needsCacheBreakpoints) runEveryTurnMicrocompact(result, config, logger);
 
@@ -431,7 +432,7 @@ export function createRequestBodyInjector(
           // Concern 4: store (Responses API + storeCompletions)
           injectStoreFlag(result, needsResponsesApiInjection, config.storeCompletions);
 
-          // Cache #C4-OAI: stabilise the OpenAI Responses auto-cached prefix.
+          // Stabilise the OpenAI Responses auto-cached prefix.
           // The per-turn inline-recall block ("[Relevant context from memory: ...]") is
           // prepended to the CURRENT user turn (envelope-wrapper) but recall is TRANSIENT —
           // the LCD/history rebuild emits each user turn CLEAN. So the latest user item is sent
@@ -452,11 +453,11 @@ export function createRequestBodyInjector(
             // 1. Defensive: strip recall from any HISTORICAL user item (no-op when history is
             //    already clean, which it is when recall is transient).
             const strippedCount = stripTransientRecallFromResponsesInput(inputItems);
-            // 2. Recall #C4-OAI: defer recall on the LATEST user item to a trailing (uncached,
+            // 2. Recall deferral: defer recall on the LATEST user item to a trailing (uncached,
             //    never persisted) item, so the latest item is byte-identical to its future
             //    historical clean form and the auto-cached prefix never mutates at the turn boundary.
             const deferred = deferRecallToTrailingResponsesItem(inputItems);
-            // 3. Reasoning #C5-OAI: strip ALL replayed reasoning items — ONLY on the native
+            // 3. Reasoning strip: strip ALL replayed reasoning items — ONLY on the native
             //    openai / Azure Responses path (needsResponsesApiInjection). With `store:false`
             //    the SDK keeps reasoning for recent turns but drops it from aging turns -> an
             //    early-index prefix mutation -> floor-collapse. Removing them consistently every

@@ -17,7 +17,7 @@
  * Hard cap: 100K chars (TOOL_RESULT_HARD_CAP_CHARS) -- truncated before offload.
  *
  * - Tool results exceeding inline threshold saved to disk
- * - Per-tool thresholds applied (8K/5K/15K)
+ * - Per-tool thresholds applied (8K/15K/15K)
  * - Hard cap (100K) truncation applied before disk offload
  * - Inline reference contains disk path for read tool recovery
  *
@@ -66,8 +66,8 @@ export function getInlineThreshold(toolName: string): number {
  * Save tool result content to disk as raw concatenated text.
  *
  * Agents read offloaded files expecting raw content matching the head/tail
- * previews shown in the inline reference. Writing a JSON envelope caused
- * parse failures when agents assumed raw text on disk.
+ * previews shown in the inline reference. Writing a JSON envelope would cause
+ * parse failures for agents that assume raw text on disk.
  *
  * Uses synchronous file I/O because `appendMessage()` is synchronous.
  * Path construction uses `safePath()` to prevent traversal attacks.
@@ -77,7 +77,7 @@ export function getInlineThreshold(toolName: string): number {
  *   `written` is `false` when the parent-dir or file write was rejected
  *   (e.g. confinement-base escape), so the caller can suppress the
  *   `tool:result_offloaded` trajectory emit instead of recording a phantom
- *   pointer at a file that does not exist (WR-151-04).
+ *   pointer at a file that does not exist.
  */
 function saveToDisk(
   sessionDir: string,
@@ -208,7 +208,7 @@ function createInlineReference(
  * @param dataDir - Confinement base for fs-safe substrate writes
  *   (typically `~/.comis/`). Threaded as `confinedBaseDir` on every
  *   `ensureContainedDir` + `writeRegularFile` call so the ancestor-
- *   symlink escape is rejected — closes the §1.4 confused-deputy gap
+ *   symlink escape is rejected — closes the confused-deputy gap
  *   that O_NOFOLLOW + parent-`lstat` together do NOT cover.
  * @param logger - Logger for WARN/DEBUG-level offload events
  */
@@ -345,15 +345,15 @@ export function installMicrocompactionGuard(
       const truncatedMsg = { ...toolResultMsg, content: truncatedContent };
       const reference = createInlineReference(truncatedMsg, totalChars, diskPath);
       // Pass only a WORKSPACE-RELATIVE pointer (sessionDir-relative) — the
-      // absolute diskPath leaks the host filesystem layout (T-151-05) and is
+      // absolute diskPath leaks the host filesystem layout and is
       // not a stable drill-down target. This guard holds no event bus and no
-      // clock (T-151-07): it computes the payload and hands it to onOffloaded;
+      // clock: it computes the payload and hands it to onOffloaded;
       // the executor callback (which has both) performs the trajectory emit.
       //
-      // Only emit when the disk write actually persisted (WR-151-04): a
+      // Only emit when the disk write actually persisted: a
       // best-effort write failure (confinement-base escape, fs error) returns
       // `written: false` and the file does not exist, so emitting
-      // tool:result_offloaded would record a phantom pointer the Phase 153
+      // tool:result_offloaded would record a phantom pointer the
       // IncidentReport.offloads[] drill-down cannot open. Log+suppress instead.
       if (written) {
         const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
@@ -371,7 +371,7 @@ export function installMicrocompactionGuard(
         );
       }
 
-      // PIPELINE-FIX: Propagate compact reference to in-memory message object.
+      // Propagate the compact reference to the in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the
       // raw oversized content, causing the bouncer to re-truncate on the next
       // LLM call. By mutating the original content array, both
@@ -413,7 +413,7 @@ export function installMicrocompactionGuard(
 
       // Same residency-safe pointer at the threshold branch — its own diskPath
       // is in scope (returned by the saveToDisk above). Workspace-relative only.
-      // Suppress the offload event on a failed write (WR-151-04) so the
+      // Suppress the offload event on a failed write so the
       // trajectory never records a pointer at a file that was not persisted.
       if (written) {
         const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
@@ -431,7 +431,7 @@ export function installMicrocompactionGuard(
         );
       }
 
-      // PIPELINE-FIX: Propagate compact reference to in-memory message object.
+      // Propagate the compact reference to the in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the
       // raw oversized content, causing the bouncer to re-truncate on the next
       // LLM call. By mutating the original content array, both

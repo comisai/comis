@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, expectTypeOf } from "vitest";
-// Value import so the RED state is reproducible from this test commit alone:
-// vitest must RESOLVE the module at runtime. `normalized-reaction.js` does not
-// exist on the pre-patch code → the import throws and the suite is RED.
 import {
   parseReaction,
   NormalizedReactionSchema,
@@ -48,8 +45,8 @@ describe("NormalizedReaction", () => {
     });
   });
 
-  describe("invalid data — strictObject is the V5 control", () => {
-    it("parseReaction rejects a smuggled trustLevel field via strictObject (SECURITY V5)", () => {
+  describe("invalid data — strictObject is the input-validation control (ASVS V5)", () => {
+    it("parseReaction rejects a smuggled trustLevel field via strictObject (ASVS V5)", () => {
       // A reactor that injects a trust/authority claim must be rejected at parse.
       const result = parseReaction(validReaction({ trustLevel: "admin" }));
       expect(result.ok).toBe(false);

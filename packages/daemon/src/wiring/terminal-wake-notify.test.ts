@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * 166-03 — co-located unit coverage for the extracted NOTIFY-01/02 emit helpers
+ * Co-located unit coverage for the extracted user-facing emit helpers
  * (`emitTerminalOutcome` + `runHeartbeatTick`). The holder suite
  * (`setup-terminal-wake.test.ts`) exercises these THROUGH the wiring; this suite pins their
  * branches DIRECTLY with plain fakes so the packages/daemon coverage floor stays green on the
@@ -35,7 +35,7 @@ function makeNotifyDeps(policy: NotifyPolicy, opts: { notify?: boolean; rejectNo
   const warn = vi.fn();
   const deps = {
     // The bus-only case (opts.notify === false) deliberately omits `notify` so the helper
-    // takes the "no channel callback" branch (I1).
+    // takes the "no channel callback" branch.
     ...(opts.notify === false ? {} : { notify }),
     info,
     warn,
@@ -47,7 +47,7 @@ function makeNotifyDeps(policy: NotifyPolicy, opts: { notify?: boolean; rejectNo
 
 const baseArgs: TerminalOutcomeArgs = { sessionId: "s-1", agentId: "a", transition: "exited", durationMs: 7_200_000, interactions: 5 };
 
-describe("emitTerminalOutcome — the gated done/failed emit + the §2.7 record (166-03)", () => {
+describe("emitTerminalOutcome — the gated done/failed emit + the §2.7 record", () => {
   it("emits an INFO done record + a content-free notify on a promoted exit under terminal", () => {
     const deps = makeNotifyDeps("terminal");
     emitTerminalOutcome(deps.deps, baseArgs);
@@ -83,7 +83,7 @@ describe("emitTerminalOutcome — the gated done/failed emit + the §2.7 record 
     expect(deps.notify.mock.calls[0]![0].message).toContain("wall_clock");
   });
 
-  it("WR-04: an evicted transition with NO capName reads as an explicit UNKNOWN cap — never a fabricated max_sessions", () => {
+  it("an evicted transition with NO capName reads as an explicit UNKNOWN cap — never a fabricated max_sessions", () => {
     const deps = makeNotifyDeps("terminal");
     emitTerminalOutcome(deps.deps, { sessionId: "s-2", agentId: "a", transition: "evicted" });
     // Still a failed (resource) — a missing cap defaults to a safe structural label, never throws.
@@ -91,7 +91,7 @@ describe("emitTerminalOutcome — the gated done/failed emit + the §2.7 record 
     expect((warn![0] as { errorKind?: string }).errorKind).toBe("resource");
     expect(deps.notify).toHaveBeenCalledTimes(1);
     const msg = deps.notify.mock.calls[0]![0].message as string;
-    // WR-04: the message must NOT fabricate a plausible-but-false cap name (max_sessions).
+    // The message must NOT fabricate a plausible-but-false cap name (max_sessions).
     expect(msg, "a missing cap must NOT be reported as a fabricated max_sessions").not.toContain("max_sessions");
     // It reads honestly as an unknown cap ("(cap unknown)" / "unknown") rather than a real cap.
     expect(msg.toLowerCase(), "a missing cap reads as an explicit unknown, not a real cap").toContain("unknown");
@@ -101,17 +101,17 @@ describe("emitTerminalOutcome — the gated done/failed emit + the §2.7 record 
     expect((warn![0] as { hint: string }).hint, "the §2.7 hint must not fabricate a cap").not.toContain("max_sessions");
   });
 
-  it("WR-03: a lost transition threads the REAL unrecoverable reason onto the §2.7 record + hint (not a generic session_lost)", () => {
+  it("a lost transition threads the REAL unrecoverable reason onto the §2.7 record + hint (not a generic session_lost)", () => {
     const deps = makeNotifyDeps("terminal");
     emitTerminalOutcome(deps.deps, { ...baseArgs, transition: "lost", lostReason: "tmux_reattach_failed" });
     const warn = deps.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
     expect((warn![0] as { outcome?: string }).outcome).toBe("failed");
     // The real reason rides the record's reason field AND the hint (so `comis explain` names it).
-    expect((warn![0] as { reason?: string }).reason, "the real unrecoverable reason rides the §2.7 record (WR-03)").toBe("tmux_reattach_failed");
+    expect((warn![0] as { reason?: string }).reason, "the real unrecoverable reason rides the §2.7 record").toBe("tmux_reattach_failed");
     expect((warn![0] as { hint: string }).hint, "the §2.7 hint names the actual cause, not a generic lost").toContain("tmux_reattach_failed");
   });
 
-  it("WR-03: a lost transition with NO lostReason falls back to the generic session_lost (never throws)", () => {
+  it("a lost transition with NO lostReason falls back to the generic session_lost (never throws)", () => {
     const deps = makeNotifyDeps("terminal");
     emitTerminalOutcome(deps.deps, { ...baseArgs, transition: "lost" });
     const warn = deps.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
@@ -140,7 +140,7 @@ describe("emitTerminalOutcome — the gated done/failed emit + the §2.7 record 
     expect(deps.notify).toHaveBeenCalledTimes(1);
   });
 
-  it("records the §2.7 line but makes NO channel call when no notify callback is present (bus-only, I1)", () => {
+  it("records the §2.7 line but makes NO channel call when no notify callback is present (bus-only)", () => {
     const deps = makeNotifyDeps("terminal", { notify: false });
     emitTerminalOutcome(deps.deps, baseArgs);
     expect(deps.notify, "a bus-only channel makes no notify call").not.toHaveBeenCalled();
@@ -169,7 +169,7 @@ describe("emitTerminalOutcome — the gated done/failed emit + the §2.7 record 
   });
 });
 
-describe("runHeartbeatTick — the NOTIFY-02 per-tick heartbeat loop body (166-03)", () => {
+describe("runHeartbeatTick — the per-tick heartbeat loop body", () => {
   const journal = (over: Partial<DriveJournal> = {}): DriveJournal => ({
     objective: "build",
     lastClassification: "working",
@@ -226,7 +226,7 @@ describe("runHeartbeatTick — the NOTIFY-02 per-tick heartbeat loop body (166-0
     expect(args.notify.mock.calls[0]![0].message).toContain("(no activity yet)");
   });
 
-  it("emits NOTHING when there are no promoted sessions (I1)", () => {
+  it("emits NOTHING when there are no promoted sessions", () => {
     const args = makeTickArgs({ promotedSessions: new Set() });
     runHeartbeatTick(args);
     expect(args.notify).not.toHaveBeenCalled();
@@ -251,19 +251,19 @@ describe("runHeartbeatTick — the NOTIFY-02 per-tick heartbeat loop body (166-0
 });
 
 // ---------------------------------------------------------------------------
-// CR-01 (the I9/I10 BLOCKER): `shouldFailOnLost` — the pure genuine-death
-// discriminator the wake holder's onStateChange consumes. ONLY an explicit
-// unrecoverable:true is a genuine death (→ map to failed); a transient/recoverable
-// lost (worker-crash respawn / a re-attaching durable drive — undefined / false)
-// must NEVER fail (the SAFE direction is "do not fail" — I9/I10).
+// `shouldFailOnLost` — the pure genuine-death discriminator the wake holder's
+// onStateChange consumes. ONLY an explicit unrecoverable:true is a genuine death
+// (→ map to failed); a transient/recoverable lost (worker-crash respawn / a
+// re-attaching durable drive — undefined / false) must NEVER fail (the SAFE
+// direction is "do not fail").
 // ---------------------------------------------------------------------------
-describe("shouldFailOnLost — the CR-01 genuine-death discriminator (I9/I10)", () => {
+describe("shouldFailOnLost — the genuine-death discriminator", () => {
   it("returns true ONLY for an explicit unrecoverable:true (the genuine death)", () => {
     expect(shouldFailOnLost(true)).toBe(true);
   });
 
   it("returns false for an UNSET (undefined) marker — a transient/recoverable lost (worker-crash respawn / re-attach)", () => {
-    expect(shouldFailOnLost(undefined), "an absent marker is a recoverable lost → never failed (I9/I10)").toBe(false);
+    expect(shouldFailOnLost(undefined), "an absent marker is a recoverable lost → never failed").toBe(false);
   });
 
   it("returns false for an explicit false marker (the SAFE direction is do-not-fail)", () => {

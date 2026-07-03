@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `setup-worktree-sweep` — the WT-02 worktree-orphan-sweep subsystem wiring.
+ * `setup-worktree-sweep` — the worktree-orphan-sweep subsystem wiring.
  *
- * `spawn --worktree` (WT-01) runs a child in an ISOLATED git worktree created off
+ * `spawn --worktree` runs a child in an ISOLATED git worktree created off
  * the child's jailed workspace. The happy path creates + auto-cleans-if-unchanged
  * inside one `executeSubAgent` call. But a CRASHED run (the daemon dies mid-child)
- * leaves the worktree + its `.git/worktrees/<name>` admin state orphaned. WT-02
+ * leaves the worktree + its `.git/worktrees/<name>` admin state orphaned. The sweep
  * reclaims those: a registry tracks every created worktree, and a boot (+ periodic)
  * sweep runs the lifecycle's CONSERVATIVE {@link sweepOrphans} — which removes ONLY
  * gone-from-disk or completed-AND-pristine entries and PRESERVES any dirty/ahead/
@@ -218,7 +218,7 @@ export interface WorktreeSweepHandle {
 const DEFAULT_SWEEP_INTERVAL_MS = 30 * 60_000;
 
 /**
- * Wire the WT-02 orphan sweep. `sweepNow()` runs the lifecycle's conservative
+ * Wire the orphan sweep. `sweepNow()` runs the lifecycle's conservative
  * {@link sweepOrphans} over the registry snapshot (so a removal during the pass
  * cannot mutate the iteration), and PRUNES reclaimed entries from the registry.
  * `startPeriodicSweep()` registers ONE `.unref()`'d interval; `shutdown()` cancels

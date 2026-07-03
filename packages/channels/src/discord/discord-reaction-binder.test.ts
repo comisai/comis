@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the Discord reaction-add binder (REACT-01, Verified Learning WS1).
+ * Unit tests for the Discord reaction-add binder.
  *
  * The binder is co-located out of discord-adapter.ts to hold the 800-line cap.
  * It registers a single `MessageReactionAdd` listener that mints a
  * NormalizedReaction and fans it out to the registered reaction handlers,
  * filtering the bot's own reactions and skipping uncached PARTIAL reactions
- * non-fatally (discord.js v14 partials, RESEARCH Pitfall 3).
+ * non-fatally (discord.js v14 delivers PARTIAL reactions for uncached messages).
  *
  * @module
  */

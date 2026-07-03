@@ -9,18 +9,17 @@ import { TypedEventBus } from "./bus.js";
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Open Q2: the typed `terminal:*` transition + failure events. P0/OPS-07 needs
- * exactly two — a state-transition event and a spawn-failure event. The richer
+ * The typed `terminal:*` events: the state-transition + spawn-failure pair,
+ * plus the richer
  * `terminal:input_needed`/`terminal:stuck`/`terminal:escalated`/
- * `terminal:auto_answered` attention+audit set is P5 (Phase 124) and is NOW
- * DECLARED here (124-02 flips the prior negative reservation test below).
+ * `terminal:auto_answered` attention+audit set declared below.
  *
  * vitest transpiles via esbuild (types stripped) and `tsc` excludes `*.test.ts`,
- * so a bare type annotation alone is not a runtime-observable RED. These tests
+ * so a bare type annotation alone is not runtime-observable. These tests
  * therefore source-introspect `events-terminal.ts` + `events.ts` (the same
- * pattern `events-agent.test.ts` uses) so they FAIL on pre-patch code: the
- * source file does not exist and `TerminalEvents` is not in the `EventMap`
- * extends list. The bus-emit cases additionally exercise the payload shape.
+ * pattern `events-agent.test.ts` uses) so a declaration dropped from the source
+ * or from the `EventMap` extends list fails them. The bus-emit cases
+ * additionally exercise the payload shape.
  */
 describe("TerminalEvents source contract", () => {
   it("events-terminal.ts declares the TerminalEvents interface with both event keys", () => {
@@ -102,12 +101,11 @@ describe("TerminalEvents payload structure", () => {
 // ---------------------------------------------------------------------------
 // terminal:keystroke + terminal:session_evicted.
 //
-// These two NET-NEW typed bus events let the tool layer and the reaper
+// These two typed bus events let the tool layer and the reaper
 // `emit(...)` them: `TypedEventBus` is a CLOSED union, so an undeclared event
-// fails to typecheck. This block is RED on pre-patch code: `events-terminal.ts`
-// declares only session_state + spawn_failed, so the source-introspection cases
-// below (the genuinely-RED layer — esbuild strips bare type annotations) do not
-// find the two new keys.
+// fails to typecheck. The source-introspection cases below are the
+// runtime-observable layer — esbuild strips bare type annotations, so a
+// type-only declaration cannot be asserted at runtime.
 //
 // Payloads are redaction-SAFE: counts / ids / a typed reason ONLY — NEVER the
 // raw keystroke text/keys, screen, or command (the REDACTED payload rides the
@@ -117,7 +115,7 @@ describe("TerminalEvents payload structure", () => {
 // (idle | max_sessions | wall_clock | max_interactions).
 // ---------------------------------------------------------------------------
 describe("TerminalEvents — keystroke + eviction", () => {
-  it("declares terminal:keystroke + terminal:session_evicted on TerminalEvents (source RED on pre-patch)", () => {
+  it("declares terminal:keystroke + terminal:session_evicted on TerminalEvents (source-introspected)", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     expect(src, "terminal:keystroke key must be declared").toMatch(/"terminal:keystroke":/);
     expect(src, "terminal:session_evicted key must be declared").toMatch(
@@ -189,7 +187,7 @@ describe("TerminalEvents — keystroke + eviction", () => {
 
     // Source-block guard (the events-agent.ts counts-only pattern): the declared
     // keystroke block must NOT contain a raw text/keys/screen/payload/command
-    // field. RED on pre-patch (the block does not exist yet).
+    // field.
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const match = src.match(/"terminal:keystroke":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "terminal:keystroke event block must exist").toBeTruthy();
@@ -244,7 +242,7 @@ describe("TerminalEvents — keystroke + eviction", () => {
     expect(seen).toEqual(["idle", "max_sessions", "wall_clock", "max_interactions"]);
 
     // Source guard: the declared reason union carries exactly those four members
-    // and no screen/command/text leak. RED on pre-patch (block absent).
+    // and no screen/command/text leak.
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const match = src.match(/"terminal:session_evicted":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "terminal:session_evicted event block must exist").toBeTruthy();
@@ -259,30 +257,27 @@ describe("TerminalEvents — keystroke + eviction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 124 P5 (TR-11 / OPS-04 / SEC-11 / SEC-12) — the attention + audit set:
+// The attention + audit set:
 // terminal:input_needed + terminal:stuck + terminal:escalated +
 // terminal:auto_answered.
 //
-// These are the four NET-NEW typed bus events the worker classifier (124-05),
-// the wake-FSM (124-07), and the auto-answer policy (124-09) need so they can
+// These are the four typed bus events the worker classifier,
+// the wake-FSM, and the auto-answer policy need so they can
 // `emit(...)` against the CLOSED `TypedEventBus` union (an undeclared event
-// fails to typecheck — RESEARCH Pitfall 4 / the "MCP field plumbing 3 paths"
-// bug class). This block REPLACES the prior negative reservation test ("does
-// NOT declare the speculative P5 payloads") and is RED on pre-patch code:
-// `events-terminal.ts` declares only the four P0+P4 keys, so the source-
-// introspection cases below (the genuinely-RED layer — esbuild strips bare type
-// annotations) do not find the four new keys.
+// fails to typecheck). The source-introspection cases below are the
+// runtime-observable layer — esbuild strips bare type annotations, so a
+// type-only declaration cannot be asserted at runtime.
 //
 // Payloads are redaction-SAFE BY CONSTRUCTION: counts / ids / a typed reason /
 // a typed state ONLY — NEVER the raw screen text, keystroke, or command (the
 // REDACTED detail rides the structured LOG, never the bus; the file's own doc-
 // comment forbids it). Each new payload block's safe key-set is asserted so a
-// leak field (text/keys/screen/payload) cannot creep in (the T-123-01 / T-124-03
-// precedent). auto_answered carries the matched-pattern INDEX + a keystroke
-// COUNT, never the keystroke itself (mirrors terminal:keystroke).
+// leak field (text/keys/screen/payload) cannot creep in. auto_answered carries
+// the matched-pattern INDEX + a keystroke COUNT, never the keystroke itself
+// (mirrors terminal:keystroke).
 // ---------------------------------------------------------------------------
-describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-12)", () => {
-  it("declares input_needed + stuck + escalated + auto_answered on TerminalEvents (source RED on pre-patch)", () => {
+describe("TerminalEvents — attention + audit set (input_needed/stuck/escalated/auto_answered)", () => {
+  it("declares input_needed + stuck + escalated + auto_answered on TerminalEvents (source-introspected)", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     expect(src, "terminal:input_needed key must be declared").toMatch(/"terminal:input_needed":/);
     expect(src, "terminal:stuck key must be declared").toMatch(/"terminal:stuck":/);
@@ -290,16 +285,16 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(src, "terminal:auto_answered key must be declared").toMatch(/"terminal:auto_answered":/);
   });
 
-  it("the P5 reservation comment is GONE — the attention set is no longer 'intentionally NOT declared'", () => {
+  it("the source carries no 'intentionally NOT declared' reservation comment for the attention set", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     expect(src, "the 'intentionally NOT declared here' reservation must be removed").not.toMatch(
       /intentionally NOT declared/,
     );
   });
 
-  it("input_needed declares confidence; stuck declares confidence + reason (CLASS-02 source RED on pre-patch)", () => {
-    // esbuild strips bare type annotations, so this source-introspection layer is
-    // what fails on pre-patch code (the fields are absent on both blocks).
+  it("input_needed declares confidence; stuck declares confidence + reason (source-introspected)", () => {
+    // esbuild strips bare type annotations, so source introspection is the only
+    // runtime-observable way to assert the declared fields.
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
 
     const inputNeeded = src.match(/"terminal:input_needed":\s*\{[\s\S]*?\n\s*\};/);
@@ -312,7 +307,7 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(stuck![0], "stuck declares reason").toMatch(/reason:/);
   });
 
-  it("terminal:input_needed delivers sessionId/agentId/state/reason/confidence — the attention wake (TR-11, CLASS-02)", () => {
+  it("terminal:input_needed delivers sessionId/agentId/state/reason/confidence — the attention wake signal", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:input_needed"] = {
@@ -333,7 +328,7 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(received.agentId).toBe("agent-1");
     expect(received.state).toBe("awaiting-input");
     expect(received.reason).toBe("settled_cursor_parked");
-    // CLASS-02: the classifier confidence rides the wake event for the autonomous policy.
+    // The classifier confidence rides the wake event for the autonomous policy.
     expect(received.confidence).toBe("medium");
     expect(typeof received.timestamp).toBe("number");
   });
@@ -355,7 +350,7 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(seen).toEqual(["awaiting-input", "stuck"]);
   });
 
-  it("terminal:input_needed confidence union accepts high | medium (CLASS-02)", () => {
+  it("terminal:input_needed confidence union accepts high | medium", () => {
     const bus = new TypedEventBus();
     const seen: string[] = [];
     bus.on("terminal:input_needed", (p) => seen.push(p.confidence));
@@ -372,7 +367,7 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(seen).toEqual(["high", "medium"]);
   });
 
-  it("terminal:stuck delivers sessionId/agentId/noProgressMs/reason/confidence — a duration + verdict signal, not content (OPS-04, CLASS-02)", () => {
+  it("terminal:stuck delivers sessionId/agentId/noProgressMs/reason/confidence — a duration + verdict signal, not content", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:stuck"] = {
@@ -392,13 +387,13 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(received.sessionId).toBe("sess-6");
     expect(received.agentId).toBe("agent-1");
     expect(received.noProgressMs).toBe(30_000);
-    // CLASS-02: stuck now carries the classifier reason + confidence (observability symmetry).
+    // stuck carries the classifier reason + confidence (observability symmetry with input_needed).
     expect(received.reason).toBe("no_progress");
     expect(received.confidence).toBe("medium");
     expect(typeof received.timestamp).toBe("number");
   });
 
-  it("terminal:escalated delivers sessionId/agentId/reason — the SEC-11/SEC-12 audit signal", () => {
+  it("terminal:escalated delivers sessionId/agentId/reason — the escalation audit signal", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:escalated"] = {
@@ -418,7 +413,7 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(typeof received.timestamp).toBe("number");
   });
 
-  it("terminal:escalated reason union is exactly the seven SEC-11/SEC-12 escalation reasons", () => {
+  it("terminal:escalated reason union is exactly the seven audited escalation reasons", () => {
     const bus = new TypedEventBus();
     const seen: string[] = [];
     bus.on("terminal:escalated", (p) => seen.push(p.reason));
@@ -458,7 +453,7 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     );
   });
 
-  it("terminal:auto_answered delivers matchedPatternIndex + keystrokeCount — the index/count, never the keystroke (SEC-12)", () => {
+  it("terminal:auto_answered delivers matchedPatternIndex + keystrokeCount — the index/count, never the keystroke", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:auto_answered"] = {
@@ -479,8 +474,8 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     expect(typeof received.timestamp).toBe("number");
   });
 
-  it("every P5 payload carries ONLY a redaction-safe key-set — no text/keys/screen/payload/command field", () => {
-    // Object.keys proves no raw-payload field rides the bus (T-124-03). Each
+  it("every attention/audit payload carries ONLY a redaction-safe key-set — no text/keys/screen/payload/command field", () => {
+    // Object.keys proves no raw-payload field rides the bus. Each
     // payload is constructed from EventMap so the set tracks the declared type.
     const inputNeeded: EventMap["terminal:input_needed"] = {
       sessionId: "s",
@@ -540,8 +535,7 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     ]);
 
     // Source-block guard (the counts-only pattern): NONE of the four declared
-    // blocks may contain a raw text/keys/screen/payload/command field. RED on
-    // pre-patch (the blocks do not exist yet).
+    // blocks may contain a raw text/keys/screen/payload/command field.
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     for (const key of [
       "terminal:input_needed",
@@ -562,40 +556,39 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
 });
 
 // ---------------------------------------------------------------------------
-// Phase 164 DRIVE-02 (v2.24) — the autonomous-drive PROMOTION signal:
+// The autonomous-drive PROMOTION signal:
 // terminal:drive_promoted.
 //
-// The ONE net-new typed bus event the drive-promotion seam needs (164-04). The
+// The ONE typed bus event the drive-promotion seam needs. The
 // skills wait tool (Context A, the agent's LLM turn) consults the pure
-// `shouldPromoteDrive` predicate (164-02) on its WaitResult and, on a qualifying
+// `shouldPromoteDrive` predicate on its WaitResult and, on a qualifying
 // wait, emits this CONTENT-FREE event; the fd3 wake dispatcher (Context B, the
 // daemon) consumes it into a closure-local promoted-Set + fires exactly ONE
 // "drive started (backgrounded)" notification (promote-once). It declares the
 // event on the CLOSED `TypedEventBus` union so both the emit site (skills) and
-// the `.on` consumer (daemon) typecheck — an undeclared event fails to compile
-// (RESEARCH Pitfall 4 / the "MCP field plumbing 3 paths" bug class).
+// the `.on` consumer (daemon) typecheck — an undeclared event fails to compile.
 //
-// CONTENT-FREE BY CONSTRUCTION (I3): sessionId / agentId / a typed `reason` enum
+// CONTENT-FREE BY CONSTRUCTION: sessionId / agentId / a typed `reason` enum
 // (`producing` | `mode_detached` — WHY it promoted, NEVER the screen) / timestamp
 // ONLY. The screen digest that drove the wait rides the structured LOG, never the
-// bus. RED on pre-patch: `events-terminal.ts` does not declare the key, so the
-// source-introspection layer (esbuild strips bare type annotations) does not find it.
+// bus. The source-introspection layer exists because esbuild strips bare type
+// annotations — a type-only declaration cannot be asserted at runtime.
 // ---------------------------------------------------------------------------
-describe("TerminalEvents — DRIVE-02 promotion signal (terminal:drive_promoted)", () => {
-  it("declares terminal:drive_promoted on TerminalEvents (source RED on pre-patch)", () => {
+describe("TerminalEvents — promotion signal (terminal:drive_promoted)", () => {
+  it("declares terminal:drive_promoted on TerminalEvents (source-introspected)", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     expect(src, "terminal:drive_promoted key must be declared").toMatch(/"terminal:drive_promoted":/);
   });
 
-  it("the module-doc event list mentions terminal:drive_promoted (source RED on pre-patch)", () => {
+  it("the module-doc event list mentions terminal:drive_promoted", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     // The header lists every event so a transition is reconstructable from the
-    // bus alone; the new event must be added there too (AGENTS.md §2.7).
+    // bus alone; the event must be listed there too (AGENTS.md §2.7).
     const header = src.slice(0, src.indexOf("export interface TerminalEvents"));
     expect(header, "the module-doc must mention terminal:drive_promoted").toMatch(/drive_promoted/);
   });
 
-  it("terminal:drive_promoted delivers sessionId/agentId/reason/timestamp — the promotion signal (DRIVE-02)", () => {
+  it("terminal:drive_promoted delivers sessionId/agentId/reason/timestamp — the promotion signal", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:drive_promoted"] = {
@@ -630,8 +623,8 @@ describe("TerminalEvents — DRIVE-02 promotion signal (terminal:drive_promoted)
     expect(seen).toEqual(["producing", "mode_detached"]);
   });
 
-  it("terminal:drive_promoted carries ONLY a content-free key-set — no screen/text/keystroke/payload/command field (I3)", () => {
-    // Object.keys proves no raw-payload field rides the bus (T-164-11). The payload
+  it("terminal:drive_promoted carries ONLY a content-free key-set — no screen/text/keystroke/payload/command field", () => {
+    // Object.keys proves no raw-payload field rides the bus. The payload
     // is constructed from EventMap so the set tracks the declared type.
     const promoted: EventMap["terminal:drive_promoted"] = {
       sessionId: "s",
@@ -642,8 +635,7 @@ describe("TerminalEvents — DRIVE-02 promotion signal (terminal:drive_promoted)
     expect(Object.keys(promoted).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
 
     // Source-block guard (the counts/ids/enums-only pattern): the declared block
-    // may NOT contain a raw screen/text/keystroke/payload/command field. RED on
-    // pre-patch (the block does not exist yet).
+    // may NOT contain a raw screen/text/keystroke/payload/command field.
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const match = src.match(/"terminal:drive_promoted":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "terminal:drive_promoted event block must exist").toBeTruthy();
@@ -658,40 +650,40 @@ describe("TerminalEvents — DRIVE-02 promotion signal (terminal:drive_promoted)
 });
 
 // ---------------------------------------------------------------------------
-// Phase 165 DUR-01 (v2.24) — the autonomous-drive RE-ATTACH signal:
+// The autonomous-drive RE-ATTACH signal:
 // terminal:drive_reattached.
 //
-// The ONE net-new typed bus event DUR-01 needs (165-06). On a daemon restart the
+// The ONE typed bus event the durability seam needs. On a daemon restart the
 // session registry recovers a persisted descriptor whose detached tmux server
 // SURVIVED and re-attaches it as `running` (NOT `lost`) WITHOUT a second create
-// frame (I10); the daemon binds the registry's `onReattached` hook to emit this
+// frame; the daemon binds the registry's `onReattached` hook to emit this
 // CONTENT-FREE event so a 40h drive's restart/re-attach is reconstructable via
-// `comis explain` (design §9). It MIRRORS terminal:drive_promoted's shape (the
-// 164 precedent): sessionId/agentId/a typed `reason` enum/timestamp.
+// `comis explain`. It MIRRORS terminal:drive_promoted's
+// shape: sessionId/agentId/a typed `reason` enum/timestamp.
 //
 // CRITICAL — the genuinely-gone path does NOT get a new event: it REUSES the
 // EXISTING terminal:session_state(state:"lost") + a content-free unrecoverable
 // reason on the structured log. There is NO `state:"failed"` member (the union is
-// created|running|exited|lost); the user-facing `failed` OUTCOME is Phase-166
-// NOTIFY-01's job. This block ALSO pins that the session_state union is UNCHANGED.
+// created|running|exited|lost); the user-facing `failed` OUTCOME is the wake
+// holder's job, derived downstream. This block ALSO pins that the session_state union is UNCHANGED.
 //
-// CONTENT-FREE BY CONSTRUCTION (I3): sessionId / agentId / `reason:"tmux_alive"` /
-// timestamp ONLY. RED on pre-patch: events-terminal.ts does not declare the key, so
-// the source-introspection layer (esbuild strips bare type annotations) does not find it.
+// CONTENT-FREE BY CONSTRUCTION: sessionId / agentId / `reason:"tmux_alive"` /
+// timestamp ONLY. The source-introspection layer exists because esbuild strips
+// bare type annotations — a type-only declaration cannot be asserted at runtime.
 // ---------------------------------------------------------------------------
-describe("TerminalEvents — DUR-01 re-attach signal (terminal:drive_reattached)", () => {
-  it("declares terminal:drive_reattached on TerminalEvents (source RED on pre-patch)", () => {
+describe("TerminalEvents — re-attach signal (terminal:drive_reattached)", () => {
+  it("declares terminal:drive_reattached on TerminalEvents (source-introspected)", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     expect(src, "terminal:drive_reattached key must be declared").toMatch(/"terminal:drive_reattached":/);
   });
 
-  it("the module-doc event list mentions terminal:drive_reattached (source RED on pre-patch)", () => {
+  it("the module-doc event list mentions terminal:drive_reattached", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const header = src.slice(0, src.indexOf("export interface TerminalEvents"));
     expect(header, "the module-doc must mention terminal:drive_reattached").toMatch(/drive_reattached/);
   });
 
-  it("terminal:drive_reattached delivers sessionId/agentId/reason/timestamp — the re-attach signal (DUR-01)", () => {
+  it("terminal:drive_reattached delivers sessionId/agentId/reason/timestamp — the re-attach signal", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:drive_reattached"] = {
@@ -711,7 +703,7 @@ describe("TerminalEvents — DUR-01 re-attach signal (terminal:drive_reattached)
     expect(received.reason).toBe("tmux_alive");
   });
 
-  it("terminal:drive_reattached carries ONLY a content-free key-set — no screen/text/keystroke/payload/command field (I3)", () => {
+  it("terminal:drive_reattached carries ONLY a content-free key-set — no screen/text/keystroke/payload/command field", () => {
     const reattached: EventMap["terminal:drive_reattached"] = {
       sessionId: "s",
       agentId: "a",
@@ -720,7 +712,7 @@ describe("TerminalEvents — DUR-01 re-attach signal (terminal:drive_reattached)
     };
     expect(Object.keys(reattached).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
 
-    // Source-block guard (the counts/ids/enums-only pattern). RED on pre-patch (block absent).
+    // Source-block guard (the counts/ids/enums-only pattern).
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const match = src.match(/"terminal:drive_reattached":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "terminal:drive_reattached event block must exist").toBeTruthy();
@@ -734,8 +726,8 @@ describe("TerminalEvents — DUR-01 re-attach signal (terminal:drive_reattached)
   });
 
   it("the genuinely-gone path adds NO state:'failed' — the session_state union stays created|running|exited|lost (the type-pin)", () => {
-    // DUR-01 emits the EXISTING state:"lost" for a genuine death, NOT a new union member.
-    // The user-facing `failed` OUTCOME is Phase-166 NOTIFY-01's, derived downstream.
+    // A genuine death emits the EXISTING state:"lost", NOT a new union member.
+    // The user-facing `failed` OUTCOME is the wake holder's, derived downstream.
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const match = src.match(/"terminal:session_state":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "terminal:session_state block must exist").toBeTruthy();
@@ -758,30 +750,29 @@ describe("TerminalEvents — DUR-01 re-attach signal (terminal:drive_reattached)
 });
 
 // ---------------------------------------------------------------------------
-// Phase 166 CR-01 (v2.24) — the genuine-death DISCRIMINATOR on
+// The genuine-death DISCRIMINATOR on
 // terminal:session_state.
 //
 // `state:"lost"` has TWO sources that are otherwise indistinguishable on the
 // bus: a GENUINE unrecoverable death (terminal-durable-wiring.ts onUnrecoverable
-// — the durable tmux is truly gone on recover-on-boot, the ONLY I9-legitimate
-// `failed`) and a TRANSIENT worker-process crash that respawns (the supervisor's
-// "worker will re-spawn" path, re-published via the fd3 hook) / a durable session
-// that re-attaches (I10). NOTIFY-01 must map `lost` → user-facing `failed` ONLY
-// for the genuine death, so the event gains an optional `unrecoverable?: boolean`
-// discriminator (set ONLY at the genuine-death emit) + an optional content-free
-// `reason?: string` (a closed structural tag, e.g. "tmux_session_gone") so
-// NOTIFY-01 / `comis explain` can name the actual cause (WR-03) rather than a
-// generic "session_lost".
+// — the durable tmux is truly gone on recover-on-boot, the ONLY legitimate
+// source of a user-facing `failed`) and a TRANSIENT worker-process crash that
+// respawns (the supervisor's "worker will re-spawn" path, re-published via the
+// fd3 hook) / a durable session that re-attaches. The wake holder must map
+// `lost` → user-facing `failed` ONLY for the genuine death, so the event carries
+// an optional `unrecoverable?: boolean` discriminator (set ONLY at the
+// genuine-death emit) + an optional content-free `reason?: string` (a closed
+// structural tag, e.g. "tmux_session_gone") so the wake holder / `comis explain`
+// can name the actual cause rather than a generic "session_lost".
 //
-// CONTENT-FREE (I3): `unrecoverable` is a boolean flag; `reason` is a SHORT
+// CONTENT-FREE: `unrecoverable` is a boolean flag; `reason` is a SHORT
 // structural tag (NEVER screen text / keystrokes / command output — the redacted
-// detail rides the structured LOG, never the bus). RED on pre-patch:
-// events-terminal.ts declares neither field on the session_state block, so the
-// source-introspection layer (esbuild strips bare type annotations) does not find
-// them and the typed emit below would not typecheck.
+// detail rides the structured LOG, never the bus). The source-introspection
+// layer exists because esbuild strips bare type annotations — a type-only
+// declaration cannot be asserted at runtime.
 // ---------------------------------------------------------------------------
-describe("TerminalEvents — CR-01 genuine-death discriminator (session_state unrecoverable/reason)", () => {
-  it("declares the optional unrecoverable + reason fields on terminal:session_state (source RED on pre-patch)", () => {
+describe("TerminalEvents — genuine-death discriminator (session_state unrecoverable/reason)", () => {
+  it("declares the optional unrecoverable + reason fields on terminal:session_state (source-introspected)", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const match = src.match(/"terminal:session_state":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "terminal:session_state block must exist").toBeTruthy();
@@ -792,9 +783,9 @@ describe("TerminalEvents — CR-01 genuine-death discriminator (session_state un
     expect(block, "session_state must declare an optional reason?: string").toMatch(/reason\?:\s*string/);
   });
 
-  it("the session_state block carries NO raw screen/text/keys/payload/command field even with the new discriminator (I3 content-free)", () => {
-    // The new fields are a boolean flag + a closed structural tag — they must NOT open a
-    // raw-bytes door. The block remains counts/ids/enums/flags only.
+  it("the session_state block carries NO raw screen/text/keys/payload/command field even with the discriminator (content-free)", () => {
+    // The discriminator fields are a boolean flag + a closed structural tag — they must
+    // NOT open a raw-bytes door. The block remains counts/ids/enums/flags only.
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const match = src.match(/"terminal:session_state":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "terminal:session_state block must exist").toBeTruthy();
@@ -847,7 +838,7 @@ describe("TerminalEvents — CR-01 genuine-death discriminator (session_state un
     bus.emit("terminal:session_state", payload);
 
     const received = handler.mock.calls[0]![0] as EventMap["terminal:session_state"];
-    // The absence of the discriminator is what tells NOTIFY-01 this is NOT a genuine death.
-    expect(received.unrecoverable, "a transient/recoverable lost leaves unrecoverable unset (I9/I10)").toBeUndefined();
+    // The absence of the discriminator is what tells the wake holder this is NOT a genuine death.
+    expect(received.unrecoverable, "a transient/recoverable lost leaves unrecoverable unset").toBeUndefined();
   });
 });

@@ -8,8 +8,8 @@
  *
  * Sectional layout: (1) memory-package-local public rows paired 1:1 with the
  * `./types.js` interfaces (each pair gets an `expectTypeOf` drift guard in
- * `row-schemas.test.ts`); (2) removed in v2.12 — the DAG context-store row
- * schemas were deleted with the ctx_* schema (Phase 126); (3) session-store
+ * `row-schemas.test.ts`); (2) removed — the DAG context-store row
+ * schemas were deleted with the ctx_* schema; (3) session-store
  * DTOs; (4) file-internal snake_case row shapes (the SSOT consumers retarget to
  * via `z.infer<typeof XxxRowSchema>`).
  *
@@ -120,7 +120,7 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
   ignored_count: z.number(),
   /** Epoch ms of the last "used" attribution; NULL until first use. */
   last_useful_at: z.number().nullable(),
-  /** Outcome-attributed task-failure count (NOT NULL DEFAULT 0; FORGET-02) — DISTINCT from ignored_count. WR-03: the readUsefulness projection NOW selects it (the bandit feed's negative-reward signal, surfaced onto the signal only when >0); `.optional()` keeps the schema tolerant of the legacy/lifecycle reads that omit it. */
+  /** Outcome-attributed task-failure count (NOT NULL DEFAULT 0) — DISTINCT from ignored_count. The readUsefulness projection selects it (the bandit feed's negative-reward signal, surfaced onto the signal only when >0); `.optional()` keeps the schema tolerant of the legacy/lifecycle reads that omit it. */
   failure_count: z.number().optional(),
 });
 

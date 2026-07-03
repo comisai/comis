@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tier-aware summary token target resolver (Phase 171, SUM-02).
+ * Tier-aware summary token target resolver.
  *
  * Provides resolveSummaryTargetTokens() keyed on capabilityClass + depth,
  * and the deterministic nano structured extractor floor. No I/O, no network,
@@ -23,7 +23,7 @@ import { estimateMessageTokens, estimateMessageChars } from "../safety/token-est
 /**
  * Resolve the effective summary target token count for the given tier.
  *
- * Rules (SUM-02):
+ * Rules:
  *  - nano   → min(256, configuredTarget)
  *  - small  → min(400, configuredTarget)
  *  - mid    → min(800, configuredTarget)
@@ -69,8 +69,8 @@ export function resolveSummaryTargetTokens(
  * Replaces the bare count-note (`LEAF_FALLBACK_SUMMARY_MARKER N messages`) with a
  * structured JSON block carrying decisions/files/entities/constraints extracted by
  * simple string heuristics (no LLM). The result MUST:
- *   1. Carry LEAF_FALLBACK_SUMMARY_MARKER so DOC-01 scans detect it.
- *   2. Pass the shrink invariant (C1): tokenCount strictly < chunkTokens.
+ *   1. Carry LEAF_FALLBACK_SUMMARY_MARKER so fallback-marker scans detect it.
+ *   2. Pass the shrink invariant: tokenCount strictly < chunkTokens.
  *
  * If the structured JSON exceeds `shrinkCeilingTokens` (from computeShrinkBounds),
  * falls back to a bare count-note that is guaranteed to be smaller.
@@ -146,7 +146,7 @@ export function buildNanoStructuredExtraction(
 
   const tokenCount = estimateMessageTokens({ role: "user", content: structured } as Message);
 
-  // C1 / shrink invariant: if structured output is not smaller than the ceiling,
+  // Shrink invariant: if structured output is not smaller than the ceiling,
   // fall back to the bare count-note (always tiny, always beats the ceiling)
   if (tokenCount >= shrinkCeilingTokens) {
     return buildBareCountNote(messages.length, chunkTokens);

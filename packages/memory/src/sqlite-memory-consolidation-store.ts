@@ -3,19 +3,19 @@
  * SqliteMemoryConsolidationStore: the SOLE adapter for the segregated
  * `MemoryConsolidationStore` port (@comis/core).
  *
- * Phase 226 (SIMPLIFY-02): TRIMMED to the LIVE read + deletion-reconciliation
- * surface after the consolidation CRON (the writer) was retired in phase 225.
- * It owns ONLY the SQL behind the three live, non-cron methods:
+ * This adapter exposes the live read + deletion-reconciliation surface only;
+ * there is no consolidation writer. It owns the SQL behind the three live,
+ * non-cron methods:
  *   - `listObservations`             — the scoped observation listing
  *                                      (`proof_count IS NOT NULL`) behind the
  *                                      `comis memory` observation view.
- *   - `unlinkDeletedSources`         — DIST-05 deletion reconciliation: re-scan
+ *   - `unlinkDeletedSources`         — deletion reconciliation: re-scan
  *                                      in-scope observations' `source_ids`,
  *                                      delete orphans / shrink multi-source rows.
- *   - `purgeConsolidatedDerivedFrom` — DIST-05 nuclear purge of observations
+ *   - `purgeConsolidatedDerivedFrom` — nuclear purge of observations
  *                                      derived from a reset session's ids.
- * The dead writer SQL (candidate selection / apply / fold / surprisal k-NN /
- * deductive-drain) is gone.
+ * No writer SQL (candidate selection / apply / fold / surprisal k-NN /
+ * deductive-drain) lives here.
  *
  * It shares the `better-sqlite3` handle of the `SqliteMemoryAdapter` (passed in
  * via `getDb()`), so it runs against the same schema — the `memories` table
@@ -66,7 +66,7 @@ export interface MemoryConsolidationStoreDeps {
 // so the extra column never trips MemoryRowSchema's `strictObject`.
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
 
-// DIST-05 id-projection mapper (sanctioned typed-read path; no `as Foo[]` cast).
+// Id-projection mapper (sanctioned typed-read path; no `as Foo[]` cast).
 const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
 /**
@@ -82,7 +82,7 @@ export function createSqliteMemoryConsolidationStore(
   // --- Prepared statements (parameterized; built once, reused across calls) ---
 
   // Observation listing (the `comis memory` observation view). proof_count IS
-  // NOT NULL is the column-flag for "this row is an observation" (§4.1). Scoped
+  // NOT NULL is the column-flag for "this row is an observation". Scoped
   // on (tenant_id, agent_id) — a cross-scope observation is never returned.
   const selectObservations = db.prepare(
     "SELECT * FROM memories WHERE tenant_id = ? AND agent_id = ? AND proof_count IS NOT NULL " +
@@ -132,7 +132,7 @@ export function createSqliteMemoryConsolidationStore(
       tenantId: string,
       agentId: string,
     ): Promise<Result<number, Error>> {
-      // DIST-05: called AFTER the raw memories were deleted by
+      // Called AFTER the raw memories were deleted by
       // deleteBySessionKey, so the source rows are already gone. We re-scan each
       // in-scope observation's source_ids and treat any id no longer present in
       // `memories` (for this tenant+agent) as a deleted source. Orphan (every
@@ -144,12 +144,12 @@ export function createSqliteMemoryConsolidationStore(
       // --purge path + a future provenance-joined variant; the
       // delete-already-happened semantics mean the load-bearing predicate is
       // "source id absent from memories" — sessionKey-agnostic but
-      // (tenant, agent)-SCOPED (WR-05: matches deleteBySessionKey's scope exactly,
+      // (tenant, agent)-SCOPED (matches deleteBySessionKey's scope exactly,
       // fail-closed isolation), so the param is intentionally unused here.
       const startMs = systemNowMs();
       try {
         // The set of live memory ids for this tenant+agent — the membership oracle
-        // for "still exists". Scoped on tenant_id AND agent_id (WR-05, fail-closed:
+        // for "still exists". Scoped on tenant_id AND agent_id (fail-closed:
         // a cross-scope id is never in this set, so it can never be treated as
         // "surviving"). Typed read via the sanctioned mapper (untyped-sqlite).
         const liveIdsParsed = idProjectionMapper.parseRows(
@@ -161,7 +161,7 @@ export function createSqliteMemoryConsolidationStore(
         // All observations (proof_count IS NOT NULL) in this tenant+agent carry the
         // source_ids array. Read the full rows through the existing memoryRowMapper
         // (SELECT *) so source_ids is parsed for us by rowToEntry (no new schema,
-        // no manual JSON.parse). Scoped on tenant_id AND agent_id (WR-05) — mirrors
+        // no manual JSON.parse). Scoped on tenant_id AND agent_id — mirrors
         // the agent-scoped selectObservations/selectCandidates in this file.
         const observationsParsed = memoryRowMapper.parseRows(
           db
@@ -223,20 +223,20 @@ export function createSqliteMemoryConsolidationStore(
       agentId: string,
       thisSessionIds: string[],
     ): Promise<Result<number, Error>> {
-      // DIST-05 nuclear escalation: delete EVERY observation derived from THIS
+      // Nuclear escalation: delete EVERY observation derived from THIS
       // session's deleted memory ids. Called via the opt-in --purge-derived flag
       // ONLY. Runs AFTER the raw memories were deleted, but the purge oracle is
       // the explicit `thisSessionIds` set (captured BEFORE the delete via
       // MemoryPort.listMemoryIdsBySessionKey), NOT "any source id now absent".
       //
-      // WR-02 (session-scoped, not coarse): an observation is purged ONLY if its
+      // Session-scoped (not coarse): an observation is purged ONLY if its
       // source_ids INTERSECT thisSessionIds. A prior unrelated dangling source id
       // in an UNRELATED observation (from an earlier admin delete / TTL / another
       // session's purge) is left alone — the bug the "any absent id" oracle had.
       // It still nukes a multi-source observation when one of its sources WAS a
       // this-session id (nuclear regardless of surviving corroboration).
       //
-      // WR-05: scoped on tenant_id AND agent_id (matches deleteBySessionKey).
+      // Scoped on tenant_id AND agent_id (matches deleteBySessionKey).
       // `sessionKey` is retained for the audit log. An empty thisSessionIds set
       // purges nothing (fast-path).
       const startMs = systemNowMs();
@@ -267,7 +267,7 @@ export function createSqliteMemoryConsolidationStore(
             if (ids.length === 0) continue;
             // Purge ONLY when a source id was one of THIS session's deleted ids
             // (source_ids ∩ thisSessionIds ≠ ∅) — nuclear regardless of surviving
-            // corroboration, but session-scoped (WR-02): unrelated observations
+            // corroboration, but session-scoped: unrelated observations
             // with a prior dangling id are untouched.
             const derivedFromThisSession = ids.some((id) => sessionIdSet.has(id));
             if (derivedFromThisSession) {

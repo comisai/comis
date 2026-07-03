@@ -5,18 +5,16 @@ import { buildFindings, pipelineAuthoringAggregateFromRows } from "./fleet-findi
 import { pricingGapFromRow } from "./fleet-findings-extractors.js";
 
 // ---------------------------------------------------------------------------
-// EMB-01 — the dedicated multilingual fleet advisory (standing state).
+// The dedicated multilingual fleet advisory (standing state).
 //
-// buildFindings is a PURE rows -> findings transform. The EMB-01 advisory reads
+// buildFindings is a PURE rows -> findings transform. The advisory reads
 // the LATEST (max-timestamp) `model_health` row's details JSON and emits ONE
 // finding per non-multilingual lane (embedder / reranker). It is STANDING STATE,
-// not a count over rows (Pitfall 4 — a daemon that rebooted N times must NOT show
-// "N non-multilingual signals", mirrors the KNOB-03 latest-row pattern). The
-// parse is defensive (malformed/missing folds to no-advisory, never throws, never
-// echoes a body). ADVISORY ONLY (I4) — buildFindings touches no recall/search path.
-//
-// RED: the advisory branch does not exist yet, so none of these findings are
-// emitted (only the generic count-based `model_health` rollup exists).
+// not a count over rows (a daemon that rebooted N times must NOT show
+// "N non-multilingual signals"; mirrors the served-below-configured latest-row
+// pattern). The parse is defensive (malformed/missing folds to no-advisory, never
+// throws, never echoes a body). ADVISORY ONLY — buildFindings touches no
+// recall/search path.
 // ---------------------------------------------------------------------------
 
 const EMBED_CODE = "model_health:embedder_not_multilingual";
@@ -60,7 +58,7 @@ function degradedModelHealthRow(ts: number): DiagnosticRow {
   };
 }
 
-describe("buildFindings — EMB-01 multilingual advisory (standing state)", () => {
+describe("buildFindings — multilingual advisory (standing state)", () => {
   it("emits ONE embedder advisory from the LATEST row when a newer model_health row reports embeddingMultilingual=false (older true is superseded)", () => {
     const older = modelHealthRow(1_000, { embeddingMultilingual: true, rerankerMultilingual: true });
     const newer = modelHealthRow(5_000, { embeddingMultilingual: false, rerankerMultilingual: true });
@@ -100,7 +98,7 @@ describe("buildFindings — EMB-01 multilingual advisory (standing state)", () =
     expect(findings.filter((f) => f.code === EMBED_CODE)).toHaveLength(1);
   });
 
-  it("reports the advisory as STANDING STATE — five reboot rows with latest multilingual=false yield count 1, NOT 5 (Pitfall 4 RED)", () => {
+  it("reports the advisory as STANDING STATE — five reboot rows with latest multilingual=false yield count 1, NOT 5", () => {
     // Five model_health rows from five reboots; the latest (max ts) is false.
     const rows: DiagnosticRow[] = [
       modelHealthRow(1_000, { embeddingMultilingual: false, rerankerMultilingual: false }),
@@ -150,7 +148,7 @@ describe("buildFindings — EMB-01 multilingual advisory (standing state)", () =
     expect(findings.some((f) => f.code === RERANK_CODE)).toBe(false);
   });
 
-  it("never echoes a raw model-id / path body — the advisory detail+hint carry no GGUF/URI substring (I8 digest-only)", () => {
+  it("never echoes a raw model-id / path body — the advisory detail+hint carry no GGUF/URI substring (digest-only)", () => {
     // Even though details only ever holds booleans, pin that the FINDING text is
     // a fixed digest string, never a row body.
     const findings = buildFindings(
@@ -172,7 +170,7 @@ describe("buildFindings — EMB-01 multilingual advisory (standing state)", () =
 });
 
 // ---------------------------------------------------------------------------
-// T1.3 (F6) — the generic config_posture rollup NAMES the specific flagged keys
+// The generic config_posture rollup NAMES the specific flagged keys
 // (closed labels only) instead of "the flagged config keys", so an operator does
 // not have to grep daemon.log to learn it was gateway.tls + CANARY_SECRET.
 // ---------------------------------------------------------------------------
@@ -188,7 +186,7 @@ function configPostureRow(ts: number, details: Record<string, unknown>): Diagnos
   };
 }
 
-describe("buildFindings — T1.3 config_posture names the flagged keys (F6)", () => {
+describe("buildFindings — config_posture rollup names the flagged keys", () => {
   it("names gateway.tls + CANARY_SECRET + stranded secrets in the rollup detail", () => {
     const findings = buildFindings(
       [],
@@ -209,7 +207,7 @@ describe("buildFindings — T1.3 config_posture names the flagged keys (F6)", ()
     expect(cp!.hint).not.toBe("review the gateway TLS / token posture and the flagged config keys");
   });
 
-  it("RELAX-SURFACE: names security.agentToAgent.sandboxNoDowngrade when the no-downgrade invariant is disabled", () => {
+  it("names security.agentToAgent.sandboxNoDowngrade when the no-downgrade invariant is disabled", () => {
     const findings = buildFindings(
       [],
       [],
@@ -246,20 +244,16 @@ describe("buildFindings — T1.3 config_posture names the flagged keys (F6)", ()
 });
 
 // ---------------------------------------------------------------------------
-// OBS-04 (Phase 196) — the voice_health fleet finding.
+// The voice_health fleet finding.
 //
 // A degraded STT/TTS turn emits a `health_signal` diagnostic row labelled
-// `voice_degraded` (the route-(b) emit, scoped to the obs layer — see the plan's
-// FLAG-7 spike decision). buildFindings rolls those rows up into ONE
+// `voice_degraded` (emitted at the obs layer). buildFindings rolls those rows up
+// into ONE
 // counts+hints-only `voice_health` finding beside `model_health`/`config_posture`:
 // the degraded count + the dominant voice errorKind (the domain SttErrorKind, a
 // CLOSED label — never a raw provider body or a secret). The finding rides the
 // existing `count desc, code asc` sort and is guarded on zero voice traffic
 // (mirrors `if (modelHealth.length > 0)`).
-//
-// RED: the `voice_degraded` arm + the `voice_health` finding do not exist yet, so
-// NO `voice_health` finding is produced — every assertion below fails on the
-// pre-patch code.
 // ---------------------------------------------------------------------------
 
 const VOICE_CODE = "voice_health";
@@ -276,7 +270,7 @@ function voiceDegradedRow(ts: number, errorKind: string, kind: "stt" | "tts" = "
   };
 }
 
-describe("buildFindings — OBS-04 voice_health finding", () => {
+describe("buildFindings — voice_health finding", () => {
   it("emits ONE voice_health finding with the degraded count + the dominant voice errorKind", () => {
     const findings = buildFindings(
       [
@@ -316,7 +310,7 @@ describe("buildFindings — OBS-04 voice_health finding", () => {
     expect(findings.some((f) => f.code === VOICE_CODE)).toBe(false);
   });
 
-  it("is SAFE TO PASTE — the detail+hint carry no raw provider body, no URL, no secret (SEC-01 H1)", () => {
+  it("is SAFE TO PASTE — the detail+hint carry no raw provider body, no URL, no secret", () => {
     // Even though the row only ever holds a closed errorKind, pin that the FINDING
     // text is a fixed digest naming only the count + the closed label.
     const findings = buildFindings(
@@ -380,8 +374,7 @@ describe("buildFindings — OBS-04 voice_health finding", () => {
       voiceDegradedRow(5_000, "network"),
     ];
     // WARNING-severity (embeddingAvailable=false) rows — the only ones that count
-    // as "provider degradation" after the LOCAL re-test fix below; healthy info
-    // boots no longer inflate the count.
+    // as "provider degradation"; healthy info boots must not inflate the count.
     const modelRows: DiagnosticRow[] = [
       degradedModelHealthRow(1_000),
       degradedModelHealthRow(2_000),
@@ -396,18 +389,15 @@ describe("buildFindings — OBS-04 voice_health finding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TELEM-01 (Plan 173-03) — the dedicated pipeline_authoring finding + the pure
+// The dedicated pipeline_authoring finding + the pure
 // pipelineAuthoringAggregateFromRows reducer.
 //
-// The GENQ-01 clone: pipeline:authored persists a `health_signal` row with
+// pipeline:authored persists a `health_signal` row with
 // signal:"pipeline_authoring" + {tier, schemaValid}. buildFindings rolls the
-// SMALL-TIER (small|nano — D-TIER) invalid rate into ONE dedicated finding (the
-// Phase-174 gate metric). The pure reducer computes the aggregate Plan 04's gate
+// SMALL-TIER (small|nano) invalid rate into ONE dedicated finding (the
+// small-model-authorable-DAGs gate metric). The pure reducer computes the
+// aggregate the authoring gate
 // consumes: {smallTierInvocations, smallTierValidRate, frontierValidRate}.
-//
-// RED: neither the reducer nor the finding exists yet on the pre-patch code —
-// `pipelineAuthoringAggregateFromRows` is undefined and NO pipeline_authoring
-// finding is produced, so every assertion below fails.
 // ---------------------------------------------------------------------------
 
 const PIPELINE_CODE = "pipeline_authoring";
@@ -489,7 +479,7 @@ describe("pipelineAuthoringAggregateFromRows", () => {
   });
 });
 
-describe("buildFindings — TELEM-01 pipeline_authoring finding", () => {
+describe("buildFindings — pipeline_authoring finding", () => {
   it("emits ONE dedicated finding reporting the small-tier invalid count/total + rate percent", () => {
     const findings = buildFindings(
       [
@@ -507,7 +497,7 @@ describe("buildFindings — TELEM-01 pipeline_authoring finding", () => {
     expect(finding[0]!.count).toBe(2);
     expect(finding[0]!.detail).toMatch(/2\/3/);
     expect(finding[0]!.detail).toMatch(/66\.7%|67%|66/); // rate percent named
-    // The hint names the Phase-174 gate metric.
+    // The hint names the small-model-authoring gate metric + the knob.
     expect(finding[0]!.hint).toMatch(/Phase-?174|orchestration\.authoring/i);
   });
 
@@ -574,11 +564,10 @@ describe("buildFindings — TELEM-01 pipeline_authoring finding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ORCH-OBS (orchestration-observability) — three dedicated fleet findings for the
+// Orchestration observability — three dedicated fleet findings for the
 // previously-dark daemon-side orchestration health_signals. Each mirrors the
 // voice_health pattern: a closed `signal` label, a zero-traffic if-guard, counts +
-// closed labels ONLY (safe to paste), defensive parse. RED: none of the three arms
-// exist yet, so NO finding is produced — every assertion fails on the pre-patch code.
+// closed labels ONLY (safe to paste), defensive parse.
 // ---------------------------------------------------------------------------
 
 /** A `health_signal` row labelled `sandbox_downgrade_refused`, carrying the closed
@@ -593,7 +582,7 @@ function sandboxRefusedRow(ts: number, dimensions: string[]): DiagnosticRow {
   };
 }
 
-describe("buildFindings — ORCH-OBS sandbox_downgrade_refused finding", () => {
+describe("buildFindings — sandbox_downgrade_refused finding", () => {
   const CODE = "sandbox_downgrade_refused";
 
   it("emits ONE finding with the refusal count + the violated dimensions named", () => {
@@ -644,7 +633,7 @@ function deadletterRow(ts: number, channelType: string, transient: boolean): Dia
   };
 }
 
-describe("buildFindings — ORCH-OBS delivery_deadlettered finding", () => {
+describe("buildFindings — delivery_deadlettered finding", () => {
   const CODE = "delivery_deadlettered";
 
   it("emits ONE finding with the dropped count + the transient/permanent split", () => {
@@ -693,18 +682,16 @@ function budgetRow(ts: number, capSource: string): DiagnosticRow {
 }
 
 // ---------------------------------------------------------------------------
-// FLEET-01/02 (Phase 220-03) — three dedicated AUTONOMY findings over the
-// `health_signal` rows Plan 01 persists (signal labels durable_orphaned /
+// Three dedicated AUTONOMY findings over the persisted
+// `health_signal` rows (signal labels durable_orphaned /
 // autonomy_revoked / autonomy_killed). Each clones the node_budget_exceeded mold:
 // a closed `signal` label, a zero-traffic if-guard, counts + a STATIC knob-naming
 // hint ONLY (safe to paste), defensive parse. The kill-vs-revoke SEPARATION is
-// the whole point — Plan 01 emits DISTINCT events (both flip durable status to
+// the whole point — the daemon emits DISTINCT events (both flip durable status to
 // 'revoked' in the table), so two separate findings are the only count separator.
-// RED: none of the three arms exist yet, so NO finding is produced — every
-// assertion below fails on the pre-patch code.
 // ---------------------------------------------------------------------------
 
-/** A `health_signal` row labelled `durable_orphaned` (the Plan-01 details shape:
+/** A `health_signal` row labelled `durable_orphaned` (the persisted details shape:
  *  closed reason enum + rootRunId — never the engine free-text reason). */
 function durableOrphanedRow(ts: number, reason: string, rootRunId = "root-orphan"): DiagnosticRow {
   return {
@@ -738,7 +725,7 @@ function autonomyKilledRow(ts: number, killed: number, rootRunId = "root-kill"):
   };
 }
 
-describe("buildFindings — FLEET-01 durable_orphaned finding", () => {
+describe("buildFindings — durable_orphaned finding", () => {
   const CODE = "durable_orphaned";
 
   it("emits ONE finding counting the orphaned rows, naming the top reason + comis explain + the heartbeat knob", () => {
@@ -773,7 +760,7 @@ describe("buildFindings — FLEET-01 durable_orphaned finding", () => {
   });
 
   it("CONTENT-FREE: the detail/hint carry no free-text reason / path / secret — only the closed enum + counts", () => {
-    // The Plan-01 row only ever holds a closed reason enum + an id, but pin that
+    // The persisted row only ever holds a closed reason enum + an id, but pin that
     // the FINDING text is a fixed digest (no engine free-text reason ever leaks).
     const findings = buildFindings([durableOrphanedRow(1_000, "invalid_caps", "r9")], [], []);
     const f = findings.find((x) => x.code === CODE)!;
@@ -795,8 +782,8 @@ describe("buildFindings — FLEET-01 durable_orphaned finding", () => {
   });
 });
 
-describe("buildFindings — FLEET-01 autonomy_revoked + autonomy_killed findings (kill≠revoke separable)", () => {
-  it("emits SEPARATE autonomy_revoked and autonomy_killed findings — the kill-vs-revoke separation Plan 01 enables", () => {
+describe("buildFindings — autonomy_revoked + autonomy_killed findings (kill≠revoke separable)", () => {
+  it("emits SEPARATE autonomy_revoked and autonomy_killed findings — kill is separable from revoke", () => {
     const findings = buildFindings(
       [
         autonomyRevokedRow(1_000, 2, "r-rev1"),
@@ -864,7 +851,7 @@ describe("buildFindings — FLEET-01 autonomy_revoked + autonomy_killed findings
   });
 });
 
-describe("buildFindings — ORCH-OBS node_budget_exceeded finding", () => {
+describe("buildFindings — node_budget_exceeded finding", () => {
   const CODE = "node_budget_exceeded";
 
   it("emits ONE finding with the breach count + the dominant cap source named", () => {
@@ -899,13 +886,13 @@ describe("buildFindings — ORCH-OBS node_budget_exceeded finding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LOCAL re-test 2026-06-20 — the generic `model_health` "provider degradation"
-// rollup counted EVERY model_health row, including the once-per-boot HEALTHY
+// The generic `model_health` "provider degradation" rollup must NOT count the
+// once-per-boot HEALTHY
 // snapshot (severity "info", embeddingAvailable=true). recordModelHealth writes
 // ONE row per boot with severity "info" when the embedding provider is present
 // and "warning" only when it is absent (the primary degraded-recall cause). A
-// keyless macOS daemon with a working local embedder that had rebooted 8× thus
-// showed "8 model-health signal(s) (provider degradation)" — 8 benign healthy
+// keyless daemon with a working local embedder that rebooted 8× would otherwise
+// show "8 model-health signal(s) (provider degradation)" — 8 benign healthy
 // boots mislabeled as degradation (the BENIGN_*_REASONS anti-pattern: routine
 // events inflating warning counts). Only severity "warning" rows are real
 // degradation; the multilingual advisory (read from the latest row) is
@@ -945,19 +932,16 @@ describe("buildFindings — model_health 'provider degradation' counts only degr
 });
 
 // ---------------------------------------------------------------------------
-// SPEND-05 (Phase 177) — the config_posture:pricing_gap fleet finding.
+// The config_posture:pricing_gap fleet finding.
 //
 // The kill-switch is only honest if an operator can SEE its pricing-coverage gap:
 // how many configured agents burn tokens on remote-unknown-priced models (a NATIVE
-// provider with no catalog entry — the ffe11736 fail-open where spend is silently
+// provider with no catalog entry — the fail-open where spend is silently
 // under-counted as $0). The count is produced at boot from `resolvePricingState`
 // (== "unknown") into the config_posture row's `details` JSON; buildFindings reads
 // it defensively (the chimericModelFromRow mold) and emits ONE counts+hint-only
 // finding beside `config_posture:chimeric_model`. STANDING STATE (latest row only),
 // content-free (counts + remediation, never a model id / config value as a body).
-//
-// RED: neither `pricingGapFromRow` nor the `config_posture:pricing_gap` finding
-// exists yet — every assertion below fails on the pre-patch code.
 // ---------------------------------------------------------------------------
 
 const PRICING_GAP_CODE = "config_posture:pricing_gap";
@@ -986,7 +970,7 @@ describe("pricingGapFromRow — defensive pricingGapCount extractor (chimericMod
   });
 });
 
-describe("buildFindings — SPEND-05 config_posture:pricing_gap finding (standing state, content-free)", () => {
+describe("buildFindings — config_posture:pricing_gap finding (standing state, content-free)", () => {
   it("emits the pricing_gap finding with the count from the latest posture row when pricingGapCount > 0", () => {
     const findings = buildFindings([], [], [configPostureRow(1_000, { pricingGapCount: 3 })]);
     const finding = findings.find((f) => f.code === PRICING_GAP_CODE);
@@ -1045,11 +1029,11 @@ describe("buildFindings — SPEND-05 config_posture:pricing_gap finding (standin
 });
 
 // ---------------------------------------------------------------------------
-// OBS-3b (hindsight-reflection-20260626): the learning_health finding — the
+// The learning_health finding — the
 // reflection funnel rolled up over the window (daemon-wide "is learning admitting").
 // ---------------------------------------------------------------------------
 
-describe("buildFindings — OBS-3b learning_health (reflection funnel rollup)", () => {
+describe("buildFindings — learning_health (reflection funnel rollup)", () => {
   function learningHealthRow(
     ts: number,
     fields: { admissionOutcome: string; admitted?: number; untrustedDrops?: number },
@@ -1097,11 +1081,11 @@ describe("buildFindings — OBS-3b learning_health (reflection funnel rollup)", 
     expect(lh[0]!.detail).toContain("latest outcome=unknown"); // off-vocabulary → unknown, never echoed
   });
 
-  it("no learning_health finding when there are no reflection rows (back-compat with pre-OBS-3b callers)", () => {
+  it("no learning_health finding when there are no reflection rows (callers omitting the argument are unchanged)", () => {
     expect(buildFindings([], [], []).some((f) => f.code === "learning_health")).toBe(false);
   });
 
-  it("never echoes a doc body even if one is smuggled into details (content-free / H1)", () => {
+  it("never echoes a doc body even if one is smuggled into details (content-free)", () => {
     const row: DiagnosticRow = {
       timestamp: 1, category: "learning_health", severity: "info", message: "reflect:funnel",
       details: JSON.stringify({ admissionOutcome: "admitted", admitted: 1, body: "## the reflected procedure\nrm -rf /" }),
@@ -1112,7 +1096,7 @@ describe("buildFindings — OBS-3b learning_health (reflection funnel rollup)", 
   });
 });
 
-describe("buildFindings — OBS-2b memory_lifecycle (forget sweep rollup)", () => {
+describe("buildFindings — memory_lifecycle (forget sweep rollup)", () => {
   function lifecycleRow(ts: number, fields: { evicted?: number; demoted?: number }): DiagnosticRow {
     return {
       timestamp: ts,
@@ -1139,11 +1123,11 @@ describe("buildFindings — OBS-2b memory_lifecycle (forget sweep rollup)", () =
     expect(ml[0]!.detail).toContain("demoted=1");
   });
 
-  it("no memory_lifecycle finding when there are no sweep rows (back-compat with pre-OBS-2b callers)", () => {
+  it("no memory_lifecycle finding when there are no sweep rows (callers omitting the argument are unchanged)", () => {
     expect(buildFindings([], [], [], []).some((f) => f.code === "memory_lifecycle")).toBe(false);
   });
 
-  it("never echoes a memory body even if smuggled into details (content-free / H1)", () => {
+  it("never echoes a memory body even if smuggled into details (content-free)", () => {
     const row: DiagnosticRow = {
       timestamp: 1, category: "memory_lifecycle", severity: "info", message: "learning:lifecycle_swept",
       details: JSON.stringify({ evicted: 1, body: "the secret memory content", id: "memory-deadbeef" }),

@@ -2,7 +2,7 @@
 import { randomInt } from "node:crypto";
 
 /**
- * Short, callback-safe identifier for an approval request (§6.4.1).
+ * Short, callback-safe identifier for an approval request.
  *
  * The approval-gate is the SOLE minter: when it creates a new pending request it
  * mints a `shortId` alongside the 36-char `requestId`. The short id is the only

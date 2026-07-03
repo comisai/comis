@@ -187,8 +187,8 @@ describe("createMediaRoutes - bearer token auth", () => {
     expect(res.status).toBe(401);
   });
 
-  // Security regression for the v2.20 review finding: the media auth only
-  // verified the token, never its scope. A sole-scope `mcp-client` token (the
+  // Security regression: the media auth only verified the token, never its
+  // scope. A sole-scope `mcp-client` token (the
   // most contained external credential) could fetch dashboard media. Require
   // the same `rpc` scope the rest of the web surface enforces.
   it("returns 403 for a sole-scope mcp-client token", async () => {

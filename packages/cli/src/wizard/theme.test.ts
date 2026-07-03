@@ -153,9 +153,9 @@ describe("wizard/theme — colorize() at chalk.level === 1 (basic 16-color)", ()
   });
 
   it("renders labeled sectionSeparator combining muted prefix + accent label + muted suffix at chalk.level=1", () => {
-    const out = sectionSeparator("Phase 1");
+    const out = sectionSeparator("Section B");
     expect(out).toMatch(/\x1b\[/);
-    expect(out).toContain("Phase 1");
+    expect(out).toContain("Section B");
     expect(out).toContain("--");
   });
 });

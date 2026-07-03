@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AUDIT-01 (Phase 215 Plan 01 Task 3): the per-cap audit at the SOCKET
+ * The per-cap audit at the SOCKET
  * chokepoint (`setup-capability-endpoint.ts handleToolInvoke`) — emitted for an
  * ALLOWED *and* a DENIED `tool.invoke` with the FULL lease tuple (the socket
- * path carries the real lease, no asymmetry). RED-first.
+ * path carries the real lease, no asymmetry).
  *
  * The socket path's realistic cap-deny for `tool.invoke` is the lease-AUDIENCE
  * deny at `validate` (RFC 8707), which returns null BEFORE `handleToolInvoke`
@@ -47,7 +47,7 @@ function createTestClock(startMs = 1_700_000_000_000): { now: () => number; adva
 
 /**
  * Build the audit-capturing deps the socket emit reads (`container.eventBus` +
- * `container.config.tenantId`) — the NEW structural field Task 3 adds to
+ * `container.config.tenantId`) — the structural field added to
  * CapabilityEndpointDeps. Captures both bus channels.
  */
 function makeAuditCapture(): {
@@ -70,7 +70,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint (AUDIT-01)", () => {
+describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint", () => {
   it("a SUCCESSFUL tool.invoke emits audit:event + capability:audited with the FULL lease tuple (leaseId/rootRunId/tool/cap, decision=allow, parentLeaseId)", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
@@ -196,15 +196,15 @@ describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint (A
   });
 });
 
-describe("createCapabilityEndpoint — per-cap audit on the SOCKET DIRECT-METHOD path (CR-01)", () => {
-  // CR-01 (BLOCKER): a validated cap-socket lease dispatching a DIRECT cap-gated
+describe("createCapabilityEndpoint — per-cap audit on the SOCKET DIRECT-METHOD path", () => {
+  // A validated cap-socket lease dispatching a DIRECT cap-gated
   // method (NOT tool.invoke — e.g. message.send/session.spawn/graph.execute) was
   // structurally UNAUDITED: handleCapCall's direct branch injected _agentId but
   // no _callerSessionKey, so the dispatch-closure audit was unreachable and
   // handleCapCall emitted nothing. A sub-agent spawning a grandchild / authoring
   // a graph/cron / sending an outward message over the socket produced NEITHER
   // the durable audit:event NOR the capability:audited tree record — breaking
-  // AUDIT-01 + TREE-01/02 for exactly the case that matters most. These assert
+  // the audit for exactly the case that matters most. These assert
   // the direct branch now emits BOTH events with the FULL lease tuple, allow AND
   // deny, content-free.
   it("an ALLOWED direct message.send emits audit:event + capability:audited with the FULL lease tuple (decision=allow, leaseId/rootRunId/parentLeaseId, method=message.send, cap=orch:message)", async () => {

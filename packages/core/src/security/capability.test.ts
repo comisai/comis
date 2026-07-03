@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit coverage for the capability primitive (CAP-02 / CAP-05).
+ * Unit coverage for the capability primitive.
  *
  * Proves the single authority predicate has NO wildcard branch (unlike
  * `checkScope`'s `*`) and that the handler-boundary gate throws a typed,
@@ -25,7 +25,7 @@ describe("AGENT_CAPABILITIES", () => {
   });
 });
 
-describe("checkCapability (CAP-02 — no wildcard branch)", () => {
+describe("checkCapability (no wildcard branch)", () => {
   it("returns false when the held set does not contain the required cap", () => {
     expect(checkCapability(["orch:read"], "orch:spawn")).toBe(false);
   });
@@ -35,7 +35,7 @@ describe("checkCapability (CAP-02 — no wildcard branch)", () => {
   });
 
   it("treats a literal `*` as an ordinary (absent) member — NO wildcard authority", () => {
-    // checkScope's `*` implies-all branch must NOT exist here (CAP-02).
+    // checkScope's `*` implies-all branch must NOT exist here.
     expect(checkCapability(["*"], "orch:spawn")).toBe(false);
   });
 
@@ -44,7 +44,7 @@ describe("checkCapability (CAP-02 — no wildcard branch)", () => {
   });
 });
 
-describe("requireCapability (CAP-05 — handler-boundary gate)", () => {
+describe("requireCapability (handler-boundary gate)", () => {
   it("throws CapabilityDeniedError when held is undefined", () => {
     expect(() => requireCapability(undefined, "orch:spawn")).toThrow(
       CapabilityDeniedError,

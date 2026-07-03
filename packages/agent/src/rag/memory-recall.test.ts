@@ -3,7 +3,7 @@
  * Tests for createMemoryRecall — the single recall orchestrator composing
  * search -> fuse -> rerank -> score -> trust-filter -> dedup.
  *
- * Load-bearing RED-first assertions:
+ * Load-bearing assertions:
  * - DEFAULT-OFF CHARACTERIZATION (no-regression pin): with rerank.enabled=false,
  *   recall yields the SAME order as the documented inline reference computation
  *   (single-lane fuse = identity -> score boosts -> trust-filter -> dedup).
@@ -50,7 +50,7 @@ import { createMemoryRecall, type MemoryRecallConfig } from "./memory-recall.js"
 import { appendCausalLane } from "./recall-causal-lane.js";
 import { expandSynonyms, parseTemporalRange } from "./query-understanding.js";
 import type { FusionLane } from "./fuse.js";
-// DIST-03 live-path integration (Task 3): the CONCRETE @comis/memory adapters,
+// Provenance live-path integration: the CONCRETE @comis/memory adapters,
 // imported as a devDependency in the TEST only (the agent↛memory cut forbids this
 // in src/, NOT in .test.ts — verified by architecture.test.ts excludeFileSuffixes).
 import Database from "better-sqlite3";
@@ -88,10 +88,10 @@ function makeResult(
     content?: string;
     occurredAt?: number;
     /** Entry tags. Default []; set e.g. ["lcd_distilled", "depth:1"] for the
-     *  DIST-03 provenance down-weighting pass fixtures. */
+     *  provenance down-weighting pass fixtures. */
     tags?: string[];
     /** source.sessionKey — the conversation a memory was written from. Used by the
-     *  DIST-03 post-fusion provenance pass to find same-conversation paired rows. */
+     *  post-fusion provenance pass to find same-conversation paired rows. */
     sessionKey?: string;
   } = {},
 ): MemorySearchResult {
@@ -274,9 +274,9 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).not.toContain("c");
   });
 
-  it("PROMOTE-01: a failing recall-trace recorder logs at WARN (default-level visible), not DEBUG — the recall hot path is unaffected", async () => {
-    // Invariant I4: a silently-failing obs-substrate (the recall-trace recorder) blinds
-    // the recall lens (RECALL-02). It must be diagnosable at the DEFAULT log level, not
+  it("a failing recall-trace recorder logs at WARN (default-level visible), not DEBUG — the recall hot path is unaffected", async () => {
+    // A silently-failing obs-substrate (the recall-trace recorder) blinds
+    // the recall lens. It must be diagnosable at the DEFAULT log level, not
     // contingent on logLevel:debug having been set before the incident. The recall result
     // itself must still succeed (obs failures never fail the hot path).
     const input = [makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW })];
@@ -305,7 +305,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       }),
       expect.stringContaining("recall-trace capture failed"),
     );
-    // The load-bearing fix: it is NOT buried at DEBUG anymore.
+    // Load-bearing: the failure is NOT buried at DEBUG.
     expect(debug).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.stringContaining("recall-trace capture failed"),
@@ -381,7 +381,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
   it("NON-DESTRUCTIVE: two CONFLICTING memories about the same subject BOTH survive recall (no write-time deletion of older facts)", async () => {
     // Distinct content (so the 200-char dedup fingerprint does NOT collapse them) but
     // contradictory about the same subject. Recall resolves contradictions at READ time
-    // (the §7.3 guidance block, injected at prompt-assembly) — it NEVER deletes, supersedes,
+    // (the temporal contradiction-guidance block, injected at prompt-assembly) — it NEVER deletes, supersedes,
     // or filters the older conflicting fact. Both ids must remain in the recall result.
     const input = [
       makeResult("m1", { content: "user_a owns a horse named Bella", createdAt: NOW - 30 * 86_400_000 }),
@@ -480,7 +480,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(warnArg).toBeDefined();
   });
 
-  it("rerank fallback (dependency): the WARN carries the underlying reranker err so the outage is diagnosable (§2.7)", async () => {
+  it("rerank fallback (dependency): the WARN carries the underlying reranker err so the outage is diagnosable (AGENTS.md §2.7)", async () => {
     // A memory-pressured host surfaced this: the reranker returns an err Result
     // (not a timeout) and the fallback WARN logged only errorKind+hint, DROPPING
     // the underlying cause — so a real reranker outage is undiagnosable from logs.
@@ -500,12 +500,12 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const warnArg = warn.mock.calls.find((c) => (c[0] as { errorKind?: string })?.errorKind === "dependency");
     expect(warnArg).toBeDefined();
     const loggedErr = (warnArg![0] as { err?: unknown }).err;
-    expect(loggedErr).toBeDefined(); // RED pre-fix: the dependency branch dropped scored.error
+    expect(loggedErr).toBeDefined(); // regression pin: the dependency branch must not drop scored.error
     expect(String((loggedErr as Error)?.message ?? loggedErr)).toContain("reranker boom");
   });
 
-  it("rerank fallback WARN carries the err message only — the stack rides a DEBUG line (W11)", async () => {
-    // §2.2: stack traces at DEBUG only. The live fallback WARN inlined a full
+  it("rerank fallback WARN carries the err message only — the stack rides a DEBUG line", async () => {
+    // AGENTS.md §2.2: stack traces at DEBUG only. The live fallback WARN inlined a full
     // multi-KB stack for a classified, hinted, recovered degradation.
     const input = [makeResult("a", { base: 0.9 })];
     const warn = vi.fn();
@@ -1427,7 +1427,7 @@ describe("createMemoryRecall — recall-trace capture", () => {
       makeResult("c", { base: 0.3, trustLevel: "external", createdAt: NOW }),
     ];
     const cfg = baseConfig();
-    // Reference = the documented default pipeline (unchanged from pre-Plan-03).
+    // Reference = the documented default pipeline.
     const fused = fuse([{ results: input, weight: 1.0 }]);
     const scored = score(fused, cfg.scoring, NOW);
     const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
@@ -1715,8 +1715,8 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
     //
     // This pins the FULL returned set (count AND ids AND order) to the prior behavior:
     //   prior = preFused(fts, vector).slice(0, maxResults)
-    // RED on the un-capped code (returns the full 7-id union); GREEN once the FTS+vector
-    // base is capped to maxResults before scoring (mirroring hybridSearch's slice).
+    // Un-capped code would return the full 7-id union; the FTS+vector base must be
+    // capped to maxResults before scoring (mirroring hybridSearch's slice).
     const ftsIds = ["L1", "L2", "L3", "L4", "L5"];
     const vecIds = ["L2", "L1", "L4", "L6", "L7"];
     const fts = ftsIds.map((id) => makeResult(id, { base: 1 }));
@@ -1991,12 +1991,11 @@ describe("createMemoryRecall — temporal-spread lane", () => {
     expect(rec.lanes?.temporal).toBe(1);
   });
 
-  it("I1: the memory:recalled `lanes` count INCLUDES the temporal lane when it contributes (no off-by-one under-report)", async () => {
-    // I1 (observability): the counts-only memory:recalled event's `lanes` summed fts+vector+
-    // entity but OMITTED temporal, so an active+contributing temporal lane was under-reported
-    // by one (the rich recall-trace record DID count lanes.temporal, so the two diverged).
+  it("the memory:recalled `lanes` count INCLUDES the temporal lane when it contributes (no off-by-one under-report)", async () => {
+    // Observability: if the counts-only memory:recalled event's `lanes` summed fts+vector+
+    // entity but OMITTED temporal, an active+contributing temporal lane would be under-reported
+    // by one (the rich recall-trace record DOES count lanes.temporal, so the two would diverge).
     // FTS-only base (1 lane) + a contributing temporal lane (1 lane) → 2 active lanes.
-    // RED on the pre-fix laneCount (emits 1, temporal omitted); GREEN once temporal is added.
     const fts = [makeResult("seed", { base: 0.9, occurredAt: SEED_T })];
     const { store } = fakeTemporalStore(
       ok([makeResult("nearSeed", { base: 0.99, occurredAt: SEED_T + 1 * TEMP_DAY })]),
@@ -2504,7 +2503,7 @@ describe("createMemoryRecall — graph-spread lane", () => {
     expect(got.value.map((r) => r.entry.id)).not.toContain("spread");
   });
 
-  it("NO graphSpread CONFIG: an absent lanes.graphSpread → spreadLane NEVER called (byte-identical to before this plan)", async () => {
+  it("NO graphSpread CONFIG: an absent lanes.graphSpread → spreadLane NEVER called (byte-identical to the no-lane path)", async () => {
     const fts = [makeResult("a", { base: 0.9 })];
     const { store, calls } = fakeTripleStore(ok([makeResult("spread", { base: 0.99 })]));
     const recall = createMemoryRecall(
@@ -2599,7 +2598,7 @@ describe("createMemoryRecall — query understanding", () => {
   const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
   const QU_OFF = { intentReweight: false, synonyms: false, temporalParse: false };
 
-  /** The pre-IQ fused output (fts + vector, no reweight/expansion/range) — byte-identity reference. */
+  /** The pre-query-understanding fused output (fts + vector, no reweight/expansion/range) — byte-identity reference. */
   function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
     const lanes = [] as Parameters<typeof fuse>[0];
     if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
@@ -2654,7 +2653,7 @@ describe("createMemoryRecall — query understanding", () => {
     expect(seenQuery).toBe("vps config db status");
     // … the options carry NO occurredAtRange (no temporal parse) …
     expect(capture.laneOpts?.occurredAtRange).toBeUndefined();
-    // … and the fused output is byte-identical to the pre-IQ path (unmultiplied weights).
+    // … and the fused output is byte-identical to the no-query-understanding path (unmultiplied weights).
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
   });
 
@@ -2684,7 +2683,7 @@ describe("createMemoryRecall — query understanding", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
   });
 
-  it("INTENT-ON LIFT: a temporal-intent query with intentReweight=true up-weights the temporal lane so a temporal-lane candidate outranks where it didn't with reweight off (RED on pre-wiring)", async () => {
+  it("INTENT-ON LIFT: a temporal-intent query with intentReweight=true up-weights the temporal lane so a temporal-lane candidate outranks where it didn't with reweight off", async () => {
     // A temporal-intent query ("when …") → classifyIntent → "temporal" → intentMultiplier
     // ×1.5 on the temporal lane. The base lane has ONE strong fts hit; the temporal lane
     // contributes a candidate at rank 1. With NO reweight the base hit leads; with the ×1.5
@@ -2924,7 +2923,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
   });
 
-  it("NO mmr CONFIG: an absent cfg.mmr → readEmbeddings NEVER called (byte-identical to before this plan)", async () => {
+  it("NO mmr CONFIG: an absent cfg.mmr → readEmbeddings NEVER called (byte-identical to the no-MMR path)", async () => {
     const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
     const { store, calls } = fakeEmbeddingStore(new Map([["a", [1, 0]], ["b", [0, 1]]]));
     const recall = createMemoryRecall(
@@ -2987,7 +2986,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(["only"]);
   });
 
-  it("MMR-ON DIVERSITY LIFT: an orthogonal candidate is promoted ahead of a near-duplicate vs the OFF order (RED on pre-wiring)", async () => {
+  it("MMR-ON DIVERSITY LIFT: an orthogonal candidate is promoted ahead of a near-duplicate vs the OFF order", async () => {
     // Single FTS lane (pass-through preserves the base scores as rel). A and B are near-duplicate-
     // embedded (cos≈1), C is orthogonal (cos 0). With λ=0.5: round 1 picks A (highest rel); round 2
     // B = 0.5·relB − 0.5·1 (penalized to A), C = 0.5·relC − 0.5·0 (no penalty) → C overtakes B.
@@ -3018,7 +3017,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
     const onOrder = on.value.map((r) => r.entry.id);
     expect(offOrder).toEqual(["A", "B", "C"]); // relevance order (no diversity)
     expect(onOrder).toEqual(["A", "C", "B"]); // MMR promotes the orthogonal C ahead of the near-dup B
-    expect(onOrder).not.toEqual(offOrder); // the reorder is real (RED on pre-wiring)
+    expect(onOrder).not.toEqual(offOrder); // the reorder is real (the ON and OFF orders differ)
   });
 
   it("SCOPE: the recorded readEmbeddings call's scope === {tenantId: SESSION_KEY_OBJ.tenantId, agentId: <recall agentId>}", async () => {
@@ -3144,17 +3143,17 @@ describe("llm-free", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Pinned-first recall lane (SC1 + SC2-cap + SC4-mmr)
+// Pinned-first recall lane (pinned-first, injection cap, MMR dedup)
 //
 // DEFAULT-OFF: with pinnedStore absent or pinned.enabled=false, the pinned lane
-// is never executed — the recall pipeline is byte-identical to pre-pinning.
+// is never executed — the recall pipeline is byte-identical to the no-pinning path.
 // When enabled, the Step-0 lane fetches pinned entries and prepends them to the
 // final result AFTER the fused/mmr/dedup pipeline, bounded by maxPinnedInjection.
 // ---------------------------------------------------------------------------
 
 import type { MemoryPinnedStore } from "@comis/core";
 
-describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", () => {
+describe("createMemoryRecall — pinned-first lane (head placement, cap, MMR dedup)", () => {
   /** Minimal MemoryPinnedStore stub returning a canned pinned result list. */
   function createMockPinnedStore(
     pinnedEntries: Array<{ id: string; content: string; score: number }>,
@@ -3197,10 +3196,10 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
   };
 
   it("returns a pinned entry first even when its fused score ranks below top-K", async () => {
-    // SC1: the pinned-first lane ensures pinned entries are returned at the head of
-    // the result regardless of their fused relevance score.
-    // Pre-patch (no lane): pinnedId is ABSENT from recall → test FAILS.
-    // Post-patch (Step-0 lane): pinnedId is result[0] → test PASSES.
+    // The pinned-first lane ensures pinned entries are returned at the head of
+    // the result regardless of their fused relevance score. Without the Step-0
+    // lane, pinnedId would be absent from recall entirely; with it, pinnedId is
+    // result[0].
     const pinnedId = "pinned-low-score-001";
     const mockPinnedStore = createMockPinnedStore([
       { id: pinnedId, content: "standing instruction: always use metric units", score: 1.0 },
@@ -3233,9 +3232,8 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
   });
 
   it("maxPinnedInjection cap limits injected pins when count exceeds the configured cap", async () => {
-    // SC2-cap: listPinned is called with limit=maxPinnedInjection; only cap entries injected.
-    // Pre-patch (no lane): all 10 would be absent → test FAILS on count.
-    // Post-patch: exactly 5 pinned entries in result (cap=5 out of 10 available).
+    // listPinned is called with limit=maxPinnedInjection; only cap entries are
+    // injected — exactly 5 pinned entries in the result (cap=5 out of 10 available).
     const tenEntries = Array.from({ length: 10 }, (_, i) => ({
       id: `pin-${i}`,
       content: `pinned content ${i}`,
@@ -3263,10 +3261,10 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
   });
 
   it("pinned IDs are excluded from MMR candidates preventing double injection in results", async () => {
-    // SC4-mmr: a pinned entry that also ranks highly in fused results must appear
-    // exactly once (as the prepended pin), never twice.
-    // Pre-patch (no dedup): overlap-001 appears in both fused ranked and prepended → twice.
-    // Post-patch (Step 5b-pre filter): overlap-001 filtered from ranked before MMR → once.
+    // A pinned entry that also ranks highly in fused results must appear
+    // exactly once (as the prepended pin), never twice: the Step 5b-pre filter
+    // removes overlap-001 from the ranked set before MMR, so only the prepended
+    // pin remains.
     const overlapId = "overlap-001";
     const mockPinnedStore = createMockPinnedStore([
       { id: overlapId, content: "pinned and high-ranked entry", score: 1.0 },
@@ -3331,11 +3329,10 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
     expect(result.value.map((r) => r.entry.id)).toEqual(["a", "b"]);
   });
 
-  it("CR-04: pinned entry with a disallowed trustLevel is filtered out before prepend", async () => {
-    // CR-04: pinned entries bypass the trust filter. A pinned entry whose trustLevel
-    // is NOT in cfg.includeTrustLevels must be excluded from finalRanked.
-    // Pre-patch: the entry is prepended unconditionally → it appears in results.
-    // Post-patch: filtered → it does NOT appear in results.
+  it("pinned entry with a disallowed trustLevel is filtered out before prepend", async () => {
+    // Pinned entries must not bypass the trust filter: a pinned entry whose trustLevel
+    // is NOT in cfg.includeTrustLevels must be excluded from finalRanked, never
+    // prepended unconditionally.
     const disallowedPinnedId = "pinned-external-001";
     const disallowedTrustStore: MemoryPinnedStore = {
       async pin() { return ok(true); },
@@ -3380,10 +3377,8 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
     expect(ids).not.toContain(disallowedPinnedId); // external-trust pinned entry must be filtered
   });
 
-  it("WR-03: pinned lane WARN log on failure includes durationMs", async () => {
-    // WR-03: the WARN emitted when listPinned fails must include durationMs per AGENTS.md §2.7.
-    // Pre-patch: the WARN omits durationMs.
-    // Post-patch: durationMs is present.
+  it("pinned lane WARN log on failure includes durationMs", async () => {
+    // The WARN emitted when listPinned fails must include durationMs per AGENTS.md §2.7.
     const warnMock = vi.fn();
     const failingPinnedStore: MemoryPinnedStore = {
       async pin() { return ok(true); },
@@ -3413,7 +3408,7 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
 });
 
 // ---------------------------------------------------------------------------
-// DIST-03 POST-FUSION PROVENANCE DOWN-WEIGHTING PASS
+// POST-FUSION PROVENANCE DOWN-WEIGHTING PASS
 //
 // When a distilled summary (tag "lcd_distilled") is in the ranked set, the
 // recall pipeline down-weights same-conversation paired memories whose covered
@@ -3422,7 +3417,7 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
 // is NON-FATAL (a provenance failure never affects recall results), and is
 // BYTE-IDENTICAL when provenanceStore is absent / no lcd_distilled result.
 //
-// W6 INVARIANT: the distilled summary itself (and any OTHER lcd_distilled entry)
+// INVARIANT: the distilled summary itself (and any OTHER lcd_distilled entry)
 // is NEVER down-weighted — the predicate is fully parenthesized
 // (candidate.id !== summary.id AND !candidateIsDistilled, candidateIsDistilled a
 // separate boolean) so the &&/|| precedence trap cannot down-weight the summary.
@@ -3463,7 +3458,7 @@ const DIST_NEUTRAL_SCORING: ScoringAlphas = {
   usefulnessAlpha: 0,
 };
 
-describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
+describe("createMemoryRecall — provenance down-weighting", () => {
   // The two stable strings the fixtures share.
   const CONV_SESSION = "telegram:chat_1:user_a"; // the distilled summary's source.sessionKey
 
@@ -3510,22 +3505,20 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     // The other-session memory keeps its score (≈0.7 base, neutral scoring → unchanged).
     const otherScore = byId.get("other-session")!;
     expect(pairedScore).toBeLessThan(otherScore);
-    // The distilled summary itself is never down-weighted (W6).
+    // The distilled summary itself is never down-weighted.
     const distilledScore = byId.get("distilled")!;
     expect(distilledScore).toBeGreaterThan(pairedScore);
   });
 
-  it("CR-01: a down-weighted paired memory MOVES BELOW a non-downweighted peer it previously outranked (the demotion changes RANK, not just score)", async () => {
-    // The headline BLOCKER: applyProvenanceDownweighting multiplied `score` by 0.5
-    // but PRESERVED array position, and nothing downstream re-sorts (deduplicateResults
-    // preserves order; the hybrid injector consumes in order). So the demotion was a
-    // functional no-op for RANKING. This test asserts ORDER, not score.
+  it("a down-weighted paired memory MOVES BELOW a non-downweighted peer it previously outranked (the demotion changes RANK, not just score)", async () => {
+    // The hazard: if applyProvenanceDownweighting multiplied `score` by 0.5
+    // but PRESERVED array position, nothing downstream would re-sort (deduplicateResults
+    // preserves order; the hybrid injector consumes in order) and the demotion would be
+    // a functional no-op for RANKING. This test asserts ORDER, not score.
     //
-    // RED on pre-patch code: `paired` (base 0.8) enters ABOVE `peer` (base 0.6) in the
-    // fused/scored order. The pass halves paired → 0.4 (< peer's 0.6) but leaves it in
-    // slot 0. Pre-patch: got.value order is still [distilled, paired, peer] → the
-    // assertion `idx(paired) > idx(peer)` FAILS. GREEN (re-sort by descending score):
-    // the order becomes [distilled, peer, paired] → paired sinks below peer.
+    // Fixture: `paired` (base 0.8) enters ABOVE `peer` (base 0.6) in the
+    // fused/scored order. The pass halves paired → 0.4 (< peer's 0.6); the re-sort by
+    // descending score must yield [distilled, peer, paired] — paired sinks below peer.
     const input = [
       makeResult("distilled", {
         base: 0.9,
@@ -3573,7 +3566,7 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     expect(byId.get("paired")!).toBeLessThan(byId.get("peer")!);
   });
 
-  it("CR-01 STABLE re-sort: ties between two down-weighted rows preserve their relative input order (index tiebreaker)", async () => {
+  it("STABLE re-sort: ties between two down-weighted rows preserve their relative input order (index tiebreaker)", async () => {
     // Two same-session paired rows with EQUAL base → both ×0.5 → equal score. The
     // re-sort MUST be STABLE: `pairedA` (input slot 1) stays ahead of `pairedB`
     // (input slot 2). A non-stable sort could swap them. They both sink below the
@@ -3601,19 +3594,17 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     expect(order.indexOf("pairedA")).toBeLessThan(order.indexOf("pairedB"));
   });
 
-  it("IN-03: branch (2) does NOT over-demote a legitimately-distinct same-session memory once the precise summary:<id> tag is present", async () => {
-    // The IN-03 over-reach: when CR-01 makes the pass effective, the SESSION-HEURISTIC
-    // branch (2) — which down-weights EVERY non-distilled candidate sharing the
-    // summary's sessionKey — suppresses same-session memories the precise provenance
-    // branch (1) never linked. Once 173-04 stamps the summary:<id> tag, branch (1) is
-    // the primary selector; branch (2) must be GATED OFF so a distinct same-session
-    // row keeps its rank.
+  it("branch (2) does NOT over-demote a legitimately-distinct same-session memory once the precise summary:<id> tag is present", async () => {
+    // The over-reach hazard: the SESSION-HEURISTIC branch (2) — which down-weights
+    // EVERY non-distilled candidate sharing the summary's sessionKey — would suppress
+    // same-session memories the precise provenance branch (1) never linked. When the
+    // write path stamps the summary:<id> tag, branch (1) is the primary selector;
+    // branch (2) must be GATED OFF so a distinct same-session row keeps its rank.
     //
-    // RED on pre-patch code (branch 2 always runs): `distinct` shares CONV_SESSION but
-    // is NOT in the provenance row set, so the heuristic down-weights it anyway →
-    // demoted below `peer`. GREEN (branch 2 gated behind absence of a usable
-    // summary:<id> tag): the precise branch links only `linked`; `distinct` keeps its
-    // score and stays ABOVE peer.
+    // Fixture: `distinct` shares CONV_SESSION but is NOT in the provenance row set.
+    // With branch (2) gated behind the absence of a usable summary:<id> tag, the
+    // precise branch links only `linked`; `distinct` keeps its score and stays ABOVE
+    // peer.
     const SUMMARY_ID = "sum-in03";
     const input = [
       makeResult("distilled", {
@@ -3666,11 +3657,11 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     expect(order.indexOf("distinct")).toBeLessThan(order.indexOf("peer"));
   });
 
-  it("IN-03: with NO usable summary:<id> tag, the session heuristic (branch 2) STILL fires (fallback preserved)", async () => {
+  it("with NO usable summary:<id> tag, the session heuristic (branch 2) STILL fires (fallback preserved)", async () => {
     // The complement of the test above: when the distilled summary carries NO precise
     // summary:<id> tag, branch (1) cannot select anything, so branch (2) must remain the
     // fallback selector — a same-session paired row is still demoted. This pins that the
-    // IN-03 gate scopes branch (2) to the no-precise-tag case rather than removing it.
+    // gate scopes branch (2) to the no-precise-tag case rather than removing it.
     const input = [
       makeResult("distilled", { base: 0.95, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
       makeResult("paired", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
@@ -3694,7 +3685,7 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     expect(order.indexOf("paired")).toBeGreaterThan(order.indexOf("peer"));
   });
 
-  it("W6 PRECEDENCE: the distilled summary itself is NEVER down-weighted even when it is the only same-session entry besides another lcd_distilled row", async () => {
+  it("PRECEDENCE: the distilled summary itself is NEVER down-weighted even when it is the only same-session entry besides another lcd_distilled row", async () => {
     // Two lcd_distilled summaries from the same session: NEITHER may be down-weighted.
     // The buggy `a && b || c` predicate would down-weight one distilled entry; the
     // correct fully-parenthesized predicate leaves BOTH untouched.
@@ -3775,11 +3766,11 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     expect(byId.get("prov-paired")!).toBeLessThan(referenceById.get("prov-paired")!);
   });
 
-  it("IN-02: the provenance scope carries the FORMATTED sessionKey (formatSessionKey), never String(sessionKey) → \"[object Object]\"", async () => {
-    // RED on pre-patch code: the scope built at the call site uses
-    // `String(sessionKey)` → "[object Object]" (harmless only while the pass was
-    // dormant; poisons ContextStoreScope.sessionKey the instant it activates).
-    // Phase 173 replaces it with formatSessionKey(sessionKey).
+  it("the provenance scope carries the FORMATTED sessionKey (formatSessionKey), never String(sessionKey) → \"[object Object]\"", async () => {
+    // The hazard: a scope built at the call site with `String(sessionKey)` yields
+    // "[object Object]" (harmless only while the pass is dormant; poisons
+    // ContextStoreScope.sessionKey the instant it activates). The call site must
+    // use formatSessionKey(sessionKey).
     const SUMMARY_ID = "sum-in02";
     const input = [
       makeResult("distilled", {
@@ -3875,7 +3866,7 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.length).toBe(2);
-    // The failure was logged with an errorKind + hint (§2.7).
+    // The failure was logged with an errorKind + hint (AGENTS.md §2.7).
     expect(warnMock).toHaveBeenCalled();
     const payload = warnMock.mock.calls[0][0] as Record<string, unknown>;
     expect(payload).toHaveProperty("errorKind");
@@ -3883,16 +3874,16 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
   });
 });
 
-// ── DIST-03 LIVE-PATH integration: the CONCRETE adapter end-to-end ───────────
+// ── Provenance LIVE-PATH integration: the CONCRETE adapter end-to-end ────────
 //
-// The DIST-03 carry-in's central risk is "built-but-not-wired" — the milestone's
-// #1 recurring failure class. The fake-store tests above prove the pass LOGIC; this
+// The provenance pass's central risk is "built-but-not-wired". The fake-store
+// tests above prove the pass LOGIC; this
 // block proves the WHOLE chain fires on the LIVE recall path with the REAL
-// @comis/memory adapter (buildProvenanceReadStore from Task 1) + the REAL provenance
+// @comis/memory adapter (buildProvenanceReadStore) + the REAL provenance
 // write (appendProvenance) + the stamped summary:<id> tag: a distilled summary in the
 // ranked set → its provenance-linked paired row gets ×0.5; and it is a byte-identical
 // no-op when no provenance/distilled entry is present (the absent path preserved).
-describe("createMemoryRecall — DIST-03 live-path integration (concrete LcdProvenanceReadStore)", () => {
+describe("createMemoryRecall — provenance live-path integration (concrete LcdProvenanceReadStore)", () => {
   const SUMMARY_ID = "sum-live-1";
   const PAIRED_ID = "mem-paired-live";
 
@@ -3966,9 +3957,9 @@ describe("createMemoryRecall — DIST-03 live-path integration (concrete LcdProv
     }
   });
 
-  it("R4 fail-closed on the live path: a CROSS-AGENT recall does NOT down-weight (the concrete adapter returns zero rows for the wrong agent)", async () => {
+  it("scope fail-closed on the live path: a CROSS-AGENT recall does NOT down-weight (the concrete adapter returns zero rows for the wrong agent)", async () => {
     // The provenance row is written under agent_live; recall as agent_OTHER must get
-    // ZERO rows from getProvenanceForSummary → no down-weight (R4 fail-closed end-to-end).
+    // ZERO rows from getProvenanceForSummary → no down-weight (scope isolation, fail-closed end-to-end).
     const input = [
       makeResult("distilled", {
         base: 0.9,
@@ -4041,15 +4032,15 @@ describe("createMemoryRecall — DIST-03 live-path integration (concrete LcdProv
   });
 });
 
-// ── RETR-04: security gates upstream of fusion (bypass-attempt) ──────────────
+// ── Security gates upstream of fusion (bypass-attempt) ───────────────────────
 //
-// The unified arbiter (Plan 03) ranks LTM T3/T4 candidates against history by FUSED
-// rank. RETR-04 requires that a trust-excluded or sub-floor candidate can NEVER be
-// resurrected by a high fused rank. These tests construct a malicious candidate at
+// The unified arbiter ranks LTM T3/T4 candidates against history by FUSED
+// rank. The security requirement: a trust-excluded or sub-floor candidate can NEVER
+// be resurrected by a high fused rank. These tests construct a malicious candidate at
 // rank-1 in BOTH lanes (the HIGHEST possible RRF fused rank) and assert it is still
 // dropped — proving the trust filter runs UPSTREAM of fuse() (no resurrection route)
-// and the baseFloor is fail-closed under the arbiter (design §17 S6, Pitfall 2).
-describe("createMemoryRecall — RETR-04: security gates upstream of fusion (bypass-attempt)", () => {
+// and the baseFloor is fail-closed under the arbiter.
+describe("createMemoryRecall — security gates upstream of fusion (bypass-attempt)", () => {
   // Boosts neutralized so FUSION rank (not score() boosts) is the only ordering signal —
   // the malicious candidate's rank-1-in-both-lanes gives it the top fused score.
   const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
@@ -4106,7 +4097,7 @@ describe("createMemoryRecall — RETR-04: security gates upstream of fusion (byp
         scoring: NEUTRAL,
         lanes: PARITY_LANES,
         minScore: 0,
-        baseFloor: 0, // unconfigured — WR-02 fail-open trigger
+        baseFloor: 0, // unconfigured — the fail-open trigger
         relevanceFirst: true, // arbiter active → floor enforced at the class default
       } as unknown as Partial<MemoryRecallConfig>),
     );
@@ -4147,8 +4138,8 @@ describe("createMemoryRecall — RETR-04: security gates upstream of fusion (byp
     expect(ids).toContain("keep");
   });
 
-  it("FRONTIER byte-identical: the new pre-filter is a NO-OP for an all-allowed corpus (deep-equal to the pre-patch reference)", async () => {
-    // No trust-excluded, no sub-floor candidate, relevanceFirst=false. The reorder/new
+  it("FRONTIER byte-identical: the pre-filter is a NO-OP for an all-allowed corpus (deep-equal to the reference pipeline)", async () => {
+    // No trust-excluded, no sub-floor candidate, relevanceFirst=false. The
     // pre-filter must not change the result vs the documented reference pipeline.
     const input = [
       makeResult("f1", { base: 0.9, trustLevel: "learned", createdAt: NOW - 5 * 86_400_000 }),
@@ -4163,8 +4154,8 @@ describe("createMemoryRecall — RETR-04: security gates upstream of fusion (byp
     const got = await recall.recall("q", SESSION_KEY, "default");
     expect(got.ok).toBe(true);
     if (!got.ok) return;
-    // Deep-equal the full result (ids + order) to the pre-patch reference — the gate is
-    // that the new code is a no-op for frontier/mid, not that it happens to reorder the same.
+    // Deep-equal the full result (ids + order) to the reference — the gate is
+    // that the pre-filter is a no-op for frontier/mid, not that it happens to reorder the same.
     expect(got.value.map((r) => r.entry.id)).toEqual(reference.map((r) => r.entry.id));
   });
 });

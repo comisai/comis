@@ -132,7 +132,7 @@ describe("buildHeartbeatsSection", () => {
 });
 
 describe("pre-tool-text policy line in messaging section", () => {
-  it("buildMessagingSection includes the new pre-tool-text policy line", () => {
+  it("buildMessagingSection includes the pre-tool-text policy line", () => {
     const result = buildMessagingSection(["message"], false, undefined);
     const joined = result.join("\n");
     // Match on the load-bearing phrase ("tool call" + "narrate" / "before")

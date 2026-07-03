@@ -220,19 +220,18 @@ describe("MCP OAuth RPC handlers", () => {
       expect(deps.mcpClientManager.reconnect).not.toHaveBeenCalled();
     });
 
-    // Fix 8 (2026-05-28). After Fix 6 unblocked the headless background-
-    // completion path, the live Higgsfield install hit a final wall: the
-    // background task ran the second-pass code exchange + saveTokens
-    // successfully (daemon.1.log:246 "authorized — tokens persisted"), then
-    // fired onAuthorized → mcpClientManager.reconnect("higgsfield"), which
+    // Headless background completion must land the live connection via
+    // manager.connect, not reconnect. Observed live: the background task ran
+    // the second-pass code exchange + saveTokens successfully, then fired
+    // onAuthorized → mcpClientManager.reconnect("higgsfield"), which
     // threw `MCP server "higgsfield" has no stored config -- use connect()
-    // instead` (daemon.1.log:247). Fix 4 had short-circuited the initial
-    // manager.connect call, so state.serverConfigs was empty when reconnect
-    // tried to look up the config. Tokens were saved, but the MCP connection
-    // never came alive — the agent had no Higgsfield tools to surface.
+    // instead` — the connect handler's token-aware short-circuit had skipped
+    // the initial manager.connect call, so state.serverConfigs was empty when
+    // reconnect tried to look up the config. Tokens were saved, but the MCP
+    // connection never came alive — the agent had no tools to surface.
     //
-    // Fix: onAuthorized must call manager.connect with a McpServerConfig
-    // built from the persisted entry (Fix 4 wrote it to
+    // So onAuthorized must call manager.connect with a McpServerConfig
+    // built from the persisted entry (the short-circuit wrote it to
     // container.config.integrations.mcp.servers), NOT manager.reconnect.
     it("headless onAuthorized → manager.connect (not reconnect) with config built from persisted entry", async () => {
       let capturedOnAuthorized: ((name: string) => Promise<void>) | undefined;
@@ -275,19 +274,19 @@ describe("MCP OAuth RPC handlers", () => {
         auth: "oauth",
         enabled: true,
       });
-      // reconnect MUST NOT have been called — Fix 4 left state.serverConfigs
-      // empty so reconnect would throw "no stored config".
+      // reconnect MUST NOT have been called — the connect short-circuit left
+      // state.serverConfigs empty so reconnect would throw "no stored config".
       expect(deps.mcpClientManager.reconnect).not.toHaveBeenCalled();
     });
 
-    // Fix 9 (2026-05-28). After Fix 6+8 the headless OAuth chain runs to
-    // completion (tokens persisted + manager.connect succeeds), but the
+    // Even when the headless OAuth chain runs to
+    // completion (tokens persisted + manager.connect succeeds), the
     // agent stays silent — its turn ended when mcp_login returned
     // headless_hint and there is no path that wakes the agent when the
     // daemon-side background work finishes. The operator must ask "is X
     // connected?" for the agent to verify via mcp_manage(list).
     //
-    // Fix: after a successful headless background connect, push a short
+    // So after a successful headless background connect, push a short
     // completion message to the operator's channel (captured from the
     // mcp.oauth_login RPC's `_deliveryTarget`) via the injected
     // `notifyOperatorChannel` hook. The hook is wired in rpc-dispatch.ts
@@ -347,8 +346,8 @@ describe("MCP OAuth RPC handlers", () => {
     });
 
     // Pin the integrated chain for the VPS deployment
-    // model. The PKCE headless path above (Fix 6/8/9 tests) was already
-    // green; this test exercises the device-flow path through the same
+    // model. The PKCE headless path is covered by the tests above;
+    // this test exercises the device-flow path through the same
     // captured-onAuthorized scaffolding. The runOauthLogin fake returns
     // status:"device_code_pending" + verificationUri/userCode/expiresIn
     // (the union widening) and captures onAuthorized so the test
@@ -360,8 +359,8 @@ describe("MCP OAuth RPC handlers", () => {
     //   discovery (mocked by runOauthLogin fake)
     //   → user_code WDJB-MJHT + verificationUri returned synchronously
     //   → onAuthorized captured
-    //   → manager.connect called with config built from persisted entry (Fix 8)
-    //   → notifyOperatorChannel called with the captured _deliveryTarget (Fix 9)
+    //   → manager.connect called with config built from persisted entry
+    //   → notifyOperatorChannel called with the captured _deliveryTarget
     //   → RPC response carries the 3 new fields verbatim (device-flow surface)
     it("Higgsfield-shaped device-flow E2E: dual auth servers, userCode WDJB-MJHT, poll pending+slow_down+tokens, onAuthorized fires manager.connect + notifyOperatorChannel", async () => {
       let capturedOnAuthorized: ((name: string) => Promise<void>) | undefined;
@@ -428,7 +427,7 @@ describe("MCP OAuth RPC handlers", () => {
         expiresIn: 600,
       });
 
-      // === Assertion 2: Fix 8 chain — background fires manager.connect ===
+      // === Assertion 2: background completion fires manager.connect ===
       expect(capturedOnAuthorized).toBeDefined();
       await capturedOnAuthorized!("higgsfield");
       expect(deps.mcpClientManager.connect).toHaveBeenCalledOnce();
@@ -440,10 +439,10 @@ describe("MCP OAuth RPC handlers", () => {
         auth: "oauth",
         enabled: true,
       });
-      // Fix 8 invariant: reconnect MUST NOT be called (Fix 4 left serverConfigs empty)
+      // Invariant: reconnect MUST NOT be called (the connect short-circuit left serverConfigs empty)
       expect(deps.mcpClientManager.reconnect).not.toHaveBeenCalled();
 
-      // === Assertion 3: Fix 9 chain — notifyOperatorChannel fires ===
+      // === Assertion 3: notifyOperatorChannel fires ===
       expect(notifyOperatorChannel).toHaveBeenCalledOnce();
       const [calledTarget, calledText] = (notifyOperatorChannel as ReturnType<typeof vi.fn>).mock.calls[0] as [unknown, string];
       expect(calledTarget).toMatchObject(deliveryTarget);
@@ -523,16 +522,16 @@ describe("MCP OAuth RPC handlers", () => {
     });
 
     // ── Fail loudly instead of plaintext-disk fallback (env mode) ────────────
-    // Pre-fix the login handler silently fell back to a plaintext disk store
-    // (`defaultCreateTokenStore`) when no store was injected, ignoring
-    // security.storage. After the fix, no token store ⇒ a clear, actionable
+    // Guards the regression where the login handler silently falls back to a
+    // plaintext disk store (`defaultCreateTokenStore`) when no store is
+    // injected, ignoring security.storage. No token store ⇒ a clear, actionable
     // storage-mode error (NOT a success, NOT a disk write). These two cases
     // cover (a) createTokenStore undefined and (b) createTokenStore() returning
     // undefined (the env-mode pass-through `() => boot.mcpTokenStore`).
     it("rejects with a clear storage-mode error when createTokenStore is undefined (no plaintext-disk fallback)", async () => {
       // runOauthLogin is injected so that IF the handler wrongly fell back to a
       // disk store and proceeded, the test would observe a non-throwing success
-      // (the pre-fix RED behavior) rather than the required loud failure.
+      // (the failure mode this guards against) rather than the required loud failure.
       const runOauthLogin = vi.fn().mockResolvedValue({ status: "authorized" });
       const deps = makeDeps("notion", { runOauthLogin, noTokenStore: true });
       // createTokenStore intentionally absent (env mode has no writable store).
@@ -701,7 +700,7 @@ describe("MCP OAuth RPC handlers", () => {
       ).rejects.toThrow(/not found/);
       // The unknown-server guard runs BEFORE any token-store side effect —
       // deleteAll must NEVER be called for a name that is not in the persisted
-      // server list. (Previously this was called regardless.)
+      // server list (guards the regression where it ran regardless).
       expect(deleteAll).not.toHaveBeenCalled();
     });
   });

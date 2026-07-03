@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent orchestration-capability primitive (CAP-01 / CAP-02 / CAP-05).
+ * Agent orchestration-capability primitive.
  *
  * The single authority predicate for the in-process agent loop — an
  * orthogonal axis to the gateway's `Scope` (`api-contracts/types.ts:19`). The
@@ -13,9 +13,9 @@
  *   1. NO wildcard branch. `checkScope` has a `*`-implies-all rule;
  *      `checkCapability` is a plain membership test. With no lattice and no
  *      catch-all, least-privilege holds by construction — no member can imply
- *      `admin`/`rpc`/all (CAP-02). Copying `checkScope` verbatim would FAIL the
+ *      `admin`/`rpc`/all. Copying `checkScope` verbatim would FAIL the
  *      `capability-scope-disjoint.test.ts` arch-test.
- *   2. The union is DISJOINT from `Scope` (CAP-01) — capabilities are
+ *   2. The union is DISJOINT from `Scope` — capabilities are
  *      `orch:*`, scopes are `rpc|admin|mcp-client`; the arch-test asserts the
  *      intersection is empty.
  *
@@ -37,9 +37,9 @@
  */
 
 /**
- * Closed orchestration-capability union (v8 §3.3/§3.8). Each member gates one
+ * Closed orchestration-capability union. Each member gates one
  * orchestration surface. `orch:browse` is part of the UNION but is OFF in every
- * default profile (Plan 02 owns the profile defaults — the union must still
+ * default profile (the profile defaults live elsewhere — the union must still
  * contain it so the type is total).
  *
  * Closed string-literal tuple (AGENTS §2.8): `AGENT_CAPABILITIES` is the single
@@ -65,7 +65,7 @@ export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];
 /**
  * Pure capability predicate — a plain membership test with NO wildcard branch.
  *
- * CRITICAL (CAP-02): unlike `checkScope`'s asterisk-implies-all rule, there is
+ * CRITICAL: unlike `checkScope`'s asterisk-implies-all rule, there is
  * no lattice and no catch-all here. A held set is exactly the caps it lists; no
  * entry (an asterisk string included) confers any other cap. That is what makes
  * least-privilege hold by construction.
@@ -79,14 +79,14 @@ export function checkCapability(
 
 /**
  * Mint attenuation — the single trust boundary against capability broadening
- * down a delegation tree (LEASE-04, v8 §4.2). Pure set-intersection: the result
+ * down a delegation tree. Pure set-intersection: the result
  * is exactly `parent ∩ requested`, so a child lease can NEVER hold a cap the
  * parent does not, and never a cap that was not requested. This is the only
  * broadening-prevention an opaque lease has, which is why it is property/fuzz-
  * tested over 1000+ random (parent, requested) pairs rather than by example.
  *
  * Same discipline as {@link checkCapability}: a plain membership filter with NO
- * wildcard branch (CAP-02) — no member implies admin/rpc/all-authority. The
+ * wildcard branch — no member implies admin/rpc/all-authority. The
  * requested order is preserved on the surviving subset.
  */
 export function attenuateCaps(
@@ -117,7 +117,7 @@ export class CapabilityDeniedError extends Error {
 }
 
 /**
- * Handler-boundary capability gate (v8 §3.7 — the single gate). Throws
+ * Handler-boundary capability gate (the single gate). Throws
  * {@link CapabilityDeniedError} when the caller does not hold `required`
  * (including the missing/undefined `_capabilities` case). On success it returns
  * `void`.

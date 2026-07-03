@@ -38,7 +38,7 @@ import { processFailurePath } from "./failure-path.js";
  * Compute the final PromptRunResult by running output escalation, success-
  * path response processing, and failure-path overflow recovery as needed.
  *
- * Side effects (matching pre-split behavior):
+ * Side effects:
  *   - mutates `params.result.response`, `params.result.finishReason`,
  *     `params.result.errorContext`, `params.result.continuationMetrics`,
  *     `params.result.budgetMetrics`.
@@ -293,7 +293,7 @@ async function processSuccessPath(
     );
   }
 
-  // L4: Post-batch continuation (replaces the deleted SEP one-shot nudge).
+  // L4: Post-batch continuation (the silent-termination enforcement path).
   // Detects empty final assistant turn after a successful tool batch within
   // the current execution window and fires a directive followUp with multi-
   // shot retry. Falls through to L3 synthesis (recoverEmptyFinalResponse) on
@@ -301,7 +301,7 @@ async function processSuccessPath(
   // observability — see pi-event-bridge.ts:949-1024.
   await runPostBatchContinuationStep(params);
 
-  // Issue 4 (small-model e2e 2026-06-12): narrate-without-emit nudge — the
+  // Narrate-without-emit nudge — the
   // sibling of L4 for turns that END ON intent narration ("Now let me write
   // the script:") with NO tool call. small/nano-gated, one bounded re-prompt;
   // an unrecovered fire marks result.narrateNudge so the post-execution
@@ -384,7 +384,7 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
   }
 }
 
-/** Issue-4 narrate-without-emit nudge step — separated like the post-batch step. */
+/** Narrate-without-emit nudge step — separated like the post-batch step. */
 async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
   const { session, agentId, result, deps } = params;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -436,7 +436,7 @@ async function runBudgetContinuation(
       "Budget continuation nudge",
     );
 
-    // fromPromise wrapping per CLAUDE.md: no thrown exceptions
+    // fromPromise wrapping: followUp rejections surface as Result values, never thrown exceptions.
     const followUpResult = await fromPromise(session.followUp(budgetNudgeText));
     if (!followUpResult.ok) {
       deps.logger.warn(

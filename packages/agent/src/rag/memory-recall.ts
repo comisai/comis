@@ -62,7 +62,7 @@ import {
 export type { MemoryRecallDeps, MemoryRecallConfig, MemoryRecall } from "./recall-types.js";
 import type { MemoryRecallDeps, MemoryRecallConfig, MemoryRecall } from "./recall-types.js";
 
-// The R3 base-score floor predicate (FAIL-CLOSED, WR-02) lives in
+// The base-score floor predicate (FAIL-CLOSED) lives in
 // recall-security-prefilter.ts (the module that owns the security floor); re-exported here
 // so existing consumers (memory-recall-floor.test.ts) import it from ./memory-recall.js unchanged.
 export { passesBaseFloor } from "./recall-security-prefilter.js";
@@ -110,7 +110,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           deps.logger.warn(
             {
               agentId,
-              // WR-03: durationMs required per AGENTS.md §2.7 on every WARN at a boundary crossing.
+              // durationMs is required per AGENTS.md §2.7 on every WARN at a boundary crossing.
               durationMs: deps.clock.now() - pinnedStart,
               errorKind: "internal" as const,
               hint: "pinned lane read failed; proceeding without pinned memories",
@@ -140,11 +140,11 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const laneWeight = (base: number, lane: ReweightLane): number =>
         intent !== undefined ? base * intentMultiplier(intent, lane) : base;
 
-      // RETR-04 (Phase 173): resolve the security-gate inputs ONCE so gateLanes() can
+      // Resolve the security-gate inputs ONCE so gateLanes() can
       //   pre-filter EVERY candidate supply (trust + arbiter-scoped baseFloor) BEFORE any fusion
       //   touches it, accumulating content-free dropped ids into prefilterAcc. effectiveBaseFloor:
-      //   explicit floor wins; else 0.15 when relevanceFirst; else 0 → frontier/mid byte-identical
-      //   (LOCKED #2). Why baseFloor must be pre-fusion: recall-security-prefilter.ts doc; §17 S6.
+      //   explicit floor wins; else 0.15 when relevanceFirst; else 0 → frontier/mid byte-identical.
+      //   Why baseFloor must be pre-fusion: see the recall-security-prefilter.ts module doc.
       const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
       const effectiveBaseFloor = resolveEffectiveBaseFloor(cfg.baseFloor, cfg.relevanceFirst);
       const prefilterAcc: PrefilterAccumulator = { trustDroppedIds: [], floorDroppedIds: [] };
@@ -196,7 +196,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         const vectorWeight = laneWeight(cfg.lanes?.vector.weight ?? 1.5, "vector");
         ftsCandidates = laneRes.value.fts.length;
         vectorCandidates = laneRes.value.vector.length;
-        // RETR-04 (Phase 173): gate the RAW fts/vector lanes BEFORE the within-recall fuse()
+        // Gate the RAW fts/vector lanes BEFORE the within-recall fuse()
         //   below — the load-bearing placement (fuse() inflates a rank-1 sub-floor candidate's
         //   score past any later floor; gating raw lanes uses the TRUE pre-fusion relevance).
         //   Byte-identity preserved by gateLanes when floor 0 + all-allowed. See module doc.
@@ -242,7 +242,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // The split is NOT observable on this path (search() returns ONE merged list),
         // so vectorCandidates stays its honest initial value — the recall layer cannot break
         // out a true vector count here. The searchLanes path above sets the real count.
-        // RETR-04 (Phase 173): gate the single merged search lane (its `score` is the genuine
+        // Gate the single merged search lane (its `score` is the genuine
         //   per-result relevance — search()->hybridSearch fused internally but returns one list
         //   with no second inflation). Byte-identity preserved when floor 0 + all-allowed.
         const gatedSearchLanes = gateLanes([{ results: searched.value, weight: 1.0 }], allowed, effectiveBaseFloor, prefilterAcc);
@@ -401,9 +401,9 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // Reweight the graph-spread lane (1.0 off; no boosted intent today → 1.0).
         graphSpreadCandidates = await appendGraphSpreadLane(lanes, deps.tripleStore, laneWeight(gs.weight, "graphSpread"), cfg.maxResults, gs.maxDepth, gs.fanOut, seedSubjects, sessionKey, agentId, deps.logger);
       }
-      // RETR-04 (Phase 173): gate upstream of the FINAL fuse() — the appended entity/temporal/
+      // Gate upstream of the FINAL fuse() — the appended entity/temporal/
       //   causal/graph-spread (T4 KG) lanes against trust + baseFloor, so a high fused rank can
-      //   never resurrect a dropped KG candidate (design §17 S6). The base lane is already gated
+      //   never resurrect a dropped KG candidate. The base lane is already gated
       //   → re-gating it is a no-op. The downstream trust filter (Step 5) + baseFloor (Step 4b)
       //   are RETAINED as defense in depth. Full rationale: recall-security-prefilter.ts doc.
       const gatedLanes = gateLanes(lanes, allowed, effectiveBaseFloor, prefilterAcc);
@@ -561,8 +561,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
                 agentId,
                 rerankCandidates: docs.length,
                 errorKind: "dependency" as const,
-                // §2.7: carry the underlying reranker cause so a real outage is
-                // diagnosable. §2.2 (W11): MESSAGE at WARN — the full Error
+                // AGENTS.md §2.7: carry the underlying reranker cause so a real outage is
+                // diagnosable. AGENTS.md §2.2: MESSAGE at WARN — the full Error
                 // (with stack) rides the DEBUG line below, not this WARN.
                 err: scored.error.message,
                 hint,
@@ -620,22 +620,22 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         ranked = scored;
       }
 
-      // 4b. R3 BASE-SCORE FLOOR — drop memories whose pre-boost base score is below the
+      // 4b. BASE-SCORE FLOOR — drop memories whose pre-boost base score is below the
       //     effective floor. Runs AFTER scoreWithBreakdown() (breakdownById populated)
       //     so the filter accesses the EXACT breakdown.base — not the boosted r.score.
       //     Boosts (recency/temporal/proof/trust/usefulness) CANNOT resurrect a memory
-      //     whose raw cosine/RRF base sits below the floor (T-153-poison mitigation).
-      //     FAIL-CLOSED-ON-MISSING-BASE (WR-02): a memory with no recorded breakdown.base
+      //     whose raw cosine/RRF base sits below the floor (memory-poisoning mitigation).
+      //     FAIL-CLOSED-ON-MISSING-BASE: a memory with no recorded breakdown.base
       //     cannot be proven above the floor, so it is DROPPED (passesBaseFloor takes no
       //     r.score fallback — on the rerank path r.score is the CE probability, a higher
       //     scale that would let an inflated low-base poison survive). This is a security gate.
       //
-      //     RETR-04 / WR-02 ARBITER-SCOPED FAIL-CLOSED (Phase 173) — DEFENSE IN DEPTH: the
+      //     ARBITER-SCOPED FAIL-CLOSED — DEFENSE IN DEPTH: the
       //     baseFloor already ran UPSTREAM of fuse() against each candidate's genuine
-      //     pre-fusion relevance (the RETR-04 pre-filter), so for the fused list this gate is
+      //     pre-fusion relevance (the security pre-filter), so for the fused list this gate is
       //     normally a no-op. It is RETAINED unchanged as defense in depth (a future lane that
       //     bypasses the pre-filter is still floored here). Reuses the arbiter-scoped
-      //     `effectiveBaseFloor` resolved before fuse(); 0 → skipped (frontier/mid, LOCKED #2).
+      //     `effectiveBaseFloor` resolved before fuse(); 0 → skipped (frontier/mid).
       if (effectiveBaseFloor > 0) {
         ranked = ranked.filter((r) => passesBaseFloor(breakdownById.get(r.entry.id), effectiveBaseFloor));
       }
@@ -689,7 +689,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         }
       }
 
-      // 5c. POST-FUSION PROVENANCE PASS (DIST-03). Optional, NON-FATAL, DEFAULT-OFF.
+      // 5c. POST-FUSION PROVENANCE PASS. Optional, NON-FATAL, DEFAULT-OFF.
       //     Runs AFTER mmrRerank (the rerank order has committed) and BEFORE dedup +
       //     observability capture. When a distilled summary (tag "lcd_distilled") is in
       //     the ranked set, down-weight same-conversation paired memories whose covered
@@ -701,7 +701,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       //     WARN — recall results are NEVER affected. TYPE-only provenanceStore port
       //     (the agent↛memory build cut).
       //
-      //     LIVE AS OF PHASE 173 (C2): provenanceStore is now injected at the
+      //     LIVE WIRING: provenanceStore is injected at the
       //     composition root (setup-memory builds the concrete LcdProvenanceReadStore
       //     and threads it daemon → setup-agents → pi-executor → prompt-assembly →
       //     here), and the distillation runner stamps the `summary:<id>` tag, so the
@@ -715,8 +715,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
             agentId: agentId ?? sessionKey.agentId ?? "default",
             // conversationId/sessionKey are not load-bearing for the (tenant, agent)-scoped
             // getProvenanceForSummary read, but the port takes a full scope — fill them from
-            // the session key so the adapter's R4 filter has the complete context.
-            // IN-02 fix: formatSessionKey (not String(sessionKey) → "[object Object]").
+            // the session key so the adapter's scope filter has the complete context.
+            // Must be formatSessionKey (not String(sessionKey) → "[object Object]").
             conversationId: sessionKey.channelId ?? "",
             sessionKey: formatSessionKey(sessionKey),
           };
@@ -745,7 +745,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // PREPEND pinned entries — bounded, already fetched at Step 0.
       // Pinned entries are ALWAYS returned first, regardless of fused score.
       // They were excluded from the MMR/dedup pipeline above (Step 5b-pre).
-      // CR-04: filter pinned entries through the trust allowlist BEFORE prepending.
+      // Filter pinned entries through the trust allowlist BEFORE prepending.
       // A pinned entry with a trustLevel outside cfg.includeTrustLevels must NOT inject.
       // DEFAULT-OFF: when pinnedResults is empty this is a no-op (no prepend).
       const filteredPinnedResults = pinnedResults.length > 0

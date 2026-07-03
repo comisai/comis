@@ -35,7 +35,7 @@ describe("DEFAULT_TEMPLATES workspace prose invariants (agent copy)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2026-06-04 fix (mirrors the core copy): the templates must not instruct
+  // Mirrors the core copy: the templates must not instruct
   // tool-reading the inlined identity files (the loop trigger), but must
   // still instruct writing IDENTITY.md / USER.md during onboarding.
   // -------------------------------------------------------------------------

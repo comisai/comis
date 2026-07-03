@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Deterministic honest-fail backstop for the unattended-drive flub
- * (`WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY`, webhook-claude-cli-tdd-20260701).
+ * Deterministic honest-fail backstop for the unattended-drive flub.
  *
  * The dominant flub: an UNATTENDED (webhook/cron) agent turn creates a `claude` drive, clears the
  * trust gate, but NEVER delivers the task (no `send_text`) — it hallucinates "I don't have a task"
- * and ends the turn. `cb57b96d` already stops that never-tasked drive from BACKGROUNDING (no
- * resurrec-able wake-state); the wait-tool directive ({@link ./terminal-wait-reply}
+ * and ends the turn. The `everTasked` promotion gate already stops that never-tasked drive from
+ * BACKGROUNDING (no resurrec-able wake-state); the wait-tool directive ({@link ./terminal-wait-reply}
  * `WAIT_TASK_NOT_DELIVERED_NOTE`) best-efforts an in-turn recovery — but was LIVE-PROVEN
- * INSUFFICIENT (the model ignores the JIT directive, guard2 run). This is the DETERMINISTIC floor,
+ * INSUFFICIENT (the model ignores the just-in-time directive). This is the DETERMINISTIC floor,
  * model-independent: at an unattended turn-end the caller reaps every LIVE, never-tasked drive the
  * turn left behind, so the origin records an HONEST failure (the webhook route flips
  * `webhook_delivered` success:false) instead of a silent "success" with a leaked idle drive.

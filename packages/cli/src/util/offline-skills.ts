@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI entry point — errors propagate to the Commander error handler.
 /**
- * OBS-02 (Phase 201, P2 skills shadow): OFFLINE procedural-learning telemetry
- * for `comis memory skills`.
+ * OFFLINE procedural-learning telemetry for `comis memory skills`.
  *
  * The learned-skill funnel (the `kind='skill'` rows of `mental_models`) lives in
  * the local `~/.comis/memory.db`, so reading it must not require a live gateway —
@@ -12,12 +11,12 @@
  * offline `@comis/memory` read is the sanctioned path — CLI→@comis/memory +
  * better-sqlite3 are already allowed edges.
  *
- * COUNTS/IDS ONLY (T-201-44): the SELECT projects `name` (the skill id) +
+ * COUNTS/IDS ONLY: the SELECT projects `name` (the skill id) +
  * `state`/`proof_count`/`confidence`/`mutating` (closed enum + counts/booleans) +
  * the `(tenant_id, agent_id)` scope — and NEVER `body`, `structured_body`,
  * `history`, `description`, `params_schema`, `required_tools`, `source_traj_ids`,
  * or `validation_result` (the doc-body columns). A body never crosses into the
- * CLI output (SEC-01). The db is opened in WAL mode (concurrent with a live
+ * CLI output. The db is opened in WAL mode (concurrent with a live
  * daemon) and ONLY when the file already exists — the offline read never creates
  * it; a missing/unreadable/empty store soft-fails to `undefined` so the command
  * prints an honest "no learned skills" default-off message instead of a misleading
@@ -71,13 +70,13 @@ export interface SkillStats {
   /** Row counts per closed-enum state, store-wide. */
   byState: Record<string, number>;
   /**
-   * Promotion roll-up (SURFACE-06) — the count of skills that reached `active`
+   * Promotion roll-up — the count of skills that reached `active`
    * (= `byState.active`). DERIVED from the existing `byState` tally: a count,
    * NEVER a body. The funnel's "how many candidates were promoted" lens.
    */
   promoted: number;
   /**
-   * Demotion roll-up (SURFACE-06) — the count of skills that left `active` for
+   * Demotion roll-up — the count of skills that left `active` for
    * `stale`/`archived` (= `byState.stale` + `byState.archived`). DERIVED from
    * `byState`: a count, never a body. The "how many were demoted" lens.
    */
@@ -137,7 +136,7 @@ export function readSkillStatsOffline(dataDir: string): SkillStats | undefined {
   let db: ReturnType<typeof openSqliteDatabase> | undefined;
   try {
     db = openSqliteDatabase({ dbPath, initSchema: () => undefined });
-    // A store whose mental_models table is absent (an old/reset db) → honest empty.
+    // A store whose mental_models table is absent (a reset or partially-initialized db) → honest empty.
     const present = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='mental_models'")
       .get();
@@ -146,7 +145,7 @@ export function readSkillStatsOffline(dataDir: string): SkillStats | undefined {
     // Counts/ids projection ONLY — name is the id; state/proof_count/confidence/
     // mutating are closed-enum/counts/booleans. NO body/structured_body/description/etc.
     // Scoped to kind='skill' — the `comis memory skills` verb is the learned-skill
-    // lens onto the kind-generic mental_models store (D-02: surface stays skill-flavored).
+    // lens onto the kind-generic mental_models store (the surface stays skill-flavored).
     const rows = db
       .prepare(
         "SELECT tenant_id, agent_id, name, state, proof_count, confidence, mutating " +
@@ -185,7 +184,7 @@ export function readSkillStatsOffline(dataDir: string): SkillStats | undefined {
 
     if (total === 0) return undefined; // every row dropped (all off-vocabulary) → honest empty
 
-    // Derive the promotion/demotion roll-ups (SURFACE-06) from the per-state
+    // Derive the promotion/demotion roll-ups from the per-state
     // tallies — counts only, no new SELECT columns, no body egress.
     const perAgent = [...byAgent.values()];
     for (const a of perAgent) {

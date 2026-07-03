@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for LeaseManager — the run-scoped, multi-use, revocable,
- * audience-bound capability lease (LEASE-01 / LEASE-02 / LEASE-03).
- *
- * RED-first TDD: written before `lease-manager.ts` exists, so the import
- * fails and the suite is RED on pre-patch code.
+ * audience-bound capability lease.
  *
  * Security invariants tested:
- *   - LEASE-01 multi-use: a minted lease validates more than once (NOT
+ *   - multi-use: a minted lease validates more than once (NOT
  *     consumed on first use, unlike SessionManager).
- *   - LEASE-02 renew is clamped to maxExpiresAt; a renew at/past the ceiling
+ *   - renew is clamped to maxExpiresAt; a renew at/past the ceiling
  *     is denied; revoke gates BOTH validate and renew.
- *   - LEASE-03 audience binding (RFC 8707): a captured lease replayed at a
+ *   - audience binding (RFC 8707): a captured lease replayed at a
  *     method whose cap it does not hold is denied.
  *   - timing-safe compare: empty / short / wrong-but-right-length bearers are
  *     rejected by the length-guarded timingSafeEqual without throwing.
@@ -46,7 +43,7 @@ function baseInput(caps: readonly AgentCapability[]) {
   };
 }
 
-describe("LeaseManager — mintLease (LEASE-01 record shape)", () => {
+describe("LeaseManager — mintLease record shape", () => {
   it("returns an IssuedLease carrying a leaseId and a non-empty base64url bearer", () => {
     const mgr = createLeaseManager(makeDeps());
     const issued = mgr.mintLease(baseInput(["orch:read"]));
@@ -82,7 +79,7 @@ describe("LeaseManager — mintLease (LEASE-01 record shape)", () => {
   });
 });
 
-describe("LeaseManager — multi-use semantics (LEASE-01)", () => {
+describe("LeaseManager — multi-use semantics", () => {
   it("validate succeeds a SECOND time with the same bearer (lease is not consumed)", () => {
     const mgr = createLeaseManager(makeDeps());
     const { bearer } = mgr.mintLease(baseInput(["orch:message"]));
@@ -94,7 +91,7 @@ describe("LeaseManager — multi-use semantics (LEASE-01)", () => {
   });
 });
 
-describe("LeaseManager — audience binding (LEASE-03)", () => {
+describe("LeaseManager — audience binding", () => {
   it("denies a method whose required cap is outside the lease audience", () => {
     const mgr = createLeaseManager(makeDeps());
     // caps grant orch:read only; message.send maps to orch:message ∉ caps.
@@ -129,17 +126,17 @@ describe("LeaseManager — audience binding (LEASE-03)", () => {
   });
 });
 
-describe("LeaseManager — self-scoped-read audience exception (CLI-01/02; v8 §15 whoami/status)", () => {
+describe("LeaseManager — self-scoped-read audience exception (whoami/status)", () => {
   // The three ungated, self-_agentId-scoped, scopes:["rpc"] reads
   // (capabilities.introspect / session.status / session.list) are in-audience
   // for ANY valid lease — the cap-socket whoami/status path. The exception
   // short-circuits ONLY the orch:* audience deny, AFTER the bearer/expiry/revoke
   // authenticity gates, and grants reach to NOTHING else.
 
-  it("allows capabilities.introspect (whoami) for an orch:read-only lease (RED: was null)", () => {
+  it("allows capabilities.introspect (whoami) for an orch:read-only lease", () => {
     const mgr = createLeaseManager(makeDeps());
-    // capabilities.introspect is "ungated" → pre-patch validate returned null
-    // (no orch:* cap). The audience exception lets any valid lease reach it.
+    // capabilities.introspect is "ungated" (no orch:* cap), so the audience
+    // exception is the only thing that lets any valid lease reach it.
     const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
     const info = mgr.validate(bearer, "capabilities.introspect");
     expect(info).not.toBeNull();
@@ -147,7 +144,7 @@ describe("LeaseManager — self-scoped-read audience exception (CLI-01/02; v8 §
     expect(info?.caps).toEqual(["orch:read"]);
   });
 
-  it("allows session.status (status) for an orch:read-only lease (RED: was null)", () => {
+  it("allows session.status (status) for an orch:read-only lease", () => {
     const mgr = createLeaseManager(makeDeps());
     const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
     const info = mgr.validate(bearer, "session.status");
@@ -156,7 +153,7 @@ describe("LeaseManager — self-scoped-read audience exception (CLI-01/02; v8 §
     expect(info?.agentId).toBe("agent-1");
   });
 
-  it("allows session.list (status) for an orch:read-only lease (RED: was null)", () => {
+  it("allows session.list (status) for an orch:read-only lease", () => {
     const mgr = createLeaseManager(makeDeps());
     const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
     expect(mgr.validate(bearer, "session.list")).not.toBeNull();
@@ -217,18 +214,19 @@ describe("LeaseManager — self-scoped-read audience exception (CLI-01/02; v8 §
   });
 });
 
-describe("LeaseManager — tool.invoke audience-on-inner-tool (Pitfall 2; DISPATCH-01)", () => {
+describe("LeaseManager — tool.invoke audience binds to the inner tool", () => {
   // tool.invoke is NOT a member of HANDLER_CAPABILITY_MAP — its required cap is
-  // the INNER tool's cap from TOOL_CAPABILITY_MAP (shape (b), keeps caps+audience
-  // un-drifted). A lease holding orch:read is in-audience at a tool.invoke whose
-  // inner tool maps to orch:read, and OUT of audience at one mapping to orch:web.
+  // the INNER tool's cap from TOOL_CAPABILITY_MAP (reading the same table keeps
+  // caps and audience un-drifted). A lease holding orch:read is in-audience at a
+  // tool.invoke whose inner tool maps to orch:read, and OUT of audience at one
+  // mapping to orch:web.
 
   it("allows tool.invoke at an inner tool whose cap (orch:read) the lease holds", () => {
     const mgr = createLeaseManager(makeDeps());
     // TOOL_CAPABILITY_MAP["memory_search"] === "orch:read"; lease holds orch:read.
-    // RED on pre-patch: validate ignores the 3rd arg and derives the cap from
-    // HANDLER_CAPABILITY_MAP["tool.invoke"] === undefined → returns null (denies
-    // EVERY tool.invoke). The audience MUST bind to the inner tool to pass.
+    // The audience MUST bind to the inner tool: HANDLER_CAPABILITY_MAP["tool.invoke"]
+    // is undefined, so deriving the cap from the method name alone would ignore the
+    // 3rd arg and deny EVERY tool.invoke.
     const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
     const info = mgr.validate(bearer, "tool.invoke", "memory_search");
     expect(info).not.toBeNull();
@@ -317,7 +315,7 @@ describe("LeaseManager — timing-safe rejection (no throw)", () => {
   });
 });
 
-describe("LeaseManager — revocation gates both paths (LEASE-02)", () => {
+describe("LeaseManager — revocation gates both paths", () => {
   it("denies the next validate after revoke(leaseId)", () => {
     const mgr = createLeaseManager(makeDeps());
     const { leaseId, bearer } = mgr.mintLease(baseInput(["orch:read"]));
@@ -350,7 +348,7 @@ describe("LeaseManager — revocation gates both paths (LEASE-02)", () => {
   });
 });
 
-describe("LeaseManager — renew clamps to maxExpiresAt (LEASE-02)", () => {
+describe("LeaseManager — renew clamps to maxExpiresAt", () => {
   it("renew clamps the new expiry to maxExpiresAt when now+ttl would exceed it", () => {
     const deps = makeDeps({ defaultTtlMs: 1000 });
     const mgr = createLeaseManager(deps);
@@ -397,12 +395,12 @@ describe("LeaseManager — renew clamps to maxExpiresAt (LEASE-02)", () => {
   });
 });
 
-describe("LeaseManager — cascadeRevoke reaches grandchildren via the at-mint adjacency (REVOKE-02)", () => {
+describe("LeaseManager — cascadeRevoke reaches grandchildren via the at-mint adjacency", () => {
   // Each lease holds orch:graph and is validated at graph.execute, so the ONLY
   // reason a post-cascade validate returns null is the `revoked` flag — isolating
   // the cascade behavior from audience/expiry. The adjacency
-  // (parentLeaseId → children) is built at MINT (Pitfall 5: it cannot be derived
-  // at revoke time because parentLeaseId has no reverse index otherwise).
+  // (parentLeaseId → children) is built at MINT because it cannot be derived at
+  // revoke time — parentLeaseId has no reverse index otherwise.
 
   it("cascadeRevoke of a parent denies the parent, its child AND its grandchild", () => {
     const mgr = createLeaseManager(makeDeps());
@@ -482,12 +480,12 @@ describe("LeaseManager — cascadeRevoke reaches grandchildren via the at-mint a
   });
 });
 
-describe("LeaseManager — revoke(leaseId) returns an HONEST count (REVOKE-01 honesty)", () => {
+describe("LeaseManager — revoke(leaseId) returns an HONEST count", () => {
   // The by-leaseId cooperative stop must report what it actually revoked — the
   // daemon `lease.revoke` handler surfaces this count to the operator. A revoke
   // of an UNKNOWN id is a no-op and MUST report { revoked: 0 }, never a phantom
-  // { revoked: 1 } (the live VPS finding: a nonexistent leaseId returned 1 while
-  // rootRunId honestly returned 0). A security RPC must not over-report a stop.
+  // { revoked: 1 } (a nonexistent leaseId must not return 1 while the by-root
+  // revoke honestly returns 0). A security RPC must not over-report a stop.
   it("returns { revoked: 1 } for an existing lease and denies it after", () => {
     const mgr = createLeaseManager(makeDeps());
     const lease = mgr.mintLease({ ...baseInput(["orch:graph"]), rootRunId: "root-R" });
@@ -500,7 +498,7 @@ describe("LeaseManager — revoke(leaseId) returns an HONEST count (REVOKE-01 ho
   });
 });
 
-describe("LeaseManager — revokeByRootRun scans + cascades every lease of a root (REVOKE-01)", () => {
+describe("LeaseManager — revokeByRootRun scans + cascades every lease of a root", () => {
   // The by-rootRunId fan-out: scan on `rootRunId`, cascadeRevoke each match
   // through ONE shared visited set (so the count is distinct), leave other roots
   // untouched. Each lease holds orch:graph / validates at graph.execute, so the

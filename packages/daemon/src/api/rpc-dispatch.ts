@@ -24,24 +24,25 @@ import {
   HANDLER_CAPABILITY_MAP,
   CapabilityDeniedError,
   parseFormattedSessionKey,
-  // Phase 217-05 (the keystone): the never-hang mode-aware deny decision.
-  // resolveEffectiveMode = the EVICT-02 fail-closed primitive (Plan 01);
-  // resolveAutonomy = the jail-leg server-side mode resolve (Plan 03); systemNowMs
-  // = the execution:aborted timestamp (mirrors bridge-safety-controls.ts).
+  // The never-hang mode-aware deny decision. resolveEffectiveMode is the
+  // fail-closed primitive (absent/forged/unknown mode → "default");
+  // resolveAutonomy is the server-side mode resolve for legs that inject no
+  // mode; systemNowMs = the execution:aborted timestamp (mirrors
+  // bridge-safety-controls.ts).
   resolveEffectiveMode,
   resolveAutonomy,
   systemNowMs,
   type AutonomyMode,
 } from "@comis/core";
-// ORIGIN-01 deny-by-origin chokepoint: the in-process agent loop dispatches
+// Deny-by-origin chokepoint: the in-process agent loop dispatches
 // straight through this closure (bypassing the gateway scope-router's
 // checkScope), so the positive control-plane boundary MUST live here in the
 // dispatch closure — the convergence point of the in-process and gateway legs.
 import { assertNotAgentOrigin } from "./shared/assert-not-agent-origin.js";
-// AUDIT-01 (Phase 215): the per-cap audit emitter — emits audit:event (the
-// durable AUDIT-02 trail) + capability:audited (the spawn-tree producer) for an
+// The per-cap audit emitter — emits audit:event (the durable security-audit
+// trail) + capability:audited (the spawn-tree producer) for an
 // allowed AND a denied gated call at THIS chokepoint. The in-process leg has no
-// lease (G1): rootRunId via resolveRootRunId, leaseId honestly absent.
+// lease: rootRunId via resolveRootRunId, leaseId honestly absent.
 import { emitCapabilityAudit } from "./shared/emit-capability-audit.js";
 
 import { createCronHandlers } from "./cron-handlers.js";
@@ -65,13 +66,13 @@ import { createSecretsHandlers } from "./secrets-handlers.js";
 import { createAuthHandlers } from "./auth-handlers.js";
 import { createBrowserHandlers } from "./browser-handlers.js";
 import { createSubagentHandlers } from "./subagent-handlers.js";
-// Phase 213-06 (REVOKE-01/03): the operator-facing live-control RPC handlers.
-// lease.revoke / run.kill are scopes:["admin"] (Plan 03) → ADMIN_METHODS →
+// The operator-facing live-control RPC handlers.
+// lease.revoke / run.kill are scopes:["admin"] → ADMIN_METHODS →
 // deny-by-origin is automatic via the chokepoint below (no manual _agentId check
 // in the handler). They drive the LeaseManager revoke fan-outs + the runner's
 // killByRootRun.
 import { createAutonomyHandlers } from "./autonomy-handlers.js";
-// INTRO-01/02 (Phase 215-04): capabilities.introspect — the read-only,
+// capabilities.introspect — the read-only,
 // agent-reachable `comis whoami` surface. scopes:["rpc"] + "ungated" (NO
 // requireCapability, NOT in ADMIN_METHODS), self-scoped to the caller's
 // _agentId. Gated on deps.boundedAutonomy being wired (the snapshot source).
@@ -87,7 +88,7 @@ import { createDaemonHandlers } from "./daemon-handlers.js";
 import { createMcpHandlers } from "./mcp-handlers.js";
 import { createMcpOauthHandlers } from "./mcp-oauth-handlers.js";
 import { createGraphHandlers } from "./graph-handlers/index.js";
-// AUTHOR-01 (Phase 174-03): the daemon composition site is the boundary-clean
+// The daemon composition site is the boundary-clean
 // place to import @comis/agent and inject the conservative repair matcher into
 // the graph handlers (buildGraphInput receives it via deps.repairMatch — never a
 // direct daemon→agent import in the pure helper).
@@ -116,7 +117,7 @@ import { createProviderHandlers } from "./provider-handlers.js";
 // assignable from ApiDispatchDeps via structural subtyping.
 
 // ---------------------------------------------------------------------------
-// WR-04: media methods whose params carry a large base64/binary payload
+// Media methods whose params carry a large base64/binary payload
 // (`source`/`image`/`video`/`audio`/`file`). The dispatcher error log writes
 // `params` for triage, but Pino's key-name redaction does NOT cover these
 // fields, so on a throw branch the whole image/video/audio body would land in
@@ -155,11 +156,10 @@ const BINARY_PARAM_KEYS = ["source", "image", "video", "audio", "file"] as const
  * ALSO classified by the `@comis/gateway` method-router trace wrapper — which cannot
  * `instanceof` these classes (dependency direction) and so keys off `Error.name`. Before
  * that shared classifier the two layers drifted and the gateway kept logging intentional
- * refusals as internal/ERROR after this layer was fixed (OBS-RPC-REFUSAL-CLASS,
- * orchestration-excellence-20260701). **Add a new typed refusal in `@comis/core`, not
- * here.** The legacy substring-match fallbacks remain deleted; typed errors are the
- * sanctioned path (OBS-10: admin-trust denials throw `AuthorizationError`; bare-Error
- * handlers still classify internal/error until migrated to a typed class).
+ * refusals as internal/ERROR after this layer was fixed. **Add a new typed refusal
+ * in `@comis/core`, not here.** The legacy substring-match fallbacks remain deleted;
+ * typed errors are the sanctioned path (admin-trust denials throw `AuthorizationError`;
+ * bare-Error handlers still classify internal/error until migrated to a typed class).
  */
 export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: string; level: "warn" | "error" } {
   const typed = classifyTypedRpcError(err);
@@ -168,7 +168,7 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
 }
 
 // ---------------------------------------------------------------------------
-// ORIGIN-01 deny-by-origin: the authoritative admin-method set.
+// Deny-by-origin: the authoritative admin-method set.
 // ---------------------------------------------------------------------------
 //
 // Derived ONCE from the contract registry (`scopes.includes("admin")`) — the
@@ -177,9 +177,9 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
 // chokepoint below; there is NO hand-maintained method list to fall out of
 // sync. The chokepoint (in the dispatch closure) calls `assertNotAgentOrigin`
 // for exactly the methods in this set, so an agent-origin (`_agentId`-bearing)
-// call can never reach an admin handler, INDEPENDENT of its ALS `_trustLevel`
-// (v8 §3.1 / §22.3 floor item 1). Non-admin methods are NOT in this set, so an
-// agent's own `_agentId` rides them untouched for self-scoping (Pitfall 2).
+// call can never reach an admin handler, INDEPENDENT of its ALS `_trustLevel`.
+// Non-admin methods are NOT in this set, so an agent's own `_agentId` rides
+// them untouched for self-scoping.
 const ADMIN_METHODS: ReadonlySet<string> = new Set(
   API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
 );
@@ -248,8 +248,8 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     }),
     ...createBrowserHandlers(deps),
     ...createSubagentHandlers(deps),
-    // Phase 213-06: lease.revoke + run.kill. Gated on deps.leaseManager being
-    // wired (Plan 07 constructs it at the composition root); subAgentRunner +
+    // lease.revoke + run.kill. Gated on deps.leaseManager being
+    // wired (constructed at the composition root); subAgentRunner +
     // logger ride the OrchestratorApiDeps slice. Deny-by-origin fires in the
     // dispatch chokepoint below for these admin-scoped methods (no manual check).
     // When leaseManager is absent (a partial boot) the methods are simply not
@@ -258,25 +258,24 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       ? createAutonomyHandlers({
           ...deps,
           leaseManager: deps.leaseManager,
-          // FLEET-03: the LIVE autonomy:revoked/killed bus (the same typed bus the
-          // execution:aborted emit uses below, ~:678) + systemNowMs as the
+          // The LIVE autonomy:revoked/killed bus (the same typed bus the
+          // execution:aborted emit uses below) + systemNowMs as the
           // wiring-layer clock (globals-gate-safe; no Date.now() here). Without
           // this the handler's optional eventBus? is absent in prod → the daemon
-          // emits nothing → Plan 03's counts are silently zero.
+          // emits nothing → the revoke/kill counts are silently zero.
           eventBus: deps.container.eventBus,
           now: systemNowMs,
         })
       : {}),
-    // INTRO-01/02 (Phase 215-04): capabilities.introspect (the `comis whoami`
-    // read). Gated on deps.boundedAutonomy (the remaining-budget snapshot
-    // source, Plan 02). The handler resolves the CALLER's per-agent
-    // AutonomyConfig itself from deps.agents (caps are per-caller; the handler is
-    // built once) — do NOT pre-resolve a single config at wiring time. It is
-    // scopes:["rpc"] + "ungated" (no requireCapability, NOT in ADMIN_METHODS) so
-    // the agent reaches it; the spread closes the contract↔handler parity gate
+    // capabilities.introspect (the `comis whoami` read). The remaining-budget
+    // snapshot comes from deps.boundedAutonomy. The handler resolves the CALLER's
+    // per-agent AutonomyConfig itself from deps.agents (caps are per-caller; the
+    // handler is built once) — do NOT pre-resolve a single config at wiring time.
+    // It is scopes:["rpc"] + "ungated" (no requireCapability, NOT in ADMIN_METHODS)
+    // so the agent reaches it; the spread closes the contract↔handler parity gate
     // via [CapabilitiesIntrospectContract.method] in the SAME wave the handler +
-    // codegen land (the 188 BLOCKER-1 same-wave rule).
-    // Finding E (30uc-20260624): register UNCONDITIONALLY (no longer gated on deps.boundedAutonomy).
+    // codegen land.
+    // Register UNCONDITIONALLY (NOT gated on deps.boundedAutonomy).
     // When no autonomy agent is wired, the handler returns a clean disabled-state ({enabled:false,
     // caps:[]}) — `comis whoami` / capabilities.introspect must never be "Unknown RPC method".
     // The budget snapshot is omitted when boundedAutonomy is absent (handler guards it).
@@ -304,15 +303,15 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       tenantId: deps.tenantId,
       dataDir: deps.container.config.dataDir || ".",
       nodeTypeRegistry: deps.nodeTypeRegistry,
-      // TELEM-01 (Phase 173-02): construct the per-agent capabilityClass
+      // Construct the per-agent capabilityClass
       // resolver for the daemon-side `pipeline:authored` emit. Resolve the tier
       // server-side from the agent's provider (deps.agents[agentId].provider →
-      // getProviderCapabilityClass) — NEVER a tool-supplied param (Spoofing
-      // mitigation T-173-03). Constructing it HERE (not just typing it) is the
-      // load-bearing guard against the 172-WR-02 silent-dead-metric class
-      // (T-173-13): without this line every emit fail-defaults to "unknown".
+      // getProviderCapabilityClass) — NEVER a tool-supplied param (spoofing
+      // mitigation). Constructing it HERE (not just typing it) is the
+      // load-bearing guard against the silent-dead-metric class:
+      // without this line every emit fail-defaults to "unknown".
       resolveCapabilityClass: (agentId) =>
-        // IN-02 (Phase 173 review): a dynamic-key READ (not a write) on the typed
+        // A dynamic-key READ (not a write) on the typed
         // Record<string, PerAgentConfig>; the key is the server-trusted agentId.
         // A key like "__proto__" returns the prototype's `provider` (undefined) →
         // fail-safes to "unknown", never a pollution write. No eslint-disable is
@@ -321,22 +320,22 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         // so adding the directive here is reported as unused — this plain comment
         // documents the intentional safe read instead.
         //
-        // TELEM-01 fix (2026-06-19): fall back to the provider-family heuristic when no operator
+        // Fall back to the provider-family heuristic when no operator
         // `providers.entries.<p>.capabilities.capabilityClass` override is pinned. Without this
         // fallback the override-only resolver returned undefined for every un-pinned config (the
-        // common case), so `pipeline:authored` always emitted capabilityClass:"unknown" and P1's
+        // common case), so `pipeline:authored` always emitted capabilityClass:"unknown" and the
         // small-model-authoring-rate metric was dead. The heuristic (anthropic/openai→frontier,
         // google→mid, else→small) is the same one the executor's live ModelProfile derives.
         (() => {
           const provider = deps.agents[agentId ?? ""]?.provider;
           return deps.getProviderCapabilityClass?.(provider) ?? capabilityClassFromProvider(provider);
         })(),
-      // AUTHOR-01 (Phase 174-03): thread the orchestration.authoring gate +
+      // Thread the orchestration.authoring gate +
       // inject the conservative repair matcher. The daemon→agent boundary is
       // crossed HERE (the composition site legitimately imports @comis/agent),
       // never inside buildGraphInput — mirroring the resolveCapabilityClass
       // injection above. With repairProducer:false (the default) the gate is off
-      // and buildGraphInput is byte-identical to pre-174.
+      // and buildGraphInput leaves the raw graph unchanged.
       authoringConfig: deps.container.config.orchestration?.authoring,
       repairMatch: matchRawGraphToTemplate,
     }) : {}),
@@ -536,16 +535,16 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     ...(deps.imageHandlerDeps
       ? createImageHandlers(deps.imageHandlerDeps)
       : {}),
-    // v2.24 Phase 188: Video generation handler (video.generate). Gated on the
+    // Video generation handler (video.generate). Gated on the
     // video bundle being wired (provider + rate limiter present); the spread
     // closes the contract↔handler parity gate via [VideoGenerateContract.method].
     ...(deps.videoHandlerDeps
       ? createVideoHandlers(deps.videoHandlerDeps)
       : {}),
-    // v2.24 Phase 189 (JOB-04): Video status handler (video.status). Gated on the
+    // Video status handler (video.status). Gated on the
     // status deps being wired (the agent-scoped store + logger); the spread closes
     // the contract↔handler parity gate via [VideoStatusContract.method] in the SAME
-    // wave the contract is declared (no cross-wave strand — the 188 BLOCKER-1 class).
+    // wave the contract is declared (no cross-wave strand).
     ...(deps.videoStatusHandlerDeps
       ? createVideoStatusHandlers(deps.videoStatusHandlerDeps)
       : {}),
@@ -560,12 +559,12 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       throw new Error(`Unknown RPC method: ${method}`);
     }
     try {
-      // ORIGIN-01 deny-by-origin chokepoint. BOTH the in-process agent path
+      // Deny-by-origin chokepoint. BOTH the in-process agent path
       // (createAgentRpcCall -> the same injected rpcCall) AND the gateway path
       // funnel through this one closure to reach every handler — so this is the
       // single seam at which an agent-origin call to an admin-scoped method is
-      // rejected. `params._agentId` is the trusted agent-origin signal (Plan 03
-      // strips external forgeries, so presence == agent-origin). The guard fires
+      // rejected. `params._agentId` is the trusted agent-origin signal (external
+      // forgeries are stripped, so presence == agent-origin). The guard fires
       // only for ADMIN_METHODS; a non-admin method's `_agentId` passes untouched.
       // assertNotAgentOrigin emits the content-free audited denial and throws;
       // the catch below logs + re-throws it as the JSON-RPC error (so the denial
@@ -574,11 +573,11 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         assertNotAgentOrigin(params, deps, method);
       }
 
-      // AUDIT-01 (Phase 215): the per-CAPABILITY audit. Emit ONLY when the
+      // The per-CAPABILITY audit. Emit ONLY when the
       // method maps to a real AgentCapability in HANDLER_CAPABILITY_MAP (skip
       // "ungated" + "deny-by-origin" — the latter already audits via
       // assertNotAgentOrigin above, so excluding it here avoids the double-audit
-      // for the admin path). The in-process leg has NO lease (G1): source
+      // for the admin path). The in-process leg has NO lease: source
       // rootRunId from the synthetic-root resolver; leaseId is honestly ABSENT.
       const classification = HANDLER_CAPABILITY_MAP[method as keyof typeof HANDLER_CAPABILITY_MAP];
       const isCapGated =
@@ -595,33 +594,33 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
       const rootRunId =
         parsedKey !== undefined ? deps.resolveRootRunId?.(parsedKey) : undefined;
-      // WR-02: gate the durable AUDIT-02 trail on a real cap + agent origin ONLY —
+      // Gate the durable audit trail on a real cap + agent origin ONLY —
       // a gated decision is a security fact regardless of tree-root resolution.
       // emitCapabilityAudit emits `audit:event` unconditionally and SUPPRESSES the
       // `capability:audited` tree producer when rootRunId is absent (an unplaceable
       // node), so a missing _callerSessionKey no longer silently drops the security
       // row — only the tree node. rootRunId is honestly absent in-process when
-      // unresolvable (never fabricated, G1).
+      // unresolvable (never fabricated).
       const shouldAudit = isCapGated && agentOrigin !== undefined;
 
-      // Phase 217-05 (the keystone): the run's EFFECTIVE autonomy mode at THIS gate
-      // decision (research Pattern 3 + EVICT-02/03). The order is load-bearing:
+      // The run's EFFECTIVE autonomy mode at THIS gate
+      // decision. The order is load-bearing:
       //   1. evicted (operator's autonomy.evict) → "default" FIRST — the demotion
       //      overrides any injected/resolved mode and takes effect at the NEXT gate
-      //      decision (mid-run, EVICT-03), not next spawn.
-      //   2. else the trusted in-process-injected `_autonomyMode` (Plan 03) →
+      //      decision (mid-run), not next spawn.
+      //   2. else the trusted in-process-injected `_autonomyMode` →
       //      resolveEffectiveMode (valid passthrough; absent/forged/unknown →
-      //      "default", EVICT-02 fail-closed).
-      //   3. else (the jail leg injects no mode — Plan 03) → server-resolve from
+      //      "default", fail-closed).
+      //   3. else (the jail leg injects no mode) → server-resolve from
       //      deps.agents[agentOrigin] (this chokepoint HAS deps.agents in scope,
       //      unlike the boot file) → resolveEffectiveMode (unresolvable → "default").
-      // TODO(2026-06-24, T-217-06/T-217-15): wire evictRegistry.clear + denialBreaker.evict on NORMAL run-end (not just the trip/kill path). The chokepoint is per-call and has no clean run-end hook; the durable run-lifecycle / sessionEnd seam (setup-durable-resume / the runner's run-complete) is the right place to drop a completed root's breaker counter + evict flag so the in-memory maps cannot grow under a storm of per-cron-fire roots. The trip/kill path already clears; this TODO covers the happy-path completion only.
+      // TODO: wire evictRegistry.clear + denialBreaker.evict on NORMAL run-end (not just the trip/kill path). The chokepoint is per-call and has no clean run-end hook; the durable run-lifecycle / sessionEnd seam (setup-durable-resume / the runner's run-complete) is the right place to drop a completed root's breaker counter + evict flag so the in-memory maps cannot grow under a storm of per-cron-fire roots. The trip/kill path already clears; this TODO covers the happy-path completion only.
       const effectiveMode = (): AutonomyMode => {
         if (rootRunId !== undefined && deps.evictRegistry?.isEvicted(rootRunId)) return "default";
         const injected = params._autonomyMode;
         if (typeof injected === "string") return resolveEffectiveMode(injected);
-        // Jail leg: no injected mode → server-resolve from deps.agents. Fail-CLOSED
-        // (EVICT-02): an absent agents map or a missing/unresolvable agent entry
+        // Jail leg: no injected mode → server-resolve from deps.agents. Fail-CLOSED:
+        // an absent agents map or a missing/unresolvable agent entry
         // yields `undefined` → resolveEffectiveMode → "default" (never the broader
         // standard profile resolveAutonomy(undefined) would return).
         const agentEntry =
@@ -644,7 +643,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
             decision: "allow",
           });
         }
-        // Phase 217-05 (BREAK reset): a successful gated call resets the per-root
+        // Breaker reset: a successful gated call resets the per-root
         // consecutive-floor-block counter, so a single deny inside a PRODUCTIVE
         // loop never accumulates to a trip (the productive run is not aborted).
         if (rootRunId !== undefined) deps.denialBreaker?.recordAllow(rootRunId);
@@ -662,11 +661,11 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
             decision: "deny",
           });
         }
-        // Phase 217-05 (the keystone): the mode-aware deny-vs-escalate + breaker
+        // The mode-aware deny-vs-escalate + breaker
         // drive. COUNT-ONLY-FLOOR-BLOCKS — this branch fires ONLY for a genuine
         // CapabilityDeniedError. `assertNotAgentOrigin` (admin deny-by-origin)
         // throws a PLAIN Error and a generic handler error is a non-CapabilityDeniedError,
-        // so neither reaches recordDenial (research recommendation #5, BY CONSTRUCTION
+        // so neither reaches recordDenial (BY CONSTRUCTION
         // via this instanceof guard). The throw at the end is UNCHANGED — the run
         // ALWAYS sees the deny and adapts (never hangs); NO escalation is awaited.
         if (innerErr instanceof CapabilityDeniedError) {
@@ -674,7 +673,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
           if (rootRunId !== undefined && deps.denialBreaker) {
             const verdict = deps.denialBreaker.recordDenial(rootRunId);
             if (verdict.tripped) {
-              // BREAK-02: the Nth consecutive floor-block → ABORT the tree (not an
+              // The Nth consecutive floor-block → ABORT the tree (not an
               // infinite retry loop) + escalate. Mirror bridge-safety-controls.ts's
               // execution:aborted emit shape; the obs layer consumes the reason.
               if (parsedKey !== undefined) {
@@ -685,13 +684,13 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
                   timestamp: systemNowMs(),
                 });
               }
-              // FLEET-02 (Phase 220-05): ALSO emit the dedicated content-free
+              // ALSO emit the dedicated content-free
               // autonomy:denial_breaker_tripped event so `comis fleet` surfaces the
               // trip as a separable `denialBreakerTrips` count. The execution:aborted
               // emit above flips a UI phase only (no fleet-ingestion path) and its
               // `denial_breaker` reason is never a session endReason/breakerTripCount,
-              // so the trip would otherwise be INVISIBLE to the fleet lens (the
-              // milestone-audit gap). rootRunId is in scope (the `!== undefined` guard
+              // so the trip would otherwise be INVISIBLE to the fleet lens.
+              // rootRunId is in scope (the `!== undefined` guard
               // above); systemNowMs is the globals-gate-safe wiring clock (no Date.now).
               // Content-free: the rootRunId (an id) + timestamp ONLY — the deny reason
               // rides the escalate() below, never the typed event.
@@ -706,12 +705,12 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
                 reason: "consecutive floor-blocks reached denialBreakerN",
                 hint: "the run was aborted to avoid burning the budget on a deny loop (autonomy.denialBreakerN)",
               });
-              // LOW-2: the tree is now dead — drop its per-root breaker + evict state
+              // The tree is now dead — drop its per-root breaker + evict state
               // so the in-memory maps cannot leak (the trip/kill cleanup path).
               deps.evictRegistry?.clear(rootRunId);
               deps.denialBreaker.evict(rootRunId);
             } else if (mode === "unattended") {
-              // UNATT-01/03: a would-ask deny under unattended escalates (out-of-band
+              // A would-ask deny under unattended escalates (out-of-band
               // + auditable) and the run CONTINUES (the re-throw below). Content-free.
               deps.escalate?.({
                 kind: "would_ask_denied",
@@ -755,7 +754,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         const { access: _a, refresh: _r, accountId: _id, ...rest } = params;
         safeParams = rest;
       } else if (BINARY_PARAM_METHODS.has(method)) {
-        // WR-04: omit large base64/binary payload fields (image/video/audio
+        // Omit large base64/binary payload fields (image/video/audio
         // bytes) from the log payload — content-hygiene (never log message
         // bodies). Shallow-copy minus the binary keys; the method + small
         // params (prompt, mimeType, language) remain for triage.

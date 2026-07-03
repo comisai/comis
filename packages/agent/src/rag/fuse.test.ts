@@ -2,7 +2,7 @@
 /**
  * Tests for fuse() — N-lane Reciprocal Rank Fusion over MemorySearchResult lanes.
  *
- * Pins the load-bearing properties from the plan:
+ * Pins the load-bearing properties:
  * - empty input → []
  * - single-lane identity (the DEFAULT recall path, rerank OFF, does not reorder)
  * - two-lane membership boost (a doc in two lanes outranks a doc in one)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `emitGenerationQuality` tests — GENQ-01. The shared guarded emit helper for
+ * `emitGenerationQuality` tests. The shared guarded emit helper for
  * `memory:generation_quality`: fires ONLY on a detected issue, is content-free,
  * carries the cron-job (no sessionKey) shape, and never throws out of a failing
  * subscriber (the emitSummaryLanguageMismatch isolation contract).
@@ -18,7 +18,7 @@ function makeBus(): { bus: { emit: ReturnType<typeof vi.fn> }; emit: ReturnType<
 const logger = { warn: vi.fn() };
 
 describe("emitGenerationQuality", () => {
-  it("emits memory:generation_quality on a non-Latin→Latin mismatch (the F-ML1 class)", () => {
+  it("emits memory:generation_quality on a non-Latin→Latin mismatch (the translation-regression class)", () => {
     const { bus, emit } = makeBus();
     emitGenerationQuality(bus, logger, {
       agentId: "default",

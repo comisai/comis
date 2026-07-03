@@ -153,7 +153,7 @@ describe("NormalizedMessage", () => {
     });
 
     it("accepts arbitrary non-empty channel type strings", () => {
-      // channelType is now z.string().min(1) to support dynamic channel plugins
+      // channelType is z.string().min(1) to support dynamic channel plugins
       const result = parseMessage(validMessage({ channelType: "sms" }));
       expect(result.ok).toBe(true);
     });
@@ -251,7 +251,7 @@ describe("NormalizedMessage", () => {
       }
     });
 
-    it("accepts an attachment with only existing fields (backward compatibility)", () => {
+    it("accepts an attachment that omits every optional voice field", () => {
       const result = AttachmentSchema.safeParse({
         type: "file",
         url: "https://example.com/doc.pdf",
@@ -361,7 +361,7 @@ describe("NormalizedMessage", () => {
     it("getMessageTraceId returns undefined when metadata.traceId is a non-string value (defensive read)", async () => {
       const { getMessageTraceId } = await import("./normalized-message.js");
       // Direct type cast to test defensive behavior — covers runtime edge cases
-      // where old messages may not have been through the new schema validator.
+      // where a persisted message never passed through the schema validator.
       const msg = {
         id: VALID_UUID,
         channelId: "general",

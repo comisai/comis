@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeDiscordAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the Discord EditPlace renderer (§18.1 "fake adapter records every method call").
+ * the Discord EditPlace renderer; it records every method call.
  *
  * Mirrors `createFakeTelegramAdapter` (the canonical fake) but:
  *   - mints `dc-msg-N` ids (Discord's determinism source for byte-stable
- *     fixtures — Pitfall 2),
+ *     fixtures),
  *   - records a `threadCreate` call when `send` is given `{ threadReply: true }`
  *     so a fixture can pin the S7 subagent-expand affordance SHELL (the parent
  *     line + the thread-create), and
@@ -20,7 +20,7 @@
  *
  * The affordance is a SHELL only: this fake records the thread-create egress, but
  * NO interaction handler is registered and NO signed callback_data is produced —
- * the InteractiveCallbackRouter is delivered later (§17.3).
+ * the InteractiveCallbackRouter lives in a separate component.
  */
 import { ok, err, type Result } from "@comis/shared";
 import type {

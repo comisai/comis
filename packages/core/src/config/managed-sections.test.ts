@@ -81,8 +81,8 @@ describe("getManagedSectionRedirect", () => {
 });
 
 describe("formatRedirectHint", () => {
-  // Rephrased Recovery wording -- single-step "Recovery: call <tool>(<example>)."
-  // (the discover_tools clause is dropped; on Anthropic Sonnet/Opus 4.x the model never has a
+  // The Recovery wording is single-step: "Recovery: call <tool>(<example>)."
+  // (no discover_tools clause; on Anthropic Sonnet/Opus 4.x the model never has a
   // discover_tools tool to call, and on every provider the dedicated tool auto-loads on first
   // direct invocation).
   it("emits single-step Recovery framing for fullyManaged entries", () => {
@@ -106,11 +106,11 @@ describe("formatRedirectHint", () => {
     expect(hint).toContain("entry that ALREADY exists");
   });
 
-  // Bug A regression: with the dead "agents.*.persona" override
-  // removed, the consumer-level hint must no longer mention persona. Pinned
-  // to getMutableOverridesForSection so any future re-introduction of a
+  // Regression lock: the consumer-level hint must not mention persona —
+  // PerAgentConfigSchema has no `persona` field. Pinned
+  // to getMutableOverridesForSection so any future introduction of a
   // persona override (whether real or accidental) flips this test red.
-  it("hint does NOT mention persona (dead override removed)", () => {
+  it("hint does NOT mention persona (no such per-agent field)", () => {
     const redirect = getManagedSectionRedirect("agents")!;
     const hint = formatRedirectHint(
       redirect,
@@ -153,11 +153,11 @@ describe("formatRedirectHint", () => {
   });
 
   // -------------------------------------------------------------------------
-  // D1-D5 regression tests (drop discover_tools from every formatRedirectHint
-  // output path).
+  // Regression locks: no formatRedirectHint output path may mention
+  // discover_tools.
   // -------------------------------------------------------------------------
 
-  it("D1: NO MANAGED_SECTIONS entry produces a hint containing 'discover_tools'", () => {
+  it("NO MANAGED_SECTIONS entry produces a hint containing 'discover_tools'", () => {
     for (const entry of MANAGED_SECTIONS) {
       const hint = formatRedirectHint(entry);
       expect(hint, `entry pathPrefix=${entry.pathPrefix}`).not.toContain("discover_tools");
@@ -169,7 +169,7 @@ describe("formatRedirectHint", () => {
     }
   });
 
-  it("D2: WITH exampleArgs -> 'Recovery: call <tool>(<example>).' single-step framing (no parenthesized numbering)", () => {
+  it("WITH exampleArgs -> 'Recovery: call <tool>(<example>).' single-step framing (no parenthesized numbering)", () => {
     for (const entry of MANAGED_SECTIONS) {
       if (!entry.exampleArgs) continue;
       const hint = formatRedirectHint(entry);
@@ -181,7 +181,7 @@ describe("formatRedirectHint", () => {
     }
   });
 
-  it("D3: WITHOUT exampleArgs -> 'Call <tool> directly; it will auto-load on first invocation.'", () => {
+  it("WITHOUT exampleArgs -> 'Call <tool> directly; it will auto-load on first invocation.'", () => {
     const channelsRedirect = getManagedSectionRedirect("channels", "telegram.allowFrom")!;
     expect(channelsRedirect.exampleArgs).toBeUndefined();
     const hint = formatRedirectHint(channelsRedirect);
@@ -189,7 +189,7 @@ describe("formatRedirectHint", () => {
     expect(hint).toContain("auto-load on first invocation");
   });
 
-  it("D4: schemaFragment lines (Tool actions / Required fields) still emitted on agents entry", () => {
+  it("schemaFragment lines (Tool actions / Required fields) still emitted on agents entry", () => {
     const redirect = getManagedSectionRedirect("agents")!;
     const hint = formatRedirectHint(redirect);
     expect(hint).toContain(
@@ -198,7 +198,7 @@ describe("formatRedirectHint", () => {
     expect(hint).toContain("Required fields for `create`: agent_id, config");
   });
 
-  it("D5: JSON-stringified exampleArgs round-trips through formatted output", () => {
+  it("JSON-stringified exampleArgs round-trips through formatted output", () => {
     for (const entry of MANAGED_SECTIONS) {
       if (!entry.exampleArgs) continue;
       const hint = formatRedirectHint(entry);
@@ -233,10 +233,10 @@ describe("formatRedirectHint", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bug B: schemaFragment inline in rejection hint
+// schemaFragment inline in the rejection hint
 // ---------------------------------------------------------------------------
 
-describe("schemaFragment (Bug B)", () => {
+describe("schemaFragment (inline schema in the rejection hint)", () => {
   it("agents (agents_manage) lists exact action enum from agents-manage-tool.ts", () => {
     const redirect = getManagedSectionRedirect("agents")!;
     expect(redirect.schemaFragment).toBeDefined();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure-function tests for the DAG durable-checkpoint serialization (Phase 216,
- * Plan 11, DUR-01/DUR-02). These functions are I/O-free so the snapshot ↔
+ * Pure-function tests for the DAG durable-checkpoint serialization.
+ * These functions are I/O-free so the snapshot ↔
  * durable_runs.spawn_tree round trip + the resume incomplete-node selector are
  * exhaustively unit-testable without a graph coordinator or a SQLite store.
  */
@@ -93,7 +93,7 @@ describe("snapshotToSpawnTree", () => {
     expect(roundTripped).toEqual(tree);
   });
 
-  it("is a first-class DAG spawn_tree (object entries with a status field — the LOW-2 discriminator)", () => {
+  it("is a first-class DAG spawn_tree (object entries with a status field — the DAG-vs-flat discriminator)", () => {
     const snap = snapshot([nodeState("A", "completed")]);
 
     const tree = snapshotToSpawnTree(snap);
@@ -200,15 +200,15 @@ describe("TERMINAL_NODE_STATES", () => {
 });
 
 // ---------------------------------------------------------------------------
-// isDagSpawnTree (the LOW-2 DAG-vs-flat discriminator) — Plan 12 dispatch routing.
+// isDagSpawnTree (the DAG-vs-flat discriminator) — resume-engine dispatch routing.
 // A DAG run's spawn_tree entries are OBJECTS carrying a `status` field
 // ({nodeId,status,runId?} — the snapshotToSpawnTree shape); a FLAT run's are a
-// plain string[] of node/lease ids (Plan 01 `spawnTree: z.array(z.string())`).
+// plain string[] of node/lease ids (`spawnTree: z.array(z.string())`).
 // The resume engine routes to coordinator.resumeGraph IFF this returns true, so a
 // flat run can NEVER mis-route to the graph resume.
 // ---------------------------------------------------------------------------
 
-describe("isDagSpawnTree (LOW-2 DAG-vs-flat discriminator)", () => {
+describe("isDagSpawnTree (DAG-vs-flat discriminator)", () => {
   it("is TRUE for object entries carrying a `status` field (a DAG record)", () => {
     expect(isDagSpawnTree([{ nodeId: "A", status: "completed" }, { nodeId: "B", status: "running", runId: "r1" }])).toBe(true);
   });

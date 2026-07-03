@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the post-batch continuation handler (L4 silent-termination
- * recovery). Replaces the legacy SEP one-shot completeness nudge.
+ * recovery) — the completeness-enforcement path.
  *
  * @module
  */
@@ -36,8 +36,8 @@ function mockLogger(): ComisLogger {
  * assistant turn is appended (to simulate a still-silent followUp).
  *
  * `getVisibleAssistantText` (passed into the handler) reads the most recent
- * assistant turn's first text block, mirroring the post-batch pattern at
- * executor-prompt-runner.ts:793.
+ * assistant turn's first text block, mirroring how the production caller
+ * (output-escalation.ts) reads recovered text.
  */
 function makeSession(messages: any[], followUpResponses: string[]) {
   const session: any = {
@@ -127,7 +127,7 @@ function emptyAfterToolBatch(toolCallCount: number, isError = false): any[] {
 // ---------------------------------------------------------------------------
 
 describe("runPostBatchContinuation", () => {
-  it("Test 1 — fires once after agents_manage × 3 batch and recovers", async () => {
+  it("fires once after agents_manage × 3 batch and recovers", async () => {
     const messages = emptyAfterToolBatch(3);
     const session = makeSession(messages, ["Created 3 agents successfully"]);
     const logger = mockLogger();
@@ -158,7 +158,7 @@ describe("runPostBatchContinuation", () => {
     expect(directive).toContain("agents_manage");
   });
 
-  it("Test 2 — fires after a FAILED tool batch (is_error=true)", async () => {
+  it("fires after a FAILED tool batch (is_error=true)", async () => {
     const messages = emptyAfterToolBatch(2, /* isError */ true);
     const session = makeSession(messages, ["The 2 calls failed; aborting."]);
 
@@ -178,7 +178,7 @@ describe("runPostBatchContinuation", () => {
     expect(session.followUp).toHaveBeenCalledTimes(1);
   });
 
-  it("Test 3 — no tool calls in window → no_match (followUp NOT called)", async () => {
+  it("no tool calls in window → no_match (followUp NOT called)", async () => {
     /* eslint-disable @typescript-eslint/no-explicit-any */
     const messages: any[] = [
       { role: "user", content: [{ type: "text", text: "hi" }] },
@@ -207,7 +207,7 @@ describe("runPostBatchContinuation", () => {
     expect(session.followUp).not.toHaveBeenCalled();
   });
 
-  it("Test 4 — final assistant turn has visible text → no_match", async () => {
+  it("final assistant turn has visible text → no_match", async () => {
     /* eslint-disable @typescript-eslint/no-explicit-any */
     const messages: any[] = [
       { role: "user", content: [{ type: "text", text: "do it" }] },
@@ -238,7 +238,7 @@ describe("runPostBatchContinuation", () => {
     expect(session.followUp).not.toHaveBeenCalled();
   });
 
-  it("Test 5 — multi-shot retry: first followUp empty, second returns text", async () => {
+  it("multi-shot retry: first followUp empty, second returns text", async () => {
     const messages = emptyAfterToolBatch(1);
     const session = makeSession(messages, ["", "Recovered on attempt 2"]);
 
@@ -261,7 +261,7 @@ describe("runPostBatchContinuation", () => {
     expect(session.followUp).toHaveBeenCalledTimes(2);
   });
 
-  it("Test 6 — max retries exhausted: all followUps empty", async () => {
+  it("max retries exhausted: all followUps empty", async () => {
     const messages = emptyAfterToolBatch(2);
     const session = makeSession(messages, ["", ""]);
 
@@ -284,7 +284,7 @@ describe("runPostBatchContinuation", () => {
     expect(session.followUp).toHaveBeenCalledTimes(2);
   });
 
-  it("Test 7 — structured Pino INFO logs: decision-log on entry + per-attempt log", async () => {
+  it("structured Pino INFO logs: decision-log on entry + per-attempt log", async () => {
     const messages = emptyAfterToolBatch(3);
     const session = makeSession(messages, ["recovered text"]);
     const logger = mockLogger();
@@ -308,11 +308,11 @@ describe("runPostBatchContinuation", () => {
     expect(decisionCall![0]).toMatchObject({
       submodule: "executor.post-batch-continuation",
       decision: "fire",
-      continuationReason: "empty_after_tool_batch", // T1.2: de-collided from the terminal settle `reason`
+      continuationReason: "empty_after_tool_batch", // de-collided from the terminal settle `reason`
       priorToolCallCount: 3,
       priorToolNames: ["agents_manage"],
     });
-    // T1.2: no bare `reason` field — it collided with the terminal settle reason across log lines.
+    // No bare `reason` field — it collided with the terminal settle reason across log lines.
     expect(decisionCall![0].reason).toBeUndefined();
 
     // Per-attempt INFO log.
@@ -330,7 +330,7 @@ describe("runPostBatchContinuation", () => {
     });
   });
 
-  it("Test 8 — disabled via enabled:false OR maxRetries:0", async () => {
+  it("disabled via enabled:false OR maxRetries:0", async () => {
     // 8a: enabled=false
     const messages8a = emptyAfterToolBatch(2);
     const session8a = makeSession(messages8a, ["should not run"]);
@@ -370,7 +370,7 @@ describe("runPostBatchContinuation", () => {
     expect(session8b.followUp).not.toHaveBeenCalled();
   });
 
-  it("Test 9 — returns err({kind:'followup_error'}) when session.followUp throws", async () => {
+  it("returns err({kind:'followup_error'}) when session.followUp throws", async () => {
     const messages = emptyAfterToolBatch(2);
     /* eslint-disable @typescript-eslint/no-explicit-any */
     const session: any = {

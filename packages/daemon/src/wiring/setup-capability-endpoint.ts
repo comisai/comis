@@ -3,13 +3,13 @@
 // tool, invalid/expired/revoked/audience-mismatch lease) THROW as the
 // authentication-boundary contract — the socket server's catch converts the
 // throw to a content-free JSON error to the jailed client (mirrors how the
-// dispatch sink + assertNotAgentOrigin throw their denials). ENDPOINT-02.
+// dispatch sink + assertNotAgentOrigin throw their denials).
 /**
  * `createCapabilityEndpoint` — the loopback capability endpoint that
- * authenticates the jailed script surface (ENDPOINT-01 / ENDPOINT-02; v8 §4.2).
+ * authenticates the jailed script surface.
  * A NEAR-CLONE of the in-process `createAgentRpcCall`: validate the bearer
- * (timing-safe, not-expired, not-revoked, audience-bound — 211-01) → STRIP the
- * attacker-controlled wire `_X` fields (ORIGIN-02) → inject `_capabilities` (from
+ * (timing-safe, not-expired, not-revoked, audience-bound) → STRIP the
+ * attacker-controlled wire `_X` fields → inject `_capabilities` (from
  * the VALIDATED LEASE, not `resolveAutonomy`) + `_agentId` → dispatch through the
  * SAME `createRpcDispatch` sink. Unlike the in-process path it MUST strip before
  * injecting (the params are RAW WIRE BYTES, not typed tool args).
@@ -23,13 +23,13 @@
  * order is load-bearing: a forged inbound `_X` is dropped first, so the injected
  * lease values are the ONLY ones the sink sees (the endpoint adds no new INTERNAL_FIELD_NAME).
  *
- * Phase 212 adds the `tool.invoke` ONE-ROUTE dispatch (`handleToolInvoke`): gates in
- * v8 §6.2 order — cap-map allow-list (unmapped → CapabilityDeniedError) → denylist →
- * deny-by-origin → requireCapability → route. The route split (Gap 1): `{kind:"rpc"}`
+ * The `tool.invoke` ONE-ROUTE dispatch (`handleToolInvoke`) gates in a fixed
+ * order — cap-map allow-list (unmapped → CapabilityDeniedError) → denylist →
+ * deny-by-origin → requireCapability → route. The route split: `{kind:"rpc"}`
  * tools strip-then-inject to the SAME sink; `{kind:"executor"}` tools route to the
  * injected `toolInvokeExecutor`. The lease audience binds tool.invoke to
- * TOOL_CAPABILITY_MAP[innerTool] (Pitfall 2) — a captured lease cannot dispatch a
- * tool whose cap it lacks. Phase 216 (HIGH-1): an OUTWARD message method gets a
+ * TOOL_CAPABILITY_MAP[innerTool] — a captured lease cannot dispatch a
+ * tool whose cap it lacks. An OUTWARD message method gets a
  * monotonic `_outwardStepIndex` allocated here (the exactly-once ledger key).
  *
  * @module
@@ -52,16 +52,16 @@ import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
-// AUDIT-01 (Phase 215): the per-cap audit emitter — the socket chokepoint has
+// The per-cap audit emitter — the socket chokepoint has
 // the REAL lease, so it emits the FULL tuple (leaseId + parentLeaseId present)
 // for an allowed AND a denied tool.invoke (handleToolInvoke) + direct cap-gated
-// method (dispatchAudited, CR-01). Reuses the shared helper (no asymmetry vs the
-// in-process leg, which omits leaseId — G1).
+// method (dispatchAudited). Reuses the shared helper (no asymmetry vs the
+// in-process leg, which omits leaseId).
 import { emitCapabilityAudit, type EmitCapabilityAuditDeps } from "../api/shared/emit-capability-audit.js";
 
 /**
  * Max bytes a single connection may buffer before a newline-terminated request
- * is seen (WR-01). The wire is one `{ bearer, method, params }` JSON line per
+ * is seen. The wire is one `{ bearer, method, params }` JSON line per
  * connection; a well-behaved client sends well under this. A client that
  * connects and never sends a `\n` would otherwise grow `buf` without bound
  * (memory pressure / OOM vector from a jailed client). On overflow the socket
@@ -72,22 +72,22 @@ const MAX_LINE_BYTES = 64 * 1024;
 
 /**
  * The cron-MUTATION RPC methods the cap endpoint re-identifies to the lease's
- * agent (RATE-02 cron self-ownership) — the `orch:cron` audience set. The shared
+ * agent (cron self-ownership) — the `orch:cron` audience set. The shared
  * `cron-handlers.ts` reads `agentId`/`_agentId` from params for BOTH the agent AND
  * the operator-gateway path, so forcing `agentId := lease.agentId` MUST happen
  * HERE (the only path where the lease is the authoritative identity) — never in
- * the handler (Pitfall 3: that would break operator `cron.list --agentId "*"`).
+ * the handler (that would break operator `cron.list --agentId "*"`).
  * `cron.list` is NOT here: it is `ungated` (a read view) and out of the lease's
  * `orch:cron` audience, so a cap-lease cannot reach it at all (the validate denies
  * it) — there is nothing for the endpoint to re-identify.
  */
 const CRON_MUTATION_METHODS: ReadonlySet<string> = new Set(["cron.add", "cron.update", "cron.run", "cron.remove"]);
 
-/** The OUTWARD message methods (Phase 216, HIGH-1) — the genuinely-outward subset
- *  (§3.5) that gets a monotonic `_outwardStepIndex` allocated HERE (the trusted
- *  chokepoint, stripped-then-re-injected per NEW-3) so a second send in one run
- *  gets a UNIQUE index (0 then 1) and the Plan-05 wrap does not collide+drop it
- *  (inverting ONCE-02). Mirrors the wrapOutwardSend call sites in message-handlers.ts. */
+/** The OUTWARD message methods — the genuinely-outward subset
+ *  that gets a monotonic `_outwardStepIndex` allocated HERE (the trusted
+ *  chokepoint, stripped-then-re-injected) so a second send in one run
+ *  gets a UNIQUE index (0 then 1) and the outward-send wrap does not collide and
+ *  drop it. Mirrors the wrapOutwardSend call sites in message-handlers.ts. */
 const OUTWARD_MESSAGE_METHODS: ReadonlySet<string> = new Set(["message.send", "message.reply", "message.react"]);
 
 /**
@@ -201,7 +201,7 @@ function denylistToolForMethod(method: string): string | undefined {
 
 /** Deps for {@link createCapabilityEndpoint}. */
 export interface CapabilityEndpointDeps {
-  /** The daemon-wide LeaseManager (211-01) — validates the bearer per call. */
+  /** The daemon-wide LeaseManager — validates the bearer per call. */
   leaseManager: LeaseManager;
   /**
    * The single RPC dispatch sink (createRpcDispatch). Injecting `_agentId`
@@ -210,38 +210,38 @@ export interface CapabilityEndpointDeps {
    */
   rpcCall: RpcCall;
   /**
-   * The daemon logger for socket-boundary observability (WR-02 / §2.7). A cap
+   * The daemon logger for socket-boundary observability. A cap
    * socket is a boundary crossing, so a post-listen server error and a
    * per-connection error must be reconstructable from logs (with `err` +
    * `errorKind` + `hint`) rather than silently swallowed. Optional so the
    * deny-matrix unit tests can construct the endpoint without a logger; when
-   * absent the handlers degrade to a no-op (the pre-WR-02 behavior).
+   * absent the handlers degrade to a no-op (no boundary logging).
    */
   logger?: ComisLogger;
   /**
    * The daemon-side executor for the `{kind:"executor"}` tools of `tool.invoke`
-   * (read/grep/find/ls/jq + web_search/web_fetch — Gap 1, Phase 212). Constructed
-   * + injected in Plan 05's wiring. Optional so the rpc-route + deny-matrix unit
+   * (read/grep/find/ls/jq + web_search/web_fetch). Constructed
+   * + injected by the daemon wiring. Optional so the rpc-route + deny-matrix unit
    * tests can construct the endpoint without it; a `tool.invoke` whose route is
    * `{kind:"executor"}` requires it (a clear throw when absent — never a silent
    * no-op, since that would drop a legitimately-authorized call).
    */
   toolInvokeExecutor?: ExecuteToolInvoke;
   /**
-   * The daemon-wide bounded-autonomy service (Phase 213). `handleCapCall`
-   * consults it for the per-root + per-socket rate limit (RATE-01) and the cron
-   * self-ownership cap via `cronCount` (RATE-02). Optional so the deny-matrix unit
+   * The daemon-wide bounded-autonomy service. `handleCapCall`
+   * consults it for the per-root + per-socket rate limit and the cron
+   * self-ownership cap via `cronCount`. Optional so the deny-matrix unit
    * tests can construct the endpoint without it (the rate-limit + cron-cap limbs
    * are then inert — the endpoint still validates + strips + dispatches).
    */
   boundedAutonomy?: BoundedAutonomy;
   /**
-   * The resolved autonomy posture (Phase 213) — the `cronSelfMax` source the cron
+   * The resolved autonomy posture — the `cronSelfMax` source the cron
    * self-ownership cap reads. Optional alongside {@link boundedAutonomy}.
    */
   autonomyConfig?: ResolvedAutonomy;
   /**
-   * AUDIT-01 (Phase 215): the structural deps the per-cap audit emitter reads —
+   * The structural deps the per-cap audit emitter reads —
    * `container.eventBus` (for the audit:event + capability:audited emits) +
    * `container.config.tenantId` (the audit tenant scope). The daemon passes the
    * same `AppContainer` the dispatch sink already holds (the endpoint dispatches
@@ -252,11 +252,11 @@ export interface CapabilityEndpointDeps {
    * unaffected). NEVER fabricate when absent — degrade to no-audit, not a fake.
    */
   container?: EmitCapabilityAuditDeps["container"];
-  /** Phase 216 (HIGH-1): the durable-run store — the SOLE source of the monotonic
+  /** The durable-run store — the SOLE source of the monotonic
    *  `_outwardStepIndex` (allocateOutwardStep). For an OUTWARD message method the
    *  endpoint allocates a UNIQUE per-root index + injects it beside `_agentId` so the
-   *  Plan-05 wrap reads distinct `(rootRunId, stepIndex)` per send. Optional; absent ⇒
-   *  no index injected → the wrap is a pass-through (byte-identical pre-216). */
+   *  outward-send wrap reads distinct `(rootRunId, stepIndex)` per send. Optional; absent ⇒
+   *  no index injected → the wrap is a pass-through (no exactly-once ledger). */
   durableRuns?: DurableRunPort;
 }
 
@@ -290,13 +290,13 @@ export interface CapabilityEndpoint {
  */
 export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): CapabilityEndpoint {
   const { leaseManager, rpcCall, boundedAutonomy } = deps;
-  // Scope a submodule logger for the socket boundary (WR-02). `child` is
+  // Scope a submodule logger for the socket boundary. `child` is
   // undefined-safe via the optional chain — the deny-matrix unit tests omit the
   // logger, so the socket handlers degrade to no-ops there.
   const log = deps.logger?.child({ submodule: "capability-endpoint" });
 
   /**
-   * RATE-01: consult the per-root + per-socket rate limiter for a validated
+   * Consult the per-root + per-socket rate limiter for a validated
    * lease. Throws (fail-closed, content-free) when the limiter trips. Inert when
    * `boundedAutonomy` is absent (the deny-matrix unit tests). The cap socket is
    * the agent's only orchestrate egress, so this bounds a `for(;;) spawn()` /
@@ -315,16 +315,16 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
   }
 
   /**
-   * The `tool.invoke` one-route dispatch (DISPATCH-01/02; v8 §6.2) — the
+   * The `tool.invoke` one-route dispatch — the
    * generalization of `handleCapCall`'s per-method validate. It is NOT a second
-   * gate: it reuses the lease validate (audience-bound to the INNER tool, Task 1)
-   * + strip-then-inject (S2/CR-01) + the shipped sink, so deny-by-origin +
+   * gate: it reuses the lease validate (audience-bound to the INNER tool)
+   * + strip-then-inject + the shipped sink, so deny-by-origin +
    * `requireCapability` fire automatically on the rpc route. The two NEW pieces
    * are the tool→cap allow-list lookup and the tool→route split (rpc vs the
-   * daemon-side executor, Gap 1). Gates in ORDER:
-   *   1. cap-map allow-list — an unmapped tool → CapabilityDeniedError (DISPATCH-02).
-   *   2. denylist — defense-in-depth (no cap-mapped tool is denylisted by the
-   *      Plan-01 module-load assertion, but the pre-check is kept).
+   * daemon-side executor). Gates in ORDER:
+   *   1. cap-map allow-list — an unmapped tool → CapabilityDeniedError (default-deny).
+   *   2. denylist — defense-in-depth (the cap-map's own module-load assertion
+   *      already guarantees no cap-mapped tool is denylisted, but the pre-check is kept).
    *   3. deny-by-origin — AUTOMATIC on the rpc route (the injected `_agentId`
    *      triggers `assertNotAgentOrigin` for any ADMIN_METHODS at the sink).
    *   4. requireCapability — the dispatch-layer gate (complementary to the
@@ -332,7 +332,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
    *   5. route — `{kind:"rpc"}` strips-then-injects and forwards to the sink;
    *      `{kind:"executor"}` calls the injected daemon-side executor.
    *
-   * CRITICAL (S1): NO second capability gate beyond `requireCapability`, and the
+   * CRITICAL: NO second capability gate beyond `requireCapability`, and the
    * MCP export-policy is NOT the gate (the anti-pattern — only 3 tools are the
    * `safe` policy, incl. browser; it would reject orch:read + admit browser). The
    * cap-map + the denylist are the gates.
@@ -351,7 +351,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
   ): Promise<unknown> {
     // 4. requireCapability (3 deny-by-origin is automatic on the rpc route): the
     //    plain membership gate — no wildcard, least-privilege by construction.
-    //    AUDIT-01 (215): a CapabilityDeniedError here is a first-class audited
+    //    A CapabilityDeniedError here is a first-class audited
     //    deny carrying the FULL lease tuple (the socket path has the real lease).
     try {
       requireCapability(lease.caps, cap);
@@ -375,18 +375,18 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     const route = TOOL_ROUTE_MAP[tool as keyof typeof TOOL_ROUTE_MAP];
     const result =
       route.kind === "rpc"
-        ? // S2 strip-then-inject (CR-01): the inner args are FULLY attacker-controlled
+        ? // Strip-then-inject: the inner args are FULLY attacker-controlled
           // (the jailed script). Strip every forged `_X` BEFORE injecting the trusted
           // lease-derived identity, so the lease's `_agentId` is the ONLY one the sink
           // sees (self-scoping) and deny-by-origin is sound for any ADMIN_METHODS.
-          // Phase 217: no `_autonomyMode` here — the chokepoint server-resolves the jail-leg mode (see the general dispatch below).
+          // No `_autonomyMode` here — the chokepoint server-resolves the jail-leg mode (see the general dispatch below).
           await rpcCall(route.method, {
             ...stripInternalFields(args),
             _agentId: lease.agentId,
             _capabilities: lease.caps,
           })
-        : // Executor route (Gap 1): the in-process builtins + the daemon-side web pair.
-          // The executor is injected (Plan 05 wires it); a legitimately-authorized call
+        : // Executor route: the in-process builtins + the daemon-side web pair.
+          // The executor is injected by the daemon wiring; a legitimately-authorized call
           // must NOT silently no-op if it is absent — throw a clear wiring error.
           await (async () => {
             if (deps.toolInvokeExecutor === undefined) {
@@ -398,11 +398,11 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
               agentId: lease.agentId,
               caps: lease.caps,
               // Thread the tree-stable rootRunId so the budgetHook charges the flat web
-              // call against the right per-root meter (Phase 213 BUDGET-03).
+              // call against the right per-root meter.
               rootRunId: lease.rootRunId,
             });
           })();
-    // AUDIT-01 (215): the call was authorized AND the route resolved — emit the
+    // The call was authorized AND the route resolved — emit the
     // allow with the FULL lease tuple (the spawn-tree's per-node source with the
     // real parent edge). Content-free: tool NAME + cap + ids ONLY, never args.
     if (deps.container !== undefined) {
@@ -422,7 +422,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
   }
 
   /**
-   * AUDIT-01 (215, CR-01): dispatch a DIRECT cap-gated method (the cron + final
+   * Dispatch a DIRECT cap-gated method (the cron + final
    * direct branches of `handleCapCall`) THROUGH the sink while emitting the
    * per-cap audit at THIS socket chokepoint, mirroring `handleToolInvoke`. These
    * branches previously injected `_agentId` but no `_callerSessionKey`, so the
@@ -478,12 +478,12 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     bearer: string,
     method: string,
     params: Record<string, unknown>,
-    // RATE-01: a per-connection id from the socket handler (monotonic counter).
+    // A per-connection id from the socket handler (monotonic counter).
     // Defaults to a single shared key so the deny-matrix unit tests (which call
     // handleCapCall directly) still exercise the per-root limb.
     socketId = "default",
   ): Promise<unknown> {
-    // Denylist pre-check (ENDPOINT-02): a *_manage / gateway tool is never
+    // Denylist pre-check: a *_manage / gateway tool is never
     // delegatable, independent of the lease's caps. Denied BEFORE validate so a
     // valid lease can never reach a management surface.
     const denylistTool = denylistToolForMethod(method);
@@ -491,12 +491,12 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       throw new Error(`Tool ${denylistTool} is denylisted and not reachable from the capability endpoint`);
     }
 
-    // tool.invoke is the one-route dispatch (Phase 212): extract the inner
-    // {tool, args} and thread the inner tool into the lease audience (Task 1 —
-    // validate binds tool.invoke to TOOL_CAPABILITY_MAP[innerTool]).
+    // tool.invoke is the one-route dispatch: extract the inner
+    // {tool, args} and thread the inner tool into the lease audience
+    // (validate binds tool.invoke to TOOL_CAPABILITY_MAP[innerTool]).
     if (method === "tool.invoke") {
       const tool = typeof params.tool === "string" ? params.tool : "";
-      // IN-02: an array passes `typeof === "object"`, so without the
+      // An array passes `typeof === "object"`, so without the
       // `!Array.isArray` guard `args: [...]` would flow on as an index-keyed
       // object (`{0:…,1:…}`) the tool sink mis-reads. Treat a non-plain-object
       // `args` (array / null / scalar) as empty named args.
@@ -504,12 +504,12 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         typeof params.args === "object" && params.args !== null && !Array.isArray(params.args)
           ? (params.args as Record<string, unknown>)
           : {};
-      // 1. Allow-list FIRST (DISPATCH-02 default-deny): an unmapped tool is
+      // 1. Allow-list FIRST (default-deny): an unmapped tool is
       //    undispatchable → CapabilityDeniedError. This precedes the lease
       //    validate so an unmapped tool surfaces the dispatch default-deny (a
       //    typed capability denial) rather than the generic audience-mismatch
       //    Error — the cap-map is the authority on what is dispatchable; the
-      //    lease audience (Task 1) is the complementary replay defense for a
+      //    lease audience is the complementary replay defense for a
       //    MAPPED tool whose cap the lease lacks.
       const cap = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
       if (cap === undefined) {
@@ -520,20 +520,20 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       if (SUB_AGENT_TOOL_DENYLIST.has(tool)) {
         throw new Error(`Tool ${tool} is denylisted and not reachable from the capability endpoint`);
       }
-      // 3. Validate the lease, AUDIENCE-bound to the inner tool's cap (Task 1) —
+      // 3. Validate the lease, AUDIENCE-bound to the inner tool's cap —
       //    a captured lease cannot dispatch a tool whose cap it lacks.
       const toolLease: LeaseInfo | null = leaseManager.validate(bearer, "tool.invoke", tool);
       if (!toolLease) {
         throw new Error("lease invalid/expired/revoked or audience mismatch");
       }
-      // RATE-01: rate-limit AFTER the lease validate (so an unauthenticated call
+      // Rate-limit AFTER the lease validate (so an unauthenticated call
       // is denied first) — bounds the per-root + per-socket call rate.
       consultRateLimit(toolLease, socketId);
       return handleToolInvoke(toolLease, tool, cap, innerArgs);
     }
 
     // Validate the bearer against the lease (timing-safe + not-expired +
-    // not-revoked + AUDIENCE-bound to the requested method — 211-01). The
+    // not-revoked + AUDIENCE-bound to the requested method). The
     // requested method is threaded into validate so a captured lease cannot be
     // replayed at a foreign method (RFC 8707).
     const lease: LeaseInfo | null = leaseManager.validate(bearer, method);
@@ -541,10 +541,10 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       throw new Error("lease invalid/expired/revoked or audience mismatch");
     }
 
-    // RATE-01: rate-limit AFTER the lease validate (an unauthenticated call is
+    // Rate-limit AFTER the lease validate (an unauthenticated call is
     // denied first), per-root + per-socket — bounds a for(;;) spawn() / cron-storm.
     consultRateLimit(lease, socketId);
-    // RATE-01: connection-churn cap (one request per connection, so this counts a
+    // Connection-churn cap (one request per connection, so this counts a
     // reconnect-storm per root). Denies a flood of fresh cap-socket connections.
     if (boundedAutonomy) {
       const churn = boundedAutonomy.tryChurn(lease.rootRunId);
@@ -557,8 +557,8 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       }
     }
 
-    // RATE-02 cron self-ownership: a cron mutation is re-identified to the lease's
-    // agent HERE (the only path where the lease is authoritative — Pitfall 3, the
+    // Cron self-ownership: a cron mutation is re-identified to the lease's
+    // agent HERE (the only path where the lease is authoritative — the
     // shared cron-handlers.ts is NOT touched). Reject system_event (only agent_turn
     // is self-ownable), cap at cronSelfMax via the NAMED boundedAutonomy.cronCount
     // accessor (the provider daemon.ts binds to CronScheduler.getJobs().length —
@@ -581,7 +581,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         );
         throw new CapabilityDeniedError("orch:cron");
       }
-      // AUDIT-01 (CR-01): via dispatchAudited so the socket cron mutation emits the per-cap audit (previously unaudited — no _callerSessionKey).
+      // Via dispatchAudited so the socket cron mutation emits the per-cap audit.
       return dispatchAudited(
         method,
         {
@@ -595,7 +595,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       );
     }
 
-    // ORIGIN-02 at the socket boundary (CR-01): the wire `params` are FULLY
+    // At the socket boundary the wire `params` are FULLY
     // attacker-controlled — the jailed/untrusted script is precisely what this
     // lease authenticates. STRIP every dispatcher-internal `_X` field
     // (INTERNAL_FIELD_NAMES) the wire carried BEFORE injecting the trusted ones,
@@ -613,19 +613,19 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // _agentId (Pitfall 2): makes assertNotAgentOrigin fire for admin methods.
     // _capabilities: makes each handler's requireCapability fire (no second gate
     // here — the endpoint passes the lease caps through verbatim and lets the
-    // shipped per-handler gate decide). AUDIT-01 (CR-01): via dispatchAudited so a
+    // shipped per-handler gate decide). Via dispatchAudited so a
     // direct cap-gated method (session.spawn/graph.execute/message.send/skills.*)
     // emits the per-cap audit (allow + a downstream cap-deny) with the real lease
-    // tuple — previously unaudited (no _callerSessionKey → dispatch-closure audit
-    // unreachable), silently dropping the spawn-tree's most important edges.
-    // HIGH-1 (Phase 216): for an OUTWARD message method, allocate a UNIQUE monotonic
+    // tuple — without it the dispatch-closure audit is unreachable (no
+    // _callerSessionKey), silently dropping the spawn-tree's most important edges.
+    // For an OUTWARD message method, allocate a UNIQUE monotonic
     // `_outwardStepIndex` (the SOLE source) + inject it beside `_agentId` (strip-then-
-    // inject — stripInternalFields above dropped any forged inbound value, NEW-3). Two
+    // inject — stripInternalFields above dropped any forged inbound value). Two
     // sends in one run get 0 then 1; absent store / non-outward method ⇒ no index.
     const outwardStep = await allocateOutwardStepIfNeeded(method, lease.rootRunId);
-    // Phase 217 (UNATT-01/EVICT-02): the jail leg injects NO `_autonomyMode` — the
+    // The jail leg injects NO `_autonomyMode` — the
     // Lease carries caps/agentId/rootRunId but not mode. The rpc-dispatch chokepoint
-    // (Plan 05) server-resolves THIS leg's mode from deps.agents[agentOrigin].autonomy
+    // server-resolves THIS leg's mode from deps.agents[agentOrigin].autonomy
     // (absent ⇒ server resolve ⇒ fail-closed "default"), kept in lockstep with the
     // in-process leg's INJECTED mode there — NOT by widening the Lease schema (wrong layer).
     return dispatchAudited(
@@ -640,7 +640,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     );
   }
 
-  /** HIGH-1: allocate the monotonic outward-send index for an OUTWARD message method,
+  /** Allocate the monotonic outward-send index for an OUTWARD message method,
    *  else `undefined` (no index → pass-through). Best-effort — an allocation error
    *  WARN-logs + returns undefined (never blocks the send, never substitutes a colliding 0). */
   async function allocateOutwardStepIfNeeded(method: string, rootRunId: string): Promise<number | undefined> {
@@ -659,12 +659,12 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
   // --- 0600 unix socket server (mirrors mitm-broker.startUnixSocket lifecycle) ---
   let server: net.Server | null = null;
   let boundSocketPath: string | null = null;
-  // Track live connections so stopSocket can destroy them (WR-01): net.Server
+  // Track live connections so stopSocket can destroy them: net.Server
   // .close() only stops accepting NEW connections and waits for existing ones to
   // drain — a single stuck client (connected, never sends a `\n`) would wedge
   // shutdown forever. Mirrors mitm-broker's `openSockets` set.
   const openSockets = new Set<net.Socket>();
-  // RATE-01: a monotonic per-connection id is the per-socket rate-limit key. One
+  // A monotonic per-connection id is the per-socket rate-limit key. One
   // request per connection, so this distinguishes a burst of fresh connections.
   let connectionSeq = 0;
 
@@ -678,13 +678,12 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         });
         // Minimal newline-delimited JSON wire: one `{ bearer, method, params }`
         // request per connection → one JSON `{ result }` / `{ error }` reply.
-        // Phase 212 (the jailed SDK client) finalizes the wire format; for 211
-        // the routing + the 0600 chmod is the deliverable.
+        // The jailed SDK client speaks this same wire format.
         let buf = "";
         socket.setEncoding("utf8");
         socket.on("data", (chunk: string) => {
           buf += chunk;
-          // WR-01: bound the per-connection receive buffer. A client that never
+          // Bound the per-connection receive buffer. A client that never
           // sends a newline would otherwise grow `buf` without bound (OOM vector
           // from a jailed client). Fail closed — destroy the socket on overflow.
           if (buf.length > MAX_LINE_BYTES) {
@@ -720,7 +719,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         });
         socket.on("error", (err: Error) => {
           // A jailed client that disconnects mid-write must not crash the daemon —
-          // but the error must not vanish either (WR-02 / §2.7). Log at debug
+          // but the error must not vanish either. Log at debug
           // (a client-side disconnect is routine, not a daemon fault) with the
           // canonical err/errorKind/hint so a boundary failure is reconstructable.
           log?.debug(
@@ -730,7 +729,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         });
       });
       server = srv;
-      // WR-02: a PERSISTENT server-error logger. `srv.on("error", reject)` below
+      // A PERSISTENT server-error logger. `srv.on("error", reject)` below
       // is only meaningful until `listen` resolves (after that `reject` is a
       // settled no-op); a post-listen server error would otherwise be wholly
       // unobserved. Node fans an "error" event to BOTH listeners, so the
@@ -773,7 +772,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         return;
       }
       server = null;
-      // WR-01: destroy every tracked connection FIRST so a stuck client (one
+      // Destroy every tracked connection FIRST so a stuck client (one
       // that connected but never sent a `\n`) cannot wedge `srv.close()` — which
       // otherwise waits for all open connections to drain. Mirrors mitm-broker's
       // stop(): destroy-then-close.

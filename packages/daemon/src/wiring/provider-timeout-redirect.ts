@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Provider-Timeout Redirect WARN (LAT-03 option (b)): `providers.entries.<id>.timeoutMs`
+ * Provider-Timeout Redirect WARN: `providers.entries.<id>.timeoutMs`
  * is config-echo only — its sole consumer is the daemon provider-config echo
  * (api/provider-handlers.ts); NO completion path reads it. Wiring it as a real
  * transport timeout would re-introduce a 120s whole-turn race STRICTER than the
- * 180s race Phase 177 killed (the zod default 120_000 is indistinguishable from
- * an operator-set 120_000 post-parse — Critical Finding 5), so the honest fate
+ * previously-removed 180s race (the zod default 120_000 is indistinguishable from
+ * an operator-set 120_000 post-parse), so the honest fate
  * is: re-document the knob and redirect operators who set it.
  *
  * When an operator sets a non-default value, this module WARNs ONCE per
  * provider per boot, naming the dead key, both numbers, and the knob that
  * actually governs completion deadlines
  * (`agents.<id>.promptTimeout.promptTimeoutMs` — stall budget; makespan =
- * × stallCeilingMultiplier). WARN-only, fail-open (I1): the daemon call site
+ * × stallCeilingMultiplier). WARN-only, fail-open: the daemon call site
  * wraps it in try/catch, and the loop is defensive over possibly-undefined
  * entries.
  *
@@ -21,7 +21,7 @@
  * JSDoc + config-yaml.mdx row no longer lie.
  *
  * Shape: served-window-comparator.ts (once-per-boot-per-provider latch,
- * structural logger, I7 hint with knob names + numbers — never env VALUES).
+ * structural logger, hint with knob names + numbers — never env VALUES).
  *
  * @module
  */
@@ -52,7 +52,7 @@ export function resetProviderTimeoutRedirectWarnForTest(): void {
  * almost certainly meant `agents.<id>.promptTimeout.promptTimeoutMs`.
  *
  * Reads ONLY the numeric `timeoutMs` field from each entry (structural input
- * type) — never credentials fields (apiKeyName/headers/baseUrl), T-177-20.
+ * type) — never credentials fields (apiKeyName/headers/baseUrl).
  */
 export function warnOnProviderTimeoutRedirect(input: {
   providerEntries: Record<string, { timeoutMs?: number } | undefined>;
@@ -70,7 +70,7 @@ export function warnOnProviderTimeoutRedirect(input: {
         defaultTimeoutMs: PROVIDER_TIMEOUT_MS_DEFAULT,
         errorKind: "config" as const,
         submodule: "provider-timeout-redirect",
-        // Knob NAMES + numbers only — never credential/env VALUES (T-177-20).
+        // Knob NAMES + numbers only — never credential/env VALUES.
         hint:
           `providers.entries.${providerId}.timeoutMs (${String(configured)}) is not enforced on completion calls — ` +
           `the completion deadline is agents.<id>.promptTimeout.promptTimeoutMs (stall budget; ` +

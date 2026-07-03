@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * prefilterLanes — the RETR-04 pre-fusion security gate, extracted from memory-recall.ts
+ * prefilterLanes — the pre-fusion security gate, extracted from memory-recall.ts
  * (which is at the 800-line cap; mirrors the recall-provenance / recall-causal-lane
  * extractions). PURE, synchronous helper.
  *
- * RETR-04 / design §17 S6: the unified arbiter (Plan 03) ranks LTM T3/T4 candidates
+ * The unified arbiter ranks LTM T3/T4 candidates
  * against history by FUSED rank. A trust-excluded OR sub-floor memory must NEVER be
- * resurrected by a high fused rank, so BOTH the trust filter and the R3 baseFloor run
+ * resurrected by a high fused rank, so BOTH the trust filter and the baseFloor run
  * UPSTREAM of `fuse()` — on each candidate lane's results BEFORE fusion — not only on the
  * post-fusion ranked list. The downstream trust filter + baseFloor in memory-recall.ts are
  * RETAINED as defense in depth.
  *
- * Why baseFloor MUST be pre-fuse (RESEARCH Pitfall 2, proven by a bypass-attempt test):
+ * Why baseFloor MUST be pre-fuse (proven by a bypass-attempt test):
  * `fuse()` re-normalizes scores to the RRF rank scale, so a sub-floor candidate that is
  * rank-1 in its lanes emerges with a HIGH fused `score`. The downstream baseFloor reads
  * `ScoreBreakdown.base` (= the post-fuse `result.score`), which the inflation lifts above
@@ -22,12 +22,12 @@
  *
  * DEFAULT-OFF BYTE-IDENTITY: when every lane result is already trust-allowed AND the floor
  * is 0 (frontier/mid recency-first, unconfigured), each lane's results array is returned
- * UNCHANGED (same reference, same order), so fuse() sees exactly the lanes it saw pre-patch
- * and the fused output is byte-identical (LOCKED #2). A lane is rebuilt only when the gate
+ * UNCHANGED (same reference, same order), so fuse() sees exactly the lanes it would see
+ * without the gate and the fused output is byte-identical. A lane is rebuilt only when the gate
  * actually drops an entry (a disallowed trust level, or — when a floor is enforced — a
  * sub-floor score).
  *
- * CONTENT-FREE OBSERVABILITY (§2.7): the helper returns the dropped entry IDS only (never
+ * CONTENT-FREE OBSERVABILITY (AGENTS.md §2.7): the helper returns the dropped entry IDS only (never
  * content or query text), so the caller's recall trace can record the upstream DROP count /
  * ids the same way the downstream trust filter captures `trustFilteredIds`.
  *
@@ -42,7 +42,7 @@ import type { FusionLane } from "./fuse.js";
 import type { ScoreBreakdown } from "./score.js";
 
 /**
- * R3 base-score floor decision (T-153-poison mitigation), FAIL-CLOSED (WR-02).
+ * Base-score floor decision (poisoned-memory mitigation), FAIL-CLOSED.
  *
  * A memory survives the floor ONLY when its recorded pre-boost `breakdown.base`
  * is at or above `baseFloor` (boundary inclusive). A memory with NO breakdown
@@ -66,26 +66,26 @@ export function passesBaseFloor(
 }
 
 /**
- * RETR-04 / WR-02 (Phase 173): the class-default base floor enforced when the unified
+ * The class-default base floor enforced when the unified
  * arbiter is active (relevanceFirst) and the operator left baseFloor UNCONFIGURED (0).
  *
  * Mirrors SMALL_NANO_DEFAULT_BASE_FLOOR in scaffold-defaults.ts (the resolver already
  * resolves small/nano to 0.15; this is the recall gate's own fail-closed floor so an
  * unconfigured 0 reaching the gate under the arbiter is NEVER silently skipped). Kept in
- * sync with the resolver via the Phase-153 poison fixture (base=0.12 dropped, 0.40 kept).
+ * sync with the resolver via the shared poison fixture (base=0.12 dropped, 0.40 kept).
  */
 export const RELEVANCE_FIRST_DEFAULT_BASE_FLOOR = 0.15 as const;
 
 /**
- * Resolve the effective R3 base floor (WR-02 fail-closed, arbiter-scoped). Pure.
+ * Resolve the effective base floor (fail-closed, arbiter-scoped). Pure.
  *
  * Precedence:
  *   • explicit operator floor (configuredBaseFloor > 0) → always wins (every class);
  *   • relevanceFirst (arbiter active) AND unconfigured (0) → the class default 0.15
- *     (an arbiter that ranks LTM against history needs the floor enforced — the WR-02
- *     fail-open closure, design §17 S6);
- *   • otherwise (frontier/mid recency-first, unconfigured) → 0 (filter skipped,
- *     byte-identical to v2.14, LOCKED #2).
+ *     (an arbiter that ranks LTM against history needs the floor enforced — an
+ *     unconfigured 0 must not silently disable the security gate);
+ *   • otherwise (frontier/mid recency-first, unconfigured) → 0 (filter skipped —
+ *     the un-gated pipeline, byte-identical).
  *
  * @returns the floor to enforce; `0` means "no floor — skip the filter".
  */
@@ -193,7 +193,7 @@ export function gateLanes(
 }
 
 /**
- * §2.7 instrumentation for the new pre-fusion security boundary — CONTENT-FREE (counts +
+ * Boundary instrumentation (AGENTS.md §2.7) for the pre-fusion security gate — CONTENT-FREE (counts +
  * booleans only, NEVER memory bodies or query text). DEBUG (N-per-recall internal stage),
  * emitted only when the gate actually dropped a candidate so a clean corpus stays silent.
  * Makes a pre-fusion poisoning drop diagnosable from logs alone.

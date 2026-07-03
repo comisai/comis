@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the pure bounded digest/diff read selector
- * (terminal-read-digest.ts) — READ-01, design §4 Phase B / §7.1 (R3 RESOLVED).
- *
- * RED-first: `terminal-read-digest.ts` does not exist when this file is first
- * committed — the import fails, every case is RED. The production module turns
- * them GREEN.
+ * Unit tests for the pure bounded digest/diff read selector
+ * (terminal-read-digest.ts).
  *
  * `boundedReadDigest(view, mode, byteCap)` is a PURE total selector over a
  * single already-rendered read view ({screen, diff?}): it answers "what bounded
@@ -14,24 +10,24 @@
  * `diff` mode that returns ONLY the changed rows (`firstChangedRow..lastChangedRow`
  * from the SHIPPED {@link diffSnapshot}, which the worker already attaches as
  * `view.diff`), and a `full` opt-in. Every mode passes through the byte cap so an
- * over-cap result is CLIPPED with a `truncations` breadcrumb — never a silent trim
- * (I7). At 40h a drive is woken thousands of times; each read must stay cheap +
+ * over-cap result is CLIPPED with a `truncations` breadcrumb — never a silent trim.
+ * At 40h a drive is woken thousands of times; each read must stay cheap +
  * bounded.
  *
  * `screenDigestLine(view)` is the content-free one-liner the journal stores as
- * `lastScreenDigest` (I3): counts/coords (`<rows>r <cols>c, <changed> changed,
+ * `lastScreenDigest`: counts/coords (`<rows>r <cols>c, <changed> changed,
  * cursor@(x,y)`) plus a SHORT excerpt — content-free BY CONSTRUCTION (it never
- * dumps the whole grid; the caller, plan 06, runs `scrubSecretsFromText` over the
+ * dumps the whole grid; the caller — the woken-turn driver — runs `scrubSecretsFromText` over the
  * excerpt before it reaches the journal/notification).
  *
- * The behavior pinned here (the READ-01 table):
+ * The behavior pinned here (the selector table):
  *   - digest, under cap          → screen verbatim, truncated:false
  *   - digest, over READ_DIGEST_BYTE_CAP → clipped to cap, truncated:true,
- *                                  truncations === original.length − cap > 0 (I7)
+ *                                  truncations === original.length − cap > 0
  *   - diff {changed:true, 2..4}  → ONLY rows 2..4 of a 10-row screen (not the grid)
  *   - diff {changed:false, -1,-1}→ empty/no-change result, truncated:false
  *   - diff, view.diff undefined  → falls back to the digest (defensive, never throws)
- *   - full                       → screen as-is, still byte-capped (bounded I7)
+ *   - full                       → screen as-is, still byte-capped (bounded)
  *   - screenDigestLine           → counts/coords + short excerpt, NEVER the whole grid
  *   - totality                   → every mode side-effect-free + never throws on {screen:""}
  *
@@ -77,14 +73,14 @@ describe("boundedReadDigest — digest mode (the default bounded current-screen 
     expect(out.truncated).toBe(false);
   });
 
-  it("clips an over-cap screen + sets a truncations breadcrumb — never a silent trim (I7)", () => {
+  it("clips an over-cap screen + sets a truncations breadcrumb — never a silent trim", () => {
     const cap = 64;
     const screen = "x".repeat(cap + 40); // 40 bytes over the cap
     const out = boundedReadDigest({ screen }, "digest", cap);
 
     expect(out.truncated).toBe(true);
     expect(out.screen.length).toBeLessThanOrEqual(cap);
-    // The breadcrumb is the EXPLICIT count of dropped bytes — the I7 anti-silent-trim guarantee.
+    // The breadcrumb is the EXPLICIT count of dropped bytes — the anti-silent-trim guarantee.
     expect(out.truncations).toBe(screen.length - cap);
     expect(out.truncations).toBeGreaterThan(0);
   });
@@ -125,7 +121,7 @@ describe("boundedReadDigest — diff mode (only the changed rows, reusing view.d
     expect(out.truncated).toBe(false);
   });
 
-  it("still applies the byte cap + breadcrumb to a large changed-row range (I7)", () => {
+  it("still applies the byte cap + breadcrumb to a large changed-row range", () => {
     const cap = 32;
     // A single very-long changed row > cap.
     const screen = "a".repeat(cap + 20);
@@ -137,7 +133,7 @@ describe("boundedReadDigest — diff mode (only the changed rows, reusing view.d
   });
 });
 
-describe("boundedReadDigest — full mode (opt-in for diagnosis, still bounded I7)", () => {
+describe("boundedReadDigest — full mode (opt-in for diagnosis, still bounded)", () => {
   it("returns the screen as-is when under the cap", () => {
     const screen = rows(4);
     const out = boundedReadDigest({ screen }, "full", READ_DIGEST_BYTE_CAP);
@@ -159,7 +155,7 @@ describe("boundedReadDigest — full mode (opt-in for diagnosis, still bounded I
   });
 });
 
-describe("screenDigestLine — the content-free one-line journal digest (I3)", () => {
+describe("screenDigestLine — the content-free one-line journal digest", () => {
   it("names rows/cols/changed-row-count/cursor as counts + coords", () => {
     const line = screenDigestLine({
       screen: rows(3),
@@ -175,7 +171,7 @@ describe("screenDigestLine — the content-free one-line journal digest (I3)", (
     expect(line).toContain("cursor@(12,4)");
   });
 
-  it("does NOT dump the whole screen — only counts/coords + a SHORT excerpt (T-164-08)", () => {
+  it("does NOT dump the whole screen — only counts/coords + a SHORT excerpt", () => {
     // A screen with many distinct rows; the digest line must not contain them all.
     const screen = Array.from({ length: 40 }, (_, i) => `LINE_${i}_UNIQUE_TOKEN`).join("\n");
     const line = screenDigestLine({ screen, rows: 40, cols: 120, cursor: { x: 0, y: 0 } });

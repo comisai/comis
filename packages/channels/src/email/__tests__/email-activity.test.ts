@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Email DigestOnly renderer tests (§18.3 Email column).
+ * Email DigestOnly renderer tests.
  *
  * Email is the largest-cap, send-only channel — it wires the DigestOnly
  * strategy: buffer the trail in `apply`, send NOTHING mid-turn, send NOTHING on
@@ -10,8 +10,8 @@
  * `classifyEmailError` — the live adapter returns a bare nodemailer `Error`
  * (`err(error)`) on an SMTP send failure with no structured numeric code attached
  * to the returned object, so the classifier defaults to `internal` and reads the
- * error structurally ONLY (never renders the `.message` as activity text —
- * §19.3). `makeEmailRenderActions` maps `send` through it and returns
+ * error structurally ONLY (never renders the `.message` as activity
+ * text). `makeEmailRenderActions` maps `send` through it and returns
  * `not_supported` for edit/delete (Email is send-only);
  * `createEmailActivityRenderer` wires the `createDigestOnlyRenderer`
  * (no duplicated state machine, NO timer/clock — DigestOnly is purely end-of-turn).
@@ -24,8 +24,8 @@
  * single-use approval LINK is delivered separately — none of these 5 fixtures involves it.
  *
  * Golden fixtures assert via readFixture + toEqual (NEVER an auto-writing
- * inline/file snapshot, which self-heals a wrong fixture — Pitfall 3). DigestOnly
- * takes NO timer — there is no fake-timer advance anywhere here (Pitfall 5).
+ * inline/file snapshot, which self-heals a wrong fixture). DigestOnly
+ * takes NO timer — there is no fake-timer advance anywhere here.
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityRenderFrame, ActivityEvent, TurnOutcome, FinalDeliveryReceipt } from "@comis/core";
@@ -81,7 +81,7 @@ function okReceipt(deliveredAtMs: number): FinalDeliveryReceipt {
   return { ok: true, deliveredChunks: 1, lastChunkMessageId: "msg-final", deliveredAtMs };
 }
 
-// --- Task 1: classifyEmailError + makeEmailRenderActions -------------------
+// --- classifyEmailError + makeEmailRenderActions ----------------------------
 
 describe("classifyEmailError (structural only, never the SMTP message string)", () => {
   it("maps an unknown bare Error to internal carrying the cause (SMTP send returns a raw nodemailer Error)", () => {
@@ -199,9 +199,9 @@ describe("createEmailActivityRenderer (DigestOnly wiring)", () => {
     const send = sends[0];
     if (send && send.op === "send") {
       // Body is `[FAILED] {errorKind}` then one `• <label>` per trailed event.
-      // [Rule 1 — bug fix, quick-260528-nsv] Per-event bullet labels carry the
-      // running 🔧 marker (kind:"tool" + status:"running" non-failed events);
-      // the header text and no-stack-trace invariants are unchanged.
+      // Per-event bullet labels carry the running 🔧 marker (kind:"tool" +
+      // status:"running" non-failed events); the header text and
+      // no-stack-trace invariants are the load-bearing assertions.
       expect(send.text).toBe("[FAILED] dependency\n  • 🔧 fetch data\n  • 🔧 transform");
       // The raw SMTP error body is NEVER rendered; only the errorKind + labels.
       expect(send.text).not.toContain("ECONNREFUSED");
@@ -213,13 +213,14 @@ describe("createEmailActivityRenderer (DigestOnly wiring)", () => {
 
 // --- 5 golden fixtures (S4, S5, S10, S11, S12 only; S1-S3/S6/S7/S9 n/a; no S8) ---
 //
-// The §18.3 Email column requires ONLY S4, S5, S10, S11, S12 (footnote ¹: success
-// generates no email beyond the assistant reply, so S1-S3/S6/S7/S9 are n/a; the
-// approval S8 is deferred). Each scenario drives the renderer and asserts the
-// serialised FakeEmailAdapter call-log against the committed fixture (readFixture
-// + toEqual — never an auto-writing inline/file snapshot, which self-heals a wrong
-// fixture, Pitfall 3). 4 of the 5 are empty call-logs (silent on
-// success/recovered/silent); only S4 has content (the single failure digest).
+// Email needs ONLY S4, S5, S10, S11, S12: success generates no email beyond
+// the assistant reply, so S1-S3/S6/S7/S9 are n/a, and the approval scenario S8
+// is covered by email-activity.approval.test.ts. Each scenario drives the
+// renderer and asserts the serialised FakeEmailAdapter call-log against the
+// committed fixture (readFixture + toEqual — never an auto-writing inline/file
+// snapshot, which self-heals a wrong fixture). 4 of the 5 are empty call-logs
+// (silent on success/recovered/silent); only S4 has content (the single
+// failure digest).
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeEmailAdapter>): unknown {
@@ -230,7 +231,7 @@ function serialiseCallLog(fake: ReturnType<typeof createFakeEmailAdapter>): unkn
  * Drive the Email DigestOnly renderer through a scenario's frames + finalize and
  * RETURN the serialised call-log. DigestOnly takes NO timer/clock — the factory
  * call is `createEmailActivityRenderer(fake, "inbox-1")` with no deps, and there is
- * no delete to gate behind a deliveredAt timer (Pitfall 5: a fake-timer advance for
+ * no delete to gate behind a deliveredAt timer (a fake-timer advance for
  * Email is a warning sign). Each `it(...)` asserts `toEqual(readFixture("email", …))`
  * itself (never an auto-writing snapshot) so the on-disk fixture cannot self-heal.
  */
@@ -257,7 +258,7 @@ function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
 
 const okFinal = (deliveredAtMs: number): FinalDeliveryReceipt => okReceipt(deliveredAtMs);
 
-describe("Email golden fixtures (§18.3 DigestOnly rows — readFixture + toEqual)", () => {
+describe("Email golden fixtures (DigestOnly rows — readFixture + toEqual)", () => {
   it("S4 outright failure — ONE [FAILED] {errorKind} digest carrying the trail (• per event)", async () => {
     const log = await runScenario(
       [

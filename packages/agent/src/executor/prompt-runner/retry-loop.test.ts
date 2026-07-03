@@ -26,7 +26,7 @@ import type { RunPromptParams } from "./prompt-runner-types.js";
 import { runRetryLoop, stuckSessionResult } from "./retry-loop.js";
 
 // Module-level clock for executor-session-state's bounded session map (the
-// CR-02 session-lifetime strip once-gate lives there).
+// session-lifetime strip once-gate lives there).
 setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 // Mock ONLY runWithModelRetry (the behavioral dispatch tests below drive the
@@ -94,19 +94,19 @@ describe("retry-loop.ts — silent-failure delegation (dependency-direction)", (
 });
 
 // ---------------------------------------------------------------------------
-// Behavioral dispatch — tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
+// Behavioral dispatch — tool_schema_unsupported (grammar-unsupported schema repair)
 //
 // Drives the REAL detectSilentFailure cascade (real classifyError, real
 // silent-failure handlers) through runRetryLoop with only runWithModelRetry
-// mocked. RED on pre-patch code: Plan 02's classifier already labels the
-// llama-server body `tool_schema_unsupported`, but with no dispatch branch
-// the category falls into handleSilentRetryDefault — the retry fires with
+// mocked. Regression guard: the classifier labels the llama-server body
+// `tool_schema_unsupported`, and without a dedicated dispatch branch the
+// category would fall into handleSilentRetryDefault — the retry firing with
 // UNSTRIPPED tools (the fallback-burn wrong-remedy) and no
-// execution:tool_schema_unsupported event is emitted.
+// execution:tool_schema_unsupported event emitted.
 // ---------------------------------------------------------------------------
 
 describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
-  // FULL verbatim llama-server body (llama.cpp #19716) — re-inlined per plan
+  // FULL verbatim llama-server body (llama.cpp #19716) — re-inlined here
   // (no cross-test-file imports). Carries the `invalid_request_error` wrapper
   // that used to make client_request steal the match.
   const LLAMA_SERVER_GRAMMAR_400 =
@@ -171,8 +171,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
 
   beforeEach(async () => {
     vi.mocked(runWithModelRetry).mockReset();
-    // Optional pre-patch (export missing) — post-patch resets the module
-    // once-gate between tests.
+    // Reset the module once-gate between tests.
     const sfh = (await import("./silent-failure-handlers.js")) as Record<string, unknown>;
     (sfh.resetToolSchemaStripGateForTest as undefined | (() => void))?.();
   });
@@ -192,13 +191,13 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     // re-entry shape and never a terminal generic failure.
     expect(vi.mocked(runWithModelRetry)).toHaveBeenCalledTimes(2);
     // The strip happened BEFORE the retry invocation (boundary observation;
-    // pre-patch the default branch retries with the hostile schema intact).
+    // the default branch would retry with the hostile schema intact).
     expect(capturedAtInvocation[1]).not.toContain('"pattern"');
     expect(capturedAtInvocation[1]).not.toContain('"format"');
     // handleClientRequest's terminal state did NOT occur.
     expect(String(outcome.promptError ?? "")).not.toContain("Client request rejected by provider");
     expect(outcome.promptSucceeded).toBe(true);
-    // The obs chain input exists (Plan 06's explain heuristic consumes it).
+    // The obs chain input exists (the explain heuristic consumes it).
     const events = emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported");
     expect(events).toHaveLength(1);
     expect(events[0][1]).toMatchObject({
@@ -227,16 +226,16 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01 (175-REVIEW): the THROWN path. When session.prompt() throws the
-  // grammar-400, runWithModelRetry's GBNF-02 ladder guard returns
-  // {succeeded:false, error} immediately — pre-fix runRetryLoop passed the
-  // failure straight to output-escalation, where the canned userMessage
-  // PROMISES "the agent will simplify the tool definition and try again
-  // automatically" while no strip, no retry, and no
+  // The THROWN path. When session.prompt() throws the
+  // grammar-400, runWithModelRetry's grammar-ladder guard returns
+  // {succeeded:false, error} immediately — without the thrown-path dispatch,
+  // runRetryLoop passes the failure straight to output-escalation, where the
+  // canned userMessage PROMISES "the agent will simplify the tool definition
+  // and try again automatically" while no strip, no retry, and no
   // execution:tool_schema_unsupported event ever happened (obs-explain blind).
   // -------------------------------------------------------------------------
 
-  it("WR-01: grammar-400 on the THROWN path dispatches to the strip-retry handler — strip + one retry + event, not a terminal false promise", async () => {
+  it("grammar-400 on the THROWN path dispatches to the strip-retry handler — strip + one retry + event, not a terminal false promise", async () => {
     const tools = makeHostileTools();
     const capturedAtInvocation: string[] = [];
     vi.mocked(runWithModelRetry)
@@ -279,7 +278,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     });
   });
 
-  it("WR-01: gate-closed thrown-path failure carries the THROWN error body in promptError (bridge has no recorded LLM error) so failure-path classification stays correct", async () => {
+  it("gate-closed thrown-path failure carries the THROWN error body in promptError (bridge has no recorded LLM error) so failure-path classification stays correct", async () => {
     // Consume the session's one strip-retry via the thrown path.
     const tools = makeHostileTools();
     vi.mocked(runWithModelRetry)
@@ -311,7 +310,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(String(outcome.promptError)).toContain("JSON schema conversion failed");
   });
 
-  it("WR-01: a non-grammar thrown failure stays terminal — no strip dispatch, no event (scope guard)", async () => {
+  it("a non-grammar thrown failure stays terminal — no strip dispatch, no event (scope guard)", async () => {
     vi.mocked(runWithModelRetry).mockResolvedValue({
       succeeded: false,
       error: new Error("ECONNREFUSED connection refused"),
@@ -327,16 +326,16 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Failure-path terminal diagnostics — knob-named timeout hints (LAT-01,
-// Phase 177). processFailurePath is the all-models-failed surface: the retry
+// Failure-path terminal diagnostics — knob-named timeout hints.
+// processFailurePath is the all-models-failed surface: the retry
 // loop returned promptSucceeded:false and emitFailureDiagnostics classifies
 // the terminal error, logs the operator WARN, and writes the user-safe
-// response. Pre-LAT-01 a PromptTimeoutError was logged with
-// errorKind:"dependency", a generic hint, and finishReason:"error" — the
-// operator learned WHAT (all models failed) but not WHICH KNOB.
+// response. Without knob-named classification a PromptTimeoutError is logged
+// with errorKind:"dependency", a generic hint, and finishReason:"error" — the
+// operator learns WHAT (all models failed) but not WHICH KNOB.
 // ---------------------------------------------------------------------------
 
-describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", () => {
+describe("processFailurePath — knob-named timeout diagnostics", () => {
   function makeFailureParams(channelId: string): {
     params: RunPromptParams;
     emit: ReturnType<typeof vi.fn>;
@@ -362,7 +361,7 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
       session: { agent: { streamFn: vi.fn() } },
       sessionKey: { tenantId: "t1", channelId, userId: "u1" },
       agentId: "my-agent",
-      executionId: "exec-lat01",
+      executionId: "exec-timeout-diagnostics",
       executionStartMs: 0,
       result,
       mergedCustomTools: [],
@@ -392,8 +391,8 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
     return { params, emit, warn, result };
   }
 
-  it("LAT-01-H-7: a terminal PromptTimeoutError carries errorKind 'timeout' + a knob-named hint on the WARN; finishReason 'prompt_timeout'; userMessage stays generic", async () => {
-    const { params, warn, result } = makeFailureParams("c-lat01-timeout");
+  it("a terminal PromptTimeoutError carries errorKind 'timeout' + a knob-named hint on the WARN; finishReason 'prompt_timeout'; userMessage stays generic", async () => {
+    const { params, warn, result } = makeFailureParams("c-stall-timeout");
     const timeoutErr = new PromptTimeoutError(180_000, {
       limit: "stall",
       stallBudgetMs: 180_000,
@@ -406,7 +405,7 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
     expect(warnCall![0].errorKind).toBe("timeout");
     expect(warnCall![0].hint).toMatch(/promptTimeout\.promptTimeoutMs|operationModels/);
     expect(result.finishReason).toBe("prompt_timeout");
-    // The knob detail NEVER leaks into the user reply (T-177-13): the response
+    // The knob detail NEVER leaks into the user reply: the response
     // is the byte-identical generic userMessage, with no config keys.
     expect(result.response).toBe(
       "The request took too long to process. Please try again with a simpler message.",
@@ -414,8 +413,8 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
     expect(result.response).not.toContain("agents.");
   });
 
-  it("177-REVIEW IN-01: a terminal makespan kill renders the multiplier NUMBER in the hint — the binding carries stallCeilingMultiplier", async () => {
-    const { params, warn } = makeFailureParams("c-in01-makespan");
+  it("a terminal makespan kill renders the multiplier NUMBER in the hint — the binding carries stallCeilingMultiplier", async () => {
+    const { params, warn } = makeFailureParams("c-makespan-hint");
     const makespanErr = new PromptTimeoutError(1_800_000, {
       limit: "makespan",
       stallBudgetMs: 180_000,
@@ -426,16 +425,16 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
 
     const warnCall = warn.mock.calls.find((c) => c[1] === "Prompt execution error");
     expect(warnCall).toBeDefined();
-    // Pre-patch the binding omitted stallCeilingMultiplier, so the makespan
-    // hint rendered '(stall budget 180000 × stallCeilingMultiplier)' with no
-    // multiplier value — number-less, despite EffectiveTimeout carrying the
-    // non-optional field in scope.
+    // Guards that the binding carries stallCeilingMultiplier: without it the
+    // makespan hint renders '(stall budget 180000 × stallCeilingMultiplier)'
+    // with no multiplier value — number-less, despite EffectiveTimeout
+    // carrying the non-optional field in scope.
     expect(warnCall![0].hint).toMatch(/stallCeilingMultiplier 10\)/);
     expect(warnCall![0].hint).toMatch(/makespan ceiling 1800000ms/);
   });
 
-  it("177-REVIEW IN-04: the ghost-cost token_usage event reports the FIRED limit as latencyMs — a makespan kill is not understated by the multiplier", async () => {
-    const { params, emit } = makeFailureParams("c-in04-ghost");
+  it("the ghost-cost token_usage event reports the FIRED limit as latencyMs — a makespan kill is not understated by the multiplier", async () => {
+    const { params, emit } = makeFailureParams("c-ghost-cost");
     const makespanErr = new PromptTimeoutError(1_800_000, {
       limit: "makespan",
       stallBudgetMs: 180_000,
@@ -446,15 +445,16 @@ describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", (
 
     const usage = emit.mock.calls.find((c) => c[0] === "observability:token_usage");
     expect(usage).toBeDefined();
-    // Pre-patch latencyMs hardcoded effectiveTimeout.promptTimeoutMs
-    // (180_000) for every timeout — a makespan kill actually ran
-    // ~promptTimeoutMs × stallCeilingMultiplier ms, understating by up to
-    // the multiplier. PromptTimeoutError.timeoutMs carries the fired limit.
+    // Guards against reporting the stall budget
+    // (effectiveTimeout.promptTimeoutMs, 180_000) for every timeout — a
+    // makespan kill actually ran ~promptTimeoutMs × stallCeilingMultiplier
+    // ms, which would understate latencyMs by up to the multiplier.
+    // PromptTimeoutError.timeoutMs carries the fired limit.
     expect((usage![1] as Record<string, unknown>).latencyMs).toBe(1_800_000);
   });
 
-  it("LAT-01-H-7 regression: a non-timeout terminal error keeps finishReason 'error' + errorKind 'dependency' + the generic all-models hint", async () => {
-    const { params, warn, result } = makeFailureParams("c-lat01-generic");
+  it("regression: a non-timeout terminal error keeps finishReason 'error' + errorKind 'dependency' + the generic all-models hint", async () => {
+    const { params, warn, result } = makeFailureParams("c-generic-error");
 
     await processFailurePath(params, "hello", undefined, new Error("ECONNREFUSED connection refused"));
 

@@ -1,5 +1,5 @@
 {
-  "_provenance": "Derived from LoCoMo format (github.com/snap-research/locomo, CC BY-NC 4.0); neutral placeholder content, NOT the real dataset — do not vendor real LoCoMo data (Pitfall 3).",
+  "_provenance": "Derived from LoCoMo format (github.com/snap-research/locomo, CC BY-NC 4.0); neutral placeholder content, NOT the real dataset — do not vendor real LoCoMo data.",
   "sample_id": "conv1",
   "conversation": {
     "speaker_a": "user_a",

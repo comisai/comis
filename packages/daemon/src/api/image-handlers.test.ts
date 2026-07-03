@@ -15,17 +15,17 @@ import { validateUrl } from "@comis/core";
 import type { PersistedFile } from "@comis/skills/tools";
 import { readFile } from "node:fs/promises";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-// SEC-03: the credential KEY-NAME set that drives Pino's redact.paths. The
+// The credential KEY-NAME set that drives Pino's redact.paths. The
 // assertion below checks no credential VALUE leaks into any image log line.
 import { CREDENTIAL_KEYS } from "@comis/observability";
 
-/** DEL-01: a successful PersistedFile the per-agent persist getter returns. The
+/** A successful PersistedFile the per-agent persist getter returns. The
  *  filePath is what sendAttachment receives (the PERSISTED path, NOT a tmpdir
- *  path) and sizeBytes is the OBS-01 field (Plan 02 consumes it). */
+ *  path) and sizeBytes is the size field the completion INFO line consumes. */
 const PERSISTED_OK: PersistedFile = {
   // A durable workspace path under ~/.comis/workspace/media/photos/ — what
   // MediaPersistenceService returns. Deliberately NOT under an OS temp dir and
-  // NOT a `comis-img-*` ephemeral filename (the pre-DEL-01 signature the
+  // NOT a `comis-img-*` ephemeral filename (the tmpdir signature the
   // delivery assertion rejects).
   filePath: "/home/agent/.comis/workspace/media/photos/abc123.png",
   relativePath: "photos/abc123.png",
@@ -39,7 +39,7 @@ const PERSISTED_OK: PersistedFile = {
 vi.mock("node:fs/promises", () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
-  // IN-01: the reference-image file path branch reads the resolved (safePath-
+  // The reference-image file path branch reads the resolved (safePath-
   // confined) path. Returns deterministic bytes; tests assert WHICH path it
   // was called with (workspace-confined), not the contents.
   readFile: vi.fn().mockResolvedValue(Buffer.from("REF-FILE-BYTES")),
@@ -53,7 +53,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-// CR-01: the reference_image URL branch now routes through the shared
+// The reference_image URL branch routes through the shared
 // DNS-pinned SSRF fetcher (ssrf-image-fetch.ts → undici Agent + fetch). Mock
 // `undici` so Agent is a real class (constructor args captured) and `fetch`
 // delegates to globalThis.fetch — NEVER the real network. Mirrors the
@@ -82,19 +82,19 @@ vi.mock("@comis/core", async (importOriginal) => {
   return {
     ...actual,
     // safePath joins segments here (the real guard is unit-tested in core); the
-    // IN-01 path-traversal test asserts the handler routes the agent-supplied
+    // path-traversal test asserts the handler routes the agent-supplied
     // path THROUGH safePath (confinement under the workspace), mirroring the
     // media-handlers.test.ts convention.
     safePath: (...segments: string[]) => segments.join("/"),
     // validateUrl defaults to ok WITH a resolved value (hostname/ip/url) so the
-    // CR-01 URL branch can pin DNS to the validated IP; the SSRF test overrides
+    // URL branch can pin DNS to the validated IP; the SSRF test overrides
     // it to reject.
     validateUrl: vi.fn(async () => ({
       ok: true,
       value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("https://example.com/ref.png") },
     })),
     // isValidImageModel / listImageModels come through `...actual` (the real
-    // IN-02 enumeration) so the reject hint lists the genuine model lists.
+    // model enumeration) so the reject hint lists the genuine model lists.
   };
 });
 
@@ -130,12 +130,12 @@ function createMockDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandler
     logger: createMockLogger() as any,
     getChannelAdapter: vi.fn().mockReturnValue(undefined),
     resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openrouter" }),
-    // IN-01 (185): the reference-image file path branch resolves the agent
+    // The reference-image file path branch resolves the agent
     // workspace dir from these (mirrors MediaApiDeps; threaded through
-    // imageHandlerDeps this plan).
+    // imageHandlerDeps).
     workspaceDirs: new Map<string, string>(),
     defaultWorkspaceDir: "/tmp/test-workspace",
-    // DEL-01 (186): the per-agent persist getter (MediaPersistenceService.persist
+    // The per-agent persist getter (MediaPersistenceService.persist
     // bound to the agent's workspace). Defaults to a successful PersistedFile so
     // the existing handler tests still construct valid deps after the type grows.
     persist: vi.fn().mockResolvedValue(ok(PERSISTED_OK)),
@@ -143,7 +143,7 @@ function createMockDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandler
   };
 }
 
-/** OBS-04 (186): a mock trajectoryRegistry whose getRecorder returns a recorder
+/** A mock trajectoryRegistry whose getRecorder returns a recorder
  *  with a `recordEvent` spy — the direct-emit seam the handler records the 4
  *  image.* events through. Returns BOTH the registry (for createMockDeps) and the
  *  spy (so a test can assert the recorded events). `getRecorder` is a spy too so a
@@ -163,11 +163,11 @@ function makeMockTrajectoryRegistry(): {
   return { trajectoryRegistry, recordEvent, getRecorder };
 }
 
-describe("ImageHandlerDeps.persist type (DEL-01)", () => {
+describe("ImageHandlerDeps.persist type", () => {
   it("exposes a per-agent persist getter returning Result<PersistedFile, Error>", () => {
     // Type-level proof that the dep exists with the (agentId, buffer, opts)
     // signature. The assignment fails to compile if types.ts lacks the field
-    // (the RED state before the GREEN type widen) or if the shape diverges.
+    // or if the shape diverges.
     const persist: ImageHandlerDeps["persist"] = async (
       agentId: string,
       buffer: Buffer,
@@ -345,9 +345,9 @@ describe("createImageHandlers", () => {
     expect(deps.getChannelAdapter).not.toHaveBeenCalled();
   });
 
-  // ─── DEL-01: durable persistence replaces the tmpdir write+delete ──────────
+  // ─── Durable persistence replaces the tmpdir write+delete ──────────────────
 
-  it("DEL-01: persists the image and hands sendAttachment the PERSISTED filePath (not a tmpdir path)", async () => {
+  it("persists the image and hands sendAttachment the PERSISTED filePath (not a tmpdir path)", async () => {
     const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-del01"));
     const persist = vi.fn().mockResolvedValue(ok(PERSISTED_OK));
     const deps = createMockDeps({
@@ -363,7 +363,7 @@ describe("createImageHandlers", () => {
     });
 
     // The handler persists the generated buffer via the per-agent getter,
-    // scoped to the caller's agentId with mediaKind:"image" (T-186-01 — the
+    // scoped to the caller's agentId with mediaKind:"image" (the
     // service routes to the agent's confined `photos/` subdir).
     expect(persist).toHaveBeenCalledTimes(1);
     expect(persist).toHaveBeenCalledWith(
@@ -372,8 +372,8 @@ describe("createImageHandlers", () => {
       expect.objectContaining({ mediaKind: "image", mimeType: "image/png" }),
     );
     // sendAttachment receives the PERSISTED durable path — NOT an OS-tmpdir
-    // `comis-img-*` ephemeral path (the whole point of DEL-01). It lives under
-    // the agent workspace media dir.
+    // `comis-img-*` ephemeral path (the whole point of durable persistence).
+    // It lives under the agent workspace media dir.
     const attachment = mockSendAttachment.mock.calls[0]?.[1] as { url: string };
     expect(attachment.url).toBe(PERSISTED_OK.filePath);
     expect(attachment.url).not.toMatch(/comis-img-/);
@@ -381,7 +381,7 @@ describe("createImageHandlers", () => {
     expect(result).toEqual({ success: true, delivered: true, mimeType: "image/png" });
   });
 
-  it("DEL-01: a persistence failure WARNs and falls through to base64 (no crash, no sendAttachment)", async () => {
+  it("a persistence failure WARNs and falls through to base64 (no crash, no sendAttachment)", async () => {
     const mockSendAttachment = vi.fn().mockResolvedValue(ok("should-not-be-called"));
     const persist = vi.fn().mockResolvedValue(err(new Error("disk full")));
     const deps = createMockDeps({
@@ -402,8 +402,8 @@ describe("createImageHandlers", () => {
     expect(result.success).toBe(true);
     expect(result.imageBase64).toBeDefined();
     expect(result.mimeType).toBe("image/png");
-    // OBS-02: the persist-failure branch carries errorKind + a hint (§2.7).
-    // IN-02 (186): a persist failure (disk full / size cap) is `resource`
+    // The persist-failure branch carries errorKind + a hint (§2.7).
+    // A persist failure (disk full / size cap) is `resource`
     // exhaustion, not `network` — the WARN names the accurate log ErrorKind.
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -415,9 +415,9 @@ describe("createImageHandlers", () => {
     );
   });
 
-  // ─── DEL-02 (regression-guard): capability-driven, NEVER a channel-name list ─
+  // ─── Regression-guard: capability-driven, NEVER a channel-name list ─────────
 
-  it("DEL-02: an adapter present but LACKING sendAttachment degrades to base64 (no undefined-method call)", async () => {
+  it("an adapter present but LACKING sendAttachment degrades to base64 (no undefined-method call)", async () => {
     // The adapter object has NO sendAttachment property (today only IRC). The
     // capability gate (typeof adapter.sendAttachment === "function") must skip
     // delivery and fall through to base64 — never call an undefined method.
@@ -439,7 +439,7 @@ describe("createImageHandlers", () => {
     expect(result.mimeType).toBe("image/png");
   });
 
-  // ─── RES-01 keystone: the handler is no longer provider-blind ──────────────
+  // ─── Main-provider resolution: the handler is not provider-blind ───────────
 
   it("resolves the agent main provider with the default agentId when none provided", async () => {
     const deps = createMockDeps();
@@ -449,13 +449,13 @@ describe("createImageHandlers", () => {
       // no _agentId → defaults to "default"
     });
 
-    // RES-01: the handler calls deps.resolveAgentMainProvider with the resolved agentId.
+    // The handler calls deps.resolveAgentMainProvider with the resolved agentId.
     expect(deps.resolveAgentMainProvider).toHaveBeenCalledWith("default");
     // The existing happy-path delivery still works (provider mock returns ok).
     expect((result as any).success).toBe(true);
   });
 
-  it("resolves the agent main provider with the supplied agentId for RES-01 lockstep", async () => {
+  it("resolves the agent main provider with the supplied agentId (lockstep with the completion path)", async () => {
     const deps = createMockDeps();
     const handlers = createImageHandlers(deps);
     await handlers["image.generate"]!({
@@ -463,13 +463,13 @@ describe("createImageHandlers", () => {
       prompt: "a fox",
     });
 
-    // RES-01: the resolved id flows from the dispatcher-injected _agentId.
+    // The resolved id flows from the dispatcher-injected _agentId.
     expect(deps.resolveAgentMainProvider).toHaveBeenCalledWith("agent-x");
   });
 
-  // ─── RES-03 honest-unavailable surfaced THROUGH the handler with the hint ──
+  // ─── Honest-unavailable surfaced THROUGH the handler with the hint ─────────
 
-  it("surfaces the RES-03 unavailable hint naming the provider config knob", async () => {
+  it("surfaces the honest-unavailable hint naming the provider config knob", async () => {
     const knobHint =
       'Set integrations.media.imageGeneration.provider to an image-capable provider (e.g. "openrouter").';
     const deps = createMockDeps({
@@ -499,9 +499,9 @@ describe("createImageHandlers", () => {
     expect(result.hint).toContain("integrations.media.imageGeneration.provider");
   });
 
-  // ─── WR-03 (§2.7): INFO completion line with durationMs on success ─────────
+  // ─── §2.7: INFO completion line with durationMs on success ─────────────────
 
-  it("emits an INFO completion line with durationMs on the channel-delivered success path (WR-03)", async () => {
+  it("emits an INFO completion line with durationMs on the channel-delivered success path", async () => {
     const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-789"));
     const deps = createMockDeps({
       getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
@@ -527,7 +527,7 @@ describe("createImageHandlers", () => {
     );
   });
 
-  it("emits an INFO completion line with durationMs on the base64-fallback success path (WR-03)", async () => {
+  it("emits an INFO completion line with durationMs on the base64-fallback success path", async () => {
     const deps = createMockDeps({ getChannelAdapter: vi.fn().mockReturnValue(undefined) });
     const handlers = createImageHandlers(deps);
     await handlers["image.generate"]!({
@@ -548,7 +548,7 @@ describe("createImageHandlers", () => {
     );
   });
 
-  it("does NOT emit a completion INFO line on the failure path (WR-03)", async () => {
+  it("does NOT emit a completion INFO line on the failure path", async () => {
     const deps = createMockDeps({
       provider: {
         id: "test-provider",
@@ -565,9 +565,9 @@ describe("createImageHandlers", () => {
     expect(completionInfo).toBe(false);
   });
 
-  // ─── OBS-01 (§2.7): the FULL INFO completion field set on both paths ────────
-  // The WR-03 line (above) carries agentId/mainProvider/delivered/mimeType/
-  // durationMs/step. OBS-01 ADDS imageProvider/model/costUsd/sizeBytes so a
+  // ─── §2.7: the FULL INFO completion field set on both paths ─────────────────
+  // The completion line (above) carries agentId/mainProvider/delivered/mimeType/
+  // durationMs/step. The full set ADDS imageProvider/model/costUsd/sizeBytes so a
   // generation is provider-, model-, cost-, and size-visible in one line.
 
   /** Find the captured image_complete INFO payload (or undefined). */
@@ -578,13 +578,13 @@ describe("createImageHandlers", () => {
     return call?.[0] as Record<string, unknown> | undefined;
   }
 
-  it("OBS-01: the channel-delivered INFO line carries imageProvider/model/costUsd/sizeBytes", async () => {
+  it("the channel-delivered INFO line carries imageProvider/model/costUsd/sizeBytes", async () => {
     const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-obs01"));
     const deps = createMockDeps({
       provider: {
         id: "openai",
         isAvailable: () => true,
-        // The widened ImageGenOutput (Task 1) carries model/costUsd through.
+        // The widened ImageGenOutput carries model/costUsd through.
         execute: vi
           .fn()
           .mockResolvedValue(
@@ -611,7 +611,7 @@ describe("createImageHandlers", () => {
       mainProvider: "openrouter",
       model: "gpt-image-1",
       costUsd: 0.04,
-      sizeBytes: 4242, // from the PersistedFile (DEL-01) on the delivered path
+      sizeBytes: 4242, // from the PersistedFile on the delivered path
       mimeType: "image/png",
       delivered: true,
       step: "image_complete",
@@ -622,7 +622,7 @@ describe("createImageHandlers", () => {
     expect(payload).not.toHaveProperty("traceId");
   });
 
-  it("OBS-01: the base64-fallback INFO line carries imageProvider/model/costUsd/sizeBytes (buffer length)", async () => {
+  it("the base64-fallback INFO line carries imageProvider/model/costUsd/sizeBytes (buffer length)", async () => {
     const buffer = Buffer.from("a-larger-image-buffer");
     const deps = createMockDeps({
       provider: {
@@ -652,9 +652,9 @@ describe("createImageHandlers", () => {
     expect(payload).not.toHaveProperty("traceId");
   });
 
-  it("OBS-01 non-regression: an undefined costUsd/model is logged as undefined, never a crash (legacy path)", async () => {
-    // A legacy/text-only adapter returns only { buffer, mimeType } (Task 1
-    // non-regression). The INFO line must still emit, with costUsd/model unset.
+  it("non-regression: an undefined costUsd/model is logged as undefined, never a crash (cost-less adapter path)", async () => {
+    // An adapter that reports no cost/model returns only { buffer, mimeType }.
+    // The INFO line must still emit, with costUsd/model unset.
     const deps = createMockDeps({
       provider: {
         id: "openrouter",
@@ -674,16 +674,16 @@ describe("createImageHandlers", () => {
     expect(payload).toMatchObject({ imageProvider: "openrouter", delivered: false, step: "image_complete" });
     expect(payload!.costUsd).toBeUndefined();
     expect(payload!.model).toBeUndefined();
-    // sizeBytes is still the buffer length even on the legacy path.
+    // sizeBytes is still the buffer length even on the cost-less path.
     expect(payload!.sizeBytes).toBe(1);
   });
 
-  // ─── OBS-02 (§2.7): every handler failure branch logs errorKind + hint ──────
+  // ─── §2.7: every handler failure branch logs errorKind + hint ───────────────
   // The provider-error and persist-failure branches already do (above). The
-  // model-reject branch (IN-02) returned { success:false } with NO log — OBS-02
-  // adds a WARN naming errorKind + the listing hint BEFORE the return.
+  // model-reject branch must not return { success:false } with NO log — it
+  // WARNs naming errorKind + the listing hint BEFORE the return.
 
-  it("OBS-02: the model-reject branch WARNs errorKind:precondition + the listing hint before returning", async () => {
+  it("the model-reject branch WARNs errorKind:precondition + the listing hint before returning", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       provider: { id: "openai", isAvailable: () => true, execute },
@@ -728,13 +728,13 @@ describe("createImageHandlers", () => {
       prompt: "test prompt",
     })) as { success: boolean; error: string; hint?: string };
 
-    // A plain Error has no .hint → the handler returns the legacy shape (no hint key).
+    // A plain Error has no .hint → the handler returns the bare shape (no hint key).
     expect(result).toEqual({ success: false, error: "Provider error: content blocked" });
     expect("hint" in result).toBe(false);
   });
 
-  // ─── WR-05 (184-REVIEW): multi-agent credential-misroute is a DOCUMENTED ────
-  // deferral (a future multi-agent refinement). The boot-selected `provider` port
+  // ─── Multi-agent credential-misroute is a DOCUMENTED deferral ───────────────
+  // (a future multi-agent refinement). The boot-selected `provider` port
   // is the DEFAULT agent's; a non-default agent whose resolved main provider DIFFERS
   // runs the default agent's port/credentials. Until per-request re-selection lands, the
   // handler must at least make the divergence OBSERVABLE (not silent), so triage
@@ -769,9 +769,8 @@ describe("createImageHandlers", () => {
     expect(payload.callerProvider).toBe("openai-codex");
     expect(payload.executedProvider).toBe("openrouter");
     expect(payload.errorKind).toBe("precondition");
-    // Assert the actionable remediation knob, not a brittle phase number — the
-    // hint deliberately stopped naming "Phase 186" (d5612798); pin it to the
-    // stable config key an operator must set instead.
+    // Assert the actionable remediation knob: pin the hint to the stable
+    // config key an operator must set, not to incidental hint wording.
     expect(payload.hint).toContain("integrations.media.imageGeneration.provider");
   });
 
@@ -800,11 +799,11 @@ describe("createImageHandlers", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// IN-01 reference-image resolution (SSRF / path-traversal safe) + IN-02 model
-// validation + CFG-02 param threading (185-03, Task 2)
+// Reference-image resolution (SSRF / path-traversal safe) + model
+// validation + generation-param threading
 // ───────────────────────────────────────────────────────────────────────────
 
-describe("createImageHandlers IN-01 reference_image resolution", () => {
+describe("createImageHandlers reference_image resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset validateUrl to the default ok between tests (the SSRF case overrides).
@@ -816,7 +815,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
 
   const REF_B64 = Buffer.from("PNGBYTES").toString("base64");
 
-  it("Test 1: a raw base64 reference_image is decoded and threaded to execute() (data path)", async () => {
+  it("a raw base64 reference_image is decoded and threaded to execute() (data path)", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       provider: { id: "openrouter", isAvailable: () => true, execute },
@@ -838,7 +837,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  it("Test 2: a workspace file path is confined by safePath under the agent workspace dir", async () => {
+  it("a workspace file path is confined by safePath under the agent workspace dir", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       provider: { id: "openrouter", isAvailable: () => true, execute },
@@ -860,7 +859,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     );
   });
 
-  it("Test 3: a path-traversal reference_image stays under the workspace root (never reads outside)", async () => {
+  it("a path-traversal reference_image stays under the workspace root (never reads outside)", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       provider: { id: "openrouter", isAvailable: () => true, execute },
@@ -874,7 +873,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
       reference_image: "../../etc/passwd",
     });
 
-    // The handler routes the path THROUGH safePath (the T-185-09 confinement
+    // The handler routes the path THROUGH safePath (the confinement
     // floor): readFile is called with a path that begins at the workspace root,
     // NOT a bare /etc/passwd. (The real safePath rejects the escape; the mocked
     // join proves the guard is on the path.)
@@ -886,7 +885,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     expect(readFile).not.toHaveBeenCalledWith("/etc/passwd");
   });
 
-  it("Test 4: an internal-metadata URL is SSRF-blocked before any fetch", async () => {
+  it("an internal-metadata URL is SSRF-blocked before any fetch", async () => {
     (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
       ok: false,
       error: new Error("blocked private IP"),
@@ -916,7 +915,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     fetchSpy.mockRestore();
   });
 
-  it("Test 5: absence of reference_image keeps execute() text-only (no referenceImage — no regression)", async () => {
+  it("absence of reference_image keeps execute() text-only (no referenceImage — no regression)", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       provider: { id: "openrouter", isAvailable: () => true, execute },
@@ -931,12 +930,12 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  // ─── CR-01: the URL branch MUST route through the DNS-pinned SSRF fetcher ───
+  // ─── The URL branch MUST route through the DNS-pinned SSRF fetcher ──────────
   // (not a bare fetch that re-resolves DNS), closing the DNS-rebinding TOCTOU
   // window. A successful fetch must (a) validate the host, (b) pin the undici
   // Agent dispatcher to the validated IP, (c) refuse redirects.
 
-  it("CR-01: a reference_image URL is fetched with a DNS-pinned dispatcher (no rebind window)", async () => {
+  it("a reference_image URL is fetched with a DNS-pinned dispatcher (no rebind window)", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       headers: new Headers({ "content-type": "image/png" }),
@@ -983,13 +982,13 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     }
   });
 
-  // ─── IN-03 (186): reference-image rejections throw a TYPED error with an ───
+  // ─── Reference-image rejections throw a TYPED error with an ─────────────────
   // actionable, knob-naming message (§2.7). A bare `throw new Error(msg)`
-  // classified as internal/error (operator-alerting) and carried no remediation;
+  // classifies as internal/error (operator-alerting) and carries no remediation;
   // a ValidationError classifies as validation/warn AND the message names the
   // 20 MB cap / the raster-image remedy so the JSON-RPC error is self-actionable.
 
-  it("IN-03: an oversized data-uri reject is a ValidationError whose message names the 20 MB cap", async () => {
+  it("an oversized data-uri reject is a ValidationError whose message names the 20 MB cap", async () => {
     const oversized = "A".repeat(28 * 1024 * 1024);
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
@@ -1012,7 +1011,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("IN-03: an SVG reference_image reject is a ValidationError naming the raster-image remedy", async () => {
+  it("an SVG reference_image reject is a ValidationError naming the raster-image remedy", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
     const handlers = createImageHandlers(deps);
@@ -1032,9 +1031,9 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  // ─── WR-01: data-uri decode is size-capped (resource exhaustion) ───────────
+  // ─── Data-uri decode is size-capped (resource exhaustion) ──────────────────
 
-  it("WR-01: an oversized data-uri reference_image is rejected before threading to execute()", async () => {
+  it("an oversized data-uri reference_image is rejected before threading to execute()", async () => {
     // 21 MB of base64 'A' decodes to > 20 MB (MAX_REFERENCE_BYTES). Must reject.
     const oversized = "A".repeat(28 * 1024 * 1024);
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
@@ -1051,9 +1050,9 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  // ─── WR-02: workspace-file read is size-capped ─────────────────────────────
+  // ─── Workspace-file read is size-capped ────────────────────────────────────
 
-  it("WR-02: an oversized workspace-file reference_image is rejected before threading to execute()", async () => {
+  it("an oversized workspace-file reference_image is rejected before threading to execute()", async () => {
     (readFile as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       Buffer.alloc(21 * 1024 * 1024, 1),
     );
@@ -1074,9 +1073,9 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  // ─── WR-03: charset-parameterized data-URIs accepted; non-base64 not decoded ─
+  // ─── Charset-parameterized data-URIs accepted; non-base64 not decoded ───────
 
-  it("WR-03: a charset-parameterized base64 data-URI is accepted (mime stripped of params)", async () => {
+  it("a charset-parameterized base64 data-URI is accepted (mime stripped of params)", async () => {
     const payload = Buffer.from("PNGBYTES").toString("base64");
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
@@ -1097,7 +1096,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
     );
   });
 
-  it("WR-03: a non-base64 (URL-encoded) data-URI is NOT base64-decoded into garbage", async () => {
+  it("a non-base64 (URL-encoded) data-URI is NOT base64-decoded into garbage", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({ provider: { id: "openrouter", isAvailable: () => true, execute } });
     const handlers = createImageHandlers(deps);
@@ -1118,7 +1117,7 @@ describe("createImageHandlers IN-01 reference_image resolution", () => {
   });
 });
 
-describe("createImageHandlers IN-02 model validation", () => {
+describe("createImageHandlers model validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (validateUrl as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
@@ -1127,7 +1126,7 @@ describe("createImageHandlers IN-02 model validation", () => {
     }));
   });
 
-  it("Test 6: an unknown model for the resolved provider is rejected with a hint LISTING valid models (no execute)", async () => {
+  it("an unknown model for the resolved provider is rejected with a hint LISTING valid models (no execute)", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       provider: { id: "openai", isAvailable: () => true, execute },
@@ -1143,12 +1142,12 @@ describe("createImageHandlers IN-02 model validation", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("bogus-model");
-    // The hint LISTS the valid openai models (IN-02 actionable reject).
+    // The hint LISTS the valid openai models (an actionable reject).
     expect(result.hint).toContain("gpt-image-1");
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("Test 7: a valid model for the resolved provider is accepted and threaded to execute()", async () => {
+  it("a valid model for the resolved provider is accepted and threaded to execute()", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       provider: { id: "openai", isAvailable: () => true, execute },
@@ -1165,7 +1164,7 @@ describe("createImageHandlers IN-02 model validation", () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-image-1" }));
   });
 
-  it("Test 8 (CFG-02): a provider with an EMPTY Comis-side list does NOT reject every model (validate strictly only when listed)", async () => {
+  it("a provider with an EMPTY Comis-side list does NOT reject every model (validate strictly only when listed)", async () => {
     // openrouter has no Comis-side IMAGE_MODELS_BY_PROVIDER entry; a model arg
     // must NOT be rejected (else every openrouter model is 'unknown'). The arg
     // still flows through to execute (the provider/openrouter catalog decides).
@@ -1188,14 +1187,14 @@ describe("createImageHandlers IN-02 model validation", () => {
     );
   });
 
-  // ─── WR-05: validate against the provider that ACTUALLY executes ───────────
+  // ─── Validate against the provider that ACTUALLY executes ──────────────────
   // In a multi-agent daemon the boot-selected port (deps.provider) belongs to
   // the DEFAULT agent; a non-default caller may resolve a DIFFERENT main
   // provider. The model must be validated against the EXECUTING provider (the
   // port that will run it), not the caller's — else a model valid for the
   // caller passes Comis-side validation then fails late at the executing SDK.
 
-  it("WR-05: rejects a model valid for the CALLER but invalid for the EXECUTING (default) provider", async () => {
+  it("rejects a model valid for the CALLER but invalid for the EXECUTING (default) provider", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       // Boot-selected port = the DEFAULT agent's (google).
@@ -1219,7 +1218,7 @@ describe("createImageHandlers IN-02 model validation", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("WR-05: accepts a model valid for the EXECUTING (default) provider even when the caller differs", async () => {
+  it("accepts a model valid for the EXECUTING (default) provider even when the caller differs", async () => {
     const execute = vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" }));
     const deps = createMockDeps({
       provider: { id: "google", isAvailable: () => true, execute },
@@ -1238,14 +1237,14 @@ describe("createImageHandlers IN-02 model validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-04 (186): direct-emit the image.* lifecycle to the per-session
+// Direct-emit the image.* lifecycle to the per-session
 // trajectory recorder. The daemon RPC context has NO eventBus bridge, so the
 // handler resolves the recorder by `_callerSessionKey` and records directly
-// (the comis-session-manager.ts:298 precedent). image.generated carries costUsd
-// (OBS-03 Route a). A null recorder / absent _callerSessionKey must no-op
+// (the comis-session-manager.ts:298 precedent). image.generated carries
+// costUsd. A null recorder / absent _callerSessionKey must no-op
 // without crashing. Payloads are content-free (no prompt / bytes / secret).
 // ---------------------------------------------------------------------------
-describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
+describe("createImageHandlers — trajectory direct-emit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -1257,7 +1256,7 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     const { trajectoryRegistry, recordEvent, getRecorder } = makeMockTrajectoryRegistry();
     const deps = createMockDeps({
       trajectoryRegistry,
-      // The widened ImageGenOutput carries model + costUsd (186-02).
+      // The widened ImageGenOutput carries model + costUsd.
       provider: {
         id: "openai",
         isAvailable: () => true,
@@ -1297,7 +1296,7 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect(requested.provider).toBe("openai");
     expect(requested.mainProvider).toBe("openai");
 
-    // image.generated carries costUsd (OBS-03 Route a) + model + sizeBytes + outcome.
+    // image.generated carries costUsd + model + sizeBytes + outcome.
     const generated = recordEvent.mock.calls[1]![1] as Record<string, unknown>;
     expect(generated.provider).toBe("openai");
     expect(generated.model).toBe("gpt-image-1");
@@ -1318,14 +1317,14 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     }
   });
 
-  // WR-03 (186-REVIEW): the count rate-limit early-return previously emitted NO
-  // terminal image.* record and no WARN — leaving only an orphan image.requested
+  // Without a terminal image.* record and a WARN, the count rate-limit
+  // early-return leaves only an orphan image.requested
   // that accumulateImageRecord seeds as outcome:"failed" with NO errorKind
   // (indistinguishable from a generic abort), while the structurally-identical
-  // cost-ceiling block DOES emit image.failed{quota_exceeded} + a WARN. Make them
+  // cost-ceiling block DOES emit image.failed{quota_exceeded} + a WARN. Keep them
   // consistent: the rate-limit block emits a terminal image.failed + a WARN
   // carrying errorKind + a hint naming the maxPerHour knob (§2.7).
-  it("WR-03: the rate-limit early-return emits image.failed{quota_exceeded} + a WARN with a hint", async () => {
+  it("the rate-limit early-return emits image.failed{quota_exceeded} + a WARN with a hint", async () => {
     const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
     const deps = createMockDeps({
       trajectoryRegistry,
@@ -1358,7 +1357,7 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect(failed.errorKind).toBe("quota_exceeded");
     expect(failed.provider).toBe("openai");
 
-    // OBS-02: a WARN logs the rate limit with the closed-union log errorKind +
+    // A WARN logs the rate limit with the closed-union log errorKind +
     // a hint naming the maxPerHour knob (mirrors the cost-ceiling block).
     const warn = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
       (c) => (c[0] as { step?: string }).step === "image_rate_limit",
@@ -1403,20 +1402,20 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect(JSON.stringify(failed)).not.toContain("Image generation blocked");
   });
 
-  // IN-02 (186-REVIEW): every image.failed trajectory record speaks ONE
+  // Every image.failed trajectory record speaks ONE
   // vocabulary — the domain ImageErrorKind family. An UNTYPED provider Error
   // (no imageErrorKind) must fall back to a DOMAIN kind (empty_response — a
   // non-classified, non-image provider failure), NOT the bare log-ish "error"
   // literal that is not a member of the ImageErrorKind union. (The closed-union
   // log ErrorKind mapping stays confined to the Pino line via IMAGE_ERR_TO_LOG.)
-  it("IN-02: an untyped provider Error records image.failed with a DOMAIN errorKind (not the 'error' literal)", async () => {
+  it("an untyped provider Error records image.failed with a DOMAIN errorKind (not the 'error' literal)", async () => {
     const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
     const deps = createMockDeps({
       trajectoryRegistry,
       provider: {
         id: "openai",
         isAvailable: () => true,
-        // A plain Error (no imageErrorKind) — the legacy/untyped provider path.
+        // A plain Error (no imageErrorKind) — the untyped provider path.
         execute: vi.fn().mockResolvedValue(err(new Error("Provider error: something broke"))),
       },
       resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "openai" }),
@@ -1435,7 +1434,7 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect(failed.errorKind).not.toBe("error");
   });
 
-  // WR-02 (186-REVIEW): a generation that SUCCEEDS but whose persist FAILS is a
+  // A generation that SUCCEEDS but whose persist FAILS is a
   // delivered, charged image (the base64 fallback IS the delivery — the agent
   // receives the bytes). The terminal trajectory record must reflect that
   // delivery as image.generated{outcome:"ok"} (with `persisted:false` to surface
@@ -1443,7 +1442,7 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
   // charged delivery as a failed generation and (via accumulateImageRecord's
   // "terminal failed wins") reconstruct the turn as failed in `comis explain`.
   // image.failed is reserved for an ACTUAL generation failure (!result.ok).
-  it("WR-02: a persist failure records image.generated{outcome:ok, persisted:false} (delivered, not failed)", async () => {
+  it("a persist failure records image.generated{outcome:ok, persisted:false} (delivered, not failed)", async () => {
     const { trajectoryRegistry, recordEvent } = makeMockTrajectoryRegistry();
     const deps = createMockDeps({
       trajectoryRegistry,
@@ -1484,13 +1483,13 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect(JSON.stringify(generated)).not.toContain("disk full");
   });
 
-  // WR-02 (186-REVIEW): the synthetic `observability:token_usage` billing emit
+  // The synthetic `observability:token_usage` billing emit
   // must fire on EVERY charged generation, regardless of persist outcome — the
   // image cost reaches sharedCostTracker + the token_usage table + billing even
-  // when persistence fails and the image is delivered as base64. Previously this
-  // emit lived inside the `else` (persisted-ok) branch, so a persist failure
-  // charged the cost-limiter but under-billed (three accounting views disagreed).
-  it("WR-02: bills observability:token_usage on a persist-failure-but-delivered generation", async () => {
+  // when persistence fails and the image is delivered as base64. If this
+  // emit lived inside the `else` (persisted-ok) branch, a persist failure would
+  // charge the cost-limiter but under-bill (three accounting views disagreeing).
+  it("bills observability:token_usage on a persist-failure-but-delivered generation", async () => {
     const { trajectoryRegistry } = makeMockTrajectoryRegistry();
     const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
     const deps = createMockDeps({
@@ -1526,9 +1525,9 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect(payload.tokens.total).toBe(0);
   });
 
-  // WR-02 non-regression: the billing emit STILL fires on the persisted-ok path
+  // Non-regression: the billing emit STILL fires on the persisted-ok path
   // (the hoist must not drop the existing delivered-path billing).
-  it("WR-02: still bills observability:token_usage on the persisted-ok delivered path", async () => {
+  it("still bills observability:token_usage on the persisted-ok delivered path", async () => {
     const { trajectoryRegistry } = makeMockTrajectoryRegistry();
     const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
     const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-1"));
@@ -1563,8 +1562,8 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
     expect((billed[0]![1] as { cost: { total: number } }).cost.total).toBe(0.04);
   });
 
-  // WR-02: a zero-cost generation does NOT bill (the `> 0` guard is preserved).
-  it("WR-02: a zero-cost generation does not emit a billing token_usage on either path", async () => {
+  // A zero-cost generation does NOT bill (the `> 0` guard is preserved).
+  it("a zero-cost generation does not emit a billing token_usage on either path", async () => {
     const { trajectoryRegistry } = makeMockTrajectoryRegistry();
     const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
     const deps = createMockDeps({
@@ -1643,16 +1642,16 @@ describe("createImageHandlers — OBS-04 trajectory direct-emit", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SEC-02: the maxCostPerHourUsd cost ceiling. A new daemon-side per-agent USD
+// The maxCostPerHourUsd cost ceiling. A daemon-side per-agent USD
 // accumulator (image-cost-limiter.ts) is wired BESIDE the count rate limiter
 // (which is RETAINED). The handler pre-checks canSpend(agentId) BEFORE
 // provider.execute (block with quota_exceeded + a hint naming
-// maxCostPerHourUsd, and emit image.failed{quota_exceeded} for OBS-04
+// maxCostPerHourUsd, and emit image.failed{quota_exceeded} for trajectory
 // continuity), and records the actual costUsd AFTER a successful generation.
 // When the limiter dep is undefined (maxCostPerHourUsd unset) the ceiling is
 // skipped — count-only, no regression.
 // ---------------------------------------------------------------------------
-describe("createImageHandlers — SEC-02 cost ceiling", () => {
+describe("createImageHandlers — cost ceiling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -1686,7 +1685,7 @@ describe("createImageHandlers — SEC-02 cost ceiling", () => {
     // The ceiling was consulted for THIS agent.
     expect(costLimiter.canSpend).toHaveBeenCalledWith("agent-1");
 
-    // OBS-02: a WARN logs the quota ceiling. The Pino `errorKind` LOG field is
+    // A WARN logs the quota ceiling. The Pino `errorKind` LOG field is
     // the CLOSED union, so the domain `quota_exceeded` maps to `resource`
     // (IMAGE_ERR_TO_LOG); the domain kind rides the separate `imageErrorKind`.
     const calls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
@@ -1697,7 +1696,7 @@ describe("createImageHandlers — SEC-02 cost ceiling", () => {
     expect((warn![0] as { errorKind?: string }).errorKind).toBe("resource"); // closed-union log kind
     expect((warn![0] as { hint?: string }).hint).toMatch(/maxCostPerHourUsd/);
 
-    // OBS-04 continuity: image.failed{quota_exceeded} is recorded (the domain
+    // Trajectory continuity: image.failed{quota_exceeded} is recorded (the domain
     // kind — the trajectory event payload is not a closed-union log field).
     const failed = recordEvent.mock.calls.find((c) => c[0] === "image.failed");
     expect(failed).toBeDefined();
@@ -1743,7 +1742,7 @@ describe("createImageHandlers — SEC-02 cost ceiling", () => {
     const costLimiter = makeMockCostLimiter(true);
     const deps = createMockDeps({
       costLimiter,
-      // No costUsd on the output (legacy adapter) → record(agentId, 0).
+      // No costUsd on the output (adapter reports no cost) → record(agentId, 0).
       provider: {
         id: "test-provider",
         isAvailable: () => true,
@@ -1777,14 +1776,14 @@ describe("createImageHandlers — SEC-02 cost ceiling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SEC-03: no credential value leaks into ANY image log line, at any level.
+// No credential value leaks into ANY image log line, at any level.
 //
 // The image handler must log only ids/labels/step/errorKind/hint/counts — never
 // the raw provider message, headers, a bearer, an API key, or a ChatGPT
 // account id (the codex OAuth identity). Pino's redact.paths + CREDENTIAL_KEYS
 // auto-redact credential-NAMED keys, but the firmer guarantee asserted here is
 // that the handler never even constructs a log payload carrying a secret VALUE
-// (so redaction is a safety net, not the only defence — T-186-14).
+// (so redaction is a safety net, not the only defence).
 //
 // This is a regression-guard: green today (the handler discards the raw
 // provider message at classification — pi-image-adapter.ts:109 — and logs only
@@ -1792,7 +1791,7 @@ describe("createImageHandlers — SEC-02 cost ceiling", () => {
 // field (e.g. `err: result.error` with a bearer in its message, or the raw
 // provider response headers).
 // ---------------------------------------------------------------------------
-describe("createImageHandlers — SEC-03 no secret in any log line", () => {
+describe("createImageHandlers — no secret in any log line", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

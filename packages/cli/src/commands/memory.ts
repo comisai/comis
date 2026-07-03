@@ -48,11 +48,6 @@ export function registerMemoryCommand(program: Command): void {
 
   // memory search <query> — the hybrid memory-entry search
   // (memory.search_files: memoryApi.search → FTS + vector fusion).
-  //
-  // Live finding 2026-06-11: this command was a hardcoded exit-1 stub left
-  // over from the Phase-126 demolition, blaming "the context engine is
-  // 'pipeline'" on a DAG-mode daemon — while the contracted search RPC
-  // worked fine. The excuse outlived the era it described.
   memory
     .command("search <query>")
     .description("Search memory entries")
@@ -94,9 +89,6 @@ export function registerMemoryCommand(program: Command): void {
 
   // memory inspect <id> — single-entry detail via memory.browse (no
   // dedicated by-id read RPC exists; the browse page is scanned client-side).
-  //
-  // Live finding 2026-06-11: like `search`, this was a hardcoded exit-1 stub
-  // blaming the demolished pipeline-era context engine.
   memory
     .command("inspect <id>")
     .description("Display full details of a memory entry")
@@ -201,7 +193,7 @@ export function registerMemoryCommand(program: Command): void {
       }
     });
 
-  // memory learning — OBS-02 (Phase 198) outcome-learning telemetry (coverage,
+  // memory learning — outcome-learning telemetry (coverage,
   // volume by source, success/failure ratio per agent). Read OFFLINE from the
   // local outcome_events ledger (~/.comis/memory.db): the CLI cannot import
   // @comis/agent/@comis/skills (closed graph) and the daemon coverage gauge is
@@ -250,7 +242,7 @@ export function registerMemoryCommand(program: Command): void {
       );
     });
 
-  // memory skills — OBS-02 (Phase 201, P2 skills) procedural-learning telemetry:
+  // memory skills — procedural-learning telemetry:
   // the learned-skill admission funnel (synthesized/admitted counts by state, per
   // agent). Read OFFLINE from the local mental_models table (kind='skill' rows,
   // ~/.comis/memory.db):
@@ -287,7 +279,7 @@ export function registerMemoryCommand(program: Command): void {
       const byStateStr = (m: Record<string, number>): string =>
         Object.entries(m).map(([k, v]) => `${k}:${v}`).join(" ");
       info(`Learned skills: ${stats.total} (${byStateStr(stats.byState)})`);
-      // SURFACE-06 promotion/demotion roll-up — counts only (DERIVED from byState):
+      // Promotion/demotion roll-up — counts only (DERIVED from byState):
       // promoted = active, demoted = stale+archived. Never a per-procedure body.
       info(`Promoted (active): ${stats.promoted} · Demoted (stale+archived): ${stats.demoted}`);
       renderTable(
@@ -332,8 +324,8 @@ export function registerMemoryCommand(program: Command): void {
 
           const records = (result.records ?? []) as Array<Record<string, unknown>>;
           if (records.length === 0) {
-            // Honest empty (live finding 2026-06-11): say WHY it is empty —
-            // the recorder is opt-in, so a bare "no records" pointed nowhere.
+            // Honest empty: say WHY it is empty — the recorder is opt-in, so
+            // a bare "no records" would point nowhere.
             const traceResult = result as { tracingEnabled?: boolean; hint?: string };
             if (traceResult.hint !== undefined) {
               info(`No recall-trace records found — ${traceResult.hint}`);
@@ -536,7 +528,7 @@ export function registerMemoryCommand(program: Command): void {
 
   // memory export — versioned, secret-scrubbed envelope export.
   // CLI writes the file (daemon runs under node --permission which disables
-  // fd-based fs APIs: fsync*, fchmod, fchown). T-02-07: mode 0o600 (owner
+  // fd-based fs APIs: fsync*, fchmod, fchown). Mode 0o600 (owner
   // read/write only).
   memory
     .command("export")
@@ -545,7 +537,7 @@ export function registerMemoryCommand(program: Command): void {
     .option("--output <path>", "Output file path (default: comis-memory-<agentId>-<timestamp>.json)")
     .option("--limit <n>", "Maximum entries to export (default: 10000)", "10000")
     .action(async (options: { agent: string; output?: string; limit: string }) => {
-      // WR-02: guard against non-numeric --limit before the RPC call.
+      // Guard against non-numeric --limit before the RPC call.
       const exportLimit = parseInt(options.limit, 10);
       if (isNaN(exportLimit) || exportLimit < 1) {
         error("Invalid limit: must be a positive integer");
@@ -561,7 +553,7 @@ export function registerMemoryCommand(program: Command): void {
           ),
         );
         // CLI writes the file — daemon runs node --permission (no fd-based fs APIs).
-        // T-02-07: mode 0o600 (owner read/write only — same pattern as openSqliteDatabase).
+        // Mode 0o600 (owner read/write only — same pattern as openSqliteDatabase).
         const outPath =
           options.output ?? `comis-memory-${options.agent}-${Date.now()}.json`;
         await fs.writeFile(outPath, JSON.stringify(result, null, 2), { mode: 0o600 });
@@ -576,7 +568,7 @@ export function registerMemoryCommand(program: Command): void {
     });
 
   // memory import — firewalled import from comis-memory-export-v1 envelope.
-  // CLI validates envelope client-side (T-02-08 fail-closed layer) before RPC.
+  // CLI validates envelope client-side (fail-closed layer) before RPC.
   // Daemon runs its own Zod validation + memory-poisoning firewall as second line.
   memory
     .command("import <file>")
@@ -585,7 +577,7 @@ export function registerMemoryCommand(program: Command): void {
     .option("--dry-run", "Validate and report counts without writing to the store")
     .action(async (file: string, options: { agent: string; dryRun?: boolean }) => {
       try {
-        // T-02-08: CLI validates envelope before sending to daemon — fail-closed.
+        // CLI validates the envelope before sending to the daemon — fail-closed.
         let raw: unknown;
         try {
           raw = JSON.parse(await fs.readFile(file, "utf-8")) as unknown;

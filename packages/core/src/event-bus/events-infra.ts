@@ -22,7 +22,7 @@ export interface InfraEvents {
      * Short, renderer-safe approval id (12-char base62) minted by the
      * approval gate. REQUIRED on the event so renderer prompts and the
      * `/approve <id>` / `/deny <id>` slash commands share the same id, and
-     * the full `requestId` never reaches renderers (§4.2, §6.4.1).
+     * the full `requestId` never reaches renderers.
      *
      * Build coupling: the SOLE emit site that mints + supplies `shortId`
      * lives in `approval/approval-gate.ts` — this schema only declares the
@@ -39,7 +39,7 @@ export interface InfraEvents {
     timeoutMs: number;
     /** Distributed trace id when the request is created inside a request
      *  context. Optional — `restorePending()` preserves `shortId` but may
-     *  omit `traceId` after a graceful restart (§4.2). */
+     *  omit `traceId` after a graceful restart. */
     traceId?: string;
     /** Channel type of the originating request (e.g., "telegram", "discord"). Used by the activity-renderer approval path. */
     channelType?: string;
@@ -84,10 +84,10 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  // Three plugin / hook lifecycle event-bus events were removed from this
-  // map. They had zero non-test subscribers; the only emit sites were
-  // inside PluginRegistry and HookRunner themselves. Plugin lifecycle is
-  // now consumed exclusively through the in-tree PluginRegistry interface
+  // Plugin / hook lifecycle deliberately has NO event-bus events here: such
+  // events would have zero non-test subscribers (the only plausible emit sites
+  // are inside PluginRegistry and HookRunner themselves). Plugin lifecycle is
+  // consumed exclusively through the in-tree PluginRegistry interface
   // (register / unregister / getHooksByName / deactivateAll).
 
   // -------------------------------------------------------------------------
@@ -165,7 +165,7 @@ export interface InfraEvents {
      * Carried on the payload so the Verified Learning correction writer
      * (setup-learning-reactions.ts) can record the prior completed trajectory for
      * a single-agent turn WITHOUT reading ALS (the emit runs outside the
-     * executor's runWithContext scope — CR-02).
+     * executor's runWithContext scope).
      */
     traceId?: string;
     receivedAt: number;
@@ -287,9 +287,9 @@ export interface InfraEvents {
     result: string;
     success: boolean;
     /** Absent for deliveryTarget-less system_event jobs (the memory-cron
-     *  __SENTINEL__ class — live finding 2026-06-11: their WORK rides this
-     *  event and must fire even with nothing to deliver). The delivery
-     *  listener already guards via `deliveryTarget?.channelType`. */
+     *  __SENTINEL__ class): their WORK rides this event, so it must fire
+     *  even with nothing to deliver. The delivery listener already guards
+     *  via `deliveryTarget?.channelType`. */
     deliveryTarget?: {
       channelId: string;
       userId: string;
@@ -565,15 +565,13 @@ export interface InfraEvents {
   // System lifecycle events
   // -------------------------------------------------------------------------
 
-  // The "system:shutdown" event-bus event was removed from this map. Its
-  // production subscribers (across daemon.ts, channels-helpers.ts,
-  // setup-tools.ts, setup-channels-runtime.ts, setup-cross-session-events.ts)
-  // had ZERO production emitters — every teardown silently no-op'd in
-  // production until the systemd KillMode reaped the process. Teardowns now
-  // flow directly through setupShutdown's ShutdownDeps (no event-bus
-  // indirection). approval-gate.ts:156 + :339 retain the literal
-  // "system:shutdown" string as a denial-reason sentinel — that string is
-  // NOT this event.
+  // There is deliberately NO "system:shutdown" event-bus event. A bus event
+  // here invites subscriber-without-emitter drift: shutdown subscribers with
+  // zero emitters silently no-op every teardown until the systemd KillMode
+  // reaps the process. Teardowns flow directly through setupShutdown's
+  // ShutdownDeps (no event-bus indirection). approval-gate.ts:156 + :339 use
+  // the literal "system:shutdown" string as a denial-reason sentinel — that
+  // string is NOT an event.
 
   /** Unhandled error from a system component */
   "system:error": { error: Error; source: string };

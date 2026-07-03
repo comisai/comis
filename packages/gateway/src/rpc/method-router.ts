@@ -112,14 +112,13 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
     errorKind: "config" | "auth" | "validation" | "precondition" | "internal";
     hint: string;
   } {
-    // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): typed policy/security/
-    // validation refusals → non-internal (warn) via the SINGLE source of truth in
-    // `@comis/core`, which the daemon's `classifyRpcError` (rpc-dispatch.ts) ALSO delegates
-    // to. They reach this outer trace wrapper with their `Error.name` intact; this package
-    // cannot `instanceof` the daemon/@comis/agent error classes (dependency direction), and
-    // `classifyTypedRpcError` keys off that name — so the two log layers cannot drift (the
-    // drift is exactly what let this layer keep logging refusals as internal/ERROR after the
-    // dispatch layer was fixed). A refusal must NOT log error(50) — a health sweep counts it.
+    // Typed policy/security/validation refusals → non-internal (warn) via the
+    // SINGLE source of truth in `@comis/core`, which the daemon's `classifyRpcError`
+    // (rpc-dispatch.ts) ALSO delegates to. They reach this outer trace wrapper with
+    // their `Error.name` intact; this package cannot `instanceof` the daemon/@comis/agent
+    // error classes (dependency direction), and `classifyTypedRpcError` keys off that
+    // name — so the two log layers cannot drift and log the same refusal at different
+    // levels. A refusal must NOT log error(50) — a health sweep counts it.
     const typed = classifyTypedRpcError(err);
     if (typed) return { errorKind: typed.errorKind, hint: typed.hint };
     // Unrecognized errors keep the gateway's own message-substring fallbacks, then internal.

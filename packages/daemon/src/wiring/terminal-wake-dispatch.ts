@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Recurring wake-dispatch FSM (OPS-08/OPS-09) — the daemon-side module that
- * turns a `terminal:input_needed` event into AT MOST ONE woken agent turn.
+ * Recurring wake-dispatch FSM — the daemon-side module that turns a
+ * `terminal:input_needed` event into AT MOST ONE woken agent turn.
  *
  * Modeled on `packages/agent/src/background/completion-dispatcher.ts`, but
  * RECURRING/mid-session: the completion-dispatcher fires once per task
@@ -20,18 +20,17 @@
  *   | suppressError failure isolation      | suppressError on the woken turn           |
  *   | shutdown() = off + await inflight    | shutdown() = off + await inflight (drain) |
  *
- * **Daemon-side placement (binding — RESEARCH Open Q1 + Pitfall 3):** the FSM
- * persists via `@comis/observability` (terminal-wake-persistence.ts), which
- * `@comis/skills` must NOT value-import — so the recurring FSM + its
- * persistence live in the daemon layer (spec §4.4 "@comis/core/daemon"), not
- * in the skills worker.
+ * **Daemon-side placement (binding constraint):** the FSM persists via
+ * `@comis/observability` (terminal-wake-persistence.ts), which `@comis/skills`
+ * must NOT value-import — so the recurring FSM + its persistence live in the
+ * daemon layer, not in the skills worker.
  *
- * **Separability (124-09 is the keystone):** this module is the FSM UNIT. The
- * daemon SUBSCRIBE wiring — binding the fd3 hook → this FSM → a woken turn
- * that runs the auto-answer / loop-guard, and binding `escalate` to emit the
- * `terminal:escalated` event + the subagent→parent→human chain — lands in
- * 124-09. Here, `escalate` is an injected NotifyFn-shaped callback and
- * `wakeOneTurn` is the injected woken-turn driver.
+ * **Separability:** this module is the FSM UNIT. The daemon SUBSCRIBE wiring —
+ * binding the fd3 hook → this FSM → a woken turn that runs the auto-answer /
+ * loop-guard, and binding `escalate` to emit the `terminal:escalated` event +
+ * the subagent→parent→human chain — lives in the daemon setup layer. Here,
+ * `escalate` is an injected NotifyFn-shaped callback and `wakeOneTurn` is the
+ * injected woken-turn driver.
  *
  * Injected clock (`nowMs`), closure-local state ONLY (no module-global),
  * never-throw isolation (a wake handler error must not crash the dispatcher).
@@ -56,9 +55,9 @@ export type WakeEscalationReason = "hop_limit";
 
 /**
  * The escalation callback (NotifyFn-shaped, the completion-dispatcher
- * `fireFallback` precedent). 124-09 binds this to emit `terminal:escalated`
- * + drive the subagent→parent→human chain (spec §4.7). Returns a promise so
- * the FSM can await it inside its in-flight tracking.
+ * `fireFallback` precedent). The daemon setup layer binds this to emit
+ * `terminal:escalated` + drive the subagent→parent→human chain. Returns a
+ * promise so the FSM can await it inside its in-flight tracking.
  */
 export type WakeEscalateFn = (opts: {
   sessionId: string;
@@ -68,11 +67,11 @@ export type WakeEscalateFn = (opts: {
 
 /**
  * The narrow structural event the FSM consumes. It carries `requestId` (the
- * `(sessionId, requestId)` dedupe correlation, reusing the P0 framer key
- * shape) — the daemon hook in 124-09 maps the fd3 frame's requestId in. The
- * core `terminal:input_needed` bus payload omits requestId (it is a
- * redaction-safe summary); the FSM's correlation needs it, so the daemon
- * threads it from the frame.
+ * `(sessionId, requestId)` dedupe correlation, reusing the framer key shape) —
+ * the daemon hook maps the fd3 frame's requestId in. The core
+ * `terminal:input_needed` bus payload omits requestId (it is a redaction-safe
+ * summary); the FSM's correlation needs it, so the daemon threads it from the
+ * frame.
  */
 export interface TerminalInputNeededWake {
   sessionId: string;
@@ -95,8 +94,8 @@ export interface WakeDispatcherBus {
 /** Public-facing handle on the wake dispatcher. */
 export interface TerminalWakeDispatcher {
   /**
-   * Drop the in-memory FSM state for a session that has ended (killed/evicted/exited)
-   * — IN-03/WR-02. The `states` map is otherwise only pruned when a NEW wake arrives
+   * Drop the in-memory FSM state for a session that has ended (killed/evicted/exited).
+   * The `states` map is otherwise only pruned when a NEW wake arrives
    * for an already-dead session (the active-check), so a session that goes quiet then
    * dies would leak its `WakeState` for the daemon's lifetime. The end-of-life hook in
    * `setupTerminalWake` calls this (alongside the loop-guard + wake-file cleanup). Total
@@ -111,12 +110,12 @@ export interface TerminalWakeDispatcher {
 export interface TerminalWakeDispatcherDeps {
   /** The typed bus (structurally a `WakeDispatcherBus`). */
   eventBus: WakeDispatcherBus;
-  /** Active-session check — owner-scoped (the P4 registry). A wake for a session
+  /** Active-session check — owner-scoped (the registry). A wake for a session
    *  this reports false (killed/evicted/cross-owner) is dropped + audited. */
   isSessionActive: (sessionId: string, owner: PersistedWakeOwner) => boolean;
-  /** The woken-turn driver (124-09 wires it to the agent turn). */
+  /** The woken-turn driver (the daemon setup layer wires it to the agent turn). */
   wakeOneTurn: (sessionId: string, owner: PersistedWakeOwner) => Promise<void>;
-  /** Hop-limit / drop escalation (124-09 binds it to terminal:escalated). */
+  /** Hop-limit / drop escalation (bound to terminal:escalated at daemon setup). */
   escalate: WakeEscalateFn;
   /** Data dir for the durable wake-state. */
   dataDir: string;
@@ -149,8 +148,8 @@ interface WakeState {
  * Wire the recurring wake-dispatch FSM against an event bus. Subscriptions are
  * installed synchronously; call `shutdown()` to remove them + drain.
  *
- * Recovers persisted dispatch state on construction (OPS-09) so a session
- * mid-wake before a daemon restart is not re-woken spuriously.
+ * Recovers persisted dispatch state on construction so a session mid-wake
+ * before a daemon restart is not re-woken spuriously.
  */
 export function createTerminalWakeDispatcher(
   deps: TerminalWakeDispatcherDeps,
@@ -164,7 +163,7 @@ export function createTerminalWakeDispatcher(
   let stopped = false;
   let inflight: Promise<void> = Promise.resolve();
 
-  // Recover persisted dispatch state on boot (OPS-09).
+  // Recover persisted dispatch state on boot.
   for (const persisted of recoverWakeStates(deps.dataDir)) {
     states.set(persisted.sessionId, {
       owner: persisted.owner,
@@ -222,9 +221,9 @@ export function createTerminalWakeDispatcher(
       return;
     }
 
-    // (2) ACTIVE-CHECK — drop wakes for genuinely-gone sessions. ISSUE-3: isSessionActive now
-    // recovers the STAMPED owner (registry.getOwner), so a LIVE channel/API session is NOT dropped
-    // cross-owner; a drop here means the session is truly absent (killed/evicted/never-registered).
+    // (2) ACTIVE-CHECK — drop wakes for genuinely-gone sessions. isSessionActive recovers the
+    // STAMPED owner (registry.getOwner), so a LIVE channel/API session is NOT dropped cross-owner;
+    // a drop here means the session is truly absent (killed/evicted/never-registered).
     if (!deps.isSessionActive(ev.sessionId, ev.owner)) {
       log.warn(
         {
@@ -313,10 +312,10 @@ export function createTerminalWakeDispatcher(
       // Clear the pending flag so a FRESH frame can wake again; back to idle.
       st.pendingFrame = undefined;
       st.dispatchState = "idle";
-      // WR-01: a turn that settled SUCCESSFULLY ends the consecutive wake run, so
-      // reset hopCount. `maxHops` is the CONSECUTIVE-wakes-without-progress cap (the
+      // A turn that settled SUCCESSFULLY ends the consecutive wake run, so reset
+      // hopCount. `maxHops` is the CONSECUTIVE-wakes-without-progress cap (the
       // loop/recursion guard the "consecutive" docstrings promise) — NOT a lifetime
-      // budget (that is the P4 maxInteractions cap). A long-lived session driven
+      // budget (that is the maxInteractions cap). A long-lived session driven
       // through many safe answered prompts must never permanently over-escalate;
       // only an unbroken run of un-settled wakes climbs to the cap. A REJECTED turn
       // (err !== undefined) is NOT progress — leave hopCount climbing so a wedged
@@ -384,7 +383,7 @@ export function createTerminalWakeDispatcher(
 
   return {
     forgetSession(sessionId: string): void {
-      // IN-03/WR-02: reclaim the in-memory FSM state for an ended session. Total +
+      // Reclaim the in-memory FSM state for an ended session. Total +
       // never-throws (Map.delete is a no-op for an unknown id). The durable wake-file
       // + loop-guard ring are reclaimed by the setupTerminalWake end-of-life hook.
       states.delete(sessionId);

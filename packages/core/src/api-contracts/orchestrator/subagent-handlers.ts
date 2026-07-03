@@ -74,9 +74,9 @@ export const SubagentKillContract = defineContract({
 
 /**
  * `subagent.steer` — Steer a running sub-agent. Flag-gated on
- * `security.agentToAgent.steerInject` (default false, STEER-01):
+ * `security.agentToAgent.steerInject` (default false):
  *   - flag OFF (default): kill the current run and respawn with a new task
- *     (the historical behavior) → `{ status: "steered", oldRunId, newRunId }`.
+ *     → `{ status: "steered", oldRunId, newRunId }`.
  *   - flag ON: inject the message into the RUNNING child's live SDK session at
  *     its next step boundary (transcript + progress preserved, same runId; no
  *     kill, no respawn) → `{ status: "steered_inject", runId }`.

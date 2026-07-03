@@ -115,10 +115,11 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
 
   // Construction-time invariant: the reactor is created only for
   // adapters whose capability gate says `features.reactions: true` (see
-  // setup-channels-runtime.ts ~L500). After ChannelPort.reactToMessage/removeReaction
-  // were made optional, narrow the adapter shape locally so the body can call the
-  // methods directly. If a caller bypasses the gate the constructor surfaces it
-  // loudly here instead of `TypeError` later inside the fire-and-forget path.
+  // setup-channels-runtime.ts). ChannelPort.reactToMessage/removeReaction are
+  // optional on the port, so narrow the adapter shape locally so the body can
+  // call the methods directly. If a caller bypasses the gate the constructor
+  // surfaces it loudly here instead of `TypeError` later inside the
+  // fire-and-forget path.
   // @allow-throw: Construction-time invariant — capability-gate misconfiguration
   // is a developer/composition-root bug that must surface loudly at startup, not
   // be swallowed into Result.err. The caller (setup-channels-runtime.ts) creates

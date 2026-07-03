@@ -76,7 +76,7 @@ function resolveJobByName(
 ): { id: string; name: string } {
   if (!jobName) {
     // Echoing the unmatched var produced "Job not found: undefined" when a
-    // caller used the wrong param key (live finding, 2026-06-11 memory run).
+    // caller used the wrong param key (observed in a live run).
     throw new Error("Missing required parameter: jobName (resolve names via cron.list)");
   }
   const matches = scheduler.getJobs().filter((j) => j.name === jobName);
@@ -105,7 +105,7 @@ function resolveJob(
   const jobName = params.jobName as string | undefined;
   if (!jobName) {
     // Echoing the unmatched var produced "Job not found: undefined" when a
-    // caller used the wrong param key (live finding, 2026-06-11 memory run).
+    // caller used the wrong param key (observed in a live run).
     throw new Error(
       "Missing required parameter: jobId or jobName (resolve names via cron.list)",
     );
@@ -152,7 +152,7 @@ function normalizeCronAddParams(params: Record<string, unknown>): Record<string,
 export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHandler> {
   return {
     [CronAddContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // In-process capability gate — the agent loop skips
       // checkScope, so orch:cron is enforced here, reading the injected
       // _capabilities from raw params BEFORE the strip.
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
@@ -260,8 +260,8 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         deliveryTarget: j.deliveryTarget,
       });
 
-      // TARGET-01: `agentId: "*"` → every agent's jobs (the admin inventory view I
-      // lacked when a non-default agent's crons were invisible).
+      // `agentId: "*"` → every agent's jobs (the admin inventory view; without
+      // it a non-default agent's crons were invisible).
       if (params.agentId === "*") {
         const jobs: Array<ReturnType<typeof mapJob>> = [];
         for (const scheduler of deps.cronSchedulers.values()) {
@@ -289,7 +289,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
     },
 
     [CronUpdateContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see cron.add).
+      // In-process capability gate (see cron.add).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
 
       const userParams = stripInternalFields(rawParams);
@@ -337,7 +337,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
     },
 
     [CronRemoveContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see cron.add).
+      // In-process capability gate (see cron.add).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
 
       const userParams = stripInternalFields(rawParams);
@@ -357,7 +357,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const userParams = stripInternalFields(rawParams);
       const params = CronStatusContract.request.parse(userParams);
 
-      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId; // TARGET-01
+      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId; // explicit agentId wins over the connection default
       const scheduler = deps.cronSchedulers.get(cronAgentId);
       const result = {
         running: scheduler !== undefined,
@@ -372,7 +372,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const userParams = stripInternalFields(rawParams);
       const params = CronRunsContract.request.parse(userParams);
 
-      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId; // TARGET-01
+      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId; // explicit agentId wins over the connection default
       const scheduler = deps.cronSchedulers.get(cronAgentId);
       const tracker = deps.executionTrackers.get(cronAgentId);
       if (!tracker || !scheduler) {
@@ -389,15 +389,15 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
     },
 
     [CronRunContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see cron.add).
+      // In-process capability gate (see cron.add).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
 
       const userParams = stripInternalFields(rawParams);
       const params = CronRunContract.request.parse(userParams);
 
-      // TARGET-01: explicit request `agentId` wins over the connection `_agentId`,
-      // then the default — and we ALWAYS report the agent we resolved (I5: no silent
-      // default; the prior behavior triggered the wrong agent's cron 3× in live runs).
+      // Explicit request `agentId` wins over the connection `_agentId`,
+      // then the default — and we ALWAYS report the agent we resolved (no silent
+      // default; a silently-defaulted target triggered the wrong agent's cron 3× in live runs).
       const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId;
       const agentScheduler = deps.getAgentCronScheduler(cronAgentId);
       const jobName = params.jobName;

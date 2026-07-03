@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED → GREEN for the pure `assembleIncidentReport` (Plan 03, Wave 3).
+ * Tests for the pure `assembleIncidentReport`.
  *
  * `assembleIncidentReport(signals, metadata, rollup, sessionKey, recordCount)`
- * merges the normalized {@link IncidentSignals} (Plan 02) + the F1
- * `_session-metadata.json` rollup (PRIMARY, per OQ3) + the F2 `obs_diagnostics`
- * rollup row (FALLBACK) into a §6.3 {@link IncidentReport} — a PURE function
+ * merges the normalized {@link IncidentSignals} + the F1
+ * `_session-metadata.json` rollup (PRIMARY) + the F2 `obs_diagnostics`
+ * rollup row (FALLBACK) into an {@link IncidentReport} — a PURE function
  * with no I/O and no LLM. `recordCount` is the number of trajectory records the
  * reader READ (the meta-observability signal behind `coverage.trajectory`).
  *
- * These tests pin the contract per field group BEFORE the module exists:
+ * These tests pin the contract per field group:
  *   - **cost** comes from the F1 metadata rollup (`sessionEnd.costUsd`) with a
  *     fallback chain: `sessionEnd.costUsd` → top-level `sessionCostUsd` →
  *     F2 `rollup.costUsd` → `0`. For the 678 fixture this is `1.320669`.
@@ -19,13 +19,13 @@
  *   - **toolStats** merges the signal per-tool counts with the rollup toolStats;
  *     **failures[]** is newest-first (seq descending); **breakerTimeline[]** /
  *     **offloads[]** are copied straight from the signals.
- *   - **likelyRootCause** stays `null` (Plan 05 owns it); **truncations** is `[]`
- *     (Plan 04 owns it); **schemaVersion** is `1`; ids echo from metadata/signals
- *     and NEVER throw on absent fields.
+ *   - **likelyRootCause** stays `null` (the heuristics pass owns it);
+ *     **truncations** is `[]` (the bounding pass owns it); **schemaVersion** is
+ *     `1`; ids echo from metadata/signals and NEVER throw on absent fields.
  *
  * The assembler copies the ALREADY-bounded `errorPreview` (≤200, redacted by
- * Plan 02) and the ALREADY-relativized offload pointers — it introduces no raw
- * body (threat T-153-08).
+ * the normalizer) and the ALREADY-relativized offload pointers — it introduces
+ * no raw body.
  *
  * @module
  */
@@ -34,7 +34,7 @@ import { describe, it, expect } from "vitest";
 import type { IncidentFailure, IncidentSignals } from "@comis/core";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
-// PERSIST-01 + AUDIT-05 (176-05): the cacheBreaks? fold rides toIncidentSignals;
+// The cacheBreaks? fold rides toIncidentSignals;
 // the audit? fold rides assembleIncidentReportFromSources (reader-sourced).
 import { toIncidentSignals } from "./obs-explain-signals.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js";
@@ -86,7 +86,7 @@ function makeSignals(overrides: Partial<IncidentSignals> = {}): IncidentSignals 
 }
 
 /**
- * Build an F1 metadata object. `sessionEnd` is the nested Phase-152 rollup;
+ * Build an F1 metadata object. `sessionEnd` is the nested end-of-session rollup;
  * top-level fields (traceId, agentId, channel, sessionCostUsd) sit beside it.
  */
 function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -113,12 +113,12 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 // ---------------------------------------------------------------------------
-// ORCH-OBS (orchestration-observability): the per-node budget-breach section is
-// surfaced when the signals carry breaches (capSource names WHICH knob bound the
-// node) and OMITTED when there are none (additive; schemaVersion stays 1).
+// The per-node budget-breach section is surfaced when the signals carry
+// breaches (capSource names WHICH knob bound the node) and OMITTED when there
+// are none (additive; schemaVersion stays 1).
 // ---------------------------------------------------------------------------
 
-describe("assembleIncidentReport — nodeBudgetBreaches (ORCH-OBS)", () => {
+describe("assembleIncidentReport — nodeBudgetBreaches", () => {
   it("surfaces nodeBudgetBreaches with capSource when the signals carry a breach", () => {
     const report = assembleIncidentReport(
       makeSignals({
@@ -133,19 +133,19 @@ describe("assembleIncidentReport — nodeBudgetBreaches (ORCH-OBS)", () => {
     expect(report.nodeBudgetBreaches![0]).toMatchObject({ nodeId: "greedy", capSource: "node", tokenBudget: 5000, tokensUsed: 17770 });
   });
 
-  it("OMITS nodeBudgetBreaches entirely when there are no breaches (additive — pre-extension report shape preserved)", () => {
+  it("OMITS nodeBudgetBreaches entirely when there are no breaches (additive — the section is absent, schemaVersion stays 1)", () => {
     const report = assembleIncidentReport(makeSignals({ nodeBudgetBreaches: [] }), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.nodeBudgetBreaches).toBeUndefined();
   });
 });
 
 // ---------------------------------------------------------------------------
-// TREE (215-03): the spawn-tree section is surfaced when the signals carry
+// The spawn-tree section is surfaced when the signals carry
 // nodes (folded from capability.audited records) and OMITTED when empty
 // (additive; schemaVersion stays 1) — the nodeBudgetBreaches mold.
 // ---------------------------------------------------------------------------
 
-describe("assembleIncidentReport — spawnTree (TREE)", () => {
+describe("assembleIncidentReport — spawnTree", () => {
   it("surfaces spawnTree when the signals carry nodes; schemaVersion stays 1", () => {
     const report = assembleIncidentReport(
       makeSignals({
@@ -183,7 +183,7 @@ describe("assembleIncidentReport — spawnTree (TREE)", () => {
     });
   });
 
-  it("OMITS spawnTree entirely when there are no nodes (additive — pre-extension report shape preserved)", () => {
+  it("OMITS spawnTree entirely when there are no nodes (additive — the section is absent, schemaVersion stays 1)", () => {
     const report = assembleIncidentReport(makeSignals({ spawnTree: [] }), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.spawnTree).toBeUndefined();
     expect(report.schemaVersion).toBe(1);
@@ -196,7 +196,7 @@ describe("assembleIncidentReport — spawnTree (TREE)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// cost — the F1-primary fallback chain (the X3 1.320669 invariant).
+// cost — the F1-primary fallback chain (the frozen-fixture 1.320669 invariant).
 // ---------------------------------------------------------------------------
 
 describe("assembleIncidentReport — cost", () => {
@@ -286,7 +286,7 @@ describe("assembleIncidentReport — cost", () => {
 });
 
 // ---------------------------------------------------------------------------
-// outcome — degraded / severity derivation (design D5).
+// outcome — degraded / severity derivation.
 // ---------------------------------------------------------------------------
 
 describe("assembleIncidentReport — outcome", () => {
@@ -389,8 +389,8 @@ describe("assembleIncidentReport — outcome", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BUDGET-LIMB-OBS (memory-learning-stress-catalog-codex-20260629): a per-root
-// autonomy.budget abort whose turn HARD-aborts skips the clean sessionEnd rollup,
+// A per-root autonomy.budget abort whose turn HARD-aborts skips the clean
+// sessionEnd rollup,
 // so the metadata carries no spend endReason — but the trajectory carries the
 // terminal `execution.aborted` record with `reason` + `perRootBudget`. The
 // assembler must derive `endReason` (and surface `perRootBudget`) from that record
@@ -400,7 +400,7 @@ describe("assembleIncidentReport — outcome", () => {
 // returned likelyRootCause:null despite the trajectory carrying the data).
 // ---------------------------------------------------------------------------
 
-describe("assembleIncidentReport — per-root budget abort (BUDGET-LIMB-OBS)", () => {
+describe("assembleIncidentReport — per-root budget abort", () => {
   it("derives endReason + perRootBudget from a terminal execution.aborted when the rollup lacks a spend endReason", () => {
     const records: Array<Record<string, unknown>> = [
       // an EARLIER non-spend turn in the same (multi-turn) session
@@ -447,8 +447,8 @@ describe("assembleIncidentReport — per-root budget abort (BUDGET-LIMB-OBS)", (
 });
 
 // ---------------------------------------------------------------------------
-// SELF-GRADE VISIBILITY (#4, memory-learning-stress-catalog-codex-20260629): a
-// self-graded tool failure (the #1 `{graded:true,outcome:"failure"}` envelope)
+// Self-grade visibility: a self-graded tool failure
+// (the `{graded:true,outcome:"failure"}` envelope)
 // sets classifiedFailureBy:"failure_detector" + matchedRule:"self_grade" and rides
 // the trajectory tool.result record (translate-payload carries both). But the
 // explain failure-fold dropped `matchedRule`, so `explain.failures` showed only
@@ -458,7 +458,7 @@ describe("assembleIncidentReport — per-root budget abort (BUDGET-LIMB-OBS)", (
 // visible in one call (the per-session companion to the deferred funnel count).
 // ---------------------------------------------------------------------------
 
-describe("assembleIncidentReport — failure matchedRule (self_grade visibility, #4)", () => {
+describe("assembleIncidentReport — failure matchedRule (self_grade visibility)", () => {
   it("surfaces matchedRule on explain.failures so a self-graded task-failure is distinguishable", () => {
     const records: Array<Record<string, unknown>> = [
       {
@@ -473,7 +473,7 @@ describe("assembleIncidentReport — failure matchedRule (self_grade visibility,
           success: false,
           transportOk: true, // the call returned cleanly; the DOMAIN graded it a failure
           classifiedFailureBy: "failure_detector",
-          matchedRule: "self_grade", // the #1 self-grade envelope drove the failure flip
+          matchedRule: "self_grade", // the self-grade envelope drove the failure flip
           errorKind: "validation",
         },
       },
@@ -647,12 +647,12 @@ describe("assembleIncidentReport — identity & invariants", () => {
     expect(report.channel).toEqual({ type: "", id: "" });
   });
 
-  it("leaves likelyRootCause null — Plan 05 owns it", () => {
+  it("leaves likelyRootCause null — the heuristics pass owns it", () => {
     const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.likelyRootCause).toBeNull();
   });
 
-  it("starts truncations and suggestedNextSteps empty — Plan 04/05 own them", () => {
+  it("starts truncations and suggestedNextSteps empty — the bounding/heuristics passes own them", () => {
     const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.truncations).toEqual([]);
     expect(report.suggestedNextSteps).toEqual([]);
@@ -698,7 +698,7 @@ describe("assembleIncidentReport — identity & invariants", () => {
     expect(withoutRatio.cost.cacheReadRatio).toBe(0);
   });
 
-  it("reads cacheReadRatio from the metadata TOP LEVEL when there is no sessionEnd (flat 678-style shape) — WR-02", () => {
+  it("reads cacheReadRatio from the metadata TOP LEVEL when there is no sessionEnd (flat 678-style shape)", () => {
     // Every other numeric rollup field (durationMs, totalTokens, …) reads from
     // the metadata top level as a fallback because the FROZEN 678 fixture is
     // flat (no nested sessionEnd). cacheReadRatio must do the same — pre-fix it
@@ -787,7 +787,7 @@ describe("assembleIncidentReport — coverage (READ-coverage)", () => {
     expect(report.coverage!.offloads.pointersTotal).toBe(2);
   });
 
-  it("preserves coverage unchanged through boundIncidentReport at BOTH summary and full depth (STEP D)", () => {
+  it("preserves coverage unchanged through boundIncidentReport at BOTH summary and full depth", () => {
     // coverage is a fixed 4-int + 2-bool object far below every cap and is NOT a
     // REPORT_ARRAY_FIELD, so the bounding pass passes it through untouched. Pin
     // it at both depths so a future cap change cannot silently drop it.
@@ -813,10 +813,10 @@ describe("assembleIncidentReport — coverage (READ-coverage)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// W3 (obs-llm-troubleshooting): the report carries the signals contextBudget.
+// The report carries the signals contextBudget.
 // ---------------------------------------------------------------------------
 
-describe("assembleIncidentReport — contextBudget threading (W3)", () => {
+describe("assembleIncidentReport — contextBudget threading", () => {
   it("carries signals.contextBudget into the report verbatim", () => {
     const contextBudget = {
       windowTokens: 32_000,
@@ -840,19 +840,19 @@ describe("assembleIncidentReport — contextBudget threading (W3)", () => {
     expect(report.contextBudget).toEqual(contextBudget);
   });
 
-  it("omits contextBudget when the signals carry none (pre-W2 session)", () => {
+  it("omits contextBudget when the signals carry none (no context.budget record)", () => {
     const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.contextBudget).toBeUndefined();
   });
 });
 
 // ---------------------------------------------------------------------------
-// W8 (obs-llm-troubleshooting): the report falls back to signals-derived
+// The report falls back to signals-derived
 // agentId/channel when the metadata rollup lacks them (the live rollup carries
-// neither — the report printed empty strings for a real session).
+// neither — without the fallback the report prints empty strings for a real session).
 // ---------------------------------------------------------------------------
 
-describe("assembleIncidentReport — agentId/channel fallback (W8)", () => {
+describe("assembleIncidentReport — agentId/channel fallback", () => {
   it("falls back to signals agentId and channel when the metadata rollup lacks them", () => {
     const report = assembleIncidentReport(
       makeSignals({ agentId: "default", channel: { type: "telegram", id: "678314278" } }),
@@ -879,7 +879,7 @@ describe("assembleIncidentReport — agentId/channel fallback (W8)", () => {
   });
 });
 
-describe("assembleIncidentReport — RECALL-01 recall section", () => {
+describe("assembleIncidentReport — recall section", () => {
   it("surfaces signals.recall on the report (counts/booleans only — no bodies)", () => {
     const report = assembleIncidentReport(
       makeSignals({
@@ -899,13 +899,13 @@ describe("assembleIncidentReport — RECALL-01 recall section", () => {
     });
   });
 
-  it("omits the recall section when the signals carry no recall data (pre-RECALL-01 / no-recall session)", () => {
+  it("omits the recall section when the signals carry no recall data (no-recall session)", () => {
     const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.recall).toBeUndefined();
   });
 });
 
-describe("assembleIncidentReport — OBS-02 learning section", () => {
+describe("assembleIncidentReport — learning section", () => {
   it("surfaces signals.learning on the report (counts/ids/closed-enums only — no bodies)", () => {
     const report = assembleIncidentReport(
       makeSignals({
@@ -940,8 +940,8 @@ describe("assembleIncidentReport — OBS-02 learning section", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PERSIST-01 (176-05): the cacheBreaks? section — folded per-reason from the
-// session's `cache.break` trajectory records (Plan 04), content-free + bounded.
+// The cacheBreaks? section — folded per-reason from the
+// session's `cache.break` trajectory records, content-free + bounded.
 // ---------------------------------------------------------------------------
 
 /** A `cache.break` trajectory record envelope (post-translate-payload shape). */
@@ -963,7 +963,7 @@ function cacheBreakRecord(
   };
 }
 
-describe("assembleIncidentReport — cacheBreaks? (PERSIST-01, 176-05)", () => {
+describe("assembleIncidentReport — cacheBreaks?", () => {
   it("surfaces cacheBreaks folded per-reason from cache.break trajectory records", () => {
     const signals = toIncidentSignals([
       cacheBreakRecord({ reason: "system_changed", estCostUsd: 0.004 }, 1),
@@ -993,7 +993,7 @@ describe("assembleIncidentReport — cacheBreaks? (PERSIST-01, 176-05)", () => {
     expect(report.cacheBreaks?.[0]).toEqual({ reason: "tools_changed", count: 1, estCostUsd: 0.02 });
   });
 
-  it("caps cacheBreaks at summary depth + records a truncations[] breadcrumb (GBIII I2 bounded)", () => {
+  it("caps cacheBreaks at summary depth + records a truncations[] breadcrumb (bounded output)", () => {
     // 12 distinct reasons > SUMMARY_MAX_CACHE_BREAKS (10) → the bound pass sheds the tail.
     const records = Array.from({ length: 12 }, (_, i) =>
       cacheBreakRecord({ reason: `reason_${String(i).padStart(2, "0")}`, estCostUsd: 0.001 }, i + 1),
@@ -1007,8 +1007,8 @@ describe("assembleIncidentReport — cacheBreaks? (PERSIST-01, 176-05)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AUDIT-05 (176-05): the audit? section — counts-by-kind from the session's
-// obs_audit_events (Plan 03 persists via SQLite, NOT a trajectory record), read
+// The audit? section — counts-by-kind from the session's
+// obs_audit_events (persisted via SQLite, NOT a trajectory record), read
 // through the IncidentSourceReader's readAuditEvents + filtered to the resolved
 // traceId, content-free.
 // ---------------------------------------------------------------------------
@@ -1056,7 +1056,7 @@ function auditRow(kind: string, traceId: string | null, extra: Record<string, un
   };
 }
 
-describe("assembleIncidentReportFromSources — audit? (AUDIT-05, 176-05)", () => {
+describe("assembleIncidentReportFromSources — audit?", () => {
   it("populates audit { total, byKind } from the session's audit events scoped to the resolved traceId", async () => {
     const reader = makeAuditReader([
       auditRow("secret_access", TRACE_ID),
@@ -1094,7 +1094,7 @@ describe("assembleIncidentReportFromSources — audit? (AUDIT-05, 176-05)", () =
     expect(report.audit).toEqual({ total: 1, byKind: { secret_access: 1 } });
   });
 
-  it("OMITS audit when the reader has no readAuditEvents method (pre-176-05 fixture readers unaffected)", async () => {
+  it("OMITS audit when the reader has no readAuditEvents method (audit-less fixture readers unaffected)", async () => {
     const legacyReader: IncidentSourceReader = {
       async readSessionRecords() {
         return [];

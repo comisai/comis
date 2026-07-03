@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Verbosity configuration schema for channel-aware response style hints.
- * Channel-aware response style hints.
  */
 import { z } from "zod";
 

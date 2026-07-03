@@ -13,9 +13,9 @@ import type { SessionKey } from "../domain/session-key.js";
  * - Session: session_start, session_end
  * - Gateway: gateway_start, gateway_stop
  *
- * Tool / agent_end hook lanes (before_tool_call, after_tool_call,
- * tool_result_persist, agent_end) were removed — zero in-tree production
- * registrations.
+ * There are deliberately no tool / agent_end hook lanes (before_tool_call,
+ * after_tool_call, tool_result_persist, agent_end) — they would have zero
+ * in-tree production registrations.
  */
 export type HookName =
   | "before_agent_start"

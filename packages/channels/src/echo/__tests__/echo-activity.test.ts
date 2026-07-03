@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Echo activity renderer + harness tests (§18.2 Echo/TestSink row).
+ * Echo activity renderer + harness tests.
  *
  * Echo is the canonical-stream reference: `createEchoActivityRenderer()` wraps
  * `createTestSink()`, which records every `apply(frame)` verbatim with NO
  * coalescing plus the single `finalize(outcome)`. The scenario cases read a
  * golden fixture from disk and assert via `toEqual` (NEVER `toMatchSnapshot` —
- * auto-write self-heals, Pitfall 3).
+ * auto-write self-heals a wrong fixture).
  *
  * Determinism: fixed activityIds (`00000000-0000-0000-0000-00000000000N`),
  * fixed frameSeq, fake clock/timers — no `randomUUID`, no wall-clock timestamps
- * (Pitfall 2). The FakeEchoAdapter mints deterministic `echo-msg-N` ids and
+ * (would flap fixtures). The FakeEchoAdapter mints deterministic `echo-msg-N` ids and
  * records call ORDER only (no clock).
  */
 import { describe, it, expect } from "vitest";
@@ -72,7 +72,7 @@ function serialiseRecorded(recorded: {
   return JSON.parse(JSON.stringify({ frames: recorded.frames, outcome: recorded.outcome ?? null }));
 }
 
-// --- Task 1 behavior tests -------------------------------------------------
+// --- Behavior tests ----------------------------------------------------------
 
 describe("createEchoActivityRenderer (canonical fidelity)", () => {
   it("captures every apply frame verbatim with coalescing NOT applied plus the finalize outcome", async () => {
@@ -138,7 +138,7 @@ describe("createFakeEchoAdapter (recording shape, deterministic ids)", () => {
     expect(serialised).not.toMatch(/timestamp|ts"|deliveredAtMs/);
   });
 
-  it("surfaces an injected platform error through the Result err branch without throwing (Wave-2 classifier seam)", async () => {
+  it("surfaces an injected platform error through the Result err branch without throwing (classifier seam)", async () => {
     const fake = createFakeEchoAdapter();
     fake.nextError = { error_code: 429, parameters: { retry_after: 3 } };
     const r = await fake.sendMessage("chan-a", "boom");
@@ -158,7 +158,7 @@ describe("readFixture (read-from-disk helper)", () => {
   });
 });
 
-// --- Scenario cases (S1-S7, S10-S12; S8 deferred, S9 n/a) ---
+// --- Scenario cases (S1-S7, S10-S12; no S8, S9 n/a) ---
 
 /**
  * Build the recorded {frames, outcome} for a scenario, drive the Echo renderer,
@@ -171,7 +171,7 @@ async function runScenario(
   outcome: TurnOutcome,
 ): Promise<void> {
   // Time discipline: fixtures are deterministic, but exercise the fake clock/timer
-  // to prove no wall-clock leaks into the recorder (Pitfall 2).
+  // to prove no wall-clock leaks into the recorder.
   createFakeTimers();
   createFakeClock(0);
 
@@ -187,7 +187,7 @@ async function runScenario(
   expect(serialised).toEqual(readFixture("echo", scenario));
 }
 
-// Helper events keyed to spec §18.2 scenarios.
+// Helper events keyed to the S1-S12 scenario cases.
 function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
   return makeEvent({
     activityId: `00000000-0000-0000-0000-00000000000${id}`,
@@ -202,7 +202,7 @@ const okReceipt: FinalDeliveryReceipt = {
   deliveredAtMs: 5000,
 };
 
-describe("Echo golden fixtures (§18.2 TestSink row — readFixture + toEqual)", () => {
+describe("Echo golden fixtures (TestSink recordings — readFixture + toEqual)", () => {
   it("S1 trivial chat — zero activity events, kind:success trivial", async () => {
     await runScenario("S1", [], { kind: "success", trivial: true, delivery: okReceipt });
   });

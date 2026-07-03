@@ -8,7 +8,7 @@
  *
  * `describe.skipIf(process.platform !== "linux")` so it COMPILES + SKIPS CLEAN on the
  * macOS author box (the established `.linux.test.ts` pattern) and runs live on
- * `comisvps` (where forkpty + bwrap work). This is the OPTIONAL live corroboration:
+ * a Linux host (where forkpty + bwrap work). This is the OPTIONAL live corroboration:
  * the BINDING proof is the in-process 3-session isolation test (via the
  * fake worker keying each read reply to its sessionId). This file is NOT a required gate —
  * it is VPS-only and must not fail the macOS suite.
@@ -73,7 +73,7 @@ function realShell(): string {
  * The in-process bridge wiring the REAL node-pty loader (`defaultLoadPty`) so each
  * session drives a live PTY via forkpty on the VPS — the same shape the live
  * round-trip test uses. ONE worker hosts all sessions (origin-keying is visibility,
- * not a second worker per session — spec §4.7).
+ * not a second worker per session).
  */
 function makeBridgedPtyWorkerChild(): FakeWorkerChild {
   const worker = createTerminalWorker({ loadPty: defaultLoadPty, logger: noopLogger });

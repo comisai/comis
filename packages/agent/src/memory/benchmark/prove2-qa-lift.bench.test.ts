@@ -2,7 +2,8 @@
 /**
  * PROVE2 — the costed cross-judge per-capability QA-lift + competitor
  * head-to-head harness. The "measure-first" keystone: it produces the
- * cross-judged numbers that gate the activation phase.
+ * cross-judged numbers that decide whether a measured capability may be
+ * activated by default.
  *
  * WHAT IT DOES (one bounded, sampled, COSTED run):
  *   1. Ingest a bounded sample (COMIS_BENCH_LIMIT LongMemEval items + the first

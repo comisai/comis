@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * label-resolver — the typed-first, ActivityStream-side label producer
- * (spec §6.1).
+ * label-resolver — the typed-first, ActivityStream-side label producer.
  *
- * Resolution is typed-first, deterministic-second (spec §6.1):
+ * Resolution is typed-first, deterministic-second:
  *
  *   1. `metadata.suppressActivity === true` → `null` (the tool produces NO
  *      activity at all — e.g. `memory_search` from consolidation,
- *      `discover_tools`, cron poll ticks; spec §10.3).
+ *      `discover_tools`, cron poll ticks).
  *   2. `resolveLabelSpec(toolName, { action, theme })` → the effective LabelSpec
  *      (theme override > registered spec > semantic fallback — resolved in core).
  *   3. `applyTemplate(spec, params, { homeDir })` → the redacted, length-capped
@@ -21,7 +20,7 @@
  * (`resolveLabelSpec` + `applyTemplate`, themselves pure). Redaction-WARN
  * ownership: the resolver does NOT log the redaction WARN. {@link resolveLabelDetailed} returns
  * `redactionsApplied` upward so the ActivityStream (which holds the injected
- * logger) emits the single WARN when non-empty (spec §10.1). It never imports
+ * logger) emits the single WARN when non-empty. It never imports
  * `channels` (the hexagonal boundary).
  *
  * @module
@@ -40,7 +39,7 @@ import {
  * metadata interface.
  */
 export interface ResolveLabelMetadata {
-  /** When true the tool produces no activity (spec §10.3). */
+  /** When true the tool produces no activity. */
   readonly suppressActivity?: boolean;
 }
 
@@ -92,7 +91,7 @@ export function resolveLabelDetailed(
   params: Readonly<Record<string, unknown>>,
   opts: ResolveLabelOpts = {},
 ): ResolvedLabel | null {
-  // (1) suppressActivity short-circuit — no activity at all (spec §10.3).
+  // (1) suppressActivity short-circuit — no activity at all.
   if (opts.metadata?.suppressActivity === true) return null;
 
   // (2) The action discriminator (if present) selects a per-action spec.

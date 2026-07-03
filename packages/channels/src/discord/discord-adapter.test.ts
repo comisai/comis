@@ -1052,7 +1052,7 @@ describe("createDiscordAdapter", () => {
       }
     });
 
-    it("returns unresolved (NOT not_sent) when messages.fetch throws — a failed query cannot prove absence (Pitfall 2)", async () => {
+    it("returns unresolved (NOT not_sent) when messages.fetch throws — a failed query cannot prove absence", async () => {
       const mockMessagesFetch = vi.fn().mockRejectedValue(new Error("DiscordAPIError: 500"));
       mockChannelsFetch.mockResolvedValue({
         isTextBased: () => true,
@@ -1091,7 +1091,7 @@ describe("createDiscordAdapter", () => {
       }
     });
 
-    it("ignores a non-bot author whose message shares the digest — only the bot's own sends count (Spoofing T-216-25)", async () => {
+    it("ignores a non-bot author whose message shares the digest — only the bot's own sends count", async () => {
       const text = "identical body from a user";
       const ts = 1_700_000_000_000;
       const collection = new Map([

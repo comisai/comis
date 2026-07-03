@@ -18,8 +18,8 @@
  * (the gated harness passes `scenario.docs.length`); the module default is a fixed
  * large constant {@link DEFAULT_ABSENT_SENTINEL} so a unit caller need not supply one.
  *
- * PURE: NO clock, NO I/O, NO @comis/memory import — mirrors recall-eval.ts. The
- * gated harness (learning-lift-harness.bench.test.ts) feeds it the per-episode gold
+ * PURE: NO clock, NO I/O, NO @comis/memory import — mirrors recall-eval.ts. A
+ * gated harness feeds it the per-episode gold
  * ranks from the live recall pipeline; the unit test pins the math.
  *
  * @module

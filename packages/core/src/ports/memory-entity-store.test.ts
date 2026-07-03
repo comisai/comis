@@ -44,8 +44,7 @@ describe("MemoryEntityStore.listEntities — scoped entity-graph read", () => {
     expect(portSrc, "listEntities method must be on the port").toMatch(/\blistEntities\s*\(/);
     // The port must stay type-only (mirrors reranker.ts) — neither a zod
     // dependency nor a runtime import of @comis/memory (that would invert the
-    // dependency direction + break the agent↛memory build cut). The plan's
-    // verification grep is import-scoped: `import .* @comis/memory | z.`.
+    // dependency direction + break the agent↛memory build cut).
     expect(portSrc, "no zod in a type-only port").not.toMatch(/\bz\.[a-z]/);
     expect(portSrc, "no @comis/memory import in core port").not.toMatch(
       /^\s*import\b[^\n]*@comis\/memory/m,

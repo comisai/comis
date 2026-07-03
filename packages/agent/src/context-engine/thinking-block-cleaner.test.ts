@@ -6,7 +6,7 @@
  * older assistant messages while preserving redacted thinking blocks
  * and maintaining immutability guarantees.
  *
- * cacheFenceIndex no longer gates stripping. The cleaner is
+ * cacheFenceIndex never gates stripping. The cleaner is
  * pure/deterministic so the same input must produce the same cleaned
  * output regardless of the fence value, which is what Anthropic's
  * prompt-cache validator requires.
@@ -307,16 +307,16 @@ describe("createThinkingBlockCleaner", () => {
   });
 
   // -------------------------------------------------------------------------
-  // cache fence — IGNORED. The fence is read for diagnostic stats but no
-  // longer gates stripping.
+  // cache fence — IGNORED. The fence is read for diagnostic stats but
+  // never gates stripping.
   // -------------------------------------------------------------------------
 
   describe("cache fence (ignored)", () => {
     it("cacheFenceIndex does NOT protect old assistants from stripping", async () => {
       const layer = createThinkingBlockCleaner(2); // keepTurns=2
-      // 6 assistant messages: indices 0-2 historically would be fenced,
-      // 3-5 modifiable. Only the last 2 are in keep window (indices 4, 5).
-      // After the fix: cleaner strips 0-3 regardless of fence.
+      // 6 assistant messages with the fence at index 2. Only the last 2 are
+      // in the keep window (indices 4, 5); the cleaner strips 0-3 regardless
+      // of the fence.
       const messages: AgentMessage[] = Array.from({ length: 6 }, (_, i) =>
         makeAssistantMsg([makeThinkingBlock(`think-${i}`), makeTextBlock(`text-${i}`)]),
       );
@@ -325,7 +325,7 @@ describe("createThinkingBlockCleaner", () => {
       const result = await layer.apply(messages, fencedBudget);
 
       // Messages at indices 0, 1, 2, 3 are beyond keep window — ALL stripped.
-      // The fence at index 2 used to protect 0-2; now it doesn't.
+      // The fence at index 2 does not protect 0-2 from stripping.
       for (let i = 0; i <= 3; i++) {
         const msg = result[i] as { role: string; content: unknown[] };
         expect(msg.content).toHaveLength(1); // only text — thinking stripped
@@ -516,8 +516,8 @@ describe("createThinkingBlockCleaner", () => {
 
     it("onCleaned reports cacheFenceIndex for diagnostics but does not flag protected messages", async () => {
       // messagesProtected is intentionally omitted because no messages are
-      // fence-protected anymore. cacheFenceIndex is still surfaced for
-      // diagnostic visibility into what the cache fence would have been.
+      // fence-protected. cacheFenceIndex is still surfaced for
+      // diagnostic visibility into the fence position.
       const onCleaned = vi.fn();
       const layer = createThinkingBlockCleaner(2, onCleaned);
       // 6 assistant messages, keepTurns=2, fence at index 2
@@ -534,7 +534,7 @@ describe("createThinkingBlockCleaner", () => {
       expect(stats.blocksRemoved).toBe(4);
       // cacheFenceIndex still reported for diagnostics.
       expect(stats.cacheFenceIndex).toBe(2);
-      // messagesProtected omitted: nothing is fence-protected anymore.
+      // messagesProtected omitted: nothing is fence-protected.
       expect(stats.messagesProtected).toBeUndefined();
       expect(stats.totalMessages).toBe(6);
     });

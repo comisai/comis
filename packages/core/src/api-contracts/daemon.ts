@@ -62,9 +62,7 @@ export const DaemonSetLogLevelContract = defineContract({
 
 /**
  * Health-check / liveness probe. Handler returns `{ pong: true, ts: <ms> }`
- * (see daemon-handlers.ts:29-32). Note: NOT `{ ok: true, time: number }` as
- * the plan template suggested — the actual handler shape was confirmed by
- * reading daemon-handlers.ts.
+ * (see daemon-handlers.ts:29-32).
  */
 export const SystemPingContract = defineContract({
   method: "system.ping",

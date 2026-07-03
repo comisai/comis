@@ -62,11 +62,11 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
   });
 
   it("partitions scopes correctly (9 rpc + 4 admin per setup-gateway-api.ts)", () => {
-    // 210-GAP MD-01: session.list/compact/reset re-scoped admin→rpc (agent-self
+    // session.list/compact/reset are rpc-scoped (agent-self
     // reads/lifecycle, classified "ungated", NO in-handler admin check). The
-    // three that STAY admin (delete/export/reset_conversation) carry an
+    // three that are admin (delete/export/reset_conversation) carry an
     // in-handler `_trustLevel === "admin"` check + target an ARBITRARY session →
-    // genuine control plane / deny-by-origin. agents.list stays admin.
+    // genuine control plane / deny-by-origin. agents.list is admin too.
     const byScope = new Map<string, string[]>();
     for (const c of SESSIONS_CONTRACTS) {
       const scope = c.scopes[0]!;
@@ -371,7 +371,7 @@ describe("SessionHistoryContract", () => {
     expect(parsed.messages[1]).toHaveProperty("deliveryStatus", "pending");
   });
 
-  it("SessionHistoryContract.response accepts messages without deliveryStatus (backward-compatible with callers that omit the field)", () => {
+  it("SessionHistoryContract.response accepts messages without deliveryStatus (the field is optional on the wire)", () => {
     expect(SessionHistoryContract.response.parse({
       session: {
         key: "k", agentId: "default", channelType: "dm",
@@ -380,7 +380,7 @@ describe("SessionHistoryContract", () => {
         createdAt: 0, lastActiveAt: 0,
       },
       messages: [
-        // No deliveryStatus field -- older callers that omit it continue to work.
+        // No deliveryStatus field -- callers that omit it must still parse.
         { role: "user", content: "Hello", timestamp: 1 },
       ],
       total: 1, offset: 0, limit: 20, hasMore: false,
@@ -469,7 +469,7 @@ describe("SessionSpawnContract", () => {
     expect(() => SessionSpawnContract.request.parse({})).toThrow();
   });
 
-  it("accepts and preserves worktree:true (WT-01 isolated-worktree opt-in)", () => {
+  it("accepts and preserves worktree:true (isolated-worktree opt-in)", () => {
     const parsed = SessionSpawnContract.request.parse({ task: "x", worktree: true });
     expect(parsed.worktree).toBe(true);
   });
@@ -490,7 +490,7 @@ describe("SessionSpawnContract", () => {
     ).toThrow();
   });
 
-  it("keeps async optional alongside worktree (WT-03: --async rides the already-async-only spawn)", () => {
+  it("keeps async optional alongside worktree (--async rides the already-async-only spawn)", () => {
     const withAsync = SessionSpawnContract.request.parse({
       task: "x",
       async: true,
@@ -716,7 +716,7 @@ describe("SessionResetConversationContract", () => {
     })).toEqual({ session_key: "k", memory: true });
   });
 
-  it("DIST-05: accepts request with optional purge_derived flag preserved", () => {
+  it("accepts request with optional purge_derived flag preserved", () => {
     expect(SessionResetConversationContract.request.parse({
       session_key: "k",
       memory: true,
@@ -736,7 +736,7 @@ describe("SessionResetConversationContract", () => {
     })).toBeDefined();
   });
 
-  it("DIST-05: accepts response with memoriesDeleted present", () => {
+  it("accepts response with memoriesDeleted present (memory:true full-forget path)", () => {
     expect(SessionResetConversationContract.response.parse({
       sessionKey: "k",
       lcdRowsDeleted: 12,

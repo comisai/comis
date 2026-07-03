@@ -5,8 +5,8 @@ import { safePath } from "@comis/core";
 import { resolveTrajectoryConfinedBase } from "./trajectory-confinement.js";
 
 describe("resolveTrajectoryConfinedBase", () => {
-  it("confines to the configured dataDir, NOT a hardcoded ~/.comis (260611 custom-dataDir trajectory regression)", () => {
-    // Live shape (30-UC run): the daemon runs with dataDir=~/.comis-livetest.
+  it("confines to the configured dataDir, NOT a hardcoded ~/.comis (custom-dataDir trajectory regression)", () => {
+    // Live shape: a daemon running with dataDir=~/.comis-livetest.
     // Session files (and their co-located <file>.trajectory.jsonl) live under
     // that root. If the confinement base is the hardcoded ~/.comis instead,
     // every trajectory line-write is rejected at open() and the file is never

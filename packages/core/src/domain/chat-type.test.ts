@@ -17,7 +17,7 @@ describe("ChatType", () => {
     });
   });
 
-  describe("narrowChatType maps the 5-value NormalizedMessage.chatType (spec §4.6)", () => {
+  describe("narrowChatType maps the 5-value NormalizedMessage.chatType to the 3-value ChatType", () => {
     it("narrows dm to direct for one-to-one conversations", () => {
       expect(narrowChatType("dm")).toBe("direct");
     });

@@ -88,7 +88,7 @@ function getProviderHint(id: string): ProviderUiHint {
  * May drift from the live catalog (e.g., if pi-ai adds a new provider,
  * users still see the same note). Computing this from
  * PROVIDER_UI_HINTS + the loaded catalog is a future enhancement;
- * static is acceptable for v1 since the categories rarely change.
+ * static is acceptable for now since the categories rarely change.
  */
 const CATEGORY_NOTE = [
   "Recommended: Anthropic, OpenAI",

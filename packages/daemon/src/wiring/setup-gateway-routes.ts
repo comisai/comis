@@ -34,7 +34,7 @@ import {
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { randomUUID } from "node:crypto";
-// RESTART-01: defer a mid-turn config-change SIGUSR2 until the synchronous
+// Defer a mid-turn config-change SIGUSR2 until the synchronous
 // chat/responses-API response flushes.
 import { withConfigMutationFence } from "../api/shared/persist-to-config.js";
 
@@ -422,7 +422,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
       // finding 2026-06-18: without this, chat-API turn outcomes were observed but NEVER
       // resolved (no reward/forget/skill-promote) and were invisible to obs.
       const turnTraceId = randomUUID();
-      // RESTART-01: hold the config-mutation fence across the turn so a
+      // Hold the config-mutation fence across the turn so a
       // config-mutating tool (heartbeat_manage/config.patch/…) that schedules a
       // SIGUSR2 restart mid-turn defers it until this synchronous HTTP response
       // flushes — otherwise the daemon restarts under the in-flight request and
@@ -505,7 +505,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
       // for the OpenResponses API — without runWithContext every executor log line is
       // traceId-less (no trace stitching) and the degraded reply cannot carry
       // its incident ref. One context per inbound request, minted here.
-      // RESTART-01: hold the config-mutation fence across the turn (see the
+      // Hold the config-mutation fence across the turn (see the
       // chat-completions path) so a mid-turn config-mutating tool's SIGUSR2
       // restart defers until this synchronous response flushes.
       const result = await withConfigMutationFence(() => runWithContext(

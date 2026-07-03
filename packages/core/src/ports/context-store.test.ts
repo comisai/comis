@@ -3,18 +3,17 @@ import { describe, it, expect, expectTypeOf } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
-// Side-effecting (value) imports so the RED state is reproducible from this test
-// commit alone: vitest must RESOLVE the modules at runtime. Both are type-only
-// (core ports are zero-runtime-zod by rule) so they resolve to empty namespaces;
-// the types are pulled via the `import type` blocks below. A bare `import type`
-// would be stripped by the transform and never resolve, hiding RED if the
-// symbols were missing.
+// Side-effecting (value) imports so vitest must RESOLVE the modules at
+// runtime. Both are type-only (core ports are zero-runtime-zod by rule) so
+// they resolve to empty namespaces; the types are pulled via the `import type`
+// blocks below. A bare `import type` would be stripped by the transform and
+// never resolve, hiding a missing module.
 //
 // Because these ports are type-only, the type-level assertions below ERASE at
-// runtime (vitest does not type-check). The runtime RED proof for the new E1
-// surface is therefore the source-grep guard in the first test: it FAILS on
-// pre-patch (the LcdSearchHit DTO + the 3 methods do not exist yet). The
-// compile-time RED is `pnpm build --filter @comis/core` (the @ts-expect-error /
+// runtime (vitest does not type-check). The runtime guard for the read
+// surface is therefore the source-grep test below: it FAILS if the
+// LcdSearchHit DTO or the 3 read methods are removed from the port. The
+// compile-time guard is `pnpm build --filter @comis/core` (the @ts-expect-error /
 // expectTypeOf assertions only bite under tsc).
 import "./context-store.js";
 import "./context-store-types.js";
@@ -29,11 +28,11 @@ import type {
   AppendSummaryInput,
   AppendCondensedSummaryInput,
 } from "./context-store-types.js";
-// Public-surface RED proof: LcdSearchHit must be re-exported on the @comis/core
+// Public-surface guard: LcdSearchHit must be re-exported on the @comis/core
 // barrel (../index.js is the in-package equivalent of the bare `@comis/core`
 // specifier — index.ts `export *`s the curated exports/ports.js). This import
-// fails to resolve (a tsc build error) until the export-wiring in ports/index.ts
-// lands. @comis/skills and @comis/memory consume LcdSearchHit from this surface.
+// fails to resolve (a tsc build error) if the export-wiring in ports/index.ts
+// is missing. @comis/skills and @comis/memory consume LcdSearchHit from this surface.
 import type { LcdSearchHit as PublicLcdSearchHit } from "../index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,27 +41,27 @@ const typesSrc = readFileSync(resolve(here, "./context-store-types.ts"), "utf8")
 const barrelSrc = readFileSync(resolve(here, "./index.ts"), "utf8");
 
 /**
- * The Phase-131 E1 expansion-loop read surface on `ContextStorePort`.
+ * The expansion-loop read surface on `ContextStorePort`.
  *
- * This is the INTERFACE-FIRST contract the memory adapter (Plan 02) implements
- * and the skills `ctx_*` tools (Plan 03) consume: three region-resolution +
+ * This is the INTERFACE-FIRST contract the memory adapter implements
+ * and the skills `ctx_*` tools consume: three region-resolution +
  * search read methods plus the `LcdSearchHit` return DTO. All type-only (core
  * ports are zero-runtime-zod by rule) and synchronous (better-sqlite3 is
  * synchronous — the methods return arrays directly, never Promises).
  *
- * The runtime RED proof is the source-grep guards (the symbols are absent on
- * pre-patch source); the compile-time RED is the @ts-expect-error / expectTypeOf
- * assertions under tsc.
+ * The runtime guard is the source-grep tests (they fail if the symbols leave
+ * the port source); the compile-time guard is the @ts-expect-error /
+ * expectTypeOf assertions under tsc.
  */
-describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => {
+describe("ContextStorePort — expansion-loop read surface", () => {
   it("source declares getSummaryChildren / getSummaryMessages / searchLcd and stays type-only", () => {
-    // Runtime RED proof: fails on pre-patch source where the 3 methods are absent.
+    // Runtime guard: fails if the 3 methods are removed from the port source.
     expect(portSrc, "getSummaryChildren must be on the port").toMatch(/\bgetSummaryChildren\s*\(/);
     expect(portSrc, "getSummaryMessages must be on the port").toMatch(/\bgetSummaryMessages\s*\(/);
     expect(portSrc, "searchLcd must be on the port").toMatch(/\bsearchLcd\s*\(/);
     // The port must stay type-only + synchronous: no zod, no @comis/memory
     // import (that would invert the dependency direction + break the agent↛memory
-    // build cut), and the new methods must NOT return Promises (line 34-35:
+    // build cut), and the read methods must NOT return Promises (the port doc:
     // "All operations are synchronous").
     expect(portSrc, "no zod in a type-only port").not.toMatch(/\bz\.[a-z]/);
     expect(portSrc, "no @comis/memory import in core port").not.toMatch(
@@ -74,7 +73,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
   });
 
   it("source declares the LcdSearchHit DTO with a CLOSED message|summary discriminator (not string)", () => {
-    // Runtime RED proof: fails on pre-patch types where LcdSearchHit is absent.
+    // Runtime guard: fails if LcdSearchHit is removed from the types file.
     expect(typesSrc, "LcdSearchHit interface must be declared").toMatch(
       /export\s+interface\s+LcdSearchHit\b/,
     );
@@ -90,13 +89,13 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
   });
 
   it("barrel re-exports LcdSearchHit on the public @comis/core surface", () => {
-    // Runtime RED proof: fails on pre-patch barrel where LcdSearchHit is not exported.
+    // Runtime guard: fails if the barrel stops exporting LcdSearchHit.
     expect(barrelSrc, "LcdSearchHit must be re-exported from ports/index.ts").toMatch(
       /\bLcdSearchHit\b/,
     );
   });
 
-  it("Test 1: a valid LcdSearchHit literal is assignable; rank is optional", () => {
+  it("a valid LcdSearchHit literal is assignable; rank is optional", () => {
     const hit: LcdSearchHit = { kind: "message", refId: "m1", snippet: "x" };
     expectTypeOf(hit.kind).toEqualTypeOf<"message" | "summary">();
     expectTypeOf(hit.refId).toEqualTypeOf<string>();
@@ -110,7 +109,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
     expect(ranked.rank).toBe(-3.2);
   });
 
-  it("Test 1 (compile-time): kind is a CLOSED union — `other` is NOT assignable", () => {
+  it("kind is a CLOSED union — `other` is NOT assignable (compile-time)", () => {
     const bad: LcdSearchHit = {
       // @ts-expect-error kind is the closed "message"|"summary" union — "other" is rejected
       kind: "other",
@@ -120,9 +119,10 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
     void bad;
   });
 
-  it("Test 2: a stub implementing ALL 9 methods is assignable to ContextStorePort", () => {
-    // The full extended surface: the existing 6 + the new 3. Proves the 3 methods
-    // are actually ON the interface (a hand-built object literal, AGENTS.md §2.5).
+  it("a stub implementing ALL 9 methods is assignable to ContextStorePort", () => {
+    // The full extended surface: the 6 write/read methods + the 3 region-walk/
+    // search methods. Proves the 3 methods are actually ON the interface (a
+    // hand-built object literal, AGENTS.md §2.5).
     const stub: ContextStorePort = {
       append: (_input: AppendMessageInput): void => undefined,
       getMessages: (_conversationId: string): LcdMessage[] => [],
@@ -130,7 +130,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
       appendCondensedSummary: (_input: AppendCondensedSummaryInput): string => "s",
       getContextItems: (_conversationId: string): LcdContextItem[] => [],
       getSummaries: (_conversationId: string): LcdSummary[] => [],
-      // The 3 NEW E1 methods:
+      // The 3 region-walk/search read methods:
       getSummaryChildren: (_conversationId: string, _parentSummaryId: string): LcdSummary[] => [],
       getSummaryMessages: (_conversationId: string, _summaryId: string): string[] => [],
       searchLcd: (
@@ -140,7 +140,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
       ): LcdSearchResult => ({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false }),
     };
 
-    // The new methods are SYNCHRONOUS (return arrays directly, never Promises).
+    // The read methods are SYNCHRONOUS (return arrays directly, never Promises).
     expectTypeOf(stub.getSummaryChildren).returns.toEqualTypeOf<LcdSummary[]>();
     expectTypeOf(stub.getSummaryMessages).returns.toEqualTypeOf<string[]>();
     expectTypeOf(stub.searchLcd).returns.toEqualTypeOf<LcdSearchResult>();
@@ -150,8 +150,8 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
     expect(stub.searchLcd("c", "q", { limit: 10 })).toEqual({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false });
   });
 
-  it("Test 2 (compile-time): a ContextStorePort impl missing searchLcd is NOT assignable", () => {
-    // @ts-expect-error the stub omits `searchLcd` (and the other new methods) — not a ContextStorePort
+  it("a ContextStorePort impl missing searchLcd is NOT assignable (compile-time)", () => {
+    // @ts-expect-error the stub omits `searchLcd` (and the other read methods) — not a ContextStorePort
     const incomplete: ContextStorePort = {
       append: (): void => undefined,
       getMessages: (): LcdMessage[] => [],
@@ -168,14 +168,14 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
       getSummaryChildren: (_c: string, _p: string): LcdSummary[] => [],
       getSummaryMessages: (_c: string, _s: string): string[] => [],
     } as Pick<ContextStorePort, "getSummaryChildren" | "getSummaryMessages">;
-    // Both take (conversationId, summaryId) — scoped by conversationId (E2/R4).
+    // Both take (conversationId, summaryId) — scoped by conversationId.
     expectTypeOf(stub.getSummaryChildren).parameters.toEqualTypeOf<[string, string]>();
     expectTypeOf(stub.getSummaryMessages).parameters.toEqualTypeOf<[string, string]>();
     // getSummaryMessages returns message IDS (strings), NOT LcdMessage rows.
     expectTypeOf(stub.getSummaryMessages).returns.toEqualTypeOf<string[]>();
   });
 
-  it("Test 3: searchLcd opts accepts {limit} and {limit, scope:'both'}; scope is a closed union", () => {
+  it("searchLcd opts accepts {limit} and {limit, scope:'both'}; scope is a closed union", () => {
     const stub = {
       searchLcd: (
         _c: string,
@@ -190,7 +190,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
     expect(stub.searchLcd("c", "q", { limit: 5, scope: "summaries" })).toEqual({ hits: [], cjkZeroHit: false, lane: "word", matchErrored: false });
   });
 
-  it("Test 3 (compile-time): searchLcd rejects an invalid scope literal", () => {
+  it("searchLcd rejects an invalid scope literal (compile-time)", () => {
     const stub = {
       searchLcd: (
         _c: string,
@@ -202,7 +202,7 @@ describe("ContextStorePort — Phase-131 E1 expansion-loop read surface", () => 
     stub.searchLcd("c", "q", { limit: 10, scope: "invalid" });
   });
 
-  it("Test 3 (compile-time): searchLcd requires limit (it is not optional)", () => {
+  it("searchLcd requires limit on opts (it is not optional) — compile-time", () => {
     const stub = {
       searchLcd: (
         _c: string,

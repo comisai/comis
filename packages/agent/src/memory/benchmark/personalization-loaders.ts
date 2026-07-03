@@ -13,7 +13,7 @@
  * SEPARATE channel. The gold (answers, and HaluMem's hallucination labels) is
  * NEVER serialized into document content (the anti-leak invariant).
  *
- * Documented external formats (RESEARCH §6; full schema is operator-verified):
+ * Documented external formats (full schema is operator-verified):
  *   - PrefEval (ICLR 2025 Oral; amazon-science/PrefEval): preference-adherence
  *     triplets `{ preference, query, gold }` -> `{ items: { preference, query,
  *     answer }[] }`. The on-mission preference-following lane (uncontested).

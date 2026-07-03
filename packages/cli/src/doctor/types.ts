@@ -89,7 +89,7 @@ export interface DoctorContext {
    * is absent when it is (load error, unresolved secret refs, validation
    * issues). Checks that skip on a missing `config` must consult this so
    * their skip message names the real cause instead of claiming nothing
-   * is configured (live finding, 2026-06-12 C1 smoke run).
+   * is configured.
    */
   readonly configResolution?: DoctorConfigResolution;
   readonly configPaths: string[];

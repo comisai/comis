@@ -7,11 +7,6 @@
  *   - `memory.pin`   — mark a memory entry as always-injected in recall.
  *   - `memory.unpin` — remove the always-inject mark.
  *
- * Seam closed in plan 03-03 (same diff as handler creation): the
- * `@contract-deferred-handler` annotations were removed, the spread into
- * MEMORY_CONTRACTS was added to memory.ts, and pnpm contracts:generate was run —
- * mirroring the memory-diagnostics pattern.
- *
  * @module
  */
 import { z } from "zod";
@@ -26,7 +21,7 @@ export const MemoryPinContract = defineContract({
   }),
   response: z.object({
     pinned: z.literal(true),
-    // IN-02: `found` surfaces whether the memory row existed in the caller's scope.
+    // `found` surfaces whether the memory row existed in the caller's scope.
     // found=true: row found and pinned. found=false: id not found (pin was a no-op).
     // Callers that only inspect `pinned` are unaffected (additive field).
     found: z.boolean(),

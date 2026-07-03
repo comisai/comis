@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OPS-05 — the SUBAGENT-OWNED GSD-milestone SOAK (the SC-5 soak; spec §4.7 + §10.5). The
- * forcing use case at FULL SCALE: a dedicated subagent owns its session (origin-keyed per
- * §4.2/§4.7 — the wake-FSM + status + the answer all respect the owner), and drives a long
- * autonomous `claude`-driven GSD-like milestone to COMPLETION across MANY event-woken turns
+ * The SUBAGENT-OWNED GSD-milestone SOAK — the forcing use case at FULL SCALE: a dedicated
+ * subagent owns its session (origin-keyed — the wake-FSM + status + the answer all respect
+ * the owner), and drives a long autonomous `claude`-driven GSD-like milestone to COMPLETION
+ * across MANY event-woken turns
  * via the live attention loop (classifier → fd3 `terminal:input_needed` → a woken turn runs
  * decideAutoAnswer safe-only + the loop-guard → keystroke → read → repeat). It asserts the
  * run reaches completion (or a clean audited escalation at a genuine human gate), the
  * woken-turn count stays BOUNDED (maxConcurrentAttentionTurns + a hop-limit + maxInteractions
- * all observed), and NO daemon crash across the run (OPS-01 holds).
+ * all observed), and NO daemon crash across the run (a frame handler never throws to the host).
  *
  * ──────────────────────────────────────────────────────────────────────────────────────
  * DEFERRED-TO-CI — NOT EXPECTED TO PASS ON macOS, BY DESIGN.
  * ──────────────────────────────────────────────────────────────────────────────────────
- * This is the deferred-to-CI half of SC-5 (ROADMAP). It is gated THREE ways:
+ * This soak is deferred to CI by design. It is gated THREE ways:
  *   1. `describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())` — like every
  *      `*.linux.test.ts`, so it COMPILES + SKIPS CLEAN on the macOS author box (this box:
  *      claude 2.1.161 + tmux 3.6a present, bwrap ABSENT → it SKIPS, not fails).
@@ -24,9 +24,9 @@
  *      back to a deterministic scripted-dialog stand-in (the same loop, auth-free) so the
  *      bound/no-crash assertions still hold without burning Max credentials/cost.
  *
- * The macOS verification of this phase MUST treat a SKIP here as deferred-to-CI / human_needed
- * — NOT a verification gap. The macOS-provable bulk (124-03/04/05/06/07/09 in-process tests +
- * the fixture corpus) is the LOAD-BEARING proof of the classifier/FSM/auto-answer/loop logic;
+ * A SKIP here on a macOS box is deferred-to-CI by design — NOT a verification gap. The
+ * macOS-provable bulk (the in-process tests + the fixture corpus) is the LOAD-BEARING
+ * proof of the classifier/FSM/auto-answer/loop logic;
  * THIS soak is the live full-scale regression net that runs on the CI/VPS Linux+bwrap host via
  * `pnpm validate:full` (or an operator-driven `COMIS_RUN_SOAK=1` run).
  *
@@ -38,7 +38,7 @@
  * gate — terminal-scope-matrix.linux.test.ts:158), so the soak composes the loop WITHIN the
  * skills layer (registry + real-PTY worker with the fd3 emitter wired + classifier +
  * decideAutoAnswer + loop-guard), counting its OWN woken turns. The daemon-side wake-FSM
- * (124-07: dedupe/active-check/hop-limit/bounded re-entry) + the fd3 re-publish hook (124-09)
+ * (dedupe/active-check/hop-limit/bounded re-entry) + the fd3 re-publish hook
  * are proven by their own in-process daemon tests; this soak proves the SAME loop survives a
  * long live run against a real CLI.
  *
@@ -86,7 +86,7 @@ function bwrapAvailable(): boolean {
 }
 
 /**
- * A real driven CLI for the soak. We PREFER a real `claude` (the genuine §4.7 milestone), but
+ * A real driven CLI for the soak. We PREFER a real `claude` (the genuine milestone run), but
  * fall back to a scripted `bash` dialog stand-in when `claude` is absent/unauthed — the same
  * live loop, auth-free, so the bound/no-crash assertions hold on CI without Max credentials.
  */
@@ -181,19 +181,19 @@ function makeBridgedPtyWorkerChild(onFd3: (frame: TerminalEventFrame) => void): 
 }
 
 // ===========================================================================
-// OPS-05 — the subagent-owned GSD-milestone soak (SC-5, DEFERRED-TO-CI).
+// The subagent-owned GSD-milestone soak (DEFERRED-TO-CI).
 // Triple-gated: !linux || !claudeAvailable || !bwrapAvailable → skip clean on macOS;
 // the body additionally short-circuits unless COMIS_RUN_SOAK=1 (the long-run opt-in).
 // ===========================================================================
 describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
-  "OPS-05 (Linux+bwrap, opt-in COMIS_RUN_SOAK) — a subagent-owned GSD-milestone soak runs to completion, bounded, no crash",
+  "subagent-owned GSD-milestone soak (Linux+bwrap, opt-in COMIS_RUN_SOAK) — runs to completion, bounded, no crash",
   () => {
     it(
-      "drives a long milestone across MANY woken turns: completes (or audited escalation), woken-turn count BOUNDED (maxConcurrentAttentionTurns + hop-limit + maxInteractions), no daemon crash (OPS-01)",
+      "drives a long milestone across MANY woken turns: completes (or audited escalation), woken-turn count BOUNDED (maxConcurrentAttentionTurns + hop-limit + maxInteractions), no daemon crash",
       async () => {
         // The opt-in guard: even on a Linux+bwrap host, a soak is a LONG run kept OFF the default
         // `pnpm test:integration` path — only a deliberate CI step / operator sets COMIS_RUN_SOAK=1.
-        // Absent ⇒ the soak no-ops cleanly (NOT a failure; the deferral is by design — ROADMAP).
+        // Absent ⇒ the soak no-ops cleanly (NOT a failure; the deferral is by design).
         if (!soakOptedIn()) {
           expect(soakOptedIn()).toBe(false); // documents the opt-in skip; the long run is CI-gated
           return;
@@ -201,7 +201,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
 
         const { bin, argv, isClaude } = resolveDrivenCli();
 
-        // The subagent OWNS its session: origin-keyed (§4.7) by a DISTINCT sessionKey so parallel
+        // The subagent OWNS its session: origin-keyed by a DISTINCT sessionKey so parallel
         // subagent milestones are isolated by construction (a sibling owner's wake/status/read
         // never crosses to this session — the owner-scoped registry degrades to not-found).
         const subagentOwner: SessionOwner = {
@@ -222,7 +222,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
               fd3Frames.push(f);
               if (f.event === "terminal:input_needed") inputNeededEvents.push(f);
             } catch {
-              workerCrashed = true; // a frame handler must NEVER throw to the host (OPS-01)
+              workerCrashed = true; // a frame handler must NEVER throw to the host
             }
           }),
           logger: noopLogger,
@@ -236,7 +236,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
           scope: WORKSPACE_SCOPE,
         };
 
-        // The bounds (OPS-05 / spec §2.3): the woken-turn count must stay under these. ONE session
+        // The bounds: the woken-turn count must stay under these. ONE session
         // → maxConcurrentAttentionTurns is trivially honored (one turn in flight at a time here);
         // the hop-limit caps total woken turns; a real maxInteractions breach would EVICT (the cap
         // is enforced at the tool layer in production — here the soak asserts the turn count never
@@ -296,7 +296,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
 
           if (decision.action === "escalate" || loop.repeat) {
             // A genuine human gate or a detected loop → escalate (send NOTHING), audited. The soak
-            // tolerates a clean escalation as a valid terminal outcome (spec §4.4/§4.6).
+            // tolerates a clean escalation as a valid terminal outcome.
             escalations++;
             inFlight--;
             break;
@@ -307,7 +307,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
           inFlight--;
         }
 
-        // ── The OPS-05 / OPS-01 assertions ──────────────────────────────────────────────────
+        // ── The soak assertions: bounded, completed-or-escalated, no crash ──────────────────
         // 1) The run reached COMPLETION or a clean audited escalation (never an infinite drive).
         expect(completed || escalations > 0).toBe(true);
         // 2) The woken-turn count stayed BOUNDED (never ran away past the hop-limit).
@@ -325,16 +325,16 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         //        may exit before parking (→ `terminal:session_state` exited), or park in its
         //        full-screen TUI which the emitter classifies `stuck` not awaiting-input
         //        (claude 2.1.x parks the cursor on the empty bottom input line while the
-        //        prompt renders above — the live-VPS finding). The soak's `wokenTurns` counts
+        //        prompt renders above — observed on a live VPS run). The soak's `wokenTurns` counts
         //        `status`-frame awaiting-input, a DIFFERENT classification site than the
         //        settle-path emitter, so the two legitimately disagree on a claude screen —
         //        hence NO `wokenTurns ⇒ input_needed` coupling here. The bound + no-crash +
-        //        fd3-fired invariants are what OPS-05 actually proves for the real CLI.
+        //        fd3-fired invariants are what this soak actually proves for the real CLI.
         if (!isClaude) {
           expect(inputNeededEvents.length).toBeGreaterThanOrEqual(1);
         }
         expect(fd3Frames.length).toBeGreaterThanOrEqual(1);
-        // 5) OPS-01: no worker/daemon crash across the whole run (a frame handler never threw).
+        // 5) No worker/daemon crash across the whole run (a frame handler never threw).
         expect(workerCrashed).toBe(false);
 
         await registry.cleanup();

@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD `dag`-mode assembly engine (Phase 128 A1/A2/A4 + Phase 129 C3/A3) — the
- * corrected loop fix, now resolving `context_items` and evicting under budget.
+ * LCD `dag`-mode assembly engine — resolves the stored `context_items` view and
+ * evicts under budget.
  *
- * The deleted `dag-assembler.ts` flattened every assistant `tool_use` and every
- * `tool_result` into `content: [{ type: "text", text }]`, so the model never saw
- * a provider-valid `tool_use`<->`tool_result` pairing for its own prior action
- * and re-issued the same `read` 54 times (124 s). This module is the verbatim
- * replacement wired into the `dag` branch at `context-engine.ts`:
+ * History must reconstruct as provider-valid STRUCTURED blocks: flattening every
+ * assistant `tool_use` and every `tool_result` into `content: [{ type: "text",
+ * text }]` means the model never sees a provider-valid `tool_use`<->`tool_result`
+ * pairing for its own prior action and re-issues the same tool call indefinitely.
+ * This module is wired into the `dag` branch at `context-engine.ts`:
  *
- *  1+2. HISTORY (C3) — resolve the ordered model-facing `context_items` view: a
+ *  1+2. HISTORY — resolve the ordered model-facing `context_items` view: a
  *       `message`-ref reconstructs verbatim via the core `partsToMessage` codec
- *       (stable ids, the round-trip the loop bug broke); a `summary`-ref injects
+ *       (stable ids — the lossless round-trip); a `summary`-ref injects
  *       as a plain `user`-role text message behind `summaryRefToMessage` (the ONE
- *       Phase-130 swap point — untrusted by role, never system/assistant). Each
+ *       summarizer swap point — untrusted by role, never system/assistant). Each
  *       resolved message carries its token authority (the stored `tokenCount`, or
- *       the summary's, Pitfall 2) for the budget pass.
- *  2b.  COALESCE (B-19, defensive) — a maximal run of >=2 contiguous summary-refs
+ *       the summary's) for the budget pass.
+ *  2b.  COALESCE (defensive) — a maximal run of >=2 contiguous summary-refs
  *       is merged into ONE user message (headers/bodies/tokens preserved). The
  *       Anthropic API merges consecutive user turns server-side (no 400, confirmed
  *       live), but local coalescing keeps distinct summaries from being opaquely
@@ -24,34 +24,34 @@
  *       endpoints that enforce role alternation. Message-refs are untouched.
  *  3.   FRESH TAIL — the last N STEPS of the LIVE array (an assistant message
  *       plus the tool results it triggered), sliced VERBATIM as the ORIGINAL
- *       structured blocks (never reconstructed-from-text). Never evicted (A1).
- *  4.   BUDGET + EVICTION (A3) — compute H = W − S − O − M − R via the profile-aware
- *       `computeTokenBudgetForProfile` (C1: 8K-starvation fix + 256K-overfill cap for
+ *       structured blocks (never reconstructed-from-text). Never evicted.
+ *  4.   BUDGET + EVICTION — compute H = W − S − O − M − R via the profile-aware
+ *       `computeTokenBudgetForProfile` (8K-starvation fix + 256K-overfill cap for
  *       small/nano; byte-identical to `computeTokenBudget` for frontier/mid), then trim
  *       ONLY the evictable prefix (resolved history minus the items the fresh tail covers)
- *       to fit H via `evictHistoryUnderBudget` (recency, frontier/mid) OR the RETR-02
+ *       to fit H via `evictHistoryUnderBudget` (recency, frontier/mid) OR the
  *       margin arbiter `evictUnderArbiter` (relevance-first small/nano — fused-rank
- *       allocation with T0/S4 floors); the fresh tail is concatenated UNCONDITIONALLY
- *       (A1/A3 — always included, even when it alone exceeds H). The prefix/fresh-tail
- *       boundary is drop-free and double-free for both L>H (mid-turn, the store lags the
- *       live array — CR-01) and L<=H (a heal shrank the live array — WR-01); transcript
+ *       allocation with fresh-tail + security-pin floors); the fresh tail is concatenated
+ *       UNCONDITIONALLY (always included, even when it alone exceeds H). The
+ *       prefix/fresh-tail boundary is drop-free and double-free for both L>H (mid-turn,
+ *       the store lags the live array) and L<=H (a heal shrank the live array); transcript
  *       repair (step 6) re-pairs the seam regardless.
  *  5.   NORMALIZE — assistant string content -> `[{ type: "text", text }]`
  *       (pure, non-mutating; tool blocks untouched).
- *  6.   TRANSCRIPT REPAIR — `sanitizeToolUseResultPairing` runs LAST (A2), so the
+ *  6.   TRANSCRIPT REPAIR — `sanitizeToolUseResultPairing` runs LAST, so the
  *       provider can never receive an unpaired/out-of-order pairing even if the
  *       history/fresh-tail seam landed mid-pair.
  *
- * Keep the body THIN (Pitfall 7): the eviction logic lives in pure modules
+ * Keep the body THIN: the eviction logic lives in pure modules
  * (`lcd-budget-eviction.ts`, `margin-arbiter.ts` / `lcd-arbiter-seam.ts`) and the leaf
- * summarization in Plan 03's; this assembler only RESOLVES + CALLS them.
+ * summarization in `lcd-leaf-summarizer.ts`; this assembler only RESOLVES + CALLS them.
  *
  * Architecture cut (agent↛memory): this file imports ONLY the core
  * `ContextStorePort`/`LcdMessage`/`LcdContextItem`/`LcdSummary` TYPES + the core
  * `partsToMessage` runtime codec from `@comis/core`; it NEVER imports
  * `@comis/memory`. The concrete `createLcdStore` is injected by the daemon as
  * `ContextEngineDeps.contextStore`. This module is read-only — it NEVER appends
- * (that is the afterTurn ingest path, Plan 03).
+ * (that is the afterTurn ingest path, `lcd-ingest.ts`).
  *
  * @module
  */
@@ -85,15 +85,6 @@ import {
 import type { ContextEngine, ContextEngineDeps } from "./types.js";
 
 /**
- * B-8: the single shared tool-result size guard for the dag assembler's fresh-tail
- * bounding. Built ONCE at module scope (stateless factory) so each
- * `transformContext` reuses it. The default head+tail+marker config is fine; the
- * honest lossless-recovery suffix is appended to the marker via `toolHint` per call
- * (it survives `truncateIfNeeded`'s `Hint:` formatting). Reusing this factory —
- * NOT a hand-rolled truncation — satisfies the AGENTS.md don't-hand-roll rule and
- * keeps the masking identical to the pipeline microcompaction guard.
- */
-/**
  * Build the `dag`-mode LCD `ContextEngine`. The caller (`createContextEngine`'s
  * `dag` branch) only invokes this when `deps.contextStore` AND
  * `deps.conversationId` are both wired, so both are asserted non-null here.
@@ -114,10 +105,10 @@ export function createLcdContextEngine(
   // is the sanctioned system-clock wrapper for the no-injected-clock unit case.
   const now = (): number => (deps.clock ? deps.clock.now() : systemNowMs());
 
-  // R4 (132-03): build the per-(conversation, agent, tenant) read scope ONCE.
-  // FAIL CLOSED (mirrors the T-128-08 empty-column guard): if agentId or tenantId
+  // Build the per-(conversation, agent, tenant) read scope ONCE.
+  // FAIL CLOSED (mirrors the store's empty-column guard): if agentId or tenantId
   // is absent we CANNOT safely read (an unscoped read would leak another agent's
-  // history within a shared conversation_id — WR-02), so `readScope` is undefined
+  // history within a shared conversation_id), so `readScope` is undefined
   // and the assembler reads NOTHING (an empty history) rather than reading
   // conversation-wide. The session_key falls back to conversationId (the store
   // never filters on it; the 4th field is carried for shape symmetry).
@@ -137,20 +128,21 @@ export function createLcdContextEngine(
     async transformContext(liveMessages: AgentMessage[]): Promise<AgentMessage[]> {
       const startMs = now();
 
-      // 1+2. HISTORY: resolve the ordered model-facing `context_items` view (C3)
+      // 1+2. HISTORY: resolve the ordered model-facing `context_items` view
       //      into canonical messages, each paired with its token authority.
       //      `getContextItems` returns the dense, gap-free order (lazy-seeded 1:1
       //      from `lcd_messages` on first read); a `message`-ref reconstructs
-      //      verbatim via the core `partsToMessage` codec (the round-trip the loop
-      //      bug broke), a `summary`-ref injects as a plain user-role text message
-      //      behind `summaryRefToMessage` (the ONE 130 swap point — untrusted by
-      //      role, never system/assistant; T-129-14). Token authority (Pitfall 2):
-      //      a message-ref carries its STORED `tokenCount` (counts F3 thinking); a
-      //      summary-ref carries the summary's `tokenCount`.
-      // R4 (132-03): read ONLY with a fully-built agent+tenant scope. When the
+      //      verbatim via the core `partsToMessage` codec (the lossless
+      //      round-trip), a `summary`-ref injects as a plain user-role text message
+      //      behind `summaryRefToMessage` (the ONE summarizer swap point — untrusted
+      //      by role, never system/assistant). Token authority:
+      //      a message-ref carries its STORED `tokenCount` (counts stored thinking
+      //      blocks); a summary-ref carries the summary's `tokenCount`.
+      // Read ONLY with a fully-built agent+tenant scope. When the
       // scope is incomplete (`readScope` undefined) we fail closed — read nothing
-      // rather than risk a cross-agent leak (WR-02 / T-132-03-04). A turn with no
-      // resolvable history still ships its fresh tail below (A1), so the live turn
+      // rather than risk a cross-agent leak. A turn with no
+      // resolvable history still ships its fresh tail below (the fresh tail is
+      // unconditional), so the live turn
       // is never broken; the WARN flags the misconfiguration for an operator.
       if (readScope === undefined) {
         deps.logger.warn(
@@ -169,7 +161,7 @@ export function createLcdContextEngine(
         );
       }
       const contextItems: LcdContextItem[] = readScope ? store.getContextItems(readScope) : [];
-      // EFF-01: collect the refId sets from contextItems FIRST so we can issue
+      // Collect the refId sets from contextItems FIRST so we can issue
       // bounded IN-clause reads instead of fetching ALL rows for the scope.
       // An empty set short-circuits to [] without any DB query (zero wasted I/O).
       // These bounded `rows`/summaries are used ONLY as the resolve-time lookup
@@ -178,7 +170,7 @@ export function createLcdContextEngine(
       // resolution. The TOTAL persisted-message count (persistedMsgCount, used by
       // the fresh-tail/eviction overlap math) is read SEPARATELY via the bounded
       // `countMessages` COUNT below — it must NOT be derived from rows.length, which
-      // counts only the still-referenced subset. T-170-01-01/02: R4 scope triple is
+      // counts only the still-referenced subset. The full scope triple is
       // always passed through to getMessagesByIds / getSummariesByIds.
       const messageRefIds = contextItems
         .filter((ci) => ci.refKind === "message")
@@ -199,7 +191,7 @@ export function createLcdContextEngine(
       );
       let resolved: BudgetItem[] = [];
       // Parallel to `resolved`: the ref kind of each resolved item, used by the
-      // eviction seam (WR-01) to bound the fresh-tail overlap by the number of
+      // eviction seam to bound the fresh-tail overlap by the number of
       // TRAILING message-refs actually present so the evictable-prefix slice can
       // never cut across a summary boundary regardless of the collapse shape.
       let resolvedKinds: LcdContextItem["refKind"][] = [];
@@ -224,7 +216,7 @@ export function createLcdContextEngine(
         "lcd context_items resolved from store",
       );
 
-      // 2b. COALESCE consecutive summary-refs (B-19, defensive). A maximal run of
+      // 2b. COALESCE consecutive summary-refs (defensive). A maximal run of
       //     ≥2 contiguous summary-ref user messages is merged into ONE user message
       //     (their rendered texts joined with "\n\n" so each `[LCD summary …]`
       //     header + wrapped body + footer stays individually intact) with their
@@ -232,9 +224,9 @@ export function createLcdContextEngine(
       //     overlap math so token accounting + ordering stay coherent; it is safe
       //     for that math because summary-refs are at the HEAD and message-refs at
       //     the TAIL, so coalescing a head/interior summary run never changes the
-      //     count of TRAILING message-refs the eviction seam relies on (WR-01).
+      //     count of TRAILING message-refs the eviction seam relies on.
       //     Message-refs are NOT touched (they alternate with assistant turns
-      //     naturally) and the role stays "user" (the T-129-14 untrusted-by-role
+      //     naturally) and the role stays "user" (the untrusted-by-role
       //     ceiling). DEFENSIVE: the Anthropic API merges consecutive user turns
       //     server-side (no 400, confirmed live), but local coalescing keeps
       //     distinct summaries from being opaquely muddied by that server merge and
@@ -249,19 +241,19 @@ export function createLcdContextEngine(
       resolvedKinds = coalesced.kinds;
 
       // 3. FRESH TAIL: the last N STEPS of the LIVE array, VERBATIM (original
-      //    structured blocks — never reconstructed-from-text). A1.
-      // EFF-02: clamp freshTailTurns to what the effective window can afford.
+      //    structured blocks — never reconstructed-from-text).
+      // Clamp freshTailTurns to what the effective window can afford.
       // deps.modelProfile?.contextWindow is Infinity for frontier/mid — clamp never fires.
       const effectiveWindow = deps.modelProfile?.contextWindow ?? Infinity;
-      // ISSUE #1/#3b: the PROTECTED fresh tail ships UNCONDITIONALLY (the eviction cannot
+      // The PROTECTED fresh tail ships UNCONDITIONALLY (the eviction cannot
       // trim it), so on a tight window it is bounded to the RESIDUAL room
       // (boundFreshTailTotalToResidual, below). The residual (= window − S − floor headroom
       // − preamble) is computed JUST BEFORE the bound — AFTER `profile` is resolved — so it
-      // reads `profile.reasoningStyle`, the EXACT value the pre-flight uses (ISSUE #3b: a
+      // reads `profile.reasoningStyle`, the EXACT value the pre-flight uses (a
       // pre-resolution `deps.modelProfile` read could diverge from the pre-flight's `profile`
       // and under-count the native reasoning reserve → overflow). The clamp here keeps only
       // its original 30%-of-window upper bound (no residual input — a turn-count estimate is
-      // skewed by a single oversized message, which B-8 bounds anyway).
+      // skewed by a single oversized message, which the per-message bound handles anyway).
       const clampedFreshTailTurns = resolveClampedFreshTailTurns(
         effectiveWindow,
         config.freshTailTurns,
@@ -281,18 +273,18 @@ export function createLcdContextEngine(
         "lcd fresh tail sliced verbatim",
       );
 
-      // 3b. FRESH-TAIL SIZE BOUNDING (B-8 + Issue-1) happens AFTER the budget
+      // 3b. FRESH-TAIL SIZE BOUNDING happens AFTER the budget
       //     is computed below — the per-message cap is derived from the turn's
       //     `availableHistoryTokens`, which only exists post-budget. See the
       //     boundFreshTailMessages call between steps 4's budget and eviction.
 
-      // 4. BUDGET + EVICTION (A3) at the documented seam. Compute H from the model
+      // 4. BUDGET + EVICTION at the documented seam. Compute H from the model
       //    window (W) and the system-tokens estimate (S) via the profile-aware
-      //    `computeTokenBudgetForProfile` (C1: 8K-starvation + 256K-overfill cap;
-      //    byte-identical to `computeTokenBudget` for frontier/mid — Pitfall 1:
+      //    `computeTokenBudgetForProfile` (8K-starvation + 256K-overfill cap;
+      //    byte-identical to `computeTokenBudget` for frontier/mid —
       //    never recompute W−S−O−M−R by hand),
       //    then evict the EVICTABLE PREFIX under H while the fresh tail ships
-      //    UNCONDITIONALLY (A1/A3 — always included, even when the fresh tail alone
+      //    UNCONDITIONALLY (always included, even when the fresh tail alone
       //    exceeds H).
       //
       //    The evictable prefix is the resolved history MINUS the trailing items
@@ -302,9 +294,9 @@ export function createLcdContextEngine(
       //    those map to RAW message-refs at the END of `context_items` (summaries
       //    collapse the OLDEST run, so the tail of the view is raw).
       //
-      //    WR-01 robustness: `rawOverlap` is a RAW-message count (`persistedMsgCount`,
-      //    the bounded COUNT(*) total — NOT `rows.length`, which is the referenced
-      //    working-set subset post EFF-01), while the slice indexes into the COLLAPSED
+      //    Count/length robustness: `rawOverlap` is a RAW-message count (`persistedMsgCount`,
+      //    the bounded COUNT(*) total — NOT `rows.length`, which is only the referenced
+      //    working-set subset), while the slice indexes into the COLLAPSED
       //    `resolved` view (`resolved.length ≤ persistedMsgCount` once any leaf/condense
       //    pass has run).
       //    Subtracting `rawOverlap` from `resolved.length` directly is correct ONLY
@@ -322,15 +314,15 @@ export function createLcdContextEngine(
       //
       //    Drop-free + double-free for BOTH L>H (mid-turn: the store lags the live
       //    array by the in-flight delta, so the in-flight tail rides only via
-      //    `freshTail` — CR-01) and L<=H (a heal shrank the live array — WR-01).
-      // EFF-01 (regression fix): persistedMsgCount is the TOTAL count of persisted
-      // messages in scope — NOT `rows.length`. `rows` is now the BOUNDED working
+      //    `freshTail`) and L<=H (a heal shrank the live array).
+      // persistedMsgCount is the TOTAL count of persisted
+      // messages in scope — NOT `rows.length`. `rows` is the BOUNDED working
       // set (message-refs only); once the oldest messages fold into summary-refs,
       // `rows.length` undercounts the total and corrupts the fresh-tail/eviction
-      // overlap below (this was the lcd-synthetic-session gate failure: a broken
+      // overlap below (symptom: a broken
       // fresh tail + a mis-placed condensed summary). `countMessages` is a bounded
       // COUNT(*) — one integer, NO O(total-history) row fetch — so assembly is
-      // byte-identical to the pre-EFF-01 `getMessages(readScope).length` while the
+      // byte-identical to a full `getMessages(readScope).length` read while the
       // row fetch stays O(referenced-ids). Fail-closed: no read scope ⇒ 0.
       const persistedMsgCount = readScope ? store.countMessages(readScope) : 0;
       const rawOverlap = Math.max(0, persistedMsgCount - tailStart);
@@ -341,7 +333,7 @@ export function createLcdContextEngine(
       const overlapCount = Math.min(rawOverlap, trailingMessageRefs);
       const evictable = resolved.slice(0, Math.max(0, resolved.length - overlapCount));
 
-      // I1 / WR-01: the WHOLE fresh-tail preamble block (`dynamicPreamble` +
+      // The WHOLE fresh-tail preamble block (`dynamicPreamble` +
       // `inlineMemory`, prepended into the latest user message by envelope-wrapper —
       // skills XML, MCP instructions, deferred-tools context, date/channel lines,
       // recalled memory, …, NOT just recall) rides the fresh tail and is invisible to
@@ -357,13 +349,13 @@ export function createLcdContextEngine(
       const W = model.contextWindow;
       const S = deps.getSystemTokensEstimate?.() ?? 0;
       const freshTailPreambleTokens = deps.getFreshTailPreambleTokensEstimate?.() ?? 0;
-      // C1 (Phase 152/165): profile-aware budget — 8K-starvation fix (effectiveO = min(O, maxOutputTokens))
+      // Profile-aware budget — 8K-starvation fix (effectiveO = min(O, maxOutputTokens))
       // and 256K-overfill cap for small/nano models. Frontier/mid: byte-identical to computeTokenBudget.
-      // When deps.modelProfile is present: use it for both fixes (the standard C1 path).
-      // When deps.modelProfile is absent: fail-closed to nano (K2) — an unthreaded profile must NOT
+      // When deps.modelProfile is present: use it for both fixes (the standard path).
+      // When deps.modelProfile is absent: fail-closed to nano — an unthreaded profile must NOT
       // silently fall open to frontier (no cap). Apply the most-locked (nano, 16K) cap as
       // defense-in-depth and emit a loud WARN so any future missed wire is auditable — never silent.
-      // Threading (Phase 165) makes this path dead code on the live dag path.
+      // The live dag path always threads a profile, so this branch is dead code there.
       let profile = deps.modelProfile;
       if (profile === undefined) {
         deps.logger.warn(
@@ -389,37 +381,37 @@ export function createLcdContextEngine(
         -1,
         config.budget?.effectiveContextCapSmall,
         config.budget?.effectiveContextCapNano,
-        // KNOB-02 (Phase 176): executor-reconcile provenance — when present,
+        // Executor-reconcile provenance — when present,
         // rawContextWindowTokens reports the TRUE configured window (not the
         // served value the executor overwrote contextWindow with) and
-        // windowCapSource gains "served". Undefined until the executor wires
-        // it (plan 176-04) ⇒ byte-identical until then.
+        // windowCapSource gains "served". When the executor has not wired
+        // it, undefined ⇒ the budget math is unchanged.
         deps.windowProvenance,
       );
 
-      // 3b (deferred). FRESH-TAIL SIZE BOUNDING (B-8 + Issue-1). The fresh tail
-      //     ships UNCONDITIONALLY below (A1/A3) and the dag path runs NEITHER the
+      // 3b (deferred). FRESH-TAIL SIZE BOUNDING. The fresh tail
+      //     ships UNCONDITIONALLY below and the dag path runs NEITHER the
       //     observation masker NOR the dead-content evictor (pipeline-only), so a
       //     turn whose last steps carry a huge tool output — OR a huge user/
-      //     assistant message (the Issue-1 session brick: one over-window message
+      //     assistant message (the session-bricking case: one over-window message
       //     rides the fresh tail forever) — would overflow the model window before
       //     any budget pass sees it. Bound each oversized fresh-tail message to
       //     the H-derived per-message cap (lcd-fresh-tail-bound.ts owns the cap
       //     math + the guard mechanics and their full invariant notes).
       //     Invariant reconciliation:
-      //       - A1 (verbatim) is preserved for EVERYTHING that fits: the guards are
+      //       - Verbatim slicing is preserved for EVERYTHING that fits: the guards are
       //         no-ops below the cap, and every message that fits passes through
       //         referentially unchanged (boundFreshTailMessages returns the same
       //         object when nothing truncated).
       //       - Masking fresh-tail content is acceptable because the LCD store
       //         keeps the full content losslessly and `ctx_expand` recovers it (the
       //         honest marker advertises this; ingestion stores the RAW message).
-      //       - A2 (pairing) stays valid: this step ONLY shrinks text CONTENT — it
+      //       - Tool-pairing repair stays valid: this step ONLY shrinks text CONTENT — it
       //         never removes/reorders a message, never touches a `toolCallId`, and
       //         never rewrites a non-text block (toolCall blocks pass through the
       //         guard untouched) — so sanitizeToolUseResultPairing (step 6) still
       //         sees the same ids.
-      //       - Role-untrusted handling (T-129-14) is untouched: roles are never
+      //       - Role-untrusted handling is untouched: roles are never
       //         changed; only text inside an existing message shrinks.
       const freshTailCapChars = computeFreshTailCapChars(budget.availableHistoryTokens);
       const bounded = boundFreshTailMessages(rawFreshTail, freshTailCapChars);
@@ -427,8 +419,8 @@ export function createLcdContextEngine(
       const { boundedResults, boundedMessages, charsRemoved } = bounded;
       if (boundedResults > 0 || boundedMessages > 0) {
         // Content-free DEBUG (AGENTS.md §2.2 / the lossless-store content-free rule):
-        // counts only — NEVER the message text. Closes the B-13-class silent-path gap
-        // for this new branch so a bounded fresh tail is diagnosable from logs alone.
+        // counts only — NEVER the message text. Closes the silent-path gap
+        // for this branch so a bounded fresh tail is diagnosable from logs alone.
         deps.logger.debug(
           {
             step: "lcd-fresh-tail-bound",
@@ -444,24 +436,25 @@ export function createLcdContextEngine(
         );
       }
 
-      // ISSUE #1/#3/#3b/#3c: bound the PROTECTED fresh tail's TOTAL tokens to the residual
-      // (window − S − floor headroom − preamble). B-8 above bounds each oversized MESSAGE
-      // but not the SUM across turns; the protected tail ships UNCONDITIONALLY, so on a
-      // tight window it must be trimmed to fit or the pre-flight throws. boundProtectedFreshTail
+      // Bound the PROTECTED fresh tail's TOTAL tokens to the residual
+      // (window − S − floor headroom − preamble). The per-message bound above caps each
+      // oversized MESSAGE but not the SUM across turns; the protected tail ships
+      // UNCONDITIONALLY, so on a tight window it must be trimmed to fit or the pre-flight
+      // throws. boundProtectedFreshTail
       // (lcd-fresh-tail-bound.ts) owns the residual math + the trim + the diagnostic — it
-      // reads the SAME `profile.reasoningStyle` the pre-flight uses (#3b: identical floor
+      // reads the SAME `profile.reasoningStyle` the pre-flight uses (identical floor
       // headroom, incl. the native reasoning reserve) and measures with the SAME factored
-      // estimator (#3: no fudge).
+      // estimator (no fudge factor).
       //
-      // ISSUE #3c (2026-06-22): pass budget.windowTokens — the CAPPED effective window the
+      // Pass budget.windowTokens — the CAPPED effective window the
       // pre-flight throws against (computeTokenBudgetForProfile applies
       // effectiveContextCap{Nano,Small}: min(rawContextWindow, cap)) — NOT the raw
-      // profile.contextWindow. The capabilityClass=nano pin gives gpt-5-nano a raw window of
-      // 16000, capped to 8192 ONLY on the pre-flight path; Fix C read the pre-cap 16000 →
-      // residual ~12865 (huge) → never trimmed the 5407 tail → the pre-flight (effective
-      // 8192) exhausted (live, the lcd-freshtail-bound DEBUG showed window=16000). Using
-      // budget.windowTokens makes Fix C's window IDENTICAL to the pre-flight's. (codex didn't
-      // hit this: its raw window IS 8192 == the cap → the two were already equal.) Frontier/mid:
+      // profile.contextWindow. When a model's raw window exceeds the capability-class cap
+      // (e.g. a nano pin: raw 16000, capped to 8192 on the pre-flight path), reading the
+      // pre-cap window here would compute a residual far larger than the pre-flight
+      // tolerates → the oversized tail is never trimmed → the pre-flight exhausts. Using
+      // budget.windowTokens makes this bound's window IDENTICAL to the pre-flight's.
+      // Frontier/mid:
       // budget.windowTokens is the wide window → huge residual → no trim (practical no-op).
       freshTail = boundProtectedFreshTail(freshTail, {
         effectiveWindow: budget.windowTokens,
@@ -474,23 +467,23 @@ export function createLcdContextEngine(
         sessionKey: deps.sessionKey,
       });
 
-      // RETR-02/03/05 eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
-      // the EXISTING recency call VERBATIM — same call, same args → referentially the
-      // pre-patch AgentMessage[], BYTE-IDENTICAL (LOCKED #2; the arbiter does NOT run for
-      // them). Relevance-first → the margin arbiter over the SAME availableHistoryTokens.
-      // ISSUE #1 (multi-turn nano, 2026-06-22): the history actually SHIPPED must be
+      // Eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
+      // the recency eviction call — the arbiter does NOT run for them, so their
+      // output stays byte-identical to plain recency eviction.
+      // Relevance-first → the margin arbiter over the SAME availableHistoryTokens.
+      // The history actually SHIPPED must be
       // evicted against the SAME bound the pre-flight (below) throws on — not just
       // the looser token-budget H. On a small window where S dominates, the budget's
       // H = W−S−O−M−R−P plus the 8K-starvation add-back (≈4096 on an 8192 nano
       // window) is LARGER than the pre-flight residual (window − outputHeadroom − S −
-      // freshTailPreamble ≈ 1900), so `budgeted` kept ~4096 of history while the
-      // pre-flight bound only tolerated ~1900 → the assembled prompt that SHIPS
-      // overflowed (and, before the rung-(a) fix, threw). Evicting under the TIGHTER
+      // freshTailPreamble ≈ 1900); evicting under H alone would keep ~4096 of history
+      // where the pre-flight bound only tolerates ~1900 → the assembled prompt that
+      // SHIPS would overflow. Evicting under the TIGHTER
       // of the two makes the shipped history and the pre-flight check agree, and caps
       // accumulated multi-turn history to the residual room (the sliding window) —
       // down to near-zero if S leaves no room, never an overflow. Frontier/mid: the
       // wide window makes the pre-flight residual ≥ H, so min() picks H → byte-
-      // identical (LOCKED #2). Headroom is computed exactly as the pre-flight does
+      // identical. Headroom is computed exactly as the pre-flight does
       // (same reasoningStyle / thinkingLevel / minVisibleFloor) so the two cannot drift.
       const evictThinkingLevel = deps.getThinkingLevel?.() ?? "medium";
       const evictReasoningStyle = (profile.reasoningStyle ?? "none") as "none" | "native";
@@ -514,11 +507,11 @@ export function createLcdContextEngine(
       deps.logger.debug(
         {
           step: "lcd-evict",
-          // ISSUE #1 observability fix (2026-06-22): log the ACTUAL eviction budget
+          // Log the ACTUAL eviction budget
           // (shipHistoryBudget = min(H, pre-flight residual)) the eviction ran under —
-          // NOT budget.availableHistoryTokens, which over-reports it on a small window
-          // (the loose H) and misled the live diagnosis. availableHistoryTokens is kept
-          // as a separate field so both are visible.
+          // NOT just budget.availableHistoryTokens, which over-reports it on a small
+          // window (the loose H) and misleads a diagnosis. availableHistoryTokens is
+          // kept as a separate field so both are visible.
           shipHistoryBudget,
           availableHistoryTokens: budget.availableHistoryTokens,
           windowTokens: budget.windowTokens,
@@ -533,24 +526,24 @@ export function createLcdContextEngine(
         "lcd history evicted under budget",
       );
 
-      // O1: emit the content-free `context:evicted` event (parity with the pipeline engine)
+      // Emit the content-free `context:evicted` event (parity with the pipeline engine)
       // when eviction dropped history — extracted to lcd-arbiter-seam.ts (keeps this body
       // THIN). Shared by both the recency and arbiter paths; reuses startMs (no new clock).
       emitEvictedEvent(deps, evictable, budgeted.length, startMs);
 
-      // The fresh tail is concatenated UNCONDITIONALLY (A1/A3) — never evicted.
+      // The fresh tail is concatenated UNCONDITIONALLY — never evicted.
       const assembled = [...budgeted, ...freshTail];
 
       // 5. NORMALIZE assistant string content to array blocks.
       const normalized = assembled.map(normalizeAssistantContent);
 
-      // 6. TRANSCRIPT REPAIR — the FINAL step (A2). Provider-valid pairing on
+      // 6. TRANSCRIPT REPAIR — the FINAL step. Provider-valid pairing on
       //    ANY input: out-of-order results re-placed, unpaired calls get a marked
       //    synthesized result, orphan/duplicate results dropped.
       const repaired = sanitizeToolUseResultPairing(normalized, now());
 
-      // Phase 166 CWF-02: pre-flight fit check — enforce assembledInputTokens ≤ effectiveWindow − outputHeadroom.
-      // Security-pinned messages (T-S4) are filtered via isSecurityRelevantMessage and NEVER evicted.
+      // Pre-flight fit check — enforce assembledInputTokens ≤ effectiveWindow − outputHeadroom.
+      // Security-pinned messages are filtered via isSecurityRelevantMessage and NEVER evicted.
       // Throws ContextExhaustionError when infeasible even at the thinking-level floor.
       // Extracted to lcd-preflight.ts to keep this file ≤ 820 lines.
       // Pass evictable (BudgetItem[]) + keptCount so the helper can recompute token sums
@@ -562,10 +555,10 @@ export function createLcdContextEngine(
         budgeted.length,
         freshTail,
         (profile.reasoningStyle ?? "none") as "none" | "native",
-        // W1 cap provenance: lets the exhaustion throw/WARN name the raw
+        // Cap provenance: lets the exhaustion throw/WARN name the raw
         // declared window and the knob that clamped it (contextEngine.budget.*
         // or, for "served", the Ollama knobs). Fields come off the budget —
-        // never re-derived. servedWindowTokens (KNOB-02) lets the double-cap
+        // never re-derived. servedWindowTokens lets the double-cap
         // message name the whole chain.
         {
           rawContextWindowTokens: budget.rawContextWindowTokens,
@@ -581,8 +574,8 @@ export function createLcdContextEngine(
           historyCount: budgeted.length,
           freshTailCount: freshTail.length,
           assembledCount: repaired.length,
-          // W5 (obs-llm-troubleshooting): the budget equation at INFO — the live
-          // incident was diagnosable only because logLevel happened to be debug
+          // The budget equation at INFO: diagnosability must not depend on
+          // logLevel having been debug before an incident
           // (the lcd-evict budget fields are DEBUG). One line per LLM call.
           windowTokens: budget.windowTokens,
           rawContextWindowTokens: budget.rawContextWindowTokens,
@@ -605,7 +598,7 @@ export function createLcdContextEngine(
 /**
  * The index in `messages` where the fresh tail begins: the position of the Nth-
  * from-last ASSISTANT message (a STEP = one assistant message + the tool results
- * it triggered, A1 — NOT user-turns). Everything at index >= the result is the
+ * it triggered — NOT user-turns). Everything at index >= the result is the
  * verbatim fresh tail. Returns 0 when the array has fewer than N assistant
  * messages (the whole array is the fresh tail).
  *
@@ -629,13 +622,13 @@ export function freshTailBoundaryIndex(messages: AgentMessage[], freshTailSteps:
 // ---------------------------------------------------------------------------
 
 /**
- * B-19: defensively coalesce maximal runs of ≥2 contiguous SUMMARY-ref user
+ * Defensively coalesce maximal runs of ≥2 contiguous SUMMARY-ref user
  * messages into ONE user message. Pure — returns NEW `items`/`kinds` arrays
  * (same length contract: kinds stays parallel to items). For each run of ≥2
  * adjacent `"summary"` kinds, the run's rendered texts are joined with "\n\n"
  * (so each `[LCD summary …]` header + its wrapExternalContent-wrapped body + footer
  * stay individually intact + readable) and their `tokens` are SUMMED (budget math
- * unchanged); the merged item keeps `role: "user"` (the T-129-14 ceiling). A run of
+ * unchanged); the merged item keeps `role: "user"` (the untrusted-by-role ceiling). A run of
  * 1 — the common single-summary head — and every message-ref pass through unchanged
  * (message-refs are never coalesced; they alternate with assistant turns).
  *
@@ -702,12 +695,12 @@ function summaryItemText(item: BudgetItem): string {
 
 /**
  * Resolve one ordered `context_items` row into a canonical message paired with
- * its token authority (Pitfall 2), or `undefined` when the ref dangles (drift —
+ * its token authority, or `undefined` when the ref dangles (drift —
  * skipped, never fatal):
  *
  *  - a `"message"`-ref reconstructs verbatim via the core `partsToMessage` codec
- *    (stable ids, the round-trip the loop bug broke) and carries the row's STORED
- *    `tokenCount` (which counts the F3 thinking a re-estimate would under-count);
+ *    (stable ids, the lossless round-trip) and carries the row's STORED
+ *    `tokenCount` (which counts the stored thinking blocks a re-estimate would under-count);
  *  - a `"summary"`-ref injects via {@link summaryRefToMessage} and carries the
  *    summary's pre-computed `tokenCount`.
  *
@@ -723,15 +716,15 @@ function resolveContextItem(
     case "message": {
       const row = rowById.get(item.refId);
       if (row === undefined) return undefined; // dangling message-ref (drift) — skip.
-      // WR-01 (Phase 174-04): carry the durable lcd_messages.id so the DEPTH-01 relevance
+      // Carry the durable lcd_messages.id so the relevance
       // pass (rankMiddleBandByRelevance) can match a searchLcd hit by its stable `refId`
       // (= row.id) instead of a fragile snippet substring. row.id IS the refId every hit
-      // carries — so a pure tool_use/tool_result message (empty block-text render) now ranks.
-      // TOK-01 (Phase 179): stored token_count on rows ingested before the script-aware
+      // carries — so a pure tool_use/tool_result message (empty block-text render) ranks too.
+      // A stored token_count computed without the script-aware
       // factor under-counts dense scripts ~2x. Lift at READ time — max(), never replace:
-      // the stored count carries F3 thinking weight a re-estimate would miss, and for
+      // the stored count carries thinking-block weight a re-estimate would miss, and for
       // Latin rows the same estimator over the same lossless round-trip reproduces the
-      // stored value exactly (max = no-op, the I1 byte-identical direction). No migration
+      // stored value exactly (max = no-op, the byte-identical direction). No migration
       // (forward-only schema, schema-lcd.ts).
       const msg = partsToMessage(row) as AgentMessage;
       return {
@@ -743,9 +736,9 @@ function resolveContextItem(
     case "summary": {
       const summary = summaryById.get(item.refId);
       if (summary === undefined) return undefined; // dangling summary-ref (drift) — skip.
-      // TOK-01: compare against summary.content — the SAME input the stored count was
+      // Compare against summary.content — the SAME input the stored count was
       // computed over (summarize-tier-targets) — NEVER the rendered summaryRefToMessage
-      // wrap, whose header/footer would inflate every summary including English (I1 break).
+      // wrap, whose header/footer would inflate every summary including English.
       return {
         msg: summaryRefToMessage(summary),
         tokens: Math.max(

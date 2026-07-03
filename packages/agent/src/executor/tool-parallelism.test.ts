@@ -409,13 +409,13 @@ describe("isReadOnlyTool fallback chain", () => {
 });
 
 // ---------------------------------------------------------------------------
-// STREAM-01: order-preserving, cache-stable result buffer
+// Order-preserving, cache-stable result buffer
 //
 // The SDK runs read-only tools concurrently (parallel mode) so their executes
 // resolve in COMPLETION order, which is nondeterministic. If concurrent
 // results were placed into the message array in completion order, the cached
 // prompt prefix would change turn-over-turn and bust the prompt cache
-// (T-221-STREAM-01). The order-preserving buffer indexes each result by its
+// (a cost DoS). The order-preserving buffer indexes each result by its
 // TOOL-CALL position and flushes in that source order regardless of arrival
 // order — so the assembled result array is deterministic (cache-stable).
 // ---------------------------------------------------------------------------

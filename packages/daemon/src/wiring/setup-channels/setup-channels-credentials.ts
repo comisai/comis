@@ -44,7 +44,7 @@ export interface CronEventListenerDeps {
   logger: ComisLogger;
   /** Composition-root clock — threaded to runMemoryReview for relative-date resolution. */
   clock: ClockPort;
-  /** Per-agent auto-refreshing OAuth token resolver (wraps OAuthTokenManager); lets background memory/learning jobs run on an OAuth main provider instead of skipping "no API key" (LEARN-01). Undefined ⇒ static-key/keyless only. */
+  /** Per-agent auto-refreshing OAuth token resolver (wraps OAuthTokenManager); lets background memory/learning jobs run on an OAuth main provider instead of skipping "no API key". Undefined ⇒ static-key/keyless only. */
   resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
   adaptersByType: Map<string, ChannelPort>;
   deliveryService: DeliveryService;
@@ -53,7 +53,7 @@ export interface CronEventListenerDeps {
   transcriber?: TranscriptionPort;
   workspaceDirs?: Map<string, string>;
   memoryAdapter?: MemoryPort;
-  /** LCD read + browse for the review session source (live 2026-06-11: DAG transcripts live in LCD, not the near-empty daemon store). Absent ⇒ daemon-store-only review. */
+  /** LCD read + browse for the review session source (DAG transcripts live in LCD, not the near-empty daemon store). Absent ⇒ daemon-store-only review. */
   lcdStore?: import("@comis/core").ContextStorePort; contextBrowse?: import("@comis/core").ContextBrowsePort;
   /** Entity-associative store. Threaded into runMemoryReview so each
    *  successfully-stored memory's entity mentions are resolved + linked
@@ -67,16 +67,16 @@ export interface CronEventListenerDeps {
    *  isolation. Absent => causes parsed but not persisted. Built
    *  in setup-memory on the SAME db handle the memory adapter owns; the port TYPE (agent↛memory cut). */
   causalStore?: MemoryCausalStore;
-  /** Consolidation store. ORPHANED in Phase 225-05 (the runMemoryConsolidation job +
-   *  the `__MEMORY_CONSOLIDATION__` sentinel were deleted); the port + its memories table are
-   *  retired in Phase 226. Still threaded (no live writer). Built in setup-memory on the SAME db
+  /** Consolidation store. ORPHANED — the runMemoryConsolidation job and
+   *  the `__MEMORY_CONSOLIDATION__` sentinel were removed, so the port and its memories table are
+   *  retired. Still threaded (no live writer). Built in setup-memory on the SAME db
    *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). */
   consolidationStore?: MemoryConsolidationStore;
-  // (The cron-path `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
+  // (The cron-path `tripleStore` field was DELETED — its sole reader was the
   //  deleted triple-extraction sentinel. The graphSpread recall lane consumes tripleStore via
   //  the SEPARATE setupAgents deps chain, not this cron forward; the port + lane survive.)
   // (The cron-path `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
-  //  upsert write path — was DELETED in Phase 226-04 with the rest of the social-modeling subsystem.)
+  //  upsert write path — was DELETED with the rest of the social-modeling subsystem.)
   /** Memory-lifecycle sweep store — the KEYLESS
    *  __MEMORY_LIFECYCLE__ sentinel's per-(tenant, agent) DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
@@ -84,16 +84,16 @@ export interface CronEventListenerDeps {
    *  silent no-op (the field-plumbing lesson). Absent => the lifecycle sentinel cannot run, but the
    *  cron is off-by-default so a default-config agent never reaches it. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  // (The cron-path `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
-  //  the deleted usefulness-judge sentinel. The FORGET-02 recordUsage reward write rides the
+  // (The cron-path `usefulnessStore` field was DELETED — its sole reader was
+  //  the deleted usefulness-judge sentinel. The recordUsage reward write rides the
   //  setup-learning.ts deps, not this cron chain; that store is untouched.)
-  outcomeStore?: OutcomeSignalPort; // v2.31 Reflection: the __REFLECT__ runReflection fail-closed success gate (agent↛memory)
-  learnedSkillStore?: MentalModelStorePort; // v2.31 Reflection: the __REFLECT__ get/admit target (agent↛memory; off-by-default)
+  outcomeStore?: OutcomeSignalPort; // Reflection: the __REFLECT__ runReflection fail-closed success gate (agent↛memory)
+  learnedSkillStore?: MentalModelStorePort; // Reflection: the __REFLECT__ get/admit target (agent↛memory; off-by-default)
   /** High-trust source read surface (`inspect`) — the surviving __REFLECT__ sentinel scopes
-   *  its per-(tenant, agent) profile/topic source read over it (the Phase 225 FOLD path).
+   *  its per-(tenant, agent) profile/topic source read over it (the folded profile/topic read path).
    *  Built in setup-memory; daemon-side (the agent imports no memory package). (The
    *  __USER_REPRESENTATION__ + __SOCIAL_MODELING__ readers that also used this surface were
-   *  deleted in Phase 225-05 / 226-04 with their subsystems.) */
+   *  deleted with their subsystems.) */
   memoryApi?: MemoryApi;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
@@ -177,7 +177,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         agentName: agentConfig.name ?? agentId,
         config: memReviewConfig,
         memoryPort: deps.memoryAdapter!,
-        // R6 (CR-01): small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
+        // Capability gate: a small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
         ...resolveMemoryOpsCapability(resolved, providerEntry?.capabilities),
         sessionStore: buildReviewSessionSource({ sessionStore: deps.sessionStore as unknown as Parameters<typeof buildReviewSessionSource>[0]["sessionStore"], lcdStore: deps.lcdStore, contextBrowse: deps.contextBrowse, agentId, tenantId: deps.tenantId ?? container.config.tenantId ?? "default" }),
         eventBus: container.eventBus,
@@ -217,8 +217,8 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       consolidationStore: deps.consolidationStore,
       memoryLifecycleStore: deps.memoryLifecycleStore,
       memoryApi: deps.memoryApi,
-      reflection: buildReflectionCronDeps(deps), // v2.31 Reflection closed-graph bundle; undefined ⇒ off
-      resolveAccessToken: deps.resolveAccessToken, // LEARN-01: OAuth-provider background jobs
+      reflection: buildReflectionCronDeps(deps), // Reflection closed-graph bundle; undefined ⇒ off
+      resolveAccessToken: deps.resolveAccessToken, // OAuth-provider background jobs
     });
     if (handledMemoryCron) return;
 
@@ -284,7 +284,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         );
       }
 
-      // Resolve cron operation model via 5-level priority chain. LAT-01: cronOverrides.promptTimeout is materialized UNCONDITIONALLY, so it must carry resolution.timeoutSource — without the label, decode would treat the 150s cron default as an explicit operator override (the provenance-collapse trap).
+      // Resolve cron operation model via 5-level priority chain. cronOverrides.promptTimeout is materialized UNCONDITIONALLY, so it must carry resolution.timeoutSource — without the label, decode would treat the 150s cron default as an explicit operator override (the provenance-collapse trap).
       const agentConfig = agents[payload.agentId];
       let cronOverrides: { model: string; operationType: "cron"; promptTimeout: { promptTimeoutMs: number; source: OperationModelResolution["timeoutSource"] }; cacheRetention?: "none" | "short" | "long" } | undefined;
       if (agentConfig) {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 acceptance — "channel": per-rendererKey enable/disable + the
+ * Acceptance — "channel": per-rendererKey enable/disable + the
  * hot-reload re-read proof (BOTH an in-place flip AND the real config.write
  * full-object replacement).
  *
@@ -139,7 +139,7 @@ async function runTurn(
   return painted;
 }
 
-describe("§22.2 channel: per-rendererKey gate + hot-reload via in-place flip AND full-object replacement", () => {
+describe("channel kill-switch: per-rendererKey gate + hot-reload via in-place flip AND full-object replacement", () => {
   it("renders an enabled rendererKey, suppresses an absent one, and hot-reloads disable both ways without rebuilding", async () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus });

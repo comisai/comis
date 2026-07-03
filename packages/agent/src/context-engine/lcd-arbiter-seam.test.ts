@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IN-03 / IN-04 (Phase 174-04) — the assembly-path relevance query the arbiter seam builds
+ * The assembly-path relevance query the arbiter seam builds
  * (`buildAssemblyRelevanceQuery`, via `ASSEMBLY_STOPWORDS`) must never let an FTS5 OPERATOR
  * keyword (`near` / `and` / `or` / `not`) survive as a bare term. The OR-join
  * (`relevance-eviction.ts:132`) splices the terms into a `lcd_messages_fts MATCH` query, so a
@@ -8,9 +8,9 @@
  * `evictUnderArbiter` seam (the only live caller of the private query builder) and asserts the
  * exact FTS query string the store receives carries no bare operator.
  *
- * RED: `near` is NOT in the pre-patch stoplist (`and`/`or`/`not` already were), so a live user
- * turn "search near the deployment" yields a query whose terms include "near" → the OR-join is
- * "near OR deployment ..." — the assertion fails until `near` is stopped.
+ * Regression pinned: with `near` missing from the stoplist (`and`/`or`/`not` alone), a live
+ * user turn "search near the deployment" yields a query whose terms include "near" → the
+ * OR-join is "near OR deployment ..." — the assertion fails until `near` is stopped.
  *
  * @module
  */
@@ -54,7 +54,7 @@ function makeDeps(store: ContextStorePort): ContextEngineDeps {
   } as unknown as ContextEngineDeps;
 }
 
-describe("buildAssemblyRelevanceQuery — IN-03/IN-04 FTS5 operator stopwords", () => {
+describe("buildAssemblyRelevanceQuery — FTS5 operator stopwords", () => {
   it("never emits a bare FTS5 operator keyword (near/and/or/not) in the MATCH query", () => {
     const captured: { ftsQuery?: string } = {};
     const deps = makeDeps(makeCapturingStore(captured));

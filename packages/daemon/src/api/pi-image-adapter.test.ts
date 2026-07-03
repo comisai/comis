@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the pi-ai image shim (PI-01/02/03/04 + CRED-01 resolution half).
+ * Tests for the pi-ai image shim.
  *
  * Uses pi-ai's REAL image-api registry (`registerImagesApiProvider` /
  * `getImagesApiProvider`) plus fake providers — never the network. The single
- * `generateImages()` call site (I1) is exercised through `createPiImageAdapter`.
+ * `generateImages()` call site is exercised through `createPiImageAdapter`.
  * @module
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -78,7 +78,7 @@ function registerFakeReturning(result: AssistantImages): void {
 }
 
 // ---------------------------------------------------------------------------
-// Task 1 — PI-01: execute() mapping + classification
+// execute() mapping + classification
 // ---------------------------------------------------------------------------
 
 describe("createPiImageAdapter execute()", () => {
@@ -223,13 +223,13 @@ describe("createPiImageAdapter execute()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-03 (Phase 186) — toImageGenOutput fills the cost seam:
+// toImageGenOutput fills the cost seam:
 // costUsd ← AssistantImages.usage.cost.total, model ← res.model,
 // provider ← res.provider (additive ImageGenOutput fields). Absent usage must
 // NOT throw (usage? is optional on AssistantImages) — costUsd is undefined.
 // ---------------------------------------------------------------------------
 
-describe("createPiImageAdapter OBS-03 cost mapping", () => {
+describe("createPiImageAdapter cost mapping", () => {
   it("maps usage.cost.total → costUsd, res.model → model, res.provider → provider", async () => {
     registerImagesApiProvider({
       api: TEST_API,
@@ -301,23 +301,23 @@ describe("createPiImageAdapter OBS-03 cost mapping", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — PI-02: registerComisImageProviders + registry round-trip
+// registerComisImageProviders + registry round-trip
 // ---------------------------------------------------------------------------
 
 describe("registerComisImageProviders", () => {
   it("makes the built-in openrouter-images provider reachable and is idempotent", () => {
     // The built-in is auto-registered on pi-ai import; the boot hook must be
-    // callable once-at-boot AND safe to call twice without throwing (PI-02).
+    // callable once-at-boot AND safe to call twice without throwing.
     expect(() => registerComisImageProviders()).not.toThrow();
     expect(() => registerComisImageProviders()).not.toThrow();
     expect(getImagesApiProvider("openrouter-images")).toBeDefined();
   });
 
-  it("registers the codex transport so openai-codex-images round-trips (184)", () => {
-    // Phase 184 wiring keystone: registerComisImageProviders() must register the
+  it("registers the codex transport so openai-codex-images round-trips", () => {
+    // Wiring keystone: registerComisImageProviders() must register the
     // custom Codex Responses transport under the "openai-codex-images" api so
     // pi-ai's generateImages() can dispatch to it. Round-trip via
-    // getImagesApiProvider (mirrors the PI-02 openrouter round-trip above).
+    // getImagesApiProvider (mirrors the openrouter round-trip above).
     registerComisImageProviders();
     const codex = getImagesApiProvider("openai-codex-images");
     expect(codex).toBeDefined();
@@ -326,11 +326,11 @@ describe("registerComisImageProviders", () => {
     expect(getImagesApiProvider("openrouter-images")).toBeDefined();
   });
 
-  // 185 Test B — the built-but-not-wired guard: the two genuinely-new SDK
+  // The built-but-not-wired guard: the two genuinely-new SDK
   // transports must be REGISTERED (not just written) so generateImages()
-  // dispatches to them by model.api. This is the milestone's recurring
-  // failure-class defense (a transport file that exists but is never wired).
-  it("registers the openai-images + google-images transports so both round-trip (185)", () => {
+  // dispatches to them by model.api. This defends against the recurring
+  // failure class of a transport file that exists but is never wired.
+  it("registers the openai-images + google-images transports so both round-trip", () => {
     registerComisImageProviders();
 
     const openai = getImagesApiProvider("openai-images");
@@ -343,17 +343,17 @@ describe("registerComisImageProviders", () => {
     expect(google!.api).toBe("google-images");
     expect(typeof google!.generateImages).toBe("function");
 
-    // No regression: the 183/184 registrations stay reachable.
+    // No regression: the earlier registrations stay reachable.
     expect(getImagesApiProvider("openrouter-images")).toBeDefined();
     expect(getImagesApiProvider("openai-codex-images")).toBeDefined();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — PI-03: full ImagesOptions passthrough (the load-bearing assertion)
+// full ImagesOptions passthrough (the load-bearing assertion)
 // ---------------------------------------------------------------------------
 
-describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
+describe("createPiImageAdapter ImagesOptions passthrough", () => {
   it("forwards apiKey, headers, signal, timeoutMs, and maxRetries to generateImages", async () => {
     let captured: ImagesOptions | undefined;
     let capturedCtx: ImagesContext | undefined;
@@ -393,11 +393,11 @@ describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
     expect(capturedCtx!.input).toEqual([{ type: "text", text: "x" }]);
   });
 
-  // ─── WR-04: thread input.size to the transport (via options.metadata.size) ──
+  // ─── thread input.size to the transport (via options.metadata.size) ────────
   // and make a non-honoring drop OBSERVABLE (the openai transport honors size;
   // google/openrouter cannot, so an agent-supplied size must not vanish silently).
 
-  it("WR-04: forwards input.size to the transport via options.metadata.size", async () => {
+  it("forwards input.size to the transport via options.metadata.size", async () => {
     let captured: ImagesOptions | undefined;
     registerImagesApiProvider({
       api: TEST_API,
@@ -416,7 +416,7 @@ describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
     expect(captured!.metadata).toMatchObject({ size: "1792x1024" });
   });
 
-  it("WR-04: WARNs (once) when size is set but the provider cannot honor it (google/openrouter)", async () => {
+  it("WARNs (once) when size is set but the provider cannot honor it (google/openrouter)", async () => {
     const logger = makeMockLogger();
     registerImagesApiProvider({
       api: TEST_API,
@@ -439,7 +439,7 @@ describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
     expect(payload.hint).toBeDefined();
   });
 
-  it("WR-04: does NOT WARN about size on the openai path (it honors size)", async () => {
+  it("does NOT WARN about size on the openai path (it honors size)", async () => {
     const logger = makeMockLogger();
     registerImagesApiProvider({
       api: TEST_API,
@@ -457,7 +457,7 @@ describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
     expect(warned).toBeUndefined();
   });
 
-  it("WR-04: does NOT WARN or set metadata.size when no size is supplied", async () => {
+  it("does NOT WARN or set metadata.size when no size is supplied", async () => {
     const logger = makeMockLogger();
     let captured: ImagesOptions | undefined;
     registerImagesApiProvider({
@@ -480,11 +480,11 @@ describe("createPiImageAdapter ImagesOptions passthrough (PI-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 1 (185-03) — IN-01: referenceImage → ImagesContext.input append
+// referenceImage → ImagesContext.input append
 // ---------------------------------------------------------------------------
 
-describe("createPiImageAdapter ImagesContext.input (IN-01 reference append)", () => {
-  it("appends the reference ImageContent SECOND when input.referenceImage is present (Test H)", async () => {
+describe("createPiImageAdapter ImagesContext.input (reference append)", () => {
+  it("appends the reference ImageContent SECOND when input.referenceImage is present", async () => {
     let capturedCtx: ImagesContext | undefined;
     registerImagesApiProvider({
       api: TEST_API,
@@ -511,7 +511,7 @@ describe("createPiImageAdapter ImagesContext.input (IN-01 reference append)", ()
     ]);
   });
 
-  it("keeps input EXACTLY [{type:text}] when no referenceImage (no-regression — Pitfall 3, Test I)", async () => {
+  it("keeps input EXACTLY [{type:text}] when no referenceImage (no-regression)", async () => {
     // The ImagesContext.input build is SHARED with the openrouter built-in +
     // codex transports. A text-only request must stay byte-identical to today
     // so those paths cannot regress.
@@ -536,14 +536,14 @@ describe("createPiImageAdapter ImagesContext.input (IN-01 reference append)", ()
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — PI-04: built-in openrouter-images path end-to-end (MOCKED in CI)
-// + CRED-01 resolution half (key via SecretManager, no image-specific secret)
+// built-in openrouter-images path end-to-end (MOCKED in CI)
+// + credential resolution half (key via SecretManager, no image-specific secret)
 // ---------------------------------------------------------------------------
 
-describe("createPiImageAdapter openrouter path (PI-04 + CRED-01)", () => {
+describe("createPiImageAdapter openrouter path", () => {
   it("drives getImageModel(openrouter) end-to-end with a mocked transport and a SecretManager key", async () => {
     // Register a fake OVER the built-in openrouter-images transport so the path
-    // is deterministic with no network (RESEARCH recommendation b). Capture the
+    // is deterministic with no network. Capture the
     // apiKey to prove it came from the resolved SecretManager key.
     let seenKey: string | undefined;
     registerImagesApiProvider({
@@ -561,7 +561,7 @@ describe("createPiImageAdapter openrouter path (PI-04 + CRED-01)", () => {
       },
     });
 
-    // CRED-01: a SecretManager that has ONLY OPENROUTER_API_KEY — no FAL_KEY,
+    // A SecretManager that has ONLY OPENROUTER_API_KEY — no FAL_KEY,
     // no OPENAI_API_KEY. The image key comes from the SAME store the main
     // provider uses, with no image-specific secret configured.
     const secretManager = {
@@ -588,11 +588,10 @@ describe("createPiImageAdapter openrouter path (PI-04 + CRED-01)", () => {
     expect(resolveImageApiKey("does-not-exist-images", secretManager)).toBeUndefined();
   });
 
-  // 185 Test A — CRED-01 lockstep fix: google-images must resolve GOOGLE_API_KEY
-  // (the SAME key the completion path / vision registry / env-vars docs use),
-  // NOT GEMINI_API_KEY. Before the fix a GOOGLE_API_KEY-only google agent was
-  // reported image-unavailable (the resolver read the wrong env var).
-  it("resolveImageApiKey('google-images') reads GOOGLE_API_KEY (CRED-01 lockstep)", () => {
+  // google-images must resolve GOOGLE_API_KEY (the SAME key the completion path /
+  // vision registry / env-vars docs use), NOT GEMINI_API_KEY. Reading GEMINI_API_KEY
+  // would report a GOOGLE_API_KEY-only google agent as image-unavailable.
+  it("resolveImageApiKey('google-images') reads GOOGLE_API_KEY", () => {
     const secretManager = {
       get: vi.fn((key: string) => (key === "GOOGLE_API_KEY" ? "gk" : undefined)),
     };
@@ -618,7 +617,7 @@ describe("createPiImageAdapter openrouter path (PI-04 + CRED-01)", () => {
     expect(secretManager.get).toHaveBeenCalledWith("OPENAI_API_KEY");
   });
 
-  // PI-04 LIVE opt-in: hits the REAL built-in openrouter-images transport when a
+  // LIVE opt-in: hits the REAL built-in openrouter-images transport when a
   // key is present. Operator UAT only — CI is NOT gated on OPENROUTER_API_KEY.
   // Env reads are allowed in *.test.ts (the gate test exempts test files);
   // production source resolves creds via SecretManager only.
@@ -641,7 +640,7 @@ describe("createPiImageAdapter openrouter path (PI-04 + CRED-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — PI-02 register-before-call guard (RESEARCH Pitfall 5)
+// register-before-call guard
 // ---------------------------------------------------------------------------
 
 describe("createPiImageAdapter unregistered api (register-before-call guard)", () => {

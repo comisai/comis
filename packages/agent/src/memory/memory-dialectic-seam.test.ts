@@ -75,10 +75,11 @@ describe("createDialecticSeam", () => {
     expect(typeof synthesize).toBe("function");
   });
 
-  it("resolves a custom (non-catalog) provider model via customModel spec so memory.ask runs keyless/local (live 2026-06-20: getModel('ollama','qwen3.6:35b')→not-found→abstain)", async () => {
-    // pi-ai's catalog cannot see custom-registered ollama/lm-studio models, so the
-    // bare getModel() missed and the dialectic abstained ("model not found") on EVERY
-    // keyless memory.ask — even with a capable (mid+) model. Mirrors the #223 judge fix.
+  it("resolves a custom (non-catalog) provider model via customModel spec so memory.ask runs keyless/local", async () => {
+    // pi-ai's catalog cannot see custom-registered ollama/lm-studio models, so a
+    // bare getModel() misses and the dialectic would abstain ("model not found") on EVERY
+    // keyless memory.ask — even with a capable (mid+) model. Mirrors the judge
+    // resolver's customModel construction (#223).
     (getModel as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error("not in built-in catalog");
     });
@@ -89,22 +90,24 @@ describe("createDialecticSeam", () => {
       makeDeps({
         provider: "ollama",
         modelId: "qwen3.6:35b",
-        capabilityClass: "mid", // capable → NOT gated by the T-153 abstain
+        capabilityClass: "mid", // capable → NOT gated by the capability-routing abstain
         customModel: { baseUrl: "http://127.0.0.1:11434/v1" },
       }) as never,
     );
     const out = await synthesize("what is my codename?", "[id-1] (recorded 2026-06-20) MARLIN-30");
-    // RED (pre-fix): getModel throws → "model not found" → { abstain: true }, completeSimple NEVER called.
-    // GREEN (post-fix): resolveJudgeModel constructs the openai-completions model from the spec → the LLM runs.
+    // Without the customModel spec: getModel throws → "model not found" → { abstain: true },
+    // completeSimple NEVER called. With it: resolveJudgeModel constructs the
+    // openai-completions model from the spec → the LLM runs.
     expect(completeSimple).toHaveBeenCalledTimes(1);
     expect(out).toMatchObject({ abstain: false });
   });
 
-  it("FLAG-3: when resolveCredential is set, completeSimple receives the RESOLVED (OAuth) key, not the static apiKey", async () => {
-    // Live VPS 2026-06-22: an openai-codex (OAuth) agent has no API key, so the daemon resolved apiKey=""
-    // and memory.ask abstained ("synthesis_abstained") on EVERY query despite valid grounding (5049 chars).
-    // The fix threads a per-call resolveCredential (the OAuth bearer via the boot oauthManagers map).
-    // Pre-fix: the seam used the static apiKey ("") → completeSimple got the wrong/empty key.
+  it("when resolveCredential is set, completeSimple receives the RESOLVED (OAuth) key, not the static apiKey", async () => {
+    // An OAuth-authenticated agent (e.g. openai-codex) has no static API key, so the daemon
+    // resolves apiKey="" — with only the static key, memory.ask abstains ("synthesis_abstained")
+    // on EVERY query despite valid grounding.
+    // A per-call resolveCredential (the OAuth bearer via the boot oauthManagers map) must
+    // therefore take precedence over the static apiKey.
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       llmText('{"answer":"Moshe","citedIds":["id-1"]}'),
     );
@@ -145,9 +148,9 @@ describe("createDialecticSeam", () => {
     expect(out).toEqual({ abstain: false, answer: "UTC", citedIds: ["id-a"] });
   });
 
-  it("FLAG-3: OMITS temperature for REASONING models (gpt-5.x/o-series/Opus reject it — Codex 400 'Unsupported parameter: temperature')", async () => {
-    // Live VPS 2026-06-22: completeSimple({temperature:0}) on a reasoning model (gpt-5.4 via openai-codex)
-    // → Codex 400 "Unsupported parameter: temperature" → empty response → memory.ask abstained on EVERY
+  it("OMITS temperature for REASONING models (gpt-5.x/o-series/Opus reject it — Codex 400 'Unsupported parameter: temperature')", async () => {
+    // completeSimple({temperature:0}) on a reasoning model (e.g. gpt-5.4 via openai-codex)
+    // → Codex 400 "Unsupported parameter: temperature" → empty response → memory.ask abstains on EVERY
     // query. The seam gates on the SDK's per-model `reasoning` flag (broad across ALL providers — pi's
     // openai/codex providers forward temperature unconditionally), omitting it when reasoning===true.
     (getModel as ReturnType<typeof vi.fn>).mockReturnValue({ id: "gpt-5.4", reasoning: true });
@@ -160,7 +163,7 @@ describe("createDialecticSeam", () => {
     const out = await synthesize("what is the user name?", "[id-1] The user's name is Moshe.");
     expect(completeSimple).toHaveBeenCalledTimes(1);
     const opts = (completeSimple as ReturnType<typeof vi.fn>).mock.calls[0]![2] as Record<string, unknown>;
-    // RED (pre-fix): temperature:0 present → Codex 400 → empty. GREEN: temperature key absent for reasoning models.
+    // A present temperature:0 would 400 on Codex → empty; the temperature key must be absent for reasoning models.
     expect(opts).not.toHaveProperty("temperature");
     // The maxTokens cap + abort signal still ride (only temperature is dropped).
     expect(opts.maxTokens).toBe(1024);
@@ -227,8 +230,8 @@ describe("createDialecticSeam", () => {
     expect(out).toEqual({ abstain: true });
   });
 
-  // R6 capability routing — T-153-fabricate mitigation
-  it("R6: capabilityClass=nano without override returns { abstain:true } immediately (pre-call, no LLM invoked)", async () => {
+  // Capability routing — fabrication mitigation
+  it("capabilityClass=nano without override returns { abstain:true } immediately (pre-call, no LLM invoked)", async () => {
     // Arrange: provide a canned LLM response — if the LLM IS called this would
     // return { abstain: false, answer: "x", citedIds: [] }; the test asserts
     // the seam abstains BEFORE reaching the LLM call.
@@ -242,11 +245,11 @@ describe("createDialecticSeam", () => {
 
     // Must return { abstain: true } — the capability-routing abstain.
     expect(out).toEqual({ abstain: true });
-    // The LLM must NOT have been called (pre-call abort — the core T-153-fabricate guarantee).
+    // The LLM must NOT have been called (pre-call abort — the core fabrication-mitigation guarantee).
     expect(completeSimple).not.toHaveBeenCalled();
   });
 
-  it("R6: capabilityClass=nano with hasCapableModelOverride=true proceeds to the LLM (override honored)", async () => {
+  it("capabilityClass=nano with hasCapableModelOverride=true proceeds to the LLM (override honored)", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       llmText('{"answer":"UTC","citedIds":["id-a"]}'),
     );
@@ -263,7 +266,7 @@ describe("createDialecticSeam", () => {
     expect(out).toEqual({ abstain: false, answer: "UTC", citedIds: ["id-a"] });
   });
 
-  it("R6: abstain message contains 'insufficient model capability' (explicit diagnostic, not generic)", async () => {
+  it("abstain message contains 'insufficient model capability' (explicit diagnostic, not generic)", async () => {
     // The abstain reason must carry the required diagnostic phrase so operators
     // can distinguish a capability-routing abstain from an LLM-failure abstain.
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(

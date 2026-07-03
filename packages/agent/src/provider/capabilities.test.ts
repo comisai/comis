@@ -333,9 +333,9 @@ describe("resolveToolCallIdMode", () => {
 // 10. ANTHROPIC_FAMILY de-duplication regression
 // ---------------------------------------------------------------------------
 //
-// Three duplicate `ANTHROPIC_FAMILY` Sets in the executor were replaced
-// with calls to `isAnthropicFamily` from this module. These regressions guard
-// against the Sets reappearing as future "quick fix" copies.
+// The executor must call `isAnthropicFamily` from this module rather than
+// declaring its own local `ANTHROPIC_FAMILY` Sets. These regressions guard
+// against duplicate Sets appearing as "quick fix" copies at the call sites.
 
 describe("ANTHROPIC_FAMILY de-duplication regression", () => {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -348,8 +348,8 @@ describe("ANTHROPIC_FAMILY de-duplication regression", () => {
     const source = readFileSync(join(repoRoot, relPath), "utf8");
     // Local-declaration regex (catches `const ANTHROPIC_FAMILY = new Set(...)`)
     expect(source).not.toMatch(/const\s+ANTHROPIC_FAMILY\s*=/);
-    // Belt-and-braces: bare identifier should also be gone (the executor
-    // call sites used `ANTHROPIC_FAMILY.has(...)`).
+    // Belt-and-braces: the bare identifier must not appear at all (a
+    // duplicate call site would read `ANTHROPIC_FAMILY.has(...)`).
     expect(source).not.toMatch(/\bANTHROPIC_FAMILY\b/);
   });
 

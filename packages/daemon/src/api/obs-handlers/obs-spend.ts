@@ -2,10 +2,10 @@
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
  * `obs.spend.snapshot` RPC handler — the read surface onto the LIVE spend the
- * dollars kill-switch enforces (WEBUI-02, Phase 179 Plan 04). The SIBLING of
+ * dollars kill-switch enforces. The SIBLING of
  * `obs-audit.ts`: a bounded, admin-gated, content-free read.
  *
- * LOCKED A1 (research): reads the LIVE `spendAccumulator.getSnapshot()` threaded
+ * Reads the LIVE `spendAccumulator.getSnapshot()` threaded
  * into `ObservabilityApiDeps.spendSnapshot` (the kill-switch value), NOT the
  * lagging SQL `getRollingSpendUsd` — the Spend & Governance view must agree with
  * `comis fleet` / the kill-switch. The configured ceilings ride alongside so the
@@ -14,17 +14,17 @@
  * / unknown) comes from `obsStore.pricingCoverage()` so a finance review sees how
  * trustworthy the dollars are.
  *
- * H1 dual-layer admin gate (cloned verbatim from `obs-audit.ts`): the contract is
+ * Dual-layer admin gate (same pattern as `obs-audit.ts`): the contract is
  * `scopes:["admin"]` AND the handler re-checks `_trustLevel === "admin"`.
  * `stripInternalFields` runs BEFORE the contract parse.
  *
- * Content-free (T-179-11): scope KEYS (the `${tenantId} ${agentId}` / tenant
+ * Content-free: scope KEYS (the `${tenantId} ${agentId}` / tenant
  * counter keys — config ids, never user content) + dollar/count NUMBERS + pricing
  * enums ONLY. No message/body/query/secret crosses the boundary.
  *
  * Honest-degradation: when NEITHER the live snapshot NOR the store is present the
  * handler returns `{ snapshot: { enabled: false } }` — never a misleading $0
- * success (the §14 honest-degradation invariant, T-179-13).
+ * success (the honest-degradation invariant).
  *
  * @module
  */
@@ -56,19 +56,19 @@ function scopeRows(
 }
 
 /**
- * Bind the `obs.spend.snapshot` handler — the H1 admin gate + strip-before-parse +
+ * Bind the `obs.spend.snapshot` handler — the admin gate + strip-before-parse +
  * the LIVE-snapshot read. COMPUTED-KEY form (`[ObsSpendSnapshotContract.method]`)
  * is MANDATORY (the `obs-audit.ts` precedent). The request is empty, so there are
  * no per-field literals to reference for the parity gate.
  *
  * @param deps - the shared obs-handler deps; `deps.spendSnapshot` is the threaded
- *   live reader (locked A1), `deps.obsStore` exposes `pricingCoverage`. Both absent
+ *   live reader, `deps.obsStore` exposes `pricingCoverage`. Both absent
  *   ⇒ an honest `enabled:false` snapshot.
  */
 export function bindObsSpendHandlers(deps: ObsHandlerDeps): Record<string, RpcHandler> {
   return {
     [ObsSpendSnapshotContract.method]: async (rawParams) => {
-      // H1: admin check (defense-in-depth; gateway-router is the primary gate).
+      // Admin check (defense-in-depth; gateway-router is the primary gate).
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
       if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 

@@ -119,7 +119,7 @@ describe("transcriptionStep", () => {
     );
   });
 
-  it("defaults to the keyless auto provider on a first-time run (WIZ-01)", async () => {
+  it("defaults to the keyless auto provider on a first-time run", async () => {
     const prompter = createMockPrompter({ select: ["auto"] });
     await transcriptionStep.execute(baseState(), prompter);
     expect(prompter.select).toHaveBeenCalledWith(
@@ -127,7 +127,7 @@ describe("transcriptionStep", () => {
     );
   });
 
-  it("auto and local are keyless and prompt for no API key (WIZ-01)", async () => {
+  it("auto and local are keyless and prompt for no API key", async () => {
     for (const id of ["auto", "local"]) {
       const p = createMockPrompter({ select: [id] });
       const r = await transcriptionStep.execute(baseState(), p);
@@ -136,7 +136,7 @@ describe("transcriptionStep", () => {
     }
   });
 
-  it("offers auto and local as keyless-first ordered options (WIZ-04 drift mirror)", () => {
+  it("offers auto and local as keyless-first ordered options (drift mirror of the supported list)", () => {
     expect(SUPPORTED_TRANSCRIPTION_PROVIDERS.map((t) => t.id)).toEqual([
       "auto",
       "local",
@@ -146,7 +146,7 @@ describe("transcriptionStep", () => {
     ]);
   });
 
-  it("openai with a non-openai main prompts OPENAI_API_KEY but reuses an openai main key (CRED-01)", async () => {
+  it("openai with a non-openai main prompts OPENAI_API_KEY but reuses an openai main key", async () => {
     // (a) non-openai main → must prompt for the OpenAI key (no silent reuse).
     const promptingPrompter = createMockPrompter({
       select: ["openai"],

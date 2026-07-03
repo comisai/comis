@@ -35,10 +35,9 @@ agents:
     # No autonomy block -> resolves to the `standard` profile.
 ```
 
-This is also the migration story: an existing agent that previously reached
-orchestration through the old un-gated path now resolves to `standard` and
-regains exactly those surfaces -- now capability-gated. It is an explicit grant
-via a named profile, not a compatibility shim.
+There is no un-gated path to orchestration: an agent with no autonomy config
+resolves to `standard` and holds exactly those surfaces, capability-gated. It
+is an explicit grant via a named profile, not a compatibility shim.
 
 ## Named Profiles
 
@@ -60,8 +59,8 @@ ask a human resolves to **deny + escalate** (never a blocking prompt), a
 can **evict** an in-flight run back to `default` -- see
 [The `unattended` profile](#the-unattended-profile) below. `max`'s extra surface
 (sandbox auto-allow) is **not** in this release: selecting it resolves to
-`standard`'s capability set and attaches an "available in a later milestone"
-notice (logged at boot). Comis **never silently grants** a capability whose
+`standard`'s capability set and attaches a not-yet-available notice (logged at
+boot). Comis **never silently grants** a capability whose
 enforcement floor is not yet built, so you are told rather than over-granted.
 (**Durable runs** are not one of the deferred surfaces -- they ship as an opt-in
 knob orthogonal to the profile; see [Durability & Resume](#durability-resume)
@@ -263,7 +262,7 @@ ones that cannot answer.
 </Note>
 
 <Note>
-**M1 resume scope.** A resumed run is re-anchored under the bounded-autonomy
+**Resume scope.** A resumed run is re-anchored under the bounded-autonomy
 meter (bounded, killable, and with its outward ledger reconciled across the
 restart) from its persisted checkpoint -- it is **not** re-entered into the agent
 loop from the exact step it was on. Resuming the model turn itself from a
@@ -296,7 +295,7 @@ The `changeField` names the one config field that changes all of the above:
 profile-specific: for an `unattended` agent it states that the never-hang mode
 behaviors are **active** (deny + escalate, the denial breaker, operator evict) and
 that the capability set stays `standard`-equivalent; for a `max` agent it states
-that the extra surface (sandbox auto-allow) arrives in a later milestone.
+that the extra surface (sandbox auto-allow) is not yet available.
 
 ## Honest, Legible Degrade
 
@@ -330,8 +329,8 @@ silence the warning.
 **There is never a silent unjailed fallback.** A failed precondition always
 lands on the `assistant` posture (orchestration disabled) -- the agent stays
 safe and you are told. The actual host probe that produces the preflight result
-ships with the sandbox jail; this release wires the downshift path and its
-logging so the behavior is legible the moment the probe lands.
+ships with the sandbox jail; the downshift path and its logging are wired
+independently, so the behavior is legible the moment the probe lands.
 </Warning>
 
 ## Related

@@ -234,14 +234,13 @@ export function registerSessionsCommand(program: Command): void {
       }
     });
 
-  // sessions reset — Phase 164-06: complete cross-mode conversation reset.
-  // Supersedes Phase 164-03 sessions reset-lcd (LCD-only).
+  // sessions reset — complete cross-mode conversation reset.
   // Admin-gated destructive operation: clears BOTH the LCD durable history
   // AND the daemon sessionStore working transcript for the given session.
   // After this reset, a follow-up turn has NO prior context in both dag mode
   // (LCD empty) and pipeline mode (sessionStore empty → rehydrates empty).
-  // --memory also clears RAG memories — the GDPR / full-forget path (Phase 172-03
-  // DIST-05): deletes paired + lcd-distilled memories by source_session_key and
+  // --memory also clears RAG memories — the GDPR / full-forget path:
+  // deletes paired + lcd-distilled memories by source_session_key and
   // unlinks consolidated observations. --purge-derived (opt-in, with --memory)
   // nukes EVERY observation derived from this session (destructive).
   // --yes skips confirmation (required for scripted/automated use).
@@ -287,7 +286,7 @@ export function registerSessionsCommand(program: Command): void {
       }
     });
 
-  // sessions backup — SQLite Online Backup API (Phase 170-04 DOC-02)
+  // sessions backup — SQLite Online Backup API.
   // Opens memory.db as readonly and calls db.backup(destPath) — the SQLite
   // Online Backup API — which is hot-backup-safe (daemon can continue writing).
   // The backup file is created with a timestamp suffix and immediately chmod
@@ -310,7 +309,7 @@ export function registerSessionsCommand(program: Command): void {
       const ts = new Date().toISOString().replace(/[:.]/g, "");
       const destPath = dbPath + ".backup." + ts;
       const db = new Database(dbPath, { readonly: true });
-      // WR-02: tighten the umask so db.backup() creates the file 0600 FROM THE START.
+      // Tighten the umask so db.backup() creates the file 0600 FROM THE START.
       // The session database is sensitive; a chmod-after-write pattern leaves a brief
       // world-readable window between backup completion and chmod. Restored in finally.
       const prevUmask = process.umask(0o077);

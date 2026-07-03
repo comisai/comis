@@ -3,18 +3,17 @@ import { describe, expect, it } from "vitest";
 import { adjustSliceBoundary } from "./slice-boundary.js";
 
 // ---------------------------------------------------------------------------
-// SAFE-01 — adjustSliceBoundary: the ONE pure O(1) truncation-cut backoff.
+// adjustSliceBoundary: the ONE pure O(1) truncation-cut backoff.
 //
-// Pins the boundary contract BEFORE its consumers route through it (plans
-// 182-01 task 2/3 wrap tool-result-size-guard.ts:239,240 and
-// template-interpolation.ts:100,229 with THIS symbol — one helper, I7).
+// Pins the boundary contract at its source (the truncation cut sites in
+// tool-result-size-guard.ts and template-interpolation.ts wrap
+// THIS symbol — one helper, never a copy).
 //
-// RED on pre-patch: the helper does not exist, so every case below fails to
-// import/run. The fixtures are also constructed so a RAW `text.slice(0, index)`
-// (the pre-routing code at the cut sites) would split a surrogate pair or end on
+// The fixtures are constructed so a RAW `text.slice(0, index)` at the cut
+// sites would split a surrogate pair or end on
 // an orphaned combining mark / dangling joiner — see the inline asserts.
 //
-// BOUNDARY convention (mirrors normalize-search.test.ts:24-26 / lcd-fts WR-01):
+// BOUNDARY convention (mirrors normalize-search.test.ts):
 // every multi-codepoint / invisible-codepoint fixture is built from explicit
 // `\u{...}` escapes, NEVER a pasted glyph that carries an invisible mark/joiner —
 // so every boundary is auditable from the source alone.
@@ -63,7 +62,7 @@ describe("adjustSliceBoundary", () => {
   describe("surrogate pairs (astral)", () => {
     it("steps back to the pair start when the index lands on a low surrogate", () => {
       const text = ASTRAL + "X"; // 𠀀X — code units: D840 DC00 X (length 3)
-      // Pre-patch RED proof: a raw slice mid-pair is a lone high surrogate.
+      // The raw-slice hazard: a slice mid-pair is a lone high surrogate.
       expect(hasLoneSurrogate(text.slice(0, 1))).toBe(true);
       // The helper snaps the mid-pair index 1 back to the pair start (0).
       expect(adjustSliceBoundary(text, 1)).toBe(0);
@@ -80,7 +79,7 @@ describe("adjustSliceBoundary", () => {
   describe("combining marks (Hebrew niqqud)", () => {
     it("backs off a contiguous combining run so the slice does not end on a mark", () => {
       // Index 2 lands on the shin-dot (a combining mark) — raw slice ends on a mark.
-      expect(endsOnMark(NIQQUD.slice(0, 2))).toBe(true); // RED proof (pre-patch)
+      expect(endsOnMark(NIQQUD.slice(0, 2))).toBe(true); // the raw-slice hazard
       const adjusted = adjustSliceBoundary(NIQQUD, 2);
       // Drops the shin-dot (idx 2) + the qamats (idx 1) → cut after the shin base.
       expect(adjusted).toBe(1);
@@ -100,7 +99,7 @@ describe("adjustSliceBoundary", () => {
   describe("ZWJ sequences (emoji family)", () => {
     it("does not end on a dangling joiner when the index lands on a ZWJ", () => {
       // Index 3 = after man(2 units)+ZWJ — raw slice(0,3) ends on the ZWJ joiner.
-      expect(ZWJ_FAMILY.slice(0, 3).charCodeAt(2)).toBe(0x200d); // RED proof: dangling ZWJ
+      expect(ZWJ_FAMILY.slice(0, 3).charCodeAt(2)).toBe(0x200d); // the raw-slice hazard: dangling ZWJ
       const adjusted = adjustSliceBoundary(ZWJ_FAMILY, 3);
       // Backs off the ZWJ + the man emoji surrogate pair → lands at 2.
       expect(adjusted).toBe(2);
@@ -111,7 +110,7 @@ describe("adjustSliceBoundary", () => {
 
     it("does not leave a lone surrogate when the index lands inside an emoji pair", () => {
       // Index 4 is the low half of the woman emoji (1F469 = D83D DC69 at 3,4).
-      expect(hasLoneSurrogate(ZWJ_FAMILY.slice(0, 4))).toBe(true); // RED proof
+      expect(hasLoneSurrogate(ZWJ_FAMILY.slice(0, 4))).toBe(true); // the raw-slice hazard
       const adjusted = adjustSliceBoundary(ZWJ_FAMILY, 4);
       expect(hasLoneSurrogate(ZWJ_FAMILY.slice(0, adjusted))).toBe(false);
     });
@@ -121,7 +120,7 @@ describe("adjustSliceBoundary", () => {
     it("backs off the trailing variation selector so the slice does not end on it", () => {
       // base 'A' + VS16 (U+FE0F) + 'B' — index 2 ('B' start) follows the VS.
       const text = "A\u{FE0F}B";
-      expect(/\u{FE0F}$/u.test(text.slice(0, 2))).toBe(true); // RED proof: ends on VS
+      expect(/\u{FE0F}$/u.test(text.slice(0, 2))).toBe(true); // the raw-slice hazard: ends on VS
       const adjusted = adjustSliceBoundary(text, 2);
       // The VS at index 1 is dropped; the base 'A' (index 0) is a safe boundary.
       expect(adjusted).toBe(1);
@@ -129,7 +128,7 @@ describe("adjustSliceBoundary", () => {
     });
   });
 
-  describe("I1 — pure ASCII is a no-op (byte-identical slices)", () => {
+  describe("pure ASCII is a no-op (byte-identical slices)", () => {
     it("returns the index unchanged at every ASCII boundary", () => {
       const s = "hello world";
       for (let i = 0; i <= s.length; i++) {

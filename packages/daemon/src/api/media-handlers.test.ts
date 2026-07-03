@@ -24,7 +24,7 @@ vi.mock("node:crypto", () => ({
   randomUUID: () => "test-uuid-1234",
 }));
 
-// CR-01: the image.analyze `url` branch now routes through the shared
+// The image.analyze `url` branch routes through the shared
 // DNS-pinned SSRF fetcher (ssrf-image-fetch.ts → undici Agent + fetch). Mock
 // `undici` so Agent is a real class (constructor args captured) and `fetch`
 // delegates to globalThis.fetch — NEVER the real network.
@@ -52,11 +52,11 @@ vi.mock("../wiring/daemon-utils.js", () => ({
   mimeToExtension: vi.fn(() => "mp3"),
 }));
 
-// VIS-01 (187): the daemon-side vision gate copies the setup-channels-media.ts
+// The daemon-side vision gate copies the setup-channels-media.ts
 // dance — `isVisionCapable(getModel(provider, modelId))`. Mock both so the gate
 // is deterministic without a live pi-ai catalog. getModel returns a sentinel
 // object; isVisionCapable reads `visionCapableNext` (per-test override). By
-// DEFAULT the main is NOT vision-capable → the registry path (VIS-02 today).
+// DEFAULT the main is NOT vision-capable → the registry path.
 const { getModelMock, isVisionCapableMock, visionState } = vi.hoisted(() => {
   const visionState = { capable: false, throwOnResolve: false };
   const getModelMock = vi.fn((_provider: string, _modelId: string) => {
@@ -92,7 +92,7 @@ vi.mock("@comis/core", async (importOriginal) => {
   return {
     ...actual,
     safePath: (...segments: string[]) => segments.join("/"),
-    // ok WITH a resolved value (hostname/ip/url) so the CR-01 url branch can pin
+    // ok WITH a resolved value (hostname/ip/url) so the url branch can pin
     // DNS to the validated IP; SSRF-reject tests override per-call.
     validateUrl: vi.fn(async () => ({
       ok: true,
@@ -116,7 +116,7 @@ function makeMockVisionProvider() {
   };
 }
 
-/** VIS-01 (187): a mock main-provider vision bridge. By default it succeeds
+/** A mock main-provider vision bridge. By default it succeeds
  *  (the bridge resolved the main creds + ran a multimodal completion). Tests
  *  override `.describeImage` for the err→registry-fallback case. */
 function makeMockMainProviderVision() {
@@ -131,9 +131,9 @@ function makeMockMainProviderVision() {
 function makeDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
   return {
     visionRegistry: new Map([["gemini", makeMockVisionProvider() as never]]),
-    // VIS-01 (187): the main-provider vision wiring. Defaults: main = anthropic
+    // The main-provider vision wiring. Defaults: main = anthropic
     // (vision-capable controlled by `visionState.capable`, default false → the
-    // registry path / VIS-02 today), the bridge succeeds when reached.
+    // registry path), the bridge succeeds when reached.
     resolveAgentMainProvider: vi.fn((_agentId: string) => ({ providerId: "anthropic" })),
     mainModelIdFor: vi.fn((_agentId: string) => "claude-sonnet-4-5"),
     mainProviderVision: makeMockMainProviderVision() as never,
@@ -197,8 +197,8 @@ function makeDeps(overrides?: Partial<MediaHandlerDeps>): MediaHandlerDeps {
 describe("createMediaHandlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // VIS-01 default posture: main NOT vision-capable → registry path (VIS-02
-    // byte-identical to pre-187). Individual tests flip these.
+    // Default posture: main NOT vision-capable → registry path.
+    // Individual tests flip these.
     visionState.capable = false;
     visionState.throwOnResolve = false;
   });
@@ -282,11 +282,11 @@ describe("createMediaHandlers", () => {
       expect(result.description).toBe("Vision analysis not available for this context.");
     });
 
-    // ─── CR-01: the `url` source MUST route through the DNS-pinned SSRF ───────
+    // ─── The `url` source MUST route through the DNS-pinned SSRF ──────────────
     // fetcher (shared with image-handlers), not a bare fetch that re-resolves
     // DNS. This closes the rebinding TOCTOU gap for image.analyze too.
 
-    it("CR-01: a url source is fetched with a DNS-pinned dispatcher (no rebind window)", async () => {
+    it("a url source is fetched with a DNS-pinned dispatcher (no rebind window)", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         headers: new Headers({ "content-type": "image/jpeg" }),
@@ -323,7 +323,7 @@ describe("createMediaHandlers", () => {
       }
     });
 
-    it("CR-01: a url source that fails SSRF validation throws before any fetch", async () => {
+    it("a url source that fails SSRF validation throws before any fetch", async () => {
       (validateUrl as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         ok: false,
         error: new Error("blocked private IP"),
@@ -347,12 +347,12 @@ describe("createMediaHandlers", () => {
       }
     });
 
-    // ─── VIS-01/02/03 (187): the provider-following vision ladder ─────────────
+    // ─── The provider-following vision ladder ─────────────────────────────────
     // main-vision FIRST → registry SECOND → honest-unavailable. The handler is a
-    // CONSUMER of resolveVisionPath + deps.mainProviderVision (the 183 firewall).
+    // CONSUMER of resolveVisionPath + deps.mainProviderVision.
 
-    describe("VIS-01/02/03 vision ladder", () => {
-      it("VIS-01: routes to main-vision FIRST when the main model is vision-capable + has creds", async () => {
+    describe("vision ladder: main-vision first, registry second, honest-unavailable last", () => {
+      it("routes to main-vision FIRST when the main model is vision-capable + has creds", async () => {
         visionState.capable = true;
         const deps = makeDeps();
         const handlers = createMediaHandlers(deps);
@@ -371,14 +371,14 @@ describe("createMediaHandlers", () => {
         expect((registryProvider as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
           .not.toHaveBeenCalled();
         expect(result).toEqual({ description: "A dog on a skateboard", provider: "anthropic", model: "claude-sonnet-4-5" });
-        // VIS-03 path-log: a content-free line carries path:"main-vision".
+        // Path-log: a content-free line carries path:"main-vision".
         const logged = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls
           .concat((deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls)
           .map((c) => c[0]);
         expect(logged.some((f) => f && (f as { path?: string }).path === "main-vision")).toBe(true);
       });
 
-      it("VIS-01: succeeds via main-vision with NO separate vision-registry key (the bridge owns the cred)", async () => {
+      it("succeeds via main-vision with NO separate vision-registry key (the bridge owns the cred)", async () => {
         // The registry is EMPTY (no separate vision provider/key), but the main
         // bridge succeeds (its cred came from the main provider).
         visionState.capable = true;
@@ -396,8 +396,8 @@ describe("createMediaHandlers", () => {
           .toHaveBeenCalledOnce();
       });
 
-      it("VIS-02 NON-REGRESSION: a non-vision main is byte-identical to today (registry path, no bridge call)", async () => {
-        visionState.capable = false; // the pre-187 world
+      it("NON-REGRESSION: a non-vision main takes the registry path unchanged (no bridge call)", async () => {
+        visionState.capable = false; // the registry-only posture
         const deps = makeDeps();
         const handlers = createMediaHandlers(deps);
         const registryProvider = deps.visionRegistry!.get("gemini")!;
@@ -417,7 +417,7 @@ describe("createMediaHandlers", () => {
         expect(result).toEqual({ description: "A beautiful image", provider: "gemini", model: "gemini-pro-vision" });
       });
 
-      it("VIS-02 explicit defaultProvider OVERRIDES main-first (A3 explicit wins → registry)", async () => {
+      it("explicit defaultProvider OVERRIDES main-first (explicit config wins → registry)", async () => {
         visionState.capable = true; // main COULD do vision...
         const deps = makeDeps({
           mediaConfig: {
@@ -442,7 +442,7 @@ describe("createMediaHandlers", () => {
         expect(result.description).toBe("A beautiful image");
       });
 
-      it("VIS-01 main-vision RUNTIME failure falls back to the registry (its own keys, never throw-out)", async () => {
+      it("main-vision RUNTIME failure falls back to the registry (its own keys, never throw-out)", async () => {
         visionState.capable = true;
         const failingBridge = {
           describeImage: vi.fn(async () => ({
@@ -466,7 +466,7 @@ describe("createMediaHandlers", () => {
         expect(result.description).toBe("A beautiful image"); // the registry's result
       });
 
-      it("VIS-03 honest-unavailable (errorKind) when neither main-vision nor a registry provider resolves", async () => {
+      it("honest-unavailable (errorKind) when neither main-vision nor a registry provider resolves", async () => {
         // main not vision-capable AND empty registry → honest-unavailable.
         visionState.capable = false;
         const deps = makeDeps({ visionRegistry: new Map() });
@@ -477,7 +477,7 @@ describe("createMediaHandlers", () => {
         ).rejects.toThrow(/vision provider available/i);
       });
 
-      it("VIS-03 the gate is conservative when getModel throws (model resolution failure → registry)", async () => {
+      it("the gate is conservative when getModel throws (model resolution failure → registry)", async () => {
         visionState.capable = true;
         visionState.throwOnResolve = true; // getModel throws → visionCapable=false
         const deps = makeDeps();
@@ -544,14 +544,14 @@ describe("createMediaHandlers", () => {
     });
 
     // -----------------------------------------------------------------------
-    // VIS-04 (187): the trajectory direct-emits (media.vision.{requested,
+    // The trajectory direct-emits (media.vision.{requested,
     // completed,failed}) via the per-session recorder (the daemon RPC context
-    // has NO eventBus bridge — the image-handlers.ts:210 precedent). Resolve the
+    // has NO eventBus bridge — the same pattern as image-handlers). Resolve the
     // recorder by `_callerSessionKey`; a null/absent recorder no-ops. Payloads
     // are CONTENT-FREE (provider/mainProvider/model/path/costUsd/errorKind only —
-    // never the buffer/base64/prompt/response text; T-187-12).
+    // never the buffer/base64/prompt/response text).
     // -----------------------------------------------------------------------
-    describe("VIS-04 trajectory direct-emit (content-free)", () => {
+    describe("trajectory direct-emit (content-free)", () => {
       function makeRecorderMock() {
         const records: Array<{ type: string; data: Record<string, unknown> }> = [];
         const recordEvent = vi.fn((type: string, data: Record<string, unknown>) => {
@@ -591,7 +591,7 @@ describe("createMediaHandlers", () => {
         expect(blob).not.toMatch(/abc/); // the base64 source
       });
 
-      it("the registry tier records media.vision.completed with path:'registry' and NO costUsd (Pitfall 4)", async () => {
+      it("the registry tier records media.vision.completed with path:'registry' and NO costUsd (registry providers report no cost)", async () => {
         visionState.capable = false; // → registry path
         const rec = makeRecorderMock();
         const deps = makeDeps({ trajectoryRegistry: rec.trajectoryRegistry });
@@ -631,7 +631,7 @@ describe("createMediaHandlers", () => {
         expect(failed!.data.path).toBe("unavailable");
       });
 
-      it("WR-03: when main-vision fails AND no registry can serve, the TERMINAL unavailable record carries the bridge's specific errorKind (not generic unsupported_provider)", async () => {
+      it("when main-vision fails AND no registry can serve, the TERMINAL unavailable record carries the bridge's specific errorKind (not generic unsupported_provider)", async () => {
         // main-vision is the chosen path (sel.ok === true) and the bridge fails
         // with a SPECIFIC kind (auth_required — the main provider's key is
         // missing). With no registry provider, control reaches the honest-
@@ -667,7 +667,7 @@ describe("createMediaHandlers", () => {
         // Two failed records: the main-vision attempt + the terminal unavailable.
         const terminal = failedRecords.find((r) => r.data.path === "unavailable");
         expect(terminal).toBeDefined();
-        // WR-03: the terminal preserves the bridge's specific kind.
+        // The terminal preserves the bridge's specific kind.
         expect(terminal!.data.errorKind).toBe("auth_required");
         // The §2.7 WARN for the terminal also carries the specific domain kind.
         const warnTerminal = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
@@ -677,11 +677,11 @@ describe("createMediaHandlers", () => {
         expect(warnTerminal!.imageErrorKind).toBe("auth_required");
       });
 
-      it("WR-03: the resolver-skip path (sel.ok === false) still uses the resolver's own errorKind at the terminal", async () => {
+      it("the resolver-skip path (sel.ok === false) still uses the resolver's own errorKind at the terminal", async () => {
         // Regression guard: when the resolver itself returns !ok (e.g. a
         // mediaKind/capability combination it refuses), the terminal must keep
-        // honoring sel.errorKind — the WR-03 fix preserves the bridge kind ONLY
-        // when there was a bridge failure, never overriding a real resolver kind.
+        // honoring sel.errorKind — the bridge kind is preserved ONLY when there
+        // was a bridge failure, never overriding a real resolver kind.
         visionState.capable = false; // not vision-capable → registry path, no bridge attempt
         const rec = makeRecorderMock();
         const deps = makeDeps({ visionRegistry: new Map(), trajectoryRegistry: rec.trajectoryRegistry });
@@ -706,7 +706,7 @@ describe("createMediaHandlers", () => {
         expect(terminal!.data.errorKind).not.toBe("auth_required");
       });
 
-      it("WR-01: a registry-tier provider failure emits media.vision.failed{path:'registry'} + a §2.7 WARN before throwing", async () => {
+      it("a registry-tier provider failure emits media.vision.failed{path:'registry'} + a §2.7 WARN before throwing", async () => {
         // §2.7: errorKind+hint on EVERY vision failure branch + the path label.
         // The registry provider returns !ok → the handler must record
         // media.vision.failed{path:"registry"} AND fire a content-free WARN
@@ -961,8 +961,8 @@ describe("createMediaHandlers", () => {
       ).rejects.toThrow("Transcription service not configured");
     });
 
-    it("media.transcribe on an unconfigured provider rejects with a structured Error the dispatch boundary converts, never an unhandled crash (RES-05)", async () => {
-      // RES-05 regression PIN (Pitfall 5 / A1): when the Phase-193 keyless-first
+    it("media.transcribe on an unconfigured provider rejects with a structured Error the dispatch boundary converts, never an unhandled crash", async () => {
+      // Regression PIN: when the keyless-first
       // resolution leaves the transcriber undefined (a Codex/OAuth-only main with
       // no audio key, or STT `auto` before the local engine lands), the on-demand
       // RPC handler `throw`s a typed Error. That throw is NOT an unhandled crash —
@@ -985,8 +985,8 @@ describe("createMediaHandlers", () => {
       await expect(pending).rejects.toThrow(/not configured/i);
     });
 
-    it("tts.synthesize on an unconfigured adapter rejects with a structured Error, never an unhandled crash (RES-05)", async () => {
-      // The TTS twin of the RES-05 pin: an honest-unavailable TTS resolution leaves
+    it("tts.synthesize on an unconfigured adapter rejects with a structured Error, never an unhandled crash", async () => {
+      // The TTS twin of the transcribe pin above: an honest-unavailable TTS resolution leaves
       // ttsAdapter undefined; the on-demand handler throw is converted to a
       // structured JSON-RPC error at the dispatch boundary, not a daemon crash.
       const deps = makeDeps({ ttsAdapter: undefined });
@@ -1020,12 +1020,13 @@ describe("createMediaHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBS-02/03/05 (196): voice obs wiring (media.transcribe / tts.synthesize /
-  // media.test.stt) — record + §2.7 log via wireVoiceObs, the :595 RED-proof,
-  // the source rung + onSkip on the requested record, SEC-01 no-leak.
+  // Voice obs wiring (media.transcribe / tts.synthesize /
+  // media.test.stt) — record + §2.7 log via wireVoiceObs, the STT-vs-TTS
+  // provider-reporting pin, the source rung + onSkip on the requested record,
+  // and the credential no-leak guarantee.
   // -------------------------------------------------------------------------
 
-  describe("voice obs wiring (OBS-02/03/05)", () => {
+  describe("voice observability wiring (records + completion logs)", () => {
     function makeRecorderMock() {
       const records: Array<{ type: string; data: Record<string, unknown> }> = [];
       const recordEvent = vi.fn((type: string, data: Record<string, unknown>) => {
@@ -1053,11 +1054,11 @@ describe("createMediaHandlers", () => {
       });
     }
 
-    // ---- OBS-03 RED-proof: media.test.stt reads the STT provider (:595) ----
-    it("media.test.stt reports the TRANSCRIPTION provider, not the TTS provider (the :595 RED-proof)", async () => {
+    // ---- media.test.stt reads the STT provider, not the TTS provider ----
+    it("media.test.stt reports the TRANSCRIPTION provider, not the TTS provider", async () => {
       // Config: transcription.provider = "local", tts.provider = "edge". The handler
-      // must report the STT provider "local" — TODAY it returns "edge" (reads
-      // deps.mediaConfig.tts.provider at :595).
+      // must report the STT provider "local" — a regression would return "edge"
+      // by reading deps.mediaConfig.tts.provider instead.
       const deps = voiceDeps();
       const handlers = createMediaHandlers(deps);
 
@@ -1069,7 +1070,7 @@ describe("createMediaHandlers", () => {
       expect(result.provider).toBe("local");
     });
 
-    // ---- OBS-02: media.transcribe records media.stt.completed + §2.7 INFO ----
+    // ---- media.transcribe records media.stt.completed + §2.7 INFO ----
     it("media.transcribe records media.stt.completed (provider/keyless/source) AND logs a §2.7 completion INFO", async () => {
       const rec = makeRecorderMock();
       const deps = voiceDeps({ trajectoryRegistry: rec.trajectoryRegistry });
@@ -1099,7 +1100,7 @@ describe("createMediaHandlers", () => {
       expect((infoCall![0] as Record<string, unknown>).audioBytes).toBe(Buffer.from("image-data").byteLength);
     });
 
-    // ---- OBS-02: media.transcribe failure → media.stt.failed + §2.7 WARN ----
+    // ---- media.transcribe failure → media.stt.failed + §2.7 WARN ----
     it("media.transcribe failure records media.stt.failed{errorKind} AND logs a §2.7 WARN with err/hint/errorKind/sttErrorKind", async () => {
       const rec = makeRecorderMock();
       const deps = voiceDeps({
@@ -1138,7 +1139,7 @@ describe("createMediaHandlers", () => {
       expect(fields.sttErrorKind).toBe("network");
     });
 
-    // ---- OBS-03: the source rung + onSkip reach the live emit (requested) ----
+    // ---- the source rung + onSkip reach the live emit (requested) ----
     it("media.transcribe threads the resolved source rung AND onSkip reasons onto the recorded media.stt.requested", async () => {
       const rec = makeRecorderMock();
       const deps = voiceDeps({ trajectoryRegistry: rec.trajectoryRegistry });
@@ -1152,12 +1153,12 @@ describe("createMediaHandlers", () => {
 
       const requested = rec.records.find((r) => r.type === "media.stt.requested");
       expect(requested).toBeDefined();
-      // The OBS-03 selection observability lands on the live handler path.
+      // The selection observability lands on the live handler path.
       expect(requested!.data.source).toBe("keyless-local");
       expect(requested!.data.onSkip).toEqual(['main "openai-codex" has no usable audio key']);
     });
 
-    // ---- OBS-02: tts.synthesize records media.tts.completed + §2.7 INFO ----
+    // ---- tts.synthesize records media.tts.completed + §2.7 INFO ----
     it("tts.synthesize records media.tts.completed AND logs a §2.7 synthesis completion INFO", async () => {
       const rec = makeRecorderMock();
       const deps = voiceDeps({ trajectoryRegistry: rec.trajectoryRegistry });
@@ -1182,8 +1183,8 @@ describe("createMediaHandlers", () => {
       expect((infoCall![0] as Record<string, unknown>).provider).toBe("edge");
     });
 
-    // ---- SEC-01: no credential leaks into any emitted line ----
-    it("SEC-01: a transcribe failure whose error carries a credential-bearing baseUrl leaks no Bearer/sentinel/full-URL in any line", async () => {
+    // ---- no credential leaks into any emitted line ----
+    it("a transcribe failure whose error carries a credential-bearing baseUrl leaks no Bearer/sentinel/full-URL in any line", async () => {
       const rec = makeRecorderMock();
       const leakyError = Object.assign(
         new Error("POST https://api.openai.com/v1/audio/transcriptions failed: Authorization: Bearer sk-proj-SECRETTOKEN1234567890 (ollama-no-auth)"),
@@ -1270,9 +1271,9 @@ describe("createMediaHandlers", () => {
       ).rejects.toThrow("Attachment resolution not available");
     });
 
-    // ─── VIS-03 (187): raw video → gemini-video tier (main-vision N/A) ─────────
+    // ─── raw video → gemini-video tier (main-vision N/A) ──────────────────────
 
-    it("VIS-03 routes raw video to the gemini-video tier (UNCHANGED); the main-vision bridge is NEVER called for video", async () => {
+    it("routes raw video to the gemini-video tier; the main-vision bridge is NEVER called for video", async () => {
       visionState.capable = true; // even a vision-capable main does NOT serve video
       const deps = makeDeps();
       const handlers = createMediaHandlers(deps);
@@ -1286,14 +1287,14 @@ describe("createMediaHandlers", () => {
       expect(result.description).toBe("A short video clip");
       expect((deps.mainProviderVision as unknown as { describeImage: ReturnType<typeof vi.fn> }).describeImage)
         .not.toHaveBeenCalled();
-      // VIS-03 path-log: a content-free line carries path:"gemini-video".
+      // Path-log: a content-free line carries path:"gemini-video".
       const logged = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls
         .concat((deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls)
         .map((c) => c[0]);
       expect(logged.some((f) => f && (f as { path?: string }).path === "gemini-video")).toBe(true);
     });
 
-    it("VIS-03 honest-unavailable (errorKind, NOT an undefined-method call) when no video-capable provider exists", async () => {
+    it("honest-unavailable (errorKind, NOT an undefined-method call) when no video-capable provider exists", async () => {
       const { selectVisionProvider } = await import("@comis/skills");
       // A provider WITHOUT describeVideo → the registry is "available" but cannot
       // serve video. The handler must surface an honest error, not call undefined.
@@ -1306,7 +1307,7 @@ describe("createMediaHandlers", () => {
       ).rejects.toThrow(/video-capable vision provider/i);
     });
 
-    it("WR-01: a gemini-video provider failure emits media.vision.failed{path:'gemini-video'} + a §2.7 WARN before throwing", async () => {
+    it("a gemini-video provider failure emits media.vision.failed{path:'gemini-video'} + a §2.7 WARN before throwing", async () => {
       // §2.7: errorKind+hint on EVERY vision failure branch + the path label.
       // describeVideo returns !ok → the handler must record
       // media.vision.failed{path:"gemini-video"} AND fire a content-free WARN

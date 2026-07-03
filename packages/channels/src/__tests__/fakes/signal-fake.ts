@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeSignalAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the Signal DeleteAndRepost renderer (§18.1 "fake adapter
- * records every method call").
+ * the Signal DeleteAndRepost renderer; it records every method call.
  *
  * Mirrors `createFakeTelegramAdapter` (the canonical template) but for the
  * DeleteAndRepost shape:
  *   - mints `sig-msg-N` ids (Signal's determinism source for byte-stable
- *     fixtures — Pitfall 2; clock-free, no wall-time call that would flap),
+ *     fixtures; clock-free, no wall-time call that would flap),
  *   - records NO `silent` flag on `send` (Signal does not send the silent
  *     effect — the renderer posts a plain message per transition), and
  *   - OMITS `editMessage` entirely. Signal has no in-place edit; the live

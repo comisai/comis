@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * sendAttachment — media-send observability (OBS-1).
+ * sendAttachment — media-send observability.
  *
  * A successful Telegram send ALWAYS returns a numeric message_id. When the
  * platform returns no id (a non-standard/empty envelope or a dropped upload),
- * the adapter used to log "attachment sent" with messageId:"undefined" and
+ * the adapter must not log "attachment sent" with messageId:"undefined" and
  * return ok(String(undefined)) === "undefined" — a SILENT false success that
- * hid a real delivery failure (openclaw-usecases 2026-06-25: image-gen + TTS
- * produced real artifacts but were never delivered; the channel oracle showed
- * 0 media sends, diagnosable only by a 4-hop daemon-log hand-join).
+ * hides a real delivery failure (generated media can look delivered while the
+ * channel never received it, diagnosable only by a multi-hop daemon-log
+ * hand-join).
  */
 import { describe, it, expect, vi } from "vitest";
 import { sendAttachment } from "./telegram-outbound.js";
@@ -35,7 +35,7 @@ const IMG: AttachmentPayload = {
   fileName: "generated.png",
 } as AttachmentPayload;
 
-describe("sendAttachment — media-send id guard (OBS-1)", () => {
+describe("sendAttachment — media-send message_id guard", () => {
   it("WARNs + returns err when the platform returns no message_id (no silent ok('undefined'))", async () => {
     const state = makeState({}); // <- no message_id (the emulator/unsupported-method shape)
     const logger = makeLogger();

@@ -120,6 +120,6 @@ describe("runSafetyGates", () => {
     expect(result.finishReason).toBe("circuit_open");
   });
 
-  // Touch err to satisfy import — kept for parity with the original test file.
+  // Touch err so the otherwise-unused import does not trip no-unused-vars.
   void err;
 });

@@ -12,7 +12,7 @@
  * `ImageErrorKind` is mapped onto exactly one of the closed log `ErrorKind`
  * values, so observability stays parseable while the domain vocabulary stays
  * expressive. Callers log `{ errorKind: IMAGE_ERR_TO_LOG[k], imageErrorKind: k,
- * hint }` per the §2.7 logging matrix.
+ * hint }` per the AGENTS.md §2.7 logging matrix.
  *
  * @module
  */

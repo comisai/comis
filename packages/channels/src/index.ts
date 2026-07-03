@@ -89,13 +89,13 @@ export { convertIrToSignalTextStyles } from "./signal/signal-format.js";
 export type { SignalTextStyle } from "./signal/signal-format.js";
 // Signal wire types — the adapter's OWN signal-cli envelope/attachment interface
 // (defined in ./signal/signal-client.ts). Surfaced on the public barrel TYPE-ONLY
-// for the v2.28 channel-emulation harness's CHAN2-01 I4 discipline: the Signal
-// emulator's payload builders (test/live/emulators/signal/signal-payloads.ts) must
+// for the live channel-emulation harness: the Signal emulator's payload builders
+// (test/live/emulators/signal/signal-payloads.ts) must
 // import the adapter's OWN wire interface so an envelope shape drift is a COMPILE
 // error — and the test/live vitest alias maps `@comis/channels` to dist/index.js
 // (the barrel only), so the type is unreachable without this re-export. `export
-// type` is ERASED at build (it adds NO runtime export → SEC-02's no-`@comis/*`-
-// runtime-edge holds; the harness imports it type-only). The only consumers are
+// type` is ERASED at build (it adds NO runtime export → the no-`@comis/*`-
+// runtime-edge rule holds; the harness imports it type-only). The only consumers are
 // test/live/** + the channels index.test.ts barrel check — both excluded by the
 // public-export-consumers AST walker (it scans packages/*/src/** and skips
 // *.test.ts), so the matching PUBLIC_API_POLICY entry tracks them as documented
@@ -302,8 +302,8 @@ export { coalesceBlocks } from "./shared/block-coalescer.js";
 export { buildAbortSummary } from "./shared/abort-summary.js";
 
 // Send policy primitives (consumed by orchestrator execution-policy.ts +
-// type-only by execution-pipeline / inbound-pipeline / inbound-gate / inbound-route +
-// commit 4: createSendOverrideStore needed by orchestrator channel-manager.ts)
+// type-only by execution-pipeline / inbound-pipeline / inbound-gate / inbound-route;
+// createSendOverrideStore is needed by orchestrator channel-manager.ts)
 export {
   evaluateSendPolicy,
   applySessionOverride,
@@ -333,7 +333,7 @@ export {
 } from "./telegram/thread-context.js";
 export type { TelegramThreadScope, TelegramThreadContext } from "./telegram/thread-context.js";
 
-// Activity rendering strategies (§7.2). The daemon composition root
+// Activity rendering strategies. The daemon composition root
 // (setup-channels-runtime.ts) selects a per-channel ChannelActivityRenderer via
 // `selectStrategy(caps, channelType)` from @comis/core, then constructs the
 // matching strategy here via buildActivityRenderers. Echo→TestSink is
@@ -343,7 +343,7 @@ export type { TelegramThreadScope, TelegramThreadContext } from "./telegram/thre
 // DeleteAndRepost (Signal), AppendOnly (iMessage/LINE), LinePerEvent (IRC), and
 // DigestOnly (Email) factories wire their per-channel render-actions adapters
 // here too; buildActivityRenderers dispatches each from this
-// barrel, completing the §18.3 coverage matrix. Deps differ per
+// barrel, so every channel type has a matching strategy. Deps differ per
 // strategy: DeleteAndRepost takes {timer, clock}, LinePerEvent takes {clock},
 // and AppendOnly/DigestOnly take none. The EditPlace + Echo factories + the
 // createEditPlaceRenderer machine are re-exported here so the daemon's
@@ -372,5 +372,6 @@ export type { MintApprovalLink } from "./email/email-activity.js";
 // The signing seam: the secret-bound signer the daemon composition root
 // binds over `activity.interactiveCallbackSigningSecret` and injects into
 // the activity-renderer deps. The renderers reach `@comis/core`'s signCallbackData
-// through this closure and never import `@comis/orchestrator` (Pitfall 5).
+// through this closure and never import `@comis/orchestrator` (which would
+// create a forbidden channels→orchestrator dependency edge).
 export type { SignCallbackData } from "./shared/strategies/approval-render.js";

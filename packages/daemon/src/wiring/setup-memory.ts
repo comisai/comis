@@ -61,9 +61,9 @@ export interface MemoryResult {
   db: ReturnType<SqliteMemoryAdapter["getDb"]>;
   /** Session persistence store. */
   sessionStore: ReturnType<typeof createSessionStore>;
-  /** LCD lossless context store (Phase 127); the live append-on-turn write-path is wired in Phase 128. */
+  /** LCD lossless context store; the live append-on-turn write-path is wired elsewhere. */
   lcdStore: ReturnType<typeof createLcdStore>;
-  provenanceStore: ReturnType<typeof buildProvenanceReadStore>; // LCD provenance READ store (Phase 173, DIST-03) → createMemoryRecall's down-weighting pass; core TYPE only (agent↛memory cut)
+  provenanceStore: ReturnType<typeof buildProvenanceReadStore>; // LCD provenance READ store → createMemoryRecall's down-weighting pass; core TYPE only (agent↛memory cut)
   contextBrowse: ReturnType<typeof createLcdBrowseStore>; // ContextBrowsePort — backs context.conversations
   /** High-level memory query/store API. */
   memoryApi: MemoryApi;
@@ -141,9 +141,6 @@ export interface MemoryResult {
    *  the one place this @comis/memory adapter and the @comis/agent recall consumer are joined
    *  (the agent↛memory cut). */
   embeddingStore: import("@comis/core").MemoryEmbeddingStore;
-  // (The directional relationship store was DELETED in Phase 226-04 with the rest of the
-  //  social-modeling subsystem — the RelationshipStore port + sqlite adapter, the `relationship`
-  //  table, the offline directional-edge builder, the prompt injection are all gone.)
   /** Consolidation store. SOLE `MemoryConsolidationStore` adapter; built unconditionally on
    *  the shared `db` (no model/IO cost). Cron dormant until `memoryConsolidation.enabled`
    *  (default OFF). Construction-site comment has the full rationale; the agent gets the port TYPE only. */
@@ -152,14 +149,14 @@ export interface MemoryResult {
    *  the shared `db` (no model/IO cost). Feedback loop dormant until `rag.feedback.enabled` (default OFF);
    *  the write-back subscriber is wired separately. */
   usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
-  /** Outcome-signal store (Verified Learning WS1). SOLE `OutcomeSignalPort` adapter; shared `db`,
-   *  no model/IO cost; gated at observe/resolve (agent never receives it — SEC-01). Returned so the
-   *  daemon can `prune(retentionDays)` at startup (OUTCOME-07); the observe/resolve subscriber is wired here. */
+  /** Outcome-signal store. SOLE `OutcomeSignalPort` adapter; shared `db`,
+   *  no model/IO cost; gated at observe/resolve (agent never receives it — the agent↛memory cut). Returned so the
+   *  daemon can `prune(retentionDays)` at startup; the observe/resolve subscriber is wired here. */
   outcomeStore: import("@comis/core").OutcomeSignalPort;
-  learnedSkillStore: import("@comis/core").MentalModelStorePort; // WS2/skills (SKILL-01): SOLE MentalModelStorePort adapter, shared db (trust=learned); the daemon injects it into the __REFLECT__ cron get/admit (DORMANT until learningSkills.enabled).
-  /** REACT-02 (Phase 199): outbound-message → trajectory capture callback, threaded into the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). `participantId` (FLAG-2) is the conversation participant (inbound sender) so a reaction from an unmapped group bystander is inert. */
+  learnedSkillStore: import("@comis/core").MentalModelStorePort; // SOLE MentalModelStorePort adapter, shared db (trust=learned); the daemon injects it into the __REFLECT__ cron get/admit (DORMANT until learningSkills.enabled).
+  /** Outbound-message → trajectory capture callback, threaded into the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). `participantId` is the conversation participant (inbound sender) so a reaction from an unmapped group bystander is inert. */
   recordOutboundMessage?: (messageId: string, scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string }) => void;
-  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction rate limiter (cancels their unref'd TTL timers). Invoked from the daemon shutdown path. */
+  /** Tear down the reaction/session trajectory maps + the dedicated reaction rate limiter (cancels their unref'd TTL timers). Invoked from the daemon shutdown path. */
   destroyReactionWiring: () => void;
   /** Memory-lifecycle sweep store. SOLE `MemoryLifecyclePort` adapter; shared `db`, no model/IO cost. DORMANT
    *  (0 rows swept even when enabled); the KEYLESS __MEMORY_LIFECYCLE__ cron registers only when `memoryLifecycle.enabled`. */
@@ -242,9 +239,9 @@ export async function setupMemory(deps: {
   memoryLogger: ComisLogger;
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
-  /** setTimeout scheduling (TimerPort) — the reaction trajectory map + rate limiter need it (REACT-02/03). */
+  /** setTimeout scheduling (TimerPort) — the reaction trajectory map + rate limiter need it. */
   timers: import("@comis/core").TimerPort;
-  /** WR-01: shared per-agent learned-skill SURFACE registry — forwarded into setupLearningOutcomeWiring so the promote/demote loop can re-refresh an agent's surface (next-session pickup). */
+  /** Shared per-agent learned-skill SURFACE registry — forwarded into setupLearningOutcomeWiring so the promote/demote loop can re-refresh an agent's surface (next-session pickup). */
   learnedSkillSurfaceRegistry?: import("./setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry;
 }): Promise<MemoryResult> {
   const { container, memoryLogger, clock, timers } = deps;
@@ -444,7 +441,7 @@ export async function setupMemory(deps: {
   // Adapter uses embedding port only at query time (search()), not during construction.
   // Created BEFORE cache wiring because createSqliteEmbeddingCache needs the db handle.
   const effectiveDimensions = embeddingPort ? embeddingPort.dimensions : memoryConfig.recall.embeddingDimensions;
-  // Phase 226: the recall keepers nest under memory.recall — override the nested dimension.
+  // The recall keepers nest under memory.recall — override the nested dimension.
   const adjustedMemoryConfig = { ...memoryConfig, recall: { ...memoryConfig.recall, embeddingDimensions: effectiveDimensions } };
   const memoryAdapter = new SqliteMemoryAdapter(adjustedMemoryConfig, embeddingPort, memoryLogger);
   const db = memoryAdapter.getDb();
@@ -500,11 +497,6 @@ export async function setupMemory(deps: {
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const embeddingStore = createSqliteMemoryEmbeddingStore({ db, logger: memoryLogger });
 
-  // (6.5.2b''''''. The directional relationship store construction was DELETED in Phase 226-04
-  //  with the rest of the social-modeling subsystem — the createSqliteRelationshipStore adapter,
-  //  the `relationship` table, the offline `__SOCIAL_MODELING__` builder cron, the prompt injection
-  //  are all gone. No alias, I1.)
-
   // 6.5.2c. Consolidation store. Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
@@ -528,11 +520,10 @@ export async function setupMemory(deps: {
   // (it depends on a recall-attribution bus event not yet declared at this point).
   const usefulnessStore = createSqliteMemoryUsefulnessStore({ db, logger: memoryLogger });
 
-  // 6.5.2d-bis. (The tuned-alpha store was DELETED in Phase 224 — the UCB recall bandit is
-  // gone; recall scoring is the fixed config.rag.scoring alphas, no tuned_alpha read/write.)
-  // 6.5.2d-quater. Outcome-signal store (Verified Learning WS1, OUTCOME-01). UNCONDITIONAL on the shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (SEC-01); only wireLearningOutcome + the startup prune consume it (closed-graph).
+  // 6.5.2d-bis. Recall scoring uses the fixed config.rag.scoring alphas (no tuned-alpha read/write).
+  // 6.5.2d-quater. Outcome-signal store. UNCONDITIONAL on the shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (the agent↛memory cut); only wireLearningOutcome + the startup prune consume it (closed-graph).
   const outcomeStore = createSqliteOutcomeStore({ db, logger: memoryLogger });
-  // 6.5.2d-quinquies. Learned-skill store (WS2/skills, SKILL-01). UNCONDITIONAL on the shared `db` (DB-CHECK forces trust=learned). SOLE MentalModelStorePort adapter; agent↛memory cut — the daemon injects it into the __REFLECT__ cron. DORMANT until learningSkills.enabled.
+  // 6.5.2d-quinquies. Learned-skill store. UNCONDITIONAL on the shared `db` (DB-CHECK forces trust=learned). SOLE MentalModelStorePort adapter; agent↛memory cut — the daemon injects it into the __REFLECT__ cron. DORMANT until learningSkills.enabled.
   const learnedSkillStore = createSqliteMentalModelStore({ db, logger: memoryLogger });
 
   // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the SAME shared `db` (NOT a second Database) so the sweep
@@ -571,7 +562,7 @@ export async function setupMemory(deps: {
       ),
   });
 
-  // 6.5.2f'. WS1 outcome subscriber + RANK/FORGET reward-at-resolve + OUTCOME-04 LLM-judge fallback (own leaf, byte-identity-gated); lcdStore created here for the judge transcript reader.
+  // 6.5.2f'. Outcome subscriber + reward-at-resolve (reward/failure writes) + LLM-judge fallback (own leaf, byte-identity-gated); lcdStore created here for the judge transcript reader.
   const lcdStore = createLcdStore(db);
   const judge = buildOutcomeJudgeWiring(container, clock, memoryLogger, lcdStore);
   setupLearningOutcomeWiring({
@@ -583,13 +574,13 @@ export async function setupMemory(deps: {
     outcomeJudge: judge.outcomeJudge, learningOutcomeJudgeEnabled: judge.learningOutcomeJudgeEnabled, readTurnTranscript: judge.readTurnTranscript,
   });
 
-  // 6.5.2f''. Reaction + correction outcome wiring (Verified Learning WS1, Phase 199 — the corroborating sources) behind the byte-identity gate; bulk lives in the co-located helper.
+  // 6.5.2f''. Reaction + correction outcome wiring (the corroborating sources) behind the byte-identity gate; bulk lives in the co-located helper.
   const reactionWiring = buildReactionWiringDeps(
     { config: container.config, secretManager: container.secretManager, eventBus: container.eventBus, outcomeStore, logger: memoryLogger },
     clock, timers);
   wireLearningReactions(reactionWiring.deps);
   wireLearningCorrection(reactionWiring.deps);
-  const { recordOutboundMessage, destroyReactionWiring } = reactionWiring; // WR-01: destroy* tears down the reaction/session maps + rate-limiter timers at shutdown
+  const { recordOutboundMessage, destroyReactionWiring } = reactionWiring; // destroy* tears down the reaction/session maps + rate-limiter timers at shutdown
 
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
@@ -676,7 +667,7 @@ export async function setupMemory(deps: {
   }
 
   const sessionStore = createSessionStore(db); // lcdStore is created earlier (6.5.2d-sexies) for the judge reader
-  const provenanceStore = buildProvenanceReadStore(db); // DIST-03 read side (Phase 173 carry-in); same db handle; threaded to createMemoryRecall's down-weighting pass (built-but-not-wired fix)
+  const provenanceStore = buildProvenanceReadStore(db); // LCD provenance read side; same db handle; threaded to createMemoryRecall's down-weighting pass
   const contextBrowse = createLcdBrowseStore(db); // ContextBrowsePort (context.conversations)
   const memoryApi: MemoryApi = createMemoryApi(db, memoryAdapter, sessionStore, memoryConfig);
   memoryLogger.debug(

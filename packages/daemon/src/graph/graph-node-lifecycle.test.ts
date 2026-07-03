@@ -435,7 +435,7 @@ describe("spawnNode: mcpServers pre-seeding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// spawnNode: resolvedLanguage -> envelope Language line (GEN-03 graph leg)
+// spawnNode: resolvedLanguage -> envelope Language line
 //
 // The carrier GraphRunState.resolvedLanguage (set once at graph submission from
 // the caller's RequestContext.resolvedLanguage) is threaded into
@@ -555,7 +555,7 @@ describe("graph-node-lifecycle honors §1.4 file mode invariant", () => {
 });
 
 // ---------------------------------------------------------------------------
-// handleSubAgentCompleted: per-node budget (BUDGET-02/03; D3/D5)
+// handleSubAgentCompleted: per-node budget
 // ---------------------------------------------------------------------------
 
 describe("handleSubAgentCompleted: per-node budget", () => {
@@ -636,7 +636,7 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     handleBudgetExceeded,
   });
 
-  it("BUDGET-02 node-only breach fails the node terminally and does NOT abort the graph", () => {
+  it("node-only breach fails the node terminally and does NOT abort the graph", () => {
     const callOrder: string[] = [];
     const { gs, markNodeFailed, markNodeCompleted } = makeBudgetGs({
       nodes: [{ nodeId: "n1", tokenBudget: 1_000, agentId: "child-a" }],
@@ -668,7 +668,7 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     expect(breach![1]).toMatchObject({ graphId: gs.graphId, nodeId: "n1", agentId: "child-a", tokenBudget: 1_000, tokensUsed: 5_000 });
   });
 
-  it("BUDGET-02 within budget completes the node and emits no breach", () => {
+  it("within budget completes the node and emits no breach", () => {
     const callOrder: string[] = [];
     const { gs, markNodeFailed, markNodeCompleted } = makeBudgetGs({
       nodes: [{ nodeId: "n1", tokenBudget: 1_000, agentId: "child-a" }],
@@ -797,7 +797,7 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     expect(emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded")).toBeUndefined();
   });
 
-  it("BUDGET-03 records nodeTokenSpend and enriches graph:node_updated with tokensUsed/cost", () => {
+  it("records nodeTokenSpend and enriches graph:node_updated with tokensUsed/cost", () => {
     const callOrder: string[] = [];
     const { gs } = makeBudgetGs({
       nodes: [{ nodeId: "n1", agentId: "child-a" }],
@@ -819,7 +819,7 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     expect(nodeUpdated![1]).toMatchObject({ tokensUsed: 1_234, cost: 0.07 });
   });
 
-  it("BUDGET-03 byte-identical: no node budget + no graph budget → no breach branch, node completes", () => {
+  it("no node budget + no graph budget → no breach branch, node completes", () => {
     const callOrder: string[] = [];
     const { gs, markNodeFailed, markNodeCompleted } = makeBudgetGs({
       nodes: [{ nodeId: "n1", agentId: "child-a" }],
@@ -835,31 +835,31 @@ describe("handleSubAgentCompleted: per-node budget", () => {
       noopCallbacks(handleBudgetExceeded),
     );
 
-    // No budget resolved anywhere → no per-node branch, node completes as today.
+    // No budget resolved anywhere → no per-node branch, node completes normally.
     expect(markNodeFailed).not.toHaveBeenCalled();
     expect(markNodeCompleted).toHaveBeenCalledTimes(1);
     expect(handleBudgetExceeded).not.toHaveBeenCalled();
     const emit = (deps.eventBus.emit as ReturnType<typeof vi.fn>);
     expect(emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded")).toBeUndefined();
-    // The emit still carries the node's tokensUsed/cost (additive, from Test 5's enrichment).
+    // The emit still carries the node's tokensUsed/cost (additive, from the graph:node_updated enrichment).
     const nodeUpdated = emit.mock.calls.filter((c) => c[0] === "graph:node_updated").pop();
     expect(nodeUpdated![1]).toMatchObject({ tokensUsed: 999_999, cost: 9.9 });
   });
 });
 
 // ---------------------------------------------------------------------------
-// COST-02 (Task 1): per-node CUMULATIVE corrected-$ ledger gs.nodeCost
+// per-node CUMULATIVE corrected-$ ledger gs.nodeCost
 //
-// HEAD has only a graph-WIDE gs.cumulativeCost + a TRANSIENT per-node cost
-// delta on the graph:node_updated event — NO per-node cumulative ledger. This
-// drives a REAL multi-node graph (a parent + 2 children, each completing with
-// a corrected cost) through handleSubAgentCompleted and asserts the per-node
-// ledger gs.nodeCost accumulates the corrected-$ delta keyed by nodeId — the
-// exact discipline gs.nodeTokenSpend already follows (BUDGET-03 above). The
+// Alongside the graph-WIDE gs.cumulativeCost and the TRANSIENT per-node cost
+// delta on the graph:node_updated event, gs.nodeCost is a per-node cumulative
+// ledger. This drives a REAL multi-node graph (a parent + 2 children, each
+// completing with a corrected cost) through handleSubAgentCompleted and asserts
+// the per-node ledger gs.nodeCost accumulates the corrected-$ delta keyed by
+// nodeId — the exact discipline gs.nodeTokenSpend already follows. The
 // CORRECTED cost is event.cost (the same value feeding gs.cumulativeCost).
 // ---------------------------------------------------------------------------
 
-describe("COST-02: per-node cumulative corrected-$ ledger (gs.nodeCost)", () => {
+describe("per-node cumulative corrected-$ ledger (gs.nodeCost)", () => {
   function makeCompletionDeps(): Parameters<typeof handleSubAgentCompleted>[1] {
     return {
       subAgentRunner: {

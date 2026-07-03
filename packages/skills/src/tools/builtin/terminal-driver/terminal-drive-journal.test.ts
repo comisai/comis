@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the pure bounded content-free drive-state journal
- * (terminal-drive-journal.ts) — DRIVE-01, CONTEXT §7.1.6 / design §4 Phase B.
- *
- * RED-first: `terminal-drive-journal.ts` does not exist when this file is first
- * committed — the import fails, every case is RED. The production module turns
- * them GREEN. (Mirrors terminal-dialog-detector.test.ts:1-26 — the "module does
- * not exist on first commit" banner.)
+ * Unit tests for the pure bounded content-free drive-state journal
+ * (terminal-drive-journal.ts).
  *
  * The journal is a promoted drive's CROSS-WAKE MEMORY: a bounded, content-free
  * rolling record `{objective, lastClassification, lastScreenDigest, answeredPrompts[],
@@ -14,24 +9,24 @@
  * conversation. A 40h drive accumulates thousands of woken turns; if each appended to
  * a conversation, context would blow. So the journal pins three load-bearing properties:
  *
- *   - BOUNDED (I7, Pitfall 3): `answeredPrompts`/`stepsTried` are oldest-trimmed at
+ *   - BOUNDED: `answeredPrompts`/`stepsTried` are oldest-trimmed at
  *     CAP_ANSWERED/CAP_STEPS; an over-cap append drops the OLDEST and increments the
  *     run-total `truncations` breadcrumb — NEVER a silent unbounded append. The
  *     N=10_000-append test is the unbounded-growth pin (a handful of appends does NOT
  *     catch it).
- *   - CONTENT-FREE (I3): the journal stores enums/ids/counts/durations + normalized
+ *   - CONTENT-FREE: the journal stores enums/ids/counts/durations + normalized
  *     prompt/step TAGS + a (caller-supplied, already-redacted) one-line digest ONLY.
  *     A secret-shaped prompt (`sk-…`, `password=hunter2`) is stored as a normalized
  *     tag, never re-expanded into the raw value; the journal never stores raw command
  *     output beyond the one-liner the caller hands in.
- *   - TOTAL (de)serialize (the DUR-02 / Phase-165 recovery contract): `serializeJournal`
+ *   - TOTAL (de)serialize (the crash-recovery contract): `serializeJournal`
  *     → `deserializeJournal` round-trips; a malformed/partial persisted object yields a
  *     SAFE default journal and NEVER throws (mirrors `mapWaitReply`,
  *     terminal-wait-reply.ts:60-84 — never coerce a malformed array to garbage).
  *
  * `lastClassification` is the SHIPPED classifier state union (terminal-classifier.ts:75
  * `"working" | "awaiting-input" | "exited" | "stuck"`) — these tests do NOT invent a
- * new state (I8).
+ * new state.
  *
  * @module
  */
@@ -65,7 +60,7 @@ describe("emptyJournal — the safe initial shape", () => {
     expect(j.interactions).toBe(0);
     expect(j.costUsd).toBe(0);
     expect(j.truncations).toBe(0);
-    // A sane default from the SHIPPED classifier union (I8) — "working" (a fresh drive
+    // A sane default from the SHIPPED classifier union — "working" (a fresh drive
     // is presumed working, not awaiting/exited/stuck).
     expect(j.lastClassification).toBe("working");
     expect(j.lastScreenDigest).toBe("");
@@ -79,10 +74,10 @@ describe("emptyJournal — the safe initial shape", () => {
 });
 
 // ---------------------------------------------------------------------------
-// appendAnswered / appendStep — immutability + oldest-trim + breadcrumb (I7)
+// appendAnswered / appendStep — immutability + oldest-trim + breadcrumb
 // ---------------------------------------------------------------------------
 
-describe("appendAnswered — append, immutability, oldest-trim breadcrumb (I7)", () => {
+describe("appendAnswered — append, immutability, oldest-trim breadcrumb", () => {
   it("appends a prompt tag without mutating the input journal", () => {
     const before = emptyJournal("o");
     const after = appendAnswered(before, "prompt-tag-a");
@@ -102,12 +97,12 @@ describe("appendAnswered — append, immutability, oldest-trim breadcrumb (I7)",
     // The OLDEST ("p0") was dropped; the NEWEST is retained.
     expect(j.answeredPrompts).not.toContain("p0");
     expect(j.answeredPrompts[j.answeredPrompts.length - 1]).toBe(`p${CAP_ANSWERED}`);
-    // I7 breadcrumb: exactly ONE drop recorded — never a silent drop.
+    // The breadcrumb: exactly ONE drop recorded — never a silent drop.
     expect(j.truncations).toBe(1);
   });
 });
 
-describe("appendStep — append, immutability, oldest-trim breadcrumb (I7)", () => {
+describe("appendStep — append, immutability, oldest-trim breadcrumb", () => {
   it("appends a step tag without mutating the input journal", () => {
     const before = emptyJournal("o");
     const after = appendStep(before, "step-tag-a");
@@ -137,7 +132,7 @@ describe("appendStep — append, immutability, oldest-trim breadcrumb (I7)", () 
 });
 
 // ---------------------------------------------------------------------------
-// MR-03 (I7): per-entry byte size is bounded, not only array length. The caps
+// Per-entry byte size is bounded, not only array length. The caps
 // bound COUNT; TAG_MAX bounds the byte size of an individual tag/objective/digest
 // so the serialized-size guarantee holds regardless of caller convention (a future
 // caller, or a corrupted-after-crash file with multi-kilobyte entries). An over-long
@@ -145,7 +140,7 @@ describe("appendStep — append, immutability, oldest-trim breadcrumb (I7)", () 
 // silent full-size keep.
 // ---------------------------------------------------------------------------
 
-describe("MR-03 — per-entry byte size is clamped at TAG_MAX (I7, not only array length)", () => {
+describe("per-entry byte size is clamped at TAG_MAX (not only array length)", () => {
   it("appendAnswered clamps an over-long tag to TAG_MAX bytes and bumps truncations (never silently kept full-size)", () => {
     const longTag = "x".repeat(TAG_MAX + 500);
     const j = appendAnswered(emptyJournal("o"), longTag);
@@ -205,12 +200,12 @@ describe("MR-03 — per-entry byte size is clamped at TAG_MAX (I7, not only arra
 });
 
 // ---------------------------------------------------------------------------
-// The unbounded-growth pin (Pitfall 3 — N=10_000 appends).
+// The unbounded-growth pin (N=10_000 appends).
 // A handful of appends does NOT catch unbounded growth; this is the load-bearing
-// DRIVE-01 property (a 40h drive's thousands of wakes stay within the cap).
+// journal property (a 40h drive's thousands of wakes stay within the cap).
 // ---------------------------------------------------------------------------
 
-describe("bounded after N=10_000 appends — the unbounded-growth pin (Pitfall 3)", () => {
+describe("bounded after N=10_000 appends — the unbounded-growth pin", () => {
   it("answeredPrompts stays within CAP_ANSWERED and truncations === appends − cap", () => {
     const N = 10_000;
     let j = emptyJournal("a 40h drive");
@@ -286,7 +281,7 @@ describe("updateJournal — content-free scalar field updates only", () => {
 });
 
 // ---------------------------------------------------------------------------
-// serialize / deserialize — round-trip + the DUR-02 defensive recovery contract
+// serialize / deserialize — round-trip + the defensive crash-recovery contract
 // ---------------------------------------------------------------------------
 
 describe("serializeJournal / deserializeJournal — round-trip", () => {
@@ -307,7 +302,7 @@ describe("serializeJournal / deserializeJournal — round-trip", () => {
   });
 });
 
-describe("deserializeJournal — the DUR-02 defensive recovery contract (NEVER throws)", () => {
+describe("deserializeJournal — the defensive crash-recovery contract (NEVER throws)", () => {
   it("an empty object yields a SAFE default journal", () => {
     const j = deserializeJournal("{}");
     expect(j.objective).toBe("");
@@ -342,7 +337,7 @@ describe("deserializeJournal — the DUR-02 defensive recovery contract (NEVER t
     expect(j.interactions).toBe(0);
   });
 
-  it("an unrecognized lastClassification defaults to the safe 'working' state (I8 — never an invented state)", () => {
+  it("an unrecognized lastClassification defaults to the safe 'working' state (never an invented state)", () => {
     const j = deserializeJournal(JSON.stringify({ lastClassification: "not-a-real-state" }));
     expect(j.lastClassification).toBe("working");
   });
@@ -355,7 +350,7 @@ describe("deserializeJournal — the DUR-02 defensive recovery contract (NEVER t
     expect(j.stepsTried).toEqual(["s"]);
   });
 
-  it("accepts a raw object (not only a JSON string) — DUR-02 may hand a parsed value", () => {
+  it("accepts a raw object (not only a JSON string) — recover-on-boot may hand a parsed value", () => {
     const j = deserializeJournal({ objective: "from-object", interactions: 3 } as unknown);
     expect(j.objective).toBe("from-object");
     expect(j.interactions).toBe(3);
@@ -369,11 +364,11 @@ describe("deserializeJournal — the DUR-02 defensive recovery contract (NEVER t
 });
 
 // ---------------------------------------------------------------------------
-// Content-free (I3) — a secret-shaped tag is stored verbatim-as-a-tag, never
+// Content-free — a secret-shaped tag is stored verbatim-as-a-tag, never
 // re-expanded; the journal never holds raw TUI bytes beyond the caller's one-liner.
 // ---------------------------------------------------------------------------
 
-describe("content-free (I3) — the journal carries no raw secrets it was not handed", () => {
+describe("content-free — the journal carries no raw secrets it was not handed", () => {
   it("stores the prompt/step TAG the caller supplies and nothing more (no re-expansion)", () => {
     // The CALLER is responsible for normalizing/redacting before handing a tag in
     // (the woken-turn driver runs scrubSecretsFromText — plan 06). The journal's

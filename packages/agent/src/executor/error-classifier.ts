@@ -2,7 +2,7 @@
 /**
  * Classifies raw API/provider errors into user-friendly categories.
  *
- * requires that raw error internals (API keys, URLs, stack traces)
+ * Raw error internals (API keys, URLs, stack traces) must
  * never reach the user. This module bridges the gap by parsing known error
  * patterns and returning safe, actionable messages while keeping
  * operator-level detail in the logs.
@@ -79,8 +79,8 @@ export interface ClassifiedError {
   userMessage: string;
   /** Whether the user should reasonably retry. */
   retryable: boolean;
-  /** Operator-facing detail: binding knob + numbers (I7). Rides WARN
-   *  logs/explain — NEVER the user reply (T-177-13). */
+  /** Operator-facing detail: binding knob + numbers. Rides WARN
+   *  logs/explain — NEVER the user reply. */
   hint?: string;
 }
 
@@ -163,7 +163,7 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   // errors keep their current classification — the optional `(?:\w+\.)?`
   // accepts Go's standard `Go struct field <StructTypeName>.<path>` form
   // (e.g. `ChatRequest.tools.function.parameters...`) alongside the
-  // empty-type-name variant from ollama#10164 (175-REVIEW WR-02).
+  // empty-type-name variant from ollama#10164.
   // Retryable=true because the runner performs exactly one
   // strip-pattern/format-and-retry per session.
   {
@@ -191,11 +191,11 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   // "REFUSED" that the /refus/ content-filter pattern would otherwise steal
   // (mislabelling a network outage as a "content restriction"), and BEFORE
   // empty_response because the silent-failure handler wraps a connection error
-  // as "…produced empty response after retry … — <providerError>" (F-17).
+  // as "…produced empty response after retry … — <providerError>".
   // The `…|error` arm catches the OpenAI-compat SDK's APIConnectionError, whose
-  // message is the BARE phrase "Connection error." (no errno token) — the live
-  // 30-UC UC-30 provider-down case (Ollama unreachable): without it the wrapper
-  // fell through to empty_response and the user saw "a tool call returned no
+  // message is the BARE phrase "Connection error." (no errno token) — the
+  // provider-down case (Ollama unreachable): without it the wrapper
+  // falls through to empty_response and the user sees "a tool call returned no
   // output" for a network outage. Transient → retryable.
   {
     test: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang ?up|fetch failed|getaddrinfo|network error|connect(?:ion)?[ _](?:refused|reset|timed out|failure|error)/i,
@@ -209,7 +209,7 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   // because the silent-failure handler wraps it as "…produced empty response
   // after retry … — 404 {…not_found_error… is not available…}", which would
   // otherwise be misreported to the user as "a tool call returned no output"
-  // (F-17 — live-found 2026-06-13 via claude-fable-5 → 404 "Claude Fable 5 is
+  // (e.g. claude-fable-5 → 404 "Claude Fable 5 is
   // not available. Please use Opus 4.8."). Deterministic (same model keeps
   // 404-ing) → not retryable. Scoped to model/not_found semantics so it never
   // steals the OpenAI reasoning_item "not found" case (signed-replay, tested
@@ -280,12 +280,11 @@ export function classifyError(error: unknown): ClassifiedError {
 }
 
 /**
- * The effective-timeout binding provenance a classify consumer threads in
- * (LAT-01): which resolution level bound the timeout (177-02 `source`), whose
+ * The effective-timeout binding provenance a classify consumer threads
+ * in: which resolution level bound the timeout (`source`), whose
  * config owns the knob, and the configured numbers. Every field optional —
  * absent fields degrade gracefully to placeholders / the error's own numbers,
- * so legacy callers and parallel-plan type drift (e.g. a not-yet-landed
- * `stallCeilingMultiplier` on EffectiveTimeout) never break the call shape.
+ * so callers that pass no provenance never break the call shape.
  */
 export interface PromptTimeoutBinding {
   source?: TimeoutSource;
@@ -301,17 +300,17 @@ export interface PromptTimeoutBinding {
  * Separated because PromptTimeoutError is identified by instanceof,
  * not by message content.
  *
- * LAT-01 (Phase 177): renders the operator-facing `hint` — the BINDING knob
+ * Renders the operator-facing `hint` — the BINDING knob
  * (via the timeout-knob table), the configured value, the elapsed time, and
  * WHICH limit fired (stall / makespan / whole-turn retry). The `userMessage`
  * stays generic/user-safe: config-key detail rides logs + obs.explain only,
- * never the user reply (T-177-13). A `graph_constant` binding renders honest
- * prose instead of a fake `agents.*` key (D-11).
+ * never the user reply. A `graph_constant` binding renders honest
+ * prose instead of a fake `agents.*` key.
  *
  * @param error - The PromptTimeoutError (carries `limit` + the configured
- *                numbers from 177-01).
- * @param binding - The effective-timeout binding provenance (177-02); absent
- *                  ⇒ legacy caller ⇒ the placeholder agent knob (graceful).
+ *                numbers).
+ * @param binding - The effective-timeout binding provenance; absent
+ *                  ⇒ no provenance from the caller ⇒ the placeholder agent knob (graceful).
  * @param elapsedMs - Wall-clock elapsed since execution start, when known.
  */
 export function classifyPromptTimeout(
@@ -337,13 +336,13 @@ export function classifyPromptTimeout(
       `stall budget ${String(error.stallBudgetMs ?? error.timeoutMs)}ms exceeded${elapsed} with no stream/tool activity` +
       (binding?.source === "graph_constant"
         ? // Honest prose for a non-knob — never a raise-suggestion that names
-          // a config key the operator cannot set (D-11).
+          // a config key the operator cannot set.
           ` — ${knob}`
         : ` — raise ${knob} (currently ${String(binding?.promptTimeoutMs ?? error.timeoutMs)});` +
           ` local prefill on consumer hardware can exceed it`);
   } else {
     // limit undefined ⇒ the non-resettable whole-turn path (retry/fallback
-    // prompts keep retryPromptTimeoutMs semantics — research Open Q2; never
+    // prompts keep retryPromptTimeoutMs semantics; never
     // present it as a stall-budget kill).
     hint =
       `whole-turn retry timeout ${String(error.timeoutMs)}ms exceeded${elapsed}` +

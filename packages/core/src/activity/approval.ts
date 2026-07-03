@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * ApprovalCorrelation — the renderer-visible correlation block carried on an
- * ActivityEvent when `kind === "approval"` (spec §4.2).
+ * ActivityEvent when `kind === "approval"`.
  *
  * Carries ONLY what a channel renderer needs to draw native approval UI: the
  * short callback-safe id, the choices, and the expiry. The full approval
  * request id (the pending-request UUID) is deliberately NOT a field here — it
  * never crosses the channel boundary. The InteractiveCallbackRouter resolves
- * `shortId` back to that full id server-side (§6.4). No field on this schema
+ * `shortId` back to that full id server-side. No field on this schema
  * carries the full id; the strict object below rejects any attempt to add one.
  */
 import { z } from "zod";
@@ -23,7 +23,7 @@ export const ApprovalChoiceSchema = z.strictObject({
 
 export const ApprovalCorrelationSchema = z.strictObject({
   /**
-   * 12-char base62 identifier minted by the approval-gate (§6.4.1).
+   * 12-char base62 identifier minted by the approval-gate.
    * Renderers pass this to InteractiveCallbackRouter.render(); the router
    * signs callback payloads and later resolves the short id back to the
    * full pending-request id server-side. That full id never crosses the

@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the TerminalPlatformProfile registry (PROFILE-01) +
- * the load-time ReDoS pattern guard (PROFILE-03) — design §4, §11 D1/D3, v2.26 Phase 167.
- *
- * RED-first: `./index.ts` + the two `<id>/profile.ts` files do not exist when this file
- * is first committed — the import fails, every case is RED. The production registry turns
- * them GREEN. (Mirrors terminal-notify-policy.test.ts's "module does not exist on first commit".)
+ * Unit tests for the TerminalPlatformProfile registry and the load-time ReDoS
+ * pattern guard.
  *
  * The registry answers ONE selection question: given an operator-declared `allowId`, which
  * platform profile applies? Selection is by `allowId` ONLY (exact-string match, unique,
- * operator-controlled — the driven program cannot pick its own profile, §5/INV-3). An unknown
- * allowId ⇒ `undefined` ⇒ the agnostic default (§3).
+ * operator-controlled — the driven program cannot pick its own profile). An unknown
+ * allowId ⇒ `undefined` ⇒ the agnostic default.
  */
 
 import { describe, it, expect } from "vitest";
@@ -23,7 +19,7 @@ import {
   type TerminalPlatformProfile,
 } from "./index.js";
 
-describe("getPlatformProfile — operator-allowId profile selection (PROFILE-01)", () => {
+describe("getPlatformProfile — operator-allowId profile selection", () => {
   it("returns the claude-code profile for the documented allowId 'claude'", () => {
     const p = getPlatformProfile("claude");
     expect(p?.id).toBe("claude-code");
@@ -48,7 +44,7 @@ describe("getPlatformProfile — operator-allowId profile selection (PROFILE-01)
   });
 });
 
-describe("ALL_PROFILES — each shipped profile carries a non-empty platformVersion (PROFILE-02)", () => {
+describe("ALL_PROFILES — each shipped profile carries a non-empty platformVersion", () => {
   it("declares claude-code and codex, each with a version string", () => {
     const ids = ALL_PROFILES.map((p) => p.id).sort();
     expect(ids).toEqual(["claude-code", "codex"]);
@@ -60,7 +56,7 @@ describe("ALL_PROFILES — each shipped profile carries a non-empty platformVers
   });
 });
 
-describe("assertUniqueAllowIds — load-time uniqueness check (PROFILE-01 / D3)", () => {
+describe("assertUniqueAllowIds — load-time allowId uniqueness check", () => {
   const mk = (id: string, allowIds: string[]): TerminalPlatformProfile => ({
     id,
     allowIds,
@@ -80,7 +76,7 @@ describe("assertUniqueAllowIds — load-time uniqueness check (PROFILE-01 / D3)"
   });
 });
 
-describe("assertSafeProfilePatterns — hot-path ReDoS guard on profile regexes (PROFILE-03 / D1)", () => {
+describe("assertSafeProfilePatterns — hot-path ReDoS guard on profile regexes", () => {
   const withPerception = (patterns: RegExp[]): TerminalPlatformProfile => ({
     id: "synthetic",
     allowIds: ["synthetic"],
@@ -102,15 +98,15 @@ describe("assertSafeProfilePatterns — hot-path ReDoS guard on profile regexes 
     expect(() => assertSafeProfilePatterns(profile)).toThrow();
   });
 
-  it("rejects an overlapping-alternation quantified group like (a|a)* (WR-01)", () => {
+  it("rejects an overlapping-alternation quantified group like (a|a)*", () => {
     expect(() => assertSafeProfilePatterns(withPerception([/(a|a)*/]))).toThrow();
   });
 
-  it("rejects an unbounded {n,} brace-quantifier inside a quantified group like (a{2,})+ (WR-01)", () => {
+  it("rejects an unbounded {n,} brace-quantifier inside a quantified group like (a{2,})+", () => {
     expect(() => assertSafeProfilePatterns(withPerception([/(a{2,})+/]))).toThrow();
   });
 
-  it("rejects nested quantified groups like ((a)*)* that the naive single-level scan missed (WR-01)", () => {
+  it("rejects nested quantified groups like ((a)*)* that a naive single-level scan would miss", () => {
     expect(() => assertSafeProfilePatterns(withPerception([/((a)*)*/]))).toThrow();
   });
 
@@ -120,7 +116,7 @@ describe("assertSafeProfilePatterns — hot-path ReDoS guard on profile regexes 
 
   it("accepts escaped literal parens, unquantified alternation groups, and char classes (real perception shapes)", () => {
     // Escaped parens are literals (not groups); an UNquantified (?:a|b) alternation + a quantified
-    // char class are linear — the guard must not reject the patterns Phases 168/169 actually use.
+    // char class are linear — the guard must not reject the patterns the shipped profiles actually use.
     expect(() =>
       assertSafeProfilePatterns(
         withPerception([/Working \(\d+s\)/, /Esc to (?:cancel|interrupt)/, /[✻✶✷·]\s+\w+ing\b/, /(?:^|\s)❯/]),

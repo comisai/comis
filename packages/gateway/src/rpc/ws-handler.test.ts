@@ -167,8 +167,8 @@ describe("createWsHandler", () => {
 
   function createHandlerDeps(overrides: { maxBatchSize?: number; maxMessageBytes?: number; messageRateLimit?: { maxMessages: number; windowMs: number } } = {}) {
     // Inline-stub only the methods these tests actually exercise. Do not seed
-    // all 6 — RESEARCH Pitfall 3 warns against re-introducing the dead
-    // `createStubMethods` shape via the back door.
+    // all 6 — that would re-introduce the dead `createStubMethods` shape via
+    // the back door.
     const router = createDynamicMethodRouter({
       "agent.execute": (params) => ({ stub: true, method: "agent.execute", params }),
       "memory.search": (params) => ({ stub: true, method: "memory.search", params }),

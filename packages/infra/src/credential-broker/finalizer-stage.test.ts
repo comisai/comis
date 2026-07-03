@@ -2,7 +2,6 @@
 /**
  * Tests for finalizer-stage.
  *
- * RED-first TDD: tests written before the implementation.
  * Covers: bufferBody (cap, bodyPrefix fold, error paths),
  *         bufferBody (contentLength-guided stop),
  *         runFinalizer (awsSigV4 dispatch + exhaustiveness guard),

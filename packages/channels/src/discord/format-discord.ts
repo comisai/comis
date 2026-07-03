@@ -2,9 +2,8 @@
 /**
  * Discord text chunking with code-fence awareness.
  *
- * Ported from legacy `src/discord/chunk.ts`. Splits outbound Discord text
- * by both character count and (soft) line count, while keeping fenced code
- * blocks balanced across chunks.
+ * Splits outbound Discord text by both character count and (soft) line
+ * count, while keeping fenced code blocks balanced across chunks.
  *
  * Self-contained: no external dependencies beyond Node.js built-ins.
  *

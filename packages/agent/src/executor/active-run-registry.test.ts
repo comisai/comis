@@ -270,7 +270,7 @@ describe("ActiveRunRegistry", () => {
   // the registry directly).
   // ---------------------------------------------------------------------------
   describe("source-grep: production code uses BackgroundSessionResolver, not direct registry access", () => {
-    it("no remaining activeRunRegistry.has|get(...) in non-test production source", async () => {
+    it("no activeRunRegistry.has|get(...) calls in non-test production source", async () => {
       const { execSync } = await import("node:child_process");
       const { fileURLToPath } = await import("node:url");
       const { resolve, dirname } = await import("node:path");

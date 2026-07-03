@@ -7,13 +7,13 @@
  *
  * Combination across script classes is HARMONIC per-row share summation
  * (`1/f = sum(share_i / f_i)`), NOT an arithmetic mean: tokens add per-class,
- * so `len/(R*f)` must equal `sum(len_i/(R*f_i))`. Probe evidence: a mixed
- * Hebrew+Latin string measured 15 real qwen tokens — harmonic estimates 15
- * exactly, arithmetic estimates 14 (an anti-conservative under-count)
- * [179-RESEARCH Pattern 3, qwen3-coder:30b probe 2026-06-12].
+ * so `len/(R*f)` must equal `sum(len_i/(R*f_i))`. Measured evidence: a mixed
+ * Hebrew+Latin string measured 15 real qwen tokens (qwen3-coder:30b) —
+ * harmonic estimates 15 exactly, arithmetic estimates 14 (an
+ * anti-conservative under-count).
  *
- * Pure function, same purity rules as script-classes.ts: no I/O/clock/env
- * (I9), no regex (V5). Imported relatively (same-package rule, never via the
+ * Pure function, same purity rules as script-classes.ts: no I/O/clock/env,
+ * no regex. Imported relatively (same-package rule, never via the
  * @comis/core barrel).
  * @module
  */
@@ -22,16 +22,16 @@ import type { ScriptClassRow } from "./script-classes.js";
 
 /**
  * Harmonic share-weighted token factor in (0, 1]; returns 1.0 for
- * empty/all-neutral/pure-ASCII text (I1 — Latin byte-identity). Shares are
+ * empty/all-neutral/pure-ASCII text (Latin byte-identity). Shares are
  * UTF-16 code units (matching the `.length` the estimators divide), weighted
  * per table ROW (not per class) so combining-mark rows carry their own,
  * lower factor than the letter rows of the same class.
  *
  * Why arithmetic mean is forbidden: tokens add per-class, so
  * `len/(R*f)` must equal `sum(len_i/(R*f_i))` — i.e. `1/f = sum(share_i/f_i)`
- * (harmonic). Probe evidence: the mixed he+latin design string measured 15
+ * (harmonic). Measured evidence: a mixed Hebrew+Latin string measured 15
  * qwen tokens — harmonic estimates 15 exactly, arithmetic estimates 14
- * (under-count) [179-RESEARCH Pattern 3, 2026-06-12].
+ * (under-count).
  */
 export function scriptTokenFactor(text: string): number {
   // One O(n) pass accumulating per-ROW UTF-16-unit counts (rows, not classes —

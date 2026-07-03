@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * critic-isolation.test.ts — D1 (injection resistance) + D8 (total parse / schema validity)
- *
- * RED phase: all tests import from critic-isolation.ts which does not yet exist.
- * Every import will fail until the implementation is created (GREEN phase).
+ * critic-isolation.test.ts — injection resistance + total parse / schema validity.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import adversarialFixtures from "./__fixtures__/critic-eval/adversarial-injection.json";
 import nonClaimsFixtures from "./__fixtures__/critic-eval/non-claims.json";
 
-// These imports will FAIL (RED) until critic-isolation.ts is created:
 import {
   isCompletionClaim,
   detectImpliedToolCall,
@@ -39,9 +35,9 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// D1 — Injection resistance
+// Injection resistance
 // ---------------------------------------------------------------------------
-describe("D1 — Injection resistance", () => {
+describe("Injection resistance", () => {
   describe("fixture: adversarial-injection.json", () => {
     it("should have at least 6 entries with 3+ injected entries", () => {
       expect(adversarialFixtures.length).toBeGreaterThanOrEqual(6);
@@ -213,9 +209,9 @@ describe("D1 — Injection resistance", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D8 — Total parse (parseCriticVerdict never throws)
+// Total parse (parseCriticVerdict never throws)
 // ---------------------------------------------------------------------------
-describe("D8 — Total parse / schema validity", () => {
+describe("Total parse / schema validity", () => {
   const MALFORMED_INPUTS: Array<[string, string]> = [
     ["empty string", ""],
     ["whitespace only", "   \n  "],

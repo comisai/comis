@@ -129,7 +129,7 @@ describe("videoProvidersStep", () => {
 
     const result = await videoProvidersStep.execute(state, prompter);
 
-    // No extra credential collected — CRED-01 reuse of GOOGLE_API_KEY.
+    // No extra credential collected — the main provider's GOOGLE_API_KEY is reused.
     expect(result.videoProvider).toEqual({ provider: "google" });
     expect(prompter.password).not.toHaveBeenCalled();
   });

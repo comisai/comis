@@ -3,26 +3,25 @@ import { describe, it, expect } from "vitest";
 import { assembleRichSystemPrompt } from "../system-prompt-assembler.js";
 import { buildAutonomyDoctrineSection } from "./autonomy-doctrine.js";
 
-// SKILL-02: a one-paragraph always-on autonomy doctrine is injected into every
+// A one-paragraph always-on autonomy doctrine is injected into every
 // run's bootstrap system prompt (full/operational/minimal + compact-secure
 // lockdown), stating BOTH the routing rule (single step -> direct tool;
-// multi-step -> orchestrate(script)) AND the M1-accurate contract (workspace-
-// confined; cannot read secrets/mint tokens/change config/reach the control
-// plane; runs revocable/clamped, NOT durable; a denial -> don't retry-escalate).
+// multi-step -> orchestrate(script)) AND the platform-accurate contract
+// (workspace-confined; cannot read secrets/mint tokens/change config/reach the
+// control plane; runs revocable/clamped, NOT durable; a denial -> don't
+// retry-escalate).
 //
-// WR-01: the capability claim is PROFILE-CONDITIONAL ("When your agent profile
+// The capability claim is PROFILE-CONDITIONAL ("When your agent profile
 // grants autonomy capabilities (the `standard` default does; `assistant` does
 // not), you can …") so this always-on paragraph is accurate for EVERY resolved
 // profile — including `assistant` (enabled:false, capabilities:[]) — and never
 // over-claims a cap the agent lacks. The dedicated test below pins that framing
 // AND asserts the categorical opener is gone, so a revert to the over-claim is
-// caught here (the regression WR-01 guards against).
+// caught here.
 //
-// These assertions pin STABLE phrases the builder emits verbatim. They are
-// RED before the builder + the SECTIONS descriptor entry exist (the assembled
-// prompt does not contain the doctrine heading), GREEN after.
+// These assertions pin STABLE phrases the builder emits verbatim.
 
-describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
+describe("autonomy doctrine — always-on bootstrap section", () => {
   it("the assembled full-mode prompt carries the doctrine heading", () => {
     const prompt = assembleRichSystemPrompt({ promptMode: "full" });
     expect(prompt).toContain("## Autonomy");
@@ -38,12 +37,12 @@ describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
     expect(prompt).toMatch(/cannot read secrets|mint tokens/);
   });
 
-  it("the capability claim is PROFILE-CONDITIONAL, not categorical (WR-01 — accurate for the assistant profile)", () => {
+  it("the capability claim is PROFILE-CONDITIONAL, not categorical — accurate for the assistant profile", () => {
     // The always-on paragraph rides EVERY bootstrap prompt, including an
     // `assistant`-profile agent that holds zero orch:* caps
     // (schema-agent-autonomy.ts: enabled:false, capabilities:[]). A categorical
     // "You can spawn sub-agents, run DAGs …" opener would over-claim for that
-    // profile (the exact "teaches a capability it doesn't have" bug this phase
+    // profile (the exact "teaches a capability it doesn't have" bug this test
     // guards against). The opener must instead GATE the claim on the profile.
     const prompt = assembleRichSystemPrompt({ promptMode: "full" });
     // Names the profile contrast explicitly (standard grants it; assistant does not).
@@ -55,8 +54,8 @@ describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
     expect(prompt).not.toMatch(/You can act on your own within a bounded envelope/);
   });
 
-  it("the doctrine teaches that a denial is a do-not-retry-loop signal (mode-accurate, Phase 217)", () => {
-    // A denial must NOT trigger a retry-loop (the Phase-217 denial breaker aborts
+  it("the doctrine teaches that a denial is a do-not-retry-loop signal (mode-accurate)", () => {
+    // A denial must NOT trigger a retry-loop (the denial breaker aborts
     // a run that keeps hitting a floor block — the prompt must steer away from it).
     const prompt = assembleRichSystemPrompt({ promptMode: "full" });
     expect(prompt).toMatch(/do not retry|don't retry/i);
@@ -69,7 +68,7 @@ describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
     expect(prompt).toMatch(/the platform escalates/i);
   });
 
-  it("the doctrine frames runs as revocable/clamped, NOT durable (M1 honesty)", () => {
+  it("the doctrine frames runs as revocable/clamped, NOT durable", () => {
     const prompt = assembleRichSystemPrompt({ promptMode: "full" });
     expect(prompt).toMatch(/revocable/i);
   });
@@ -93,7 +92,7 @@ describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
     expect(lines.join("\n").length).toBeGreaterThan(30);
   });
 
-  // COORD-02: the always-on paragraph carries a delegate-then-synthesize routing
+  // The always-on paragraph carries a delegate-then-synthesize routing
   // rule — heavy / long / high-volume work goes to a FRESH-WINDOW child (its own
   // isolated context + budget), which returns a bounded SUMMARY + a `ResultRef`
   // handle to its full output; the lead SYNTHESIZES that summary and drills into
@@ -101,7 +100,7 @@ describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
   // own window. The sentence is profile-conditional by PHRASING (a coordinator
   // MUST delegate; any autonomy-bearing agent SHOULD), never threaded through
   // AssemblerParams — so it rides every bootstrap prompt without over-claiming.
-  it("the doctrine routes heavy / long / high-volume work to a fresh-window child (COORD-02 delegate-then-synthesize)", () => {
+  it("the doctrine routes heavy / long / high-volume work to a fresh-window child (delegate-then-synthesize)", () => {
     const text = buildAutonomyDoctrineSection().join("\n");
     // Names the fresh-window child as the destination for heavy work …
     expect(text).toMatch(/fresh-window/);
@@ -114,7 +113,7 @@ describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
     expect(text).toMatch(/sessions_spawn/);
   });
 
-  it("the doctrine has the lead synthesize the child's returned summary + ResultRef (COORD-02)", () => {
+  it("the doctrine has the lead synthesize the child's returned summary + ResultRef", () => {
     const text = buildAutonomyDoctrineSection().join("\n");
     // The child returns a bounded summary …
     expect(text).toMatch(/summary/);
@@ -125,12 +124,12 @@ describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
     expect(text).toMatch(/inline/i);
   });
 
-  it("the COORD-02 sentence is profile-conditional by phrasing, not categorical (T-218-05)", () => {
+  it("the delegate-then-synthesize sentence is profile-conditional by phrasing, not categorical", () => {
     // The delegate-then-synthesize sentence rides EVERY bootstrap prompt,
     // including an `assistant`-profile agent that holds zero orch:* caps. It must
     // not assert a flat "you delegate" the way only a coordinator could — phrase
     // it conditionally (a coordinator MUST; any autonomy-bearing agent SHOULD),
-    // matching the existing opener's pattern (the over-claim guard, T-218-05).
+    // matching the existing opener's over-claim-guard pattern.
     const lines = buildAutonomyDoctrineSection();
     // Additive, not a rewrite: still exactly one `## Autonomy` heading …
     expect(lines.filter((l) => l === "## Autonomy")).toHaveLength(1);

@@ -517,7 +517,7 @@ describe("sanitizeSessionSecrets", () => {
       const changed = sanitizeSessionSecrets(sessionPath);
       expect(changed).toBe(1);
       // The fs-safe substrate writes regular files at mode 0o600 — the
-      // §1.4 confidentiality invariant the migration was tasked to lock in.
+      // file-mode confidentiality invariant for artifacts under ~/.comis.
       expect(statSync(sessionPath).mode & 0o777).toBe(0o600);
     });
   });

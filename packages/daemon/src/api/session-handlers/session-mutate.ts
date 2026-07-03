@@ -63,7 +63,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
     },
 
     [SessionSpawnContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): the capability gate lives HERE because the agent
+      // The capability gate lives HERE because the agent
       // loop reaches handlers without passing checkScope (the in-process
       // bypass). Read the injected _capabilities from raw params BEFORE the
       // strip; throws CapabilityDeniedError when orch:spawn is not held.
@@ -144,8 +144,8 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const reachableToolNames: ReadonlySet<string> | undefined =
         reachableToolNamesSet !== null ? reachableToolNamesSet : undefined;
 
-      // Phase 213 CR-01: establish the tree-stable rootRunId (+ parentLeaseId)
-      // BEFORE the spawn so the tree-wide ceiling (CEIL-01), killByRootRun, and
+      // Establish the tree-stable rootRunId (+ parentLeaseId)
+      // BEFORE the spawn so the tree-wide spawn ceiling, killByRootRun, and
       // the per-root budget all key on ONE id per spawn tree. Two cases:
       //   - DESCENDANT: this spawn was initiated by a running sub-agent calling
       //     sessions_spawn. The dispatcher injected THAT sub-agent's session key
@@ -153,8 +153,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       //     `run.sessionKey`. Inherit that run's rootRunId AND its parentLeaseId
       //     (the lease that authorized the parent) so the whole subtree shares
       //     one root — without this every descendant minted a fresh root and the
-      //     fork-bomb escaped the ceiling (RESEARCH Pitfall 1, the silent
-      //     under-count).
+      //     fork-bomb escaped the ceiling (a silent under-count).
       //   - TOP-LEVEL: an operator/channel turn with no parent run. Reuse the
       //     session's stable synthetic root via resolveRootRunId so the ceiling
       //     and the budget meter agree on the same tree id.
@@ -175,7 +174,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         agentId: spawnAgentId,
         callerSessionKey,
         callerAgentId: callerAgentIdInternal,
-        // CEIL-01/REVOKE-03: propagate the resolved tree root + the authorizing
+        // Propagate the resolved tree root + the authorizing
         // lease so the ceiling/kill/budget see one tree (omit when absent).
         ...(resolvedRootRunId !== undefined ? { rootRunId: resolvedRootRunId } : {}),
         ...(inheritedParentLeaseId !== undefined ? { parentLeaseId: inheritedParentLeaseId } : {}),
@@ -194,10 +193,10 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         requiredTools,
         includeParentHistory,
         reachableToolNames,
-        // GEN-03: ride the parent's resolved reply language into child session
+        // Ride the parent's resolved reply language into child session
         // metadata (same channel as objective/toolGroups); read off the live ALS.
         resolvedLanguage: tryGetContext()?.resolvedLanguage,
-        // WT-01: thread the `worktree?` request from the RPC param so the runner
+        // Thread the `worktree?` request from the RPC param so the runner
         // persists it onto the child session metadata; executeSubAgent then runs
         // the child in an isolated git worktree (auto-clean-if-unchanged). Omit
         // when absent so the no-worktree spawn stays byte-identical.
@@ -227,7 +226,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
     },
 
     [SessionCompactContract.method]: async (rawParams) => {
-      // COMPACT-KEY (30uc-20260624): self-resolve the CALLER's own session. An
+      // Self-resolve the CALLER's own session. An
       // agent should NOT have to construct/guess its own formatted key (it guessed
       // ":telegram:" where the real key uses ":peer:"). Read the dispatcher-injected
       // `_callerSessionKey` BEFORE the strip (the same internal field session.send
@@ -248,7 +247,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
 
       const instructions = params.instructions;
 
-      // COMPACT-STORE-MISS (30uc-20260624): read from EITHER store — a live channel
+      // Read from EITHER store — a live channel
       // chat is file-JSONL-only (the SQLite sessions table is empty for it), so a
       // SQLite-only read threw "Session not found" for the active session.
       const data = loadSessionAnyStore(deps, sessionKey);

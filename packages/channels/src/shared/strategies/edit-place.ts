@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * EditPlace — edit-in-place + delete-on-success rendering strategy
- * (§7.2 / §7.3 row "EditPlace"). Used by edit-capable channels: Telegram,
- * Discord, Slack, WhatsApp.
+ * EditPlace — edit-in-place + delete-on-success rendering strategy.
+ * Used by edit-capable channels: Telegram, Discord, Slack, WhatsApp.
  *
  * State machine:
  *   - The FIRST `apply(frame)` posts a placeholder message (capturing its id).
  *   - Subsequent `apply(frame)` calls DEBOUNCE the edit: each schedules an edit
  *     800ms out and cancels the prior pending edit, so a burst of frames
- *     collapses to a single edit (≤1/800ms — §5.3 / Pitfall 7 throttle).
+ *     collapses to a single edit (≤1/800ms, keeping edits under platform rate limits).
  *   - `finalize`:
  *       • success (non-trivial): edit to the final form, then WAIT for
  *         `outcome.delivery.deliveredAtMs` before deleting the placeholder. The
  *         delete is gated on the delivery receipt so scaffolding never vanishes
- *         before the assistant answer lands (§7.3 sequencing rule).
+ *         before the assistant answer lands.
  *       • success (trivial): delete the placeholder, no edit history.
  *       • failure: edit to the ❌ form and KEEP the message (a failed turn must
  *         leave a diagnostic trail; finalize NEVER deletes).
@@ -21,7 +20,7 @@
  *       • aborted: keep the trail (cancel/timeout/fatal are diagnostic).
  *
  * ALL timing goes through the injected `TimerPort` / `ClockPort` — never raw
- * `setTimeout` / `Date.now` (Pitfall 7; `globals.test.ts` fails the build).
+ * `setTimeout` / `Date.now` (`globals.test.ts` fails the build otherwise).
  * Cancellation uses `handle.cancel()`, never `clearTimeout` (TimerHandle is
  * opaque). Implements the core `ChannelActivityRenderer` port.
  */
@@ -41,7 +40,7 @@ import type {
 import type { ActivityRenderActions } from "./actions.js";
 import { renderFrameText, failureLabel, successLabel, appendPrompt } from "./render.js";
 
-/** Debounce window: at most one edit per 800ms (§5.3). */
+/** Debounce window: at most one edit per 800ms. */
 const EDIT_DEBOUNCE_MS = 800;
 
 export interface EditPlaceDeps {
@@ -50,12 +49,12 @@ export interface EditPlaceDeps {
   /**
    * Clock used to gate the delete on `deliveredAtMs`. When omitted, a successful
    * delete fires immediately (no wait) — but the coordinator always injects a
-   * clock so the §7.3 sequencing holds.
+   * clock so the delete-after-delivery sequencing holds.
    */
   clock?: ClockPort;
   /**
-   * Build the signed native-approval button rows for a frame's visible events
-   * (§7.7). Wired by a button-capable per-channel renderer
+   * Build the signed native-approval button rows for a frame's visible events.
+   * Wired by a button-capable per-channel renderer
    * (Discord/Slack/Telegram) as a closure over `buildApprovalButtons` + the
    * injected `SignCallbackData`; the placeholder `send` carries the returned rows
    * to the adapter. Omitted by plain-text channels (IRC/WhatsApp) — they paint a
@@ -63,8 +62,8 @@ export interface EditPlaceDeps {
    */
   buildButtons?: (events: readonly ActivityEvent[]) => RichButton[][];
   /**
-   * Build the plain-text approval prompt for a frame's visible events
-   * (§6.4.6). Wired by a button-less edit-capable channel (WhatsApp) as a closure
+   * Build the plain-text approval prompt for a frame's visible events.
+   * Wired by a button-less edit-capable channel (WhatsApp) as a closure
    * over `buildApprovalPrompt`; the PLACEHOLDER carries the prompt appended after
    * the frame text. Omitted by button channels (Telegram/Discord/Slack), which
    * paint native buttons instead. Returns `""` for a non-approval frame.
@@ -84,7 +83,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
   let latestText = "";
   /** Pending delete timer (deliveredAt wait); cancelled on shutdown paths. */
   let pendingDelete: TimerHandle | undefined;
-  /** SPEC-§8.5: first-apply clock snapshot; feeds `elapsedMs`
+  /** First-apply clock snapshot; feeds `elapsedMs`
    *  into renderFrameText so the "(running N s)" fallback lights up when no
    *  SEP plan is active. Undefined → no clock → graceful-degrade (skipped). */
   let startedAtMs: number | undefined;
@@ -100,7 +99,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
   ): Promise<Result<void, ActivityRenderError>> {
     if (messageId !== undefined) return ok(undefined);
     // A non-approval frame yields no rows → omit `buttons` entirely so a
-    // button-less send stays byte-identical to the historical placeholder.
+    // button-less send stays byte-identical to the plain placeholder send.
     const sent = await actions.send(text, buttons.length > 0 ? { buttons } : undefined);
     if (!sent.ok) return sent;
     messageId = sent.value;
@@ -140,7 +139,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
         // renderer (no `buildButtons`) or a non-approval frame yields `[]`.
         const buttons = buildButtons?.(frame.visibleEvents) ?? [];
         // A button-less channel (WhatsApp) appends the plain-text approval prompt
-        // to the placeholder instead (§6.4.6); a non-approval frame yields
+        // to the placeholder instead; a non-approval frame yields
         // `""`, leaving the placeholder text byte-identical.
         const placeholderText = appendPrompt(latestText, buildPrompt?.(frame.visibleEvents));
         const placed = await ensurePlaceholder(placeholderText, buttons);

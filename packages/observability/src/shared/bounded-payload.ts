@@ -11,9 +11,8 @@
  *   - depth > 6             → `bounded-payload-depth-limit`
  *   - cyclic reference      → `bounded-payload-cycle-detected`
  *
- * The Comis improvement over OpenClaw's original is the
- * `bounded-payload-*` prefix on every sentinel name (instead of
- * `trajectory-*`), so the same limiter is reusable across the trajectory
+ * Every sentinel name carries the `bounded-payload-*` prefix (rather than a
+ * `trajectory-*` one) so the same limiter is reusable across the trajectory
  * writer, system-prompt-report, config-audit, and any future
  * diagnostic-artifact pipeline without coupling the name to the
  * trajectory call site.

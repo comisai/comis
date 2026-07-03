@@ -2,23 +2,23 @@
 /**
  * The `default` activity theme.
  *
- * Baseline status markers — the glyphs currently hardcoded downstream
+ * Baseline status markers
  * (`✓ done` / `❌ {errorKind}` / `🤖 {agentId} subagent` / the running wrench).
- * Those downstream literals are redirected to read these markers so the
- * default rendering is byte-identical to today's behavior.
+ * Downstream renderers read these markers instead of hardcoding glyphs, so a
+ * theme can override them while the default rendering stays canonical.
  *
  * @module
  */
 import type { ActivityTheme } from "../label-spec.js";
 
-/** Default theme: the canonical emoji status glyphs (today's hardcoded set). */
+/** Default theme: the canonical emoji status glyphs. */
 export const defaultTheme: ActivityTheme = {
   markers: {
     success: "✓",
     failure: "❌",
     subagent: "🤖",
     running: "🔧",
-    // Per spec §9: surrogate-count separator (e.g. `reading config ×3`).
+    // Surrogate-count separator (e.g. `reading config ×3`).
     // The default theme uses the multiplication sign U+00D7 — humane glyph.
     surrogateSeparator: "×",
   },

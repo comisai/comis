@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AUDIT-01/02/04 — the durable security-audit sink (row-builders + the buffer +
+ * The durable security-audit sink (row-builders + the buffer +
  * the per-event subscribers + the three sinks per event).
  *
  * Every audit-source event maps to an {@link AuditEventRow}. The `audit:event`
  * `metadata` free-map (the ONE escape hatch) is routed through
- * `sanitizeForPersistence` before it lands in `refs` (AUDIT-04). The other
+ * `sanitizeForPersistence` before it lands in `refs`. The other
  * events are structurally content-free (the truncated prefixes / closed labels)
  * but STILL re-apply the scrub uniformly — one chokepoint, defense-in-depth.
  *
@@ -14,10 +14,10 @@
  * stream under the shared `observability.logRotation`), and a `.audit()` (level
  * 35) log line. Tenant-less events resolve `(tenant, agent, traceId)` from the
  * AsyncLocalStorage trace context when present, else persist `tenant_id=''`
- * (system-scoped) — NEVER dropped (decision #2).
+ * (system-scoped) — NEVER dropped.
  *
  * Extracted from `obs-persistence-wiring.ts` to keep that file under the
- * 800-line cap (the Plan-01/02 row-shapes extraction precedent).
+ * 800-line cap (the row-shapes extraction precedent).
  *
  * @module
  */
@@ -34,8 +34,8 @@ import type { ComisLogger } from "@comis/infra";
  * Rotation fallback for the security-audit.jsonl stream when an older caller
  * omits `logRotation`. Aligned to `LogRotationConfigSchema`'s defaults
  * (`packages/core/src/config/schema-observability.ts` — 50 MB / 5 files) so the
- * two can't drift (the AUDIT-01/L1 review found the prior 10 MB literal here
- * disagreed with the 50 MB schema default). NOT imported from the schema to
+ * two can't drift (a mismatched literal here would silently disagree with the
+ * 50 MB schema default). NOT imported from the schema to
  * avoid a daemon→core schema-coupling for two scalars; the doc-comment + this
  * note are the binding.
  */
@@ -49,7 +49,7 @@ export const AUDIT_JSONL_DEFAULT_MAX_FILES = 5;
  * body) — NOT a closed label/count/id — so they routinely carry inline secrets
  * a no-prefix value (a 32-hex key, a DB password, `mysql -p<pass>`) that
  * neither the credential-KEYED-field drop nor the prefixed/keyworded pattern
- * redactor catches (the AUDIT-04 / H1+H2 review leak). Content-free-by-
+ * redactor catches. Content-free-by-
  * construction: {@link digestFreeFormContentKeys} replaces each with a
  * non-reversible `<key>Sha256` (first 12 hex) + `<key>Length` BEFORE the row is
  * built, so the raw value can never reach the durable row/JSONL even if a
@@ -119,21 +119,21 @@ export function kindToSeverity(kind: string): string {
 }
 
 /**
- * Derive an `AuditKind` from an `actionType` when an un-migrated emit omits
- * `payload.kind` (defense-in-depth fallback — Plan 02's WIRE SHAPE: read
- * `payload.kind` when present, derive from `actionType` only as a fallback).
+ * Derive an `AuditKind` from an `actionType` when an emit omits
+ * `payload.kind` (defense-in-depth fallback — the wire shape reads
+ * `payload.kind` when present, deriving from `actionType` only as a fallback).
  * Unknown actionTypes fall back to the generic `audit` family.
  */
 export function deriveKindFromActionType(actionType: string): AuditKind {
   switch (actionType) {
-    // AUDIT-04 / M1: secret MUTATIONS (set/delete/rotate) are a security signal
-    // too — alongside the secret READ (get). Before the mutation arms they
-    // emitted `classification:"destructive"` with no `kind`, falling through to
+    // Secret MUTATIONS (set/delete/rotate) are a security signal
+    // too — alongside the secret READ (get). Without an explicit `kind` these
+    // would emit `classification:"destructive"` and fall through to
     // the generic `audit` family (severity:"info") — invisible to a
     // kind/severity-filtered audit query. Map them all to the `secret_access`
     // security-signal kind (severity:"warning") so they surface in the
-    // security-audit grep. (The emit sites ALSO set `kind` explicitly now; this
-    // is the defense-in-depth fallback for any un-migrated/future emit.)
+    // security-audit grep. (The emit sites ALSO set `kind` explicitly; this
+    // is the defense-in-depth fallback for any future emit that omits it.)
     case "secrets.get":
     case "secrets.set":
     case "secrets.delete":
@@ -153,7 +153,7 @@ export function deriveKindFromActionType(actionType: string): AuditKind {
 }
 
 /**
- * Build a content-free AuditEventRow from an `audit:event` payload (AUDIT-01/04).
+ * Build a content-free AuditEventRow from an `audit:event` payload.
  * The `metadata` free-map is routed through `sanitizeForPersistence` (keys +
  * scalar counts/ids/digests only) and packed into `refs` — NEVER the raw
  * metadata. `kind` comes from the wire shape (`payload.kind`) or is derived from
@@ -175,9 +175,9 @@ export function auditEventToRow(
     payload.classification === "destructive"
       ? payload.classification
       : null;
-  // AUDIT-04: content-free-by-construction at the sink. First DIGEST any
+  // Content-free-by-construction at the sink. First DIGEST any
   // free-form-content key (`value`/`commandPrefix` — arbitrary content that the
-  // pattern redactor misses for no-prefix secrets, the H1/H2 review leak), then
+  // pattern redactor misses for no-prefix secrets), then
   // scrub the remaining free-map. A planted value cannot survive either step.
   const scrubbed =
     payload.metadata !== undefined
@@ -219,7 +219,7 @@ export interface BuildAuditRowArgs {
  * content-free at the emit site — but is STILL routed through
  * `sanitizeForPersistence` uniformly (one chokepoint). `(tenant, agent,
  * traceId)` are resolved by the caller from the trace context (else the `''`
- * system-scope sentinel; the event is NEVER dropped — decision #2).
+ * system-scope sentinel; the event is NEVER dropped).
  */
 export function buildAuditRow(args: BuildAuditRowArgs): AuditEventRow {
   // Same content-free-by-construction chokepoint as auditEventToRow: DIGEST any
@@ -243,7 +243,7 @@ export function buildAuditRow(args: BuildAuditRowArgs): AuditEventRow {
 }
 
 // ---------------------------------------------------------------------------
-// Subscriber wiring (AUDIT-01/02/03/04)
+// Subscriber wiring
 // ---------------------------------------------------------------------------
 
 /** Dependencies for {@link wireAuditSink}. */
@@ -283,11 +283,11 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
   const keepRotated = logRotation?.maxFiles ?? AUDIT_JSONL_DEFAULT_MAX_FILES;
 
   /**
-   * The three audit sinks per event (AUDIT-01/02/03): the SQLite buffer, the
+   * The three audit sinks per event: the SQLite buffer, the
    * 0600 security-audit.jsonl line, and the `.audit()` (level 35) log. The row
    * is ALREADY scrubbed (the metadata free-map was routed through
    * `sanitizeForPersistence` in the row-builder). The JSONL append is try/caught
-   * (AGENTS §2.7 / T-176-11): a sink failure logs ERROR with hint+errorKind and
+   * (AGENTS §2.7): a sink failure logs ERROR with hint+errorKind and
    * NEVER throws past the subscriber — the SQLite half still drains, and a
    * tenant-less event is persisted system-scoped, never dropped.
    */
@@ -314,7 +314,7 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
         );
       }
     }
-    // AUDIT-03: the now-activated dormant level-35 audit line (scrubbed row).
+    // The level-35 audit line (scrubbed row).
     // `.audit()` is a CUSTOM Pino level registered ONLY by the @comis/infra
     // logger factory — `logger?.audit?.(...)` (method optional-chain, not just
     // the null-guard `logger?.`) so a logger BUILT WITHOUT that factory (a test
@@ -322,7 +322,7 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
     // rather than crashing the audit subscriber with `audit is not a function`.
     // The DURABLE audit (the obs_audit_events row + security-audit.jsonl above)
     // already fired, so the audit trail stays intact; production uses the infra
-    // logger (has `.audit()`) → behavior is byte-identical (the line still fires).
+    // logger (has `.audit()`) → the line still fires.
     logger?.audit?.({ kind: row.kind, outcome: row.outcome, agentId: row.agentId, traceId: row.traceId, refs: row.refs }, row.kind);
   }
 
@@ -367,10 +367,10 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
     }));
   });
 
-  // security:ssrf_blocked (SSRF-AUDIT, hermes-usecases 2026-06-25) — the blocked URL's
+  // security:ssrf_blocked — the blocked URL's
   // ORIGIN (scheme+host+port; secret-free by construction — `new URL().origin` drops the
   // path/query/fragment/userinfo) + the closed reason enum. Mirrors command:blocked; gives
-  // `comis security audit-log` the SSRF-attempt trail an SSRF block previously left no row for.
+  // `comis security audit-log` an SSRF-attempt trail for each SSRF block.
   eventBus.on("security:ssrf_blocked", (payload) => {
     const ctx = tryGetContext();
     persistAuditRow(buildAuditRow({
@@ -456,7 +456,7 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
     }));
   });
 
-  // command:blocked — AUDIT-04 / H2: the `commandPrefix` is the first-200-of
+  // command:blocked — the `commandPrefix` is the first-200-of
   // the COMMAND BODY (content) and routinely carries inline secrets
   // (`mysql -p<pass>`, `psql postgres://user:pw@host`). Do NOT persist it in the
   // durable row/JSONL; emit a content-free `commandSha256` (12 hex) +

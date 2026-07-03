@@ -67,14 +67,14 @@ export interface TurnCompletedEvent extends SessionIndexEventBase {
   readonly inputTokens: number;
   /** Output tokens produced by this turn. */
   readonly outputTokens: number;
-  /** W7 (obs-llm-troubleshooting): the SDK per-turn stop signal (reliable —
-   *  captured in the same turn_end). "error" marks the aborted calls that used
-   *  to be indistinguishable from healthy idle rows (0/0 tokens, null error). */
+  /** The SDK per-turn stop signal (reliable — captured in the same turn_end).
+   *  "error" marks the aborted calls that would otherwise be indistinguishable
+   *  from healthy idle rows (0/0 tokens, null error). */
   readonly stopReason?: string;
-  /** W7: the execution-level finish disposition, forwarded only once it has
-   *  settled away from the init default "stop" (it settles AFTER this row on
-   *  the turn that degrades — mirror of model.completed's WR-151-01 guard), so
-   *  a degraded cause (context_exhausted/…) lands on subsequent rows. */
+  /** The execution-level finish disposition, forwarded only once it has settled
+   *  away from the init default "stop" (it settles AFTER this row on the turn
+   *  that degrades — the same ordering guard as model.completed), so a degraded
+   *  cause (context_exhausted/…) lands on subsequent rows. */
   readonly finishReason?: string;
   /** Last error message, if the turn ended with an error; null otherwise. */
   readonly lastError: string | null;

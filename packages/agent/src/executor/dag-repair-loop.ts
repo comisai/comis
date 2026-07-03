@@ -2,7 +2,7 @@
 /**
  * DAG repair loop — bounded retry wrapper around the existing DAG validation API.
  *
- * Implements O1: feeds GraphValidationError messages back to the model via
+ * Feeds GraphValidationError messages back to the model via
  * repromptFn and re-validates. Fail-closed: after maxAttempts exhausted
  * without a valid graph, returns the last error message.
  *
@@ -67,7 +67,7 @@ export async function repairDagWithBoundedRetries(
     }
 
     // Step 3: Collect fix-hints from GraphValidationError fields ONLY
-    // (no daemon import — B2 boundary: agent cannot import from packages/daemon)
+    // (no daemon import — the agent package cannot import from packages/daemon)
     const hints: string[] = [
       `Graph validation error (${validated.error.kind}): ${validated.error.message}`,
     ];

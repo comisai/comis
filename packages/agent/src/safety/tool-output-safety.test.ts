@@ -10,7 +10,7 @@ import {
 
 describe("tool-output-safety", () => {
   // ---------------------------------------------------------------------------
-  // Text sanitization (formerly tool-sanitizer.test.ts)
+  // Text sanitization
   // ---------------------------------------------------------------------------
 
   describe("text sanitization", () => {
@@ -410,7 +410,7 @@ describe("tool-output-safety", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Image sanitization (formerly tool-image-sanitizer.test.ts)
+  // Image sanitization
   // ---------------------------------------------------------------------------
 
   describe("image sanitization", () => {

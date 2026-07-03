@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-execution turn-loop detector (FIX #2 — the durable platform guard).
+ * Per-execution turn-loop detector — the durable platform guard against
+ * runaway tool-call loops.
  *
  * Root-cause incident: a model issued ~150 identical reads of the same four
  * already-inlined workspace files in one turn, hit maxSteps, and aborted. This
@@ -15,8 +16,8 @@
  *
  * Safety: caching is an explicit ALLOWLIST of idempotent read-only tools. Any
  * tool NOT in the allowlist is treated as a side-effecting mutation — it is
- * never cached or short-circuited (T-hbe-03: a stale "success" for a write
- * would be a tampering bug), and it INVALIDATES the read cache so a read after
+ * never cached or short-circuited (a stale "success" for a write would be a
+ * tampering bug), and it INVALIDATES the read cache so a read after
  * a write of the same path really re-executes.
  *
  * State is closure-local (one instance per execution run) — NO module-level
@@ -104,7 +105,7 @@ function cacheKey(toolName: string, args: unknown): string {
 }
 
 /**
- * True when a tool result represents a FAILURE / blocked call (F-15). The canonical
+ * True when a tool result represents a FAILURE / blocked call. The canonical
  * signal is `isError: true`; we also catch content-gate / sandbox rejections that
  * surface a marker but may not set the flag. A failed mutation makes NO progress —
  * a small model looping on a doomed tool (e.g. exec repeatedly content-gate-rejected,
@@ -154,7 +155,7 @@ export function createTurnLoopDetector(): TurnLoopDetector {
       if (!isIdempotentRead(toolName)) {
         // Mutation: invalidate the read cache (write-between-reads forces a real
         // re-execution of the next read). A SUCCESSFUL mutation is genuine progress
-        // (reset). A FAILED/blocked mutation is NOT progress (F-15): count it so a
+        // (reset). A FAILED/blocked mutation is NOT progress: count it so a
         // model looping on a doomed tool trips the loop guard and degrades honestly
         // instead of running to makespan.
         readCache.clear();

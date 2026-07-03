@@ -3,14 +3,14 @@ import { describe, it, expect } from "vitest";
 import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js";
 
 // ---------------------------------------------------------------------------
-// COORD-01 (218-01): the lean-coordinator tool-surface selection (extracted from
+// The lean-coordinator tool-surface selection (extracted from
 // setup-tools.ts for the file-size cap). selectEffectiveToolGroups decides the
 // effective tool groups for a lead from its resolved autonomy posture +
 // explicit tool_groups; expandToolGroupsToNames expands those groups into the
 // flat allowed tool-name set the platform-tool filter applies. Both PURE.
 // ---------------------------------------------------------------------------
 
-describe("selectEffectiveToolGroups (COORD-01 — role-driven tool-surface selection)", () => {
+describe("selectEffectiveToolGroups — role-driven tool-surface selection", () => {
   it("narrows a role:coordinator lead with NO explicit tool_groups to coordinatorToolGroups", () => {
     const result = selectEffectiveToolGroups(
       { role: "coordinator", coordinatorToolGroups: ["coordinator"] },
@@ -26,7 +26,7 @@ describe("selectEffectiveToolGroups (COORD-01 — role-driven tool-surface selec
     expect(result.effectiveGroups).toBeUndefined();
   });
 
-  it("lets an explicit tool_groups WIN over the coordinator role default (operator intent — T-218-04)", () => {
+  it("lets an explicit tool_groups WIN over the coordinator role default (operator intent)", () => {
     const result = selectEffectiveToolGroups(
       { role: "coordinator", coordinatorToolGroups: ["coordinator"] },
       ["coding"],
@@ -51,7 +51,7 @@ describe("selectEffectiveToolGroups (COORD-01 — role-driven tool-surface selec
   });
 });
 
-describe("expandToolGroupsToNames (COORD-01 — group/profile expansion to a flat tool-name set)", () => {
+describe("expandToolGroupsToNames — group/profile expansion to a flat tool-name set", () => {
   const TOOL_PROFILES = {
     coordinator: ["sessions_spawn", "pipeline", "message", "read", "obs_query"],
     coding: ["read", "edit", "exec"],

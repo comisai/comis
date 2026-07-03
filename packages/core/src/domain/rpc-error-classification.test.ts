@@ -2,11 +2,11 @@
 import { describe, it, expect } from "vitest";
 import { classifyTypedRpcError } from "./rpc-error-classification.js";
 
-// OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): the SINGLE source of truth
+// The SINGLE source of truth
 // both the daemon rpc-dispatch classifier and the @comis/gateway method-router classifier
-// delegate to. Keyed off the stable Error.name (the LCD signal — the gateway can't
-// instanceof the daemon/@comis/agent error classes). These tests pin the shared verdicts
-// so the two layers can never drift again.
+// delegate to. Keyed off the stable Error.name (the lowest-common-denominator signal — the
+// gateway can't instanceof the daemon/@comis/agent error classes). These tests pin the
+// shared verdicts so the two layers cannot drift.
 describe("classifyTypedRpcError", () => {
   // Simulate each typed refusal by its observable `.name` (what BOTH layers see at
   // runtime — the gateway never has the class, only the propagated Error).

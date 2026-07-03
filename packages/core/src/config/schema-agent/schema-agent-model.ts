@@ -126,13 +126,14 @@ export const PromptTimeoutConfigSchema = z.strictObject({
   /** Wall-clock timeout for retry prompt calls in milliseconds. Default: 60s. */
   retryPromptTimeoutMs: z.number().int().positive().default(60_000),
   /**
-   * Makespan ceiling multiplier (LAT-02, R-1 non-optional): a
+   * Makespan ceiling multiplier: a
    * streaming-but-runaway generation is aborted at
    * promptTimeoutMs x stallCeilingMultiplier even though stream/tool
-   * activity keeps resetting the stall budget (gemma4 16x/810s receipt,
+   * activity keeps resetting the stall budget (gemma4 was measured
+   * streaming for 16x the timeout, 810s -- see
    * scripts/bench-small-model/README.md). Default: 10.
    *
-   * Bounded 1..100 (177-REVIEW WR-02): a value below 1 INVERTS the
+   * Bounded 1..100: a value below 1 INVERTS the
    * semantics (the makespan fires before the stall budget can ever elapse,
    * so every timeout -- including genuine provider hangs -- is classified
    * makespan and suppressed from providerHealth); a huge value overflows
@@ -154,10 +155,10 @@ export type ModelOperationType =
   | "compaction"
   | "taskExtraction"
   | "condensation"
-  | "verification"    // R4: pre-delivery critic (Phase 154)
-  | "planning"        // R5: pre-execution planner (Phase 154, deferrable on M2)
-  | "outcomeJudge"    // OUTCOME-04: the optional cost-gated outcome judge (fast tier, Phase 198)
-  | "skillSynthesis"; // SKILL-09: the procedural-synthesis op (mid tier — a synthesis op, not a fast classify; Phase 201)
+  | "verification"    // pre-delivery critic
+  | "planning"        // pre-execution planner
+  | "outcomeJudge"    // the optional cost-gated outcome judge (fast tier)
+  | "skillSynthesis"; // the procedural-synthesis op (mid tier — a synthesis op, not a fast classify)
 
 /**
  * Per-operation model entry: groups model override and timeout for a single
@@ -192,8 +193,8 @@ export const OperationModelsSchema = z.strictObject({
   compaction: OperationModelEntrySchema.optional(),
   taskExtraction: OperationModelEntrySchema.optional(),
   condensation: OperationModelEntrySchema.optional(),
-  verification: OperationModelEntrySchema.optional(),  // R4: pre-delivery critic (Phase 154)
-  planning: OperationModelEntrySchema.optional(),       // R5: pre-execution planner (Phase 154)
+  verification: OperationModelEntrySchema.optional(),  // pre-delivery critic
+  planning: OperationModelEntrySchema.optional(),       // pre-execution planner
 }).default({});
 
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;

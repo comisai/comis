@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * R1 schema-shape contract test (v2.15 Fleet Health Lens).
+ * Schema-shape contract test for the fleet-health lens.
  *
  * Pins the bounded/digest-only/deterministic `FleetHealthReportSchema` shape so
- * the Phase-161 `obs.fleet.health` handler (bounding pass + heuristic registry +
+ * the `obs.fleet.health` handler (bounding pass + heuristic registry +
  * coverage construction) targets a stable wire contract. MIRRORS the
  * `IncidentReport` schema-shape test discipline (a contract test that pins the
- * new behavior, §2.10) — but asserts DISTINCTNESS from `IncidentReport` (mirror,
+ * behavior) — but asserts DISTINCTNESS from `IncidentReport` (mirror,
  * not extend) and DETERMINISM (no wall-clock field in the report root).
- *
- * RED on pre-patch code: `./fleet-health-report.js` does not exist, so the import
- * throws and every case fails. GREEN once the schema module lands.
  *
  * @module
  */
@@ -75,7 +72,7 @@ function validReport(): FleetHealthReport {
   };
 }
 
-describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape)", () => {
+describe("FleetHealthReportSchema (bounded/deterministic fleet wire shape)", () => {
   it("parses a fully-populated, well-formed fleet report", () => {
     const parsed = FleetHealthReportSchema.parse(validReport());
     expect(parsed.schemaVersion).toBe(1);
@@ -123,11 +120,11 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     expect(parsed.likelyRootCause).toBeNull();
   });
 
-  it("TELEM-02: the pipelineAuthoringGate verdict SURVIVES .parse() (the BLOCKER-1 proof)", () => {
+  it("the pipelineAuthoringGate verdict SURVIVES .parse() (the round-trip proof)", () => {
     // Without the schema field, the non-strict z.object STRIPS this key on parse
     // -> the verdict never reaches the wire (the operator never sees the gate
     // decision). Declaring it in FleetHealthReportSchema is what makes .parse()
-    // PRESERVE it (T-173-12 Tampering mitigation). RED before the schema field.
+    // PRESERVE it (a tampering mitigation).
     const parsed = FleetHealthReportSchema.parse(validReport());
     expect(parsed.pipelineAuthoringGate).toBeDefined();
     expect(parsed.pipelineAuthoringGate?.buildAuthor).toBe(false);
@@ -151,19 +148,19 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
   });
 
   // -------------------------------------------------------------------------
-  // FLEET-01/02/04 (Phase 220-03) — the additive-optional `autonomy` block: the
+  // The additive-optional `autonomy` block: the
   // cross-run AUTONOMY-health slice (run counts + degradedRate +
   // orphaned/resumed/revoked/killed + breakerTrips + budgetBreaches + costUsd +
   // the worst rootRunId to drill into via `comis explain`). Counts + an id ONLY.
-  // RED on pre-patch code: there is no `autonomy` field, so the non-strict
+  // Without the schema field, the non-strict
   // z.object STRIPS the block on .parse() and it never reaches the operator —
-  // every assertion below fails until the schema field lands (the
-  // pipelineAuthoringGate BLOCKER-1 proof, one signal class over).
+  // every assertion below fails without the schema field (the
+  // pipelineAuthoringGate round-trip proof, one signal class over).
   // -------------------------------------------------------------------------
-  it("FLEET-01/02/04: the populated `autonomy` block SURVIVES .parse() (additive block round-trip)", () => {
+  it("the populated `autonomy` block SURVIVES .parse() (additive block round-trip)", () => {
     // Without the schema field, the non-strict z.object STRIPS this key on parse
     // → the autonomy slice never reaches the wire. Declaring it in
-    // FleetHealthReportSchema is what makes .parse() PRESERVE it (T-220-10).
+    // FleetHealthReportSchema is what makes .parse() PRESERVE it.
     const withAutonomy = {
       ...validReport(),
       autonomy: {
@@ -173,7 +170,7 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
         revoked: 1,
         killed: 1,
         breakerTrips: 2,
-        // FLEET-02 (Phase 220-05): the capability-denial breaker count, separable
+        // The capability-denial breaker count, separable
         // from the tool-failure `breakerTrips`.
         denialBreakerTrips: 3,
         budgetBreaches: 1,
@@ -189,8 +186,8 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     expect(parsed.autonomy?.revoked).toBe(1);
     expect(parsed.autonomy?.killed).toBe(1);
     expect(parsed.autonomy?.breakerTrips).toBe(2);
-    // FLEET-02: the separable denial-breaker count survives .parse() (a non-strict
-    // z.object would STRIP it without the schema field — the milestone-audit fix).
+    // The separable denial-breaker count survives .parse() (a non-strict
+    // z.object would STRIP it without the schema field).
     expect(parsed.autonomy?.denialBreakerTrips).toBe(3);
     expect(parsed.autonomy?.budgetBreaches).toBe(1);
     expect(parsed.autonomy?.costUsd).toBeCloseTo(0.42);
@@ -226,7 +223,7 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     expect(parsedNoWorst.autonomy?.worstRootRunId).toBeUndefined();
   });
 
-  it("CONTENT-FREE: a smuggled free-text `reason` key inside the autonomy block is STRIPPED on parse (T-220-10)", () => {
+  it("CONTENT-FREE: a smuggled free-text `reason` key inside the autonomy block is STRIPPED on parse", () => {
     // The block carries counts + an id ONLY. A caller who smuggles a body field
     // (a free-text reason / a lease bearer) must have it stripped by the
     // non-strict z.object — it can never reach the operator-facing report.
@@ -257,7 +254,7 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     expect(parsed.autonomy?.worstRootRunId).toBe("root-run-xyz");
   });
 
-  it("QT2/QT3: carries degradedByCause — a required bounded Record<cause, count> of named causes", () => {
+  it("carries degradedByCause — a required bounded Record<cause, count> of named causes", () => {
     // The fleet-level degradation detector. Required (the assembler always emits
     // it, possibly {}). Each value is a count (bounded, no raw bodies).
     const parsed = FleetHealthReportSchema.parse(validReport());
@@ -279,7 +276,7 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     // A shape resembling a per-session IncidentReport (no fleet `sessions`
     // rollup; carries the session-only `failures`/`breakerTimeline`/`offloads`).
     // Because `sessions` (required) is absent, it must NOT parse as a fleet report —
-    // pinning that R1 is a DISTINCT shape, not an IncidentReport alias.
+    // pinning that FleetHealthReport is a DISTINCT shape, not an IncidentReport alias.
     const sessionShaped = {
       schemaVersion: 1,
       sessionKey: "tenant/discord/abc",
@@ -336,13 +333,13 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
 });
 
 /**
- * R2 contract-shape pins (Phase 161): the `obs.fleet.health` RPC contract is the
- * admin-scoped sibling of `obs.explain`. RED on pre-patch code: `ObsFleetHealthContract`
- * does not exist, so the import fails to compile and every case below fails (the
- * 159/160 precedent: an absent symbol IS the RED). GREEN once the `defineContract`
+ * Contract-shape pins: the `obs.fleet.health` RPC contract is the
+ * admin-scoped sibling of `obs.explain`. Without `ObsFleetHealthContract`
+ * the import fails to compile and every case below fails (an absent symbol
+ * IS the failure). GREEN once the `defineContract`
  * lands in this module and is registered in `OBSERVABILITY_CONTRACTS`.
  */
-describe("ObsFleetHealthContract (R2 — admin-scoped fleet RPC contract)", () => {
+describe("ObsFleetHealthContract (admin-scoped fleet RPC contract)", () => {
   it("declares the method `obs.fleet.health`", () => {
     expect(ObsFleetHealthContract.method).toBe("obs.fleet.health");
   });

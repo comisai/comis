@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs-explain-heuristics` — deterministic root-cause registry tests (Plan 05,
- * Task 1).
+ * `obs-explain-heuristics` — deterministic root-cause registry tests.
  *
- * Pins the ORDERING that makes BOTH frozen Phase-149 fixtures pass:
+ * Pins the ORDERING that makes BOTH frozen incident fixtures pass:
  *   - 678 signals carry hasMisclassificationSignal AND hasDoNotRetrySignal AND a
  *     breakerOpenedTool (the breaker tripped on the misclassified successes) →
  *     content_heuristic_misclassification wins (it is the ROOT; the breaker is
@@ -38,7 +37,7 @@ function makeSignals(overrides?: Partial<IncidentSignals>): IncidentSignals {
 
 describe("obs-explain-heuristics", () => {
   // ------------------------------------------------------------------------
-  // The X3-mandated ordering: misclassification (root) over breaker (symptom).
+  // The frozen-fixture ordering: misclassification (root) over breaker (symptom).
   // ------------------------------------------------------------------------
 
   it("678: misclassification+breaker both present → content_heuristic_misclassification (root over symptom)", () => {
@@ -107,7 +106,7 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
-  // Insurance codes (low-risk corpus coverage for 156/G1).
+  // Insurance codes (low-risk corpus coverage).
   // ------------------------------------------------------------------------
 
   it("insurance: exec_dependency (errorKind dependency + ModuleNotFoundError in preview)", () => {
@@ -190,12 +189,13 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
-  // QT2/QT3 — the two NAMED degradation causes surface as likelyRootCause.
-  // Keyed on the (metadata-derived) endReason, lowest priority (a tool-failure
-  // cause out-ranks them — they explain the terminal state, not a tool crash).
+  // context_exhausted / output_starved — the two NAMED degradation causes
+  // surface as likelyRootCause. Keyed on the (metadata-derived) endReason,
+  // lowest priority (a tool-failure cause out-ranks them — they explain the
+  // terminal state, not a tool crash).
   // ------------------------------------------------------------------------
 
-  it("QT2: endReason=context_exhausted (no tool-failure signal) → context_exhausted root cause", () => {
+  it("endReason=context_exhausted (no tool-failure signal) → context_exhausted root cause", () => {
     const r = rootCause(makeSignals({ endReason: "context_exhausted" }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("context_exhausted");
@@ -205,7 +205,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((s) => /summariz|compact|context/i.test(s))).toBe(true);
   });
 
-  it("QT3: endReason=output_starved (no tool-failure signal) → output_starved root cause", () => {
+  it("endReason=output_starved (no tool-failure signal) → output_starved root cause", () => {
     const r = rootCause(makeSignals({ endReason: "output_starved" }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("output_starved");
@@ -214,14 +214,14 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((s) => /maxTokens|output|truncat/i.test(s))).toBe(true);
   });
 
-  it("WR-4 (177-obs-loop): endReason=spend_exceeded (no tool-failure signal) → spend_exceeded root cause naming observability.spend.*", () => {
-    // The security-review WR-4 finding: a spend-killed session root-caused to
-    // NOTHING (the deterministic verdict had no spend_exceeded case) — so the
-    // platform could not diagnose its own dollars kill-switch firing in ONE
-    // `comis explain` call (violating the milestone thesis + the troubleshooting
-    // feedback loop). END_REASON_MAP now resolves finishReason:"spend_exceeded"
-    // (WR-2) → the assembler threads endReason:"spend_exceeded" onto the signals →
-    // this NAMED terminal-band verdict fires (same additive mold as QT2/QT3).
+  it("endReason=spend_exceeded (no tool-failure signal) → spend_exceeded root cause naming observability.spend.*", () => {
+    // A spend-killed session used to root-cause to NOTHING (the deterministic
+    // verdict had no spend_exceeded case) — so the platform could not diagnose
+    // its own dollars kill-switch firing in ONE `comis explain` call.
+    // END_REASON_MAP resolves finishReason:"spend_exceeded" → the assembler
+    // threads endReason:"spend_exceeded" onto the signals → this NAMED
+    // terminal-band verdict fires (same additive mold as the
+    // context_exhausted/output_starved rules).
     const r = rootCause(makeSignals({ endReason: "spend_exceeded" }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("spend_exceeded");
@@ -232,12 +232,12 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((s) => /observability\.spend\./.test(s))).toBe(true);
   });
 
-  it("OBS-3: a per-ROOT autonomy.budget abort names autonomy.budget.<limb> + the numbers, NOT observability.spend ceilings", () => {
+  it("a per-ROOT autonomy.budget abort names autonomy.budget.<limb> + the numbers, NOT observability.spend ceilings", () => {
     // The per-root meter (token / wall-clock / aggregateUsd) is a DIFFERENT knob tree
     // than the priced observability.spend ceiling — pointing the operator at
-    // observability.spend.* misdirects them (the SPEND-ABORT-OBS class). The terminal
-    // execution.aborted record now carries the tripped limb + numbers, so the verdict
-    // names the RIGHT knob in one `explain` call (openclaw-usecases 2026-06-25).
+    // observability.spend.* misdirects them. The terminal execution.aborted
+    // record carries the tripped limb + numbers, so the verdict names the
+    // RIGHT knob in one `explain` call.
     const r = rootCause(
       makeSignals({
         endReason: "spend_exceeded",
@@ -253,11 +253,11 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((s) => /autonomy\.budget\.tokens/.test(s))).toBe(true);
   });
 
-  it("WR-4: the X3-frozen misclassification verdict OUT-RANKS the spend_exceeded cause (the one signal above spend)", () => {
+  it("the frozen misclassification verdict OUT-RANKS the spend_exceeded cause (the one signal above spend)", () => {
     // A spend-killed session that ALSO carries the content_heuristic_misclassification
-    // signal still reports misclassification: spend_exceeded was promoted above the
-    // breaker/dependency/timeout tool-failure heuristics (LIVE v2.28 260621 — see
-    // test above) but stays BELOW the single X3-frozen misclassification verdict,
+    // signal still reports misclassification: spend_exceeded ranks above the
+    // breaker/dependency/timeout tool-failure heuristics (see test above)
+    // but stays BELOW the single frozen misclassification verdict,
     // the one specific Comis-defect indicator that keeps top billing.
     const r = rootCause(
       makeSignals({
@@ -270,7 +270,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.code).toBe("content_heuristic_misclassification");
   });
 
-  it("when the spend kill-switch aborts at admission it out-ranks chronic breaker noise (live v2.28 260621)", () => {
+  it("when the spend kill-switch aborts at admission it out-ranks chronic breaker noise", () => {
     // Live VPS incident: a long-lived chat-API session carried 8 chronic exec
     // failures from PRIOR turns (the per-tool breaker had tripped). It then hit
     // the configured spend ceiling, so the kill-switch aborted the turn at
@@ -281,7 +281,7 @@ describe("obs-explain-heuristics", () => {
     // FAILURES (~0 bytes, ~$0) cannot drive cumulative spend; the ceiling is
     // causally INDEPENDENT of them, so the kill-switch is the acute terminal
     // cause and must out-rank the breaker/dependency/timeout tool-failure
-    // heuristics (it still defers to the single X3-frozen misclassification
+    // heuristics (it still defers to the single frozen misclassification
     // verdict — the one specific Comis-defect indicator; see test above).
     const r = rootCause(
       makeSignals({
@@ -311,7 +311,7 @@ describe("obs-explain-heuristics", () => {
 
   it("a clean endReason (success) does NOT trip the named-cause heuristics", () => {
     // success / end_turn / a non-cause endReason must NOT produce a verdict from
-    // the QT2/QT3 rules (no false degradation cause on a healthy session).
+    // the terminal-state rules (no false degradation cause on a healthy session).
     expect(rootCause(makeSignals({ endReason: "success" }))).toBeNull();
     // endReason ALONE (no tool failures in the signals) names no cause — the
     // catch-all keys on actual failures, not the terminal label.
@@ -319,12 +319,12 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
-  // terminal_drive_opened_without_task — the unattended abandoned-drive case
-  // (live r3tdd/r3terse 2026-06-30): the agent opened a coding-CLI terminal
+  // terminal_drive_opened_without_task — the unattended abandoned-drive case,
+  // grounded in a live incident: the agent opened a coding-CLI terminal
   // drive (terminal_session_create) but never delivered a task
-  // (terminal_session_send_text), so the build never started. Pre-fix `explain`
-  // root-caused NOTHING (endReason:success → null verdict) — the 5-source
-  // hand-join that surfaced it is exactly the gap this verdict closes.
+  // (terminal_session_send_text), so the build never started. Without this
+  // verdict `explain` root-causes NOTHING (endReason:success → null verdict) —
+  // the 5-source hand-join that surfaced it is exactly the gap it closes.
   // ------------------------------------------------------------------------
 
   it("fires when terminal_session_create succeeded but no terminal_session_send_text (drive opened, never tasked)", () => {
@@ -344,8 +344,9 @@ describe("obs-explain-heuristics", () => {
   });
 
   it("OUT-RANKS the completed_with_tool_errors catch-all (a stray failure during the stall is incidental)", () => {
-    // r3terse: opened claude, never sent the task, and a `read` of a directory
-    // EISDIR'd. The no-task diagnosis is the root; the stray failure is noise.
+    // Live incident: the agent opened the coding CLI, never sent the task, and
+    // a `read` of a directory EISDIR'd. The no-task diagnosis is the root; the
+    // stray failure is noise.
     const r = rootCause(
       makeSignals({
         toolStats: {
@@ -379,7 +380,7 @@ describe("obs-explain-heuristics", () => {
     ).toBeNull();
   });
 
-  it("cites the backgrounding reason in the detail when the drive was promoted (DRIVE-02 bridge → signal)", () => {
+  it("cites the backgrounding reason in the detail when the drive was promoted to background", () => {
     const r = rootCause(
       makeSignals({
         toolStats: { terminal_session_create: { ok: 1, failed: 0 } },
@@ -392,13 +393,13 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
-  // terminal_drive_evicted — the idle/lifetime-reap case (EVICT-01, live
-  // webhook-claude-gsd-snake-20260702). A durable autonomous drive was
-  // idle-reaped by the terminal reaper; pre-fix that eviction was a daemon
-  // WARN only — `explain` couldn't see it, so a reaper-killed drive root-caused
-  // NOTHING. The observability completion of the PRODUCING-01 keep-alive fix:
+  // terminal_drive_evicted — the idle/lifetime-reap case, grounded in a live
+  // incident where a durable autonomous drive was idle-reaped by the terminal
+  // reaper. Without this verdict the eviction is a daemon WARN only —
+  // `explain` can't see it, so a reaper-killed drive root-causes NOTHING.
+  // The observability completion of the producing-drive keep-alive fix:
   // an idle-reap of a drive that HAD been producing is exactly the canary a
-  // PRODUCING-01 regression would trip, now a one-call verdict.
+  // keep-alive regression would trip, now a one-call verdict.
   // ------------------------------------------------------------------------
 
   it("fires on an idle eviction and names it terminal_drive_evicted", () => {
@@ -408,7 +409,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.detail).toMatch(/idle/);
   });
 
-  it("flags the ACUTE producing-drive idle-reap in the detail (the PRODUCING-01 regression canary)", () => {
+  it("flags the ACUTE producing-drive idle-reap in the detail (the keep-alive regression canary)", () => {
     const r = rootCause(
       makeSignals({
         // tasked (send_text succeeded) so the no-task verdict does NOT shadow this
@@ -450,7 +451,7 @@ describe("obs-explain-heuristics", () => {
   });
 
   it("a degraded session with tool failures and no named cause gets a catch-all tool-failure verdict", () => {
-    // Live C13 finding (2026-06-12): an induced 2-tool-failure session
+    // Live finding: an induced 2-tool-failure session
     // (memory_get + image_analyze, errorKind dependency, endReason
     // completed_with_tool_errors) fell through all 9 named rules to a NULL
     // verdict — comis explain captured the data but root-caused nothing.
@@ -480,13 +481,13 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
-  // RECALL-01: recall_miss verdict.
+  // The recall_miss verdict.
   // ------------------------------------------------------------------------
 
   const allMissRecall = { recalls: 2, zeroHits: 2, lastLanes: 3, lastFinalCount: 0, rerankerAvailable: false };
 
-  it("RECALL-01: a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
-    // Grounded in the v2.22 Hebrew / LM-3 runs where recall silently returned
+  it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
+    // Grounded in live Hebrew-language runs where recall silently returned
     // nothing and comis explain root-caused nothing.
     const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
     expect(r).not.toBeNull();
@@ -499,14 +500,14 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/trigram|non-Latin/i);
   });
 
-  it("RECALL-01: a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
+  it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
     // The agent simply didn't need memory. degraded=false must never name a cause.
     expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();
     // Defensive: degraded absent entirely is also benign.
     expect(rootCause(makeSignals({ recall: allMissRecall }))).toBeNull();
   });
 
-  it("RECALL-01: a degraded session where SOME recalls hit does not fire recall_miss", () => {
+  it("a degraded session where SOME recalls hit does not fire recall_miss", () => {
     const r = rootCause(
       makeSignals({
         endReason: "error",
@@ -517,7 +518,7 @@ describe("obs-explain-heuristics", () => {
     expect(r).toBeNull();
   });
 
-  it("RECALL-01: recall_miss yields to the tool-failure catch-all (mutually exclusive — failures present)", () => {
+  it("recall_miss yields to the tool-failure catch-all (mutually exclusive — failures present)", () => {
     // A degraded session with BOTH zero-hit recalls AND tool failures is a
     // tool-failure session; recall_miss requires failures.length===0 so the
     // catch-all wins and the operator is pointed at the failing tool.
@@ -577,7 +578,7 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
-  // OBS-02 (Phase 198): outcome_unresolved verdict — BENIGN, lowest priority
+  // The outcome_unresolved verdict — BENIGN, lowest priority
   // (Defer ≠ Retry). Fires on a finished trajectory whose learning shadow saw
   // the turn but resolved no outcome; ranks BELOW every acute tool-failure cause.
   // ------------------------------------------------------------------------
@@ -590,7 +591,7 @@ describe("obs-explain-heuristics", () => {
     synthesisAbstained: false,
   };
 
-  it("OBS-02: an unresolved learning signal with NO acute failure → outcome_unresolved", () => {
+  it("an unresolved learning signal with NO acute failure → outcome_unresolved", () => {
     const r = rootCause(makeSignals({ learning: UNRESOLVED_LEARNING }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("outcome_unresolved");
@@ -600,7 +601,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
   });
 
-  it("OBS-02: outcome_unresolved ranks BELOW an acute tool failure (Defer ≠ Retry)", () => {
+  it("outcome_unresolved ranks BELOW an acute tool failure (Defer ≠ Retry)", () => {
     // The SAME unresolved-learning signal, now with a real tool failure, must
     // report the upstream tool cause — the unresolved outcome is benign and
     // never masks an acute error.
@@ -618,7 +619,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.code).toBe("completed_with_tool_errors");
   });
 
-  it("OBS-02: a named acute cause (misclassification) out-ranks outcome_unresolved", () => {
+  it("a named acute cause (misclassification) out-ranks outcome_unresolved", () => {
     const r = rootCause(
       makeSignals({
         learning: UNRESOLVED_LEARNING,
@@ -630,7 +631,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.code).toBe("content_heuristic_misclassification");
   });
 
-  it("OBS-02: a RESOLVED learning outcome (outcomeResolved:true) names NO cause", () => {
+  it("a RESOLVED learning outcome (outcomeResolved:true) names NO cause", () => {
     // A resolved outcome (incl. an explicit `unknown` resolution would set
     // outcomeResolved per the assembler) is not a degradation — no verdict.
     const r = rootCause(
@@ -641,11 +642,11 @@ describe("obs-explain-heuristics", () => {
     expect(r).toBeNull();
   });
 
-  it("OBS-02: absent learning block names no cause (clean session)", () => {
+  it("an absent learning block names no cause (clean session)", () => {
     expect(rootCause(makeSignals())).toBeNull();
   });
 
-  it("OBS-02: the frozen 678/503 fixtures are UNCHANGED (they carry no learning block)", () => {
+  it("the frozen 678/503 fixtures are UNCHANGED (they carry no learning block)", () => {
     const r678 = rootCause(
       makeSignals({
         hasMisclassificationSignal: true,
@@ -670,7 +671,7 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
-  // OBS-02 (Phase 201, P2 skills): the two BENIGN procedural-skill verdicts —
+  // The two BENIGN procedural-skill verdicts —
   // synthesis_abstained_low_capability + learned_skill_failing. Both dead-last
   // (after the catch-all tool-failure rule); Defer ≠ Retry — an abstain never
   // ranks as an acute failure.
@@ -684,7 +685,7 @@ describe("obs-explain-heuristics", () => {
     synthesisAbstained: true,
   };
 
-  it("OBS-02: synthesisAbstained:true with no acute cause → synthesis_abstained_low_capability", () => {
+  it("synthesisAbstained:true with no acute cause → synthesis_abstained_low_capability", () => {
     const r = rootCause(makeSignals({ learning: ABSTAINED_LEARNING }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("synthesis_abstained_low_capability");
@@ -693,7 +694,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
   });
 
-  it("OBS-02: synthesis_abstained is BENIGN — it ranks BELOW an acute tool failure (Defer ≠ Retry)", () => {
+  it("synthesis_abstained is BENIGN — it ranks BELOW an acute tool failure (Defer ≠ Retry)", () => {
     const r = rootCause(
       makeSignals({
         learning: ABSTAINED_LEARNING,
@@ -706,7 +707,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.code).toBe("completed_with_tool_errors");
   });
 
-  it("OBS-02: skillFailures non-empty (no acute cause) → learned_skill_failing", () => {
+  it("skillFailures non-empty (no acute cause) → learned_skill_failing", () => {
     const r = rootCause(
       makeSignals({
         learning: { outcomeResolved: true, outcome: "corrected", sources: ["correction"], skillsUsed: ["flaky"], skillFailures: ["flaky"], synthesisAbstained: false },
@@ -717,14 +718,14 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/comis memory skills/);
   });
 
-  it("OBS-02: learned_skill_failing fires on a REPEATEDLY-failing procedure → its hint is now ACTIONABLE (demote is real, Phase 202)", () => {
+  it("learned_skill_failing fires on a REPEATEDLY-failing procedure with an ACTIONABLE demote hint", () => {
     // A procedure used across several failed/corrected trajectories (the
     // repeatedly-failing case): the verdict surfaces every implicated skill id.
-    // Phase 202 (Plan 05) makes the hint's "the procedure will demote on
-    // continued failure" promise actionable — the resolve-seam loop now demotes
-    // a corroborated+weakening surfaced skill (active→stale, then evict→archived),
-    // which drops it from the read-only surface. The verdict itself is UNCHANGED
-    // (still BENIGN, still counts/ids-only) — this asserts the actionable hint.
+    // The resolve-seam loop makes the hint's "the procedure will demote on
+    // continued failure" promise actionable — it demotes a corroborated+weakening
+    // surfaced skill (active→stale, then evict→archived), which drops it from
+    // the read-only surface. The verdict itself stays BENIGN and counts/ids-only
+    // — this asserts the actionable hint.
     const r = rootCause(
       makeSignals({
         learning: { outcomeResolved: true, outcome: "failure", sources: ["tool", "correction"], skillsUsed: ["flaky", "shaky"], skillFailures: ["flaky", "shaky"], synthesisAbstained: false },
@@ -736,11 +737,11 @@ describe("obs-explain-heuristics", () => {
     expect(r!.detail).toContain("flaky");
     expect(r!.detail).toContain("shaky");
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/comis memory skills/);
-    // The hint's demote promise (now fulfilled by Plan 05's resolve-seam loop).
+    // The hint's demote promise (fulfilled by the resolve-seam loop).
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/demote on continued failure/);
   });
 
-  it("OBS-02: learned_skill_failing ranks BELOW an acute tool failure", () => {
+  it("learned_skill_failing ranks BELOW an acute tool failure", () => {
     const r = rootCause(
       makeSignals({
         learning: { outcomeResolved: false, outcome: "failure", sources: ["tool"], skillsUsed: ["flaky"], skillFailures: ["flaky"], synthesisAbstained: false },
@@ -752,7 +753,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.code).toBe("completed_with_tool_errors");
   });
 
-  it("OBS-02: neither skill verdict fires on an absent learning block (no fixture regression)", () => {
+  it("neither skill verdict fires on an absent learning block (no fixture regression)", () => {
     expect(rootCause(makeSignals())).toBeNull();
     // A resolved, no-skill learning block fires NEITHER skill verdict.
     expect(
@@ -772,13 +773,13 @@ describe("obs-explain-heuristics", () => {
 });
 
 // ---------------------------------------------------------------------------
-// W3 (obs-llm-troubleshooting): budget-evidence-specific context_exhausted
-// verdict. The generic summarizer-speculation text actively misdirected the
-// live incident (the real cause was the small-class window cap + tool-schema
-// dominance — summarizerSpend would have done nothing).
+// Budget-evidence-specific context_exhausted verdict. The generic
+// summarizer-speculation text actively misdirected a live incident (the real
+// cause was the small-class window cap + tool-schema dominance —
+// summarizerSpend would have done nothing).
 // ---------------------------------------------------------------------------
 
-describe("context_exhausted with budget evidence (W3)", () => {
+describe("context_exhausted with budget evidence", () => {
   const BUDGET = {
     windowTokens: 32_000,
     rawContextWindowTokens: 131_072,
@@ -821,7 +822,7 @@ describe("context_exhausted with budget evidence (W3)", () => {
     expect(r!.suggestedNextSteps.join(" | ")).not.toContain("effectiveContextCapSmall");
   });
 
-  it("falls back to the generic terminal verdict when no budget evidence exists (pre-W2 session)", () => {
+  it("falls back to the generic terminal verdict when no budget evidence exists (no contextBudget signal)", () => {
     const r = rootCause(makeSignals({ endReason: "context_exhausted" }));
     expect(r!.code).toBe("context_exhausted");
     expect(r!.detail).toContain("context exhausted");
@@ -830,14 +831,14 @@ describe("context_exhausted with budget evidence (W3)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// KNOB-02 (Phase 176): served-bound context_exhausted verdict. The cap branch
-// templates `contextEngine.budget.${windowCapSource}` — for the new "served"
-// member that renders the NONSENSE knob `contextEngine.budget.served` (it is
-// not a config key; the real knobs are Ollama's OLLAMA_CONTEXT_LENGTH env /
-// Modelfile PARAMETER num_ctx). Both template sites must branch by source.
+// Served-bound context_exhausted verdict. The cap branch templates
+// `contextEngine.budget.${windowCapSource}` — for the "served" member that
+// renders the NONSENSE knob `contextEngine.budget.served` (it is not a config
+// key; the real knobs are Ollama's OLLAMA_CONTEXT_LENGTH env / Modelfile
+// PARAMETER num_ctx). Both template sites must branch by source.
 // ---------------------------------------------------------------------------
 
-describe("context_exhausted with served-bound budget evidence (KNOB-02)", () => {
+describe("context_exhausted with served-bound budget evidence", () => {
   const SERVED_BUDGET = {
     windowTokens: 8_192,
     rawContextWindowTokens: 131_072,
@@ -851,7 +852,7 @@ describe("context_exhausted with served-bound budget evidence (KNOB-02)", () => 
     verdict: "exhausted" as const,
   };
 
-  it("KNOB-02-23: a served-bound verdict names the Ollama knobs + the configured number and NEVER renders contextEngine.budget.served", () => {
+  it("a served-bound verdict names the Ollama knobs + the configured number and NEVER renders contextEngine.budget.served", () => {
     const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: SERVED_BUDGET }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("context_exhausted");
@@ -866,8 +867,8 @@ describe("context_exhausted with served-bound budget evidence (KNOB-02)", () => 
     expect(steps).not.toMatch(/contextEngine\.budget\.served/);
   });
 
-  it("KNOB-02-24: the effectiveContextCapSmall verdict wording is byte-identical to pre-patch (cap branch untouched)", () => {
-    // The frozen W3 fixture — pins the EXACT pre-patch strings so the served
+  it("the effectiveContextCapSmall verdict wording is pinned byte-for-byte (served branch cannot perturb it)", () => {
+    // The frozen cap-branch fixture — pins the EXACT strings so the served
     // branch cannot perturb the cap-knob wording.
     const CAP_BUDGET = {
       windowTokens: 32_000,
@@ -892,12 +893,12 @@ describe("context_exhausted with served-bound budget evidence (KNOB-02)", () => 
     ]);
   });
 
-  it("WR-01: a capabilityClass-bound verdict names the pin lever and NEVER the inert budget knob nor a templated contextEngine.budget.capabilityClass", () => {
+  it("a capabilityClass-bound verdict names the pin lever and NEVER the inert budget knob nor a templated contextEngine.budget.capabilityClass", () => {
     // The executor's DEFAULT_EFFECTIVE_CAP_BY_CLASS cap (from the operator's
     // providers.entries.<id>.capabilities.capabilityClass pin) bound the window
     // upstream — raising contextEngine.budget.effectiveContextCapSmall (or
-    // setting 0) changes NOTHING on this branch; suggesting it is the exact
-    // dead-knob misdirection this phase kills.
+    // setting 0) changes NOTHING on this branch; suggesting it is exactly the
+    // dead-knob misdirection this verdict exists to prevent.
     const PIN_BUDGET = {
       windowTokens: 32_000,
       rawContextWindowTokens: 131_072,
@@ -930,16 +931,16 @@ describe("context_exhausted with served-bound budget evidence (KNOB-02)", () => 
 });
 
 // ---------------------------------------------------------------------------
-// GBNF-02 (Phase 175): tool_schema_unsupported — an acute, deterministic
-// provider-schema rejection (grammar-compile/unmarshal 400). Placement is the
-// ordering contract: AFTER the two X3-mandated codes (their frozen 678/503
-// fixtures carry no schema-rejection records, so they cannot regress), BEFORE
-// the insurance codes, and out-ranking the terminal-state explainers. Fires
-// only when the one-shot strip-retry did NOT recover — a recovered repair is
-// evidence, not a verdict.
+// tool_schema_unsupported — an acute, deterministic provider-schema rejection
+// (grammar-compile/unmarshal 400). Placement is the ordering contract: AFTER
+// the two frozen-fixture codes (the frozen 678/503 fixtures carry no
+// schema-rejection records, so they cannot regress), BEFORE the insurance
+// codes, and out-ranking the terminal-state explainers. Fires only when the
+// one-shot strip-retry did NOT recover — a recovered repair is evidence, not
+// a verdict.
 // ---------------------------------------------------------------------------
 
-describe("tool_schema_unsupported (GBNF-02)", () => {
+describe("tool_schema_unsupported", () => {
   const UNRECOVERED = {
     toolNames: ["schedule_task"],
     strippedKeywords: ["pattern", "format"],
@@ -968,13 +969,13 @@ describe("tool_schema_unsupported (GBNF-02)", () => {
     expect(r!.detail).toContain("nothing strippable");
   });
 
-  // WR-05 (175-REVIEW): gate-closed and nothing-to-strip terminals used to
+  // Gate-closed and nothing-to-strip terminals used to
   // emit indistinguishable payloads — with last-record-wins, a session that
   // healed once and then hit the gate produced a verdict claiming "nothing
   // strippable so no retry was attempted" when stripping WAS performed and a
   // retry WAS attempted earlier in the session. The reason discriminator
   // branches the detail.
-  it("WR-05: reason gate_closed says the strip-retry was already attempted earlier this session — never 'nothing strippable'", () => {
+  it("reason gate_closed says the strip-retry was already attempted earlier this session — never 'nothing strippable'", () => {
     const r = rootCause(
       makeSignals({
         toolSchemaUnsupported: {
@@ -992,7 +993,7 @@ describe("tool_schema_unsupported (GBNF-02)", () => {
     expect(r!.detail).not.toContain("nothing strippable");
   });
 
-  it("WR-05: reason nothing_to_strip keeps the nothing-strippable explanation", () => {
+  it("reason nothing_to_strip keeps the nothing-strippable explanation", () => {
     const r = rootCause(
       makeSignals({
         toolSchemaUnsupported: {
@@ -1008,7 +1009,7 @@ describe("tool_schema_unsupported (GBNF-02)", () => {
     expect(r!.detail).toContain("nothing strippable");
   });
 
-  it("WR-05: an absent reason (historical pre-WR-05 record) falls back to the retried-based wording", () => {
+  it("an absent reason discriminator falls back to the retried-based wording", () => {
     const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, retried: false } }));
     expect(r).not.toBeNull();
     expect(r!.detail).toContain("nothing strippable");
@@ -1016,7 +1017,7 @@ describe("tool_schema_unsupported (GBNF-02)", () => {
     expect(retriedForm!.detail).toContain("strip-pattern/format-retry");
   });
 
-  it("PRIORITY: the misclassification signal out-ranks tool_schema_unsupported (below X3 code #1)", () => {
+  it("PRIORITY: the misclassification signal out-ranks tool_schema_unsupported (frozen code #1 stays first)", () => {
     const r = rootCause(
       makeSignals({
         toolSchemaUnsupported: UNRECOVERED,
@@ -1028,7 +1029,7 @@ describe("tool_schema_unsupported (GBNF-02)", () => {
     expect(r!.code).toBe("content_heuristic_misclassification");
   });
 
-  it("PRIORITY: the breaker rule out-ranks tool_schema_unsupported (below X3 code #2)", () => {
+  it("PRIORITY: the breaker rule out-ranks tool_schema_unsupported (frozen code #2 stays ahead)", () => {
     const r = rootCause(
       makeSignals({
         toolSchemaUnsupported: UNRECOVERED,
@@ -1078,17 +1079,17 @@ describe("tool_schema_unsupported (GBNF-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LAT-04 (Phase 177): prompt_timeout — the NAMED terminal latency cause, keyed
-// on endReason "timeout" (alive since the 177-04 END_REASON_MAP entry). Pre-
-// patch, a timeout-heavy session with clean tools got NO verdict at all (rule
-// 6 provider_timeout requires a TOOL failure — research Critical Finding 7
-// point 6); the terminal-band rule closes exactly that gap. Placement: BELOW
-// every tool-failure cause (chronic-vs-acute ordering, T-177-19); the frozen
-// 678/503 fixtures carry no prompt_timeout records and no endReason "timeout",
-// so they cannot regress (the GBNF-02 rule-3 argument).
+// prompt_timeout — the NAMED terminal latency cause, keyed on endReason
+// "timeout" (resolved via the END_REASON_MAP entry). Without it, a
+// timeout-heavy session with clean tools gets NO verdict at all (rule
+// 6 provider_timeout requires a TOOL failure); the terminal-band rule closes
+// exactly that gap. Placement: BELOW every tool-failure cause
+// (chronic-vs-acute ordering); the frozen 678/503 fixtures carry no
+// prompt_timeout records and no endReason "timeout", so they cannot regress
+// (the same no-regression argument as tool_schema_unsupported).
 // ---------------------------------------------------------------------------
 
-describe("prompt_timeout terminal verdict (LAT-04)", () => {
+describe("prompt_timeout terminal verdict", () => {
   const STALL_TIMEOUT = {
     timeoutMs: 180_000,
     durationMs: 195_000,
@@ -1099,7 +1100,7 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     makespanMs: 1_800_000,
   };
 
-  it("LAT-04-O-6: the stall verdict names the budget, the elapsed time, and the binding knob with the ACTUAL numbers (the ROADMAP-quoted shape)", () => {
+  it("the stall verdict names the budget, the elapsed time, and the binding knob with the ACTUAL numbers", () => {
     const r = rootCause(
       makeSignals({ endReason: "timeout", agentId: "my-agent", promptTimeout: STALL_TIMEOUT }),
     );
@@ -1114,7 +1115,7 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
   });
 
-  it("LAT-04-O-7: the makespan verdict names the ceiling and stallCeilingMultiplier (streaming runaway — never a stall framing)", () => {
+  it("the makespan verdict names the ceiling and stallCeilingMultiplier (streaming runaway — never a stall framing)", () => {
     const r = rootCause(
       makeSignals({
         endReason: "timeout",
@@ -1137,14 +1138,14 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     expect(r!.suggestedNextSteps.join("\n")).toMatch(/stallCeilingMultiplier/);
   });
 
-  it("177-REVIEW WR-01: a terminal whole-turn retry kill (limit ABSENT) renders retry framing + the retryPromptTimeoutMs knob — never the stall framing or the stall knob", () => {
+  it("a terminal whole-turn retry kill (limit ABSENT) renders retry framing + the retryPromptTimeoutMs knob — never the stall framing or the stall knob", () => {
     // The terminal record is a rotation/fallback/short-retry kill: 60_000ms
     // whole-turn window, no stallBudgetMs, limit undefined ('LAST record
     // wins' makes the retry kill terminal after a primary stall-kill). The
-    // row deliberately carries the OLD wrong-knob bindingKnob shape that
-    // pre-WR-01 emit sites wrote — the branch must not echo it: the lever
-    // for a whole-turn retry kill is retryPromptTimeoutMs (the same branch
-    // the agent-side classify hint takes — LAT-01-H-5).
+    // row deliberately carries a wrong-knob bindingKnob value — the branch
+    // must not echo it: the lever for a whole-turn retry kill is
+    // retryPromptTimeoutMs (the same branch the agent-side classify hint
+    // takes).
     const r = rootCause(
       makeSignals({
         endReason: "timeout",
@@ -1159,10 +1160,10 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     );
     expect(r).not.toBeNull();
     expect(r!.code).toBe("prompt_timeout");
-    // Pre-patch: 'stall budget 60000ms exceeded ... with no stream/tool
-    // activity' — wrong framing (not a stall kill), wrong knob (the lever is
-    // retryPromptTimeoutMs), the 60000 retry value misattributed to the
-    // 180000 promptTimeoutMs knob.
+    // The wrong output would be 'stall budget 60000ms exceeded ... with no
+    // stream/tool activity' — wrong framing (not a stall kill), wrong knob
+    // (the lever is retryPromptTimeoutMs), the 60000 retry value
+    // misattributed to the 180000 promptTimeoutMs knob.
     expect(r!.detail).toMatch(/whole-turn retry timeout 60000ms/);
     expect(r!.detail).toMatch(/241000ms/);
     // The stall FRAMING ("stall budget Xms exceeded ... no stream/tool
@@ -1177,7 +1178,7 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     expect(r!.suggestedNextSteps).toContain("obs.explain depth=full");
   });
 
-  it("LAT-04-O-8: a pre-extension timeout session (no enriched signal) still gets the verdict with a generic knob suggestion and NO invented numbers", () => {
+  it("a timeout session with no enriched signal still gets the verdict with a generic knob suggestion and NO invented numbers", () => {
     const r = rootCause(makeSignals({ endReason: "timeout" }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("prompt_timeout");
@@ -1187,10 +1188,10 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     expect(r!.suggestedNextSteps[0]).not.toMatch(/\d/);
   });
 
-  it("LAT-04-O-9: a TOOL timeout failure out-ranks the terminal rule (provider_timeout wins — insurance-band ordering)", () => {
-    // Guard pin (green pre-patch by design): the terminal rule sits BELOW the
-    // tool-failure rules; an acute tool-failure cause is upstream of the
-    // terminal state (T-177-19 — chronic-vs-acute misattribution guard).
+  it("a TOOL timeout failure out-ranks the terminal rule (provider_timeout wins — insurance-band ordering)", () => {
+    // Guard pin: the terminal rule sits BELOW the tool-failure rules; an
+    // acute tool-failure cause is upstream of the terminal state
+    // (chronic-vs-acute misattribution guard).
     const r = rootCause(
       makeSignals({
         endReason: "timeout",
@@ -1212,7 +1213,7 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     expect(r!.code).toBe("provider_timeout");
   });
 
-  it("LAT-04-O-10: a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (pre-patch: NO verdict — Critical Finding 7 point 6)", () => {
+  it("a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (no tool failure required)", () => {
     const r = rootCause(
       makeSignals({
         endReason: "timeout",
@@ -1226,8 +1227,8 @@ describe("prompt_timeout terminal verdict (LAT-04)", () => {
     expect(r!.code).toBe("prompt_timeout");
   });
 
-  it("LAT-04-O-11: the frozen 678/503 fixture verdicts are UNCHANGED (no prompt_timeout records, no endReason timeout)", () => {
-    // The GBNF-02 rule-3 no-regression argument, re-pinned for the new rule.
+  it("the frozen 678/503 fixture verdicts are UNCHANGED (no prompt_timeout records, no endReason timeout)", () => {
+    // The frozen-fixture no-regression argument, re-pinned for this rule.
     const r678 = rootCause(
       makeSignals({
         hasMisclassificationSignal: true,

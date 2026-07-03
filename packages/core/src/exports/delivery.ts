@@ -7,7 +7,8 @@
 //
 // The Markdown IR pipeline that underlies formatForChannel and chunkForDelivery
 // (markdown-ir, ir-renderer, ir-chunker, markdown-tables, sanitize-for-plain-text,
-// table-converter, telegram-file-ref-guard) lives alongside as a Rule 3 fix.
+// table-converter, telegram-file-ref-guard) lives alongside, keeping the
+// `core → channels` dependency one-way.
 // Those internals are intentionally NOT exported from this aggregator: the
 // public surface is limited to the names below plus the telegram-file-ref-guard
 // symbols the daemon needs at bootstrap.

@@ -68,9 +68,9 @@ const CREDENTIAL_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: URL_PASSWORD, replacement: "://$1:[REDACTED]@" },
   // Discord bot tokens: M/N prefix, three dot-separated segments
   { pattern: DISCORD_BOT_TOKEN, replacement: "[REDACTED_DISCORD_TOKEN]" },
-  // FAL API keys: <uuid-or-token>:<24+ hex> (CR-01, Phase 192). Before the generic
-  // hex pass so the colon-joined key is replaced as one unit; the 24-hex-tail floor
-  // keeps ordinary host:port / key:value prose out.
+  // FAL API keys: <uuid-or-token>:<24+ hex>. Before the generic hex pass so the
+  // colon-joined key is replaced as one unit; the 24-hex-tail floor keeps
+  // ordinary host:port / key:value prose out.
   { pattern: FAL_KEY, replacement: "[REDACTED_FAL]" },
   // Generic hex secrets (40+ chars of hex, commonly git tokens, etc.)
   { pattern: HEX_SECRET_LONG, replacement: "[REDACTED_HEX]" },
@@ -115,16 +115,15 @@ export function sanitizeLogString(input: string): string {
 /**
  * Redact a free-text error/diagnostic string: strip URLs (`[URL]`), the bare
  * `Authorization:`/`Bearer` credential-scheme markers, and any long token
- * (`[REDACTED]`). The single source of truth for the SEC-01 redaction regex —
+ * (`[REDACTED]`). The single source of truth for this redaction regex —
  * reused by `sanitizeApiError` (adapter API-error bodies in `@comis/skills`),
  * the inbound voice handler's structured-log lines, AND the voice-OUT pipeline's
  * WARN branches in `@comis/channels`.
  *
- * Relocated here from `@comis/skills` (media-adapter-shared.ts) in Phase 197 so
- * BOTH `@comis/skills` and `@comis/channels` resolve ONE definition: channels
- * deliberately does NOT import skills (structural-typing boundary), so the pure
- * primitive lives DOWN in core where both packages already depend. The redaction
- * SEMANTICS are unchanged from the original — only the location moved.
+ * It lives here so BOTH `@comis/skills` and `@comis/channels` resolve ONE
+ * definition: channels deliberately does NOT import skills (structural-typing
+ * boundary), so the pure primitive lives DOWN in core where both packages
+ * already depend.
  *
  * This is intentionally narrower than {@link sanitizeLogString} (which matches a
  * catalog of known credential FORMATS): `redactErrorMessage` is the coarser
@@ -138,20 +137,20 @@ export function redactErrorMessage(body: string): string {
   return (
     body
       .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
-      // WR-03: redact a credential-scheme marker TOGETHER with the long token it
+      // Redact a credential-scheme marker TOGETHER with the long token it
       // carries, as ONE `[REDACTED]` — and ONLY when a >=20-char credential token
       // actually follows. The optional `Authorization:` / `Bearer ` prefix is
       // part of the match but the `{20,}` token is REQUIRED, so the prefix is
       // consumed only alongside a real credential (no orphaned scheme word, no
       // double-space), while a bare "bearer"/"authorization" used as PROSE — or a
-      // scheme followed by a sub-20-char value — is left verbatim (the prior
-      // non-anchored deletion mangled such prose). Single character class with a
+      // scheme followed by a sub-20-char value — is left verbatim (a non-anchored
+      // deletion would mangle such prose). Single character class with a
       // single `+`/`{20,}` quantifier — linear, no catastrophic backtracking.
       // eslint-disable-next-line no-restricted-syntax, security/detect-unsafe-regex -- media adapter API-error sanitization (not the Pino censor literal); the optional prefixes precede a single character class with one bounded quantifier — no nested/overlapping quantifier, so it is linear-time (safe-regex false positive)
       .replace(/\b(?:Authorization:\s*)?(?:Bearer\s+)?[A-Za-z0-9_-]{20,}/gi, "[REDACTED]")
       // Defense-in-depth: any standalone long token NOT preceded by a scheme
-      // marker (so untouched above) is still redacted — preserves the prior
-      // long-token floor and the no-opaque-leak guarantee.
+      // marker (so untouched above) is still redacted — upholds the long-token
+      // floor and the no-opaque-leak guarantee.
       // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (not the Pino censor literal)
       .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
       // Collapse any residual run of internal whitespace a redaction may have

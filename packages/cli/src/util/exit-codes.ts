@@ -2,8 +2,8 @@
 /**
  * CLI exit-code constants — single source of truth.
  *
- * Replaces scattered inline `process.exit(N)` literals.
- *   - 1: general failure (many sites — kept as-is, default for unknown errors)
+ * Canonical meanings for `process.exit(N)` codes:
+ *   - 1: general failure (default for unknown errors; many sites still exit 1 inline)
  *   - 2: validation/usage error (e.g., commands/auth.ts:247,259,265,280)
  *   - 3: config error (commands/config.ts:457,479,484)
  *   - 4: daemon required but unreachable
@@ -19,7 +19,7 @@ export const ExitCode = {
   ConfigError: 3,
   /** Daemon required but unreachable. */
   DaemonRequired: 4,
-  /** Daemon self-restart signal (carry-forward; do not reassign). */
+  /** Daemon SIGUSR2 self-restart signal — the installed systemd unit pins RestartForceExitStatus=42; do not reassign. */
   DaemonRestartSignal: 42,
 } as const;
 

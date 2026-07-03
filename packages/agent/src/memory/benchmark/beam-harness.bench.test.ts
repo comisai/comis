@@ -7,8 +7,9 @@
  * text reproduced from the seed), ingests every generated doc into a REAL fresh
  * `SqliteMemoryAdapter`, runs the LIVE `createMemoryRecall` pipeline per planted
  * needle, and scores per-ability recall@k by REUSING the pure {@link scoreBeam}
- * (which reuses `scoreRanking`). The number it prints is the BEAM scale signal that
- * feeds the gap report's open decision on FORGET inclusion.
+ * (which reuses `scoreRanking`). The number it prints is the BEAM scale signal —
+ * the measured footprint/recall pressure that tells whether FORGET (footprint
+ * reduction at scale) is worth building.
  *
  * KEYLESS: recall@k needs no answer/judge model, so the gate is `COMIS_BENCH` ONLY
  * (no `COMIS_BENCH_ANSWER_*` / `COMIS_BENCH_JUDGE_*` lane). A default `pnpm test`
@@ -28,7 +29,7 @@
  * it consumes (beam-generator.ts, beam-scorer.ts, suite-report.ts) import ONLY
  * @comis/core types. Mirrors the blessed precedent retrieval-harness.bench.test.ts.
  *
- * DUPLICATED INGEST WIRING (intentional, RESEARCH Anti-Pattern): makeBenchConfig /
+ * DUPLICATED INGEST WIRING (intentional): makeBenchConfig /
  * BENCH_SESSION_KEY / resolveReportDir are DUPLICATED from the retrieval/QA harnesses
  * rather than factored into a shared non-`.test.ts` helper — a shared helper importing
  * @comis/memory WOULD trip the cut.

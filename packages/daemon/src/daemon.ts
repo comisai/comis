@@ -116,7 +116,8 @@ import {
   type SessionTrackerRegistry,
 } from "@comis/agent";
 // resolveAgentMainProvider is the handler-side accessor that delegates to the
-// EXACT completion-path resolveAgentModel (I4 lockstep / RES-01). Imported
+// EXACT completion-path resolveAgentModel (so both surfaces resolve the same
+// model, never a parallel re-implementation). Imported
 // directly (not via the wiring barrel) to avoid widening the barrel surface.
 import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
 import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
@@ -124,7 +125,7 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry } from "@comis/skills/tools";
-import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // Phase 211 ENDPOINT-01/03 + JAIL-03
+import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
@@ -220,7 +221,7 @@ export function applyInspectDefaultsForLogging(
 }
 
 // Preflight native-dep doctor — extracted to wiring/preflight-doctor.ts to keep
-// this composition root ≤3000 lines (v2.25 audio wiring pushed it over). Imported
+// this composition root ≤3000 lines. Imported
 // for the boot call site below AND re-exported so `runPreflightDoctor` stays on
 // daemon.ts's public surface (daemon.test.ts imports it from "./daemon.js").
 export { runPreflightDoctor };
@@ -433,7 +434,7 @@ function buildChannelManagerDeps(deps: {
     onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
     executionPlanPorts, oauthManagers,
   } = agents;
-  // LEARN-01: per-agent OAuth access-token resolver (auto-refreshing) so the
+  // Per-agent OAuth access-token resolver (auto-refreshing) so the
   // background memory/learning cron jobs run on an OAuth main provider
   // (openai-codex) instead of skipping for "no API key". Wraps the SAME
   // OAuthTokenManager.getApiKey the interactive + media-bundle paths use.
@@ -448,7 +449,7 @@ function buildChannelManagerDeps(deps: {
     });
     return r.ok ? r.value : undefined;
   };
-  // Complete three-layer forget for channel /new + /reset (live 2026-06-11).
+  // Complete three-layer forget for channel /new + /reset.
   const channelConversationReset = createConversationReset({ lcdStore: agents.lcdStore, piSessionAdapters, tenantId: container.config.tenantId, logger });
   // Build exportSessionBundle DI closure for the /export-trajectory slash
   // command. Uses exportTrajectoryBundle from @comis/observability (same
@@ -471,14 +472,14 @@ function buildChannelManagerDeps(deps: {
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
-    resolveAccessToken: resolveCronAccessToken, // LEARN-01: OAuth-provider background jobs
+    resolveAccessToken: resolveCronAccessToken, // OAuth-provider background jobs
 
     // the orchestrator-facing redacted ActivityStream (setupObservability)
     // injected into the inbound coordinatorFactory as its activityStreamPort.
     // the process-singleton circuit breaker shared across every coordinator.
     activityStream, activityBreaker,
     // the DEFAULT agent's shared ExecutionPlanHolder reference
-    // (Pitfall 1 lock — same reference as PiExecutorDeps.executionPlanHolder +
+    // (MUST be the same reference as PiExecutorDeps.executionPlanHolder +
     // AcpServerDeps.executionPlanPort, NOT a parallel createExecutionPlanHolder).
     // Multi-agent note: only the default agent's plan-state reaches chat in this
     // wave; non-default-agent plan updates are filtered out per-turn in the
@@ -514,19 +515,14 @@ function buildChannelManagerDeps(deps: {
     // also rides the setupAgents read path (the 5th causal recall lane).
     causalStore,
     // the consolidation store (built in setup-memory on the shared db).
-    // Orphaned in v2.31 Phase 225-05 (the runMemoryConsolidation job + the
-    // __MEMORY_CONSOLIDATION__ cron were deleted); the consolidationStore port + its
-    // memories table are retired in Phase 226. Still threaded (its writer is gone, no live consumer).
+    // It has no live writer or cron consumer; still threaded on the shared chain.
     consolidationStore,
     // memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_LIFECYCLE__
-    // sentinel (KEYLESS: the DORMANT lifecycle sweep). (The __SOCIAL_MODELING__ sentinel + its
-    // relationshipStore were DELETED in Phase 226-04 with the rest of the social-modeling subsystem.
-    // The __MEMORY_TRIPLE_EXTRACTION__ + __USEFULNESS_JUDGE__ sentinels were deleted in Phase 226
-    // SIMPLIFY-03 — neither tripleStore nor usefulnessStore rides the cron chain anymore: tripleStore
-    // feeds ONLY the graphSpread recall lane via setupAgents (below), the FORGET-02 recordUsage write
-    // is in setup-learning.ts. The __MEMORY_REASONING__ / __USER_REPRESENTATION__ sentinels + the
-    // __ONLINE_TUNING__ bandit were deleted in Phase 225 / 224.)
-    // outcomeStore + learnedSkillStore ride the SAME chain → the __REFLECT__ sentinel (v2.31 Reflection): the daemon assembles the closed-graph reflection bundle from them + the trusted-origin LCD source inside registerCronEventListeners. (The embedder is NO LONGER threaded here — the reflection job groups by topicKey, no clustering embeddings; the dead procedural-synthesis embedding wiring was deleted in Phase 223 Plan 05.)
+    // sentinel (KEYLESS: the DORMANT lifecycle sweep). Neither tripleStore nor
+    // usefulnessStore rides the cron chain: tripleStore feeds ONLY the graphSpread
+    // recall lane via setupAgents (below); the recall recordUsage write lives in
+    // setup-learning.ts.
+    // outcomeStore + learnedSkillStore ride the SAME chain → the __REFLECT__ sentinel: the daemon assembles the closed-graph reflection bundle from them + the trusted-origin LCD source inside registerCronEventListeners. (The embedder is NOT threaded here — the reflection job groups by topicKey, no clustering embeddings.)
     memoryLifecycleStore, outcomeStore, learnedSkillStore, memoryApi,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
@@ -547,9 +543,9 @@ function buildChannelManagerDeps(deps: {
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,
-    // REACT-04 (206-04): the outbound → trajectory binding (same callback the
+    // The outbound → trajectory binding (same callback the
     // delivery-queue drain receives) so the DIRECT ack path in createDeliveryService
-    // binds the primary inbound-reply id → trajectory (the 206-03 live-finding fix).
+    // also binds the primary inbound-reply id → trajectory.
     recordOutboundMessage,
     destroyConversation: channelConversationReset.destroyConversationCompletely,
     lcdStore: agents.lcdStore, contextBrowse: agents.contextBrowse, // review session source (DAG transcripts)
@@ -574,7 +570,7 @@ function buildGraphCoordinatorDeps(deps: {
     assembleToolsForAgent: ReturnType<typeof setupTools>["assembleToolsForAgent"];
     nodeTypeRegistry: ReturnType<typeof createNodeTypeRegistry>;
   };
-  // Phase 216 Plan 12 (HIGH-3/DUR-01): Plan 07's durable store → GraphCoordinatorDeps.durableRuns (Plan 11) so the coordinator checkpoints node state at each markNode* boundary (off ⇒ no-op).
+  // The durable run store → GraphCoordinatorDeps.durableRuns so the coordinator checkpoints node state at each markNode* boundary (off ⇒ no-op).
   durableRunStore?: import("@comis/core").DurableRunPort;
 }): Parameters<typeof createGraphCoordinator>[0] {
   const { agents, channels } = deps;
@@ -598,7 +594,7 @@ function buildGraphCoordinatorDeps(deps: {
       tools: [] as Array<{ name: string; description?: string; inputSchema?: unknown }>,
     };
   })();
-  // F3: capability-gated graph concurrency — small/nano → 2, frontier/mid → 4.
+  // Capability-gated graph concurrency — small/nano → 2, frontier/mid → 4.
   // Reads the default agent's model+provider — the same values the preWarm block uses,
   // but declared here in the outer function scope (not inside the IIFE above).
   // Explicit `graphMaxConcurrency` config always wins via the ?? chain below.
@@ -620,7 +616,7 @@ function buildGraphCoordinatorDeps(deps: {
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
     maxResultLength: a2aSec.graphMaxResultLength as number | undefined, maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
-    // BUDGET-02/03 (D3): operator default per-node token-budget inherit-share source.
+    // Operator default per-node token-budget inherit-share source.
     subAgentTokenBudget: (a2aSec.tokenBudget as number | null | undefined) ?? null,
     logger: agentLogger?.child?.({ submodule: "graph-coordinator" }),
     dataDir: container.config.dataDir || dataDir,
@@ -634,8 +630,8 @@ function buildGraphCoordinatorDeps(deps: {
     touchParentSession: channels.commandQueue
       ? (sessionKey: string) => channels.commandQueue!.touchLane(sessionKey)
       : undefined,
-    ...(agents.resolveRootRunId ? { resolveRootRunId: agents.resolveRootRunId } : {}), // Phase 213 CR-01: graph nodes share one tree root (killByRootRun reach).
-    ...(deps.durableRunStore ? { durableRuns: deps.durableRunStore } : {}), // Phase 216 HIGH-3/DUR-01: node-boundary DAG checkpointing → the live durable store (off ⇒ no-op).
+    ...(agents.resolveRootRunId ? { resolveRootRunId: agents.resolveRootRunId } : {}), // graph nodes share one tree root (killByRootRun reach).
+    ...(deps.durableRunStore ? { durableRuns: deps.durableRunStore } : {}), // node-boundary DAG checkpointing → the live durable store (off ⇒ no-op).
     preWarm,
   };
 }
@@ -650,11 +646,11 @@ async function wirePostChannelsLifecycle(deps: {
   channelAdaptersRef: NonNullable<BootContext["channelAdaptersRef"]>;
   drainAndStartDeliveryPrune: NonNullable<BootContext["drainAndStartDeliveryPrune"]>;
   shutdownDeliveryQueue: NonNullable<BootContext["shutdownDeliveryQueue"]>;
-  /** JOB-03 (189): start + resume the background video poller. Runs AFTER the
+  /** Start + resume the background video poller. Runs AFTER the
    *  channelAdaptersRef.set loop below — the channel registry is now populated, so
    *  the poller's announce-on-complete reaches a LIVE adapter outside a turn. */
   startAndResumeVideoPoller?: () => Promise<void>;
-  /** Phase 216: durable boot recovery + watchdog start. Runs AFTER channels (the engine's reconcile/replay need LIVE adapters) — the boot-order constraint, like the video poller. */
+  /** Durable boot recovery + watchdog start. Runs AFTER channels (the engine's reconcile/replay need LIVE adapters) — the boot-order constraint, like the video poller. */
   startAndResumeDurable?: () => Promise<void>;
   startMirrorPrune: BootContext["startMirrorPrune"];
   shutdownMirror: BootContext["shutdownMirror"];
@@ -668,12 +664,12 @@ async function wirePostChannelsLifecycle(deps: {
     outputRetentionConfig } = deps;
   for (const [type, adapter] of adaptersByType) channelAdaptersRef.set(type, adapter);
   await drainAndStartDeliveryPrune();
-  // JOB-03 (189): the channel registry is now populated (channelAdaptersRef was
+  // The channel registry is now populated (channelAdaptersRef was
   // just filled by reference) — start + resume the video poller so a pending
   // render's finished clip announces to the recorded channel outside any turn,
   // exactly like the delivery queue's drainAndStart above.
   await startAndResumeVideoPoller?.();
-  // Phase 216: run the durable resume engine AFTER the video poller — i.e. after the
+  // Run the durable resume engine AFTER the video poller — i.e. after the
   // channel registry is populated — so its reconcile (reconcileSend) + replay resolve
   // a LIVE adapter (a crashed-mid-send row is otherwise mis-resolved). Boot-order.
   await startAndResumeDurable?.();
@@ -778,7 +774,7 @@ function createHotRemove(deps: {
     const startMs = systemNowMs();
     // Warn if agent may have active executions.
     // ActiveRunRegistry is keyed by sessionKey, not agentId. Since hot-remove is
-    // rare and the registry is small, a coarse size > 0 check is sufficient for v1.
+    // rare and the registry is small, a coarse size > 0 check is sufficient here.
     if (activeRunRegistry.size > 0) {
       daemonLogger.warn(
         { agentId, activeRuns: activeRunRegistry.size,
@@ -819,15 +815,15 @@ function buildRpcDispatchDeps(deps: {
   defaultConfigPaths: string[];
 }): import("./api/rpc-dispatch.js").ApiDispatchDeps {
   const { channels: c, gateway: g, startupStartMs, defaultConfigPaths } = deps;
-  // RES-01 keystone (I4 lockstep): the agent's main provider via the EXACT completion-path resolver, falling back to the configurable defaultAgentId (NOT literal "default"; WR-01 183-REVIEW). See resolveAgentMainProvider (setup-agents-tooling.ts) for the fallback + honest-sentinel semantics.
+  // The agent's main provider via the EXACT completion-path resolver, falling back to the configurable defaultAgentId (NOT literal "default"). See resolveAgentMainProvider (setup-agents-tooling.ts) for the fallback + honest-sentinel semantics.
   const resolveAgentMainProviderFor = (agentId: string): { providerId: string } =>
     resolveAgentMainProvider(c.container.config.agents, c.container.config.models, agentId, c.defaultAgentId);
-  // WR-04 (186-REVIEW): extracted to buildImageHandlerDeps (wiring/main-helpers.ts) to keep this composition root under its 3000-line cap. Undefined when image generation is disabled (no provider / rate limiter).
+  // Extracted to buildImageHandlerDeps (wiring/main-helpers.ts) to keep this composition root under its 3000-line cap. Undefined when image generation is disabled (no provider / rate limiter).
   const imageHandlerDeps = buildImageHandlerDeps(c, resolveAgentMainProviderFor);
-  // Phase 188: video.generate handler deps (undefined when disabled). The spread
+  // video.generate handler deps (undefined when disabled). The spread
   // into ApiDispatchDeps below wires the live handler (source guard pins it).
   const videoHandlerDeps = buildVideoHandlerDeps(c, resolveAgentMainProviderFor);
-  // Phase 189 (JOB-04): video.status read-handler deps (undefined when disabled) —
+  // video.status read-handler deps (undefined when disabled) —
   // reads the SAME agent-scoped store the poller writes. Spread below (guard pins it).
   const videoStatusHandlerDeps = buildVideoStatusHandlerDeps(c);
   // Inlined buildTokenStoreMutators.
@@ -839,7 +835,7 @@ function buildRpcDispatchDeps(deps: {
   };
   // Pass-through to the ONE mode-selected MCP OAuth token store the composition
   // root built via selectMcpTokenStore (threaded onto the boot context). Both
-  // mcp-handlers (Fix 4 — pre-check no-token before manager.connect) and
+  // mcp-handlers (which pre-check no-token before manager.connect) and
   // mcp-oauth-handlers (read/write tokens during login) consume this factory and
   // receive the SAME instance setupMcp's manager wiring uses — no split-brain,
   // no plaintext-disk fallback. Returns undefined in env mode (no writable MCP
@@ -852,29 +848,29 @@ function buildRpcDispatchDeps(deps: {
   // gauge is daemon-lifetime — it resets on restart.
   const recallCounters = c.recallCounters;
   const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c)); // the memory.ask seam + per-agent recall factory (setup-dialectic.ts owns the wiring; the cost gate returns {} when off). Spread into the dispatch deps below; the forward-presence belt locks the spread.
-  // L3 destroy for session.reset_conversation (live 2026-06-11: skipping it resurrected the forget).
+  // L3 destroy for session.reset_conversation — without it, runtime session state resurrects the conversation the reset was meant to forget.
   const conversationReset = createConversationReset({ lcdStore: c.lcdStore, sessionStore: g.sessionStoreBridge, piSessionAdapters: c.piSessionAdapters, tenantId: c.container.config.tenantId, logger: c.logger });
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
-    // DIST-05: thread the memory adapter as the MemoryPort for the
+    // Thread the memory adapter as the MemoryPort for the
     // session.reset_conversation --memory honest reset. SqliteMemoryAdapter
-    // implements MemoryPort (incl. deleteBySessionKey, Phase 172-03), so the
+    // implements MemoryPort (incl. deleteBySessionKey), so the
     // SAME object satisfies SessionsApiDeps.memoryPort. consolidationStore (the
     // unlink/purge surface) is already on the spread below.
     memoryPort: c.memoryAdapter,
     destroyRuntimeSession: (formattedSessionKey: string) => conversationReset.destroyRuntimeSession(c.defaultAgentId, formattedSessionKey),
-    // CR-02 (175-REVIEW): session.reset_conversation / session.delete drop
-    // the executor's session-scoped state (tool-schema snapshots, GBNF-02
-    // strip-retry once-gate, JIT-guide delivery, cache latches) through the
+    // session.reset_conversation / session.delete drop
+    // the executor's session-scoped state (tool-schema snapshots, the
+    // tool-schema strip-retry once-gate, JIT-guide delivery, cache latches) through the
     // agent's single authoritative cleanup path — the same function the
     // session:expired listener uses (wireSessionStateCleanup above).
     clearAgentSessionState: clearSessionState,
     // context.* operator-browse RPC deps (Context DAG browser): the LCD
     // ContextStorePort (context.tree reads getSummaries/getContextItems) + the
-    // ContextBrowsePort (context.conversations). Both R4 agent+tenant scoped.
+    // ContextBrowsePort (context.conversations). Both are agent+tenant scoped.
     lcdStore: c.lcdStore, contextBrowse: c.contextBrowse,
     // memory-diagnostic deps: the scoped consolidation + entity stores
     // (provenance + entity-graph reads) and the live recall counters
@@ -886,13 +882,13 @@ function buildRpcDispatchDeps(deps: {
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge, crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
-    ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}), // Phase 213 CR-01: session→rootRunId resolver so session.spawn propagates one tree root (ceiling/kill/budget key on it).
-    // Phase 213-06: the daemon-wide LeaseManager (autonomy-handlers gate lease.revoke/run.kill on it).
-    // Phase 216: DUR-03 durableRuns (revoke ALSO invalidates the persisted record) + ONCE-01/02 outwardLedger (the message.send/reply/react wrap). Absent ⇒ degrade (no revoke RPC / pass-through wrap).
+    ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}), // session→rootRunId resolver so session.spawn propagates one tree root (ceiling/kill/budget key on it).
+    // The daemon-wide LeaseManager (autonomy-handlers gate lease.revoke/run.kill on it).
+    // durableRuns (revoke ALSO invalidates the persisted record) + outwardLedger (the message.send/reply/react wrap). Absent ⇒ degrade (no revoke RPC / pass-through wrap).
     ...(c.capEndpointHandle?.leaseManager ?? c.sharedLeaseManager ? { leaseManager: c.capEndpointHandle?.leaseManager ?? c.sharedLeaseManager } : {}),
     ...(c.durableRunStore ? { durableRuns: c.durableRunStore } : {}),
     ...(c.outwardLedger ? { outwardLedger: c.outwardLedger } : {}),
-    // Phase 217-05 (UNATT/BREAK/EVICT): the never-hang control plane the dispatch chokepoint reads — the denial breaker (recordDenial/recordAllow → trip→abort), the evicted-rootRunId set (isEvicted → demote mid-run), and the content-free escalate. Constructed at the cap layer; absent when no autonomy agent ⇒ pre-217 deny-without-escalate (byte-identical). Threading evictRegistry here ALSO flows it into createAutonomyHandlers via the `...deps` spread, activating the autonomy.evict handler (Plan 04 cross-wave point).
+    // The never-hang control plane the dispatch chokepoint reads — the denial breaker (recordDenial/recordAllow → trip→abort), the evicted-rootRunId set (isEvicted → demote mid-run), and the content-free escalate. Constructed at the cap layer; absent when no autonomy agent ⇒ deny-without-escalate. Threading evictRegistry here ALSO flows it into createAutonomyHandlers via the `...deps` spread, activating the autonomy.evict handler.
     ...(c.capEndpointHandle ? { denialBreaker: c.capEndpointHandle.denialBreaker, evictRegistry: c.capEndpointHandle.evictRegistry, escalate: c.capEndpointHandle.escalate } : {}),
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
@@ -911,8 +907,8 @@ function buildRpcDispatchDeps(deps: {
     hotAdd: g.hotAdd, hotRemove: g.hotRemove,
     diagnosticCollector: c.diagnosticCollector, billingEstimator: c.billingEstimator,
     channelActivityTracker: c.channelActivityTracker, deliveryTracer: c.deliveryTracer, budgetGuards: c.budgetGuards,
-    // WEBUI-02 (179-04): thread the LIVE spend snapshot the kill-switch enforces
-    // (locked A1 — getSnapshot(), NOT the lagging SQL) + the configured ceilings, so
+    // Thread the LIVE spend snapshot the kill-switch enforces
+    // (getSnapshot(), NOT the lagging SQL read) + the configured ceilings, so
     // obs.spend.snapshot computes headroom = ceiling − spend. Absent ⇒ spend off
     // (the handler degrades to an honest enabled:false, never a misleading $0).
     spendSnapshot: c.spendAccumulator
@@ -934,16 +930,16 @@ function buildRpcDispatchDeps(deps: {
     // no down-cast to `{ emit }` is needed.
     eventBus: c.container.eventBus,
     mcpClientManager: c.mcpClientManager,
-    // 161-02: ObservabilityApiDeps.clock = the SAME boot ClockPort (one createSystemClock()
+    // ObservabilityApiDeps.clock = the SAME boot ClockPort (one createSystemClock()
     // at the composition root) so the obs.fleet.health assembler has a clock (asserts deps.clock!).
     obsStore: c.obsStore, clock: c.clock, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
     // obs.getCacheStats reads deps.tokenTracker for the in-memory hit-rate/effectiveness;
-    // without this it fell to the `!deps.tokenTracker` branch and returned a silent 0/0
-    // forever, even at an 85% live hit rate (live cache-management finding, 2026-06-12).
+    // without this it falls to the `!deps.tokenTracker` branch and returns a silent 0/0
+    // forever, even at a high live hit rate.
     tokenTracker: c.tokenTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
-    boundedAutonomy: c.capEndpointHandle?.boundedAutonomy, leaseManager: c.capEndpointHandle?.leaseManager, // Phase 213 QUOTA-01/02 + 213-06 REVOKE-01/03: the outward-quota service the message handlers gate on, plus the SAME cap-endpoint handle's LeaseManager gating lease.revoke + run.kill registration — omitting leaseManager (while boundedAutonomy WAS threaded) left REVOKE unreachable live ("Unknown RPC method" with the lease layer ACTIVE — VPS finding)
+    boundedAutonomy: c.capEndpointHandle?.boundedAutonomy, leaseManager: c.capEndpointHandle?.leaseManager, // the outward-quota service the message handlers gate on, plus the SAME cap-endpoint handle's LeaseManager gating lease.revoke + run.kill registration — omitting leaseManager (while boundedAutonomy IS threaded) leaves revoke unreachable live ("Unknown RPC method" with the lease layer ACTIVE)
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
     embeddingCacheStats: c.embeddingCacheStats, embeddingCircuitBreakerState: c.embeddingCircuitBreakerState,
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
@@ -1180,7 +1176,7 @@ async function bootFoundation(
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
   const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
 
-  // P0 boot gate: ensure file/env first boot creates no key material.
+  // Boot gate: ensure file/env first boot creates no key material.
   //
   // Step 1: Pre-read security.storage from YAML (layered, last-wins). Returns
   // "encrypted"|"file"|"env". NEVER writes key material before this check.
@@ -1205,7 +1201,8 @@ async function bootFoundation(
   try {
 
   // selectSecretStore is called BEFORE scrubProcessEnv so encrypted mode
-  // can still read SECRETS_MASTER_KEY from process.env (Pitfall 5 in RESEARCH).
+  // can still read SECRETS_MASTER_KEY from process.env — scrubbing first
+  // would strip the key the encrypted store needs to open.
   //
   // sensitiveNames: built here at the composition root (a sanctioned process.env
   // access point per AGENTS.md §2.8). In file/encrypted modes the names are
@@ -1345,9 +1342,9 @@ async function bootFoundation(
     );
   }
 
-  // P0 boot: file/env storage mode INFO log (logger now available).
-  // No WARN needed — the legacy opt-out path now fails at the boot gate above.
-  // If we reach here with storageMode !== "encrypted", it is a valid P0 mode.
+  // file/env storage mode INFO log (logger now available).
+  // No WARN needed — a bad opt-out path fails at the boot gate above.
+  // If we reach here with storageMode !== "encrypted", it is a valid non-encrypted mode.
   if (storageMode !== "encrypted") {
     daemonLogger.info(
       {
@@ -1377,14 +1374,14 @@ async function bootFoundation(
     // threaded into setupShutdown. The activity-stream logger + homeDir
     // are read here at the sanctioned composition root (no env reads in the
     // substrate; injected logger).
-    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: Phase 177 kill-switch (live-incremented, REHYDRATED below, threaded to bridges); otelHandle: Phase 178 OTLP/Prometheus exporter handle → setupShutdown.
+    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: the spend kill-switch (live-incremented, REHYDRATED below, threaded to bridges); otelHandle: the OTLP/Prometheus exporter handle → setupShutdown.
   } = await setupObservability({
     eventBus: container.eventBus,
     _createTokenTracker,
     logger: logLevelManager.getLogger("observability"),
     activityLogger: logLevelManager.getLogger("activity-stream"),
     homeDir: mergedEnv["HOME"],
-    dataDir, clock, config: container.config, version: daemonVersion, // Phase 177 (clock+config): construct the spend accumulator here (ceilings from config.observability.spend). Phase 178/CR-01: daemonVersion → comis_build_info{version}.
+    dataDir, clock, config: container.config, version: daemonVersion, // clock+config construct the spend accumulator here (ceilings from config.observability.spend); daemonVersion → comis_build_info{version}.
     // runtime reachability: resolve the DEFAULT agent's activity.theme →
     // themeForName bundle and forward it so the process-wide ActivityStream's
     // subagent marker follows the configured theme (the four themes are now
@@ -1409,7 +1406,7 @@ async function bootFoundation(
   // coordinatorFactory over the live activityRenderers map and injects it onto
   // createChannelManager. The substrate is drained on shutdown via
   // disposeActivityStream. Per-renderer egress stays fail-closed until an
-  // operator opts in via activity.channels.<rendererKey> (§22.2 Day-0).
+  // operator opts in via activity.channels.<rendererKey>.
   daemonLogger.debug(
     { component: "activity-stream", counters: activityStream.counters() },
     "ActivityStream substrate constructed and subscribed to EventBus",
@@ -1420,7 +1417,7 @@ async function bootFoundation(
     container, logger, daemonLogger, _createProcessMonitor,
   });
 
-  // WR-01: the shared per-agent learned-skill SURFACE registry — created BEFORE the memory
+  // The shared per-agent learned-skill SURFACE registry — created BEFORE the memory
   // wiring (which stands up the promote/demote loop) and threaded into BOTH it and setupAgents,
   // so a promote/demote can re-refresh the agent that registered its surface cache.
   const learnedSkillSurfaceRegistry = createLearnedSkillSurfaceRegistry();
@@ -1453,7 +1450,7 @@ async function bootFoundation(
           startupTimestamp: startupStartMs,
           snapshotIntervalMs: obsConfig.persistence.snapshotIntervalMs,
           logger: daemonLogger,
-          // AUDIT-01: the security-audit.jsonl lives under <dataDir>/logs and
+          // The security-audit.jsonl lives under <dataDir>/logs and
           // rides the shared observability.logRotation policy (the 6th stream).
           dataDir: container.config.dataDir || dataDir,
           logRotation: {
@@ -1461,7 +1458,7 @@ async function bootFoundation(
             maxFiles: obsConfig.logRotation.maxFiles,
           },
           auditConfig: { persist: obsConfig.audit.persist, sink: obsConfig.audit.sink },
-          // PERSIST-01: the cache_break subscriber is opt-out-able via this flag (default on).
+          // The cache_break subscriber is opt-out-able via this flag (default on).
           persistence: { cacheBreaks: obsConfig.persistence.cacheBreaks },
         });
         return { obsStore: store, obsPersistence: persistence };
@@ -1469,16 +1466,16 @@ async function bootFoundation(
     : undefined;
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
-  // Phase 177: REHYDRATE the spend accumulator at the boot root, AFTER obsStore exists (the rolling-spend read lives there); NO-OPS when obsStore is undefined (persistence off → start at $0). 24h window.
+  // REHYDRATE the spend accumulator at the boot root, AFTER obsStore exists (the rolling-spend read lives there); NO-OPS when obsStore is undefined (persistence off → start at $0). 24h window.
   if (spendAccumulator) rehydrateSpendFromStore(spendAccumulator, obsStore, 24 * 60 * 60 * 1000);
 
-  // OUTCOME-07: prune the append-only outcome_events ledger at EVERY boot,
+  // Prune the append-only outcome_events ledger at EVERY boot,
   // UNCONDITIONALLY — deliberately OUTSIDE the obsConfig.persistence.enabled IIFE
   // above, because this is anti-DoS housekeeping that must run regardless of obs
   // persistence OR the learningOutcome enable flag (a ledger that grew while the
   // signal was briefly enabled must still be bounded after it is turned off). The
   // ledger is tenant/agent-agnostic, so retain the LONGEST horizon any agent asks
-  // for (default 30 from the Plan-01 schema) — never prune one agent's data early.
+  // for (schema default 30 days) — never prune one agent's data early.
   {
     const learningOutcomeRetentionDays = Math.max(
       30,
@@ -1498,10 +1495,10 @@ async function bootFoundation(
     );
   }
 
-  // I2: one-shot model_health boot snapshot — embedding/reranker load-level
+  // One-shot model_health boot snapshot — embedding/reranker load-level
   // signals as a queryable obs_diagnostics row (no-ops when persistence off).
-  // EMB-01 adds the two advisory multilingual booleans (provider-aware resolution
-  // in resolveModelHealthMultilingual; advisory only — no recall gated, I4).
+  // Includes the two advisory multilingual booleans (provider-aware resolution
+  // in resolveModelHealthMultilingual; advisory only — no recall is gated on them).
   recordModelHealth(obsStore, {
     embeddingAvailable: !!cachedPort, rerankerModelPresent, rerankerBuilt: rerankerPort !== undefined,
     ...resolveModelHealthMultilingual(container.config),
@@ -1569,8 +1566,7 @@ async function bootFoundation(
     : undefined;
 
   // 6.5.9. Seed ALL bundled skills into the user data dir (version-aware, AUTO-SCANNED).
-  // SKILLS-SEED-01: generalized from the former single skill-creator IIFE — every
-  // `bundled-skills/<name>/` (skill-creator, claude-code, codex, …) is seeded into
+  // Every `bundled-skills/<name>/` (skill-creator, claude-code, codex, …) is seeded into
   // `<dataDir>/skills/<name>`, so shipping a bundled skill is ZERO engine code. Idempotent:
   // re-seeds only when missing or the bundled `version:` differs (see seed-bundled-skills.ts).
   {
@@ -1594,7 +1590,7 @@ async function bootFoundation(
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: Phase 177 kill-switch → bridge; otelHandle: Phase 178 OTLP/Prometheus exporter → setupShutdown.
+    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: the spend kill-switch → bridge; otelHandle: the OTLP/Prometheus exporter → setupShutdown.
     contextPipelineCollector,
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
@@ -1657,14 +1653,14 @@ async function bootAgents(
     rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
     rerankerModelPresent, // model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
     entityStore, // threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
-    lcdStore, // Phase 128 LCD store; threaded into setupAgents -> createPiExecutor (contextStore) -> setupContextEngine -> the `dag` branch (context-engine.ts). Opt-in (version: "dag"); default pipeline. The agent receives the core ContextStorePort TYPE only (agent↛memory cut)
-    provenanceStore, // Phase 173 DIST-03 read side; threaded into setupAgents -> createPiExecutor -> prompt-assembly -> createMemoryRecall's post-fusion provenance down-weighting pass (was BUILT but never injected in Phase 172). The agent receives the core LcdProvenanceReadStore TYPE only (agent↛memory cut)
-    summarizerSpendBreaker, // R1 (132-05); daemon-owned per-tenant breaker; threaded into setupAgents -> createPiExecutor -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant (truncation-only degrade on open-breaker/over-cap)
-    spendAccumulator, temporalStore, // spendAccumulator = Phase 177 dollars kill-switch (threaded setupAgents -> createPiExecutor -> bridge); temporalStore -> createMemoryRecall (recall temporal-spread read; dormant until rag.lanes.temporal.enabled)
+    lcdStore, // the LCD store; threaded into setupAgents -> createPiExecutor (contextStore) -> setupContextEngine -> the `dag` branch (context-engine.ts). Opt-in (version: "dag"); default pipeline. The agent receives the core ContextStorePort TYPE only (agent↛memory cut)
+    provenanceStore, // the provenance read side; threaded into setupAgents -> createPiExecutor -> prompt-assembly -> createMemoryRecall's post-fusion provenance down-weighting pass. The agent receives the core LcdProvenanceReadStore TYPE only (agent↛memory cut)
+    summarizerSpendBreaker, // daemon-owned per-tenant breaker; threaded into setupAgents -> createPiExecutor -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant (truncation-only degrade on open-breaker/over-cap)
+    spendAccumulator, temporalStore, // spendAccumulator = the dollars kill-switch (threaded setupAgents -> createPiExecutor -> bridge); temporalStore -> createMemoryRecall (recall temporal-spread read; dormant until rag.lanes.temporal.enabled)
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
-    embeddingStore, usefulnessStore, // the MMR re-rank's scoped embedding read + recall usefulness read -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut). (The directional relationshipStore + the LLM-free <channel_relationships> standing-block read were DELETED in Phase 226-04 with the rest of the social-modeling subsystem. The LLM-free <user_profile> read is now the kind:"profile" mentalModelStore.list path — FOLD-01, Phase 225 — NOT a separate userRepresentationStore. The buildScoringAlphas tuned-vector read was deleted in Phase 224 — recall scoring is the fixed config alphas.)
-    activeRunRegistry, canaryFallbackSecret, injectionRateLimiter, learnedSkillStore, learnedSkillSurfaceRegistry, // learnedSkillStore (v2.26 SURFACE-01/03) -> setupAgents -> getPromptSkillsXml; learnedSkillSurfaceRegistry (WR-01) -> setupAgents register + the promote/demote re-refresh
+    embeddingStore, usefulnessStore, // the MMR re-rank's scoped embedding read + recall usefulness read -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut). (The LLM-free <user_profile> read is the kind:"profile" mentalModelStore.list path — NOT a separate userRepresentationStore. Recall scoring is the fixed config alphas.)
+    activeRunRegistry, canaryFallbackSecret, injectionRateLimiter, learnedSkillStore, learnedSkillSurfaceRegistry, // learnedSkillStore -> setupAgents -> getPromptSkillsXml; learnedSkillSurfaceRegistry -> setupAgents register + the promote/demote re-refresh
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
     secretsCrypto, secretsDb, obsStore, // thread into setupAgents
@@ -1757,14 +1753,14 @@ async function bootAgents(
     mcpTokenStore,
   });
 
-  // CWF-03: Ollama served-window probe — best-effort, fail-open.
+  // Ollama served-window probe — best-effort, fail-open.
   // Must run before setupAgents so the result can be threaded into each executor.
   // daemon.ts is the globals allowlist root; raw fetch is permitted here.
   const servedWindowByProvider = await probeAllOllamaProviders({
     providerEntries: container.config.providers?.entries ?? {},
     fetchFn: (url: string, init: RequestInit) => fetch(url, init),
     timeoutMs: 5_000,
-    // IMP-2a: also LOAD-warm each ollama model (fire-and-forget) so a cold model's first inference
+    // Also LOAD-warm each ollama model (fire-and-forget) so a cold model's first inference
     // doesn't exceed the per-inference stall budget and abort the first user turn after a (re)start.
     prewarm: true,
     logger: agentLogger,
@@ -1780,18 +1776,18 @@ async function bootAgents(
     return new Map<string, number>();
   });
 
-  // LAT-03: one-time redirect WARN for the config-echo-only providers.*.timeoutMs.
+  // One-time redirect WARN for the config-echo-only providers.*.timeoutMs.
   try {
     warnOnProviderTimeoutRedirect({ providerEntries: container.config.providers?.entries ?? {}, logger: agentLogger });
-  } catch { /* fail-open — a WARN helper must never block boot (I1) */ }
+  } catch { /* fail-open — a WARN helper must never block boot */ }
 
-  // KNOB-01/03 + FLOOR-01 (v2.21): daemon-owned boot-honesty collectors, populated
+  // Daemon-owned boot-honesty collectors, populated
   // per-agent in setup-agents beside the registry; read by the bootChannels floor
   // loop + the bootShutdown posture count (ONE comparison feeds WARN + count).
   const servedWindowComparisons = new Map<string, ServedWindowComparison>();
   const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
 
-  // Phase 213-08: the LATE-BOUND bounded-autonomy seam (built before the cap layer; see helper JSDoc).
+  // The LATE-BOUND bounded-autonomy seam (built before the cap layer; see helper JSDoc).
   const { boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock });
 
   const {
@@ -1811,11 +1807,11 @@ async function bootAgents(
     toolCapabilityPorts, trajectoryRegistry,
     // per-agent shared ExecutionPlanHolder reference map.
     // Threaded through buildChannelManagerDeps so the chat plan-stream reads
-    // from the SAME object SEP publishes into (Pitfall 1).
-    executionPlanPorts, oauthManagers, authStorages, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01); authStorages (FLAG-3): dialectic OAuth resolver
+    // from the SAME object the execution pipeline publishes into.
+    executionPlanPorts, oauthManagers, authStorages, // oauthManagers: DEFAULT agent's → buildImageGenBundle (Codex OAuth bearer); authStorages: dialectic OAuth resolver
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
-    boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // Phase 213-08: per-root budget holder + rootRunId resolver → each bridge
+    boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // per-root budget holder + rootRunId resolver → each bridge
     outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
@@ -1846,8 +1842,8 @@ async function bootAgents(
     // per-agent ToolCapabilityPort adapter construction.
     mcpClientManager,
     clock, env, timers,
-    servedWindowByProvider,  // CWF-03: Ollama served context-window probe result
-    servedWindowComparisons, agentBootWindowInfo,  // KNOB-01/03 + FLOOR-01 collectors
+    servedWindowByProvider,  // Ollama served context-window probe result
+    servedWindowComparisons, agentBootWindowInfo,  // boot-honesty collectors
   });
 
   // Log operation model resolutions at startup (dry-run validation)
@@ -1899,7 +1895,7 @@ async function bootAgents(
       }
     },
     clock, timers,
-    leaseManager: sharedLeaseManager, boundedAutonomyHolder: boundedAutonomyBudgetHolder, // Phase 213-08 (RATE-02): the cron-fire fresh-lease mint (shared LeaseManager + late-bound holder)
+    leaseManager: sharedLeaseManager, boundedAutonomyHolder: boundedAutonomyBudgetHolder, // the cron-fire fresh-lease mint (shared LeaseManager + late-bound holder)
   });
 
   // Post-setupAgents cleanup wiring: session expiry, Gemini cache disposal,
@@ -1924,11 +1920,11 @@ async function bootAgents(
     auditAggregator.record({ source: "external_content", patterns: info.patterns });
   };
 
-  // 6.6.7. Media (moved up from 6.6.8 -- media infrastructure must be ready before channels)
-  // Phase 193 keyless-first audio steering: setup-media gates STT/TTS construction
+  // 6.6.7. Media (runs before channels -- media infrastructure must be ready first)
+  // Keyless-first audio steering: setup-media gates STT/TTS construction
   // on this selector (resolveStt/resolveTts) BEFORE building any adapter — a
   // Codex/OAuth-only main never builds the empty-bearer OpenAI adapter (no 401).
-  // Phase 194: buildAudioResolverDeps is async (runs the detectLocalSttEngine boot probe).
+  // buildAudioResolverDeps is async (runs the detectLocalSttEngine boot probe).
   const audioSelector = await buildAudioResolverDeps(container, defaultAgentId, skillsLogger);
   const {
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
@@ -1979,14 +1975,14 @@ async function bootAgents(
   const channelAdaptersRef = new Map<string, import("@comis/core").DeliveryAdapter>();
   const { deliveryQueue, drainAndStart: drainAndStartDeliveryPrune, shutdown: shutdownDeliveryQueue } = await setupDeliveryQueue({
     db, config: container.config, eventBus: container.eventBus, logger: daemonLogger, channelAdapters: channelAdaptersRef,
-    // REACT-02 (Verified Learning, Phase 199): capture agent-authored outbound (messageId → trajectory).
-    // `undefined` when learning-outcome is off for all agents (byte-identity: zero extra drain work).
+    // Capture agent-authored outbound (messageId → trajectory).
+    // `undefined` when learning-outcome is off for all agents (zero extra drain work).
     recordOutboundMessage: foundation.recordOutboundMessage,
   });
 
   Object.assign(boot, {
     defaultAgentId, defaultWorkspaceDir, agentsConfig,
-    boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager, // Phase 213-08: ride the late-bind seam onto boot for bootChannels' cap layer
+    boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager, // ride the late-bind seam onto boot for bootChannels' cap layer
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
@@ -2068,7 +2064,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     agentsConfig: agents, toolCapabilityPorts, mcpClientManager,
     linkRunner, systemEventQueue, rpcCall, approvalGate,
     deliveryQueue, cronWakeCallbackRef, singleAgentDeps,
-    // Phase 131 (E1/E2): the concrete LCD ContextStorePort (createLcdStore),
+    // The concrete LCD ContextStorePort (createLcdStore),
     // populated on the BootContext by bootFoundation's setupMemory Object.assign.
     // Threaded into setupTools so assembleToolsForAgent wires the dag-mode ctx_*
     // in-session expansion tools. The agent sees only the core port TYPE (the cut).
@@ -2091,20 +2087,19 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // because setupTools consumes both as direct inputs).
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
-  // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
+  // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path.
   const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
     await buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
-  // Video-generation bundle (Phase 188 baseline + 189 async + 190 live adapters —
-  // see buildVideoGenBundle in wiring/main-helpers.ts). 189: pass the shared
-  // memory.db handle (the VideoJobStore binds it), the EARLY channelAdaptersRef
-  // (WARNING-1 — the poller resolves a LIVE adapter from it after
+  // Video-generation bundle (see buildVideoGenBundle in wiring/main-helpers.ts).
+  // Pass the shared memory.db handle (the VideoJobStore binds it), the EARLY
+  // channelAdaptersRef (the poller resolves a LIVE adapter from it after
   // wirePostChannelsLifecycle populates it), and the daemon TimerPort (the poller's
-  // sweeper). 190 (CRED-01): oauthManager threads the DEFAULT agent's OAuth manager
-  // for the Grok-video key-or-OAuth path (mirrors the image call below + :2169).
+  // sweeper). oauthManager threads the DEFAULT agent's OAuth manager
+  // for the Grok-video key-or-OAuth path (mirrors the image call above).
   // Destructure videoJobStore + videoPoller for the boot context + the handler deps.
   const { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller } =
     buildVideoGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef: handle.channelAdaptersRef, timers: handle.timers, trajectoryRegistry: handle.trajectoryRegistry, eventBus: container.eventBus });
-  // VIS-01 (187): the provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
+  // The provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
   const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
@@ -2114,31 +2109,31 @@ async function bootChannels(boot: BootContext): Promise<void> {
     if (!port) throw new Error(`No ToolCapabilityPort registered for agent '${agentId}' and no default agent ('${defaultAgentId}') fallback available -- the agent may have been removed or the daemon failed to initialize.`);
     return port;
   };
-  // 7.8.9. Phase 216: durable stores built EARLY (before the cap layer — the jail-leg chokepoint shares the SAME store for the HIGH-1 _outwardStepIndex allocation). See buildDurableStores.
+  // 7.8.9. Durable stores built EARLY (before the cap layer — the jail-leg chokepoint shares the SAME store for the _outwardStepIndex allocation). See buildDurableStores.
   const { durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly } = buildDurableStores({ agents, db });
 
-  // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler. Phase 216: durableRuns threads into the jail-leg chokepoint for the HIGH-1 _outwardStepIndex allocation.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // Phase 213-08: POPULATE the late-bound budget holder (read by the bridge at turn time) + share the SAME LeaseManager as the cron-fire mint; Phase 215 (AUDIT-01): pass the container so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
+  // 7.9. Capability-lease layer + ACTIVATION — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. cronJobCount binds the bounded-autonomy rate count to the per-agent CronScheduler. durableRuns threads into the jail-leg chokepoint for the _outwardStepIndex allocation.
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
 
-  // 7.9.1. Phase 216: the durable-resume engine built AFTER the cap layer (BoundedAutonomy reachable); its closures resolve at resumeAndStart() (AFTER channels — boot-order). See buildDurableResume.
-  // Plan 12 (DUR-02/LOW-2): late-bound holder for coordinator.resumeGraph — the coordinator is built later (after channels) but resumeRun only fires at resumeAndStart() (also after channels), so it is set by then. A DAG record routes here.
+  // 7.9.1. The durable-resume engine built AFTER the cap layer (BoundedAutonomy reachable); its closures resolve at resumeAndStart() (AFTER channels — boot-order). See buildDurableResume.
+  // Late-bound holder for coordinator.resumeGraph — the coordinator is built later (after channels) but resumeRun only fires at resumeAndStart() (also after channels), so it is set by then. A DAG record routes here.
   const graphResumeHolder: { ref?: (record: import("@comis/core").DurableRunRecord) => Promise<import("@comis/shared").Result<void, Error>> } = {};
   const { durableResume, startAndResumeDurable, durableRunFacts } = buildDurableResume({
     db, durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly,
     boundedAutonomy: capEndpointHandle?.boundedAutonomy, sharedLeaseManager: handle.sharedLeaseManager!,
     channelAdaptersRef: handle.channelAdaptersRef, eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
-    // DUR-02/LOW-2: route a DAG record (spawn_tree objects w/ status) to coordinator.resumeGraph via the late-bound holder.
+    // Route a DAG record (spawn_tree objects w/ status) to coordinator.resumeGraph via the late-bound holder.
     resumeGraph: (record) => graphResumeHolder.ref ? graphResumeHolder.ref(record) : Promise.resolve(err(new Error("resumeGraph holder unpopulated (coordinator not built)"))),
   });
   Object.assign(boot, { durableRunStore: durableResume.durableRunStore, outwardLedger: durableResume.outwardLedger, durableResumeShutdown: durableResume.shutdown });
 
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
-    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle, namespacePreflightOk, // Phase 211 JAIL-03 → PROFILE-05: degrade the orchestrate surface + lease mint when the host cannot build the jail (no silent unjailed fallback)
-    // Phase 216 (HIGH-1 / NEW-4): durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
+    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle, namespacePreflightOk, // degrade the orchestrate surface + lease mint when the host cannot build the jail (no silent unjailed fallback)
+    // Durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
-    // WR-04 (Phase 174-04): the per-provider operator capabilityClass override so ctx_expand's walk depth honors a pinned tier (same providers.entries source as the executor's ModelProfile). Undefined ⇒ provider-family heuristic.
+    // The per-provider operator capabilityClass override so ctx_expand's walk depth honors a pinned tier (same providers.entries source as the executor's ModelProfile). Undefined ⇒ provider-family heuristic.
     getProviderCapabilityClass: (provider) =>
       container.config.providers?.entries?.[provider ?? ""]?.capabilities?.capabilityClass,
     dataDir: container.config.dataDir || ".",
@@ -2146,9 +2141,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus, skillsLogger, linkRunner,
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     subprocessEnv: handle.execToolEnv, onSuspiciousContent: handle.onSuspiciousContent,
-    // 124-09 (WR-01 closure): the daemon TimerPort drives the terminal-driver reaper sweep.
+    // The daemon TimerPort drives the terminal-driver reaper sweep.
     timers: handle.timers,
-    // Phase 131 (E1/E2): the concrete LCD store, so assembleToolsForAgent can wire the
+    // The concrete LCD store, so assembleToolsForAgent can wire the
     // dag-mode ctx_* tools (gated on version === "dag" && a present store). The agent
     // receives only the core ContextStorePort TYPE (the agent-to-store cut holds).
     lcdStore,
@@ -2157,7 +2152,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // config:mutated server edits surface on the next tool assembly.
     getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
     sandboxProvider, imageGenProvider, videoGenProvider, backgroundTaskManager,
-    // JOB-04 (189): gate the video_status tool on the SAME condition video_generate
+    // Gate the video_status tool on the SAME condition video_generate
     // uses (the async store + poller are wired exactly when videoGenProvider exists).
     videoStatusEnabled: videoGenProvider,
     sessionTrackerRegistry: handle.sessionTrackerRegistry, getCapabilityPortForAgent,
@@ -2180,8 +2175,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
       : undefined,
   });
 
-  // FLOOR-01 (v2.21): boot-time viable-floor WARN per agent — WARN-only (I1/D-02),
-  // awaited for determinism, fail-open per agent (a throw never aborts boot, T-176-15).
+  // Boot-time viable-floor WARN per agent — WARN-only,
+  // awaited for determinism, fail-open per agent (a throw never aborts boot).
   for (const [floorAgentId, bootInfo] of handle.agentBootWindowInfo ?? new Map<string, AgentBootWindowInfo>()) {
     try {
       evaluateViableFloorForAgent({ info: bootInfo, tools: await assembleToolsForAgent(floorAgentId), logger: daemonLogger });
@@ -2223,11 +2218,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
     channelAdaptersRef: handle.channelAdaptersRef,
     drainAndStartDeliveryPrune: handle.drainAndStartDeliveryPrune,
     shutdownDeliveryQueue: handle.shutdownDeliveryQueue,
-    // JOB-03 (189): start + resume the background video poller after the channel
+    // Start + resume the background video poller after the channel
     // registry is populated (the local videoPoller from buildVideoGenBundle above;
     // undefined when video is disabled → the optional call no-ops).
     ...(videoPoller ? { startAndResumeVideoPoller: () => videoPoller.startAndResume() } : {}),
-    // Phase 216: run the durable resume engine after channels (boot-order — reconcile/replay need LIVE adapters); inert no-op when durability is off.
+    // Run the durable resume engine after channels (boot-order — reconcile/replay need LIVE adapters); inert no-op when durability is off.
     startAndResumeDurable,
     startMirrorPrune: handle.startMirrorPrune,
     shutdownMirror: handle.shutdownMirror,
@@ -2255,24 +2250,24 @@ async function bootChannels(boot: BootContext): Promise<void> {
   //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
   // is threaded directly into setupShutdown via
   // ShutdownDeps.bgCompletionRunnerShutdown.
-  // Thread the terminal registries to bootGateway's webhook route for the unattended honest-fail backstop (WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY).
+  // Thread the terminal registries to bootGateway's webhook route for the unattended honest-fail backstop.
   Object.assign(boot, { terminalRegistries });
 
-  // 6.6.8.0.2. Terminal-driver wake-FSM (v2.11 / 124-09 — THE KEYSTONE). One-per-daemon:
-  // subscribes the re-published terminal:input_needed (the Task-1 fd3 hook) → dedupe/active-
+  // 6.6.8.0.2. Terminal-driver wake-FSM. One-per-daemon:
+  // subscribes the re-published terminal:input_needed (the fd3 attention hook) → dedupe/active-
   // check/hop-limit → wakes ONE turn that runs the safe-only auto-answer + loop-guard against
-  // the SAME per-agent terminalRegistries the tools drive; escalations route via bgNotifyFn
-  // (§4.7). Drained on shutdown via ShutdownDeps.terminalWakeShutdown.
+  // the SAME per-agent terminalRegistries the tools drive; escalations route via bgNotifyFn.
+  // Drained on shutdown via ShutdownDeps.terminalWakeShutdown.
   const terminalWakeContext = setupTerminalWake({
     eventBus: container.eventBus,
     registries: terminalRegistries,
     getTerminalAttentionConfig,
     notify: bgNotifyFn,
     dataDir: container.config.dataDir || ".",
-    // 165-07 DUR-02 / LIVE-01 / ENDURE-01: the durable wake deps — the journal store
+    // The durable wake deps — the journal store
     // (persist-on-set + resume-on-re-attach), the liveness backstop (timers + heartbeatMs +
-    // checkLiveness via the worker status round-trip, whose lastActivity stamp IS the I9 reaper
-    // unify — LO-03), and the spend ceiling (maxCostUsd). timers = the reaper's TimerPort.
+    // checkLiveness via the worker status round-trip, whose lastActivity stamp also feeds
+    // the reaper), and the spend ceiling (maxCostUsd). timers = the reaper's TimerPort.
     ...terminalDurability,
     timers: handle.timers,
     logger: daemonLogger,
@@ -2292,7 +2287,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // the eventBus.on("system:shutdown", ...) subscriber inside
   // registerProxyTypingListeners that silently no-op'd in production.
   const gatewaySendRef: { ref?: (channelId: string, text: string) => boolean } = {};
-  // WT-01/WT-02: the git-worktree seam for `spawn --worktree`. ONE registry shared
+  // The git-worktree seam for `spawn --worktree`. ONE registry shared
   // by executeSubAgent (which creates + auto-cleans worktrees in-line) and the boot
   // orphan-sweep (which reclaims worktrees orphaned by a crashed run). The lifecycle
   // GitExec is the SAME real execFile-backed `execGit` config-git uses, adapted to
@@ -2307,19 +2302,19 @@ async function bootChannels(boot: BootContext): Promise<void> {
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
-    // WT-01/WT-02: thread the worktree seam + the shared registry.
+    // Thread the worktree seam + the shared registry.
     worktreeGitExec, worktreeRegistry,
-    ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout), releaseSpawnCeiling: (rootRunId: string) => capEndpointHandle.boundedAutonomy.releaseSpawn(rootRunId) } : {}), // Phase 213 CEIL-01/CR-02: tree-wide spawn ceiling + symmetric release (paired 1:1, no per-root leak)
-    // Phase 216 DUR-01/HB-01: durable store + thresholds + facts → the runner writes a per-root checkpoint + heartbeat (off ⇒ inert).
+    ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout), releaseSpawnCeiling: (rootRunId: string) => capEndpointHandle.boundedAutonomy.releaseSpawn(rootRunId) } : {}), // tree-wide spawn ceiling + symmetric release (paired 1:1, no per-root leak)
+    // Durable store + thresholds + facts → the runner writes a per-root checkpoint + heartbeat (off ⇒ inert).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(durabilityCfg.enabled ? { durability: { keepAliveMs: durabilityCfg.keepAliveMs, staleHeartbeatMs: durabilityCfg.staleHeartbeatMs } } : {}),
     ...(durableRunFacts ? { durableRunFacts } : {}),
-    // Phase 216 HIGH-2 (ONCE-01..04): the SAME ledger (Plan 07) + rootRunId resolver → announce() + the DLQ drain route through the exactly-once ledger (off ⇒ pass-through). Makes Plan 10 LIVE.
+    // The SAME outward ledger + rootRunId resolver → announce() + the DLQ drain route through the exactly-once ledger (off ⇒ pass-through).
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
   });
 
-  // WT-02: the worktree orphan-sweep. Boot recovery (discover prior-crash
+  // The worktree orphan-sweep. Boot recovery (discover prior-crash
   // worktrees from `git worktree list` → seed the registry → one conservative
   // sweep) THEN a periodic interval (.unref()'d, cancelled on shutdown). Modeled
   // on the durable-resume two-phase boot hook. The sweep is git/fs-only (no
@@ -2369,14 +2364,14 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const graphCoordinator = createGraphCoordinator(buildGraphCoordinatorDeps({
     agents: handle,
     channels: { subAgentRunner, sendToChannel, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
-    // Phase 216 HIGH-3/DUR-01: thread the live durable store so the coordinator checkpoints node state (Plan 11). Makes DAG durability LIVE.
+    // Thread the live durable store so the coordinator checkpoints node state (DAG durability).
     ...(durableResume.durableRunStore ? { durableRunStore: durableResume.durableRunStore } : {}),
   }));
   subAgentRunner.setGraphCoordinator(graphCoordinator);
-  // Phase 216 DUR-02/LOW-2: populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
+  // Populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
   graphResumeHolder.ref = (record) => graphCoordinator.resumeGraph(record);
   const namedGraphStore = createNamedGraphStore(db);
-  // O2 (WR-02): seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
+  // Seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
   seedDefaultDagTemplates(namedGraphStore);
 
   // 6.7. Monitoring + per-agent heartbeat + wake coalescer
@@ -2464,8 +2459,8 @@ async function bootGateway(
     assembleToolsForAgent, preprocessMessageText,
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
-    obsStore, // 154-03: backs the obs_explain assembler closure (diagnostics rollup)
-    dataDir: bootDataDir, // 154-03: absolute fallback data dir (always abs; ~/.comis or $COMIS_DATA_DIR)
+    obsStore, // backs the obs_explain assembler closure (diagnostics rollup)
+    dataDir: bootDataDir, // absolute fallback data dir (always abs; ~/.comis or $COMIS_DATA_DIR)
   } = channels;
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
 
@@ -2517,11 +2512,11 @@ async function bootGateway(
   // 7. Gateway server
   const gwConfig = container.config.gateway;
 
-  // 154-03 / 161-02: the trust-flag-FREE obs.explain + obs.fleet.health MCP-client
+  // The trust-flag-FREE obs.explain + obs.fleet.health MCP-client
   // closures, extracted to wiring/obs-mcp-closures.ts (daemon.ts ≤3000 line cap).
   // SECURITY (never-inject-admin; allowlist-only authorization) + the durableRuns
-  // NET-NEW-thread rationale (boot.durableRunStore — the live store the RPC path wires
-  // at :893) live in that helper. dataDir MUST be the absolute boot dir (else
+  // threading rationale (boot.durableRunStore — the live store the RPC path wires)
+  // live in that helper. dataDir MUST be the absolute boot dir (else
   // makeRealReader → PathTraversalError); clock is the load-bearing boot ClockPort.
   const { obsExplainForMcpClient, obsFleetHealthForMcpClient } = buildObsMcpClientClosures({
     dataDir: container.config.dataDir || bootDataDir,
@@ -2534,12 +2529,12 @@ async function bootGateway(
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,
     embeddingQueue, memoryAdapter, memoryApi, cachedPort, sessionStore, getExecutor,
-    // Deterministic honest-fail backstop (WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY): reap a webhook turn's LIVE never-tasked drives so it records an honest failure, not a silent success.
+    // Deterministic honest-fail backstop: reap a webhook turn's LIVE never-tasked drives so it records an honest failure, not a silent success.
     reapNeverTaskedDrives: (agentId, owner) => { const r = channels.terminalRegistries?.get(agentId); return r ? reapNeverTaskedDrivesInRegistry(r, owner) : Promise.resolve({ reaped: [] }); },
     assembleToolsForAgent, preprocessMessageText, rpcCall,
     costTrackers, workspaceDirs,
     _createGatewayServer, piSessionAdapters,
-    // Complete three-layer forget for gateway slash /new + /reset (live 2026-06-11).
+    // Complete three-layer forget for gateway slash /new + /reset.
     destroyConversation: createConversationReset({ lcdStore: channels.lcdStore, sessionStore: sessionStoreBridge, piSessionAdapters, tenantId: container.config.tenantId, logger: gatewayLogger }).destroyConversationCompletely,
     resolvedTokens: resolvedGatewayTokens,
     daemonVersion: boot.daemonVersion,
@@ -2713,7 +2708,7 @@ async function bootShutdown(
     shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
     bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, mcpClientManager,
-    // Phase 189: the background video poller (undefined when video disabled) —
+    // The background video poller (undefined when video disabled) —
     // its shutdown is threaded into setupShutdown below.
     videoPoller,
   } = gateway;
@@ -2741,14 +2736,14 @@ async function bootShutdown(
     secretStore,  // close secrets.db on shutdown
     auditAggregator,  // clear pending dedup timers
     injectionRateLimiter,  // clear rate limiter timers on shutdown
-    destroyReactionWiring,  // WR-01: clear reaction/session map + reaction limiter timers on shutdown
+    destroyReactionWiring,  // clear reaction/session map + reaction limiter timers on shutdown
     lockCleanupTimer,  // clear periodic lock cleanup timer
     dataDir: container.config.dataDir || dataDir,
-    lockDataDir: dataDir,  // D14 lock release — must match acquireDataDirLock's boot path
+    lockDataDir: dataDir,  // lock release — must match acquireDataDirLock's boot path
     continuationTracker,
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close
-    disposeActivityStream, otelShutdown: otelHandle ? () => otelHandle.shutdown() : undefined, // drain ActivityStream; Phase 178 flush+close OTLP/Prometheus exporter (stops /metrics listener)
+    disposeActivityStream, otelShutdown: otelHandle ? () => otelHandle.shutdown() : undefined, // drain ActivityStream; flush+close the OTLP/Prometheus exporter (stops /metrics listener)
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
     // 9 new teardown fields (8 production subscribers + setup-tools
@@ -2757,14 +2752,14 @@ async function bootShutdown(
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
-    // 124-09: drain the terminal wake-FSM (unsubscribe + await in-flight woken turns).
+    // Drain the terminal wake-FSM (unsubscribe + await in-flight woken turns).
     terminalWakeShutdown: terminalWakeContext ? () => terminalWakeContext.shutdown() : undefined,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
-    // Phase 189: SIGTERM clears the poller's sweeper interval + stops in-flight
+    // SIGTERM clears the poller's sweeper interval + stops in-flight
     // per-job loops (no-op when video is disabled / poller undefined).
     ...(videoPoller ? { shutdownVideoPoller: () => videoPoller.shutdown() } : {}),
-    // Phase 216: cancel the durable-resume watchdog interval on shutdown (inert no-op when off).
+    // Cancel the durable-resume watchdog interval on shutdown (inert no-op when off).
     ...(boot.durableResumeShutdown ? { durableResumeShutdown: boot.durableResumeShutdown } : {}),
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
@@ -2773,7 +2768,7 @@ async function bootShutdown(
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
     // Credential broker teardown (no-op when executor.broker is absent)
     brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
-    capEndpointStop: capEndpointHandle ? () => capEndpointHandle.endpoint.stopSocket() : undefined, // Phase 211/212: stops+unlinks cap.sock
+    capEndpointStop: capEndpointHandle ? () => capEndpointHandle.endpoint.stopSocket() : undefined, // stops+unlinks cap.sock
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:
@@ -2794,7 +2789,7 @@ async function bootShutdown(
     container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
     db, secretStore, cachedPort, ttsAdapter, visionRegistry,
     startupStartMs, instanceId,
-    namespacePreflightOk, // Phase 211: the real probe result → emitAutonomyBootLog.
+    namespacePreflightOk, // the real probe result → emitAutonomyBootLog.
   });
 
   // 9.1. Boot invariant record + duplicate-wiring WARN.
@@ -2826,26 +2821,26 @@ async function bootShutdown(
   });
   const posture = checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
 
-  // 9.2. I3 — config-posture SNAPSHOT (one-shot boot record, NOT an event).
+  // 9.2. Config-posture SNAPSHOT (one-shot boot record, NOT an event).
   // Records the three log-file-only posture FINDINGS — TLS-off, stranded-secret
   // COUNTS, canary-fallback — as a single config_posture obs_diagnostics row so
   // the fleet lens can query a daemon's posture without grepping daemon.log.
   // TLS-off is CONFIG-DERIVED here, not read from the gateway's own TLS decision:
   // `gateway.{tls,allowInsecureHttp}` is the INPUT the gateway acts on, but the
   // gateway's resolved `tls ? https : http` branch (hono-server.ts) is internal
-  // and NOT exposed on GatewayServerHandle, and threading it back out is the deep
-  // cross-package plumbing this phase's KISS constraint forbids. This recompute
-  // matches the listener's posture today; it only diverges if the gateway gains a
+  // and NOT exposed on GatewayServerHandle, and threading it back out would be
+  // deep cross-package plumbing. This recompute
+  // matches the listener's posture; it only diverges if the gateway gains a
   // TLS path that bypasses config (an injected cert / env override) — a future
-  // change should thread the gateway's resolved boolean here (WR-02).
+  // change should thread the gateway's resolved boolean here.
   // canaryFallbackActive is a daemon-global presence proxy: CANARY_SECRET is
   // folded into `boot.env`/mergedEnv store-wins (buildMergedEnv), so this env read
   // already honors an encrypted/file secret-store entry — the same source the
   // per-agent path resolves (setup-agents-runtime.ts). True ⇒ no secret set ⇒
-  // every agent uses the deterministic fallback. KISS — no deep per-agent plumbing.
-  // OBS-7 (openclaw-usecases 2026-06-25): TLS-off is a posture concern only on a
+  // every agent uses the deterministic fallback. No deep per-agent plumbing.
+  // TLS-off is a posture concern only on a
   // NON-loopback bind. A loopback gateway has no off-host exposure, so flagging it
-  // made `fleet` headline `config_posture` (TLS-off) on a clean dev/loopback box —
+  // would make `fleet` headline `config_posture` (TLS-off) on a clean dev/loopback box —
   // noise. The gate matches the gateway-exposure security check (only 0.0.0.0-without-
   // TLS is critical). `gateway.host` defaults to 127.0.0.1, so a default daemon stays
   // benign; an operator-set 0.0.0.0/routable host WITHOUT TLS still flags.
@@ -2855,9 +2850,9 @@ async function bootShutdown(
     !isLoopbackHost(boot.container.config.gateway.host);
   const allowInsecureHttp = boot.container.config.gateway.allowInsecureHttp === true;
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
-  // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
+  // Derived from the SAME boot comparisons the served-window WARN used (no second comparison).
   const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  // RELAX-SURFACE (Track-M): surface the relaxed no-downgrade sandbox default at boot.
+  // Surface the relaxed no-downgrade sandbox default at boot.
   // The typed field defaults to true (schema-security.ts); === false is the relaxation.
   const sandboxNoDowngradeDisabled = container.config.security.agentToAgent.sandboxNoDowngrade === false;
   buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled }, boot.clock);

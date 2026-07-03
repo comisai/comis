@@ -2,11 +2,11 @@
 /**
  * Env-gated KEYLESS learning-IQ harness -- the
  * FREE, deterministic, no-API-cost measurement of the learning MECHANISM:
- * the per-intent usefulness bucket the recall hot path reads (Track H1)
- * and the citation->FEED accrual the dialectic answer feeds (Track H3).
+ * the per-intent usefulness bucket the recall hot path reads
+ * and the citation->FEED accrual the dialectic answer feeds.
  * It is the MECHANICAL gate that ships alongside the PARTIAL manifest; the costed
- * rank-over-episodes learning-LIFT (the accuracy number) is DEFERRED to the
- * learning-lift-harness over real episodes + the H2 bandit.
+ * rank-over-episodes learning-LIFT (the accuracy number) is DEFERRED to a costed
+ * run over real episodes.
  *
  * WHY THIS HARNESS EXISTS (the honest gap the learning gate must measure -- the
  * SAME structural finding the IQ and dialectic gates
@@ -55,7 +55,8 @@
  * key, no provider call, no cost. The learning claims need NO model: the per-intent
  * buckets are seeded DIRECTLY via `recordUsage` and recall is the LLM-free
  * `createMemoryRecall`. The costed rank-over-episodes learning-LIFT (the accuracy
- * number) lives in `learning-lift-harness.bench.test.ts`; this
+ * number) is a separate, deferred measurement (its pure rank math lives in
+ * `learning-lift-scorer.ts`); this
  * harness produces NO lift number -- a fresh one here would be fabricated.
  *
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import

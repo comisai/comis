@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SD1/SD2/SD3/SD5 truth table for resolveScaffoldDefaults().
- *
- * RED state: scaffold-defaults.ts does not exist yet — all tests fail with
- * "Cannot find module './scaffold-defaults.js'" until Task 2 creates the
- * implementation. This failing state is committed intentionally per
- * CLAUDE.md Tests-First.
+ * Capability-default truth table for resolveScaffoldDefaults().
  *
  * Invariants tested:
- *  - SD1: GoalAnchor capability default ON for small/nano; explicit config wins both ways
- *  - SD2: rag.baseFloor capability default 0.15 for small/nano; explicit non-zero wins;
- *         0.15>0.12 poison evidence (Phase-153 fixture)
- *  - SD3: Verification cost-gate OFF unless distinct cheap critic explicitly configured + keyless
- *  - SD5: frontier/mid always return all-OFF regardless of capability class (byte-identical
- *         non-regression — pre-Phase-158 behavior preserved for frontier/mid)
+ *  - GoalAnchor capability default ON for small/nano; explicit config wins both ways
+ *  - rag.baseFloor capability default 0.15 for small/nano; explicit non-zero wins;
+ *    0.15>0.12 drops the known poison fixture
+ *  - Verification cost-gate OFF unless a distinct cheap critic is explicitly configured + keyless
+ *  - frontier/mid always return all-OFF regardless of capability class (byte-identical
+ *    non-regression — the scaffold defaults never touch large tiers)
  *
  * @module
  */
@@ -34,7 +29,7 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
 // Profile fixtures — use capabilityClassOverride so tests do not depend on
-// provider heuristics (per SD5 test structure from model-profile.test.ts L163-191).
+// provider heuristics (mirrors the model-profile.test.ts override fixtures).
 // ---------------------------------------------------------------------------
 const BASE_OLLAMA_INPUT = {
   id: "test-model",
@@ -54,7 +49,7 @@ const midProfile = resolveModelProfile(BASE_OLLAMA_INPUT, "mid");
 // on these — that would collapse undefined to false and break the ?? gate tests.
 const emptyConfig = {} as PerAgentConfig;
 
-// criticContext for SD3 tests: ollama keyless, distinct cheap critic model
+// criticContext for the cost-gate tests: ollama keyless, distinct cheap critic model
 const criticContextWithDistinctCheapModel = {
   provider: "ollama",
   agentModel: "qwen3.6:27b",
@@ -64,27 +59,27 @@ const criticContextWithDistinctCheapModel = {
 };
 
 // ---------------------------------------------------------------------------
-// SD1: GoalAnchor capability-gated default
+// GoalAnchor capability-gated default
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD1: GoalAnchor capability default", () => {
-  it("Test 1: small model with no goalAnchor config returns goalAnchorEnabled=true (capability default ON)", () => {
+describe("resolveScaffoldDefaults — GoalAnchor capability default", () => {
+  it("small model with no goalAnchor config returns goalAnchorEnabled=true (capability default ON)", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
     expect(result.goalAnchorEnabled).toBe(true);
   });
 
-  it("Test 2: nano model with no goalAnchor config returns goalAnchorEnabled=true (capability default ON)", () => {
+  it("nano model with no goalAnchor config returns goalAnchorEnabled=true (capability default ON)", () => {
     const result = resolveScaffoldDefaults(nanoProfile, emptyConfig);
     expect(result.goalAnchorEnabled).toBe(true);
   });
 
-  it("Test 3: small model with explicit goalAnchor.enabled=false returns goalAnchorEnabled=false (explicit false wins)", () => {
+  it("small model with explicit goalAnchor.enabled=false returns goalAnchorEnabled=false (explicit false wins)", () => {
     const config = { goalAnchor: { enabled: false } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(smallProfile, config);
     expect(result.goalAnchorEnabled).toBe(false);
   });
 
-  it("Test 4: frontier model with explicit goalAnchor.enabled=true returns goalAnchorEnabled=true (explicit true on frontier wins)", () => {
+  it("frontier model with explicit goalAnchor.enabled=true returns goalAnchorEnabled=true (explicit true on frontier wins)", () => {
     const config = { goalAnchor: { enabled: true } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(frontierProfile, config);
     expect(result.goalAnchorEnabled).toBe(true);
@@ -92,46 +87,46 @@ describe("resolveScaffoldDefaults — SD1: GoalAnchor capability default", () =>
 });
 
 // ---------------------------------------------------------------------------
-// SD2: rag.baseFloor capability-gated default
+// rag.baseFloor capability-gated default
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD2: rag.baseFloor capability default", () => {
-  it("Test 5: small model with baseFloor=0 (schema default) returns baseFloor=0.15 (SMALL_NANO_DEFAULT_BASE_FLOOR)", () => {
+describe("resolveScaffoldDefaults — rag.baseFloor capability default", () => {
+  it("small model with baseFloor=0 (schema default) returns baseFloor=0.15 (SMALL_NANO_DEFAULT_BASE_FLOOR)", () => {
     const config = { rag: { baseFloor: 0 } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(smallProfile, config);
     expect(result.baseFloor).toBe(0.15);
   });
 
-  it("Test 6: small model with explicit non-zero baseFloor=0.5 returns baseFloor=0.5 (explicit non-zero wins)", () => {
+  it("small model with explicit non-zero baseFloor=0.5 returns baseFloor=0.5 (explicit non-zero wins)", () => {
     const config = { rag: { baseFloor: 0.5 } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(smallProfile, config);
     expect(result.baseFloor).toBe(0.5);
   });
 
-  it("Test 7: SMALL_NANO_DEFAULT_BASE_FLOOR=0.15 drops Phase-153 poison fixture base=0.12 (0.15 > 0.12)", () => {
+  it("SMALL_NANO_DEFAULT_BASE_FLOOR=0.15 drops the poison fixture base=0.12 (0.15 > 0.12)", () => {
     // Documentary proof: the resolved floor for a small model with no config is 0.15.
-    // The Phase-153 R3 poison fixture had base=0.12 (see memory-recall-floor.test.ts CASE A).
-    // resolvedFloor=0.15 > 0.12 (Phase-153 poison fixture base score)
+    // The poison fixture has base=0.12 (see memory-recall-floor.test.ts CASE A).
+    // resolvedFloor=0.15 > 0.12 (poison fixture base score)
     // → passesBaseFloor gate in memory-recall.ts drops it.
     // We prove the constant relationship here — the downstream gate is tested in memory-recall-floor.test.ts.
     const config = { rag: { baseFloor: 0 } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(smallProfile, config);
-    // resolvedFloor=0.15 > 0.12 (Phase-153 poison fixture base) → passesBaseFloor gate drops it
+    // resolvedFloor=0.15 > 0.12 (poison fixture base) → passesBaseFloor gate drops it
     expect(result.baseFloor).toBeGreaterThan(0.12);
   });
 });
 
 // ---------------------------------------------------------------------------
-// SD3: Verification cost-gate
+// Verification cost-gate
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD3: verification cost-gate", () => {
-  it("Test 8: small model with no criticContext returns verificationEnabled=false (no cost-gate check)", () => {
+describe("resolveScaffoldDefaults — verification cost-gate", () => {
+  it("small model with no criticContext returns verificationEnabled=false (no cost-gate check)", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig, undefined);
     expect(result.verificationEnabled).toBe(false);
   });
 
-  it("Test 9: small + keyless + distinct cheap critic model explicitly configured → verificationEnabled=true", () => {
+  it("small + keyless + distinct cheap critic model explicitly configured → verificationEnabled=true", () => {
     // agentModel=qwen3.6:27b (primary), criticModel=qwen3.6:1.5b (cheap distinct)
     // provider=ollama (keyless) → resolveOperationModel returns source="explicit_config",
     // modelId="qwen3.6:1.5b" !== agentModel "qwen3.6:27b" → cost-gate ON
@@ -139,29 +134,29 @@ describe("resolveScaffoldDefaults — SD3: verification cost-gate", () => {
     expect(result.verificationEnabled).toBe(true);
   });
 
-  it("Test 10: small model with explicit verification.enabled=false + cheap critic → verificationEnabled=false (explicit false wins)", () => {
+  it("small model with explicit verification.enabled=false + cheap critic → verificationEnabled=false (explicit false wins)", () => {
     const config = { verification: { enabled: false } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(smallProfile, config, criticContextWithDistinctCheapModel);
     expect(result.verificationEnabled).toBe(false);
   });
 
-  it("Test 11: frontier model with cheap critic configured → verificationEnabled=false (frontier → cost-gate branch unreachable)", () => {
-    // Frontier: isSmallNano=false → SD3 defaults to false regardless of criticContext
+  it("frontier model with cheap critic configured → verificationEnabled=false (frontier → cost-gate branch unreachable)", () => {
+    // Frontier: isSmallNano=false → the cost-gate defaults to false regardless of criticContext
     const result = resolveScaffoldDefaults(frontierProfile, emptyConfig, criticContextWithDistinctCheapModel);
     expect(result.verificationEnabled).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// SD3 / WR-01: the cost-gate must expose the DISTINCT CHEAP critic model the
+// The cost-gate must expose the DISTINCT CHEAP critic model the
 // critic actually runs on — NOT the agent's primary. The cost-gate's defining
 // guarantee ("never silently doubles local-CPU latency") is false if the critic
 // auto-enables on a cheap model's existence but then runs the primary. This is
-// the regression the SD3 gate-decision tests above could not catch (code review
-// WR-03): they only asserted the on/off decision, never the model identity.
+// the regression the gate-decision tests above cannot catch:
+// they only assert the on/off decision, never the model identity.
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD3/WR-01: resolved critic model", () => {
+describe("resolveScaffoldDefaults — resolved critic model", () => {
   it("exposes the distinct cheap critic model the critic runs on (qwen3.6:1.5b), not the primary (qwen3.6:27b)", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig, criticContextWithDistinctCheapModel);
     expect(result.verificationEnabled).toBe(true);
@@ -185,25 +180,25 @@ describe("resolveScaffoldDefaults — SD3/WR-01: resolved critic model", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SD5: Non-regression — frontier/mid byte-identical to pre-Phase-158
+// Non-regression — frontier/mid all-OFF (scaffold defaults never touch large tiers)
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD5: frontier/mid byte-identical non-regression", () => {
-  it("Test 12: frontier model with no config returns all-OFF (goalAnchorEnabled=false, baseFloor=0, verificationEnabled=false)", () => {
+describe("resolveScaffoldDefaults — frontier/mid all-OFF non-regression", () => {
+  it("frontier model with no config returns all-OFF (goalAnchorEnabled=false, baseFloor=0, verificationEnabled=false)", () => {
     const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
     expect(result.goalAnchorEnabled).toBe(false);
     expect(result.baseFloor).toBe(0);
     expect(result.verificationEnabled).toBe(false);
   });
 
-  it("Test 13: mid model with no config returns all-OFF (goalAnchorEnabled=false, baseFloor=0, verificationEnabled=false)", () => {
+  it("mid model with no config returns all-OFF (goalAnchorEnabled=false, baseFloor=0, verificationEnabled=false)", () => {
     const result = resolveScaffoldDefaults(midProfile, emptyConfig);
     expect(result.goalAnchorEnabled).toBe(false);
     expect(result.baseFloor).toBe(0);
     expect(result.verificationEnabled).toBe(false);
   });
 
-  it("Test 14: capabilityClassOverride=frontier on ollama model → goalAnchorEnabled=false (same as Test 12 via override)", () => {
+  it("capabilityClassOverride=frontier on ollama model → goalAnchorEnabled=false (same all-OFF result via the override path)", () => {
     // Proves that the override path (not just provider heuristic) also yields all-OFF for frontier.
     const frontierViaOverride = resolveModelProfile(BASE_OLLAMA_INPUT, "frontier");
     const result = resolveScaffoldDefaults(frontierViaOverride, emptyConfig);
@@ -212,10 +207,10 @@ describe("resolveScaffoldDefaults — SD5: frontier/mid byte-identical non-regre
 });
 
 // ---------------------------------------------------------------------------
-// SD6: bootstrapMaxChars capability default
+// bootstrapMaxChars capability default
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD6: bootstrapMaxChars capability default", () => {
+describe("resolveScaffoldDefaults — bootstrapMaxChars capability default", () => {
   it("small model with default bootstrap config (20_000 sentinel) returns bootstrapMaxChars=3_500", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
     expect(result.bootstrapMaxChars).toBe(3_500);
@@ -230,7 +225,7 @@ describe("resolveScaffoldDefaults — SD6: bootstrapMaxChars capability default"
     expect(result.bootstrapMaxChars).toBe(5_000);
   });
   it("small model with explicit maxChars=20000 (sentinel value) — capability default applies, not the explicit 20_000", () => {
-    // 20_000 is the schema .default() value — treated as "unset" sentinel.
+    // 20_000 is the schema .default() value — treated as an "unset" sentinel.
     // An operator who genuinely wants 20_000 on a small model must use capabilityClassOverride:"frontier".
     const config = { bootstrap: { maxChars: 20_000, promptMode: "full", groupChatFiltering: true } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(smallProfile, config);
@@ -239,10 +234,10 @@ describe("resolveScaffoldDefaults — SD6: bootstrapMaxChars capability default"
 });
 
 // ---------------------------------------------------------------------------
-// SD7: activeToolCeiling capability default
+// activeToolCeiling capability default
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD7: activeToolCeiling capability default", () => {
+describe("resolveScaffoldDefaults — activeToolCeiling capability default", () => {
   it("small model returns activeToolCeiling=24", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
     expect(result.activeToolCeiling).toBe(24);
@@ -254,10 +249,10 @@ describe("resolveScaffoldDefaults — SD7: activeToolCeiling capability default"
 });
 
 // ---------------------------------------------------------------------------
-// SD8: frontier/mid capacity byte-identical non-regression
+// frontier/mid capacity byte-identical non-regression
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD8: frontier/mid capacity byte-identical non-regression", () => {
+describe("resolveScaffoldDefaults — frontier/mid capacity byte-identical non-regression", () => {
   it("frontier: bootstrapMaxChars=20_000 with no bootstrap config", () => {
     const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
     expect(result.bootstrapMaxChars).toBe(20_000);
@@ -266,16 +261,16 @@ describe("resolveScaffoldDefaults — SD8: frontier/mid capacity byte-identical 
     const result = resolveScaffoldDefaults(midProfile, emptyConfig);
     expect(result.bootstrapMaxChars).toBe(20_000);
   });
-  it("frontier: activeToolCeiling=undefined (no ceiling — byte-identical to v2.14)", () => {
+  it("frontier: activeToolCeiling=undefined (no ceiling — large tiers stay uncapped)", () => {
     const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
     expect(result.activeToolCeiling).toBeUndefined();
   });
-  it("mid: activeToolCeiling=undefined (no ceiling — byte-identical to v2.14)", () => {
+  it("mid: activeToolCeiling=undefined (no ceiling — large tiers stay uncapped)", () => {
     const result = resolveScaffoldDefaults(midProfile, emptyConfig);
     expect(result.activeToolCeiling).toBeUndefined();
   });
   it("capabilityClassOverride=frontier on ollama model → bootstrapMaxChars=20_000 AND activeToolCeiling=undefined", () => {
-    // Mirrors SD5 Test 14 (capabilityClassOverride pattern)
+    // Mirrors the frontier-via-override case above (capabilityClassOverride pattern)
     const frontierViaOverride = resolveModelProfile(BASE_OLLAMA_INPUT, "frontier");
     const result = resolveScaffoldDefaults(frontierViaOverride, emptyConfig);
     expect(result.bootstrapMaxChars).toBe(20_000);
@@ -284,10 +279,10 @@ describe("resolveScaffoldDefaults — SD8: frontier/mid capacity byte-identical 
 });
 
 // ---------------------------------------------------------------------------
-// SD9: bootstrapTotalMaxChars capability default
+// bootstrapTotalMaxChars capability default
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — SD9: bootstrapTotalMaxChars capability default", () => {
+describe("resolveScaffoldDefaults — bootstrapTotalMaxChars capability default", () => {
   it("small model returns bootstrapTotalMaxChars=5_000", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
     expect(result.bootstrapTotalMaxChars).toBe(5_000);
@@ -307,17 +302,17 @@ describe("resolveScaffoldDefaults — SD9: bootstrapTotalMaxChars capability def
 });
 
 // ---------------------------------------------------------------------------
-// F5: frontier/mid byte-identical after F1+F2 retune (non-regression)
+// frontier/mid byte-identical after the small/nano capacity retune (non-regression)
 // ---------------------------------------------------------------------------
 
-describe("resolveScaffoldDefaults — F5: frontier/mid byte-identical after F1+F2 retune", () => {
-  it("frontier: activeToolCeiling=undefined (no ceiling — unchanged by F1 retune)", () => {
+describe("resolveScaffoldDefaults — frontier/mid byte-identical after the small/nano capacity retune", () => {
+  it("frontier: activeToolCeiling=undefined (no ceiling — unchanged by the retune)", () => {
     expect(resolveScaffoldDefaults(frontierProfile, emptyConfig).activeToolCeiling).toBeUndefined();
   });
   it("mid: activeToolCeiling=undefined", () => {
     expect(resolveScaffoldDefaults(midProfile, emptyConfig).activeToolCeiling).toBeUndefined();
   });
-  it("frontier: bootstrapMaxChars=20_000 with no total cap (F2 total cap is small/nano only)", () => {
+  it("frontier: bootstrapMaxChars=20_000 with no total cap (the total cap is small/nano only)", () => {
     const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
     expect(result.bootstrapMaxChars).toBe(20_000);
     expect(result.bootstrapTotalMaxChars).toBeUndefined();
@@ -330,19 +325,19 @@ describe("resolveScaffoldDefaults — F5: frontier/mid byte-identical after F1+F
 });
 
 // ---------------------------------------------------------------------------
-// RETR-04 / WR-02 (Phase 173): relevanceFirst resolution + arbiter-scoped baseFloor.
+// relevanceFirst resolution + arbiter-scoped baseFloor.
 //
-// The unified arbiter (Plan 03) ranks LTM T3/T4 against history; when it is active
-// (relevance-first), an unconfigured baseFloor must be ENFORCED, not silently 0 (the
-// WR-02 fail-open). `relevanceFirst` is the arbiter-active signal threaded to the recall
-// gate. It is resolved with the SD1 capability-gate shape — NEVER re-parsed through a
-// schema (Pitfall 1: .default() collapses undefined→false and kills the ?? gate). The
-// gate axes are ModelProfile.scaffoldLevel==="max" (small/nano) AND !supportsPromptCache
-// (design §14.1, line 144 — a non-caching local model reorders for free; a caching model
-// pays a cache-break so it stays recency-first below the fence). Frontier/mid stay
-// recency-first → byte-identical baseFloor=0 (LOCKED #2).
+// The unified arbiter ranks LTM T3/T4 against history; when it is active
+// (relevance-first), an unconfigured baseFloor must be ENFORCED, not silently 0 (a
+// fail-open). `relevanceFirst` is the arbiter-active signal threaded to the recall
+// gate. It is resolved with the same explicit-??-capability gate shape — NEVER
+// re-parsed through a schema (.default() collapses undefined→false and kills the
+// ?? gate). The gate axes are ModelProfile.scaffoldLevel==="max" (small/nano) AND
+// !supportsPromptCache (a non-caching local model reorders for free; a caching
+// model pays a cache-break so it stays recency-first below the fence).
+// Frontier/mid stay recency-first → byte-identical baseFloor=0.
 // ---------------------------------------------------------------------------
-describe("resolveScaffoldDefaults — RETR-04: relevanceFirst (arbiter-active signal)", () => {
+describe("resolveScaffoldDefaults — relevanceFirst (arbiter-active signal)", () => {
   it("small ollama (no prompt-cache) with no relevance config → relevanceFirst=true (capability gate)", () => {
     // BASE_OLLAMA_INPUT has no prompt-cache capability → supportsPromptCache=false →
     // the small/nano capability gate fires.
@@ -366,9 +361,9 @@ describe("resolveScaffoldDefaults — RETR-04: relevanceFirst (arbiter-active si
   });
 
   it("explicit config.contextEngine.relevance.firstByDefault=true wins for frontier (operator opt-in)", () => {
-    // The TYPED read of the (Plan-03 / 173-03) schema block: explicit true overrides the
+    // The TYPED read of the relevance schema block: explicit true overrides the
     // capability gate's false for a frontier profile. `as PerAgentConfig` (a partial-config
-    // cast — the field is now a REAL typed member of ContextEngineConfig, so NO `as unknown`
+    // cast — the field is a REAL typed member of ContextEngineConfig, so NO `as unknown`
     // bypass is needed; the resolver reads config.contextEngine?.relevance?.firstByDefault directly).
     const config = { contextEngine: { relevance: { firstByDefault: true } } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(frontierProfile, config);
@@ -382,12 +377,12 @@ describe("resolveScaffoldDefaults — RETR-04: relevanceFirst (arbiter-active si
     expect(result.relevanceFirst).toBe(false);
   });
 
-  it("OMITTED firstByDefault on a non-caching small profile still resolves relevanceFirst=true (undefined falls through the ?? gate — Pitfall 1 / no schema re-parse)", () => {
-    // The keystone Pitfall-1 proof: an explicit `relevance: {}` block with firstByDefault
+  it("OMITTED firstByDefault on a non-caching small profile still resolves relevanceFirst=true (undefined falls through the ?? gate — no schema re-parse)", () => {
+    // The keystone proof: an explicit `relevance: {}` block with firstByDefault
     // OMITTED must leave the field `undefined` so the resolver's `?? (isSmallNano &&
     // !supportsPromptCache)` capability gate FIRES. If the resolver re-parsed the sub-block
     // through its schema, a `.default()` would collapse undefined→false and this would
-    // wrongly resolve to false. The schema (173-03) keeps firstByDefault OPTIONAL with NO
+    // wrongly resolve to false. The schema keeps firstByDefault OPTIONAL with NO
     // .default(), and the resolver reads it via the optional chain — so undefined survives.
     const config = { contextEngine: { relevance: {} } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(smallProfile, config); // small + ollama (no cache)
@@ -396,14 +391,14 @@ describe("resolveScaffoldDefaults — RETR-04: relevanceFirst (arbiter-active si
 });
 
 // ---------------------------------------------------------------------------
-// RETR-04 / WR-02: baseFloor stays arbiter-scoped (the resolver is the contract pin;
+// baseFloor stays arbiter-scoped (the resolver is the contract pin;
 // the behavioral fail-open proof lives on the recall path in memory-recall-floor.test.ts).
 //
 // small/nano relevance-first: an UNCONFIGURED baseFloor (schema-default 0) resolves to the
 // class default 0.15 — the floor the arbiter enforces. frontier/mid: unconfigured stays 0
 // (byte-identical). Explicit config always wins for every class.
 // ---------------------------------------------------------------------------
-describe("resolveScaffoldDefaults — RETR-04: baseFloor fail-closed under the arbiter (contract pin)", () => {
+describe("resolveScaffoldDefaults — baseFloor fail-closed under the arbiter (contract pin)", () => {
   it("small relevance-first + unconfigured baseFloor → 0.15 AND relevanceFirst=true (the load-bearing floor)", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
     expect(result.baseFloor).toBe(0.15);
@@ -427,14 +422,13 @@ describe("resolveScaffoldDefaults — RETR-04: baseFloor fail-closed under the a
 
 // ---------------------------------------------------------------------------
 // Cross-file parity: KEYLESS_CRITIC_PROVIDERS in scaffold-defaults.ts must
-// equal the exported Set from verification-gate.ts (Plan 02 assertion, deferred
-// from Plan 01).
+// equal the exported Set from verification-gate.ts.
 //
 // scaffold-defaults.ts keeps its own private copy to avoid a circular import;
-// verification-gate.ts now exports the canonical Set (Phase 158, Plan 02).
+// verification-gate.ts exports the canonical Set.
 // This test fails loudly if either copy drifts.
 // ---------------------------------------------------------------------------
-describe("KEYLESS_CRITIC_PROVIDERS cross-file parity (Plan 02)", () => {
+describe("KEYLESS_CRITIC_PROVIDERS cross-file parity", () => {
   it("scaffold-defaults.ts KEYLESS_CRITIC_PROVIDERS content matches verification-gate.ts export", () => {
     // The scaffold-defaults copy is private; we test by exercising resolveScaffoldDefaults
     // with known-keyless and known-keyed providers and comparing the gate outcomes
@@ -476,20 +470,20 @@ describe("KEYLESS_CRITIC_PROVIDERS cross-file parity (Plan 02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CWF-04: resolveScaffoldDefaults → ceiling → applyToolDeferral E2E chain
+// resolveScaffoldDefaults → ceiling → applyToolDeferral E2E chain.
 //
-// Phase-0 static determination (2026-06-09): WIRING-OK — the ceiling and compact-prompt
-// ARE correctly wired in current source (post-Phase 165). The live incident's
-// activeToolCount: 83 was stale-dist, not a code gate. Phase 168 scope = regression
-// test (this file) + orchestration-reachability change (tool-deferral.ts).
-// No tool-path threading fix needed.
+// Regression lock for the full chain: the small-class ceiling and compact-prompt
+// ARE correctly wired in source — a live incident that showed
+// activeToolCount: 83 on a small model traced to a stale dist/, not a code gate.
+// This suite pins the chain end-to-end so a real wiring regression cannot hide
+// behind that ambiguity again.
 //
-// CWF-04-E (compact-prompt binding): small profile → resolvePromptModeForProfile
-// returns 'compact-secure'. This is locked by the existing WR-03 suite at
-// prompt-assembly.test.ts:2159. Confirm it stays GREEN after the GREEN commit.
+// (The compact-prompt half — small profile → resolvePromptModeForProfile
+// returns 'compact-secure' — is locked by the resolvePromptModeForProfile
+// suite in prompt-assembly.test.ts.)
 // ---------------------------------------------------------------------------
 
-describe("CWF-04: resolveScaffoldDefaults→ceiling→applyToolDeferral E2E chain (small + 83 tools)", () => {
+describe("resolveScaffoldDefaults→ceiling→applyToolDeferral E2E chain (small + 83 tools)", () => {
   function makeTool(name: string): ToolDefinition {
     return {
       name,
@@ -507,17 +501,17 @@ describe("CWF-04: resolveScaffoldDefaults→ceiling→applyToolDeferral E2E chai
     } as unknown as ToolDefinition;
   }
 
-  it("CWF-04-A: small profile → resolveScaffoldDefaults returns activeToolCeiling=24 (chain entry lock)", () => {
+  it("small profile → resolveScaffoldDefaults returns activeToolCeiling=24 (chain entry lock)", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
     expect(result.activeToolCeiling).toBe(24);
   });
 
-  it("CWF-04: small + 83 tools → active ≤ 24 AND pipeline in active set (E2E chain — RED: pipeline deferred today)", () => {
-    // RED test: fails today because pipeline is currently deferred by the ceiling.
-    // GREEN: SMALL_CLASS_ORCHESTRATION_TOOLS exempts pipeline inside the ceiling block.
+  it("small + 83 tools → active ≤ 24 AND pipeline in active set (E2E chain)", () => {
+    // Fails if the ceiling defers pipeline: SMALL_CLASS_ORCHESTRATION_TOOLS
+    // must exempt pipeline inside the ceiling block.
     //
     // This integrates resolveScaffoldDefaults → applyToolDeferral end-to-end.
-    // No existing test covers this full chain — this is the regression lock.
+    // No other test covers this full chain — this is the regression lock.
     const logger = createMockLogger();
     const defaults = resolveScaffoldDefaults(smallProfile, emptyConfig);
     expect(defaults.activeToolCeiling).toBe(24); // confirm chain entry
@@ -552,13 +546,13 @@ describe("CWF-04: resolveScaffoldDefaults→ceiling→applyToolDeferral E2E chai
     // Ceiling holds — exact pin: 15 CORE + 1 pipeline + 8 cold = 24
     // (83 total − 59 deferred cold tools = 24 active; deterministic — same fixture every run)
     expect(result.activeTools.length).toBe(24);
-    // KEY ASSERTION (RED → GREEN): pipeline must be in the active set for small
+    // KEY ASSERTION: pipeline must be in the active set for small
     expect(result.activeTools.map(t => t.name)).toContain("pipeline");
   });
 });
 
 // ---------------------------------------------------------------------------
-// SD (v2.19): maxToolResultChars capability-gated default
+// maxToolResultChars capability-gated default
 //
 // A single tool result defaults to up to 50_000 chars (~12.5K tokens). On a
 // small model (32K window) two such results exhaust the context — the live NVDA
@@ -588,9 +582,9 @@ describe("resolveScaffoldDefaults — maxToolResultChars capability default", ()
   });
 
   it("small + explicit 50_000 (the schema-default sentinel) → still capped (12_000)", () => {
-    // 50_000 is BOTH the schema default and an explicit value — like the SD6 20_000
-    // sentinel, a small model still receives the capability cap. Operators force the
-    // full value via capabilityClassOverride:"frontier".
+    // 50_000 is BOTH the schema default and an explicit value — like the bootstrap
+    // 20_000 sentinel, a small model still receives the capability cap. Operators force
+    // the full value via capabilityClassOverride:"frontier".
     const config = { maxToolResultChars: 50_000 } as PerAgentConfig;
     expect(resolveScaffoldDefaults(smallProfile, config).maxToolResultChars).toBe(12_000);
   });

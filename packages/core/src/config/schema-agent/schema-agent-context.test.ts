@@ -2,9 +2,6 @@
 /**
  * Tests for the memory.distillFromLcd config block in ContextEngineConfigSchema.
  *
- * RED (172-01): These tests fail on pre-patch code because the
- * memory.distillFromLcd block does not exist in ContextEngineConfigSchema yet.
- *
  * They verify:
  *   1. Empty contextEngine config produces correct memory.distillFromLcd defaults.
  *   2. Explicit overrides are not clobbered by defaults.
@@ -14,7 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { ContextEngineConfigSchema } from "./schema-agent-context.js";
 
-describe("ContextEngineConfigSchema — memory.distillFromLcd config block (Phase 172-01)", () => {
+describe("ContextEngineConfigSchema — memory.distillFromLcd config block", () => {
   // ── Test 1: enabled default ──────────────────────────────────────────────
 
   it("empty contextEngine config produces memory.distillFromLcd.enabled = false", () => {
@@ -90,19 +87,15 @@ describe("ContextEngineConfigSchema — memory.distillFromLcd config block (Phas
 });
 
 // ---------------------------------------------------------------------------
-// RETR-03 (Phase 173-03): contextEngine.relevance.firstByDefault config block.
+// contextEngine.relevance.firstByDefault config block.
 //
-// RED on pre-patch: ContextEngineConfigSchema (a z.strictObject) has no `relevance`
-// field, so parsing `{ contextEngine: { relevance: {...} } }` would be rejected by
-// strictObject — the schema block does not exist yet.
-//
-// The CRITICAL contract (Pitfall 1 — the schema re-parse trap): firstByDefault is an
+// The CRITICAL contract (the schema re-parse trap): firstByDefault is an
 // OPTIONAL boolean with NO `.default()`. An OMITTED field must parse to `undefined`
 // (NOT `false`) so the scaffold-defaults resolver's `?? (capability gate)` survives.
 // A `.default(false)` here would collapse undefined→false and silently kill the
 // capability-gated default for small/nano. These tests pin undefined-stays-undefined.
 // ---------------------------------------------------------------------------
-describe("ContextEngineConfigSchema — relevance.firstByDefault config block (RETR-03)", () => {
+describe("ContextEngineConfigSchema — relevance.firstByDefault config block", () => {
   it("parses { relevance: { firstByDefault: true } } to true", () => {
     const cfg = ContextEngineConfigSchema.parse({ relevance: { firstByDefault: true } });
     expect(cfg.relevance?.firstByDefault).toBe(true);
@@ -121,7 +114,7 @@ describe("ContextEngineConfigSchema — relevance.firstByDefault config block (R
 
   it("OMITTING firstByDefault inside an explicit relevance block leaves the field undefined", () => {
     const cfg = ContextEngineConfigSchema.parse({ relevance: {} });
-    // The field is .optional() with NO .default(false) → undefined, not false (Pitfall 1).
+    // The field is .optional() with NO .default(false) → undefined, not false.
     expect(cfg.relevance?.firstByDefault).toBeUndefined();
   });
 

@@ -86,8 +86,8 @@ export const HostRuleSchema = z.strictObject({
   pathPrefix: z.string().min(1).optional(),
   pathPolicy: z.array(z.string()).optional(),
   inject: z.array(InjectionRuleSchema),
-  // staticHeaders and finalizer were missing, causing z.strictObject to
-  // reject valid operator YAML that includes these fields.
+  // staticHeaders and finalizer must be declared here: z.strictObject would
+  // otherwise reject valid operator YAML that includes these fields.
   staticHeaders: z.array(StaticHeaderSchema).optional(),
   finalizer: RequestFinalizerSchema.optional(),
 });

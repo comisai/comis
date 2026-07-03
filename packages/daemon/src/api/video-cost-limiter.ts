@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SEC-02 / DIVERGENCE 3: per-agent hourly video-generation COST ceiling, gated
- * PRE-SUBMIT against a worst-case estimate.
+ * Per-agent hourly video-generation COST ceiling, gated PRE-SUBMIT against a
+ * worst-case estimate.
  *
  * A daemon-side fixed-window USD accumulator that mirrors the image cost limiter
  * (`./image-cost-limiter.ts`) byte-for-byte in structure — same per-agent `Map`,
@@ -13,14 +13,14 @@
  * WHY the estimate (vs the image limiter's post-hoc `canSpend(agentId)`): an
  * image's cost is only known AFTER `provider.execute`, so the image gate is a
  * pre-check on the ALREADY-spent total plus a post-hoc `record`. A video clip is
- * dollars-per-clip and is ALREADY RENDERING once submitted (I6) — there is no
+ * dollars-per-clip and is ALREADY RENDERING once submitted — there is no
  * "un-bill" once the queue accepts the job — so the ceiling cannot wait for the
  * actual cost. The handler computes a conservative worst-case estimate
  * (`estimateVideoCostUsd`: duration × per-second rate, audio/4k upper bound) and
  * passes it here BEFORE calling `port.execute`; exceeding the ceiling blocks the
  * submit. After completion the handler reconciles the actual cost via `record`.
  *
- * SOFT CAP — concurrency caveat (WR-01, inherited from the image limiter). The
+ * SOFT CAP — concurrency caveat (inherited from the image limiter). The
  * pre-check and `record` straddle the `await port.execute`, and `canSpend` is a
  * read-only check with NO reservation. So N concurrent same-agent `video.generate`
  * calls all evaluate `canSpend()` BEFORE any `record()` runs: when the
@@ -50,16 +50,16 @@
  */
 import { systemNowMs } from "@comis/core";
 
-/** Per-agent hourly USD cost ceiling for video generation (SEC-02). */
+/** Per-agent hourly USD cost ceiling for video generation. */
 export interface VideoCostLimiter {
   /**
    * True if the agent can afford a render whose worst-case cost is `estimateUsd`
    * within the current window — i.e. `(accumulatedSpend + estimateUsd)` is at or
-   * under `maxCostPerHourUsd` (the boundary is INCLUSIVE). DIVERGENCE 3: unlike
+   * under `maxCostPerHourUsd` (the boundary is INCLUSIVE). Unlike
    * the image limiter this takes the pre-submit estimate, because a video clip is
-   * already rendering once submitted (I6) so the gate must run BEFORE the call.
+   * already rendering once submitted so the gate must run BEFORE the call.
    *
-   * BEST-EFFORT under concurrency (WR-01): a read-only check with no reservation
+   * BEST-EFFORT under concurrency: a read-only check with no reservation
    * — concurrent same-agent calls can each pass before any records, overshooting
    * by up to (concurrency − 1) × per-call cost. Bounded by the count rate limit
    * (`maxPerHour`, checked first). See the module header.
@@ -111,7 +111,7 @@ export function createVideoCostLimiter(opts: {
 
   return {
     canSpend(agentId: string, estimateUsd: number): boolean {
-      // DIVERGENCE 3: gate the SUM (accumulated + worst-case estimate) against
+      // Gate the SUM (accumulated + worst-case estimate) against
       // the ceiling, INCLUSIVE. A poisoned (negative/NaN) estimate clamps to 0
       // so it cannot drive the sum below the accumulated spend (no gate bypass).
       const est = Number.isFinite(estimateUsd) ? Math.max(0, estimateUsd) : 0;

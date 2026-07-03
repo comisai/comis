@@ -23,12 +23,12 @@ export interface HostileMcpTool {
 }
 
 /**
- * One tool covering all four GBNF-01 transform classes plus GBNF-02's
+ * One tool covering all four proactive gbnf transform classes plus the
  * reactive strip targets (`pattern`/`format` — which the PROACTIVE gbnf
  * profile must NOT touch):
  *
  * - `due`      — unanchored `pattern` with PCRE `\d` shorthand + `format`
- *                (llama.cpp #22314 grammar-parse class; survives GBNF-01)
+ *                (llama.cpp #22314 grammar-parse class; survives the proactive profile)
  * - `assignee` — nullable `anyOf` + node-level description (Ollama Go-side
  *                strictness; collapse target)
  * - `retries`  — `["integer", "null"]` type array (ollama#10164 family)

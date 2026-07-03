@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LabelSpec registry + theme-merge resolver (spec
- * §6.1/§6.2). Resolution precedence is THEME-OVERRIDE > REGISTERED > SEMANTIC
+ * Tests for the LabelSpec registry + theme-merge resolver.
+ * Resolution precedence is THEME-OVERRIDE > REGISTERED > SEMANTIC
  * FALLBACK, applied as a deep merge (an override of one field preserves the
  * others). Pure resolution; no logger.
  */

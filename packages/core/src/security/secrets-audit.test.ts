@@ -62,7 +62,7 @@ describe("scanConfigForSecrets", () => {
   });
 
   it("skips ${VAR} env-substitution references (properly configured)", () => {
-    // Live incident (v2.20 doctor surface validation, 2026-06-10): a correctly
+    // Live incident from doctor-surface validation: a correctly
     // configured production config that references secrets via the documented
     // ${VAR} env-substitution syntax was flagged PLAINTEXT_SECRET (severity
     // error) with the misleading advice "consider using ... an environment

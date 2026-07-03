@@ -5,7 +5,7 @@ import {
   LANGUAGE_PRESERVATION_INSTRUCTION,
 } from "./summarize-prompt-style.js";
 
-describe("buildDepthAwareInstructions — SUM-01 depth-keyed prompt styles", () => {
+describe("buildDepthAwareInstructions — depth-keyed prompt styles", () => {
   describe("d0 (leaf extractive) — depth <= 0", () => {
     it("d0 non-aggressive instruction contains file paths and decisions", () => {
       const result = buildDepthAwareInstructions(0, false);
@@ -88,9 +88,9 @@ describe("buildDepthAwareInstructions — SUM-01 depth-keyed prompt styles", () 
     });
   });
 
-  describe("WR-01: aggressive directive preserved for all depths", () => {
+  describe("aggressive directive preserved for all depths", () => {
     it("d1 aggressive instruction differs from d1 non-aggressive — not a byte-identical wasted round-trip", () => {
-      // WR-01: depth>=1 aggressive=true must differ from depth>=1 aggressive=false
+      // depth>=1 aggressive=true must differ from depth>=1 aggressive=false
       // so the Level-2 aggressive condense retry is not identical to the first pass
       const nonAggressive = buildDepthAwareInstructions(1, false);
       const aggressive = buildDepthAwareInstructions(1, true);
@@ -121,8 +121,8 @@ describe("buildDepthAwareInstructions — SUM-01 depth-keyed prompt styles", () 
     });
   });
 
-  describe("GEN-01: language-preservation sentence in every dag depth template", () => {
-    // Load-bearing fragments of the single shared sentence (design §4 GEN-01, I7).
+  describe("language-preservation sentence in every dag depth template", () => {
+    // Load-bearing fragments of the single shared sentence.
     // "never translate" pins the no-translation directive; the verbatim clause pins
     // the code-identifier carve-out — together they assert the FULL sentence is present.
     const NO_TRANSLATE_FRAGMENT = "never translate";
@@ -148,7 +148,7 @@ describe("buildDepthAwareInstructions — SUM-01 depth-keyed prompt styles", () 
     it("the exported constant itself carries both load-bearing fragments", () => {
       expect(LANGUAGE_PRESERVATION_INSTRUCTION).toContain(NO_TRANSLATE_FRAGMENT);
       expect(LANGUAGE_PRESERVATION_INSTRUCTION).toContain(VERBATIM_FRAGMENT);
-      // Anchored to the dominant-language phrasing from design §4 GEN-01.
+      // Anchored to the dominant-language phrasing of the shared sentence.
       expect(LANGUAGE_PRESERVATION_INSTRUCTION).toContain(
         "Write the summary in the dominant language of the source content",
       );

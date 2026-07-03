@@ -10,7 +10,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 describe("tool-schema-safety", () => {
   // ---------------------------------------------------------------------------
-  // Schema normalization (formerly schema-normalizer.test.ts)
+  // Schema normalization
   // ---------------------------------------------------------------------------
 
   describe("schema normalization", () => {
@@ -180,7 +180,7 @@ describe("tool-schema-safety", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Schema pruning (formerly schema-pruning.test.ts)
+  // Schema pruning
   // ---------------------------------------------------------------------------
 
   describe("schema pruning", () => {

@@ -28,8 +28,7 @@ describe("isSignedReplayError", () => {
   });
 
   it("matches Anthropic production-incident error shape", () => {
-    // Verbatim from production incident srv1593437 trace
-    // 93ba66cf-4283-4ed4-92bd-73d00b4eeb76, request_id req_011CaPCYYKfJRpuG3w2y5s52
+    // Verbatim error text from the production incident that motivated this detector.
     const msg =
       "400 invalid_request_error: messages.5.content.17: 'thinking' or 'redacted_thinking' blocks in the latest assistant message cannot be modified";
     expect(isSignedReplayError(msg)).toBe(true);

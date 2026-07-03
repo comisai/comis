@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure-function tests for oauth-helpers.ts (consolidated from
- * agent/src/model/oauth-identity.test.ts + oauth-errors.test.ts).
+ * Pure-function tests for oauth-helpers.ts.
  *
  * Test groups (mirror source layout):
  *   1. JWT decoding — decodeCodexJwtPayload + resolveCodexStableSubject +
@@ -9,8 +8,8 @@
  *   2. Identity resolution — resolveCodexAuthIdentity + redactEmailForLog
  *   3. Error catalogue — rewriteOAuthError (6 cases) + CRITICAL ORDERING
  *      invariant + defensive non-Error inputs + the `logErrorKind === "auth"`
- *      closed-union mirror invariant (the `errorKind === code` mirror was
- *      narrowed to a closed Pino ErrorKind value)
+ *      closed-union mirror invariant (`logErrorKind` is a closed Pino
+ *      ErrorKind value, never the open-ended `code`)
  *
  * Test fixtures use neutral placeholders: no real emails,
  * tokens, or proprietary error_description strings.
@@ -252,7 +251,7 @@ describe("resolveCodexAuthIdentity + redactEmailForLog", () => {
   describe("redactEmailForLog", () => {
     // standard email
     it("semi-redacts a standard email: first 2 + … + last 1 of local part", () => {
-      expect(redactEmailForLog("moshe.anconina@gmail.com")).toBe("mo…a@gmail.com");
+      expect(redactEmailForLog("jane.example@example.com")).toBe("ja…e@example.com");
     });
 
     // short local-part
@@ -284,10 +283,10 @@ describe("resolveCodexAuthIdentity + redactEmailForLog", () => {
 
 describe("rewriteOAuthError + RewrittenOAuthError + OAuthErrorCode", () => {
   // -------------------------------------------------------------------------
-  // refresh_token_reused — 3 OpenClaw substring matchers (verbatim port from
-  // openclaw/src/agents/auth-profiles/oauth.ts:117-123)
+  // refresh_token_reused — the 3 distinct substring phrasings the OAuth token
+  // endpoint emits for refresh-token reuse; each must classify to the same code
   // -------------------------------------------------------------------------
-  describe("refresh_token_reused (3 OpenClaw substring matchers)", () => {
+  describe("refresh_token_reused (3 substring matchers)", () => {
     it("matches the literal 'refresh_token_reused' substring", () => {
       const result = rewriteOAuthError(new Error("refresh_token_reused"));
       expect(result.code).toBe("refresh_token_reused");

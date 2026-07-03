@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: createOrderPreservingResultBuffer (221-05) invariant guards — RangeError on a non-negative-integer toolCallCount / out-of-range record index; Error on duplicate-fill or incomplete-flush (a hole would tear the cache-stable prefix). These are programmer-error fail-fast guards on the buffer's contract (it is called once-per-index by construction by the executor loop), not recoverable runtime conditions; consumed on the executor tool-parallelism path.
+// @allow-throw: createOrderPreservingResultBuffer invariant guards — RangeError on a non-negative-integer toolCallCount / out-of-range record index; Error on duplicate-fill or incomplete-flush (a hole would tear the cache-stable prefix). These are programmer-error fail-fast guards on the buffer's contract (it is called once-per-index by construction by the executor loop), not recoverable runtime conditions; consumed on the executor tool-parallelism path.
 /**
  * Tool Parallelism: Read-only classifier and mutation serializer.
  *
@@ -132,7 +132,7 @@ export function createMutationSerializer(): (
 }
 
 // ---------------------------------------------------------------------------
-// STREAM-01: order-preserving, cache-stable result buffer
+// Order-preserving, cache-stable result buffer
 // ---------------------------------------------------------------------------
 
 /**
@@ -142,9 +142,9 @@ export function createMutationSerializer(): (
  * `execute()` promises resolve in COMPLETION order — which is
  * nondeterministic across turns. If concurrent results were placed into the
  * message array in completion order, the cached prompt prefix would change
- * turn-over-turn and bust the prompt cache (T-221-STREAM-01, a cost DoS).
+ * turn-over-turn and bust the prompt cache (a cost DoS).
  *
- * SDK-side guarantee (Q-STREAM-1 spike, @earendil-works/pi-coding-agent
+ * SDK-side guarantee (verified against @earendil-works/pi-coding-agent
  * 0.79.3): the SDK already "appends persisted tool results in assistant
  * source order" (CHANGELOG #3503) regardless of which tool finishes first,
  * and `createMutationSerializer` above wraps `execute()` WITHOUT reordering

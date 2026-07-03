@@ -23,8 +23,8 @@ describe("resolveModelFamily — coarse family classification", () => {
   }
 });
 
-describe("isProviderModelChimera — native provider vs foreign model family (ffe11736)", () => {
-  it("FLAGS the ffe11736 shape: provider=anthropic + a qwen model ref", () => {
+describe("isProviderModelChimera — native provider vs foreign model family", () => {
+  it("FLAGS the chimeric shape: provider=anthropic + a qwen model ref", () => {
     expect(isProviderModelChimera("anthropic", "qwen3.6:35b")).toBe(true);
   });
 

@@ -52,7 +52,7 @@ export interface DialecticSeamDeps {
   modelId: string;
   /** The API key VALUE (resolved by NAME at the daemon; never logged here). */
   apiKey: string;
-  /** FLAG-3 fix: optional async credential resolver. When set, `callModel` awaits it before
+  /** Optional async credential resolver. When set, `callModel` awaits it before
    *  `completeSimple` and uses its return as the key. This routes OAuth providers (openai-codex)
    *  through `resolveProviderApiKey` (which sets pi's runtime-override token) instead of the static
    *  empty `apiKey` that made `memory.ask` abstain for OAuth deployments. Absent ⇒ the static `apiKey`
@@ -67,14 +67,14 @@ export interface DialecticSeamDeps {
   /** Scope tag for the failure logs. */
   agentId: string;
   /**
-   * R6: the capability class of the agent's model (from ModelProfile.capabilityClass).
+   * The capability class of the agent's model (from ModelProfile.capabilityClass).
    * When small/nano without a capable override, synthesize() returns { abstain: true }
-   * immediately — no LLM call is made (T-153-fabricate mitigation).
+   * immediately — no LLM call is made (fabrication mitigation).
    * Optional: callers that don't pass it default to "frontier" behavior (capable).
    */
   capabilityClass?: CapabilityClass;
   /**
-   * R6: operator override — a stronger cheap model is configured for the memory
+   * Operator override — a stronger cheap model is configured for the memory
    * pipeline. When true, small/nano are treated as "capable" for dialectic synthesis.
    * Optional; defaults to false.
    */
@@ -125,7 +125,7 @@ export function createDialecticSeam(
   deps: DialecticSeamDeps,
 ): (question: string, groundingText: string) => Promise<DialecticParsed> {
   const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId, customModel } = deps;
-  // R6: pre-resolve the capability routing (once per seam instance, not per call).
+  // Pre-resolve the capability routing (once per seam instance, not per call).
   // Defaults to "frontier" behavior when capabilityClass is absent (capable path).
   const capabilityClass = deps.capabilityClass ?? "frontier";
   const hasCapableModelOverride = deps.hasCapableModelOverride ?? false;
@@ -168,11 +168,11 @@ export function createDialecticSeam(
     const controller = new AbortController();
     const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
     try {
-      // FLAG-3: resolve the credential per-call so OAuth providers (openai-codex) get their bearer
+      // Resolve the credential per-call so OAuth providers (openai-codex) get their bearer
       // (via resolveProviderApiKey's runtime-override) instead of the static empty apiKey that made
       // memory.ask abstain. Falls back to the static apiKey (keyless / built-in / test).
       const resolvedApiKey = deps.resolveCredential ? await deps.resolveCredential() : apiKey;
-      // FLAG-3 (verified live 2026-06-22): `temperatureOption` gates the deterministic temperature:0 on
+      // Verified live: `temperatureOption` gates the deterministic temperature:0 on
       // `model.reasoning` — reasoning models (gpt-5.x, o-series, Claude Opus 4.7+) reject `temperature`
       // (HTTP 400 "Unsupported parameter: temperature" → empty response → abstain). Paired with
       // resolveCredential (the OAuth bearer); BOTH are required — the temperature 400 fired before auth.
@@ -211,7 +211,7 @@ export function createDialecticSeam(
     question: string,
     groundingText: string,
   ): Promise<DialecticParsed> {
-    // R6 pre-call check (T-153-fabricate mitigation): if the capability class
+    // Pre-call capability check (fabrication mitigation): if the capability class
     // routes to "abstain", return immediately — NO LLM call is made. A small/nano
     // model receiving a dialectic synthesis task will fabricate citations; this
     // gate prevents fabricated citations from entering trusted storage.

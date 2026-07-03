@@ -93,18 +93,18 @@ const defaultConfig: HistoryWindowConfig = {
 // ---------------------------------------------------------------------------
 
 describe("applyHistoryWindow", () => {
-  it("1. empty messages returns empty array", () => {
+  it("empty messages array returns an empty array", () => {
     const result = applyHistoryWindow([], defaultConfig);
     expect(result).toEqual([]);
   });
 
-  it("2. messages within window returns all messages unchanged (reference equality)", () => {
+  it("messages within window returns all messages unchanged (reference equality)", () => {
     const messages = buildConversation(5); // 5 user turns, window=15
     const result = applyHistoryWindow(messages, defaultConfig);
     expect(result).toBe(messages); // reference equality -- no windowing needed
   });
 
-  it("3. messages exceeding window returns last N user turns with intervening messages", () => {
+  it("messages exceeding window returns last N user turns with intervening messages", () => {
     const messages = buildConversation(20); // 20 user turns, window=5
     const config: HistoryWindowConfig = { historyTurns: 5 };
     const result = applyHistoryWindow(messages, config);
@@ -122,7 +122,7 @@ describe("applyHistoryWindow", () => {
     expect(firstUserContent[0].text).toBe("user-15"); // turns 15-19 (0-indexed)
   });
 
-  it("4. per-channel override: channelType dm with override { dm: 3 } returns last 3 user turns", () => {
+  it("per-channel override: channelType dm with override { dm: 3 } returns last 3 user turns", () => {
     const messages = buildConversation(10);
     const config: HistoryWindowConfig = {
       historyTurns: 15,
@@ -136,7 +136,7 @@ describe("applyHistoryWindow", () => {
     expect(result.length).toBe(6); // 3 user + 3 assistant
   });
 
-  it("5. per-channel override: unknown channelType falls back to default historyTurns", () => {
+  it("per-channel override: unknown channelType falls back to default historyTurns", () => {
     const messages = buildConversation(20);
     const config: HistoryWindowConfig = {
       historyTurns: 5,
@@ -149,7 +149,7 @@ describe("applyHistoryWindow", () => {
     expect(userMsgs.length).toBe(5); // falls back to historyTurns=5
   });
 
-  it("6. compaction summary: first message is compaction summary, always included", () => {
+  it("compaction summary: first message is compaction summary, always included", () => {
     const compaction = makeCompactionSummary("previous context summary");
     const conversation = buildConversation(3);
     const messages = [compaction, ...conversation];
@@ -160,7 +160,7 @@ describe("applyHistoryWindow", () => {
     expect(result).toBe(messages);
   });
 
-  it("7. compaction summary + windowing: compaction + 20 user turns with window=5 -> compaction + last 5 turns", () => {
+  it("compaction summary + windowing: compaction + 20 user turns with window=5 -> compaction + last 5 turns", () => {
     const compaction = makeCompactionSummary("summary of earlier context");
     const conversation = buildConversation(20);
     const messages = [compaction, ...conversation];
@@ -181,7 +181,7 @@ describe("applyHistoryWindow", () => {
     expect(result.length).toBe(11);
   });
 
-  it("8. pair safety: tool_use/tool_result not split by window boundary", () => {
+  it("pair safety: tool_use/tool_result not split by window boundary", () => {
     // Build: u0, a0, u1, a1(toolCall:tc1), tr(tc1), u2, a2, u3, a3
     // Window=2 -> should include u2,a2,u3,a3 but tc1 result is NOT in window
     // so no extension needed
@@ -222,7 +222,7 @@ describe("applyHistoryWindow", () => {
     expect(result2.length).toBe(2); // u2, a2
   });
 
-  it("8b. pair safety: window boundary falls ON tool result, extends to include assistant tool_use", () => {
+  it("pair safety: window boundary falls ON tool result, extends to include assistant tool_use", () => {
     // Build: u0, a0, u1, a1(tc1,tc2), tr(tc1), tr(tc2), u2, a2
     // Window=1 with user counting -> would normally start at u2
     // But let's test where the boundary falls on a tool result:
@@ -245,7 +245,7 @@ describe("applyHistoryWindow", () => {
     expect(result.length).toBe(4); // u2,a2,u3,a3
   });
 
-  it("9. pair safety: multiple consecutive tool calls all included", () => {
+  it("pair safety: multiple consecutive tool calls all included", () => {
     // Build conversation where tool results are at the START of the window:
     // u0, a0, u1, a1(tc1,tc2,tc3), tr(tc1), tr(tc2), tr(tc3), a_text, u2, a2
     // Window=1 -> starts at u2. No tool results in window -> no extension
@@ -275,7 +275,7 @@ describe("applyHistoryWindow", () => {
     // windowStartIdx=5, prev at idx 4 is tr(tc2)... but tr(tc2) is at idx 4 BEFORE window.
     // pair safety only checks if items WITHIN the window have orphaned tool results.
 
-    // Let me think about this differently. Pair safety matters when:
+    // Put differently, pair safety matters when:
     // The window starts with a tool result whose tool_use (assistant) is outside.
     // This happens when the window-start user message is preceded by tool results.
 
@@ -326,7 +326,7 @@ describe("applyHistoryWindow", () => {
     // u0, a0, u1, a1(tc1,tc2), tr1, [CUT] tr2, u2, a2
     // This can't happen because the cut is always at a user message index.
 
-    // Wait -- the cut IS at a user message. Then the tool results/assistant
+    // The cut IS at a user message. Then the tool results/assistant
     // before the user message are always outside. The pair safety extends
     // backwards only if there's a tool result IN the window whose tool_use is
     // NOT in the window.
@@ -362,7 +362,7 @@ describe("applyHistoryWindow", () => {
     expect(result[0]!.role).toBe("assistant");
   });
 
-  it("10. mixed content: correct turn counting with text-only and tool-call assistants", () => {
+  it("mixed content: correct turn counting with text-only and tool-call assistants", () => {
     // u0, a0(text), u1, a1(tc1), tr1, u2, a2(text), u3, a3(text)
     const messages: AgentMessage[] = [
       makeUserMsg("u0"), makeAssistantMsg("a0"),
@@ -379,7 +379,7 @@ describe("applyHistoryWindow", () => {
     expect(result.length).toBe(4);
   });
 
-  it("11. no user messages: edge case returns all messages (no windowing possible)", () => {
+  it("no user messages: edge case returns all messages (no windowing possible)", () => {
     const messages: AgentMessage[] = [
       makeAssistantMsg("a0"),
       makeAssistantMsg("a1"),
@@ -389,7 +389,7 @@ describe("applyHistoryWindow", () => {
     expect(result).toBe(messages); // no user turns -> within window -> reference equality
   });
 
-  it("12. channelType undefined with overrides: falls back to historyTurns", () => {
+  it("channelType undefined with overrides: falls back to historyTurns", () => {
     const messages = buildConversation(20);
     const config: HistoryWindowConfig = {
       historyTurns: 5,
@@ -405,7 +405,7 @@ describe("applyHistoryWindow", () => {
   // Cache-stable boundary snapping
   // ---------------------------------------------------------------------------
 
-  it("13. window start is always a user message when no pair safety extension", () => {
+  it("window start is always a user message when no pair safety extension", () => {
     // 20 user turns (40 messages), window=5. The boundary should always
     // land on a user message since the backward walk counts user turns.
     const messages = buildConversation(20);
@@ -420,9 +420,10 @@ describe("applyHistoryWindow", () => {
     expect(userMsgs.length).toBe(5);
   });
 
-  it("14. pair safety extension preserves assistant at window start", () => {
-    // Same scenario as test 9: pair safety extends to include an assistant
-    // with tool calls. The snap should NOT advance past it.
+  it("pair safety extension preserves assistant at window start", () => {
+    // Same scenario as the multiple-consecutive-tool-calls test above: pair
+    // safety extends to include an assistant with tool calls. The snap should
+    // NOT advance past it.
     const messages: AgentMessage[] = [
       makeUserMsg("u0"),
       makeAssistantWithToolCalls(["tc1", "tc2", "tc3"]),
@@ -442,7 +443,7 @@ describe("applyHistoryWindow", () => {
     expect(result[0]!.role).toBe("assistant");
   });
 
-  it("15. snap forward when boundary falls on toolResult without matching toolUse", () => {
+  it("snap forward when boundary falls on toolResult without matching toolUse", () => {
     // Defensive edge case: unmatched toolResult at boundary.
     // Build: [user0, assistant0, toolResult(orphan), user1, assistant1, user2, assistant2]
     // The orphan toolResult has a toolCallId that does NOT match any assistant tool call.
@@ -474,7 +475,7 @@ describe("applyHistoryWindow", () => {
     expect(result.length).toBe(4); // u1, a1, u2, a2
   });
 
-  it("16. compaction + windowing still starts on user message", () => {
+  it("compaction + windowing still starts on user message", () => {
     // Compaction summary at index 0, 20 user turns, window=5.
     // Result should be: compaction at [0], user message at [1].
     const compaction = makeCompactionSummary("summary of earlier context");

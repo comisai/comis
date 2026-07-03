@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * ExecutionPlanPort — read-only accessor for the Silent Execution Planner
- * (SEP) `ExecutionPlan` (spec §16.7 / §17.1).
+ * (SEP) `ExecutionPlan`.
  *
- * The milestone adds **no** `plan_state` tool — SEP is the canonical plan-state
- * source. The authoritative `ExecutionPlan` + `PlanStep` types live in
+ * There is deliberately **no** `plan_state` tool — SEP is the canonical
+ * plan-state source. The authoritative `ExecutionPlan` + `PlanStep` types live in
  * `@comis/agent` (`packages/agent/src/planner/types.ts`). This port re-declares
  * the **minimal read-only** shape in core so the gateway/ACP plan bridge can
- * render plan-state (`session/update { sessionUpdate: "plan" }`, §16.8) and the
- * chat-projection plan renderer (§8.3) can draw checkboxes WITHOUT the gateway
+ * render plan-state (`session/update { sessionUpdate: "plan" }`) and the
+ * chat-projection plan renderer can draw checkboxes WITHOUT the gateway
  * depending on `@comis/agent`. The implementation (agent/orchestrator) and the
  * consumer (gateway) are wired separately; this declares only the port
  * shape. Pure type-only file (no I/O, no logger).
@@ -27,7 +27,7 @@ export interface ReadonlyPlanStep {
   readonly status: "pending" | "in_progress" | "done" | "skipped";
   /**
    * Tool call IDs that contributed to completing this step. Optional — the
-   * projection MUST treat `undefined` as "no completions yet" (§16.7).
+   * projection MUST treat `undefined` as "no completions yet".
    */
   readonly completedBy?: readonly string[];
 }

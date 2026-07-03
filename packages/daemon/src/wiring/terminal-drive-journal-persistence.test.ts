@@ -1,49 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED (165-04 Task 1, DUR-02): the DAEMON-side durable journal store
- * (`persistDriveJournal` / `loadDriveJournal` / `removeDriveJournal`), the single
- * genuinely-new capability of Phase 165. The resume read is per-session lazy (a
- * `load(agentId, sessionId)` on the first woken turn of a recovered session); there is
- * deliberately NO bulk `recover(agentId)` scan (no production caller — 165-REVIEW ME-03).
+ * Tests for the DAEMON-side durable journal store
+ * (`persistDriveJournal` / `loadDriveJournal` / `removeDriveJournal`). The resume
+ * read is per-session lazy (a `load(agentId, sessionId)` on the first woken turn of
+ * a recovered session); there is deliberately NO bulk `recover(agentId)` scan (no
+ * production caller).
  *
- * RED-first: `terminal-drive-journal-persistence.ts` does not exist when this
- * file is first committed — the import fails, every case is RED. The production
- * module turns them GREEN. (Mirrors the "module absent on first commit" idiom of
- * `terminal-wake-persistence.test.ts` + `terminal-drive-journal.test.ts`.)
- *
- * The store is the resume substrate the Phase-164 rolling journal
- * (`terminal-drive-journal.ts`, pure + serializable + DUR-02-ready) is persisted
+ * The store is the resume substrate the rolling journal
+ * (`terminal-drive-journal.ts`, pure + serializable) is persisted
  * THROUGH so a 40h drive that crosses a daemon restart resumes from its journal
  * (objective + last classification + answered prompts + steps tried) rather than
- * starting over (I10). It mirrors VERBATIM-in-shape the atomic-durable-write +
+ * starting over. It mirrors VERBATIM-in-shape the atomic-durable-write +
  * recover-on-boot substrate of `terminal-wake-persistence.ts` — `ensureContainedDir`
  * (dir `0o700`) + `writeRegularFile` (file `0o600`) with `dataDir` as the
  * `confinedBaseDir` ancestor-symlink defense, a boot-time recover scan that SKIPS a
  * corrupt/partial file, the best-effort swallowed-error contract, and an
- * explicit-only remove (persist/recover NEVER delete — I10 preserve-on-failure).
+ * explicit-only remove (persist/recover NEVER delete — preserve-on-failure).
  *
  * It wraps the SHIPPED pure `serializeJournal`/`deserializeJournal` from
- * `@comis/skills` (no shape rewrite — §7.1.6 LOCKED); the durable dir is the
- * resolved-Q2 confined per-agent path `<dataDir>/terminal-drive/<agentId>/journals/`.
+ * `@comis/skills` (no shape rewrite); the durable dir is the
+ * confined per-agent path `<dataDir>/terminal-drive/<agentId>/journals/`.
  *
- * The three load-bearing properties pinned here (RESEARCH §"DUR-02 ... RED" +
- * the Req→Test map rows):
+ * The three load-bearing properties pinned here:
  *   - ROUND-TRIP ACROSS A SIMULATED RESTART: persist → a FRESH store instance's
  *     recover re-reads the same dir and yields the same journal (the resume
  *     substrate). A genuinely-gone session's journal is PRESERVED (recover reads it;
- *     persist never deletes) so a fresh drive can pick up (I10).
- *   - CONTENT-FREE + SECRET-REDACTED + 0o600/0o700 confined (I3 / V8 / T-165-09/13):
+ *     persist never deletes) so a fresh drive can pick up.
+ *   - CONTENT-FREE + SECRET-REDACTED + 0o600/0o700 confined:
  *     a secret-shaped token in `lastScreenDigest` round-trips WITHOUT being
  *     expanded/structured (the journal is content-free by construction — the store
  *     persists the opaque bytes the upstream `scrubSecretsFromText` already
  *     produced; it never re-structures them into a credential field). The file is
  *     mode-0o600 in a 0o700 dir.
- *   - TOTAL recover (the DUR-02 recovery contract, T-165-12): a corrupt-after-crash
+ *   - TOTAL recover: a corrupt-after-crash
  *     file → `deserializeJournal`'s SAFE default (or skipped), NEVER a throw; a
  *     write fault is swallowed best-effort (the in-memory journal already updated).
  *
- * Two complementary test idioms (per the plan's Task-1 action):
- *   - a REAL-fs `mkdtemp(os.tmpdir())` round-trip (H2 guard: NEVER `~/.comis`) that
+ * Two complementary test idioms:
+ *   - a REAL-fs `mkdtemp(os.tmpdir())` round-trip (NEVER `~/.comis`) that
  *     asserts the on-disk 0o700/0o600 modes + the cross-instance restart, exactly
  *     like `terminal-wake-persistence.test.ts`; and
  *   - INJECTED-fs spies (the `WorkerFsPort`-shaped deps bag) that capture the mode
@@ -88,7 +82,7 @@ function makeJournal(overrides: Partial<DriveJournal> = {}): DriveJournal {
 
 // ---------------------------------------------------------------------------
 // REAL-fs idiom — round-trip across a simulated restart + on-disk 0o600/0o700
-// (mirrors terminal-wake-persistence.test.ts; H2: under os.tmpdir(), never ~/.comis)
+// (mirrors terminal-wake-persistence.test.ts; under os.tmpdir(), never ~/.comis)
 // ---------------------------------------------------------------------------
 
 describe("terminal-drive-journal-persistence (durable drive journal, real fs)", () => {
@@ -107,7 +101,7 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     persistDriveJournal({ dataDir }, AGENT, "sess-a", journal);
 
     // Simulated restart: the holder's lazy resume read re-reads ONE journal from disk
-    // (DUR-02 is per-session; there is no bulk recover — 165-REVIEW ME-03).
+    // (per-session; there is no bulk recover).
     expect(loadDriveJournal({ dataDir }, AGENT, "sess-a")).toEqual(journal);
   });
 
@@ -116,13 +110,13 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     expect(loadDriveJournal({ dataDir }, "other-agent", "sess-a")).toBeUndefined();
   });
 
-  it("loadDriveJournal returns the persisted journal (the resume read, I10)", () => {
+  it("loadDriveJournal returns the persisted journal (the resume read)", () => {
     const journal = makeJournal({ answeredPrompts: ["pattern:2"] });
     persistDriveJournal({ dataDir }, AGENT, "sess-resume", journal);
 
     const loaded = loadDriveJournal({ dataDir }, AGENT, "sess-resume");
     expect(loaded).toEqual(journal);
-    // DUR-02 resume-no-re-answer substrate: the answered-prompt tag survives the restart.
+    // Resume-no-re-answer substrate: the answered-prompt tag survives the restart.
     expect(loaded?.answeredPrompts).toContain("pattern:2");
   });
 
@@ -140,12 +134,12 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     const entries = readdirSync(journalsDir);
     expect(entries).toContain("sess-x.json");
 
-    // Dir mode 0o700, file mode 0o600 — the @comis/observability fs-safe invariants (V8).
+    // Dir mode 0o700, file mode 0o600 — the @comis/observability fs-safe invariants.
     expect(statSync(journalsDir).mode & 0o777).toBe(0o700);
     expect(statSync(join(journalsDir, "sess-x.json")).mode & 0o777).toBe(0o600);
   });
 
-  it("I3: a secret-shaped digest round-trips WITHOUT being expanded into a credential field", () => {
+  it("a secret-shaped digest round-trips WITHOUT being expanded into a credential field", () => {
     // The journal is content-free by construction; the store persists the opaque
     // (already-redacted-upstream) bytes verbatim — it must never re-structure a
     // secret-shaped token into a key/value the way a config dump would.
@@ -204,10 +198,10 @@ describe("terminal-drive-journal-persistence (durable drive journal, real fs)", 
     expect(loadDriveJournal({ dataDir }, "fresh-agent", "sess-a")).toBeUndefined();
   });
 
-  it("I10 preserve-on-failure: persist/load NEVER delete; remove is a DISTINCT explicit call", () => {
+  it("preserve-on-failure: persist/load NEVER delete; remove is a DISTINCT explicit call", () => {
     persistDriveJournal({ dataDir }, AGENT, "sess-keep", makeJournal());
     // Re-persisting / loading repeatedly never removes the journal — a
-    // genuinely-gone session keeps its journal for a fresh drive (I10).
+    // genuinely-gone session keeps its journal for a fresh drive.
     loadDriveJournal({ dataDir }, AGENT, "sess-keep");
     persistDriveJournal({ dataDir }, AGENT, "sess-other", makeJournal());
     loadDriveJournal({ dataDir }, AGENT, "sess-keep");

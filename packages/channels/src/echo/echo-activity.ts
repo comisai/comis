@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Echo activity renderer (§7.2 row "TestSink").
+ * Echo activity renderer (the "TestSink" strategy).
  *
  * Echo is the thinnest channel: its renderer is the canonical-stream recorder.
  * It wraps `createTestSink()` verbatim — every `apply(frame)` is captured with
@@ -8,7 +8,7 @@
  * adapter and zero platform I/O (`canEdit:false`, `canDelete:false`), so Echo
  * needs no `ChannelPort` and no `TimerPort`/`ClockPort`.
  *
- * This is the reference shape the 4 EditPlace channels (Wave 2) build against:
+ * This is the reference shape the 4 EditPlace channels build against:
  * a `create<Ch>ActivityRenderer()` factory that returns a `ChannelActivityRenderer`.
  */
 import { createTestSink, type TestSinkRecorder } from "../shared/strategies/test-sink.js";

@@ -159,7 +159,7 @@ describe("chatProjection applies the verbosity policy", () => {
 // ---------------------------------------------------------------------------
 // Plan-snapshot threading (4th arg).
 //
-// SPEC-§8.3 needs the latest SEP `PlanSnapshot` on the rendered frame so the
+// The rendered frame must carry the latest SEP `PlanSnapshot` so the
 // chat surfaces can prefix `[x]/[~]/[ ]` lines above the event list. The
 // coordinator captures the latest snapshot from `planStream.subscribe` and
 // passes it as the projection's 4th arg; the projection writes

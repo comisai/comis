@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DurableRunPort — the hexagonal boundary for the run-checkpoint store (Phase
- * 216, DUR-01/DUR-02/DUR-03/HB-01). A long-running agent run persists a
+ * DurableRunPort — the hexagonal boundary for the run-checkpoint store.
+ * A long-running agent run persists a
  * {@link DurableRunRecord} here so a daemon restart can find and resume it
  * (`listResumable`), keep it alive (`touchHeartbeat`), and refuse to re-mint a
  * revoked one (`invalidateForRevoke`).
  *
  * Every method is `Result`-returning and never throws — the same discipline as
- * {@link DeliveryQueuePort} and `VideoJobStore`. The SQLite adapter (Plan 02)
+ * {@link DeliveryQueuePort} and `VideoJobStore`. The SQLite adapter
  * implements it; reads degrade through the row mapper.
  *
  * @module
@@ -23,16 +23,16 @@ import type { DurableRunRecord } from "../domain/durable-run.js";
  */
 export interface DurableRunPort {
   /**
-   * DUR-01 — idempotent insert-or-update keyed on `rootRunId`. Writes the
+   * Idempotent insert-or-update keyed on `rootRunId`. Writes the
    * checkpoint fields; MUST NEVER touch the dedicated `outward_step` column
-   * (NEW-1 storage contract) — that counter is owned solely by
+   * — that counter is owned solely by
    * {@link DurableRunPort.allocateOutwardStep}, so a checkpoint between two
-   * outward sends cannot reset it and re-introduce HIGH-1.
+   * outward sends cannot reset it and cause a duplicate outward send.
    */
   upsertCheckpoint(record: DurableRunRecord): Promise<Result<void, Error>>;
 
   /**
-   * DUR-02 — the boot-resume scan: every record in status `running`. These are
+   * The boot-resume scan: every record in status `running`. These are
    * the runs a restarting daemon must resume (or orphan if un-resumable).
    */
   listResumable(): Promise<Result<DurableRunRecord[], Error>>;
@@ -54,22 +54,22 @@ export interface DurableRunPort {
   markCompleted(rootRunId: string): Promise<Result<void, Error>>;
 
   /**
-   * HB-01 — the keep-alive write: stamp `lastHeartbeatAt = atMs`. A run whose
+   * The keep-alive write: stamp `lastHeartbeatAt = atMs`. A run whose
    * heartbeat goes stale past the threshold is a crash candidate for the
    * orphan-sweep.
    */
   touchHeartbeat(rootRunId: string, atMs: number): Promise<Result<void, Error>>;
 
   /**
-   * DUR-03 — flip the record to status `revoked` so resume can NEVER re-mint it.
+   * Flip the record to status `revoked` so resume can NEVER re-mint it.
    * Called when the run's authority (lease/caps) is revoked out from under it; a
    * revoked checkpoint is terminal and is filtered out of `listResumable`.
    */
   invalidateForRevoke(rootRunId: string): Promise<Result<void, Error>>;
 
   /**
-   * HIGH-1 / ONCE-02 — atomically increment a monotonic per-`rootRunId` outward-
-   * send counter (the dedicated `outward_step` column, NEW-1) and return the NEW
+   * Atomically increment a monotonic per-`rootRunId` outward-
+   * send counter (the dedicated `outward_step` column) and return the NEW
    * index. The FIRST call returns 0, the second 1, etc. (the column seeds at the
    * -1 'never-sent' sentinel, so `outward_step + 1` yields 0 on the first call).
    *
@@ -83,11 +83,11 @@ export interface DurableRunPort {
   allocateOutwardStep(rootRunId: string): Promise<Result<number, Error>>;
 
   /**
-   * FLEET-03 (Phase 220) — windowed status counts read DIRECTLY from
+   * Windowed status counts read DIRECTLY from
    * `durable_runs`. Crash-surviving: the row IS the durability, so this count
    * survives a hard crash that would lose an in-process lifecycle event. Counts
    * ONLY rows with `updated_at_ms >= sinceMs` (the fleet window), grouped by
-   * status; absent statuses default to 0. The `comis fleet` assembler (Plan 03)
+   * status; absent statuses default to 0. The `comis fleet` assembler
    * reads this for the orphaned/resumed/revoked/running counts alongside the
    * `health_signal` rows. Mirrors the obs store's `getRollingSpendUsd`
    * windowed-aggregate (`WHERE … >= ?`) precedent.

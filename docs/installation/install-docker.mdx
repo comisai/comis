@@ -318,13 +318,13 @@ Use `ws://` only over a trusted network (VPN, SSH tunnel).
     **Fix:** Two distinct binds are involved — get them in the right place:
 
     1. **Host-side bind (which interface the host listens on):** controlled by the left side of `-p` / Compose `ports:` (e.g. `127.0.0.1:4766:4766` vs `0.0.0.0:4766:4766`).
-    2. **Container-side bind (which interface the daemon listens on inside the container):** controlled by `COMIS_GATEWAY_HOST` in `.env`. **Must be `0.0.0.0`** so Docker port-forwarding can reach the daemon. Setting it to `127.0.0.1` is what produces the "connection reset" symptom — Docker forwards into the container's `eth0` IP, where nothing is listening. Since 1.0.25 the image defaults to `0.0.0.0`; on older images set it explicitly.
+    2. **Container-side bind (which interface the daemon listens on inside the container):** controlled by `COMIS_GATEWAY_HOST` in `.env`. **Must be `0.0.0.0`** so Docker port-forwarding can reach the daemon. Setting it to `127.0.0.1` is what produces the "connection reset" symptom — Docker forwards into the container's `eth0` IP, where nothing is listening. The image defaults to `0.0.0.0`.
 
     Other things to check:
 
     - The container is running and healthy: `docker compose ps`
     - No firewall is blocking the port
-    - If you mount a `config.yaml` with `gateway.host: 127.0.0.1`, that overrides the env var (since 1.0.25). Set `gateway.host: 0.0.0.0` in the mounted config or remove the entry.
+    - If you mount a `config.yaml` with `gateway.host: 127.0.0.1`, that overrides the env var. Set `gateway.host: 0.0.0.0` in the mounted config or remove the entry.
   </Accordion>
 
   <Accordion title="Container exits immediately">

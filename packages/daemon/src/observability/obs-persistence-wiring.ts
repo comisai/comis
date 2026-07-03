@@ -5,7 +5,6 @@
  * Subscribes NEW event bus listeners alongside existing in-memory collectors
  * to push observability data into SQLite via write buffers. Does NOT modify
  * existing collectors -- purely additive "write" side.
- * Daemon Wiring and RPC Integration.
  * @module obs-persistence-wiring
  */
 
@@ -15,19 +14,19 @@ import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, Cha
 import { cacheBreakEventToRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
-// AUDIT-01/02/04 — the durable security-audit sink (row-builders + subscribers),
-// extracted to keep this file under the 800-line cap (the Plan-01/02 precedent).
+// The durable security-audit sink (row-builders + subscribers),
+// extracted to keep this file under the 800-line cap.
 import { wireAuditSink } from "./obs-audit-sink.js";
-// ORCH-OBS row-builders extracted to a sibling module for the 800-line cap (the Plan
-// 01/03 precedent); imported here for the subscriber registrations + re-exported below
+// Orchestration-observability row-builders extracted to a sibling module for the
+// 800-line cap; imported here for the subscriber registrations + re-exported below
 // so the public API stays byte-identical.
 import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
 } from "./obs-orchestration-rows.js";
-// FLEET-03 (Phase 220-01): the four autonomy/durable lifecycle row-builders, in a
-// sibling module for the 800-line cap (the obs-orchestration-rows precedent);
+// The four autonomy/durable lifecycle row-builders, in a
+// sibling module for the 800-line cap (mirroring obs-orchestration-rows);
 // imported for the subscriber registrations + re-exported below.
 import {
   durableOrphanedEventToRow,
@@ -102,12 +101,12 @@ export function createObsWriteBuffer<T>(
  * suitable for SQLite insertion. Flattens nested `tokens.*` and `cost.*` to
  * top-level fields; maps `sessionKey` and the cache cost fields.
  *
- * PERSIST-02/03 (Phase 176 Plan 04): ALSO fills the four cost-correctness fields the
- * event carries but that were previously DROPPED here (warmupTurn / cacheEligible /
- * costCorrection.delta / pendingCacheInvestmentUsd) + `pricingState` (PERSIST-03, via
- * `resolvePricingState`). Plan 01 owns the write-PATH (`insertTokenUsageStmt` +
- * the boolean↔INTEGER coercion); this plan owns the row-BUILDER — a real
- * insert→read-back round-trip proves the two halves meet.
+ * ALSO fills the four cost-correctness fields the event carries (warmupTurn /
+ * cacheEligible / costCorrection.delta / pendingCacheInvestmentUsd) +
+ * `pricingState` (via `resolvePricingState`). The write-PATH
+ * (`insertTokenUsageStmt` + the boolean↔INTEGER coercion) lives in the store;
+ * this file owns the row-BUILDER — a real insert→read-back round-trip proves
+ * the two halves meet.
  */
 export function tokenUsageEventToRow(
   payload: EventMap["observability:token_usage"],
@@ -132,15 +131,15 @@ export function tokenUsageEventToRow(
     costCacheWrite: payload.cost.cacheWrite,
     cacheSaved: payload.savedVsUncached,
     latencyMs: payload.latencyMs,
-    // PERSIST-02: the four previously-dropped cost-correctness fields. costCorrection
+    // The four cost-correctness fields. costCorrection
     // on the row is the scalar DELTA; its absence = "no correction needed".
     warmupTurn: payload.warmupTurn,
     cacheEligible: payload.cacheEligible,
     costCorrection: payload.costCorrection?.delta,
     pendingCacheInvestmentUsd: payload.pendingCacheInvestmentUsd,
-    // PERSIST-03: the three-state honest-pricing signal (the ffe11736 chimera → "unknown").
+    // The three-state honest-pricing signal (an unrecognized provider/model pairing → "unknown").
     pricingState: resolvePricingState(payload.provider, payload.model),
-    // COST-01 (Phase 179): the distinct tool tag (best-effort, labeled per N3).
+    // The distinct tool tag (best-effort).
     // Already deduped at the emit (Array.from(new Set(m.toolCallHistory))); the
     // write-path JSON-stringifies it onto the tool_tag column (NULL when absent).
     toolTag: payload.toolTag,
@@ -194,19 +193,19 @@ export function diagnosticEventToRow(event: DiagnosticEvent): DiagnosticRow {
 }
 
 /**
- * Map a `session:summary` event payload (per-session health rollup, F2/D5)
+ * Map a `session:summary` event payload (the per-session health rollup)
  * to a flat DiagnosticRow stored under `category:"session_summary"`.
  * A degraded run maps to `severity:"warning"` so it surfaces in operator
  * queries; otherwise `"info"`. The `details` JSON carries counts/flags only
  * (degraded/costUsd/toolStats/breakerTripCount/turnCount/topErrorKinds/source/
- * endReason) — no error bodies, no message text (§2.7): `topErrorKinds` keys are
+ * endReason) — no error bodies, no message text (AGENTS.md §2.7): `topErrorKinds` keys are
  * ⊂ the closed `ErrorKind` union (not free text), `source` is an enum, and
  * `endReason` is a closed-set degradation-cause label (the endReason union), so
  * the bounded-payload discipline holds. `endReason` is the NAMED degradation
- * cause (QT2/QT3 — e.g. `context_exhausted` / `output_starved`) the fleet lens's
+ * cause (e.g. `context_exhausted` / `output_starved`) the fleet lens's
  * `degradedByCause` aggregate reads from this row WITHOUT opening per-session
- * `_session-metadata.json`. Phase 153's `obs.explain` and Phase 159's
- * `aggregateSessionsInWindow` (fleet aggregate) both read this row.
+ * `_session-metadata.json`. `obs.explain` and
+ * `aggregateSessionsInWindow` (the fleet aggregate) both read this row.
  */
 export function sessionSummaryEventToRow(
   payload: EventMap["session:summary"],
@@ -226,7 +225,7 @@ export function sessionSummaryEventToRow(
       turnCount: payload.turnCount,
       topErrorKinds: payload.topErrorKinds,
       source: payload.source,
-      // QT2/QT3: the named degradation cause — closed-set label, queryable by
+      // The named degradation cause — closed-set label, queryable by
       // the fleet `degradedByCause` aggregate from the row alone.
       endReason: payload.endReason,
     }),
@@ -239,13 +238,13 @@ export function sessionSummaryEventToRow(
  *  - `serialized_wait`: the bounded-wait back-pressure signal (an
  *    ingest/compaction write queued on the per-conversation single-flight
  *    serializer — events-messaging.ts), a normal operating event, not a
- *    robustness fault (IN-01).
- *  - `session_rebase` (W10 obs-llm-troubleshooting): Phase 164 RR6 — a fresh/
+ *    robustness fault.
+ *  - `session_rebase`: a fresh/
  *    disjoint live transcript continued at the store's max seq, i.e.
  *    "continued after restart". The union member's own doc says NOT a
- *    degradation; at `warning` it fired once per session start and became the
- *    live fleet's TOP finding (9 rows), drowning the real signals.
- * Stamping either `warning` would inflate the Phase-161 fleet lens's degrade
+ *    degradation; at `warning` it fires once per session start and would become
+ *    the fleet's TOP finding, drowning the real signals.
+ * Stamping either `warning` would inflate the fleet lens's degrade
  * count with benign events. Everything else in the closed union (the
  * `*_divergence` skips, `fail_closed_rollover`, `breaker_open`, `spend_cap`)
  * is a real degrade. This is an explicit allow-set, NOT an open default: a future
@@ -256,21 +255,21 @@ const BENIGN_DAG_DEGRADED_REASONS: ReadonlySet<EventMap["context:dag_degraded"][
   new Set(["serialized_wait", "session_rebase"]);
 
 /**
- * Map a `context:dag_degraded` event payload (Phase 160 I1 — the LCD-divergence
- * class: WR-01 live/store shrink + the leaf/condense ordinal-window skips) to a
+ * Map a `context:dag_degraded` event payload (the LCD-divergence
+ * class: live/store shrink + the leaf/condense ordinal-window skips) to a
  * flat DiagnosticRow stored under `category:"health_signal"`. Severity TRACKS the
  * reason: a genuine degrade is `severity:"warning"` (operator-visible); the
  * benign `serialized_wait` back-pressure signal is `severity:"info"` so it does
- * not inflate the fleet lens's degrade count (IN-01). The `details` JSON carries
+ * not inflate the fleet lens's degrade count. The `details` JSON carries
  * the closed `signal` label + the closed-union `reason` + the `conversationId`
- * identifier + the `durationMs` count ONLY — no message/summary text (§2.7; the
- * lossless store). `conversationId` is carried (WR-04) because the most
+ * identifier + the `durationMs` count ONLY — no message/summary text (AGENTS.md §2.7; the
+ * lossless store). `conversationId` is carried because the most
  * security-relevant degrade (`fail_closed_rollover`) fires precisely on a
  * `conversationId`/`sessionKey` CONFLICT, so the row must keep the divergent
  * identifier (an identifier, not content — bounded-payload holds) rather than
  * rely on the internal LCD `conversationId === sessionKey` invariant and drop it.
  * `traceId` is `undefined`: the payload has NO traceId field — `sessionKey` +
- * `conversationId` correlate the row to a conversation. The Phase-161 fleet lens
+ * `conversationId` correlate the row to a conversation. The fleet lens
  * reads these rows so the divergence is queryable/joinable cross-session instead
  * of log-file-only.
  */
@@ -295,7 +294,7 @@ export function dagDegradedEventToRow(
 }
 
 /**
- * Map a `health:budget_exceeded` event payload (Phase 160 I1 — an alert-budget
+ * Map a `health:budget_exceeded` event payload (an alert-budget
  * threshold crossing from the health aggregator) to a flat DiagnosticRow stored
  * under `category:"health_signal"`, `severity:"warning"`. The `details` JSON
  * carries the closed `signal` label + the `kind` (⊂ the closed ErrorKind union
@@ -322,13 +321,13 @@ export function healthBudgetExceededEventToRow(
 }
 
 /**
- * OBS-3b (hindsight-reflection-20260626): map a `reflect:funnel` event → a flat DiagnosticRow under
- * `category:"learning_health"`, so the Phase-161 fleet lens surfaces the daemon-wide reflection posture
+ * Map a `reflect:funnel` event → a flat DiagnosticRow under
+ * `category:"learning_health"`, so the fleet lens surfaces the daemon-wide reflection posture
  * (is learning admitting? why-0-admitted?) as a queryable finding instead of a daemon.log grep. Severity
  * is ALWAYS `"info"`: a reflection that admitted — OR benignly didn't (no_successes / uncorroborated /
  * untrusted_origin are the anti-poison gates WORKING) — is healthy posture, not an alert (it must not
- * inflate the fleet degrade count, the BENIGN_*_REASONS / IN-01 discipline). The `details` JSON carries
- * the closed `admissionOutcome` enum + the funnel COUNTS ONLY (§2.7 / SEC-01 — the reflect:funnel event
+ * inflate the fleet degrade count, the BENIGN_*_REASONS discipline). The `details` JSON carries
+ * the closed `admissionOutcome` enum + the funnel COUNTS ONLY (AGENTS.md §2.7 — the reflect:funnel event
  * is content-free by construction; never a reflected doc body). Beside model_health / config_posture.
  */
 export function reflectFunnelEventToRow(
@@ -345,7 +344,7 @@ export function reflectFunnelEventToRow(
       admissionOutcome: payload.admissionOutcome,
       admitted: payload.admitted,
       maxClusterCardinality: payload.maxClusterCardinality,
-      // OBS-7: the under-merge discriminator (admitted=0 with distinctTopicKeys>1 & maxClusterCardinality<2
+      // The under-merge discriminator (admitted=0 with distinctTopicKeys>1 & maxClusterCardinality<2
       // = successes that didn't merge → topicKey under-merge, not a genuine single-source).
       distinctTopicKeys: payload.distinctTopicKeys,
       untrustedDrops: payload.untrustedDrops,
@@ -357,13 +356,13 @@ export function reflectFunnelEventToRow(
 }
 
 /**
- * OBS-2b (reflect-obs-20260627): map a `learning:lifecycle_swept` event → a flat DiagnosticRow under
+ * Map a `learning:lifecycle_swept` event → a flat DiagnosticRow under
  * `category:"memory_lifecycle"`, so the fleet lens surfaces the daemon-wide FORGET posture (is the
  * sweep evicting/demoting?) as a queryable finding — the parity of reflectFunnelEventToRow for the
  * forget half. Severity ALWAYS `"info"`: a sweep that evicted N corroborated-wrong / demoted N stale
  * memories — or evicted nothing (no eviction-candidates) — is healthy maintenance, not an alert (it
- * must NOT inflate the fleet degrade count, the BENIGN/IN-01 discipline). The `details` JSON carries
- * the run COUNTS ONLY (§2.7 / SEC-01 — the event is content-free; never a memory id/body).
+ * must NOT inflate the fleet degrade count, the benign-reason discipline). The `details` JSON carries
+ * the run COUNTS ONLY (AGENTS.md §2.7 — the event is content-free; never a memory id/body).
  */
 export function lifecycleSweptEventToRow(
   payload: EventMap["learning:lifecycle_swept"],
@@ -386,13 +385,13 @@ export function lifecycleSweptEventToRow(
 }
 
 /**
- * Map a `mcp:server:reconnect_failed` event payload (Phase 160 I1 — MCP
+ * Map a `mcp:server:reconnect_failed` event payload (MCP
  * reconnect exhaustion) to a flat DiagnosticRow stored under
  * `category:"health_signal"`, `severity:"warning"`. The `details` JSON carries
  * the closed `signal` label + the `serverName` + the `attempts` count ONLY —
  * the `lastError` BODY is DROPPED (bounded-payload: label+count, not the error
  * text; the body already lives in the per-session trajectory + daemon.log, and
- * the queryable health row must never duplicate an untrusted WARN body — T-160-01).
+ * the queryable health row must never duplicate an untrusted WARN body).
  * Daemon-global (no agentId/sessionKey) so the row omits them.
  */
 export function mcpReconnectFailedEventToRow(
@@ -413,7 +412,7 @@ export function mcpReconnectFailedEventToRow(
 }
 
 /**
- * Map a `context:script_zero_hit` event payload (OBS-01, Phase 180 — a non-Latin
+ * Map a `context:script_zero_hit` event payload (a non-Latin
  * search returned zero hits on a cleanly-executed lane) to a flat DiagnosticRow
  * stored under `category:"health_signal"`. Severity is ALWAYS `"warning"`: this
  * is a visibility-only signal with no gating, so — unlike `dagDegradedEventToRow`
@@ -422,7 +421,7 @@ export function mcpReconnectFailedEventToRow(
  * normalized twins via `comis doctor --repair`). The `details` JSON carries the
  * closed `signal` label + the closed `scriptClass` enum + the closed `lane` union
  * + the `conversationId` identifier ONLY — NEVER the query text or any tokens
- * (§2.7; I8 the lossless store). `agentId`/`sessionKey` correlate the row to a
+ * (AGENTS.md §2.7; the lossless store). `agentId`/`sessionKey` correlate the row to a
  * conversation; `traceId` is absent on the payload. The fleet lens reads these
  * rows so "Hebrew finds nothing" is queryable cross-session, not DEBUG-only.
  */
@@ -447,7 +446,7 @@ export function scriptZeroHitEventToRow(
 }
 
 /**
- * Map a `context:summary_language_mismatch` event payload (OBS-01, Phase 180 — a
+ * Map a `context:summary_language_mismatch` event payload (a
  * summary whose dominant script diverged from its source chunk's) to a flat
  * DiagnosticRow under `category:"health_signal"`, `severity:"warning"`. Like
  * `scriptZeroHitEventToRow` this is visibility-only (no gating; a code-heavy
@@ -455,7 +454,7 @@ export function scriptZeroHitEventToRow(
  * NO benign allow-set — the operator reviews the COUNT, the fleet finding does
  * not block anything. The `details` JSON carries the closed `signal` label + the
  * closed `sourceScript`/`summaryScript` enums + the `depth` count ONLY — NEVER
- * the summary or source body (§2.7).
+ * the summary or source body (AGENTS.md §2.7).
  */
 export function summaryLanguageMismatchEventToRow(
   payload: EventMap["context:summary_language_mismatch"],
@@ -478,11 +477,11 @@ export function summaryLanguageMismatchEventToRow(
 }
 
 /**
- * GENQ-01: map a `memory:generation_quality` event to a `health_signal`
+ * Map a `memory:generation_quality` event to a `health_signal`
  * diagnostic row. Mirrors `summaryLanguageMismatchEventToRow` — the generalization
  * to the consolidation/reasoning/user-representation passes. Cron-job passes carry
  * no `sessionKey`. `details` is closed enums + booleans ONLY (the `pass` + scripts
- * + the three issue flags) — NEVER the source or generated body (§2.7).
+ * + the three issue flags) — NEVER the source or generated body (AGENTS.md §2.7).
  */
 export function generationQualityEventToRow(
   payload: EventMap["memory:generation_quality"],
@@ -508,14 +507,14 @@ export function generationQualityEventToRow(
 }
 
 /**
- * TELEM-01 (Plan 173-03): map a `pipeline:authored` event to a `health_signal`
- * diagnostic row. The GENQ-01 clone — a new `signal:"pipeline_authoring"` label
+ * Map a `pipeline:authored` event to a `health_signal`
+ * diagnostic row. A new `signal:"pipeline_authoring"` label
  * rides the EXISTING `health_signal` category (NO schema migration). `details` is
  * closed enums + booleans ONLY (action / tier / schemaValid / repaired) — NEVER a
- * pipeline body, a type_config value, a node task/label, or a graph (§2.7).
+ * pipeline body, a type_config value, a node task/label, or a graph (AGENTS.md §2.7).
  *
  * severity is INFO for a VALID author so a valid authoring does NOT inflate the
- * fleet degrade count (A2 — the BENIGN_DAG_DEGRADED_REASONS precedent); WARNING for
+ * fleet degrade count (the BENIGN_DAG_DEGRADED_REASONS discipline); WARNING for
  * an INVALID one (the operator-visible small-model authoring miss). The fleet
  * FINDING reads the rate over both, so severity only affects degrade-count
  * inflation, not the headline metric.
@@ -541,10 +540,10 @@ export function pipelineAuthoredEventToRow(
   };
 }
 
-// ORCH-OBS (orchestration-observability): the three previously-dark sub-agent-lifecycle
+// The three sub-agent-lifecycle
 // row-builders (sandbox-downgrade refusal / dead-lettered delivery / per-node budget
 // breach → content-free health_signal rows) are imported from obs-orchestration-rows.ts
-// (extracted for the 800-line cap, the Plan 01/03 precedent) and RE-EXPORTED here so the
+// (extracted for the 800-line cap) and RE-EXPORTED here so the
 // public API + the test imports stay byte-identical.
 export {
   sandboxDowngradeRefusedEventToRow,
@@ -552,9 +551,9 @@ export {
   nodeBudgetExceededEventToRow,
 };
 
-// FLEET-03 (Phase 220-01): the four autonomy/durable lifecycle row-builders live in
+// The four autonomy/durable lifecycle row-builders live in
 // obs-autonomy-rows.ts (the 800-line-cap extraction) and are RE-EXPORTED here so the
-// public API + the test imports stay byte-identical (the obs-orchestration-rows mold).
+// public API + the test imports stay byte-identical (mirroring obs-orchestration-rows).
 export {
   durableOrphanedEventToRow,
   durableResumedEventToRow,
@@ -579,7 +578,7 @@ export interface ObsPersistenceDeps {
   logger?: ComisLogger;
   /**
    * Data directory (`~/.comis`) — the security-audit.jsonl lives at
-   * `<dataDir>/logs/security-audit.jsonl` (AUDIT-01). Optional: when absent the
+   * `<dataDir>/logs/security-audit.jsonl`. Optional: when absent the
    * audit JSONL sink is skipped (the SQLite + `.audit()` sinks still fire);
    * production always passes it.
    */
@@ -596,8 +595,8 @@ export interface ObsPersistenceDeps {
    */
   auditConfig?: { persist: boolean; sink: "sqlite" | "jsonl" | "both" };
   /**
-   * The `observability.persistence` policy — only `cacheBreaks` is read here
-   * (PERSIST-01): when `false`, the cache_break subscriber is NOT wired (opt-out).
+   * The `observability.persistence` policy — only `cacheBreaks` is read here:
+   * when `false`, the cache_break subscriber is NOT wired (opt-out).
    * Optional; absent or `cacheBreaks !== false` → the subscriber is wired (default on).
    */
   persistence?: { cacheBreaks: boolean };
@@ -620,7 +619,7 @@ export interface ObsPersistenceResult {
  * observability data to SQLite via batched write buffers.
  * Creates 5 write buffers (tokenUsage, delivery, diagnostic, channelSnapshot,
  * audit) and subscribes NEW listeners alongside existing in-memory collectors.
- * The audit buffer (AUDIT-01) feeds the dedicated obs_audit_events table; each
+ * The audit buffer feeds the dedicated obs_audit_events table; each
  * audit-source event ALSO writes a scrubbed 0600 security-audit.jsonl line and
  * a `.audit()` (level 35) log line.
  * @param deps - Persistence wiring dependencies
@@ -682,7 +681,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     },
   });
 
-  // AUDIT-01: a DEDICATED audit buffer (§14 — distinct obs_audit_events table +
+  // A DEDICATED audit buffer (distinct obs_audit_events table +
   // actor/outcome/severity columns + retention), cloned from the tokenUsage
   // factory. Its own flushFn → insertAuditEvent (the SQLite half). The JSONL
   // half + the .audit() log fire synchronously per event in wireAuditSink.
@@ -717,18 +716,18 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     }));
   });
 
-  // F2 (D5): the per-session health rollup reuses the EXISTING diagnosticBuffer
+  // The per-session health rollup reuses the EXISTING diagnosticBuffer
   // (no new table/buffer/transaction) — written under category:"session_summary".
   eventBus.on("session:summary", (payload) => {
     diagnosticBuffer.push(sessionSummaryEventToRow(payload));
   });
 
-  // I1 (Phase 160): persist the log-file-only high-value WARNs to obs_diagnostics
+  // Persist the high-value WARNs to obs_diagnostics
   // under category:"health_signal" — the LCD-divergence class + MCP health — via
   // the SAME diagnosticBuffer (no new table/buffer/transaction). The fleet lens
-  // (Phase 161) reads these rows; today they are Pino-only (LCD) or per-session
+  // reads these rows; without them the signals are Pino-only (LCD) or per-session
   // trajectory JSONL (MCP), invisible to a cross-session query. Each mapper emits
-  // counts/labels only (no error bodies, no message text — §2.7).
+  // counts/labels only (no error bodies, no message text — AGENTS.md §2.7).
   eventBus.on("context:dag_degraded", (payload) => {
     diagnosticBuffer.push(dagDegradedEventToRow(payload));
   });
@@ -738,20 +737,19 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("mcp:server:reconnect_failed", (payload) => {
     diagnosticBuffer.push(mcpReconnectFailedEventToRow(payload));
   });
-  // OBS-3b (hindsight-reflection-20260626): the reflection funnel → a learning_health row, so the
+  // The reflection funnel → a learning_health row, so the
   // fleet lens surfaces the daemon-wide reflection posture (admit/why-0-admitted) cross-session.
   // Content-free (the reflect:funnel event is counts + the closed admissionOutcome enum only).
   eventBus.on("reflect:funnel", (payload) => {
     diagnosticBuffer.push(reflectFunnelEventToRow(payload));
   });
-  // OBS-2b (reflect-obs-20260627): the forget-sweep summary → a memory_lifecycle row, so the fleet
+  // The forget-sweep summary → a memory_lifecycle row, so the fleet
   // lens surfaces the daemon-wide forget posture (is the sweep evicting/demoting?) cross-session —
   // parity with the reflection funnel above. Content-free (counts only).
   eventBus.on("learning:lifecycle_swept", (payload) => {
     diagnosticBuffer.push(lifecycleSweptEventToRow(payload));
   });
-  // OBS-01 (Phase 180): the two multilingual signals → health_signal rows (same
-  // diagnosticBuffer). Dark until the emit sites land (180-08); subscribed here
+  // The two multilingual signals → health_signal rows (same diagnosticBuffer),
   // so they reach the fleet lens the moment they fire.
   eventBus.on("context:script_zero_hit", (payload) => {
     diagnosticBuffer.push(scriptZeroHitEventToRow(payload));
@@ -759,22 +757,22 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("context:summary_language_mismatch", (payload) => {
     diagnosticBuffer.push(summaryLanguageMismatchEventToRow(payload));
   });
-  // GENQ-01: the memory-generation-pass quality signal → health_signal row (same
+  // The memory-generation-pass quality signal → health_signal row (same
   // diagnosticBuffer). Fires only on a detected issue, so each row is a regression.
   eventBus.on("memory:generation_quality", (payload) => {
     diagnosticBuffer.push(generationQualityEventToRow(payload));
   });
-  // TELEM-01 (Plan 173-03): the pipeline-authoring signal → health_signal row (same
+  // The pipeline-authoring signal → health_signal row (same
   // diagnosticBuffer, NO migration). Fires per `pipeline` define/execute invocation;
   // the fleet lens rolls the small-tier invalid rate into a dedicated finding.
   eventBus.on("pipeline:authored", (payload) => {
     diagnosticBuffer.push(pipelineAuthoredEventToRow(payload));
   });
-  // ORCH-OBS (orchestration-observability): the three previously-dark daemon-side
+  // The three daemon-side
   // orchestration signals → health_signal rows (same diagnosticBuffer, NO migration).
   // The fleet lens rolls each into a dedicated finding (fleet-findings.ts). Each
   // mapper emits closed labels/counts only (no path/host/credential, no announcement
-  // body, no per-node token numbers — §2.7).
+  // body, no per-node token numbers — AGENTS.md §2.7).
   eventBus.on("security:sandbox_downgrade_refused", (payload) => {
     diagnosticBuffer.push(sandboxDowngradeRefusedEventToRow(payload));
   });
@@ -785,11 +783,11 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));
   });
 
-  // FLEET-03 (Phase 220-01): the four autonomy/durable lifecycle signals →
+  // The four autonomy/durable lifecycle signals →
   // content-free health_signal rows (same diagnosticBuffer, NO migration). The
-  // fleet lens (Plan 03) rolls these into the orphaned/resumed/revoked/killed
+  // fleet lens rolls these into the orphaned/resumed/revoked/killed
   // counts. Each row carries closed labels/enums/counts/ids only — the engine's
-  // free-text orphan reason stays on its WARN log, never on the row (§2.7).
+  // free-text orphan reason stays on its WARN log, never on the row (AGENTS.md §2.7).
   eventBus.on("durable:orphaned", (payload) => {
     diagnosticBuffer.push(durableOrphanedEventToRow(payload));
   });
@@ -802,17 +800,17 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("autonomy:killed", (payload) => {
     diagnosticBuffer.push(autonomyKilledEventToRow(payload));
   });
-  // FLEET-02 (Phase 220-05): the capability-DENIAL breaker trip → a content-free
+  // The capability-DENIAL breaker trip → a content-free
   // health_signal row (the SEPARABLE denialBreakerTrips count; see the mapper docstring).
   eventBus.on("autonomy:denial_breaker_tripped", (payload) => {
     diagnosticBuffer.push(autonomyDenialBreakerEventToRow(payload));
   });
 
-  // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break → an obs_diagnostics
-  // category:'cache_break' row, REUSING the EXISTING diagnosticBuffer (A3 — a
+  // A detected prompt-cache break → an obs_diagnostics
+  // category:'cache_break' row, REUSING the EXISTING diagnosticBuffer (a
   // DiagnosticRow via insertDiagnostic; NO new buffer/table). The row carries the
   // 15-reason discriminator + a COMPUTED est-$ + a changed-dims DIGEST (tool-name
-  // arrays + system text dropped in the row-builder — I3); "rate by reason" is then a
+  // arrays + system text dropped in the row-builder); "rate by reason" is then a
   // clean GROUP BY (queryCacheBreakRateByReason). Gated on `persistence.cacheBreaks`
   // (default on). The cache.break TRAJECTORY record rides the trajectory bridge.
   if (persistence?.cacheBreaks !== false) {
@@ -821,14 +819,14 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     });
   }
 
-  // AUDIT-01/02/04: the durable security-audit sink — every audit-source event
+  // The durable security-audit sink — every audit-source event
   // (audit:event + secret:accessed + the 4 security:* + the 2 critic.isolation.*
   // + command:blocked, and the sandbox_downgrade_refused MIRROR) → an
   // obs_audit_events row (the buffer) + a scrubbed 0600 security-audit.jsonl line
   // + a `.audit()` log line. The metadata free-map is scrubbed in the
-  // row-builder (AUDIT-04); tenant-less events resolve from the trace context
-  // else tenant_id='' (decision #2). The existing sandbox_downgrade_refused
-  // obs_diagnostics row above is KEPT (I1′ additive — the event lands in BOTH).
+  // row-builder; tenant-less events resolve from the trace context
+  // else tenant_id=''. The existing sandbox_downgrade_refused
+  // obs_diagnostics row above is KEPT (additive — the event lands in BOTH).
   wireAuditSink({
     eventBus,
     auditBuffer,
@@ -838,7 +836,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     ...(auditConfig !== undefined ? { auditConfig } : {}),
   });
 
-  // SSRF-AUDIT (hermes-usecases obs-loop 2026-06-25): wire the SSRF guard's block hook
+  // Wire the SSRF guard's block hook
   // to emit a content-free `security:ssrf_blocked` → the wireAuditSink subscriber above
   // → an `ssrf_blocked` audit row. So an agent/injected-instruction attempt to reach a
   // metadata IP / RFC1918 / loopback / non-http target is no longer SILENT. The `origin`

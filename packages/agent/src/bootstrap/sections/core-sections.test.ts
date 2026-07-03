@@ -148,8 +148,8 @@ describe("buildRuntimeMetadataSection", () => {
     expect(result[1]).toContain("default_model=gpt-4");
   });
 
-  it("excludes channel field (relocated to dynamic preamble)", () => {
-    // channel-only info should produce empty result since channel is no longer rendered
+  it("excludes channel field (channel rides the dynamic preamble)", () => {
+    // channel-only info produces an empty result since channel is not rendered here
     const info: RuntimeInfo = { channel: "telegram" };
     const result = buildRuntimeMetadataSection(info, false);
     expect(result).toEqual([]);

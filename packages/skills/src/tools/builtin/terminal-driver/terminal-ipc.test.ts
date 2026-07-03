@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the length-prefixed JSON IPC framer (spec §2.3).
+ * Unit tests for the length-prefixed JSON IPC framer.
  *
  * Pure-JS → runs green on macOS. Proves the framing + correlation contract the
  * worker and the daemon-side reply router route over:

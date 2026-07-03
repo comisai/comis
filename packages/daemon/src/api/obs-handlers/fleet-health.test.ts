@@ -1,30 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs.fleet.health` handler + assembler acceptance tests (Phase 161 R2 + H1).
+ * `obs.fleet.health` handler + assembler acceptance tests.
  *
  * Drives the REAL read fan-in (`assembleFleetHealthReport`) over:
- *   - A1/A2: a seeded `:memory:` ObservabilityStore (real `aggregateSessionsInWindow`
- *     + the pure `reduceFleetWindow`),
- *   - A3: a REAL on-disk `<tmpDataDir>/logs/session-index.<date>.jsonl` layout
+ *   - the session rollup: a seeded `:memory:` ObservabilityStore (real
+ *     `aggregateSessionsInWindow` + the pure `reduceFleetWindow`),
+ *   - the activity index: a REAL on-disk
+ *     `<tmpDataDir>/logs/session-index.<date>.jsonl` layout
  *     (AGENTS §2.10 — a fixture-only reader proves the LOGIC, not the path
  *     resolution / day-windowing; the §2.10 rule pins the on-disk contract),
- *   - I-track (Phase 160): seeded `health_signal` / `model_health` / `config_posture`
- *     diagnostic rows via the same store.
+ *   - the diagnostics ingest: seeded `health_signal` / `model_health` /
+ *     `config_posture` diagnostic rows via the same store.
  *
  * The ONE clock read (`ClockPort.now()`) is an injected fakeClock — NO
- * Date.now()/new Date() (the globals gate). Post-WR-01 that single instant is
- * threaded as BOTH the A1/I-track window start (`sinceMs`) AND the A3 day-key
- * window upper bound (`nowMs`), so a FIXED (non-real) fake instant drives the
- * whole report coherently — the CLOCK-INDEPENDENT case pins exactly that. Most
+ * Date.now()/new Date() (the globals gate). That single instant is
+ * threaded as BOTH the store-window start (`sinceMs`) AND the session-index
+ * day-key window upper bound (`nowMs`), so a FIXED (non-real) fake instant drives
+ * the whole report coherently — the CLOCK-INDEPENDENT case pins exactly that. Most
  * cases below still seed via `systemNowMs()` so the on-disk day-files land on
  * the real-today key; the clock-independence is proven by the dedicated case.
  *
  * Cases pinned:
  *   1. ASSEMBLY — the 4 sources merge onto FleetHealthReport (sessions/topErrorKinds/
  *      breakerTripTotal/toolStats/cost/activity/findings/coverage), digest-only.
- *   2. DETERMINISM — same data + same fakeClock -> byte-identical reports (X3).
+ *   2. DETERMINISM — same data + same fakeClock -> byte-identical reports.
  *   3. BOUNDING — > FLEET_FINDINGS_CAP findings -> capped + a truncations[] entry.
- *   4. H1 admin gate — non-admin _trustLevel rejected at the handler;
+ *   4. Admin gate — non-admin _trustLevel rejected at the handler;
  *      stripInternalFields keeps _trustLevel out of the report.
  *   5. EMPTY/HEURISTIC — an empty store + missing day-files -> a clean zero report
  *      whose coverage is self-evidently empty (found:false, daysMissing>0); a
@@ -49,7 +50,7 @@ import type { ObsHandlerDeps } from "./obs-helpers.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** "YYYY-MM-DD" for an epoch ms — mirrors the A3 reader's day-key derivation. */
+/** "YYYY-MM-DD" for an epoch ms — mirrors the session-index reader's day-key derivation. */
 function dayKeyForMs(ms: number): string {
   return systemDateFrom(ms).toISOString().slice(0, 10);
 }
@@ -89,7 +90,7 @@ function summaryDetails(
 
 /** A session_started JSONL object (mirror fleet-session-index.test.ts). `ts`
  *  (epoch ms) overrides the row timestamp so a fixture row sits inside the
- *  windowed [sinceMs..nowMs] range the A3 reader now enforces (F-OBS-1b). */
+ *  windowed [sinceMs..nowMs] range the session-index reader enforces. */
 function startedRow(o: { agentId: string; channelType: string; channelId: string; sessionId?: string; ts?: number }): string {
   return JSON.stringify({
     traceSchema: "comis-session-index",
@@ -121,7 +122,8 @@ function endedRow(o: { exitReason: string; turnCount: number; totalTokens: numbe
 
 /**
  * A tmp dataDir with REAL `logs/session-index.<dayKey>.jsonl` files for today +
- * yesterday (so the A3 reader resolves real day-keys). Returns the absolute path.
+ * yesterday (so the session-index reader resolves real day-keys). Returns the
+ * absolute path.
  */
 function makeDataDirWithActivity(): string {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-health-"));
@@ -130,7 +132,7 @@ function makeDataDirWithActivity(): string {
   const today = dayKeyForMs(systemNowMs());
   const yesterday = dayKeyForMs(systemNowMs() - DAY_MS);
   // Stamp rows a minute before now so they sit safely inside the [now-24h, now]
-  // window the A3 reader windows by (F-OBS-1b) — the captured fake-clock nowMs is
+  // window the session-index reader windows by — the captured fake-clock nowMs is
   // ~now, and a 60s buffer absorbs the ms gap between capture and this write.
   const rowTs = systemNowMs() - 60_000;
   fs.writeFileSync(
@@ -215,13 +217,13 @@ function makeDeps(overrides?: Partial<ObsHandlerDeps>): ObsHandlerDeps {
   return { agents: {}, ...overrides } as unknown as ObsHandlerDeps;
 }
 
-describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
-  // OBS-2b/3b WIRING GUARD (reflect-obs-20260627): assembleFleetHealthReport must QUERY each learning
+describe("assembleFleetHealthReport (4-source read fan-in)", () => {
+  // WIRING GUARD: assembleFleetHealthReport must QUERY each learning
   // diagnostic category AND thread it into buildFindings. The buildFindings unit tests prove the finding
   // is BUILT from rows; these prove fleet-health actually QUERIES the category + passes it (the wiring
-  // a unit test can't see). A live regression (the memory_lifecycle query/arg was lost to a git-checkout
-  // during the OBS-10 fix) produced the row but no finding — caught live, now guarded here.
-  it("OBS-2b: surfaces the memory_lifecycle finding from forget-sweep rows (handler wiring)", async () => {
+  // a unit test can't see). A live regression (the memory_lifecycle query/arg was lost to a git-checkout)
+  // produced the row but no finding — caught live, now guarded here.
+  it("surfaces the memory_lifecycle finding from forget-sweep rows (handler wiring)", async () => {
     const now = systemNowMs();
     const store = makeStore();
     store.insertDiagnostic({
@@ -234,7 +236,7 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(ml!.detail).toContain("evicted=1");
   });
 
-  it("OBS-3b: surfaces the learning_health finding from reflection-funnel rows (handler wiring)", async () => {
+  it("surfaces the learning_health finding from reflection-funnel rows (handler wiring)", async () => {
     const now = systemNowMs();
     const store = makeStore();
     store.insertDiagnostic({
@@ -245,7 +247,7 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.findings.find((f) => f.code === "learning_health"), "fleet-health must query category:learning_health").toBeDefined();
   });
 
-  it("merges A1+A2+A3+I-track onto FleetHealthReport (digest-only, with coverage)", async () => {
+  it("merges the session rollup + activity index + diagnostic findings onto FleetHealthReport (digest-only, with coverage)", async () => {
     const now = systemNowMs();
     const clock = createFakeClock(now);
     const store = makeStore();
@@ -256,11 +258,11 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
 
     expect(report.schemaVersion).toBe(1);
     expect(report.windowHours).toBe(24);
-    // A1/A2: 2 sessions, 1 degraded.
+    // Session rollup: 2 sessions, 1 degraded.
     expect(report.sessions.total).toBe(2);
     expect(report.sessions.degraded).toBe(1);
     expect(report.sessions.degradedRate).toBeCloseTo(0.5);
-    // QT2/QT3: the degraded session is bucketed by its named endReason cause.
+    // The degraded session is bucketed by its named endReason cause.
     // The clean session (endReason:success) does NOT appear here.
     expect(report.degradedByCause).toEqual({ context_exhausted: 1 });
     // Merged errorKinds (capped) + breaker total + per-tool ok/failed from the reducer.
@@ -268,20 +270,20 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.breakerTripTotal).toBe(2);
     expect(report.toolStats.web_search).toEqual({ ok: 6, failed: 4 });
     expect(report.cost.costUsd).toBeCloseTo(0.5);
-    // A3 activity (real on-disk day-files).
+    // Activity from the real on-disk day-files.
     expect(report.activity.activeAgents).toEqual(["agent-a", "agent-b"]);
     expect(report.activity.activeChannels).toEqual(["discord:222", "telegram:111"]);
     expect(report.activity.turnTotal).toBe(5);
     expect(report.activity.tokenTotal).toBe(150);
     expect(report.cost.totalTokens).toBe(150);
     expect(report.activity.exitReasons).toEqual({ error: 1, success: 1 });
-    // I-track findings carry counts + codes + hints ONLY — no raw message bodies.
+    // Findings carry counts + codes + hints ONLY — no raw message bodies.
     expect(report.findings.length).toBeGreaterThan(0);
     for (const f of report.findings) {
       expect(typeof f.code).toBe("string");
       expect(typeof f.count).toBe("number");
       expect(typeof f.hint).toBe("string");
-      // No raw WARN body leaked into the finding (H1 / digest-only).
+      // No raw WARN body leaked into the finding (digest-only).
       expect(f.detail).not.toContain("LCD divergence detected on agent default");
       expect(f.detail).not.toContain("gateway TLS disabled");
     }
@@ -292,13 +294,13 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.coverage?.billing).toEqual({ present: true });
   });
 
-  it("EXCLUDES a synthetic degraded row from sessions.degraded — reconciling with total/degradedRate/degradedByCause (WR-01)", async () => {
-    // WR-01: `total` and `degradedRate` are synthetic-excluded (the reducer
-    // drops source!=="runtime"), but the absolute `sessions.degraded` was
-    // derived from the UNFILTERED store rows — so a `{degraded:true,
-    // source:"test"}` row inflated `degraded` (could exceed `total`, disagree
-    // with `degradedRate`, and contradict `sum(degradedByCause)`). After the fix
-    // all three `sessions` fields share the synthetic-excluded population.
+  it("EXCLUDES a synthetic degraded row from sessions.degraded — reconciling with total/degradedRate/degradedByCause", async () => {
+    // `total` and `degradedRate` are synthetic-excluded (the reducer
+    // drops source!=="runtime"); deriving the absolute `sessions.degraded`
+    // from the UNFILTERED store rows would let a `{degraded:true,
+    // source:"test"}` row inflate `degraded` (exceed `total`, disagree
+    // with `degradedRate`, and contradict `sum(degradedByCause)`). All three
+    // `sessions` fields must share the synthetic-excluded population.
     const now = systemNowMs();
     const clock = createFakeClock(now);
     const store = makeStore();
@@ -370,22 +372,22 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 
-  it("CLOCK-INDEPENDENT: the A3 window follows the INJECTED clock, not real Date.now() (WR-01)", async () => {
-    // WR-01 regression: the assembler documents "the ONE clock read is the
+  it("CLOCK-INDEPENDENT: the session-index window follows the INJECTED clock, not real Date.now()", async () => {
+    // The assembler documents "the ONE clock read is the
     // injected ClockPort". A FIXED, historical fake instant (NOT real now) must
-    // drive BOTH the A1/I-track window AND the A3 day-key window. We write the
-    // session-index day-file keyed to the fixed instant's day; if the A3 reader
-    // honoured the injected clock the report reads it (daysRead>0, real tokens).
-    // Pre-fix the reader uses its own systemNowMs() (real today) → it looks for
-    // a file at the real-today key, misses the historical one → daysRead 0,
-    // tokenTotal 0. This FAILS on the pre-patch code.
+    // drive BOTH the store window AND the session-index day-key window. We write
+    // the session-index day-file keyed to the fixed instant's day; the reader
+    // honours the injected clock iff the report reads it (daysRead>0, real
+    // tokens). A reader that used its own systemNowMs() (real today) would look
+    // for a file at the real-today key, miss the historical one → daysRead 0,
+    // tokenTotal 0.
     const fixedNow = Date.UTC(2021, 5, 15, 12, 0, 0); // 2021-06-15T12:00:00Z — not today
     const fixedClock = createFakeClock(fixedNow);
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-health-fixedclock-"));
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
     const fixedDayKey = dayKeyForMs(fixedNow); // "2021-06-15"
-    // Stamp the rows at the FIXED instant (F-OBS-1b windows by row-ts) so they
+    // Stamp the rows at the FIXED instant (the reader windows by row-ts) so they
     // sit inside the [fixedNow-24h, fixedNow] window, not at real-now (excluded).
     const fixedRowTs = fixedNow - 1000;
     fs.writeFileSync(
@@ -399,7 +401,7 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
 
     const report = await assembleFleetHealthReport({ obsStore: makeStore(), dataDir, clock: fixedClock }, 24);
 
-    // The A3 reader must have located + read the historical-keyed day-file
+    // The session-index reader must have located + read the historical-keyed day-file
     // because the window upper bound follows the injected clock.
     expect(report.coverage?.sessionIndex.daysRead).toBe(1);
     expect(report.activity.activeAgents).toEqual(["agent-h"]);
@@ -447,12 +449,11 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.likelyRootCause).toBeNull();
   });
 
-  it("GUARDS a non-finite sinceHours: Infinity is clamped to the default window, not a -Infinity bound (IN-01)", async () => {
-    // IN-01 defense-in-depth: the contract rejects a non-finite sinceHours at
+  it("GUARDS a non-finite sinceHours: Infinity is clamped to the default window, not a -Infinity bound", async () => {
+    // Defense-in-depth: the contract rejects a non-finite sinceHours at
     // the parse boundary, but the assembler is also reachable directly (the MCP
     // closure) and must not turn a non-finite sinceHours into windowHours:
     // Infinity / sinceMs: -Infinity. The guard clamps to the default window.
-    // Pre-fix windowHours is Infinity (RED).
     const now = systemNowMs();
     const dataDir = makeDataDirWithActivity();
     const report = await assembleFleetHealthReport(
@@ -465,7 +466,7 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.windowHours).toBe(24);
   });
 
-  it("GUARDS a NaN sinceHours: clamps to the default window rather than producing NaN bounds (IN-01)", async () => {
+  it("GUARDS a NaN sinceHours: clamps to the default window rather than producing NaN bounds", async () => {
     const now = systemNowMs();
     const dataDir = makeDataDirWithActivity();
     const report = await assembleFleetHealthReport(
@@ -476,7 +477,7 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.windowHours).toBe(24);
   });
 
-  it("HEURISTIC (W9): acute named degradation outranks chronic config posture below the rate threshold", async () => {
+  it("HEURISTIC: acute named degradation outranks chronic config posture below the rate threshold", async () => {
     // Live incident shape: 3 sessions, 1 degraded (rate 0.33 < HIGH threshold)
     // with a NAMED cause, plus a standing TLS-off posture row. The verdict must
     // point at the acute degradation, not the chronic posture.
@@ -515,7 +516,7 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain("comis explain");
   });
 
-  it("HEURISTIC (W9): chronic config posture still wins when no session degraded", async () => {
+  it("HEURISTIC: chronic config posture still wins when no session degraded", async () => {
     const now = systemNowMs();
     const store = makeStore();
     store.insertDiagnostic({
@@ -562,11 +563,11 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// KNOB-03 (Phase 176): the dedicated config_posture:served_below_configured
+// The dedicated config_posture:served_below_configured
 // finding. Count comes from the LATEST config_posture row's details JSON
-// (posture is STANDING STATE, not cumulative — research Open Q3 resolution),
+// (posture is STANDING STATE, not cumulative),
 // parsed defensively (the healthSignalLabel clone: malformed/missing/non-number
-// folds to 0, never throws — T-176-13).
+// folds to 0, never throws).
 // ---------------------------------------------------------------------------
 
 /** A config_posture `details` JSON in the buildConfigPostureRecord shape. */
@@ -591,13 +592,13 @@ function insertPostureRow(store: ObservabilityStore, timestamp: number, details:
   });
 }
 
-/** A fresh empty tmp dataDir (the A3 reader soft-fails to daysMissing). */
+/** A fresh empty tmp dataDir (the session-index reader soft-fails to daysMissing). */
 function emptyDataDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "fleet-served-below-"));
 }
 
 // ---------------------------------------------------------------------------
-// TELEM-02 (Plan 173-04) — the pipelineAuthoringGate verdict surfaced on the
+// The pipelineAuthoringGate verdict surfaced on the
 // FleetHealthReport. Seeds `pipeline_authoring` health_signal rows, asserts the
 // assembler computes pipelineAuthoringGate(pipelineAuthoringAggregateFromRows())
 // and surfaces it, AND that the returned report ROUND-TRIPS the verdict through
@@ -620,7 +621,7 @@ function insertPipelineAuthoringRow(
   });
 }
 
-describe("assembleFleetHealthReport — TELEM-02 pipelineAuthoringGate verdict", () => {
+describe("assembleFleetHealthReport — pipelineAuthoringGate verdict", () => {
   it("surfaces buildAuthor:true when >= 20 small-tier rows are materially below frontier — and the verdict round-trips .parse()", async () => {
     const now = systemNowMs();
     const clock = createFakeClock(now);
@@ -633,7 +634,7 @@ describe("assembleFleetHealthReport — TELEM-02 pipelineAuthoringGate verdict",
 
     expect(report.pipelineAuthoringGate).toBeDefined();
     expect(report.pipelineAuthoringGate?.buildAuthor).toBe(true);
-    // The verdict SURVIVES the wire parse (BLOCKER-1 guard against schema drift).
+    // The verdict SURVIVES the wire parse (guards against schema drift).
     const parsed = FleetHealthReportSchema.parse(report);
     expect(parsed.pipelineAuthoringGate?.buildAuthor).toBe(true);
   });
@@ -669,8 +670,8 @@ describe("assembleFleetHealthReport — TELEM-02 pipelineAuthoringGate verdict",
   });
 });
 
-describe("buildFindings — config_posture:served_below_configured (KNOB-03)", () => {
-  it("KNOB-03-3: emits the dedicated finding with the row's count, the provider-count detail, and the Ollama-knob hint", async () => {
+describe("buildFindings — config_posture:served_below_configured", () => {
+  it("emits the dedicated finding with the row's count, the provider-count detail, and the Ollama-knob hint", async () => {
     const now = systemNowMs();
     const store = makeStore();
     insertPostureRow(store, now - 1_000, postureDetails(2));
@@ -688,7 +689,7 @@ describe("buildFindings — config_posture:served_below_configured (KNOB-03)", (
     expect(finding?.hint).toMatch(/num_ctx/);
   });
 
-  it("RESOLVE-01: emits config_posture:chimeric_model from the latest posture row's chimericModelCount (incident ffe11736)", async () => {
+  it("emits config_posture:chimeric_model from the latest posture row's chimericModelCount", async () => {
     const now = systemNowMs();
     const store = makeStore();
     insertPostureRow(
@@ -716,7 +717,7 @@ describe("buildFindings — config_posture:served_below_configured (KNOB-03)", (
     expect(finding?.hint).toMatch(/provider/i);
   });
 
-  it("KNOB-03-4: reads the LATEST row only (standing state, not cumulative) — a newer 0 suppresses an older 3; a newer 1 emits count 1", async () => {
+  it("reads the LATEST row only (standing state, not cumulative) — a newer 0 suppresses an older 3; a newer 1 emits count 1", async () => {
     const now = systemNowMs();
 
     // Newer row (count 0) inserted FIRST so any insertion-order shortcut picks
@@ -746,7 +747,7 @@ describe("buildFindings — config_posture:served_below_configured (KNOB-03)", (
     expect(finding?.count).toBe(1);
   });
 
-  it("KNOB-03-5: folds malformed / missing-field / non-number details to 0 without throwing, keeps the generic rollup, and a valid LATEST row still emits over an older malformed one", async () => {
+  it("folds malformed / missing-field / non-number details to 0 without throwing, keeps the generic rollup, and a valid LATEST row still emits over an older malformed one", async () => {
     const now = systemNowMs();
 
     // Each defensive fold variant as the (only, hence latest) posture row:
@@ -784,17 +785,15 @@ describe("buildFindings — config_posture:served_below_configured (KNOB-03)", (
 });
 
 // ---------------------------------------------------------------------------
-// OBS-01 / Phase 180 — the two dedicated multilingual fleet findings.
+// The two dedicated multilingual fleet findings.
 // script_zero_hit rows group by (scriptClass, lane) into one finding per group
 // reading exactly "N non-Latin zero-hit searches (script=X, lane=Y)";
 // summary_language_mismatch rows roll up to one count whose hint names
 // contextEngine.compaction.strongerSummarizerModel. Both are dedicated branches
-// (the KNOB-03 precedent) — the generic `health_signal:<label>` loop must NOT
+// (the served-below-configured precedent) — the generic `health_signal:<label>`
+// loop must NOT
 // also emit a finding for these labels (no double-report). Counts/enums/hints
-// only — never raw WARN bodies (the v2.15 fleet rule).
-// RED: the dedicated branches do not exist yet, so today these surface only via
-// the generic `health_signal:script_zero_hit` rollup (wrong code + wrong detail
-// string + no named hint), failing every assertion below.
+// only — never raw WARN bodies (the fleet digest-only rule).
 // ---------------------------------------------------------------------------
 
 /** Insert one health_signal row at `ts` with the given details JSON. */
@@ -808,7 +807,7 @@ function insertHealthSignal(store: ObservabilityStore, ts: number, details: stri
   });
 }
 
-describe("buildFindings — OBS-01 script_zero_hit dedicated finding", () => {
+describe("buildFindings — script_zero_hit dedicated finding", () => {
   it("emits one finding per (scriptClass, lane) group with the exact detail string and the doctor-repair hint", async () => {
     const now = systemNowMs();
     const store = makeStore();
@@ -848,7 +847,7 @@ describe("buildFindings — OBS-01 script_zero_hit dedicated finding", () => {
   });
 });
 
-describe("buildFindings — OBS-01 summary_language_mismatch dedicated finding", () => {
+describe("buildFindings — summary_language_mismatch dedicated finding", () => {
   it("rolls up to one count whose hint names contextEngine.compaction.strongerSummarizerModel", async () => {
     const now = systemNowMs();
     const store = makeStore();
@@ -876,8 +875,8 @@ describe("buildFindings — OBS-01 summary_language_mismatch dedicated finding",
   });
 });
 
-describe("buildFindings — GENQ-01 generation_quality dedicated finding", () => {
-  it("rolls up the memory-generation passes to one count whose hint names the R6 memory-ops knob", async () => {
+describe("buildFindings — generation_quality dedicated finding", () => {
+  it("rolls up the memory-generation passes to one count whose hint names the memory-ops capability override", async () => {
     const now = systemNowMs();
     const store = makeStore();
     // Mixed passes + issue flags — all roll into the one generation_quality count.
@@ -912,16 +911,13 @@ describe("buildFindings — GENQ-01 generation_quality dedicated finding", () =>
 });
 
 // ---------------------------------------------------------------------------
-// FLEET-01/02/04 (Phase 220-03) — the AUTONOMY block on the FleetHealthReport.
+// The AUTONOMY block on the FleetHealthReport.
 // The assembler reads DurableRunPort.countByStatus(sinceMs) (orphaned/revoked +
-// running/completed for the degraded-rate denominator) AND the health_signal
-// rows Plan 01 persists (resumed/killed counts + the worst rootRunId). The
+// running/completed for the degraded-rate denominator) AND the persisted
+// health_signal rows (resumed/killed counts + the worst rootRunId). The
 // breaker subset reads back from the synthetic-excluded reduceFleetWindow
 // (degradedByCause["denial_breaker"]), NEVER re-derived. Deterministic (one
 // clock read, no Date.now()), content-free, admin-gated unchanged.
-//
-// RED: there is no autonomy block, no durableRuns dep — every assertion fails on
-// the pre-patch code.
 // ---------------------------------------------------------------------------
 
 /** The `countByStatus` windowed shape (mirror DurableRunPort.countByStatus). */
@@ -949,7 +945,7 @@ function fakeDurableRuns(counts: DurableStatusCounts): import("@comis/core").Dur
   } as unknown as import("@comis/core").DurableRunPort;
 }
 
-/** Insert a Plan-01 `durable_orphaned` health_signal row (closed reason + rootRunId). */
+/** Insert a `durable_orphaned` health_signal row (closed reason + rootRunId). */
 function insertOrphanedRow(store: ObservabilityStore, ts: number, reason: string, rootRunId: string): void {
   store.insertDiagnostic({
     timestamp: ts,
@@ -960,7 +956,7 @@ function insertOrphanedRow(store: ObservabilityStore, ts: number, reason: string
   });
 }
 
-/** Insert a Plan-01 `durable_resumed` health_signal row (healthy recovery — info). */
+/** Insert a `durable_resumed` health_signal row (healthy recovery — info). */
 function insertResumedRow(store: ObservabilityStore, ts: number, rootRunId: string): void {
   store.insertDiagnostic({
     timestamp: ts,
@@ -971,7 +967,7 @@ function insertResumedRow(store: ObservabilityStore, ts: number, rootRunId: stri
   });
 }
 
-/** Insert a Plan-01 `autonomy_revoked` health_signal row (revoked count + rootRunId). */
+/** Insert an `autonomy_revoked` health_signal row (revoked count + rootRunId). */
 function insertRevokedRow(store: ObservabilityStore, ts: number, revoked: number, rootRunId: string): void {
   store.insertDiagnostic({
     timestamp: ts,
@@ -982,7 +978,7 @@ function insertRevokedRow(store: ObservabilityStore, ts: number, revoked: number
   });
 }
 
-/** Insert a Plan-01 `autonomy_killed` health_signal row (killed count + rootRunId). */
+/** Insert an `autonomy_killed` health_signal row (killed count + rootRunId). */
 function insertKilledRow(store: ObservabilityStore, ts: number, killed: number, rootRunId: string): void {
   store.insertDiagnostic({
     timestamp: ts,
@@ -993,8 +989,8 @@ function insertKilledRow(store: ObservabilityStore, ts: number, killed: number, 
   });
 }
 
-/** Insert a FLEET-02 (220-05) `autonomy_denial_breaker` health_signal row — the
- *  capability-denial breaker (Phase 217) tripped + aborted the run tree. Content-free:
+/** Insert an `autonomy_denial_breaker` health_signal row — the
+ *  capability-denial breaker tripped + aborted the run tree. Content-free:
  *  the closed signal label + the rootRunId (an id) + count ONLY. This is the EVENT-
  *  sourced source (an `execution:aborted{reason:"denial_breaker"}`-class abort), NOT a
  *  session endReason / breakerTripCount — the existing `breakerTrips` read-back can
@@ -1009,7 +1005,7 @@ function insertDenialBreakerRow(store: ObservabilityStore, ts: number, rootRunId
   });
 }
 
-/** A session_summary row for a real breaker-tripped run: breakerTripCount >= 1. The FLEET-02
+/** A session_summary row for a real breaker-tripped run: breakerTripCount >= 1. The autonomy
  *  breaker source is the summed breakerTripCount (→ breakerTripTotal), NOT the endReason —
  *  `denial_breaker` is never a session endReason, only an execution:aborted event reason. */
 function insertBreakerDegradedRow(store: ObservabilityStore, ts: number, sessionKey: string): void {
@@ -1023,8 +1019,8 @@ function insertBreakerDegradedRow(store: ObservabilityStore, ts: number, session
   });
 }
 
-describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
-  it("FLEET-01: surfaces autonomy run counts + degradedRate from countByStatus (orphaned+revoked degraded; deterministic)", async () => {
+describe("assembleFleetHealthReport — autonomy block", () => {
+  it("surfaces autonomy run counts + degradedRate from countByStatus (orphaned+revoked degraded; deterministic)", async () => {
     const now = systemNowMs();
     const store = makeStore();
     const dataDir = emptyDataDir();
@@ -1042,10 +1038,10 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(report.autonomy?.runs.degradedRate).toBeCloseTo(3 / 20);
     expect(report.autonomy?.orphaned).toBe(2);
     expect(report.autonomy?.revoked).toBe(1);
-    // degraded never exceeds total (T-220-11 metric integrity).
+    // degraded never exceeds total (metric integrity).
     expect(report.autonomy!.runs.degraded).toBeLessThanOrEqual(report.autonomy!.runs.total);
 
-    // DETERMINISM: same input → byte-identical report (T-220-12).
+    // DETERMINISM: same input → byte-identical report.
     const a = await assembleFleetHealthReport(
       { obsStore: store, dataDir, clock: createFakeClock(now), durableRuns: fakeDurableRuns({ orphaned: 2, revoked: 1, running: 5, completed: 12 }) },
       24,
@@ -1057,7 +1053,7 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 
-  it("FLEET-01: resumed + killed counts come from the health_signal rows (event-sourced; kill separable from revoke)", async () => {
+  it("resumed + killed counts come from the health_signal rows (event-sourced; kill separable from revoke)", async () => {
     const now = systemNowMs();
     const store = makeStore();
     // countByStatus folds kill→revoked in the table; resumed/killed are event-sourced.
@@ -1079,7 +1075,7 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(report.autonomy?.killed).not.toBe(report.autonomy?.revoked);
   });
 
-  it("FLEET-02: breakerTrips reads back the synthetic-excluded breakerTripTotal; budgetBreaches from the breach rows", async () => {
+  it("breakerTrips reads back the synthetic-excluded breakerTripTotal; budgetBreaches from the breach rows", async () => {
     const now = systemNowMs();
     const store = makeStore();
     // Two breaker-tripped sessions (breakerTripCount:1 each) → breakerTripTotal = 2.
@@ -1107,26 +1103,27 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(report.autonomy?.budgetBreaches).toBe(1);
   });
 
-  // FLEET-02 (Phase 220-05) — the milestone-audit gap. A Phase-217 capability-DENIAL
-  // breaker trip (`execution:aborted{reason:"denial_breaker"}`) was INVISIBLE to
+  // A capability-DENIAL
+  // breaker trip (`execution:aborted{reason:"denial_breaker"}`) would otherwise be
+  // INVISIBLE to
   // `comis fleet`: its trip is never a session endReason and never a breakerTripCount,
-  // so the existing `breakerTrips` read-back (← breakerTripTotal ← summed
+  // so the `breakerTrips` read-back (← breakerTripTotal ← summed
   // breakerTripCount, the TOOL-failure breaker) ALWAYS shows 0, and the aborted run
   // lands in durable status 'completed' (not orphaned/revoked) → 0 in every other
-  // count too. The fix EVENT-SOURCES it into a content-free `autonomy_denial_breaker`
+  // count too. It is EVENT-SOURCED into a content-free `autonomy_denial_breaker`
   // health_signal row → a SEPARATE `denialBreakerTrips` count (the `killed`-separable-
-  // from-`revoked` mold). RED: pre-patch there is no `denialBreakerTrips` field.
-  it("FLEET-02: a denial-breaker trip surfaces as denialBreakerTrips (event-sourced), SEPARABLE from the tool-breaker breakerTrips", async () => {
+  // from-`revoked` mold).
+  it("a denial-breaker trip surfaces as denialBreakerTrips (event-sourced), SEPARABLE from the tool-breaker breakerTrips", async () => {
     const now = systemNowMs();
     const store = makeStore();
-    // Two denial-breaker-aborted run trees (the Phase-217 capability-denial breaker).
+    // Two denial-breaker-aborted run trees (the capability-denial breaker).
     insertDenialBreakerRow(store, now - 100, "root-deny-1");
     insertDenialBreakerRow(store, now - 200, "root-deny-2");
     // A tool-failure breaker session (breakerTripCount:1) — the EXISTING breakerTrips
     // source. It must NOT be conflated with the denial-breaker count.
     insertBreakerDegradedRow(store, now - 300, "tool-b1");
     // The aborted runs land in durable status 'completed' (NOT orphaned/revoked) —
-    // exactly the milestone finding: zero in runs.degraded/orphaned/revoked/killed.
+    // exactly the gap: zero in runs.degraded/orphaned/revoked/killed.
     const durableRuns = fakeDurableRuns({ orphaned: 0, revoked: 0, running: 0, completed: 5 });
 
     const report = await assembleFleetHealthReport(
@@ -1149,7 +1146,7 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(report.autonomy?.revoked).toBe(0);
   });
 
-  it("FLEET-02: a denial-breaker trip is a dedicated finding AND its worst rootRunId is drillable; CONTENT-FREE", async () => {
+  it("a denial-breaker trip is a dedicated finding AND its worst rootRunId is drillable; CONTENT-FREE", async () => {
     const now = systemNowMs();
     const store = makeStore();
     insertDenialBreakerRow(store, now - 100, "root-deny-worst");
@@ -1190,7 +1187,7 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(Object.keys(details).sort()).toEqual(["denialBreakerTrips", "rootRunId", "signal"]);
   });
 
-  it("FLEET-02: round-trips FleetHealthReportSchema.parse() with denialBreakerTrips (additive-optional, no drift)", async () => {
+  it("round-trips FleetHealthReportSchema.parse() with denialBreakerTrips (additive-optional, no drift)", async () => {
     const now = systemNowMs();
     const store = makeStore();
     insertDenialBreakerRow(store, now - 100, "root-deny-rt");
@@ -1204,7 +1201,7 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(parsed.autonomy?.denialBreakerTrips).toBe(1);
   });
 
-  it("FLEET-04: names the worst autonomy run's rootRunId AND a verdict suggests `comis explain <rootRunId>`", async () => {
+  it("names the worst autonomy run's rootRunId AND a verdict suggests `comis explain <rootRunId>`", async () => {
     const now = systemNowMs();
     const store = makeStore();
     // A degraded autonomy run (orphaned) carries a rootRunId.
@@ -1278,7 +1275,7 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
   });
 });
 
-describe("bindFleetHealthHandlers (H1 — admin dual-layer gate)", () => {
+describe("bindFleetHealthHandlers (admin dual-layer gate)", () => {
   it("admin gate: missing _trustLevel:admin throws", async () => {
     const handlers = bindFleetHealthHandlers(makeDeps({ obsStore: makeStore(), clock: createFakeClock(systemNowMs()) }));
     await expect(handlers["obs.fleet.health"]!({ sinceHours: 24 })).rejects.toThrow(/Admin/i);
@@ -1309,7 +1306,7 @@ describe("bindFleetHealthHandlers (H1 — admin dual-layer gate)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 161-02: the clock seam is LOAD-BEARING — the wired handler MUST receive a
+// The clock seam is LOAD-BEARING — the wired handler MUST receive a
 // clock (buildRpcDispatchDeps threads boot.clock into ObservabilityApiDeps.clock).
 // The handler asserts `deps.clock!`; an unwired clock throws at request time.
 // These pins prove (a) the clock-wired handler returns a real report (NOT a
@@ -1317,7 +1314,7 @@ describe("bindFleetHealthHandlers (H1 — admin dual-layer gate)", () => {
 // the buildRpcDispatchDeps `clock: c.clock` wiring is not decorative.
 // ---------------------------------------------------------------------------
 
-describe("bindFleetHealthHandlers (161-02 — boot.clock wiring is load-bearing)", () => {
+describe("bindFleetHealthHandlers (boot.clock wiring is load-bearing)", () => {
   it("the clock-wired handler returns a FleetHealthReport (NOT a clock-undefined throw)", async () => {
     const dataDir = makeDataDirWithActivity();
     const store = makeStore();

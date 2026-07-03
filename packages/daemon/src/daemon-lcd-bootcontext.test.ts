@@ -60,10 +60,10 @@ describe("daemon.ts threads lcdStore from setupMemory into the BootContext (fiel
     // setupMemory destructure (the `const {` that opens it) to the next top-level
     // function (bootAgents). Within THIS scope lcdStore must appear at least TWICE —
     // once destructured from setupMemory and once more in the BootContext literal
-    // (the Object.assign(boot, {...})). Pre-fix it appeared exactly ONCE here
-    // (destructured-but-never-forwarded), which is the no-op the lint:security
-    // unused-var error flags. Scoping to this function is what makes the test RED
-    // on that gap (lcdStore uses in OTHER functions must not mask it).
+    // (the Object.assign(boot, {...})). A single occurrence here
+    // (destructured-but-never-forwarded) is the no-op the lint:security
+    // unused-var error flags. Scoping to this function is what pins the test to
+    // that gap (lcdStore uses in OTHER functions must not mask it).
     const callIdx = daemonSrc.indexOf("= await setupMemory(");
     expect(callIdx, "daemon.ts must call setupMemory(...)").toBeGreaterThan(-1);
     const scopeStart = daemonSrc.lastIndexOf("const {", callIdx);

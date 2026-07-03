@@ -303,7 +303,7 @@ describe("setupDeliveryQueueLogging", () => {
   });
 
   // -------------------------------------------------------------------------
-  // delivery:reply_bound -> DEBUG (WR-01 breadcrumb)
+  // delivery:reply_bound -> DEBUG (reaction-attribution breadcrumb)
   // -------------------------------------------------------------------------
 
   describe("delivery:reply_bound", () => {

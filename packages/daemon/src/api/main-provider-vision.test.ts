@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the VIS-01 keystone bridge: createMainProviderVision().describeImage
+ * Tests for the vision bridge: createMainProviderVision().describeImage
  * — the completeSimple-over-multimodal vision seam that runs ONE bounded call on
  * the agent's MAIN model and reuses the main provider's creds.
  *
@@ -150,7 +150,7 @@ describe("createMainProviderVision().describeImage", () => {
     expect(opts.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("costUsd is read from usage.cost.total; a model with total:0 yields costUsd:0 (Pitfall 4 — optional, 0 valid)", async () => {
+  it("costUsd is read from usage.cost.total; a model with total:0 yields costUsd:0 (optional, 0 valid)", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       assistantMsg({ text: "local", costTotal: 0 }),
     );
@@ -174,7 +174,7 @@ describe("createMainProviderVision().describeImage", () => {
     expect(res.error.message.length).toBeGreaterThan(0);
   });
 
-  it("WR-02: a stream that RESOLVES with stopReason 'aborted' AFTER the timeout fired → classified timeout, NOT empty_response", async () => {
+  it("a stream that RESOLVES with stopReason 'aborted' AFTER the timeout fired → classified timeout, NOT empty_response", async () => {
     // pi-ai's completeSimple → AssistantMessageEventStream.result() RESOLVES
     // (does not reject) on the abort event, with the AssistantMessage carrying
     // stopReason:"aborted" (event-stream.js:64-75). So when our AbortController
@@ -204,7 +204,7 @@ describe("createMainProviderVision().describeImage", () => {
     expect(res.error.message).toMatch(/timed out|timeout/i);
   });
 
-  it("WR-02: a non-stop stream resolving 'aborted' WITHOUT the abort signal set is still classified by controller.signal (defensive)", async () => {
+  it("a non-stop stream resolving 'aborted' WITHOUT the abort signal set is still classified by controller.signal (defensive)", async () => {
     // Belt-and-suspenders: if a provider ever resolves stopReason:"aborted"
     // and the controller IS aborted (the only abort trigger on this path is our
     // own timer), it is a timeout. This pins that `aborted` is read as a
@@ -273,7 +273,7 @@ describe("createMainProviderVision().describeImage", () => {
     expect(completeSimple).not.toHaveBeenCalled();
   });
 
-  it("codex cred path (I7): provider openai-codex with no OPENAI_API_KEY still resolves via resolveCodexKey", async () => {
+  it("codex cred path: provider openai-codex with no OPENAI_API_KEY still resolves via resolveCodexKey", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(assistantMsg({ text: "ok" }));
     const resolveCodexKey = vi.fn(async (_p: string) => "codex-bearer");
     const deps = makeDeps({

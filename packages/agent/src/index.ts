@@ -45,17 +45,16 @@ export { createBudgetGuard, BudgetError } from "./budget/budget-guard.js";
 export type { BudgetGuard, BudgetSnapshot } from "./budget/budget-guard.js";
 export { createCostTracker } from "./budget/cost-tracker.js";
 export type { CostTracker, CostRecord, UsageInput } from "./budget/cost-tracker.js";
-// Spend kill-switch (Phase 177): the surface the daemon composition root consumes
+// Spend kill-switch: the surface the daemon composition root consumes
 // cross-package — the daemon-wide accumulator factory + the instance type + the
 // scope type (setup-observability wiring + the PiExecutorDeps thread).
 // The 3-state spend GATE (`checkSpendCeiling` + its outcome/error/ceilings/config
-// types) is now consumed cross-package by the per-`rootRunId` budget meter
-// (`@comis/daemon` `autonomy/per-root-budget.ts`, Phase 213-04 BUDGET-01/02/03):
-// the meter REUSES the shipped 3-state gate VERBATIM for its $-limb (the
-// ffe11736 fail-closed semantics — never re-implemented). These were previously
-// intra-package; the daemon meter is the first cross-package consumer, so they
-// graduate to the barrel (public-export-consumers gate: a barrel export needs a
-// cross-package consumer, which now exists).
+// types) is consumed cross-package by the per-`rootRunId` budget meter
+// (`@comis/daemon` `autonomy/per-root-budget.ts`): the meter REUSES the 3-state
+// gate VERBATIM for its $-limb (same fail-closed semantics — never
+// re-implemented). Exported here because the daemon meter consumes them
+// cross-package (public-export-consumers gate: a barrel export needs a
+// cross-package consumer).
 export { createSpendAccumulator, SpendError } from "./budget/spend-accumulator.js";
 export type { SpendAccumulator, SpendScope } from "./budget/spend-accumulator.js";
 export { checkSpendCeiling } from "./budget/budget-guard.js";
@@ -115,18 +114,18 @@ export type { CacheProviderInfo } from "./executor/cache-usage-helpers.js";
 export { createModelScanner } from "./model/model-scanner.js";
 export type { ScanResult, ModelScanner, ModelScannerDeps } from "./model/model-scanner.js";
 
-// Ollama capacity probe (CWF-03: boot-time served num_ctx discovery)
+// Ollama capacity probe (boot-time served num_ctx discovery)
 // Only probeAllOllamaProviders is consumed cross-package (daemon boot);
 // the remaining probe symbols (prewarmOllamaModel et al.) are intra-package
 // only — invoked internally by probeAllOllamaProviders, never re-exported.
 export { probeAllOllamaProviders } from "./model/ollama-capacity-probe.js";
 
-// Served-window comparator (KNOB-01: boot-time served<configured WARN).
+// Served-window comparator (boot-time served<configured WARN).
 // Only compareServedWindowForProvider + the comparison type are consumed
 // cross-package (daemon setup-agents wiring); the latch reset is test-only.
 export { compareServedWindowForProvider, resetServedWindowWarnForTest, type ServedWindowComparison, type ServedWindowComparisonInput } from "./model/served-window-comparator.js";
 
-// Viable floor (FLOOR-01: boot-time minViable WARN). collectAgentBootWindowInfo +
+// Viable floor (boot-time minViable WARN). collectAgentBootWindowInfo +
 // evaluateViableFloorForAgent are consumed cross-package (daemon boot wiring);
 // computeMinViableEquation + the drift-pin surface are intra-package/test only.
 export { collectAgentBootWindowInfo, evaluateViableFloorForAgent, type AgentBootWindowInfo, type MinViableEquation } from "./context-engine/viable-floor.js";
@@ -151,7 +150,7 @@ export type { LastKnownModelTracker, LastKnownModelEntry } from "./model/last-kn
 // Routing symbols (router factory, resolver, router type) live in
 // @comis/orchestrator. Consumers import from @comis/orchestrator.
 
-// Session lifecycle (renamed from session-manager.ts)
+// Session lifecycle
 export { createSessionLifecycle } from "./session/session-lifecycle.js";
 export type { SessionLifecycle, SessionLifecycleOptions } from "./session/session-lifecycle.js";
 
@@ -199,16 +198,13 @@ export type { GreetingGenerator, GreetingGeneratorDeps, GreetingTrigger } from "
 export { runMemoryReview } from "./memory/memory-review-job.js";
 export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 
-// (The offline triple-extraction job — runMemoryTripleExtraction + its
-// MemoryTripleExtractionDeps/Config/Stats + TripleCandidate types — was DELETED in Phase 226
-// SIMPLIFY-03 alongside its dormant __MEMORY_TRIPLE_EXTRACTION__ cron (the `extract` returned
-// [] — no triples were ever written). The TripleStorePort + its sqlite adapter + the
-// graphSpread recall lane (recall-graph-spread-lane.ts) survive — only the extraction JOB went.)
+// (There is no offline triple-extraction job: the TripleStorePort + its sqlite
+// adapter + the graphSpread recall lane (recall-graph-spread-lane.ts) exist
+// without a batch extraction writer.)
 
-// (The offline usefulness-judge seam — createUsefulnessJudgeSeam — was DELETED in Phase 226
-// SIMPLIFY-03 alongside its dormant __USEFULNESS_JUDGE__ cron. The keyless citation-marker
-// attribution stays the usefulness signal; the FORGET-02 recordUsage reward write lives in
-// the daemon's setup-learning.ts (a separate seam), not this factory.)
+// (There is no offline usefulness-judge seam: the keyless citation-marker
+// attribution is the usefulness signal; the recordUsage reward write lives in
+// the daemon's setup-learning.ts, a separate seam.)
 
 // Query-time dialectic synthesis seam (the ONE allowed query-time LLM
 // surface). The factory the daemon `memory.ask` handler calls to BUILD the
@@ -229,14 +225,6 @@ export type { DialecticParsed } from "./memory/memory-dialectic-prompt.js";
 // shapes (AssembledSynthesis/CitationChain/ParsedSynthesis) are inferred at the consumer and
 // kept module-internal (no unconsumed type surface on the public barrel).
 export { orderByTrust, assembleSynthesis, citationChains } from "./memory/memory-dialectic-synthesis.js";
-
-// (The offline directional relationship builder (runRelationshipBuild), its cheap-model
-//  seam factory (createRelationshipSeam), and the directional builder prompt + parser
-//  (RELATIONSHIP_PROMPT / buildRelationshipPrompt / parseRelationshipOutput) — the
-//  WRITE path of the social-modeling subsystem — were DELETED in Phase 226 SIMPLIFY-03
-//  with the rest of that subsystem (the __SOCIAL_MODELING__ cron, the RelationshipStore
-//  port + adapter, the `relationship` table, the relationship-block prompt injection).
-//  No alias, I1.)
 
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
@@ -510,7 +498,7 @@ export { stripReasoningTagsFromText } from "./response-filter/reasoning-tags.js"
 export { findCodeRegions, isInsideCode } from "./response-filter/code-regions.js";
 export type { CodeRegion } from "./response-filter/code-regions.js";
 
-// Thinking tag filter (moved from @comis/channels)
+// Thinking tag filter
 export { createThinkingTagFilter } from "./response-filter/thinking-tag-filter.js";
 export type { ThinkingTagFilter, ThinkingTagFilterOptions } from "./response-filter/thinking-tag-filter.js";
 
@@ -519,25 +507,25 @@ export { resolveOperationModel, resolveProviderFamily } from "./model/operation-
 export type { OperationModelResolution } from "./model/operation-model-resolver.js";
 
 // ModelProfile resolver — the immutable capability/capacity profile. Exported so
-// the daemon wiring can derive the memory-job capabilityClass (R6) the SAME way
-// pi-executor does per-execution (CR-01: R6 was never reaching production). Only
+// the daemon wiring derives the memory-job capabilityClass the SAME way
+// pi-executor does per-execution (any parallel derivation silently drifts from
+// what actually runs). Only
 // the resolver + CapabilityClass type cross the package boundary; the memory jobs
 // (also in @comis/agent) own the resolveMemoryOpsStrategy call internally.
 export { resolveModelProfile, capabilityClassFromProvider } from "./executor/model-profile.js";
 export type { CapabilityClass } from "./executor/model-profile.js";
-// O2 (WR-02): canonical DAG template seeding. seedDefaultDagTemplates is wired
+// Canonical DAG template seeding. seedDefaultDagTemplates is wired
 // into daemon bootstrap (idempotent INSERT-OR-IGNORE) so the four canonical
 // small-model templates exist in the named-graph store at startup.
 export { seedDefaultDagTemplates } from "./executor/dag-templates.js";
-// AUTHOR-01 (Phase 174-03, the former "Phase 157"): the deterministic,
-// conservative repair matcher. INJECTED into the daemon's buildGraphInput via
+// The deterministic, conservative repair matcher. INJECTED into the daemon's buildGraphInput via
 // deps.repairMatch (rpc-dispatch composition site) — the daemon never imports
 // dag-templates directly. fillDagTemplate / CANONICAL_DAG_TEMPLATES stay
 // package-internal (the matcher is the only weak-model repair consumer; it fills
 // internally), so only the matcher fn + its result types cross the boundary.
 export { matchRawGraphToTemplate } from "./executor/dag-template-match.js";
 export type { TemplateMatch, CanonicalTemplatePattern } from "./executor/dag-template-match.js";
-// AUTHOR-02 (Phase 174-04): the deterministic intent → ExecutionGraph
+// The deterministic intent → ExecutionGraph
 // synthesizer. Imported by the pipeline tool's from_intent action (@comis/skills)
 // — it RETURNS a validated graph, never executes one; the tool dispatches it
 // through the existing graph.execute path so governance applies automatically.
@@ -556,18 +544,18 @@ export type { SessionLatch } from "./executor/session-latch.js";
 // Background task infrastructure
 export * from "./background/index.js";
 
-// Correction-detector seam (Verified Learning WS1, Phase 199 P0.5). The cost-gated
+// Correction-detector seam. The cost-gated
 // `fast`-tier detector the daemon constructs (setup-learning-reactions
 // buildReactionWiringDeps) ONLY when `learningOutcome.correction.enabled` is opted
 // in, then runs over a follow-up user turn → a `corrected`/`correction` soft-
-// failure verdict (CORRECT-01). Re-exported from the memory sub-barrel beside its
-// daemon consumer (this plan) so the public-export-consumers gate never sees an
+// failure verdict. Re-exported from the memory sub-barrel beside its
+// daemon consumer so the public-export-consumers gate never sees an
 // orphan. The prompt + triple-bound (wrap + reward-cap + strip-parse) stay
 // agent-internal.
 export { createCorrectionDetectorSeam } from "./memory/index.js";
 export type { CorrectionVerdict } from "./memory/index.js";
 
-// Verified Learning WS1 (OUTCOME-04, Phase 202). The cost-gated LLM outcome-judge
+// The cost-gated LLM outcome-judge
 // seam the daemon constructs on the `outcomeJudge` fast tier as the FALLBACK source
 // for a CONVERSATIONAL turn (an `unknown` deterministic resolve). Re-exported beside
 // its daemon consumer (setup-learning-reactions wiring) so the public-export-consumers
@@ -578,20 +566,19 @@ export { createOutcomeJudgeSeam } from "./memory/index.js";
 // resolveJudgeModel stays package-internal (the seams import it relatively).
 export type { CustomCompletionsModelSpec } from "./memory/index.js";
 
-// v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06). The
+// Reflection engine. The
 // reflection JOB (runReflection) + the cheap-model reflect adapter + the
-// prompt/parser the daemon invokes from the __REFLECT__ cron (Plan 05): SELECT
+// prompt/parser the daemon invokes from the __REFLECT__ cron: SELECT
 // trusted-origin success → group-by-topicKey → ≥2-distinct corroboration gate →
 // delta-ops reflect → validateLearnedDocBody guard → admit at candidate/learned.
 // Consumes @comis/core PORT TYPES + the static guard + the pure delta-ops only
 // (the agent↛memory / agent↛skills cut); the daemon injects the store + adapter.
-// Re-exported from the memory sub-barrel beside its daemon consumer (Plan 05) so
-// the public-export-consumers gate never sees an orphan. This REPLACED the dead
-// embedding-clustering synthesis pipeline (job/adapter/prompt), deleted in Plan 06.
+// Re-exported from the memory sub-barrel beside its daemon consumer so
+// the public-export-consumers gate never sees an orphan.
 export { createLlmReflectionAdapter, runReflection, classifyReflectOutcome } from "./memory/index.js";
 // The per-kind reflect prompts the daemon `__REFLECT__` cron injects as the adapter
-// `systemPrompt` (Plan 04): REFLECT_PROMPT (skill default), PROFILE_REFLECT_PROMPT
-// (Plan 02), TOPIC_REFLECT_PROMPT (Plan 03). One engine, varied per-kind prompt.
+// `systemPrompt`: REFLECT_PROMPT (skill default), PROFILE_REFLECT_PROMPT,
+// TOPIC_REFLECT_PROMPT. One engine, varied per-kind prompt.
 export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT } from "./memory/index.js";
 export type {
   LlmReflectionAdapterDeps,

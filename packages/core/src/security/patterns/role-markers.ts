@@ -8,16 +8,16 @@
  * @module role-markers
  */
 
-/** Shared by tool-sanitizer.ts AND external-content.ts: system: (with whitespace) */
+/** Shared by tool-output-safety.ts AND external-content.ts: system: (with whitespace) */
 export const SYSTEM_COLON = /system\s*:\s+/gi;
 
-/** Shared by tool-sanitizer.ts AND external-content.ts: [SYSTEM] */
+/** Shared by tool-output-safety.ts AND external-content.ts: [SYSTEM] */
 export const SYSTEM_BRACKET = /\[SYSTEM\]/gi;
 
-/** Shared by tool-sanitizer.ts AND external-content.ts: [INST] */
+/** Shared by tool-output-safety.ts AND external-content.ts: [INST] */
 export const INST_BRACKET = /\[INST\]/gi;
 
-/** Shared by tool-sanitizer.ts AND external-content.ts: <system> or </system> */
+/** Shared by tool-output-safety.ts AND external-content.ts: <system> or </system> */
 export const SYSTEM_TAG = /<\/?system>/gi;
 
 /** external-content.ts only: system prompt/override/command */

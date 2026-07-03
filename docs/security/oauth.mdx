@@ -127,8 +127,8 @@ Refresh runs under a **per-profile-id file-lock**:
 
 The persist-before-release order means concurrent callers waiting for the
 file lock will see the rotated refresh token, not the stale one. This
-eliminates the `refresh_token_reused` race that plagued earlier designs in
-which the refresh round-trip ran outside any lock. Implementations
+eliminates the `refresh_token_reused` race that arises whenever the refresh
+round-trip runs outside the lock. Implementations
 specifically MUST NOT release the lock before the new credentials are
 fsynced to disk.
 
@@ -172,16 +172,16 @@ the `OAUTH_<PROVIDER>` environment variable (e.g.,
 The precedence rules are deliberately strict so an operator can never be
 confused about which credential is in flight:
 
-- **R7a -- Empty store seeds from env.** When the credential store has no
+- **Empty store seeds from env.** When the credential store has no
   profile for `<provider>` and `OAUTH_<PROVIDER>` is set, the daemon parses
   the env var as JSON (`access`, `refresh`, `expires`, `accountId`, `email`),
   decodes the JWT identity, and writes the profile on first start. Subsequent
   refreshes update the on-disk profile, not the env var.
-- **R7b -- Stored profile wins.** When the store already has a profile, the
+- **Stored profile wins.** When the store already has a profile, the
   daemon ignores the env var entirely. The stored profile is the source of
   truth (it may have been refreshed since boot, in which case the env-var
   refresh token is now stale and would trigger `refresh_token_reused`).
-- **R7c -- WARN once on drift.** When the env-var refresh token differs from
+- **WARN once on drift.** When the env-var refresh token differs from
   the stored profile's refresh token, the daemon emits one WARN per
   (provider, process) with `errorKind: "config_drift"` and
   `hint: "env-override-ignored"`. Operators clear drift by either
@@ -202,7 +202,6 @@ Where each login flow is reachable:
 | Gateway callback (web "Connect ChatGPT" button) | -- | -- | check -- `GET /oauth/callback/:provider` Hono route |
 | Skip-for-now (defer login to a later command) | check -- "Skip for now" | N/A | -- |
 | Env-var bootstrap (`OAUTH_OPENAI_CODEX`) | N/A -- wizard is interactive | N/A -- same | -- |
-| Pre-generated token paste (legacy) | -- REMOVED in 260504-gge | -- | -- |
 
 The wizard auto-defaults the picker to `Device code (phone)` on
 remote/headless hosts (`SSH_CLIENT`/`SSH_TTY` set or `DISPLAY` unset) and to
@@ -267,9 +266,9 @@ auto-lock-recovery hint.
 
 All examples in this page use `EXAMPLE-` prefixes for token values; no
 real-shape JWT bodies are paste-able from this doc, which addresses
-**T-DOC-EXAMPLE-LEAK**. The wizard-vs-CLI parity matrix is verbatim from the
-RESEARCH source so that a doc edit cannot silently drift from the wizard
-labels in `04-credentials.ts` (**T-DOC-MISDIRECTION**).
+**T-DOC-EXAMPLE-LEAK**. The wizard-vs-CLI parity matrix reproduces the wizard
+labels in `04-credentials.ts` verbatim so that a doc edit cannot silently
+drift from what the terminal renders (**T-DOC-MISDIRECTION**).
 
 ## Related
 

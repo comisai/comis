@@ -2,7 +2,7 @@
 /**
  * The PURE dialectic synthesis helpers.
  *
- * The genuinely-new logic of the phase, isolated as side-effect-free functions so the
+ * The genuinely-new synthesis logic, isolated as side-effect-free functions so the
  * trust-first contradiction ordering, the mandatory abstention, and the
  * citation→recalled-id→sourceId mapping are RED-provable at $0 (no daemon, no DB, no
  * model). The query-time LLM lives ONLY in `memory-dialectic-seam.ts`; these helpers
@@ -14,11 +14,11 @@
  *   / `triple-store.ts:55-61`) orders the recall survivors; the higher-trust claim is
  *   presented first and a lower-trust contradiction never blends into the answer. Trust is
  *   read from `entry.trustLevel` in CODE — NEVER from anything the model emitted.
- * - ABSTENTION is decided in CODE ({@link abstainIfInsufficient}, Pitfall 5), not left to
+ * - ABSTENTION is decided in CODE ({@link abstainIfInsufficient}), not left to
  *   the prompt: an empty recall set, a parser that abstained, or a parsed result whose
  *   citations do not intersect the recalled ids ⇒ abstain. The function is a pure predicate
  *   over the recall set + the parsed result — it does NOT call the seam.
- * - CITATIONS are validated ⊆ recalled ids ({@link mapCitationsToSourceIds}, Pitfall 4): a
+ * - CITATIONS are validated ⊆ recalled ids ({@link mapCitationsToSourceIds}): a
  *   hallucinated/forged id the model emits is DROPPED; each surviving citation is traversed
  *   to its `sourceIds` (the reasoning-tree provenance chain).
  *
@@ -99,7 +99,7 @@ export function orderByTrust(items: MemorySearchResult[]): MemorySearchResult[] 
 }
 
 // ---------------------------------------------------------------------------
-// 2. Mandatory abstention, decided in CODE (Pitfall 5)
+// 2. Mandatory abstention, decided in CODE (never left to the prompt)
 // ---------------------------------------------------------------------------
 
 /** The set of recalled ids — the citation-validation domain. */
@@ -108,7 +108,7 @@ function recalledIdSet(recalled: MemorySearchResult[]): Set<string> {
 }
 
 /**
- * Decide abstention in CODE (Pitfall 5 — never left to the prompt). Returns `{ abstain: true }`
+ * Decide abstention in CODE (never left to the prompt). Returns `{ abstain: true }`
  * when ANY of:
  * - the recall set is empty (no grounding at all), OR
  * - the parser itself abstained, OR
@@ -135,7 +135,7 @@ export function abstainIfInsufficient(
 /**
  * Validate citations ⊆ recalled ids, then traverse each survivor to its `sourceIds` (the
  * reasoning-tree chain). A model-emitted id that is NOT in the recalled set is
- * DROPPED (Pitfall 4 — a hallucinated/forged citation can never enter the answer). An entry
+ * DROPPED (a hallucinated/forged citation can never enter the answer). An entry
  * with no `sourceIds` yields an empty chain.
  */
 export function mapCitationsToSourceIds(
@@ -146,7 +146,7 @@ export function mapCitationsToSourceIds(
   const chains: CitationChain[] = [];
   for (const citationId of citedIds) {
     const entry = byId.get(citationId);
-    if (entry === undefined) continue; // bogus id — drop (Pitfall 4)
+    if (entry === undefined) continue; // bogus id — drop (never enters the answer)
     chains.push({ citationId, sourceIds: entry.sourceIds ?? [] });
   }
   return chains;

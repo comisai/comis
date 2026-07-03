@@ -14,9 +14,9 @@ import {
 // ---------------------------------------------------------------------------
 // buildToolingSection
 //
-// The function unconditionally emits the residual one-liner pointing at the
-// per-turn `## Capabilities` block. The legacy `## Available Tools` flat block
-// + the static-prompt capability-index gate parameter have been removed.
+// The function unconditionally emits only a one-liner pointing at the
+// per-turn `## Capabilities` block. There is NO static `## Available Tools`
+// flat block and no static-prompt capability-index gate parameter.
 // ---------------------------------------------------------------------------
 
 describe("buildToolingSection", () => {
@@ -31,7 +31,7 @@ describe("buildToolingSection", () => {
     expect(joined).toContain("authoritative for parameter shapes");
   });
 
-  it("does NOT emit the deleted legacy `## Available Tools` block", () => {
+  it("does NOT emit a static `## Available Tools` flat block", () => {
     const result = buildToolingSection(["read", "exec"], "large");
     const joined = result.join("\n");
     expect(joined).not.toContain("## Available Tools");
@@ -448,10 +448,10 @@ describe("buildPrivilegedToolsSection catalog interpolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tool-first counterweight. The bullet now emits unconditionally when `exec`
-// is in `toolNames`; the previous static-prompt capability-index gate has been
-// removed. The bullet wording is normative — DO NOT auto-update via
-// `vitest -u` without verifying the rendered text by hand.
+// Tool-first counterweight. The bullet emits unconditionally when `exec`
+// is in `toolNames`; there is no static-prompt capability-index gate. The
+// bullet wording is normative — DO NOT auto-update via `vitest -u` without
+// verifying the rendered text by hand.
 // ---------------------------------------------------------------------------
 
 describe("buildToolCallStyleSection — tool-first counterweight", () => {
@@ -509,10 +509,10 @@ describe("buildToolCallStyleSection — tool-first counterweight", () => {
     expect(joined).not.toContain("discover_tools");
     expect(joined).not.toContain("tool_search_tool_regex");
 
-    // 2026-05-20 fix: the previous bullet advised `source .venv/bin/activate`, which the
-    // exec sandbox blocks via the `\bsource\s` denylist pattern
-    // (exec-security-allowlist.ts line 109-116). The replacement bullet directs the agent
-    // to call .venv/bin/{python3,pip} directly, matching the AGENTS.md template guidance.
+    // The bullet must never advise `source .venv/bin/activate` — the exec
+    // sandbox blocks it via the `\bsource\s` denylist pattern
+    // (exec-security-allowlist.ts). The bullet directs the agent to call
+    // .venv/bin/{python3,pip} directly, matching the AGENTS.md template guidance.
     expect(joined).not.toContain("source .venv/bin/activate");
     expect(joined).toContain(".venv/bin/pip install <pkgs>");
     expect(joined).toContain("the exec sandbox blocks shell-source");

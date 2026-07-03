@@ -224,16 +224,16 @@ export function createContextEngine(
   config: ContextEngineConfig,
   deps: ContextEngineDeps,
 ): ContextEngine {
-  // Pass-through when disabled (per locked decision: zero overhead)
+  // Pass-through when disabled (zero overhead by contract)
   if (!config.enabled) {
     return { transformContext: async (msgs) => msgs, lastBreakpointIndex: undefined, lastTrimOffset: 0 };
   }
 
-  // DAG/LCD mode (the default since Phase 133): when a ContextStorePort +
+  // DAG/LCD mode (the default): when a ContextStorePort +
   // conversationId are wired (the daemon injects the concrete createLcdStore
   // unconditionally), return the LCD assembly engine -- history reconstructed
-  // from the store via the codec, verbatim fresh tail, transcript repair last
-  // (the corrected loop fix). With NO store wired (unit tests / non-daemon
+  // from the store via the codec, verbatim fresh tail, transcript repair last.
+  // With NO store wired (unit tests / non-daemon
   // callers) it must NOT crash and must NOT no-op: it WARN-logs
   // (errorKind: "config") and falls through to the pipeline assembly below --
   // the storeless safety net that makes the dag-default flip non-breaking
@@ -288,7 +288,7 @@ export function createContextEngine(
   const layers: ContextLayer[] = [];
 
   // Thinking block cleaner: skip entirely for non-thinking providers
-  // (zero overhead per locked decision)
+  // (zero overhead for models that never emit thinking blocks)
   let thinkingCleaner: ReturnType<typeof createThinkingBlockCleaner> | undefined;
   if (model.reasoning) {
     thinkingCleaner = createThinkingBlockCleaner(
@@ -299,7 +299,7 @@ export function createContextEngine(
     layers.push(thinkingCleaner);
   }
 
-  // Signature replay scrubber (R5 re-wire): strip signed thinking blocks
+  // Signature replay scrubber: strip signed thinking blocks
   // from EVERY assistant message (latest included) before the next API call.
   // Always-on (not gated by model.reasoning): Gemini's thoughtSignature on
   // toolCall blocks requires this even for non-reasoning models.
@@ -312,7 +312,7 @@ export function createContextEngine(
     },
   }));
 
-  // Signature surrogate guard (Fix #3): scrub thinkingSignature from blocks
+  // Signature surrogate guard: scrub thinkingSignature from blocks
   // whose text contains unpaired UTF-16 surrogates so pi-ai's
   // sanitizeSurrogates() does not produce a sanitized-text-with-original-
   // signature mismatch on replay. Always active — cost is one walk over
@@ -399,7 +399,7 @@ export function createContextEngine(
     layers.push(createObjectiveReinforcementLayer(deps.objective));
   }
 
-  // Transcript repair (A2) -- the ABSOLUTE FINAL pipeline layer, mirroring the
+  // Transcript repair -- the ABSOLUTE FINAL pipeline layer, mirroring the
   // DAG/LCD path where `sanitizeToolUseResultPairing` runs last (lcd-assembler).
   // The pipeline previously had NO final pairing repair: its layers only AVOID
   // CREATING orphans during windowing/eviction; none DROPS a PRE-EXISTING orphan
@@ -445,7 +445,7 @@ export function createContextEngine(
   // Create session-scoped circuit breaker
   const breaker = createLayerCircuitBreaker(LAYER_CIRCUIT_BREAKER_THRESHOLD, deps.logger);
 
-  // Log startup info (per locked decision)
+  // Log the active layer set + config once at startup (INFO)
   deps.logger.info(
     {
       thinkingKeepTurns: config.thinkingKeepTurns,
@@ -498,7 +498,7 @@ export function createContextEngine(
         /* eslint-disable @typescript-eslint/no-explicit-any */
         const initialChars = estimateContextCharsWithDualRatio(messages as any);
         /* eslint-enable @typescript-eslint/no-explicit-any */
-        // flat-by-design: pipeline cold-start aggregate (same window as llm-compaction trigger; anchor self-corrects) (TOK-01)
+        // flat-by-design: pipeline cold-start aggregate (same window as llm-compaction trigger; anchor self-corrects)
         const charBasedTokens = Math.ceil(initialChars / CHARS_PER_TOKEN_RATIO);
         const anchor = deps.getTokenAnchor?.() ?? null;
         tokensLoaded = estimateWithAnchor(anchor, messages as unknown as Message[], charBasedTokens);
@@ -550,7 +550,7 @@ export function createContextEngine(
       } catch {
         // Estimation failure should not block the pipeline
       }
-      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math
       const resultTokens = Math.ceil(resultChars / CHARS_PER_TOKEN_RATIO);
       const budgetUtilization = budget.availableHistoryTokens > 0
         ? resultTokens / budget.availableHistoryTokens
@@ -566,7 +566,7 @@ export function createContextEngine(
       // compacted context are likely the system-adjacent prefix that's still cached.
       if (snap.compaction !== null) {
         const prevFence = engine.lastBreakpointIndex;
-        // Review WR-05: `result` IS the compacted array the fence indexes into; the old Array.isArray(snap.compaction) read the stats OBJECT (always false), silently resetting the fence to -1.
+        // `result` IS the compacted array the fence indexes into; never gate this on the compaction stats OBJECT (e.g. Array.isArray(snap.compaction) is always false and would silently reset the fence to -1).
         const compactedLength = result.length;
         engine.lastBreakpointIndex = compactedLength > 0
           ? Math.max(0, Math.floor(compactedLength / 3))
@@ -622,13 +622,13 @@ export function createContextEngine(
       }
 
       // Build metrics
-      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math
       const tokensMasked = snap.masker ? Math.ceil(snap.masker.totalChars / CHARS_PER_TOKEN_RATIO) : 0;
       const tokensCompacted = snap.compaction
-        // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
+        // flat-by-design: aggregate observability stat — numbers-only log, not budget math
         ? Math.max(0, tokensLoaded - Math.ceil(resultChars / CHARS_PER_TOKEN_RATIO))
         : 0;
-      // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
+      // flat-by-design: aggregate observability stat — numbers-only log, not budget math
       const tokensEvicted = snap.evictor ? Math.ceil(snap.evictor.evictedChars / CHARS_PER_TOKEN_RATIO) : 0;
       const durationMs = systemNowMs() - pipelineStart;
 
@@ -700,9 +700,9 @@ export function createContextEngine(
           deps.eventBus.emit("context:overflow", {
             agentId,
             sessionKey,
-            // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
+            // flat-by-design: aggregate observability stat — numbers-only log, not budget math
             contextTokens: Math.ceil(snap.overflow.contextChars / CHARS_PER_TOKEN_RATIO),
-            // flat-by-design: aggregate observability stat — numbers-only log, not budget math (TOK-01)
+            // flat-by-design: aggregate observability stat — numbers-only log, not budget math
             budgetTokens: Math.ceil(snap.overflow.budgetChars / CHARS_PER_TOKEN_RATIO),
             recoveryAction: snap.overflow.recoveryAction,
             timestamp,

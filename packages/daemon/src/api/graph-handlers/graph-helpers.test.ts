@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for graph-helpers.ts — focused on transformNodes() field forwarding
- * and the O3 capabilityClass routing in buildGraphInput + isWeakCapabilityClass.
+ * and the capabilityClass routing in buildGraphInput + isWeakCapabilityClass.
  *
  * These tests exist as a regression guard against the dropped-mcpServers bug
  * (yfinance trace): the daemon RPC pipeline.execute path
@@ -15,7 +15,7 @@
  * absent-key case (downstream Zod default applies), and a full mapping
  * regression guard that every other existing field still flows through.
  *
- * O3 routing tests (added for Plan 155-04b):
+ * capabilityClass routing tests:
  *   - isWeakCapabilityClass predicate: small/nano→true, frontier/mid/undefined→false
  *   - buildGraphInput with capabilityClass="frontier": unchanged direct path
  *   - buildGraphInput with capabilityClass="small" + valid graph: returns ValidatedGraph
@@ -34,11 +34,11 @@ import { transformNodes, isWeakCapabilityClass, buildGraphInput } from "./graph-
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// v2.19: after a successful graph.execute dispatch, the model-facing hint must be a
+// After a successful graph.execute dispatch, the model-facing hint must be a
 // strong STOP signal — a weak model that dispatched a 6-node NVDA pipeline then kept
 // researching NVDA itself (130 tool calls) and exhausted its own context. The hint
 // lives in graph-mutate.ts; assert its load-bearing directives via source-grep.
-describe("graph.execute dispatch hint (caller stop-after-delegate, v2.19)", () => {
+describe("graph.execute dispatch hint (caller stop-after-delegate)", () => {
   it("tells the model its job is DONE, to STOP, and to NOT research the topic itself", () => {
     const src = readFileSync(resolve(here, "graph-mutate.ts"), "utf-8");
     const hintMatch = src.match(/hint:\s*"([^"]*Pipeline launched[^"]*)"/);
@@ -82,7 +82,7 @@ describe("transformNodes", () => {
     expect("mcpServers" in node).toBe(false);
   });
 
-  // P0-A fix (2026-06-19): the per-node tokenBudget override (highest-precedence budget
+  // The per-node tokenBudget override (highest-precedence budget
   // source, in GraphNodeSchema + read by resolveNodeBudgetWithSource as capSource "node")
   // was DROPPED by transformNodes — so an author-set per-node budget was silently ignored
   // via graph.execute (live: a node with tokenBudget:5000 ran unbounded). Forward it.
@@ -135,7 +135,7 @@ describe("transformNodes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bug-1 (v2.19 OR-01): normalize a lone `type_id:"agent"` (no type_config).
+// Normalize a lone `type_id:"agent"` (no type_config).
 //
 // A weak model often emits `type_id:"agent"` for a single-agent node WITHOUT a
 // type_config (the node's own `agent` field already specifies the agent). The
@@ -145,9 +145,9 @@ describe("transformNodes", () => {
 // or both absent"). transformNodes must drop the redundant lone `typeId:"agent"`
 // so the node runs as a regular single-agent node; an explicit `typeId:"agent"`
 // WITH a type_config (deliberate driver use) and all other typed nodes are
-// untouched. See design/small-model-orchestration-fidelity.md §4.
+// untouched.
 // ---------------------------------------------------------------------------
-describe("transformNodes — lone typeId:agent normalization (OR-01)", () => {
+describe("transformNodes — lone typeId:agent normalization", () => {
   it("drops a lone type_id:agent with no type_config (regular single-agent node)", () => {
     const result = transformNodes([
       { node_id: "analyst_technical", task: "Research NVDA technicals", agent: "ta-analyst", max_steps: 30, context_mode: "full", type_id: "agent" },
@@ -239,7 +239,7 @@ describe("buildGraphInput — full 8-node NVDA DAG (type_config:{agent} no type_
   });
 });
 
-describe("buildGraphInput — lone typeId:agent DAG no longer rejected (OR-01, live NVDA payload)", () => {
+describe("buildGraphInput — lone typeId:agent DAG accepted (live NVDA payload)", () => {
   // The exact shape the live qwen3.6 model emitted to graph.execute, which was
   // hard-rejected with "Graph validation failed: typeId and typeConfig must both
   // be present or both absent."
@@ -267,7 +267,7 @@ describe("buildGraphInput — lone typeId:agent DAG no longer rejected (OR-01, l
 });
 
 // ---------------------------------------------------------------------------
-// O3: isWeakCapabilityClass predicate
+// isWeakCapabilityClass predicate
 // ---------------------------------------------------------------------------
 
 /** Minimal valid graph params for use in buildGraphInput tests. */
@@ -309,16 +309,14 @@ describe("isWeakCapabilityClass", () => {
 });
 
 // ---------------------------------------------------------------------------
-// O3: buildGraphInput capabilityClass routing
+// buildGraphInput capabilityClass routing
 // ---------------------------------------------------------------------------
 
-describe("buildGraphInput — capabilityClass routing (O3)", () => {
-  // M-2 (Phase 174-03): buildGraphInput is now ASYNC (the weak-invalid branch may
-  // run the repair). ALL FIVE call sites below are AWAITED — the values/assertions
-  // are UNCHANGED, only the calls become `await` and the throw-assertions become
-  // `await expect(...).rejects.toThrow(...)`. No behavior change, just the Promise
-  // plumbing (the byte-identical seam: with no repair context the Phase-157 throw
-  // is exactly as before).
+describe("buildGraphInput — capabilityClass routing", () => {
+  // buildGraphInput is ASYNC (the weak-invalid branch may run the repair), so
+  // every call site below is awaited and throw-assertions use
+  // `await expect(...).rejects.toThrow(...)`. With no repair context the
+  // weak-invalid path ends in the fail-closed validation throw.
   it("capable path: capabilityClass='frontier' returns ValidatedGraph (unchanged direct path)", async () => {
     const result = await buildGraphInput(VALID_GRAPH_PARAMS, "frontier");
     expect(result).toBeDefined();
@@ -352,11 +350,11 @@ describe("buildGraphInput — capabilityClass routing (O3)", () => {
     expect(result.executionOrder).toBeDefined();
   });
 
-  it("weak path: capabilityClass='small' with a cyclic (invalid) graph throws fail-closed with Phase-157 comment", async () => {
+  it("weak path: capabilityClass='small' with a cyclic (invalid) graph throws fail-closed", async () => {
     await expect(buildGraphInput(CYCLIC_GRAPH_PARAMS, "small")).rejects.toThrow();
   });
 
-  it("weak path: capabilityClass='small' with a cyclic graph throw message mentions Phase 157 (FLAGS-OFF, no repair context)", async () => {
+  it("weak path: capabilityClass='small' with a cyclic graph surfaces the weak-model deferred-repair message (no repair context)", async () => {
     let msg = "";
     try {
       await buildGraphInput(CYCLIC_GRAPH_PARAMS, "small");
@@ -368,11 +366,11 @@ describe("buildGraphInput — capabilityClass routing (O3)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AUTHOR-01 (Phase 174-03): the gated weak-model repair branch in buildGraphInput.
-// The capable + weak-valid paths are unchanged (tested above); these pin the
-// un-commented weak-INVALID branch: gated repair to a canonical template, the
+// The gated weak-model repair branch in buildGraphInput.
+// The capable + weak-valid paths are tested above; these pin the
+// weak-INVALID branch: gated repair to a canonical template, the
 // structured did-you-mean on ambiguity, governance re-run on the repaired graph,
-// best-effort emit, and FLAGS-OFF byte-identical (Phase-157 throw unchanged).
+// best-effort emit, and gate-off behavior identical to the ungated fail-closed throw.
 // ---------------------------------------------------------------------------
 
 const FLAGS_ON_AUTHORING = { repairProducer: true, intentAction: false, gbnfConstrain: false };
@@ -388,8 +386,8 @@ const matchToDebate: (rawGraph: unknown) => TemplateMatch = () => ({
   ],
 });
 
-describe("buildGraphInput — weak-model repair branch (AUTHOR-01)", () => {
-  it("Test 1 (FLAGS-OFF byte-identical seam): repairProducer:false + weak + invalid → still rejects with the Phase-157 message", async () => {
+describe("buildGraphInput — weak-model repair branch", () => {
+  it("gate off: repairProducer:false + weak + invalid → still rejects with the fail-closed deferred-repair message", async () => {
     const emit = vi.fn();
     await expect(
       buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
@@ -402,7 +400,7 @@ describe("buildGraphInput — weak-model repair branch (AUTHOR-01)", () => {
     expect(emit).not.toHaveBeenCalled();
   });
 
-  it("Test 2 (repair): repairProducer:true + weak + invalid graph that unambiguously matches debate → resolves to the repaired ValidatedGraph + emits graph:repaired once", async () => {
+  it("repair: repairProducer:true + weak + invalid graph that unambiguously matches debate → resolves to the repaired ValidatedGraph + emits graph:repaired once", async () => {
     const emit = vi.fn();
     const result = await buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
       authoringConfig: FLAGS_ON_AUTHORING,
@@ -424,7 +422,7 @@ describe("buildGraphInput — weak-model repair branch (AUTHOR-01)", () => {
     });
   });
 
-  it("Test 3 (did-you-mean): repairProducer:true + weak + ambiguous match → rejects with a structured did-you-mean (no synthesis)", async () => {
+  it("did-you-mean: repairProducer:true + weak + ambiguous match → rejects with a structured did-you-mean (no synthesis)", async () => {
     const ambiguous: (rawGraph: unknown) => TemplateMatch = () => ({
       kind: "ambiguous",
       candidates: ["research-fanout", "vote", "map-reduce"],
@@ -437,7 +435,7 @@ describe("buildGraphInput — weak-model repair branch (AUTHOR-01)", () => {
     ).rejects.toThrow(/Did you mean one of these templates:.*from_intent/);
   });
 
-  it("Test 3b (no-match): repairProducer:true + weak + no-match → falls through to the Phase-157 throw", async () => {
+  it("no-match: repairProducer:true + weak + no-match → falls through to the fail-closed deferred-repair throw", async () => {
     const noMatch: (rawGraph: unknown) => TemplateMatch = () => ({ kind: "no-match" });
     await expect(
       buildGraphInput(CYCLIC_GRAPH_PARAMS, "small", {
@@ -447,10 +445,11 @@ describe("buildGraphInput — weak-model repair branch (AUTHOR-01)", () => {
     ).rejects.toThrow(/157/);
   });
 
-  it("Test 4 (governance preserved): a repaired graph that would itself fail validation is NOT returned — falls through to the Phase-157 throw", async () => {
+  it("governance preserved: a repaired graph that would itself fail validation is NOT returned — falls through to the fail-closed throw", async () => {
     // The matcher returns a "matched" whose filledNodes are themselves cyclic →
     // the re-run parse+sort governance rejects them, so buildGraphInput must NOT
-    // return an unvalidated graph (D-SAME-VALIDATION §9).
+    // return an unvalidated graph (repaired graphs get the SAME validation as
+    // author-supplied graphs).
     const matchCyclic: (rawGraph: unknown) => TemplateMatch = () => ({
       kind: "matched",
       pattern: "debate",
@@ -467,7 +466,7 @@ describe("buildGraphInput — weak-model repair branch (AUTHOR-01)", () => {
     ).rejects.toThrow(/157/);
   });
 
-  it("Test 5 (emit best-effort): a throwing graph:repaired emit does NOT break the valid repaired graph", async () => {
+  it("emit best-effort: a throwing graph:repaired emit does NOT break the valid repaired graph", async () => {
     const throwingEmit = vi.fn(() => {
       throw new Error("SQLITE_BUSY: database is locked");
     });

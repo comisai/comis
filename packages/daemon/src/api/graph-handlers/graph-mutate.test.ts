@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for graph-mutate.ts — the daemon-side `pipeline:authored` emit
- * (Phase 173-02 / TELEM-01).
+ * Tests for graph-mutate.ts — the daemon-side `pipeline:authored` emit.
  *
  * The emit lives in the `graph.define` and `graph.execute` handlers, where the
  * `buildGraphInput` parse+validate verdict (schemaValid) and the resolved
  * capabilityClass tier both converge (the skills pipeline tool has neither —
- * emitting there would record `schemaValid:true` always; research decision
- * D-EMITSITE). These tests pin:
+ * emitting there would record `schemaValid:true` always). These tests pin:
  *
  *   - define + execute each emit exactly ONE pipeline:authored per invocation
  *   - schemaValid reflects the REAL buildGraphInput verdict (true on success,
@@ -15,11 +13,11 @@
  *     handler still re-throws the user-facing error: the existing error contract
  *     is unchanged)
  *   - capabilityClass comes from the injected `resolveCapabilityClass(_agentId)`
- *     resolver (small/nano preserved; "unknown" when unresolvable — Pitfall 2,
+ *     resolver (small/nano preserved; "unknown" when unresolvable —
  *     never silently dropped, never defaulted to "frontier")
- *   - repaired is the literal `false` (the P2/174 repair throw is NOT wired)
+ *   - repaired is the literal `false` (this emit site never runs the repair path)
  *   - the payload is counts/ids/enums ONLY — no node task / type_config / label /
- *     body leaks into the event (§2.7 / D-EVENT no-leak control)
+ *     body leaks into the event (§2.7 no-leak control)
  *
  * @module
  */
@@ -28,7 +26,7 @@ import { describe, it, expect, vi } from "vitest";
 import { ok } from "@comis/shared";
 import type { CapabilityClass, TemplateMatch } from "@comis/agent";
 
-// AUTHOR-02 (Phase 174-04): a DELEGATING spy over graph-helpers so the M-1
+// A DELEGATING spy over graph-helpers so the
 // marker-no-leak test can capture the EXACT params object reaching
 // buildGraphInput (the marker is not in INTERNAL_FIELD_NAMES, so only the
 // handler's explicit delete removes it before this call). The spy delegates to
@@ -50,11 +48,11 @@ import type { RpcHandler } from "../types.js";
 import { PreconditionError } from "../errors.js";
 import { withHeldCapabilities } from "../../../../../test/support/held-capabilities.js";
 
-// CAP-03: the gated graph.define/execute/save/load/delete/cancel/deleteRun
-// handlers now require an injected _capabilities (production supplies it via
+// The gated graph.define/execute/save/load/delete/cancel/deleteRun
+// handlers require an injected _capabilities (production supplies it via
 // createAgentRpcCall). Wrap the bound record so these body-tests reach the
-// handler BODY, not the gate (proven RED-first in the CAP-05 tests). Read-only
-// graph methods pass through unchanged.
+// handler BODY, not the gate (the gate itself is covered by the dedicated
+// capability-gate tests). Read-only graph methods pass through unchanged.
 function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, RpcHandler> {
   return withHeldCapabilities(bindGraphMutateHandlersRaw(deps));
 }
@@ -89,13 +87,13 @@ interface FakeDepsOverrides {
   emit?: ReturnType<typeof vi.fn>;
   resolveCapabilityClass?: (agentId: string | undefined) => CapabilityClass | undefined;
   a2aEnabled?: boolean;
-  /** Override the logger (WR-01: assert the best-effort emit logs at WARN). */
+  /** Override the logger (to assert the best-effort emit logs at WARN). */
   logger?: Partial<Record<"info" | "warn" | "debug" | "error", ReturnType<typeof vi.fn>>>;
-  /** Override graphCoordinator.run (WR-01: assert run still dispatches). */
+  /** Override graphCoordinator.run (to assert run still dispatches). */
   run?: ReturnType<typeof vi.fn>;
-  /** AUTHOR-01 (174-03): the orchestration.authoring gate. */
+  /** The orchestration.authoring gate. */
   authoringConfig?: { repairProducer: boolean; intentAction: boolean; gbnfConstrain: boolean };
-  /** AUTHOR-01 (174-03): the injected conservative repair matcher. */
+  /** The injected conservative repair matcher. */
   repairMatch?: (rawGraph: unknown) => TemplateMatch;
 }
 
@@ -127,7 +125,7 @@ function authoredPayloads(emit: ReturnType<typeof vi.fn>): Array<Record<string, 
     .map((c) => c[1] as Record<string, unknown>);
 }
 
-/** Pull graph:repaired payloads off a captured emit mock (AUTHOR-01). */
+/** Pull graph:repaired payloads off a captured emit mock. */
 function repairedPayloads(emit: ReturnType<typeof vi.fn>): Array<Record<string, unknown>> {
   return emit.mock.calls
     .filter((c) => c[0] === "graph:repaired")
@@ -151,7 +149,7 @@ const FLAGS_ON = { repairProducer: true, intentAction: false, gbnfConstrain: fal
 // graph.define emit
 // ---------------------------------------------------------------------------
 
-describe("graph.define — pipeline:authored emit (TELEM-01)", () => {
+describe("graph.define — pipeline:authored emit", () => {
   it("emits exactly one pipeline:authored with action=define, schemaValid=true, repaired=false on a valid payload", async () => {
     const emit = vi.fn();
     const handlers = bindGraphMutateHandlers(makeDeps({ emit }));
@@ -182,7 +180,7 @@ describe("graph.define — pipeline:authored emit (TELEM-01)", () => {
 // graph.execute emit
 // ---------------------------------------------------------------------------
 
-describe("graph.execute — pipeline:authored emit (TELEM-01)", () => {
+describe("graph.execute — pipeline:authored emit", () => {
   it("emits exactly one pipeline:authored with action=execute, schemaValid=true, repaired=false on a valid payload", async () => {
     const emit = vi.fn();
     const handlers = bindGraphMutateHandlers(makeDeps({ emit }));
@@ -209,7 +207,7 @@ describe("graph.execute — pipeline:authored emit (TELEM-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tier resolution — capabilityClass from the injected resolver (Task 2)
+// Tier resolution — capabilityClass from the injected resolver
 // ---------------------------------------------------------------------------
 
 describe("pipeline:authored — capabilityClass resolved daemon-side from _agentId", () => {
@@ -236,7 +234,7 @@ describe("pipeline:authored — capabilityClass resolved daemon-side from _agent
     expect(authoredPayloads(emit)[0]).toMatchObject({ capabilityClass: "nano" });
   });
 
-  it('records "unknown" when _agentId is absent (Pitfall 2 — never default to frontier)', async () => {
+  it('records "unknown" when _agentId is absent (never default to frontier)', async () => {
     const emit = vi.fn();
     const resolveCapabilityClass = vi.fn(() => undefined);
     const handlers = bindGraphMutateHandlers(makeDeps({ emit, resolveCapabilityClass }));
@@ -268,7 +266,7 @@ describe("pipeline:authored — capabilityClass resolved daemon-side from _agent
 });
 
 // ---------------------------------------------------------------------------
-// NO-LEAK structural control (§2.7 / D-EVENT)
+// NO-LEAK structural control (§2.7)
 // ---------------------------------------------------------------------------
 
 describe("pipeline:authored — counts/ids/enums-only (no body leak)", () => {
@@ -303,7 +301,7 @@ describe("pipeline:authored — counts/ids/enums-only (no body leak)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02: contract-parse-level schema rejections of a present-but-malformed
+// Contract-parse-level schema rejections of a present-but-malformed
 // authoring call ALSO count as schemaValid:false (so the gate denominator
 // includes the crudest small-model authoring failures — an HONEST metric).
 // graph.define has a STRICT z.object contract, so a present-nodes call with a
@@ -314,7 +312,7 @@ describe("pipeline:authored — counts/ids/enums-only (no body leak)", () => {
 // buildGraphInput, which already emits via its own try/catch.)
 // ---------------------------------------------------------------------------
 
-describe("graph.define — contract-parse rejection emits schemaValid:false (WR-02)", () => {
+describe("graph.define — contract-parse rejection emits schemaValid:false", () => {
   /** nodes present + non-empty (passes the bespoke "Missing nodes" check) but a
    *  contract-level field is malformed (timeoutMs must be a number) → the call
    *  throws at GraphDefineContract.request.parse, BEFORE buildGraphInput. */
@@ -344,14 +342,14 @@ describe("graph.define — contract-parse rejection emits schemaValid:false (WR-
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: the emit is BEST-EFFORT — a throwing bus listener (the diagnostic
+// The emit is BEST-EFFORT — a throwing bus listener (the diagnostic
 // buffer's synchronous SQLite flush on its 50th item can throw SQLITE_BUSY/FULL;
 // TypedEventBus.emit has NO listener error isolation) must NEVER break the
 // measured graph.define/execute. The telemetry throw is swallowed (logged WARN),
 // never surfaced as the operation's result.
 // ---------------------------------------------------------------------------
 
-describe("pipeline:authored — emit is best-effort (telemetry never breaks the measured op, WR-01)", () => {
+describe("pipeline:authored — emit is best-effort (telemetry never breaks the measured op)", () => {
   /** An eventBus whose emit throws (simulates the diagnosticBuffer→SQLite flush
    *  throwing SQLITE_BUSY out of EventEmitter.emit — no listener isolation). */
   const throwingEmit = () =>
@@ -412,20 +410,20 @@ describe("pipeline:authored — emit is best-effort (telemetry never breaks the 
 });
 
 // ---------------------------------------------------------------------------
-// AUTHOR-01 (174-03): the gated SERVER-SIDE capabilityClass feed.
+// The gated SERVER-SIDE capabilityClass feed.
 //
 // The tier the handler passes into buildGraphInput is observable through the
 // repair branch: a weak (small/nano) tier + an invalid graph + repairProducer
 // ON + an injected repairMatch → the invalid graph is REPAIRED (resolves +
-// emits graph:repaired) instead of throwing the Phase-157 fail-close. So:
-//   - FLAGS-OFF → tier fed undefined → capable path → the SAME Phase-157 throw
-//     on a weak agent's invalid graph (byte-identical to today).
+// emits graph:repaired) instead of throwing the fail-closed validation error. So:
+//   - FLAGS-OFF → tier fed undefined → capable path → the SAME fail-closed throw
+//     on a weak agent's invalid graph (byte-identical to the ungated behavior).
 //   - FLAGS-ON  → tier fed the SERVER-RESOLVED value (resolveCapabilityClass),
-//     NOT userParams.capabilityClass (the spoofing surface T-174-SPOOF/T-173-03).
+//     NOT userParams.capabilityClass (a spoofing surface).
 // ---------------------------------------------------------------------------
 
-describe("graph mutate — gated server-side capabilityClass feed (AUTHOR-01)", () => {
-  it("Test 1 (FLAGS-OFF byte-identical): repairProducer absent → a weak agent's invalid graph still throws Phase-157 (tier fed undefined)", async () => {
+describe("graph mutate — gated server-side capabilityClass feed", () => {
+  it("FLAGS-OFF byte-identical: repairProducer absent → a weak agent's invalid graph still throws the fail-closed validation error (tier fed undefined)", async () => {
     const emit = vi.fn();
     // The agent is weak, but the gate is OFF — the tier must NOT be resolved.
     const resolveCapabilityClass = vi.fn(() => "small" as CapabilityClass);
@@ -440,11 +438,11 @@ describe("graph mutate — gated server-side capabilityClass feed (AUTHOR-01)", 
     // The tier resolver was NEVER consulted for the buildGraphInput feed
     // (the only call would be the pipeline:authored emit, which reads it
     // separately — but with the gate off buildGraphInput got undefined, proven
-    // by the Phase-157 throw above and the absence of any repair).
+    // by the fail-closed throw above and the absence of any repair).
     expect(repairedPayloads(emit)).toHaveLength(0);
   });
 
-  it("Test 2 (server-side resolution): repairProducer ON + weak agent + invalid graph → REPAIRED via the server-resolved tier (not userParams)", async () => {
+  it("server-side resolution: repairProducer ON + weak agent + invalid graph → REPAIRED via the server-resolved tier (not userParams)", async () => {
     const emit = vi.fn();
     const resolveCapabilityClass = vi.fn(() => "small" as CapabilityClass);
     const handlers = bindGraphMutateHandlers(
@@ -460,7 +458,7 @@ describe("graph mutate — gated server-side capabilityClass feed (AUTHOR-01)", 
     expect(repairedPayloads(emit)).toHaveLength(1);
   });
 
-  it("Test 3 (spoofing ignored): a tool-supplied capabilityClass='frontier' on a weak agent is IGNORED — the real (weak) tier still routes to repair", async () => {
+  it("spoofing ignored: a tool-supplied capabilityClass='frontier' on a weak agent is IGNORED — the real (weak) tier still routes to repair", async () => {
     const emit = vi.fn();
     // The SERVER resolves the agent as weak; the TOOL claims frontier.
     const resolveCapabilityClass = vi.fn(() => "small" as CapabilityClass);
@@ -479,7 +477,7 @@ describe("graph mutate — gated server-side capabilityClass feed (AUTHOR-01)", 
     expect(repairedPayloads(emit)).toHaveLength(1);
   });
 
-  it("Test 4 (FLAGS-ON, capable agent unaffected): a frontier agent's invalid graph still throws (no repair) — repair is weak-only", async () => {
+  it("FLAGS-ON, capable agent unaffected: a frontier agent's invalid graph still throws (no repair) — repair is weak-only", async () => {
     const emit = vi.fn();
     const resolveCapabilityClass = vi.fn(() => "frontier" as CapabilityClass);
     const handlers = bindGraphMutateHandlers(
@@ -495,7 +493,7 @@ describe("graph mutate — gated server-side capabilityClass feed (AUTHOR-01)", 
 });
 
 // ---------------------------------------------------------------------------
-// AUTHOR-02 (Phase 174-04): the daemon-side from_intent gate + marker handling
+// The daemon-side from_intent gate + marker handling
 // + synthesis audit emit + governance-not-bypassed.
 //
 // from_intent synthesizes a graph in the skills tool and dispatches it through
@@ -506,7 +504,7 @@ describe("graph mutate — gated server-side capabilityClass feed (AUTHOR-01)", 
 //     off (the FLAGS-OFF chokepoint — before any graph runs),
 //   - explicit-deletes the marker after the strip (it is NOT in
 //     INTERNAL_FIELD_NAMES, and GraphExecuteContract.request is a loose z.record,
-//     so the strip alone leaves it — M-1 marker-no-leak),
+//     so the strip alone leaves it — the marker must never leak downstream),
 //   - emits graph:synthesized_from_intent best-effort on a GOVERNED synthesis,
 //   - and a synthesized graph traverses the IDENTICAL define-time governance
 //     (buildGraphInput parse/sort + validateTypeConfigs) a hand-authored graph
@@ -533,8 +531,8 @@ function makeRunCapture() {
   return { run, seen };
 }
 
-describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-02)", () => {
-  it("Test 1 (FLAGS-OFF refusal): _synthesizedFromIntent set + intentAction OFF → policy refusal, NO graph runs", async () => {
+describe("graph.execute — from_intent gate + marker + synthesis emit", () => {
+  it("FLAGS-OFF refusal: _synthesizedFromIntent set + intentAction OFF → policy refusal, NO graph runs", async () => {
     const emit = vi.fn();
     const { run, seen } = makeRunCapture();
     const handlers = bindGraphMutateHandlers(
@@ -548,7 +546,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
         _agentId: "bot",
       }),
     ).rejects.toThrow(/intentAction|from_intent .*disabled|disabled by policy/i);
-    // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): the policy refusal is a
+    // The policy refusal is a
     // TYPED PreconditionError so rpc-dispatch classifies it warn/precondition — a gated-off
     // feature is not an internal handler fault (which would read as a fleet ERROR).
     await expect(
@@ -563,7 +561,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
     expect(synthesizedPayloads(emit)).toHaveLength(0);
   });
 
-  it("Test 2 (flag-on emit): intentAction ON → the synthesized execute proceeds AND emits graph:synthesized_from_intent once (pattern + nodeCount, counts-only)", async () => {
+  it("flag-on emit: intentAction ON → the synthesized execute proceeds AND emits graph:synthesized_from_intent once (pattern + nodeCount, counts-only)", async () => {
     const emit = vi.fn();
     const { run } = makeRunCapture();
     const handlers = bindGraphMutateHandlers(
@@ -590,7 +588,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
     expect(JSON.stringify(payloads[0])).not.toContain("Research topic");
   });
 
-  it("Test 3 (governance NOT bypassed — PRIMARY path assertion): a synthesized graph traverses the IDENTICAL define-time governance (buildGraphInput + validateTypeConfigs) a hand-authored graph.execute hits", async () => {
+  it("governance NOT bypassed — PRIMARY path assertion: a synthesized graph traverses the IDENTICAL define-time governance (buildGraphInput + validateTypeConfigs) a hand-authored graph.execute hits", async () => {
     const emit = vi.fn();
     const { run, seen } = makeRunCapture();
     const handlers = bindGraphMutateHandlers(
@@ -616,7 +614,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
     // buildGraphInput (parse + validateAndSortGraph) AND validateTypeConfigs are
     // both invoked on the synthesized nodes, exactly as a hand-authored
     // graph.execute invokes them — governance is on the SHARED path, not
-    // re-implemented or skipped for synthesis (L-2 path-equivalence).
+    // re-implemented or skipped for synthesis (path-equivalence).
     buildGraphInputSpy.mockClear();
     validateTypeConfigsSpy.mockClear();
     const handlers2Run = makeRunCapture();
@@ -640,7 +638,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
     expect(graph.graph.nodes.length).toBe(VALID_NODES.length);
   });
 
-  it("Test 4 (marker does NOT leak — M-1): the _synthesizedFromIntent marker is stripped before buildGraphInput (NOT in INTERNAL_FIELD_NAMES → explicit delete required)", async () => {
+  it("marker does NOT leak: the _synthesizedFromIntent marker is stripped before buildGraphInput (NOT in INTERNAL_FIELD_NAMES → explicit delete required)", async () => {
     buildGraphInputSpy.mockClear();
     const emit = vi.fn();
     const { run, seen } = makeRunCapture();
@@ -653,7 +651,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
       _synthesizedFromIntent: "debate",
       _agentId: "bot",
     });
-    // PRIMARY M-1 assertion: the params object reaching buildGraphInput carries
+    // PRIMARY no-leak assertion: the params object reaching buildGraphInput carries
     // NO _synthesizedFromIntent key. stripInternalFields alone leaves it (not in
     // the 15-name allowlist); the handler's explicit delete must remove it.
     expect(buildGraphInputSpy).toHaveBeenCalledTimes(1);
@@ -664,7 +662,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
     expect(JSON.stringify(seen[0])).not.toContain("_synthesizedFromIntent");
   });
 
-  it("Test 5 (emit best-effort): a throwing emit does NOT break a valid synthesized execute", async () => {
+  it("emit best-effort: a throwing emit does NOT break a valid synthesized execute", async () => {
     const warn = vi.fn();
     const emit = vi.fn((event: string) => {
       if (event === "graph:synthesized_from_intent") throw new Error("obs buffer SQLITE_BUSY");
@@ -686,7 +684,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
     expect(warn).toHaveBeenCalled(); // the throw was logged at WARN
   });
 
-  it("Test 6 (no marker = byte-identical): a normal graph.execute with NO _synthesizedFromIntent does NOT gate, emit, or otherwise change", async () => {
+  it("no marker = byte-identical: a normal graph.execute with NO _synthesizedFromIntent does NOT gate, emit, or otherwise change", async () => {
     const emit = vi.fn();
     const { run, seen } = makeRunCapture();
     // intentAction OFF — a NON-from_intent execute must be wholly unaffected.

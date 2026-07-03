@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The ONE search-text normalizer (FTS-02 / I7).
+ * The ONE search-text normalizer.
  *
  * Single source of truth for search-text folding: the twin inserts, the trigram
  * MATCH builder, the bounded scan floor, and the `comis doctor` backfill ALL
@@ -9,8 +9,8 @@
  * folding to medial-kaf forms). Adding a script later is a data edit — append a
  * fold range/map, never a new mechanism.
  *
- * Pipeline order is LOAD-BEARING and probe-verified (RESEARCH Pattern 2 /
- * Code Example 3, live-verified 2026-06-13 against Node 22.21.1):
+ * Pipeline order is LOAD-BEARING (verified against the live Node 22.21.1
+ * Unicode tables):
  *   (1) NFKC          — folds presentation forms (FB1D+/FB50+), full-width, and
  *                       ligatures; a POINTED presentation form (e.g. U+FB2A
  *                       shin-with-shin-dot) decomposes to base + a COMBINING
@@ -25,12 +25,12 @@
  * FORBIDDEN anywhere here — only the COMPOSED form (NFKC) is used. The
  * decomposing form would split ё → е + U+0308 (silently implementing the fold
  * we keep EXPLICIT and breaking the idempotency pins) and destroy Devanagari
- * matras / Thai vowels (RESEARCH Pitfall 7).
+ * matras / Thai vowels.
  *
  * Defined in @comis/core so @comis/memory (twin inserts + both search lanes)
  * and @comis/cli (doctor backfill) import it without a package cycle. NO imports
- * from any @comis package — pure static data + pure functions, no I/O/clock/env
- * (I9), and NO regex (V5 — zero ReDoS surface; every transform is a bounded
+ * from any @comis package — pure static data + pure functions, no I/O/clock/env,
+ * and NO regex (zero ReDoS surface; every transform is a bounded
  * codepoint-range test or a fixed-size map lookup, allocation bounded by the
  * input length, never by backtracking).
  * @module
@@ -40,7 +40,7 @@
 
 /** True for a Hebrew combining mark to STRIP: cantillation/te'amim + niqqud
  *  points. Includes the dagesh U+05BC that NFKC emits from pointed presentation
- *  forms (it sits inside the U+0591–05BD run). Probe 2026-06-13. */
+ *  forms (it sits inside the U+0591–05BD run). */
 function isHebrewMark(cp: number): boolean {
   return (
     (cp >= 0x0591 && cp <= 0x05bd) || // cantillation marks + points through meteg (incl. dagesh 05BC)
@@ -51,8 +51,7 @@ function isHebrewMark(cp: number): boolean {
 }
 
 /** Final-form Hebrew letters → their medial form. A word-final letter and its
- *  medial twin must fold to the SAME trigram so `מלך` co-matches `מלכים`
- *  (RESEARCH Pitfall 5). Probe 2026-06-13. */
+ *  medial twin must fold to the SAME trigram so `מלך` co-matches `מלכים`. */
 const HEBREW_FINALS: ReadonlyMap<number, number> = new Map([
   [0x05da, 0x05db], // ך → כ  final kaf
   [0x05dd, 0x05de], // ם → מ  final mem
@@ -69,7 +68,7 @@ function isHebrewLetter(cp: number): boolean {
 
 /** Acronym quote stand-ins deleted ONLY when Hebrew-flanked on BOTH sides:
  *  geresh/gershayim + the smart/ASCII quotes mobile keyboards substitute.
- *  `צה"ל` (any stand-in) folds to `צהל`. Probe 2026-06-13. */
+ *  `צה"ל` (any stand-in) folds to `צהל`. */
 function isHebrewAcronymQuote(cp: number): boolean {
   return (
     cp === 0x05f3 || // ׳ geresh
@@ -92,7 +91,7 @@ function isArabicMark(cp: number): boolean {
 
 /** Arabic letter folds: hamza-carriers → bare alef; alef-maksura → yeh;
  *  ta-marbuta → heh. Each unifies an orthographic variant of the SAME word
- *  (`أحمد` ≡ `احمد`). Probe 2026-06-13. */
+ *  (`أحمد` ≡ `احمد`). */
 const ARABIC_LETTER_FOLDS: ReadonlyMap<number, number> = new Map([
   [0x0623, 0x0627], // أ → ا  hamza-on-alef
   [0x0625, 0x0627], // إ → ا  hamza-below-alef
@@ -112,15 +111,15 @@ function arabicDigitToAscii(cp: number): number {
 
 // ── Cyrillic ──────────────────────────────────────────────────────────────────
 // ё → е (U+0451 → U+0435) ONLY. Applied post-lowercase, so Ё (U+0401) is
-// already ё by the time we get here. NEVER fold й → и (RESEARCH §Pattern 2 /
-// Probe 2026-06-13) — they are distinct letters.
+// already ё by the time we get here. NEVER fold й → и — they are distinct
+// letters.
 const CYRILLIC_YO = 0x0451; // ё
 const CYRILLIC_YE = 0x0435; // е
 const TATWEEL = 0x0640; // ـ Arabic kashida — deleted entirely
 
 /**
- * The ONE search-text normalizer (I7): twin inserts, MATCH builder, scan floor,
- * and doctor backfill all import THIS symbol. Pure (I9): no I/O/clock/env.
+ * The ONE search-text normalizer: twin inserts, MATCH builder, scan floor,
+ * and doctor backfill all import THIS symbol. Pure: no I/O/clock/env.
  *
  * @param text - raw text (a stored message/summary/memory, or a query token).
  * @returns the folded form; index side and query side fold identically.

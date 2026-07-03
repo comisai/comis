@@ -4,8 +4,8 @@
  *   - session.delete (admin-gated, transcript archive)
  *   - session.reset (message clear, metadata preserved)
  *   - session.export (admin-gated, full payload dump)
- *   - session.reset_conversation (admin-gated, COMPLETE cross-mode forget — Phase 164-06)
- *     Replaces the Phase 164-03 context.reset_lcd which was LCD-only.
+ *   - session.reset_conversation (admin-gated, COMPLETE cross-mode forget —
+ *     clears the LCD store AND the daemon sessionStore, not just the LCD)
  *
  * Tests for session.reset_conversation cover:
  *   H1: non-admin caller is rejected (defense-in-depth)
@@ -17,7 +17,7 @@
  *   H4c: sessionStore saveByFormattedKey called with empty messages ([] + original metadata)
  *   H5: pipeline case — sessionStore populated, LCD returns 0 (no LCD rows) → session cleared, lcdRowsDeleted:0, no throw
  *   H6: absent session case — LCD rows exist, no session in store → LCD cleared, sessionMessagesCleared:0, no throw
- *   H7: --memory flag accepted; memoriesDeleted OMITTED (not-implemented); WARN logged
+ *   H7: --memory with memoryPort absent; memoriesDeleted OMITTED; WARN logged
  *   H7b: --memory omitted; memoriesDeleted is OMITTED
  *   H8: approvalGate.clearApprovalCache called with sessionKey after both clears
  *   H9: response includes both lcdRowsDeleted and sessionMessagesCleared
@@ -86,9 +86,9 @@ function makeLcdStore(deleteCount = 5): ContextStorePort {
   } as unknown as ContextStorePort;
 }
 
-/** Minimal MemoryPort stub for DIST-05 --memory reset. deleteBySessionKey
+/** Minimal MemoryPort stub for the --memory reset. deleteBySessionKey
  *  returns ok(deletedCount); listMemoryIdsBySessionKey returns the given ids
- *  (WR-02: captured BEFORE the delete so the purge is session-scoped). */
+ *  (captured BEFORE the delete so the purge is session-scoped). */
 function makeMemoryPort(deletedCount = 2, sessionIds: string[] = ["mem-this-1", "mem-this-2"]): MemoryPort {
   return {
     store: vi.fn(),
@@ -99,8 +99,8 @@ function makeMemoryPort(deletedCount = 2, sessionIds: string[] = ["mem-this-1", 
   } as unknown as MemoryPort;
 }
 
-/** Minimal MemoryConsolidationStore stub for DIST-05 unlink/purge (the trimmed
- *  live surface — Phase 226 cut the dead consolidation-cron writer methods). */
+/** Minimal MemoryConsolidationStore stub for the unlink/purge steps (only the
+ *  live surface — the dead consolidation-cron writer methods were removed). */
 function makeConsolidationStore(): MemoryConsolidationStore {
   return {
     listObservations: vi.fn(),
@@ -128,9 +128,9 @@ function makeDeps(overrides: Partial<SessionHandlerDeps> = {}): SessionHandlerDe
 }
 
 // ---------------------------------------------------------------------------
-// session.reset_conversation tests (Phase 164-06)
-// Complete cross-mode forget: clears BOTH LCD store AND daemon sessionStore.
-// Replaces the Phase 164-03 context.reset_lcd (LCD-only) handler.
+// session.reset_conversation tests
+// Complete cross-mode forget: clears BOTH LCD store AND daemon sessionStore
+// (an LCD-only reset would leave the daemon transcript to resurrect the chat).
 // ---------------------------------------------------------------------------
 
 describe("session.reset_conversation handler", () => {
@@ -155,7 +155,7 @@ describe("session.reset_conversation handler", () => {
     ).rejects.toThrow(/Admin/i);
   });
 
-  it("TARGET-01: explicit agentId scopes the LCD delete to that agent, not the default", async () => {
+  it("explicit agentId scopes the LCD delete to that agent, not the default", async () => {
     // Live finding 2026-06-13: resetting a non-default agent's conversation returned
     // lcdRowsDeleted:0 because the scope hardcoded deps.defaultAgentId — the delete
     // looked under the wrong agent. An admin-supplied agentId selects the scope.
@@ -176,7 +176,7 @@ describe("session.reset_conversation handler", () => {
     expect(result.resolvedAgentId).toBe("agent-b");
   });
 
-  it("TARGET-01: absent agentId falls back to the default and states it in the response", async () => {
+  it("absent agentId falls back to the default and states it in the response", async () => {
     const deps = makeDeps({ lcdStore: makeLcdStore() });
     const handlers = bindSessionArchiveHandlers(deps);
     const result = (await handlers["session.reset_conversation"]!({
@@ -234,14 +234,14 @@ describe("session.reset_conversation handler", () => {
     expect(lcdStore.deleteConversationLcd).toHaveBeenCalledTimes(1);
   });
 
-  // CR-02 (175-REVIEW): executor session-scoped state (tool-schema snapshots,
-  // the GBNF-02 strip-retry once-gate, JIT-guide delivery, cache latches)
-  // survives a conversation reset because the reset handler only cleared LCD +
-  // sessionStore. The reused session key then inherits the OLD gate/snapshots
-  // — a reset session got ZERO strip-retries and terminal-failed its first
-  // grammar-400. The handler must drop the agent-side state through the
-  // injected single authoritative cleanup path.
-  it("CR-02: reset_conversation clears executor session-scoped state via clearAgentSessionState (strip once-gate re-arms)", async () => {
+  // Executor session-scoped state (tool-schema snapshots, the grammar
+  // strip-retry once-gate, JIT-guide delivery, cache latches) would survive a
+  // conversation reset if the reset handler only cleared LCD + sessionStore.
+  // The reused session key then inherits the OLD gate/snapshots — a reset
+  // session got ZERO strip-retries and terminal-failed its first grammar-400.
+  // The handler must drop the agent-side state through the injected single
+  // authoritative cleanup path.
+  it("reset_conversation clears executor session-scoped state via clearAgentSessionState (strip once-gate re-arms)", async () => {
     const clearAgentSessionState = vi.fn();
     const deps = makeDeps({ lcdStore: makeLcdStore(1), clearAgentSessionState });
     const handlers = bindSessionArchiveHandlers(deps);
@@ -254,7 +254,7 @@ describe("session.reset_conversation handler", () => {
     expect(clearAgentSessionState).toHaveBeenCalledWith(SESSION_KEY);
   });
 
-  it("CR-02: session.delete (session destroy) also clears executor session-scoped state for the key", async () => {
+  it("session.delete (session destroy) also clears executor session-scoped state for the key", async () => {
     const clearAgentSessionState = vi.fn();
     const deps = makeDeps({ lcdStore: makeLcdStore(1), clearAgentSessionState });
     const handlers = bindSessionArchiveHandlers(deps);
@@ -373,7 +373,7 @@ describe("session.reset_conversation handler", () => {
   });
 
   it("H7: --memory but memoryPort ABSENT → graceful-degrade WARN, memoriesDeleted OMITTED", async () => {
-    // DIST-05: when memoryPort is NOT wired into deps (deployment doesn't support
+    // When memoryPort is NOT wired into deps (deployment doesn't support
     // it), --memory must NOT throw — it logs a precondition WARN and leaves
     // memoriesDeleted off the result (LCD + sessionStore are still cleared).
     const lcdStore = makeLcdStore(5);
@@ -411,7 +411,7 @@ describe("session.reset_conversation handler", () => {
 
     expect(result.lcdRowsDeleted).toBe(3);
     expect(result.memoriesDeleted).toBeUndefined();
-    // DIST-05 Test 8: --memory omitted → deleteBySessionKey NOT reached.
+    // --memory omitted → deleteBySessionKey NOT reached.
     expect((deps.memoryPort!.deleteBySessionKey as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
   });
 
@@ -457,16 +457,15 @@ describe("session.reset_conversation handler", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DIST-05: session.reset_conversation --memory HONEST reset (Phase 172-03).
-// Replaces the Phase-164 not-implemented stub. --memory now deletes the
+// session.reset_conversation --memory HONEST reset. --memory deletes the
 // RAG-memory rows by source_session_key (BOTH paired-conversation AND
 // lcd-distilled episodic memories — one query covers both) and unlinks them
 // from consolidated observations (orphan→delete, multi-source→keep).
 // --purge-derived is a separate, opt-in nuclear escalation.
 // ---------------------------------------------------------------------------
 
-describe("session.reset_conversation --memory (DIST-05)", () => {
-  it("DIST-05-1: memory:true → deleteBySessionKey called with (sessionKey, {tenantId, agentId})", async () => {
+describe("session.reset_conversation --memory", () => {
+  it("memory:true → deleteBySessionKey called with (sessionKey, {tenantId, agentId})", async () => {
     const memoryPort = makeMemoryPort(2);
     const deps = makeDeps({ lcdStore: makeLcdStore(5), memoryPort } as Partial<SessionHandlerDeps>);
     const handlers = bindSessionArchiveHandlers(deps);
@@ -487,7 +486,7 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
     expect(callArgs[1].agentId).toBe("default");
   });
 
-  it("DIST-05-2: deleteBySessionKey returns 2 → result.memoriesDeleted === 2 (field present)", async () => {
+  it("deleteBySessionKey returns 2 → result.memoriesDeleted === 2 (field present)", async () => {
     const deps = makeDeps({
       lcdStore: makeLcdStore(5),
       memoryPort: makeMemoryPort(2),
@@ -503,7 +502,7 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
     expect(result.memoriesDeleted).toBe(2);
   });
 
-  it("DIST-05-3: deleteBySessionKey returns 0 → result.memoriesDeleted === 0 (no error)", async () => {
+  it("deleteBySessionKey returns 0 → result.memoriesDeleted === 0 (no error)", async () => {
     const deps = makeDeps({
       lcdStore: makeLcdStore(5),
       memoryPort: makeMemoryPort(0),
@@ -519,7 +518,7 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
     expect(result.memoriesDeleted).toBe(0);
   });
 
-  it("DIST-05-4: purge_derived:false (default) → purgeConsolidatedDerivedFrom NOT called", async () => {
+  it("purge_derived:false (default) → purgeConsolidatedDerivedFrom NOT called", async () => {
     const consolidationStore = makeConsolidationStore();
     const deps = makeDeps({
       lcdStore: makeLcdStore(5),
@@ -537,9 +536,9 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
     expect(consolidationStore.purgeConsolidatedDerivedFrom).not.toHaveBeenCalled();
   });
 
-  it("DIST-05-5 / WR-02 / WR-05: purge_derived:true → purgeConsolidatedDerivedFrom called with (sessionKey, tenantId, agentId, thisSessionIds)", async () => {
+  it("purge_derived:true → purgeConsolidatedDerivedFrom called with (sessionKey, tenantId, agentId, thisSessionIds)", async () => {
     const consolidationStore = makeConsolidationStore();
-    // The ids captured BEFORE the delete (WR-02): purge must receive THEM, not
+    // The ids are captured BEFORE the delete: purge must receive THEM, not
     // re-derive "any dangling source id".
     const memoryPort = makeMemoryPort(2, ["mem-x", "mem-y"]);
     const deps = makeDeps({
@@ -556,7 +555,7 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
       _trustLevel: "admin",
     });
 
-    // WR-02: the ids are read BEFORE the destructive delete.
+    // The ids are read BEFORE the destructive delete.
     expect(memoryPort.listMemoryIdsBySessionKey).toHaveBeenCalledTimes(1);
     const listInvokeOrder = (memoryPort.listMemoryIdsBySessionKey as ReturnType<typeof vi.fn>).mock
       .invocationCallOrder[0]!;
@@ -569,11 +568,11 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
       .calls[0] as [string, string, string, string[]];
     expect(callArgs[0]).toBe(SESSION_KEY);
     expect(callArgs[1]).toBe("tenant1");
-    expect(callArgs[2]).toBe("default"); // WR-05: agentId threaded
-    expect(callArgs[3]).toEqual(["mem-x", "mem-y"]); // WR-02: this-session ids passed
+    expect(callArgs[2]).toBe("default"); // agentId threaded
+    expect(callArgs[3]).toEqual(["mem-x", "mem-y"]); // this-session ids passed
   });
 
-  it("DIST-05-6 / WR-05: deletedCount>0 → consolidationStore.unlinkDeletedSources called with (sessionKey, tenantId, agentId)", async () => {
+  it("deletedCount>0 → consolidationStore.unlinkDeletedSources called with (sessionKey, tenantId, agentId)", async () => {
     // The unlink step (orphan→delete, multi-source→keep) lives in the
     // consolidation store; the handler delegates to it when memories were deleted.
     const consolidationStore = makeConsolidationStore();
@@ -595,10 +594,10 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
       .calls[0] as [string, string, string];
     expect(callArgs[0]).toBe(SESSION_KEY);
     expect(callArgs[1]).toBe("tenant1");
-    expect(callArgs[2]).toBe("default"); // WR-05: agentId threaded (matches the delete scope)
+    expect(callArgs[2]).toBe("default"); // agentId threaded (matches the delete scope)
   });
 
-  it("DIST-05-7: deletedCount===0 → unlinkDeletedSources NOT called (nothing to unlink)", async () => {
+  it("deletedCount===0 → unlinkDeletedSources NOT called (nothing to unlink)", async () => {
     const consolidationStore = makeConsolidationStore();
     const deps = makeDeps({
       lcdStore: makeLcdStore(5),
@@ -616,7 +615,7 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
     expect(consolidationStore.unlinkDeletedSources).not.toHaveBeenCalled();
   });
 
-  it("DIST-05-8: deleteBySessionKey err result → non-fatal WARN, LCD reset still succeeds", async () => {
+  it("deleteBySessionKey err result → non-fatal WARN, LCD reset still succeeds", async () => {
     // A memory-store failure must NOT break the LCD/sessionStore reset that
     // already succeeded — the handler logs a dependency WARN and returns.
     const memoryPort = {
@@ -646,10 +645,10 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// session.reset_conversation runtime layer (L3) tests — live finding
-// 2026-06-11 (LIVEMEM): without the runtime destroy, the surviving pi session
-// JSONL re-ingested wholesale on the next turn (lcd-ingest epoch rebase) and
-// the "forgotten" conversation resurrected into the DAG.
+// session.reset_conversation runtime layer (L3) tests — observed live:
+// without the runtime destroy, the surviving pi session JSONL re-ingested
+// wholesale on the next turn (lcd-ingest epoch rebase) and the "forgotten"
+// conversation resurrected into the DAG.
 // ---------------------------------------------------------------------------
 
 describe("session.reset_conversation severs the runtime transcript so the forget cannot resurrect", () => {

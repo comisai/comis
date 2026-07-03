@@ -289,9 +289,9 @@ Use the rubric:
 
 The four media tools (`image_analyze`, `describe_video`, `extract_document`,
 `transcribe_audio`) are conservatively classified as `permission-gated`.
-The reviewer decides whether any can be upgraded to `safe` (if the
-tool only ever reads caller-supplied media) or must stay
-`permission-gated` (if any code path resolves a Comis-stored media ID).
+One could only be reclassified as `safe` if it only ever reads
+caller-supplied media; any code path that resolves a Comis-stored media ID
+keeps it `permission-gated`.
 
 ## Wire-format notes
 

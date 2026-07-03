@@ -33,7 +33,7 @@ export interface UpgradeSdkMarkersParams {
    * otherwise pay the 1h premium for nothing.
    *
    * When undefined (caller has no counter wired), the gate is skipped
-   * to preserve legacy behavior — promotion fires as before.
+   * and promotion fires unconditionally.
    */
   callCount?: number;
   logger: ComisLogger;
@@ -58,8 +58,8 @@ function upgradeMarkers(blocks: Array<Record<string, unknown>>): void {
  *
  * The callCount gate prevents paying the 1h premium on first-turn writes
  * that may be evicted server-side before a second turn even fires. When
- * the caller does not supply callCount, the gate is skipped (legacy
- * behavior preserved).
+ * the caller does not supply callCount, the gate is skipped and promotion
+ * fires unconditionally.
  *
  * Mutates `result.system` and `result.tools` in place.
  */
@@ -80,8 +80,8 @@ export function upgradeSdkMarkers(params: UpgradeSdkMarkersParams): void {
   // callCount gate: promote only from turn 2 onward.
   // First-turn writes that get evicted server-side would otherwise pay
   // the 1h premium for nothing. The gate is skipped when callCount is
-  // undefined to preserve behavior for callers that have not been
-  // updated yet.
+  // undefined so callers without a wired turn counter still get the
+  // promotion.
   if (callCount !== undefined && callCount < 2) {
     logger.debug(
       { modelId, sessionKey, callCount },

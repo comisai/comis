@@ -35,7 +35,7 @@ export interface GreetingGeneratorDeps {
 }
 
 /**
- * Which greeting variant to produce (spec §12). Closed union — adding a
+ * Which greeting variant to produce. Closed union — adding a
  * member forces a new `promptForTrigger` case via the exhaustive switch guard.
  * - `standard`: persona-driven greeting, no setup language.
  * - `onboarding-pending`: first run, setup unfinished — greet + guide next step.
@@ -45,12 +45,12 @@ export interface GreetingGeneratorDeps {
 export type GreetingTrigger = "standard" | "onboarding-pending" | "onboarding-limited";
 
 export interface GreetingGenerator {
-  /** Generate a greeting for the given trigger variant (spec §12). */
+  /** Generate a greeting for the given trigger variant. */
   generate(agentName: string, trigger: GreetingTrigger): Promise<Result<string, Error>>;
 }
 
 // ---------------------------------------------------------------------------
-// Per-variant system prompt (spec §12)
+// Per-variant system prompt
 // ---------------------------------------------------------------------------
 
 /**

@@ -8,7 +8,7 @@
  *
  * Design decisions:
  * - Case-insensitive: env vars are UPPERCASE, config patterns are lowercase
- * - Empty allow array = unrestricted access (backward compat)
+ * - Empty allow array = unrestricted access (an omitted `secrets.allow` must not deny)
  * - Custom 15-line implementation instead of picomatch/minimatch (sufficient for * wildcards)
  */
 
@@ -46,9 +46,9 @@ export function matchesSecretPattern(
 /**
  * Check if a secret is accessible given a list of allow patterns.
  *
- * If the allow list is empty, all secrets are accessible (backward compat).
- * This is critical: existing agents have no `secrets.allow` config, which
- * Zod parses as `[]`. This must mean "no restrictions", not "deny all".
+ * If the allow list is empty, all secrets are accessible. This is critical:
+ * an agent with no `secrets.allow` config gets `[]` from the Zod parse, and
+ * that must mean "no restrictions", not "deny all".
  *
  * @param secretName - The secret name to check
  * @param allowPatterns - Glob patterns that grant access. Empty = unrestricted.

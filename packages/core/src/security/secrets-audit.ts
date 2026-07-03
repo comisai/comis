@@ -103,8 +103,8 @@ function shouldSkipEnvKey(key: string): boolean {
  * reference*, NOT a plaintext secret — exactly like a structured `SecretRef`
  * object. Anchored to the WHOLE value (mirrors `ENV_VAR_PATTERN`'s grammar): a
  * partial/templated value like `prefix-${VAR}` or a raw secret that merely
- * contains a `$` still flags. (Surfaced 2026-06-10 validating the `comis doctor`
- * ops surface: `secret: ${COMIS_GATEWAY_TOKEN}` was mis-flagged PLAINTEXT_SECRET.)
+ * contains a `$` still flags. (Surfaced validating the `comis doctor` ops
+ * surface: `secret: ${COMIS_GATEWAY_TOKEN}` was mis-flagged PLAINTEXT_SECRET.)
  */
 const FULL_ENV_VAR_REFERENCE = /^\$\{[A-Z_][A-Z0-9_]*\}$/;
 

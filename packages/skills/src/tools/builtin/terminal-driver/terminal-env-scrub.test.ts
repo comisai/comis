@@ -121,12 +121,12 @@ describe("scrubChildEnv — non-string values are skipped", () => {
 });
 
 // ---------------------------------------------------------------------------
-// JAIL-04: the interpreter-vector prefix families (LD_/DYLD_/PIP_/UV_) — a
+// The interpreter-vector prefix families (LD_/DYLD_/PIP_/UV_) — a
 // dynamic-linker preload / package-index redirection that loads attacker code
 // at child startup → RCE. Stripped on BOTH sources (dangerous regardless of
-// origin). RED until INTERPRETER_CONTROL_PREFIXES exists in the scrub.
+// origin).
 // ---------------------------------------------------------------------------
-describe("scrubChildEnv — JAIL-04 interpreter-vector prefix families (LD_/DYLD_/PIP_/UV_)", () => {
+describe("scrubChildEnv — interpreter-vector prefix families (LD_/DYLD_/PIP_/UV_)", () => {
   it("strips EVERY LD_/DYLD_/PIP_/UV_ prefixed key and keeps a benign TERM", () => {
     const out = scrubChildEnv({
       LD_PRELOAD: "/tmp/evil.so",
@@ -165,13 +165,12 @@ describe("scrubChildEnv — JAIL-04 interpreter-vector prefix families (LD_/DYLD
 });
 
 // ---------------------------------------------------------------------------
-// JAIL-04 / RESEARCH Open Q3 — the source-distinction correctness point. The
+// The source-distinction correctness point. The
 // COMIS_ fail-closed block applies to an UNTRUSTED workspace .env source ONLY,
 // NEVER to the daemon's own COMIS_CAP_LEASE/COMIS_ORCH_SOCKET injection (which
-// rides the trusted placeholders/inherited path). RED until scrubChildEnv takes
-// an `opts.source` and gates the COMIS_ block on `source === "workspace"`.
+// rides the trusted placeholders/inherited path).
 // ---------------------------------------------------------------------------
-describe("scrubChildEnv — JAIL-04 COMIS_ block is source-distinct (Open Q3)", () => {
+describe("scrubChildEnv — the COMIS_ block is source-distinct (workspace-gated)", () => {
   it("default/inherited source PRESERVES the daemon-injected COMIS_CAP_LEASE/COMIS_ORCH_SOCKET", () => {
     // The daemon's own lease vars ride the trusted inherited/placeholders path —
     // blocking them would break the cap socket. They MUST survive the default scrub.
@@ -205,7 +204,7 @@ describe("scrubChildEnv — JAIL-04 COMIS_ block is source-distinct (Open Q3)", 
 });
 
 // ---------------------------------------------------------------------------
-// JAIL-04: the bwrap `--unsetenv` half takes a NAME (not a glob), so the prefix
+// The bwrap `--unsetenv` half takes a NAME (not a glob), so the prefix
 // families stay in the scrub-object check ONLY — JAIL_UNSET_ENV_VARS lists the
 // exact-named interpreter vars + the exact CLAUDECODE sentinel, never a prefix.
 // ---------------------------------------------------------------------------
@@ -238,8 +237,8 @@ describe("scrubChildEnv — JAIL_UNSET_ENV_VARS stays exact-name-only (bwrap --u
 // credential the boot layer trusted it to exclude (a layer mismatch). Stripped on
 // BOTH sources (a secret regardless of origin); the broker/cap-lease vars + a
 // layout pointer + the rich TUI env survive.
-// (Live-confirmed: webhook-claude-cli-tdd-20260630, jailed claude 2.1.196 — its
-//  /proc/<pid>/environ carried COMIS_GATEWAY_TOKEN + GWTOKEN.)
+// (Live-confirmed: a jailed claude's /proc/<pid>/environ carried
+//  COMIS_GATEWAY_TOKEN + GWTOKEN before this scrub landed.)
 // ---------------------------------------------------------------------------
 describe("scrubChildEnv — daemon-secret blocklist (TERM-ENV-GATEWAY-TOKEN-LEAK)", () => {
   const LEAKY: NodeJS.ProcessEnv = {

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Schema assertions for the IncidentReport optional `audit?` + `cacheBreaks?`
- * sections (AUDIT-05 + PERSIST-01, Phase 176 Plan 05).
+ * sections.
  *
- * This file is NEW — there is no `incident-report.test.ts` on pre-patch HEAD (no
- * core test imports `IncidentReportSchema`). It pins the two additive, content-free,
+ * Pins the two additive, content-free,
  * presence-conditional sections (the `recall?`/`image?` mold) and the invariant
  * that `schemaVersion` STAYS `1` (additive optional sections, NOT a compat shim).
  *
@@ -35,7 +34,7 @@ function baseReport(): Record<string, unknown> {
   };
 }
 
-describe("IncidentReportSchema audit? + cacheBreaks? sections (176-05)", () => {
+describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
   it("parses a report WITHOUT the new optional sections (additive — pre-existing constructors)", () => {
     const parsed = IncidentReportSchema.parse(baseReport());
     expect(parsed.schemaVersion).toBe(1);
@@ -72,7 +71,7 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections (176-05)", () => {
     expect(parsed.audit?.byKind).toEqual({ secret_access: 2, injection_detected: 3 });
   });
 
-  it("strips a planted value-shaped field from the audit section (content-free — T-176-19)", () => {
+  it("strips a planted value-shaped field from the audit section (content-free)", () => {
     // z.object strips unknown keys on parse — a `value`/`secret` field can never
     // ride the audit? section even if a caller tries to smuggle one.
     const report = {
@@ -101,7 +100,7 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections (176-05)", () => {
   });
 });
 
-describe("IncidentReportSchema spend? section (WEBUI-04, 179-04 — locked A2)", () => {
+describe("IncidentReportSchema spend? section", () => {
   it("parses a report WITHOUT spend (additive — present only on a spend-killed session)", () => {
     const parsed = IncidentReportSchema.parse(baseReport());
     expect(parsed.schemaVersion).toBe(1);
@@ -137,8 +136,8 @@ describe("IncidentReportSchema spend? section (WEBUI-04, 179-04 — locked A2)",
   });
 });
 
-describe("ObsExplainContract.request rootRunId arm (FLEET-05)", () => {
-  // FLEET-05 widens obs.explain from a TWO-ref (sessionKey | traceId) request to a
+describe("ObsExplainContract.request rootRunId arm", () => {
+  // The rootRunId arm widens obs.explain from a TWO-ref (sessionKey | traceId) request to a
   // THREE-ref one (+ rootRunId), so the fleet→explain drill-down can paste an
   // autonomy run's rootRunId straight in. The widen is ADDITIVE-OPTIONAL: the
   // .object stays non-strict, the .refine requires "one of three", and an existing

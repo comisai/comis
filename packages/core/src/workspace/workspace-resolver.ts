@@ -13,11 +13,11 @@ import path from "node:path";
  * 3. Named agent: `<baseDataDir>/workspace-{agentId}`
  *
  * `baseDataDir` is the daemon's RESOLVED data dir (config.dataDir /
- * COMIS_DATA_DIR); absent/empty falls back to `~/.comis`. Before 260611 the
- * base was hardcoded to `~/.comis` — the fourth face of the dataDir
- * split-brain: isolated test daemons created `workspace-<agentId>` dirs
- * inside the production `~/.comis`, and because the path was shared across
- * daemon instances, a later run silently RESUMED an earlier run's degraded
+ * COMIS_DATA_DIR); absent/empty falls back to `~/.comis`. Threading the
+ * resolved base (never hardcoding `~/.comis`) is load-bearing: a hardcoded
+ * base would let isolated test daemons create `workspace-<agentId>` dirs
+ * inside the production `~/.comis`, and a path shared across daemon
+ * instances means a later run silently RESUMES an earlier run's degraded
  * session JSONL.
  *
  * Uses safePath() for agentId-derived paths as defense-in-depth

@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 216 (DUR-01 / HB-01): the sub-agent runner's durable-checkpoint +
- * keep-alive heartbeat instrumentation.
+ * The sub-agent runner's durable-checkpoint + keep-alive heartbeat
+ * instrumentation.
  *
- * These cases fail on the pre-patch runner (it neither accepts a `durableRuns`
- * dep nor writes a checkpoint/heartbeat) — RED proof. They assert:
+ * These cases assert:
  *   - a cron-fired spawn (isCronAgentTurn + jobId) writes a checkpoint whose
- *     cronOrigin is the jobId (MED-4 — derived from the REAL cron signal);
+ *     cronOrigin is the jobId (derived from the REAL cron signal);
  *   - a non-cron spawn writes cronOrigin = null;
  *   - the initial checkpoint is at stepIndex -1 (the never-sent sentinel — the
  *     outward counter is owned by allocateOutwardStep, NOT the checkpoint);
  *   - a keep-alive heartbeat fires on the injected timer at the keepAlive cadence
- *     (HB-01 — independent of step/spawn completion);
+ *     (independent of step/spawn completion);
  *   - the run is marked completed + the heartbeat cleared on terminal settle (no
  *     leaked interval);
  *   - the whole thing is INERT when no durableRuns store is wired (default path).
@@ -104,11 +103,11 @@ function createDeps(over: Partial<SubAgentRunnerDeps> = {}): SubAgentRunnerDeps 
   };
 }
 
-describe("sub-agent-runner durable checkpoint (Phase 216 DUR-01 / HB-01)", () => {
+describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it("DUR-01-S1: writes an initial checkpoint at the spawn boundary (stepIndex -1, status running)", async () => {
+  it("writes an initial checkpoint at the spawn boundary (stepIndex -1, status running)", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(createDeps({ durableRuns: store }));
     runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-A" });
@@ -121,7 +120,7 @@ describe("sub-agent-runner durable checkpoint (Phase 216 DUR-01 / HB-01)", () =>
     expect(cp.status).toBe("running");
   });
 
-  it("MED-4-S2: a cron-fired spawn records cronOrigin = the jobId (derived from isCronAgentTurn + jobId)", async () => {
+  it("a cron-fired spawn records cronOrigin = the jobId (derived from isCronAgentTurn + jobId)", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(createDeps({ durableRuns: store }));
     runner.spawn({
@@ -136,7 +135,7 @@ describe("sub-agent-runner durable checkpoint (Phase 216 DUR-01 / HB-01)", () =>
     expect(store.checkpoints[0]!.cronOrigin).toBe("job-42");
   });
 
-  it("MED-4-S3: a non-cron spawn records cronOrigin = null", async () => {
+  it("a non-cron spawn records cronOrigin = null", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(createDeps({ durableRuns: store }));
     runner.spawn({ task: "interactive task", agentId: "worker", rootRunId: "root-B" });
@@ -145,7 +144,7 @@ describe("sub-agent-runner durable checkpoint (Phase 216 DUR-01 / HB-01)", () =>
     expect(store.checkpoints[0]!.cronOrigin).toBe(null);
   });
 
-  it("DUR-01-S4: records the lease's attenuated caps verbatim from the spawn param", async () => {
+  it("records the lease's attenuated caps verbatim from the spawn param", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(createDeps({ durableRuns: store }));
     runner.spawn({
@@ -159,7 +158,7 @@ describe("sub-agent-runner durable checkpoint (Phase 216 DUR-01 / HB-01)", () =>
     expect(store.checkpoints[0]!.caps).toEqual(["orch:read", "orch:message"]);
   });
 
-  it("HB-01-S5: emits a keep-alive heartbeat on the injected timer at the keepAlive cadence", async () => {
+  it("emits a keep-alive heartbeat on the injected timer at the keepAlive cadence", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(
       createDeps({ durableRuns: store, durability: { keepAliveMs: 1_000, staleHeartbeatMs: 4_000 } }),
@@ -170,13 +169,13 @@ describe("sub-agent-runner durable checkpoint (Phase 216 DUR-01 / HB-01)", () =>
 
     // Advance past three keep-alive intervals — the run is still running
     // (never-resolving executeAgent), so the heartbeat must fire independent of
-    // step/spawn completion (HB-01 / Pitfall 4).
+    // step/spawn completion.
     await vi.advanceTimersByTimeAsync(3_500);
     expect(store.heartbeats.length).toBe(3);
     expect(store.heartbeats.every((h) => h.rootRunId === "root-HB")).toBe(true);
   });
 
-  it("DUR-01-S6: marks the run completed + clears the heartbeat on terminal settle (no leaked timer)", async () => {
+  it("marks the run completed + clears the heartbeat on terminal settle (no leaked timer)", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(
       createDeps({
@@ -200,7 +199,7 @@ describe("sub-agent-runner durable checkpoint (Phase 216 DUR-01 / HB-01)", () =>
     expect(store.heartbeats.length).toBe(before);
   });
 
-  it("INERT-S7: no durableRuns store wired ⇒ zero checkpoint/heartbeat work (default install)", async () => {
+  it("no durableRuns store wired ⇒ zero checkpoint/heartbeat work (default install)", async () => {
     // No durableRuns in deps. A spawn must not throw and must do no durable work
     // (there is no store to record into — this is the byte-identical default).
     const runner = createSubAgentRunner(createDeps());

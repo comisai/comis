@@ -8,14 +8,14 @@
 // user mid-onboarding for what was a normal, self-corrected retry (the agent
 // re-read + retried successfully, exactly as the [text_not_found] hint advises).
 //
-// Two pre-fix defects this test pins:
-//   1. WRONG ANCHOR — the old regex `/^\[(invalid_value|validation)\]/` anchored
-//      at `^`, but errorText is the JSON-stringified tool RESULT, so the
-//      bracketed code sits inside `.content[].text`, never at offset 0. Even
-//      `[invalid_value]` never matched once wrapped.
-//   2. WRONG DEFAULT — every unmatched failure fell through to "dependency",
-//      so a built-in tool rejecting the model's input read as an external
-//      dependency outage. A structured `[code]` means the call REACHED the tool
+// Two defect classes this test pins:
+//   1. WRONG ANCHOR — a code regex like `/^\[(invalid_value|validation)\]/`
+//      anchored at `^` never matches, because errorText is the JSON-stringified
+//      tool RESULT, so the bracketed code sits inside `.content[].text`, never
+//      at offset 0. Even `[invalid_value]` cannot match once wrapped.
+//   2. WRONG DEFAULT — letting every unmatched failure fall through to
+//      "dependency" makes a built-in tool rejecting the model's input read as
+//      an external dependency outage. A structured `[code]` means the call REACHED the tool
 //      and the tool rejected it — that is validation (or, for IO codes,
 //      internal), never "dependency".
 import { describe, it, expect } from "vitest";
@@ -68,11 +68,12 @@ describe("classifyToolError", () => {
     expect(classifyToolError("read", "[error] generic")).toBe("dependency");
   });
 
-  // Live r3terse incident (2026-06-30): the agent `read` a DIRECTORY
+  // Live incident (2026-06-30): the agent `read` a DIRECTORY
   // (workspace/skills) → Node `EISDIR: illegal operation on a directory, read`
-  // (a RAW errno, no bracketed [code]) → pre-fix it fell through to "dependency",
-  // which points an operator at a missing package when the real cause is the
-  // agent's bad input. EISDIR/ENOTDIR can ONLY be a wrong-path-TYPE usage error.
+  // (a RAW errno, no bracketed [code]) — without the errno mapping it falls
+  // through to "dependency", which points an operator at a missing package when
+  // the real cause is the agent's bad input. EISDIR/ENOTDIR can ONLY be a
+  // wrong-path-TYPE usage error.
   it("classifies a raw Node EISDIR/ENOTDIR usage error as validation, not dependency", () => {
     const eisdir = JSON.stringify({
       content: [{ type: "text", text: "EISDIR: illegal operation on a directory, read" }],

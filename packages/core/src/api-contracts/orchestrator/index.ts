@@ -11,8 +11,8 @@
  *   - graph-handlers.ts       (12 methods — graph.*)
  *   - heartbeat-handlers.ts   ( 4 methods — heartbeat.*)
  *   - subagent-handlers.ts    ( 3 methods — subagent.*)
- *   - autonomy-handlers.ts    ( 3 methods — lease.revoke + run.kill, 213-03;
- *                               autonomy.evict, 217-04)
+ *   - autonomy-handlers.ts    ( 3 methods — lease.revoke + run.kill +
+ *                               autonomy.evict)
  *
  * Total: 30 contracts. The bidirectional 1:1 architecture test treats the
  * spread order as documentation only (unordered set).

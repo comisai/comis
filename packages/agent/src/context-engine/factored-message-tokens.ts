@@ -4,14 +4,15 @@
  * check (lcd-preflight.ts) and the protected-fresh-tail total bound
  * (lcd-fresh-tail-bound.ts `boundFreshTailTotalToResidual`).
  *
- * ISSUE #3 (2026-06-22): these two had DIFFERENT estimators — the pre-flight used
- * `ceil(chars / (CHARS_PER_TOKEN_RATIO × scriptTokenFactor))` (≈3.5:1) while the
- * fresh-tail bound used `estimateMessageTokens` (≈4:1) plus a ×0.83 fudge to absorb
- * the gap. The ABSOLUTE gap scales with the residual, so on a SMALL system prompt
- * (large residual — e.g. OpenAI gpt-5-nano S=1145 → residual ~6279) the fudge was
- * insufficient and the bounded fresh tail still measured over the pre-flight bound →
- * exhaustion. Single-sourcing the estimator here makes the bound == the measure for
- * ANY system-prompt size, with no fudge factor and no possibility of future drift.
+ * The two consumers MUST share one estimator. With different estimators — e.g.
+ * `ceil(chars / (CHARS_PER_TOKEN_RATIO × scriptTokenFactor))` (≈3.5:1) in the
+ * pre-flight but a ≈4:1 `estimateMessageTokens` plus a ×0.83 fudge in the
+ * fresh-tail bound — the ABSOLUTE gap scales with the residual, so on a SMALL
+ * system prompt (large residual — e.g. OpenAI gpt-5-nano S=1145 → residual
+ * ~6279) the fudge is insufficient and the bounded fresh tail still measures
+ * over the pre-flight bound → exhaustion. Single-sourcing the estimator here
+ * makes the bound == the measure for ANY system-prompt size, with no fudge
+ * factor and no possibility of future drift.
  *
  * Pure leaf — depends only on the chars/token ratio constant, the script factor, and
  * the `AgentMessage` type. No cycle risk (imports nothing from lcd-preflight /
@@ -25,10 +26,10 @@ import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
 
 /**
  * The exact text of one message that the factored estimate counts: string content,
- * or the `text ?? content` field of each array block (the IN-01 multi-part /
+ * or the `text ?? content` field of each array block (the multi-part /
  * tool-result shape — NOT text+content summed). The concatenation feeds
  * scriptTokenFactor so the factor is computed over precisely the chars whose length
- * is divided (TOK-01 identity-by-construction).
+ * is divided (identity-by-construction).
  */
 export function messageText(m: AgentMessage): string {
   const content = (m as { content?: unknown }).content;
@@ -50,7 +51,7 @@ export function messageText(m: AgentMessage): string {
  * The factored token estimate for one message: `ceil(chars / (CHARS_PER_TOKEN_RATIO
  * × scriptTokenFactor(text)))`. This is the pre-flight's per-message formula
  * (lcd-preflight.ts freshTailMsgTokens) — the authority for "does the fresh tail fit
- * the window". TOK-01: dense scripts carry ~2-3× tokens/char; ASCII factor 1.0 →
+ * the window". Dense scripts carry ~2-3× tokens/char; ASCII factor 1.0 →
  * the bare `ceil(chars / 3.5)` form.
  */
 export function factoredMessageTokens(m: AgentMessage): number {

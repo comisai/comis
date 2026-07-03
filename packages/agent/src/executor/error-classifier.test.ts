@@ -257,33 +257,31 @@ describe("classifyError", () => {
 });
 
 // ---------------------------------------------------------------------------
-// classifyPromptTimeout — knob-named hints (LAT-01, Phase 177)
+// classifyPromptTimeout — knob-named hints
 //
-// Pre-LAT-01 the function IGNORED its parameter and returned a generic
-// message: the operator learned WHAT (too slow) but not WHICH KNOB (the
-// CLAUDE.md troubleshooting-loop precedent this phase exists to fix). The
-// reworked signature consumes the PromptTimeoutError (limit + configured
-// numbers from 177-01) plus the binding provenance (177-02) plus the elapsed
+// A generic timeout message tells the operator WHAT (too slow) but not WHICH
+// KNOB. The signature consumes the PromptTimeoutError (limit + configured
+// numbers) plus the binding provenance plus the elapsed
 // time, and renders the exact config key via describeTimeoutKnob.
 //
-// Security pin (T-177-13): the knob detail rides `hint` (logs/explain ONLY)
-// — `userMessage` stays byte-identical to the pre-patch generic text so no
+// Security pin: the knob detail rides `hint` (logs/explain ONLY)
+// — `userMessage` stays byte-identical to the generic text so no
 // config-key names ever reach the user reply.
 // ---------------------------------------------------------------------------
 
-describe("classifyPromptTimeout — knob-named hints (LAT-01)", () => {
-  /** The pre-LAT-01 user-facing text — pinned byte-identical (user-safety). */
+describe("classifyPromptTimeout — knob-named hints", () => {
+  /** The generic user-facing text — pinned byte-identical (user-safety). */
   const GENERIC_TIMEOUT_USER_MESSAGE =
     "The request took too long to process. Please try again with a simpler message.";
 
-  it("returns prompt_timeout category with the generic user-safe message (pre-LAT-01 contract preserved)", () => {
+  it("returns prompt_timeout category with the generic user-safe message (user-text contract preserved)", () => {
     const result = classifyPromptTimeout(new PromptTimeoutError(120_000));
     expect(result.category).toBe("prompt_timeout");
     expect(result.retryable).toBe(true);
     expect(result.userMessage).toContain("too long");
   });
 
-  it("LAT-01-H-1: agent-primary stall — hint carries the stall budget + elapsed + the agent knob; userMessage byte-identical generic", () => {
+  it("agent-primary stall — hint carries the stall budget + elapsed + the agent knob; userMessage byte-identical generic", () => {
     const result = classifyPromptTimeout(
       new PromptTimeoutError(180_000, {
         limit: "stall",
@@ -304,11 +302,11 @@ describe("classifyPromptTimeout — knob-named hints (LAT-01)", () => {
     expect(result.hint).toMatch(/stall budget 180000ms/);
     expect(result.hint).toMatch(/195000ms/);
     expect(result.hint).toMatch(/agents\.my-agent\.promptTimeout\.promptTimeoutMs/);
-    // User-safety pin: the knob detail NEVER rides the user reply (T-177-13).
+    // User-safety pin: the knob detail NEVER rides the user reply.
     expect(result.userMessage).toBe(GENERIC_TIMEOUT_USER_MESSAGE);
   });
 
-  it("LAT-01-H-2: operation-override binding names the operationModels `timeout` key — never the agent knob, never a timeoutMs key tail, never providers.* (D-11)", () => {
+  it("operation-override binding names the operationModels `timeout` key — never the agent knob, never a timeoutMs key tail, never providers.*", () => {
     const result = classifyPromptTimeout(
       new PromptTimeoutError(180_000, {
         limit: "stall",
@@ -327,14 +325,14 @@ describe("classifyPromptTimeout — knob-named hints (LAT-01)", () => {
     );
     expect(result.hint).toContain("agents.my-agent.operationModels.cron.timeout");
     expect(result.hint).not.toContain("promptTimeout.promptTimeoutMs");
-    // Critical Finding 2: the REAL operation key is `timeout` — a `.timeoutMs`
+    // The REAL operation key is `timeout` — a `.timeoutMs`
     // key tail would be REJECTED by the strictObject config parser.
     expect(result.hint).not.toContain(".timeoutMs");
-    // D-11: no hint ever names the dead providers.* knob.
+    // No hint ever names the nonexistent providers.* knob.
     expect(result.hint).not.toMatch(/providers\./);
   });
 
-  it("LAT-01-H-3: makespan fire renders the ceiling + the stall budget + stallCeilingMultiplier (both numbers, I7)", () => {
+  it("makespan fire renders the ceiling + the stall budget + stallCeilingMultiplier (both numbers)", () => {
     const result = classifyPromptTimeout(
       new PromptTimeoutError(1_800_000, {
         limit: "makespan",
@@ -355,7 +353,7 @@ describe("classifyPromptTimeout — knob-named hints (LAT-01)", () => {
     expect(result.hint).toMatch(/180000/);
   });
 
-  it("LAT-01-H-4: graph_constant binding renders honest prose — the 600000ms constant, no agents.* fake knob (D-11)", () => {
+  it("graph_constant binding renders honest prose — the 600000ms constant, no agents.* fake knob", () => {
     const result = classifyPromptTimeout(
       new PromptTimeoutError(600_000, { limit: "stall", stallBudgetMs: 600_000 }),
       {
@@ -370,7 +368,7 @@ describe("classifyPromptTimeout — knob-named hints (LAT-01)", () => {
     expect(result.hint).not.toContain("agents.");
   });
 
-  it("LAT-01-H-5: whole-turn retry timeout (limit undefined) names retryPromptTimeoutMs and is never presented as a stall (Open Q2)", () => {
+  it("whole-turn retry timeout (limit undefined) names retryPromptTimeoutMs and is never presented as a stall", () => {
     const result = classifyPromptTimeout(
       new PromptTimeoutError(60_000),
       {
@@ -388,7 +386,7 @@ describe("classifyPromptTimeout — knob-named hints (LAT-01)", () => {
     expect(result.hint).not.toMatch(/stall budget \d+ms exceeded/);
   });
 
-  it("LAT-01-H-6: binding undefined (legacy caller) still produces a knob-named hint with the <id> placeholder — graceful, no throw", () => {
+  it("binding undefined (a caller passing no provenance) still produces a knob-named hint with the <id> placeholder — graceful, no throw", () => {
     const result = classifyPromptTimeout(
       new PromptTimeoutError(180_000, { limit: "stall", stallBudgetMs: 180_000 }),
     );
@@ -454,7 +452,7 @@ describe("classifyError — Silent LLM failure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Provider error masked as empty_response (F-17 — live-found 2026-06-13)
+// Provider error masked as empty_response
 // A provider 404 (model gated/unavailable) or a connection failure arrives
 // WRAPPED by the silent-failure handler as
 //   "Silent LLM failure: N LLM call(s) produced empty response after retry … — <providerError>"
@@ -467,7 +465,7 @@ describe("classifyError — Silent LLM failure", () => {
 // not_found_error "Claude Fable 5 is not available. Please use Opus 4.8."
 // ---------------------------------------------------------------------------
 
-describe("classifyError — provider error masked as empty_response (F-17)", () => {
+describe("classifyError — provider error masked as empty_response", () => {
   it("classifies a wrapped Anthropic 404 model-not-available as model_not_available, not empty_response", () => {
     const error = new Error(
       'Silent LLM failure: 3 LLM call(s) produced empty response after retry (finishReason: stop) — '
@@ -501,18 +499,18 @@ describe("classifyError — provider error masked as empty_response (F-17)", () 
     expect(result.userMessage.toLowerCase()).not.toContain("tool call");
   });
 
-  it("classifies a wrapped OpenAI-SDK 'Connection error.' as provider_unreachable, not empty_response (live 30-UC UC-30)", () => {
-    // Live 30-UC (2026-06-20): provider unreachable (Ollama down / dead port).
-    // The pi SDK's OpenAI-compat client throws APIConnectionError whose message
+  it("classifies a wrapped OpenAI-SDK 'Connection error.' as provider_unreachable, not empty_response", () => {
+    // Provider unreachable (Ollama down / dead port):
+    // the pi SDK's OpenAI-compat client throws APIConnectionError whose message
     // is the BARE phrase "Connection error." (no ECONNREFUSED token). The
     // silent-failure handler wraps it as "…produced empty response after retry
     // … — Connection error.". The provider_unreachable regex required
     // "connection refused/reset/timed out", so "Connection error." slipped
     // through to empty_response → the user saw "a tool call returned no output"
     // (false — there was no tool call; the provider was unreachable). The real,
-    // actionable cause must win. Ground truth captured live: daemon log
+    // actionable cause must win: the daemon log shows
     // `err:"Connection error.", hint:"Check LLM provider status",
-    // errorKind:"dependency"` per retry; user reply was the empty_response msg.
+    // errorKind:"dependency"` per retry while the user reply was the empty_response msg.
     const error = new Error(
       "Silent LLM failure: 12 LLM call(s) produced empty response after retry (finishReason: stop) — Connection error.",
     );
@@ -542,25 +540,25 @@ describe("classifyError — provider error masked as empty_response (F-17)", () 
 });
 
 // ---------------------------------------------------------------------------
-// tool_schema_unsupported classification (GBNF-02)
+// tool_schema_unsupported classification
 // ---------------------------------------------------------------------------
 //
 // llama.cpp-family local providers (llama-server, LM Studio embeds llama.cpp,
 // Ollama) reject tool JSON Schemas at grammar-compile/unmarshal time with 400
-// bodies that today either classify client_request (llama-server wraps grammar
+// bodies that would otherwise classify client_request (llama-server wraps grammar
 // bodies in `"type":"invalid_request_error"`, so the plain client_request
 // pattern steals the match) or match nothing (Ollama Go-side unmarshal →
 // unknown → the model-retry ladder burns fallback models on a deterministic
 // schema problem). These tests pin the first-class category.
 
-describe("classifyError — tool_schema_unsupported (GBNF-02)", () => {
+describe("classifyError — tool_schema_unsupported", () => {
   // Verbatim grammar-400 bodies from live upstream issues:
   // Source: github.com/ggml-org/llama.cpp/issues/19716 (exact llama-server
   // body, including the `"type":"invalid_request_error"` wrapper).
   const llamaServerBody =
     '{"error":{"code":400,"message":"JSON schema conversion failed:\\nUnrecognized schema: {\\"description\\":\\"Value for add/replace/test operations\\"}","type":"invalid_request_error"}}';
   // Source: github.com/ollama/ollama/issues/10164 (exact Go-side tools
-  // unmarshal string — matches NOTHING in the pattern table pre-GBNF-02).
+  // unmarshal string — matches NOTHING else in the pattern table).
   const ollamaGoBody =
     "json: cannot unmarshal number into Go struct field .tools.function.parameters.properties.enum of type string";
   // Source: github.com/ggml-org/llama.cpp/issues/22314 (grammar-parse stage,
@@ -568,32 +566,32 @@ describe("classifyError — tool_schema_unsupported (GBNF-02)", () => {
   const grammarParseBody = 'parse: error parsing grammar: unknown escape at \\d]+ "." [\\d]+)';
 
   it("classifies the full verbatim llama-server grammar body (invalid_request_error wrapper included) as tool_schema_unsupported, not client_request", () => {
-    // Load-bearing: pre-GBNF-02 the wrapper's `invalid_request_error` made
-    // this classify client_request — the more-specific grammar subcategory
-    // must win (first-match-wins ordering).
+    // Load-bearing: without the grammar subcategory, the wrapper's
+    // `invalid_request_error` makes this classify client_request — the
+    // more-specific grammar subcategory must win (first-match-wins ordering).
     const result = classifyError(new Error(llamaServerBody));
     expect(result.category).toBe("tool_schema_unsupported");
   });
 
   it("classifies the Ollama Go-side tools.function.parameters unmarshal error as tool_schema_unsupported", () => {
-    // Pre-GBNF-02 this matched nothing → unknown → handleSilentRetryDefault
-    // re-entered the FULL model-retry ladder (the fallback-burn path).
+    // Unmatched, this would fall to unknown → handleSilentRetryDefault
+    // re-enters the FULL model-retry ladder (the fallback-burn path).
     const result = classifyError(new Error(ollamaGoBody));
     expect(result.category).toBe("tool_schema_unsupported");
   });
 
-  it("WR-02: classifies the standard Go struct-type-name prefix form (ChatRequest.tools.function.parameters) as tool_schema_unsupported", () => {
+  it("classifies the standard Go struct-type-name prefix form (ChatRequest.tools.function.parameters) as tool_schema_unsupported", () => {
     // Go's encoding/json normally formats these as
     // `Go struct field <StructTypeName>.<path>` — ollama#10164 pinned the
     // empty-type-name variant, but Ollama versions/paths emitting the type
-    // name fell through to unknown → full fallback-ladder burn (175-REVIEW
-    // WR-02). Verbatim shape with the ChatRequest prefix:
+    // name would otherwise fall through to unknown → full fallback-ladder
+    // burn. Verbatim shape with the ChatRequest prefix:
     const prefixed =
       "json: cannot unmarshal array into Go struct field ChatRequest.tools.function.parameters.properties.type of type string";
     expect(classifyError(new Error(prefixed)).category).toBe("tool_schema_unsupported");
   });
 
-  it("WR-02: a type-name-prefixed Go unmarshal error OUTSIDE the tools path stays unmatched (negative control)", () => {
+  it("a type-name-prefixed Go unmarshal error OUTSIDE the tools path stays unmatched (negative control)", () => {
     const offPath =
       "json: cannot unmarshal string into Go struct field ChatRequest.options.temperature of type float64";
     expect(classifyError(new Error(offPath)).category).toBe("unknown");
@@ -616,10 +614,10 @@ describe("classifyError — tool_schema_unsupported (GBNF-02)", () => {
   it("returns retryable:true with a canned userMessage that never embeds schema content", () => {
     const result = classifyError(new Error(llamaServerBody));
     // Retryable because the executor performs exactly one strip-pattern/format
-    // retry per session (Plan 05 builds the repair on this category).
+    // retry per session (the schema-repair path keys on this category).
     expect(result.retryable).toBe(true);
     // Canned generic text only — the raw body embeds the offending schema
-    // dump and must never reach the user (threat T-175-04).
+    // dump and must never reach the user.
     expect(result.userMessage).not.toContain("{");
     expect(result.userMessage).not.toContain("Unrecognized schema");
   });

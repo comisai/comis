@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Assemble the closed-graph REFLECTION injectables (v2.31 Reflection, Phase 223
- * Plan 05, REFLECT-01/02) for the `__REFLECT__` cron sentinel — the
+ * Assemble the closed-graph REFLECTION injectables for the `__REFLECT__` cron sentinel — the
  * reflect-engine replacement for the deleted `buildSkillSynthesisCronDeps`
  * embedding-clustering bundle.
  *
@@ -16,21 +15,21 @@
  * OFF by default the sentinel short-circuits ok BEFORE it ever reads this bundle,
  * so a default install never exercises this path.
  *
- * What CHANGED from the synthesis bundle (D-07 / I1 — delete, don't wrap):
+ * What CHANGED from the synthesis bundle (delete, don't wrap):
  * - REMOVED the clustering embedding wiring (the embed-attach helper, its char cap,
  *   and the embedding port field). The reflection job groups by
  *   `normalizeOpeningRequest(signature)` — a deterministic, keyless topicKey (NO
- *   embeddings, so the SYNTH-EMBED-DEAD singleton failure is gone).
+ *   embeddings, so the embedding-singleton failure mode is gone).
  * - REMOVED the user-system-context strip here — its envelope-stripping algorithm
- *   now lives in Plan 01's topic-key.ts (the group-by key normalizer); this builder
+ *   now lives in topic-key.ts (the group-by key normalizer); this builder
  *   passes the raw user-role text through as `signature` and the job normalizes it.
  * - REMOVED the sandbox validation adapter + the mutating-approval gate — an
- *   advisory doc carries NO executable surface (Phase 222 dropped the column), so
+ *   advisory doc carries NO executable surface (the advisory-doc column was dropped), so
  *   the only validation is the STATIC `validateLearnedDocBody` keystone the JOB
- *   runs (INV-3). Removing the gate removes an attack surface (INV-3 strengthened).
- * - ADDED a per-source `trustedOrigin` (INV-5/D-04) the job FILTERS on — derived
+ *   runs. Removing the gate removes an attack surface.
+ * - ADDED a per-source `trustedOrigin` the job FILTERS on — derived
  *   DAEMON-SIDE here (the daemon has the session/sender-trust context; the
- *   `ResolvedOutcome` does NOT carry it — Research A2).
+ *   `ResolvedOutcome` does NOT carry it).
  *
  * @module
  */
@@ -52,7 +51,7 @@ export interface ReflectionDepsInput {
   learnedSkillStore?: MentalModelStorePort;
   /**
    * The high-trust SOURCE-MEMORY read surface the PROFILE/TOPIC source builders distil
-   * over (Phase 225 FOLD — the old user-rep/consolidation `memoryApi.inspect` read). The
+   * over (the old user-rep/consolidation `memoryApi.inspect` read). The
    * SKILL builder does not use it (it reads outcome trajectories). Absent ⇒ the profile/
    * topic builders return empty (fail-closed — never fabricate a profile/topic source).
    */
@@ -63,24 +62,24 @@ export interface ReflectionDepsInput {
  * The untrusted-tier label every UNKNOWN/unmapped sender resolves to — the
  * `ElevatedReplyConfigSchema.defaultTrustLevel` default (schema-agent-prompt.ts)
  * and the memory `TrustLevel` external tier. A sender whose derived tier equals
- * this is NOT a trusted origin (INV-5/D-04). Mirrors the delivery-service
+ * this is NOT a trusted origin. Mirrors the delivery-service
  * "unmapped participant ⇒ external (inert)" classification.
  */
 const UNTRUSTED_TRUST_TIER = "external";
 
 /**
- * Derive whether a session-source sender is a TRUSTED origin (INV-5/D-04), reading
+ * Derive whether a session-source sender is a TRUSTED origin, reading
  * the per-agent `elevatedReply.senderTrustMap` (senderId -> trust-tier name) with
  * the configured `defaultTrustLevel` (schema default `"external"`) for an unmapped
  * sender. A sender resolving to the `"external"` tier is NOT trusted.
  *
- * DENY-ON-UNKNOWN (M-1/INV-5): when trust CANNOT be positively established — no
+ * DENY-ON-UNKNOWN: when trust CANNOT be positively established — no
  * sender id, no `senderTrustMap` entry, and the default is the `"external"` tier —
  * the result is `false`. NEVER default to trusted: an untrusted/unknown-origin
  * success must seed nothing (a deny-default merely UNDER-seeds — under-learning is
- * benign; an allow-default would silently weaken INV-5 by letting a planted
+ * benign; an allow-default would silently weaken this invariant by letting a planted
  * unknown-origin success corroborate a doc). The JOB enforces the filter
- * (reflection-job.ts SELECT, RED both directions in Plan 04); this is the daemon
+ * (reflection-job.ts SELECT); this is the daemon
  * DERIVATION that feeds it.
  */
 function deriveTrustedOrigin(
@@ -109,10 +108,10 @@ export function buildReflectionCronDeps(deps: ReflectionDepsInput): ReflectionCr
     learnedSkillStore,
     outcomeSignal: outcomeStore,
 
-    // Build the PER-KIND source trajectories for the reflection SELECT step (Phase 225
-    // FOLD — the daemon-side `kind` seam). SKILL reflects over OUTCOME trajectories;
+    // Build the PER-KIND source trajectories for the reflection SELECT step (the
+    // daemon-side `kind` seam). SKILL reflects over OUTCOME trajectories;
     // PROFILE/TOPIC reflect over high-trust SOURCE MEMORIES (the old user-rep/consolidation
-    // corpus). Both carry BOTH FOLD-04 anti-poison axes the job filters on.
+    // corpus). Both carry BOTH anti-poison axes the job filters on.
     buildSourceTrajectories: async (
       kind: "skill" | "profile" | "topic",
       agentId: string,
@@ -129,8 +128,8 @@ export function buildReflectionCronDeps(deps: ReflectionDepsInput): ReflectionCr
  * attaching each turn's LCD-merged session transcript (buildReviewSessionSource — NOT raw
  * listDetailed which is empty in DAG mode) as the text to generalize from. The reflection
  * SELECT resolves each `trajectoryId` against the outcome signal — outcomes are keyed by the
- * PER-TURN `traceId` (setup-learning.ts), NOT the sessionKey. Pre-fix this emitted the
- * sessionKey, which resolve() never matched → `selected:0` forever (live VPS 2026-06-18).
+ * PER-TURN `traceId` (setup-learning.ts), NOT the sessionKey. Emitting the
+ * sessionKey instead would never match resolve() → `selected:0` forever.
  */
 async function buildSkillSources(
   deps: ReflectionDepsInput,
@@ -156,7 +155,7 @@ async function buildSkillSources(
   const senderBySession = new Map<string, string>();
   for (const e of source.listDetailed(tenantId)) senderBySession.set(e.sessionKey, e.userId);
 
-  // INV-5/D-04: the per-agent trust derivation inputs (elevatedReply.senderTrustMap
+  // The per-agent trust derivation inputs (elevatedReply.senderTrustMap
   // + defaultTrustLevel). Read once per run. The config is always default-parsed
   // (schema-agent-runtime.ts:377), so an agent that never configured elevatedReply
   // gets `{}` + `"external"` ⇒ every unmapped sender is deny-on-unknown.
@@ -185,7 +184,7 @@ async function buildSkillSources(
       // The topicKey signature = the user-role messages (the task INTENT the user
       // controls), which is stable across the agent's response wording. The JOB
       // normalizes it via normalizeOpeningRequest (topic-key.ts) — which also
-      // strips the volatile executor envelope (the RC-2 [System context] header),
+      // strips the volatile executor envelope (the [System context] header),
       // so identical requests at different times collapse to the same topicKey.
       // Fall back to the full text when a session has no user message (so the
       // signature is never empty).
@@ -212,10 +211,10 @@ async function buildSkillSources(
       sender,
       text: texts.text,
       signature: texts.signature,
-      // FOLD-04 AXIS 1 (INV-5/D-04): derive SESSION-origin trust DAEMON-SIDE
+      // Trust axis 1: derive SESSION-origin trust DAEMON-SIDE
       // (deny-on-unknown). The job filters on it.
       trustedOrigin: deriveTrustedOrigin(sender, senderTrustMap, defaultTrustLevel),
-      // FOLD-04 AXIS 2 (Phase 225): the per-MEMORY source-trust axis is always
+      // Trust axis 2: the per-MEMORY source-trust axis is always
       // false for kind:skill — a skill source is an OUTCOME trajectory (a finished
       // session), NOT a source memory carrying a per-memory trustLevel.
       sourceTrustExternal: false,
@@ -225,22 +224,22 @@ async function buildSkillSources(
 }
 
 /**
- * PROFILE / TOPIC kinds (Phase 225 FOLD-04 daemon side, axis 2): build sources from the
+ * PROFILE / TOPIC kinds (daemon side, axis 2): build sources from the
  * agent's high-trust SOURCE MEMORIES (the corpus the old user-rep/consolidation jobs read
  * via `memoryApi.inspect`), NOT outcome trajectories. For EACH source memory we set:
  *
- *  - `sourceTrustExternal = (trustLevel === "external")` — the load-bearing FOLD-04 axis 2,
+ *  - `sourceTrustExternal = (trustLevel === "external")` — the load-bearing axis 2,
  *    the OLD user-rep layer-1 firewall (memory-user-representation-job.ts:322
  *    `s.trustLevel !== "external"`). A planted `external`-trust memory rides through with
- *    `sourceTrustExternal:true`; Plan 01's engine SELECT then excludes it EVEN on a trusted
- *    session (the two axes compose — Pitfall 2). The exclude lives in the JOB (one
+ *    `sourceTrustExternal:true`; the engine SELECT then excludes it EVEN on a trusted
+ *    session (the two axes compose). The exclude lives in the JOB (one
  *    authoritative layer), this is the daemon DERIVATION feeding it.
  *  - `trustedOrigin: true` — a high-trust (system/learned) source memory IS the trusted
  *    corpus (the old user-rep semantics: the per-MEMORY external exclude is the firewall,
  *    not a per-session origin check). An `external` source carries `trustedOrigin:true` too
  *    but is excluded by axis 2 regardless — proving the axes are distinct.
  *  - PROFILE: `sender = userId` so the engine's profile `groupKey: (t) => t.sender` yields
- *    `topicKey === userId` (one doc per user, which Plan 02's `<user_profile>` read selects
+ *    `topicKey === userId` (one doc per user, which the `<user_profile>` read selects
  *    on); the `signature` carries the userId so distinct users never collapse into one group.
  *  - TOPIC: groups like skill via the engine's default `normalizeOpeningRequest(signature)`,
  *    so the `signature` is the memory content (the cluster's representative text).
@@ -289,7 +288,7 @@ function buildMemorySources(
         // The high-trust source corpus is the trusted origin (the old user-rep semantics);
         // axis 2 below is the per-memory firewall.
         trustedOrigin: true,
-        // FOLD-04 AXIS 2 (the old layer-1 firewall, memory-user-representation-job.ts:322):
+        // Trust axis 2 (the old layer-1 firewall, memory-user-representation-job.ts:322):
         // an `external`-trust source memory NEVER seeds a doc — the job SELECT excludes it.
         sourceTrustExternal: rowTrust === "external",
       });

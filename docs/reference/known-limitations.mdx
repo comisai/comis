@@ -75,16 +75,16 @@ for the full methodology, conflict-of-interest disclosure, and reproducible harn
 
 ## Documentation accuracy
 
-Two public claims were inaccurate and are corrected as part of the v1.7 milestone that introduced
+Two claims are easy to get wrong about this codebase, and are stated precisely in
 [`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md):
 
-1. **`SECURITY.md`** previously described skills as running in `isolated-vm`. The real mechanism is
-   OS-level `bwrap` (Linux) or `sandbox-exec` (macOS) — the Node.js `vm` module is not used for
-   skill or tool confinement.
+1. **Skill sandboxing mechanism.** Skills run under OS-level `bwrap` (Linux) or `sandbox-exec`
+   (macOS) — the Node.js `vm` module (`isolated-vm`) is not used for skill or tool confinement.
 
-2. **`README`** implied "no external SDK dependency" for agent execution. The agent runtime is built
+2. **Agent-execution dependency.** The agent runtime is built
    on `@earendil-works/pi-coding-agent` (exact-pinned, bundled, part of the supply-chain threat model —
-   see [`THREAT_MODEL.md §5.8`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md)).
+   see [`THREAT_MODEL.md §5.8`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md)) — it is
+   not SDK-free.
 
-Both claims are corrected in the current documentation. A CI guard (`test/architecture/security-doc-claims.test.ts`)
-now prevents regressions by statically checking the corrected text in `SECURITY.md`.
+A CI guard (`test/architecture/security-doc-claims.test.ts`)
+prevents regressions by statically checking this text in `SECURITY.md`.

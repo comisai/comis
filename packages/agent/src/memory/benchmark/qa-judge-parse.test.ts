@@ -6,7 +6,7 @@
  * UNGATED, default-CI: this is pure, deterministic string->value parsing (no
  * LLM, no I/O), so it runs in the fast `pnpm test` tier and imports
  * `qa-judge-parse.ts` so that file is never a 0%-coverage entry under the
- * agent `all:true` floor (MEMORY: a never-imported src file fails the full
+ * agent `all:true` floor (a never-imported src file fails the full
  * coverage run).
  *
  * The judge is a lightly-trusted, possibly-injected free-text boundary
@@ -14,7 +14,7 @@
  * return `undefined` (the INVALID signal) on unparseable text rather than a
  * wrong verdict. Every branch (valid JSON true/false, fenced JSON, regex
  * `yes`/`no`, garbage->undefined) gets a case to hold the agent 79% branch
- * floor (Pitfall 5).
+ * floor.
  *
  * ARCHITECTURE: imports only the in-package pure module -- no @comis/memory.
  */
@@ -39,23 +39,23 @@ describe("parseJudgeVerdict -- TOTAL judge-output parser", () => {
     expect(v).toEqual({ correct: true, reasoning: "fenced" });
   });
 
-  it("Test 3b (IN-01): an uppercase ```JSON fence parses to the structured verdict", () => {
+  it("Test 3b: an uppercase ```JSON fence parses to the structured verdict", () => {
     const fenced = ["```JSON", '{"correct":true,"reasoning":"upper-fence"}', "```"].join("\n");
     const v = parseJudgeVerdict(fenced);
     expect(v).toEqual({ correct: true, reasoning: "upper-fence" });
   });
 
-  it("Test 3c (IN-01): a non-JSON language tag (```python) fence parses to the structured verdict", () => {
+  it("Test 3c: a non-JSON language tag (```python) fence parses to the structured verdict", () => {
     const fenced = ["```python", '{"correct":false,"reasoning":"py-fence"}', "```"].join("\n");
     const v = parseJudgeVerdict(fenced);
     expect(v).toEqual({ correct: false, reasoning: "py-fence" });
   });
 
-  it("Test 3d (IN-01): stripCodeFences removes an opening fence with ANY language tag, case-insensitively -- so the verdict reaches the PRIMARY whole-string JSON path, not the regex fallback", () => {
-    // The pre-fix regex /```json?\n?/ only matched lowercase `jso`+optional`n`, so
-    // ```JSON / ```python / ```JavaScript left the language word as a textual prefix
-    // and the verdict was recovered only by the firstJsonObject fallback. The broadened
-    // strip removes any [a-zA-Z]* tag so the cleaned text begins with the JSON object.
+  it("Test 3d: stripCodeFences removes an opening fence with ANY language tag, case-insensitively -- so the verdict reaches the PRIMARY whole-string JSON path, not the regex fallback", () => {
+    // A lowercase-only /```json?\n?/ strip would leave the language word of
+    // ```JSON / ```python / ```JavaScript as a textual prefix, so the verdict would be
+    // recovered only by the firstJsonObject fallback. The strip must remove any
+    // [a-zA-Z]* tag so the cleaned text begins with the JSON object.
     expect(stripCodeFences('```json\n{"correct":true}\n```')).toBe('{"correct":true}');
     expect(stripCodeFences('```JSON\n{"correct":true}\n```')).toBe('{"correct":true}');
     expect(stripCodeFences('```python\n{"correct":true}\n```')).toBe('{"correct":true}');
@@ -66,7 +66,7 @@ describe("parseJudgeVerdict -- TOTAL judge-output parser", () => {
     expect(stripCodeFences('{"correct":true}')).toBe('{"correct":true}');
   });
 
-  it("Test 3e (IN-01): the broadened strip is ReDoS-free on a long tag run -- it terminates, never throws, and stays linear", () => {
+  it("Test 3e: the broadened strip is ReDoS-free on a long tag run -- it terminates, never throws, and stays linear", () => {
     // A pathological opening-fence-like prefix must not cause super-linear backtracking.
     // We assert TERMINATION + correctness on a large input (the suite's no-timing style):
     // a `[a-zA-Z]*` tag is a non-nested quantifier, so the match is a single linear pass.

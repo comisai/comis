@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * QT1 — the load-bearing toolStats-reconciliation invariant.
+ * The load-bearing toolStats-reconciliation invariant.
  *
  * `obs.explain` and `obs.fleet.health` must NEVER report contradicting per-tool
  * {ok,failed} for the SAME session. A lens that contradicts itself is the bug
@@ -22,10 +22,9 @@
  * the whole session — NEVER because they contradict (the rollup must never
  * OVERcount the trajectory).
  *
- * THE CONTRACT this test pins (RED on pre-patch code — `coverage.toolStats` does
- * not exist on the schema or the assembler output, so the assembler silently
- * presents the trajectory numbers with NO transparent note that fleet's rollup
- * differs):
+ * THE CONTRACT this test pins (without `coverage.toolStats` the assembler
+ * silently presents the trajectory numbers with NO transparent note that
+ * fleet's rollup differs):
  *
  *   1. The IncidentReport carries a TRANSPARENT, bounded `coverage.toolStats`
  *      reconciliation block: `reconciled` (the directional invariant held),
@@ -114,13 +113,13 @@ function makeFleetRow(
   };
 }
 
-describe("obs.explain ↔ obs.fleet.health toolStats reconciliation (QT1)", () => {
+describe("obs.explain ↔ obs.fleet.health toolStats reconciliation", () => {
   it("surfaces a transparent coverage.toolStats note when the latest-execution rollup is a SUBSET of the whole-session trajectory (multi-execution)", () => {
     // The whole-session trajectory union: web_fetch ran across 3 turns → 6 ok / 9
     // failed total. The persisted rollup (= fleet's number) reflects only the
-    // LAST execution → 2 ok / 3 failed. This is the dominant production case and
-    // the pre-patch assembler hid it: explain showed 6/9, fleet showed 2/3, with
-    // NO note explaining the gap — a self-contradiction.
+    // LAST execution → 2 ok / 3 failed. This is the dominant production case;
+    // without the note, explain shows 6/9 and fleet shows 2/3 with
+    // NOTHING explaining the gap — a self-contradiction.
     const trajectory = { web_fetch: { ok: 6, failed: 9, topErrorKind: "dependency" } };
     const rollup = { web_fetch: { ok: 2, failed: 3 } };
 

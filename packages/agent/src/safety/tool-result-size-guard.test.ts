@@ -663,16 +663,16 @@ describe("createToolResultSizeGuard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SAFE-01 — grapheme-safe truncation cuts (the head :239 / tail :240 cuts in
+// Grapheme-safe truncation cuts (the head/tail content-length cuts in
 // truncateText route through @comis/core adjustSliceBoundary).
 //
-// RED on pre-patch (raw text.slice at :239/:240): a head/tail boundary that
-// lands inside a surrogate pair or a combining run yields a lone surrogate /
-// orphaned mark. All non-ASCII fixtures are built from \u{...} escapes (the
-// boundary convention — never a pasted glyph carrying an invisible mark/joiner).
+// With raw text.slice cuts, a head/tail boundary that lands inside a
+// surrogate pair or a combining run yields a lone surrogate / orphaned mark.
+// All non-ASCII fixtures are built from \u{...} escapes (the boundary
+// convention — never a pasted glyph carrying an invisible mark/joiner).
 // ---------------------------------------------------------------------------
 
-describe("createToolResultSizeGuard — SAFE-01 grapheme-safe truncation", () => {
+describe("createToolResultSizeGuard — grapheme-safe truncation", () => {
   /** Detects an isolated (unpaired) UTF-16 surrogate code unit. */
   function hasLoneSurrogate(s: string): boolean {
     for (let i = 0; i < s.length; i++) {
@@ -704,7 +704,7 @@ describe("createToolResultSizeGuard — SAFE-01 grapheme-safe truncation", () =>
     expect(result.truncated).toBe(true);
     const out = result.content[0]!.text!;
     const head = out.slice(0, out.indexOf("\n[..."));
-    // Pre-patch the head ends with a lone high surrogate; the helper backs off.
+    // A raw slice ends the head with a lone high surrogate; the helper backs off.
     expect(hasLoneSurrogate(head)).toBe(false);
   });
 
@@ -742,7 +742,7 @@ describe("createToolResultSizeGuard — SAFE-01 grapheme-safe truncation", () =>
     expect(/\p{M}$/u.test(head)).toBe(false);
   });
 
-  it("keeps the truncation marker free of bidi-control codepoints with RTL payloads (I2)", () => {
+  it("keeps the truncation marker free of bidi-control codepoints with RTL payloads", () => {
     // Forbidden bidi-control codepoints, defined as numeric escapes ONLY (never a
     // pasted literal glyph): LRM/RLM/ALM, the embeddings/overrides, and isolates.
     const FORBIDDEN = [
@@ -763,10 +763,10 @@ describe("createToolResultSizeGuard — SAFE-01 grapheme-safe truncation", () =>
     expect([...full].every((ch) => !FORBIDDEN.includes(ch.codePointAt(0)!))).toBe(true);
   });
 
-  it("truncates pure-ASCII text byte-identically to the documented golden (I1)", () => {
+  it("truncates pure-ASCII text byte-identically to the documented golden", () => {
     // The helper is a no-op at ASCII boundaries: the output must equal the exact
-    // head + marker + tail an un-adjusted raw slice produces. Golden captured from
-    // the pre-patch implementation (head 4, tail 1, no important tail).
+    // head + marker + tail an un-adjusted raw slice produces (golden: head 4,
+    // tail 1, no important tail).
     const text = "L".repeat(40);
     const guard = createToolResultSizeGuard({
       preserveHeadChars: 4,
@@ -782,7 +782,7 @@ describe("createToolResultSizeGuard — SAFE-01 grapheme-safe truncation", () =>
   });
 
   it("routes exactly the 2 content-length cuts through adjustSliceBoundary and excludes the 2 non-cut slices", async () => {
-    // Structural greppable invariant (Pitfall 1): read the SOURCE, drop comment
+    // Structural greppable invariant: read the SOURCE, drop comment
     // lines first (so the module header prose cannot self-trigger), then assert
     // exactly the 2 truncation cuts route the helper, and the inspection slice
     // (text.slice(-500)) + the ASCII-hint slice (MAX_HINT_CHARS - 3) do NOT.

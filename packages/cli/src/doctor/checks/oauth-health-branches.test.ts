@@ -30,7 +30,7 @@ vi.mock("@comis/core", async () => {
   };
 });
 
-// OBS-4: encrypted-mode oauth check routes through the daemon auth.list RPC.
+// Encrypted-mode oauth check routes through the daemon auth.list RPC.
 // Mock the daemon probe to false here (deterministic encrypted daemon-DOWN skip).
 vi.mock("../../sync-tooling/daemon-guard.js", () => ({
   isDaemonRunning: vi.fn(async () => false),
@@ -252,7 +252,7 @@ describe("oauthHealthCheck — store.list() schema-mismatch surfacing", () => {
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — encrypted storage skips CLI-side profile reading", () => {
-  it("returns a skip pointing at the daemon when encrypted + daemon DOWN (OBS-4)", async () => {
+  it("returns a skip pointing at the daemon when encrypted + daemon DOWN", async () => {
     const findings = await oauthHealthCheck.run({
       ...baseContext,
       config: { security: { storage: "encrypted" } } as never,
@@ -262,9 +262,9 @@ describe("oauthHealthCheck — encrypted storage skips CLI-side profile reading"
     );
     expect(skipFinding).toBeDefined();
     expect(skipFinding!.message).toContain("encrypted");
-    // OBS-4: encrypted-mode now reads via the daemon RPC; the daemon-DOWN skip
-    // tells the operator to start the daemon (the RPC source) rather than the
-    // stale "run on the daemon host" hint.
+    // Encrypted-mode reads via the daemon RPC; the daemon-DOWN skip
+    // tells the operator to start the daemon (the RPC source) rather than
+    // a "run on the daemon host" hint.
     expect(skipFinding!.suggestion).toMatch(/start the daemon|security\.storage/i);
   });
 });

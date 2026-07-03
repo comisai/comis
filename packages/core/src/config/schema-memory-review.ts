@@ -15,7 +15,7 @@ import { z } from "zod";
  *
  * Fields:
  * - enabled: default true (opt-out); a COST feature force-disabled by the master
- *   switch `memory.costFeatures.enabled`
+ *   switch `memory.enabled`
  * - schedule: cron expression for review timing
  * - minMessages: minimum session messages to qualify for review
  * - maxSessionsPerRun: cap on sessions processed per cycle
@@ -25,17 +25,17 @@ import { z } from "zod";
  */
 export const MemoryReviewConfigSchema = z.strictObject({
   /** Enable periodic memory review for this agent. Default: true (opt-out posture).
-   *  A COST feature — force-disabled when `memory.costFeatures.enabled: false`. */
+   *  A COST feature — force-disabled when `memory.enabled: false`. */
   enabled: z.boolean().default(true),
   /** Cron schedule for review runs. Default: daily at 2 AM UTC. */
   schedule: z.string().default("0 2 * * *"),
   /** Minimum messages in a session to qualify for review. */
   minMessages: z.number().int().positive().default(5),
   /** Maximum sessions to process per review cycle. Default 50 (best-out-of-box: broader consolidation
-   *  coverage per run, cost ignored; was 10). Finite — a per-run work bound. */
+   *  coverage per run, cost ignored). Finite — a per-run work bound. */
   maxSessionsPerRun: z.number().int().positive().default(50),
   /** Maximum LLM response tokens for the review call. Default 16384 (best-out-of-box: richer
-   *  consolidation per session, cost ignored; was 4096). */
+   *  consolidation per session, cost ignored). */
   maxReviewTokens: z.number().int().positive().default(16384),
   /** Semantic similarity threshold (0-1) for deduplication. */
   dedupThreshold: z.number().min(0).max(1).default(0.85),

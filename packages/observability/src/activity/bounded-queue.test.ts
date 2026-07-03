@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the per-consumer bounded queue (spec §5.1).
- *
- * Fails on pre-patch code: `./bounded-queue.js` does not exist.
+ * Unit tests for the per-consumer bounded queue.
  *
  * Behavior under test:
  *   - capacity 64; pushing 70 non-failure items keeps 64 and FIFO-drops the 6
@@ -25,7 +23,7 @@ function makeItem(seq: number, failed = false): Item {
   return { seq, failed };
 }
 
-describe("createBoundedQueue (spec §5.1)", () => {
+describe("createBoundedQueue (per-consumer backpressure ring)", () => {
   it("holds capacity 64 and FIFO-drops the oldest non-failure items on overflow", () => {
     const q = createBoundedQueue<Item>({ isFailure: (i) => i.failed });
     for (let seq = 0; seq < 70; seq++) {

@@ -120,8 +120,8 @@ describe("RecallTraceEventSchema -- well-formed record", () => {
     expect(RecallTraceEventSchema.safeParse(missingUsefulness).success).toBe(false);
   });
 
-  it("carries the OBS-02 usefulnessOutcomeShare annotation through the round-trip (and tolerates its absence)", () => {
-    // OBS-02: the outcome-attributed usefulness contribution surfaced on score.ts's breakdown must
+  it("carries the usefulnessOutcomeShare annotation through the round-trip (and tolerates its absence)", () => {
+    // The outcome-attributed usefulness contribution surfaced on score.ts's breakdown must
     // SURVIVE the persistence parse so `comis explain` can read it — a z.object would otherwise
     // strip it. It is OPTIONAL: an older trace line without it still parses (back-compat), and a
     // line carrying it preserves the value (forget likewise optional).

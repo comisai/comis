@@ -20,13 +20,13 @@
 /** The 18 dispatcher-injected internal-field names (sorted alphabetically). */
 export const INTERNAL_FIELD_NAMES = [
   "_agentId",
-  // The trusted autonomy mode signal (Phase 217). Injected by createAgentRpcCall
+  // The trusted autonomy mode signal. Injected by createAgentRpcCall
   // on the in-process leg from resolveAutonomy(...).mode; listed here so
   // stripInternalFields STRIPS a forged inbound value BEFORE the chokepoint reads
   // it — the exact strip-then-inject pattern `_agentId`/`_outwardStepIndex` use, so
   // a jailed/external caller cannot forge mode:"max" to perturb the deny-vs-escalate
   // decision. Agent-origin-only by construction; absent ⇒ the chokepoint fail-closes
-  // to "default" (EVICT-02). Sorted position: after `_agentId` — JS `.sort()` (and
+  // to "default". Sorted position: after `_agentId` — JS `.sort()` (and
   // localeCompare) order "_agentId" < "_autonomyMode" (the 2nd char 'g' < 'u'), the
   // canonical order the colocated self-check test enforces.
   "_autonomyMode",
@@ -34,8 +34,8 @@ export const INTERNAL_FIELD_NAMES = [
   "_callerChannelType",
   "_callerMetadata",
   "_callerSessionKey",
-  // The trusted in-process caller's resolved orchestration capabilities
-  // (Phase 210). Injected by createAgentRpcCall / the 211 lease endpoint;
+  // The trusted in-process caller's resolved orchestration capabilities.
+  // Injected by createAgentRpcCall / the capability lease endpoint;
   // stripped from external WS/REST callers so caps cannot be forged.
   "_capabilities",
   "_channelType",
@@ -43,15 +43,16 @@ export const INTERNAL_FIELD_NAMES = [
   "_context",
   "_deliveryTarget",
   "_originChannelId",
-  // The monotonic outward-send index (Phase 216, NEW-3/HIGH-1). Allocated by
+  // The monotonic outward-send index. Allocated by
   // durableRuns.allocateOutwardStep at the TRUSTED cap chokepoint (the jail leg
   // in setup-capability-endpoint.ts + the in-process leg in
   // setup-tools-capabilities.ts) and injected as `_outwardStepIndex` for the
   // outward message methods. Listed here so stripInternalFields STRIPS a forged
   // inbound value BEFORE the chokepoint re-injects the trusted allocated one —
   // the exact strip-then-inject pattern `_agentId` uses, so a jailed script
-  // cannot forge the index to self-collide its own send (inverting ONCE-02) or
-  // perturb outward ordering. Agent-origin-only by construction.
+  // cannot forge the index to self-collide its own send (defeating the outward-
+  // send ledger's idempotency-key dedup) or perturb outward ordering.
+  // Agent-origin-only by construction.
   "_outwardStepIndex",
   "_sessionKey",
   "_tenantId",

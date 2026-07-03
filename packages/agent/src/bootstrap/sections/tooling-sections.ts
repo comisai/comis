@@ -13,7 +13,7 @@ import { getProviders } from "@earendil-works/pi-ai";
 
 /**
  * Build the residual one-liner pointing the model at the per-turn
- * `## Capabilities` block. The capability-index is now the only path.
+ * `## Capabilities` block. The capability-index is the only path.
  *
  * The wording below is normative — the per-turn `## Capabilities` block is
  * rendered into the dynamic preamble by `executor-prompt-runner.ts`.

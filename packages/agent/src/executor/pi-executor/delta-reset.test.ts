@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for createDeltaResetComposer (LAT-02, 177-03).
+ * Unit tests for createDeltaResetComposer.
  *
  * The composer is the ALWAYS-DEFINED bridge onDelta: it forwards stream
  * deltas to the optional channel callback AND resets the stall timer through
- * a LIVE ref (assigned later at onResetTimer — Pitfall 2), throttled ~1/s via
- * a hand-rolled clock compare (R-7: no timer churn per token).
+ * a LIVE ref (assigned later at the onResetTimer hand-off), throttled ~1/s
+ * via a hand-rolled clock compare (no timer churn per token).
  *
- * LAT-02-W-4 (the gating fixture) is intentionally OMITTED: the 177-01
- * DECISION records gate_scope: all-providers — no `enabled` flag exists on
- * the composer, so there is no local-gated branch to pin.
+ * A gating fixture is intentionally OMITTED: the composer applies to ALL
+ * providers — no `enabled` flag exists on it, so there is no local-gated
+ * branch to pin.
  *
  * @module
  */
@@ -28,8 +28,8 @@ function makeManualClock(startMs = 0): ClockPort & { set(ms: number): void; adva
   };
 }
 
-describe("createDeltaResetComposer (LAT-02)", () => {
-  it("LAT-02-W-1: forwards (delta, kind) to the channel callback AND resets for BOTH kinds — thinking deltas count as activity", () => {
+describe("createDeltaResetComposer", () => {
+  it("forwards (delta, kind) to the channel callback AND resets for BOTH kinds — thinking deltas count as activity", () => {
     // text delta
     const clock = makeManualClock();
     const channel = vi.fn();
@@ -59,7 +59,7 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     expect(reset2).toHaveBeenCalledTimes(1);
   });
 
-  it("LAT-02-W-2: ~1/s throttle — 50 deltas in 500ms reset exactly once; a delta at +1000ms resets again (first delta always resets)", () => {
+  it("~1/s throttle — 50 deltas in 500ms reset exactly once; a delta at +1000ms resets again (first delta always resets)", () => {
     const clock = makeManualClock();
     const reset = vi.fn();
     const onDelta = createDeltaResetComposer({}, {
@@ -82,7 +82,7 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     expect(reset).toHaveBeenCalledTimes(2);
   });
 
-  it("LAT-02-W-3: live-ref (Pitfall 2) — a delta before onResetTimer assignment is a correct no-op; after assignment the next unthrottled delta resets; channelOnDelta undefined stays callable", () => {
+  it("live-ref — a delta before onResetTimer assignment is a correct no-op; after assignment the next unthrottled delta resets; channelOnDelta undefined stays callable", () => {
     const clock = makeManualClock();
     let liveResetRef: (() => void) | undefined;
     // Always-defined contract: built with NO channel callback, still callable.
@@ -100,17 +100,17 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     const reset = vi.fn();
     liveResetRef = reset;
     // The early delta consumed the throttle window — advance past it so this
-    // test isolates the live-ref behavior from LAT-02-W-2's throttle pin.
+    // test isolates the live-ref behavior from the throttle pin above.
     clock.advance(1_000);
     onDelta("after assignment", "text");
     expect(reset).toHaveBeenCalledTimes(1);
   });
 
-  // LAT-02-W-4 intentionally omitted: 177-01 DECISION gate_scope =
-  // all-providers — the composer has no `enabled` flag (no local-gated branch
-  // exists to fixture). See 177-01-SUMMARY.md DECISION block.
+  // A gating fixture is intentionally omitted: the composer applies to ALL
+  // providers — it has no `enabled` flag, so no local-gated branch exists to
+  // fixture.
 
-  it("177-REVIEW WR-03: a THROWING channel callback cannot disable the stall reset — the reset fires BEFORE the forward on every delta", () => {
+  it("a THROWING channel callback cannot disable the stall reset — the reset fires BEFORE the forward on every delta", () => {
     const clock = makeManualClock();
     const reset = vi.fn();
     const throwingChannel = vi.fn(() => {
@@ -126,8 +126,8 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     // owns the swallow) — but the reset MUST already have fired. Pre-patch
     // the forward ran FIRST, so its throw skipped the reset on EVERY delta:
     // a turn streaming visibly (text-only, no tool calls) then died at the
-    // stall budget despite continuous activity — the false-kill class LAT-02
-    // exists to eliminate, re-opened by one faulty channel callback.
+    // stall budget despite continuous activity — the exact false-kill class
+    // this composer exists to eliminate, re-opened by one faulty channel callback.
     expect(() => { onDelta("tok", "text"); }).toThrow("channel streaming callback broke");
     expect(reset).toHaveBeenCalledTimes(1);
 
@@ -137,7 +137,7 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     expect(reset).toHaveBeenCalledTimes(2);
   });
 
-  it("177-REVIEW WR-04: a backwards wall-clock step re-baselines the throttle — resets resume within ONE throttle window instead of starving for the step duration", () => {
+  it("a backwards wall-clock step re-baselines the throttle — resets resume within ONE throttle window instead of starving for the step duration", () => {
     const clock = makeManualClock();
     const reset = vi.fn();
     const onDelta = createDeltaResetComposer({}, {

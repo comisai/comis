@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-conversation single-flight ingest serializer (Plan 132-04, R3).
+ * Per-conversation single-flight ingest serializer.
  *
- * C4 makes the afterTurn leaf + condense compaction passes DEFERRED — they run
- * detached off the turn so afterTurn returns before the compaction's store write
+ * The afterTurn leaf + condense compaction passes run DEFERRED — detached off the
+ * turn, so afterTurn returns before the compaction's store write
  * completes. That introduces a SECOND writer to a conversation's lossless store
  * (the deferred compaction) which can race the NEXT turn's synchronous ingest on
  * the `(conversation_id, agent_id, tenant_id, seq)` unique index and the
- * `lcd_context_items` ordinals (Pitfall 2). This serializer is the integrity
+ * `lcd_context_items` ordinals. This serializer is the integrity
  * boundary between them: BOTH the live ingest write AND the deferred compaction
  * write enqueue onto a per-conversation `PQueue({ concurrency: 1 })`, so on one
  * conversation they are strictly one-at-a-time and can never interleave.
@@ -22,7 +22,7 @@
  * AGENTS.md §2.4 forbids importing the infra logger directly. This module ONLY
  * orders writes — it does NOT log. The serialized-ingest-wait observability
  * (WARN + `context:dag_degraded`) is added agent-side where the injected
- * `ComisLogger` exists (Plan 132-04 Task 3); the serializer stays a silent
+ * `ComisLogger` exists; the serializer stays a silent
  * ordering seam.
  *
  * `p-queue` is a `@comis/memory` dependency (the agent has none — the agent
@@ -59,7 +59,7 @@ export interface IngestSerializer {
  * `concurrency: 1` (single-flight). Queues are lazily created on first use for a
  * conversation and retained for the process lifetime (the conversation set is
  * bounded by the active sessions; an unbounded-growth eviction policy is a
- * deferred Phase-133/O1 concern, not a correctness issue here).
+ * deferred concern, not a correctness issue here).
  */
 export function createIngestSerializer(): IngestSerializer {
   // One single-flight queue per conversationId. Lazily created; never a single

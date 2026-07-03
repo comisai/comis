@@ -51,16 +51,16 @@ import type {
 } from "./executor-tool-assembly-types.js";
 
 // ---------------------------------------------------------------------------
-// C3 (Plan 152-04): per-capability-class preamble WARN thresholds + deferred-tools caps
+// Per-capability-class preamble WARN thresholds + deferred-tools caps
 // ---------------------------------------------------------------------------
 
 /**
- * C3: Preamble WARN threshold (tokens) per capability class.
+ * Preamble WARN threshold (tokens) per capability class.
  * Warn when cachedFreshTailPreambleTokens exceeds this fraction of the
  * effective context window. frontier: Infinity (never warn). small/nano:
  * tight budget (~10% of effective window is a notable preamble spend).
  *
- * Exported (A1, Phase 176 FLOOR-01): context-engine/viable-floor.ts consumes
+ * Exported: context-engine/viable-floor.ts consumes
  * this table as the freshTailReserve term of the boot minViable equation —
  * the codebase's single per-class number for expected preamble size.
  */
@@ -72,7 +72,7 @@ export const PREAMBLE_WARN_THRESHOLD_BY_CLASS: Readonly<Record<CapabilityClass, 
 } as const;
 
 /**
- * C3: Max deferred-tools entries emitted in the preamble per capability class.
+ * Max deferred-tools entries emitted in the preamble per capability class.
  * frontier: unlimited (Infinity). small/nano: cap to avoid bloating preamble.
  */
 const DEFERRED_TOOLS_MAX_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
@@ -83,7 +83,7 @@ const DEFERRED_TOOLS_MAX_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Types — extracted to executor-tool-assembly-types.ts (file-size cap, Phase 153)
+// Types — extracted to executor-tool-assembly-types.ts (file-size cap)
 // ---------------------------------------------------------------------------
 
 export type {
@@ -93,14 +93,14 @@ export type {
 } from "./executor-tool-assembly-types.js";
 
 // ---------------------------------------------------------------------------
-// TOK-01 (Phase 179): script-aware system-tokens estimate
+// Script-aware system-tokens estimate
 // ---------------------------------------------------------------------------
 
-/** System-tokens estimate with script-aware effective chars (TOK-01).
+/** System-tokens estimate with script-aware effective chars.
  *  systemPrompt text gets its own factor (recalled content can be non-Latin);
  *  the tool-def overhead is an aggregate char count (machine-Latin JSON) and
  *  rides flat. ONE ceil over the summed effective chars — per-term ceils would
- *  inflate ASCII results and break the I1 byte-identity pin. Shared by the
+ *  inflate ASCII results and break byte-identity with a flat sum. Shared by the
  *  pre-deferral AND post-deferral (#190) sites so the two estimates cannot
  *  drift — the same anti-drift rule as the tool-overhead.ts extraction. */
 function estimateSystemTokensFactored(systemPrompt: string, toolOverheadChars: number): number {
@@ -133,7 +133,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resolvedModel, modelCompat, modelProfile: modelProfileParam, windowProvenance, agentId, safetyReinforcement, _directives,
   } = params;
 
-  const effectiveWorkspaceDir = executionOverrides?.workspaceDir ?? deps.workspaceDir; // WT-01: worktree jail when present.
+  const effectiveWorkspaceDir = executionOverrides?.workspaceDir ?? deps.workspaceDir; // Worktree jail when present.
 
   // -------------------------------------------------------------------
   // 1. Merge per-request tools (AgentTool[]) with deps.customTools
@@ -258,7 +258,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     "Settings manager initialized",
   );
 
-  // 3b. Degenerate-window compact-prompt budget (2026-06-22 root-cause fix). The
+  // 3b. Degenerate-window compact-prompt budget. The
   // system prompt is NON-EVICTABLE; on a window smaller than the full prompt (an
   // ~8K mid-class model whose ~10K prompt overflows even after every tool defers —
   // compact-secure never fires for mid/frontier), the pre-flight would throw
@@ -283,7 +283,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const promptResult = await assembleExecutionPrompt({
     config,
     deps: {
-      workspaceDir: effectiveWorkspaceDir, // WT-01: AGENTS.md/BOOT.md from the run's working tree.
+      workspaceDir: effectiveWorkspaceDir, // AGENTS.md/BOOT.md from the run's working tree.
       // Forward the data dir so the recall-trace recorder's base resolves
       // from the same source as the memory.recall_trace reader.
       dataDir: deps.dataDir,
@@ -302,20 +302,17 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       tripleStore: deps.tripleStore,
       embeddingStore: deps.embeddingStore,
       usefulnessStore: deps.usefulnessStore,
-      // R6: forward the pinned-memory store so the recall pipeline's Step-0 pinned-first
+      // Forward the pinned-memory store so the recall pipeline's Step-0 pinned-first
       // lane can fire. A missing forward here is a silent no-op: the gate
       // `cfg_pinned?.enabled === true && deps.pinnedStore !== undefined` never passes
       // and pinned entries are never prepended to recall results even when the operator
       // has set `rag.pinned.enabled: true` and pinned memories in the DB.
       pinnedStore: deps.pinnedStore,
-      // FOLD-01 (Phase 225): forward the mental-model store — the kind:"profile" source for the
-      // rewired <user_profile> block (prompt-assembly's deps.mentalModelStore.list(scope,"profile")
-      // → buildProfileBlock; the standalone userRepresentationStore was deleted in Plan 05). A
-      // missing forward here is a silent no-op (the profile block never renders even with the store
-      // wired daemon-side — the documented field-plumbing drop, Pitfall 1).
+      // Forward the mental-model store — the kind:"profile" source for the
+      // <user_profile> block (prompt-assembly's deps.mentalModelStore.list(scope,"profile")
+      // → buildProfileBlock). A missing forward here is a silent no-op (the profile
+      // block never renders even with the store wired daemon-side).
       mentalModelStore: deps.mentalModelStore,
-      // (The directional relationshipStore forward was DELETED in Phase 226-04 with the rest of
-      //  the social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,
@@ -360,11 +357,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resolvedModelReasoning: resolvedModel?.reasoning,
     // "interactive" default guards the optional overrides; mirrors pi-executor.ts:1077.
     operationType: executionOverrides?.operationType ?? "interactive",
-    // C2/S1: Forward ModelProfile to prompt-assembly.ts for compact-secure mode selection.
+    // Forward ModelProfile to prompt-assembly.ts for compact-secure mode selection.
     // modelProfileParam is the validated ModelProfile resolved at pi-executor.ts:323;
-    // it is undefined when the executor has no profile resolution (rare legacy path).
+    // it is undefined when the executor has no profile resolution (rare path).
     modelProfile: modelProfileParam,
-    // Degenerate-window compact-prompt fallback budget (2026-06-22): when the full
+    // Degenerate-window compact-prompt fallback budget: when the full
     // prompt can't fit this window, assembleExecutionPrompt falls back to
     // compact-secure so the agent still runs instead of context-exhausting on its
     // fixed overhead. Only engages in the genuinely-degenerate case (normal windows
@@ -375,22 +372,22 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // -------------------------------------------------------------------
   // 5. System token estimate
   // -------------------------------------------------------------------
-  // I8 (Phase 176 FLOOR-01): the char-overhead reduce lives in tool-overhead.ts —
+  // The char-overhead reduce lives in tool-overhead.ts —
   // shared with the boot viable-floor so the two estimates cannot drift.
   const toolDefOverheadCharsValue = toolDefOverheadChars(mergedCustomTools);
   // Computed over the PRE-deferral set here so the input-independent windowTokens
   // (computeTokenBudgetForProfile below) has a value; RECOMPUTED over the
   // post-deferral active set after applyToolDeferral so the history-budget
   // partition + pre-flight fit check reserve for the tools that actually ship,
-  // not the ~58 deferred ones the stub filter strips from the wire (live UC-2
-  // finding, 2026-06-12: the pre-deferral 82-tool estimate over-reserved ~16K and
+  // not the ~58 deferred ones the stub filter strips from the wire (live
+  // finding: the pre-deferral 82-tool estimate over-reserved ~16K and
   // falsely context-exhausted multi-turn local-model sessions).
-  // TOK-01 (Phase 179): script-aware effective chars — see estimateSystemTokensFactored.
+  // Script-aware effective chars — see estimateSystemTokensFactored.
   let cachedSystemTokensEstimate = estimateSystemTokensFactored(
     promptResult.systemPrompt,
     toolDefOverheadCharsValue,
   );
-  // I1 / WR-01: the WHOLE fresh-tail preamble token estimate — the entire
+  // The WHOLE fresh-tail preamble token estimate — the entire
   // dynamicPreamble + inlineMemory blob envelope-wrapper prepends into the latest
   // user message (skills XML, MCP instructions, deferred-tools context, date/channel
   // lines, recalled memory, …, NOT just recall), measured as a SEPARATE budget
@@ -398,11 +395,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // The whole preamble is counted deliberately: it rides the unconditionally-shipped
   // fresh tail and is reserved nowhere else, so this is the only window-headroom
   // reservation for it (recall is a strict subset → a heavier recall block still
-  // grows this and compacts harder, preserving I1's intent). See token-budget.ts WR-01.
-  // TOK-01 (Phase 179): both terms are TEXT (the preamble carries recalled
+  // grows this and compacts harder). See token-budget.ts.
+  // Both terms are TEXT (the preamble carries recalled
   // memories/skills which can be non-Latin) — each term's chars divided by its
-  // own script factor, ONE ceil over the summed effective chars (I1: ASCII
-  // factors are 1.0 → byte-identical to the previous flat sum).
+  // own script factor, ONE ceil over the summed effective chars (ASCII
+  // factors are 1.0 → byte-identical to a flat sum).
   const inlineMemoryText = promptResult.inlineMemory ?? "";
   const cachedFreshTailPreambleTokens = Math.ceil(
     (promptResult.dynamicPreamble.length / scriptTokenFactor(promptResult.dynamicPreamble) +
@@ -449,10 +446,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   );
   const modelProfile = modelProfileParam ?? FAIL_CLOSED_PROFILE;
   const capabilityClass = modelProfile.capabilityClass;
-  // SD7 (Phase 159): resolve capacity defaults (bootstrapMaxChars + activeToolCeiling).
+  // Resolve capacity defaults (bootstrapMaxChars + activeToolCeiling).
   const capacityDefaults = resolveScaffoldDefaults(modelProfile, config);
 
-  // C3: preamble size guard — warn when preamble tokens exceed the profile cap.
+  // Preamble size guard — warn when preamble tokens exceed the profile cap.
   // This is a soft operator signal: the preamble is already assembled, but the
   // warn lets operators know they may want to reduce MCP tools or deferred-tools
   // list size for this capability class.
@@ -467,8 +464,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     }, "C3: preamble size exceeds profile cap");
   }
 
-  // C1 (Phase 152): profile-aware budget — 8K-starvation fix + 256K-overfill cap +
-  // KNOB-02 provenance. windowTokens is input-independent of the systemTokens args.
+  // Profile-aware budget — 8K-starvation fix + 256K-overfill cap + window
+  // provenance. windowTokens is input-independent of the systemTokens args.
   const profileBudget = computeTokenBudgetForProfile(
     modelProfile,
     cachedSystemTokensEstimate,
@@ -562,14 +559,14 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   }
 
   const deferralCtx: DeferralContext = {
-    // 260521-0bn: per-message trust resolution. Previously the deferral
-    // context used the GLOBAL `defaultTrustLevel` only, which meant
-    // `senderTrustMap` entries (e.g. {"678314278": "admin"}) never
-    // reached this code path — privileged tools like `mcp_manage`,
-    // `agents_manage`, `obs_query` (all 14 in `PRIVILEGED_TOOL_NAMES`)
-    // stayed in the deferred set even for explicitly-mapped admin users,
-    // forcing them through indirection tools. This now mirrors the
-    // resolution at packages/orchestrator/src/execution/execution-policy.ts:82:
+    // Per-message trust resolution. The deferral context must consult
+    // `senderTrustMap` entries (e.g. {"678314278": "admin"}), not just the
+    // GLOBAL `defaultTrustLevel` — otherwise privileged tools like
+    // `mcp_manage`, `agents_manage`, `obs_query` (all 14 in
+    // `PRIVILEGED_TOOL_NAMES`) stay in the deferred set even for
+    // explicitly-mapped admin users, forcing them through indirection
+    // tools. Mirrors the resolution at
+    // packages/orchestrator/src/execution/execution-policy.ts:82:
     //   elevCfg.senderTrustMap[senderId] ?? elevCfg.defaultTrustLevel
     trustLevel:
       config.elevatedReply?.senderTrustMap?.[msg.senderId]
@@ -587,7 +584,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     providerFamily: resolvedModel?.provider
       ? resolveProviderCapabilities(resolvedModel.provider).providerFamily
       : "default",
-    // SD7 (Phase 159): capability-class active-tool ceiling.
+    // Capability-class active-tool ceiling.
     activeToolCeiling: capacityDefaults.activeToolCeiling,
   };
   const deferralResult = applyToolDeferral(
@@ -619,7 +616,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     );
   }
 
-  // ROOT-CAUSE context-exhaustion guard (2026-06-22): applyToolDeferral defers
+  // Context-exhaustion guard: applyToolDeferral defers
   // by COUNT (activeToolCeiling / CORE_TOOLS heuristic) and never against a token
   // budget — its `_contextWindow` arg is ignored. So on a small window a large
   // system prompt + even a CORE_TOOLS-only active set can exceed effectiveWindow −
@@ -632,8 +629,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // budget, refining deferralResult in place (incl. rebuilding discover_tools over
   // the new deferred set). Dropped tools stay reachable via discover_tools (no
   // capability loss for adequate windows). The fixed S term is non-evictable, so
-  // the degenerate window<S case still throws — but Part 2/3 make THAT honest
-  // (cause: fixed_overhead_exceeds_window), never "your message is too big". The
+  // the degenerate window<S case still throws — but with the honest cause
+  // (fixed_overhead_exceeds_window), never "your message is too big". The
   // headroom mirrors lcd-preflight.ts exactly (same reasoningStyle / thinkingLevel
   // / minVisibleFloor) so the two passes agree. The headroom + floor + window are
   // the SAME values computed once in step 3b (fitWindowBudget) — reused here so the
@@ -660,13 +657,13 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // the auto-discovery stubs added below, which the stub filter strips from the
   // wire). The pre-deferral estimate above counted every registered tool, so a
   // small-class agent that defers most of its surface over-reserved budget and
-  // falsely context-exhausted multi-turn sessions (live UC-2 finding, 2026-06-12).
+  // falsely context-exhausted multi-turn sessions (observed in a live session).
   // windowTokens is input-independent of this value, so the earlier budget call's
   // window is unaffected; only the downstream history partition + fit check use
   // this corrected, smaller reservation.
-  // TOK-01 (#190 third site): the recompute MUST use the same factored helper as
-  // the pre-deferral estimate — a flat recompute here would silently UNDO the
-  // script factor right before the history partition + fit check consume it.
+  // The recompute (the third char→token site, #190) MUST use the same factored
+  // helper as the pre-deferral estimate — a flat recompute here would silently
+  // UNDO the script factor right before the history partition + fit check consume it.
   cachedSystemTokensEstimate = estimateSystemTokensFactored(
     promptResult.systemPrompt,
     toolDefOverheadChars(mergedCustomTools),
@@ -696,7 +693,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // gated there by a model-id capability check. See tool-deferral.ts JSDoc
   // on `buildDeferredToolsContext` for the rationale.
   //
-  // C3: cap deferred-tools list for small/nano to bound preamble size.
+  // Cap the deferred-tools list for small/nano to bound preamble size.
   // frontier/mid: DEFERRED_TOOLS_MAX_BY_CLASS[class] = Infinity → pass undefined (no cap).
   const deferredToolsMax = DEFERRED_TOOLS_MAX_BY_CLASS[capabilityClass];
   let deferredContext = "";
@@ -742,7 +739,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       provider: resolvedModel.provider,
       modelId: resolvedModel.id,
       compat: modelCompat,
-      // AUTHOR-03 (CR-01): thread the gbnfConstrain authoring gate end-to-end.
+      // Thread the gbnfConstrain authoring gate end-to-end.
       // The flag lives on the top-level AppConfig (config.orchestration.authoring),
       // NOT PerAgentConfig — so it arrives via a deps resolver that reads
       // container.config live (runtime-mutable; see getGbnfConstrain JSDoc).
@@ -751,7 +748,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     });
   }
 
-  // GBNF-02 / CR-02: re-apply the session's reactive pattern/format strip
+  // Re-apply the session's reactive pattern/format strip
   // AFTER normalization — the per-turn snapshot→normalize rebuild constructs
   // fresh parameter objects, so a strip that healed turn N must be re-applied
   // here or turn N+1 re-sends the rejected keywords and (with the once-gate
@@ -771,7 +768,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     capabilityIndexResult,
     deliveredGuides,
     capabilityClass,
-    // SUMW-02: the per-turn budget window (min(reconciled contextWindow, class
+    // The per-turn budget window (min(reconciled contextWindow, class
     // cap)) — the single-sourced contextWindow (== fitWindowBudget.effectiveWindow),
     // the same value the pre-flight throws on and every budget computation reports.
     budgetWindowTokens: contextWindow,

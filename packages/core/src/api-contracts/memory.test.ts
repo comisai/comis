@@ -5,10 +5,6 @@
  * Covers the memory-handlers.ts contracts (8 methods) + the 4 admin-scoped
  * diagnostic contracts that share the `MemoryApiDeps` cluster slice.
  *
- * NOTE (v2.12, Phase 126): the 7 `context.*` contracts (context-handlers.ts)
- * were removed with the DAG context engine; their per-contract tests were
- * deleted here.
- *
  * @module
  */
 import { describe, it, expect } from "vitest";
@@ -37,13 +33,10 @@ describe("memory + context domain contracts", () => {
   // -------------------------------------------------------------------------
 
   it("MEMORY_CONTRACTS has exactly 17 entries (9 memory + 2 portability + 2 pinning + 4 diagnostics)", () => {
-    // The diagnostics cross-wave seam was closed (the 4 MEMORY_DIAGNOSTIC_CONTRACTS).
-    // The memory.ask cross-wave seam was closed too: MemoryAskContract is spread in.
-    // The v1.7 milestone added the portability (export/import) and pinning (pin/unpin)
-    // contracts — spread in via MEMORY_PORTABILITY_CONTRACTS + MEMORY_PINNING_CONTRACTS —
-    // in the same diffs that landed their daemon handlers, so the registry ↔ handler
-    // set stays 1:1. The 7 context.* contracts were removed in v2.12 (Phase 126) with
-    // the DAG context engine (reintroduced fresh as LCD tools, not RPC contracts).
+    // The portability (export/import), pinning (pin/unpin), diagnostic, and
+    // memory.ask contracts are spread in alongside the core memory-handlers.ts
+    // contracts; every entry has a matching daemon handler, so the registry ↔
+    // handler set stays 1:1.
     expect(MEMORY_CONTRACTS.length).toBe(17);
   });
 
@@ -59,7 +52,8 @@ describe("memory + context domain contracts", () => {
     expect(methods.has("memory.delete")).toBe(true);
     expect(methods.has("memory.flush")).toBe(true);
     expect(methods.has("memory.export")).toBe(true);
-    // context.* methods were removed in v2.12 (Phase 126).
+    // No context.* RPC methods exist in the memory domain (context expansion
+    // is served by LCD tools, not RPC contracts).
     expect(methods.has("context.search")).toBe(false);
     expect(methods.has("context.recall")).toBe(false);
   });
@@ -68,7 +62,7 @@ describe("memory + context domain contracts", () => {
     // memory-handlers.ts scopes
     expect(MemorySearchFilesContract.scopes).toEqual(["rpc"]);
     expect(MemoryGetFileContract.scopes).toEqual(["rpc"]);
-    // MD-02: memory.store is rpc-scoped (agent-reachable; the memory_store tool).
+    // memory.store is rpc-scoped (agent-reachable; the memory_store tool).
     expect(MemoryStoreContract.scopes).toEqual(["rpc"]);
     expect(MemoryStatsContract.scopes).toEqual(["admin"]);
     expect(MemoryBrowseContract.scopes).toEqual(["admin"]);
@@ -302,26 +296,16 @@ describe("memory + context domain contracts", () => {
     ).not.toThrow();
   });
 
-  // NOTE (v2.12, Phase 126): the per-contract tests for the 7 context.*
-  // contracts (context.search / .inspect / .recall / .expand / .conversations /
-  // .tree / .searchByConversation) were removed here — those contracts were
-  // deleted with the DAG context engine. The LCD engine reintroduces a fresh
-  // context-expansion contract surface in Phase 131.
 });
 
 // ===========================================================================
 // Admin-scoped memory diagnostic RPC contracts.
 //
-// Interface-first: these four contracts shipped here so the daemon handlers
-// + CLI had the request/response shapes in hand. They are grouped in their
-// OWN `MEMORY_DIAGNOSTIC_CONTRACTS` array and were deliberately NOT yet folded
-// into `MEMORY_CONTRACTS` (the registry that feeds `API_CONTRACTS`): the
-// bidirectional 1:1 + contract-handler-parity architecture tests require every
-// API_CONTRACTS entry to have a MIGRATED daemon handler, so registering them
-// before the handlers existed would RED-gate the whole repo between waves.
-// MEMORY_DIAGNOSTIC_CONTRACTS is spread into MEMORY_CONTRACTS in the same
-// diff that lands the handlers — keeping the registry↔handler set 1:1 at all
-// times. See the SUMMARY "Cross-wave seam" note.
+// The four diagnostic contracts are grouped in their OWN
+// `MEMORY_DIAGNOSTIC_CONTRACTS` array and spread into `MEMORY_CONTRACTS`
+// (the registry that feeds `API_CONTRACTS`); each has a matching daemon
+// handler, which the bidirectional 1:1 + contract-handler-parity
+// architecture tests require of every API_CONTRACTS entry.
 // ===========================================================================
 
 describe("memory diagnostic contracts — admin-scoped", () => {
@@ -332,11 +316,10 @@ describe("memory diagnostic contracts — admin-scoped", () => {
     }
   });
 
-  it("the 4 diagnostic contracts are now IN MEMORY_CONTRACTS (cross-wave seam closed)", () => {
-    // ...MEMORY_DIAGNOSTIC_CONTRACTS was spread into MEMORY_CONTRACTS in the
-    // SAME diff that landed the daemon handlers (and removed the
-    // @contract-deferred-handler annotations), so each is now registered and
-    // the contract-handler-parity + bidirectional gates pass with 1:1 parity.
+  it("the 4 diagnostic contracts are registered in MEMORY_CONTRACTS", () => {
+    // ...MEMORY_DIAGNOSTIC_CONTRACTS is spread into MEMORY_CONTRACTS; each has
+    // a daemon handler, so the contract-handler-parity + bidirectional gates
+    // pass with 1:1 parity.
     const registered = new Set(MEMORY_CONTRACTS.map((c) => c.method));
     for (const method of [
       "memory.recall_trace",
@@ -346,7 +329,7 @@ describe("memory diagnostic contracts — admin-scoped", () => {
     ]) {
       expect(
         registered.has(method),
-        `${method} must be IN MEMORY_CONTRACTS now that its handler landed`,
+        `${method} must be IN MEMORY_CONTRACTS (its daemon handler exists)`,
       ).toBe(true);
     }
   });
@@ -397,8 +380,8 @@ describe("memory diagnostic contracts — admin-scoped", () => {
 
   it("memory.recall_trace: rejects a non-integer, negative, or oversized limit (bounded limit)", () => {
     // The diagnostic `limit` must be a positive integer with a sane cap
-    // (defense-in-depth — a malformed bound used to flow straight into the
-    // file scan / `LIMIT ?`). A small positive integer still parses.
+    // (defense-in-depth — a malformed bound would otherwise flow straight
+    // into the file scan / `LIMIT ?`). A small positive integer still parses.
     expect(() =>
       MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 50 }),
     ).not.toThrow();
@@ -559,12 +542,10 @@ describe("memory diagnostic contracts — admin-scoped", () => {
 // ===========================================================================
 // memory.ask — the dialectic grounded-Q&A contract.
 //
-// CROSS-WAVE SEAM (now closed): the contract SHAPE shipped first with a
-// `@contract-deferred-handler` tag, kept OUT of `MEMORY_CONTRACTS` until
-// its daemon handler existed. The `[MemoryAskContract.method]:`
-// handler later landed in memory-handlers.ts and, in the SAME diff, spread the
-// contract into MEMORY_CONTRACTS + removed the tag — so the registry ↔ handler
-// set is 1:1 by construction (contract-handler-parity + bidirectional 1:1 both green).
+// The contract is spread into `MEMORY_CONTRACTS` and has a matching
+// `[MemoryAskContract.method]:` daemon handler in memory-handlers.ts, so the
+// registry ↔ handler set stays 1:1 (the contract-handler-parity +
+// bidirectional 1:1 gates require this of every registered contract).
 // ===========================================================================
 
 describe("memory.ask dialectic contract", () => {
@@ -599,11 +580,10 @@ describe("memory.ask dialectic contract", () => {
     ).not.toThrow();
   });
 
-  it("IS in MEMORY_CONTRACTS now that its handler landed (cross-wave seam closed)", () => {
-    // MemoryAskContract was spread into MEMORY_CONTRACTS in the SAME diff that
-    // landed its `[MemoryAskContract.method]:` daemon handler (and removed the
-    // @contract-deferred-handler tag), so it is now registered and the
-    // bidirectional 1:1 + contract-handler-parity gates require the handler present.
+  it("memory.ask is registered in MEMORY_CONTRACTS alongside its daemon handler", () => {
+    // MemoryAskContract is spread into MEMORY_CONTRACTS and has a matching
+    // `[MemoryAskContract.method]:` daemon handler, which the bidirectional
+    // 1:1 + contract-handler-parity gates require.
     const registered = new Set(MEMORY_CONTRACTS.map((c) => c.method));
     expect(registered.has("memory.ask")).toBe(true);
   });

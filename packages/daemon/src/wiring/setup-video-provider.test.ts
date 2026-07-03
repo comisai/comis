@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the video-provider SELECTION (RES-01/RES-03/CRED-01, Phase 188 / 190).
+ * Tests for the video-provider SELECTION.
  *
- * The selector selects the port ONCE at boot (the v2.20 keyless-summarizer
- * two-source firewall — the handler never re-derives). It mirrors
+ * The selector selects the port ONCE at boot (a two-source firewall — the handler
+ * never re-derives selection). It mirrors
  * setup-image-provider.ts:
  *   - explicit `fal` → the skills factory getter;
- *   - auto + main=google (GOOGLE_API_KEY) → the LIVE Veo adapter (Phase 190 / Plan
- *     01 — `port.id === "veo"`, available);
- *   - auto + main=xai (XAI_API_KEY) → the LIVE Grok adapter (Plan 02 — key-primary);
+ *   - auto + main=google (GOOGLE_API_KEY) → the LIVE Veo adapter
+ *     (`port.id === "veo"`, available);
+ *   - auto + main=xai (XAI_API_KEY) → the LIVE Grok adapter (key-primary);
  *     or, with no key but an oauthManager.hasCredentials("xai"), the defensive
- *     codex-shaped OAuth branch (A1 — forward-looking; no xai OAuth provider yet);
+ *     codex-shaped OAuth branch (forward-looking; no xai OAuth provider yet);
  *     or, with neither, honest-unavailable `auth_required` (never a misroute);
  *   - auto + a video-incapable main (openai) → honest-unavailable naming
  *     provider + FAL_KEY;
@@ -36,8 +36,8 @@ function makeSecretManager(keys: Record<string, string>): SecretManager {
 /**
  * A mock OAuthTokenManager exposing the two methods the grok key-or-OAuth seam
  * touches: `hasCredentials` (the credsAvailable + selector-branch gate) and
- * `getApiKey` (the per-call bearer the grok adapter resolves on execute). Copied
- * from setup-image-provider.test.ts:73-80 (the codex CRED-01 precedent). The
+ * `getApiKey` (the per-call bearer the grok adapter resolves on execute). Mirrors
+ * the codex precedent in setup-image-provider.test.ts. The
  * routing assertions only need `hasCredentials`; `getApiKey` is provided so a
  * downstream `execute()` would not throw on an absent method.
  */
@@ -115,7 +115,7 @@ describe("createVideoProviderSelector", () => {
     expect(port).toBe(sentinel);
   });
 
-  it("auto + main=google (GOOGLE_API_KEY present) → the LIVE Veo adapter (id 'veo', available — CRED-01)", () => {
+  it("auto + main=google (GOOGLE_API_KEY present) → the LIVE Veo adapter (id 'veo', available)", () => {
     const getPort = createVideoProviderSelector({
       videoGenConfig: { ...baseConfig, provider: "auto" },
       secretManager: makeSecretManager({ GOOGLE_API_KEY: "g-xxx" }),
@@ -125,10 +125,9 @@ describe("createVideoProviderSelector", () => {
     });
     const port = getPort();
     expect(port).toBeDefined();
-    // Phase 190 (Plan 03): the swap constructs the live createVeoVideoAdapter from
-    // the SAME GOOGLE_API_KEY the completion path uses (CRED-01 / I9) — no longer
-    // the honest-unavailable "Phase 190" placeholder. The Veo adapter is always
-    // available once constructed (isAvailable() === true).
+    // The selector constructs the live createVeoVideoAdapter from the SAME
+    // GOOGLE_API_KEY the completion path uses (no video-specific secret). The Veo
+    // adapter is always available once constructed (isAvailable() === true).
     expect(port!.id).toBe("veo");
     expect(port!.isAvailable()).toBe(true);
   });
@@ -160,16 +159,16 @@ describe("createVideoProviderSelector", () => {
       logger: createMockLogger(),
     });
     const port = getPort();
-    // Phase 190 (Plan 03): the swap constructs the live createGrokVideoAdapter from
-    // the XAI_API_KEY (key-primary — the proven path) — no longer the placeholder.
+    // The selector constructs the live createGrokVideoAdapter from the XAI_API_KEY
+    // (key-primary — the proven path).
     expect(port!.id).toBe("grok");
     expect(port!.isAvailable()).toBe(true);
   });
 
-  it("auto + main=xai, NO XAI_API_KEY but an oauthManager with hasCredentials('xai') → the LIVE Grok adapter via the defensive OAuth branch (A1)", () => {
-    // A1: no xai OAuth provider is registered in the codebase today, so this
+  it("auto + main=xai, NO XAI_API_KEY but an oauthManager with hasCredentials('xai') → the LIVE Grok adapter via the defensive OAuth branch", () => {
+    // No xai OAuth provider is registered in the codebase today, so this
     // branch is forward-looking. We mock the manager to PROVE the selector wires
-    // the key-or-OAuth contract structurally (CRED-01) — a future xai OAuth
+    // the key-or-OAuth contract structurally — a future xai OAuth
     // provider activates it with no further selector change.
     const oauthManager = mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(true) });
     const getPort = createVideoProviderSelector({

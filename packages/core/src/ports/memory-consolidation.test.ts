@@ -40,66 +40,64 @@ function makeObservation(): MemoryEntry {
 }
 
 /**
- * Phase 226 (SIMPLIFY-02) — `MemoryConsolidationStore` is TRIMMED to its LIVE
- * read/maintenance surface, NOT deleted.
+ * `MemoryConsolidationStore` is LIMITED to its LIVE read/maintenance surface.
  *
- * The consolidation CRON (the writer) was retired in phase 225, so its writer
- * methods — `listConsolidationCandidates`, `applyConsolidation`,
- * `foldIntoExisting`, `knnDistances` (the surprisal-gate read), `markReasoned`
- * (the deductive-only drain) — plus the candidate/plan input types
- * (`ConsolidationCandidate`, `ConsolidationPlan`, `ConsolidationFoldPlan`) are
- * DEAD (grep-proven: 0 live, non-test callers). They are cut.
+ * There is deliberately NO consolidation-writer surface on the port: no
+ * `listConsolidationCandidates`, `applyConsolidation`, `foldIntoExisting`,
+ * `knnDistances` (a surprisal-gate read), or `markReasoned` (a deductive-only
+ * drain), and no candidate/plan input types (`ConsolidationCandidate`,
+ * `ConsolidationPlan`, `ConsolidationFoldPlan`).
  *
- * KEPT (each has a live, NON-cron consumer that must keep working):
+ * KEPT (each has a live consumer that must keep working):
  *   - `listObservations`           — the `comis memory` observation listing CLI
  *                                    (daemon `memory.observations` handler).
- *   - `unlinkDeletedSources`       — DIST-05 deletion reconciliation
+ *   - `unlinkDeletedSources`       — deletion reconciliation
  *   - `purgeConsolidatedDerivedFrom` (`session.reset_conversation --memory`).
  *
  * The port stays type-only (mirrors the entity-store port): no zod, no
  * @comis/memory runtime import (the load-bearing agent↛memory build cut).
  */
-describe("MemoryConsolidationStore — trimmed to the live read/maintenance surface (SIMPLIFY-02)", () => {
-  it("KEEPS listObservations + the DIST-05 unlink/purge maintenance methods", () => {
+describe("MemoryConsolidationStore — limited to the live read/maintenance surface", () => {
+  it("KEEPS listObservations + the deletion-reconciliation unlink/purge maintenance methods", () => {
     expect(portSrc, "listObservations (the comis-memory CLI read) must stay on the port").toMatch(
       /\blistObservations\s*\(/,
     );
-    expect(portSrc, "unlinkDeletedSources (DIST-05) must stay on the port").toMatch(
+    expect(portSrc, "unlinkDeletedSources (deletion reconciliation) must stay on the port").toMatch(
       /\bunlinkDeletedSources\s*\(/,
     );
-    expect(portSrc, "purgeConsolidatedDerivedFrom (DIST-05) must stay on the port").toMatch(
+    expect(portSrc, "purgeConsolidatedDerivedFrom (deletion reconciliation) must stay on the port").toMatch(
       /\bpurgeConsolidatedDerivedFrom\s*\(/,
     );
   });
 
-  it("CUTS the dead consolidation-cron writer methods (writer retired in phase 225)", () => {
-    // Runtime RED proof: these FAIL on the pre-trim source (the methods still
-    // exist there). After the trim each must be GONE from the port interface.
-    expect(portSrc, "listConsolidationCandidates must be cut (dead writer surface)").not.toMatch(
+  it("declares NO consolidation-writer methods on the port surface", () => {
+    // Runtime guard: each writer method must be ABSENT from the port
+    // interface — the port exposes no consolidation-writer surface.
+    expect(portSrc, "listConsolidationCandidates must not be on the port (no writer surface)").not.toMatch(
       /\blistConsolidationCandidates\s*\(/,
     );
-    expect(portSrc, "applyConsolidation must be cut (dead writer surface)").not.toMatch(
+    expect(portSrc, "applyConsolidation must not be on the port (no writer surface)").not.toMatch(
       /\bapplyConsolidation\s*\(/,
     );
-    expect(portSrc, "foldIntoExisting must be cut (dead writer surface)").not.toMatch(
+    expect(portSrc, "foldIntoExisting must not be on the port (no writer surface)").not.toMatch(
       /\bfoldIntoExisting\s*\(/,
     );
-    expect(portSrc, "knnDistances must be cut (dead surprisal-gate read)").not.toMatch(
+    expect(portSrc, "knnDistances must not be on the port (no surprisal-gate read)").not.toMatch(
       /\bknnDistances\s*\(/,
     );
-    expect(portSrc, "markReasoned must be cut (dead deductive-only drain)").not.toMatch(
+    expect(portSrc, "markReasoned must not be on the port (no deductive-only drain)").not.toMatch(
       /\bmarkReasoned\s*\(/,
     );
   });
 
-  it("CUTS the orphaned candidate/plan input types", () => {
-    expect(portSrc, "ConsolidationCandidate type must be cut").not.toMatch(
+  it("declares NO consolidation candidate/plan input types", () => {
+    expect(portSrc, "ConsolidationCandidate type must not be declared").not.toMatch(
       /\binterface\s+ConsolidationCandidate\b/,
     );
-    expect(portSrc, "ConsolidationPlan type must be cut").not.toMatch(
+    expect(portSrc, "ConsolidationPlan type must not be declared").not.toMatch(
       /\binterface\s+ConsolidationPlan\b/,
     );
-    expect(portSrc, "ConsolidationFoldPlan type must be cut").not.toMatch(
+    expect(portSrc, "ConsolidationFoldPlan type must not be declared").not.toMatch(
       /\binterface\s+ConsolidationFoldPlan\b/,
     );
   });

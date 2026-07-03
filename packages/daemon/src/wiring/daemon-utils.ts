@@ -69,7 +69,7 @@ export function buildCronSchedule(kind: CronSchedule["kind"], params: Record<str
         tz: params.timezone as string | undefined,
       };
     case "in":
-      // Relative one-shot — seconds from now, timezone-free (CRON-IN-01).
+      // Relative one-shot — seconds from now, timezone-free.
       return { kind: "in" as const, seconds: params.schedule_in_seconds as number };
     default: {
       const _exhaustive: never = kind;

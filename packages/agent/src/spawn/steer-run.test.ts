@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * STEER-01 (Phase 175 Plan 02, Task 1) — steerRun() inject mechanism.
+ * steerRun() inject mechanism.
  *
  * steerRun is the live-child inject helper extracted from sub-agent-runner.ts
- * (which is over the §2.8 800-line cap). It resolves the RUNNING child's live
- * RunHandle via the A1-chosen lookup (175-00-SUMMARY:
- * `resolveActiveSession(deriveCompositeForRun(run))` — the SAME lookup killRun
+ * (which is over the 800-line module cap). It resolves the RUNNING child's live
+ * RunHandle via the composite lookup
+ * (`resolveActiveSession(deriveCompositeForRun(run))` — the SAME lookup killRun
  * uses for abort()) and calls the channel-path streaming-aware primitive:
  *   isStreaming() && !isCompacting() ? handle.steer(msg) : handle.followUp(msg)
  * (mirroring setup-and-route.ts:267) — NO killRun, NO spawn, NO run.status
@@ -31,7 +31,7 @@ import type { SubAgentRun } from "./sub-agent-runner.js";
 // Test doubles
 // ---------------------------------------------------------------------------
 
-/** A running sub-agent run fixture (the EXACT spawn shape, 175-00-SUMMARY). */
+/** A running sub-agent run fixture (the EXACT shape the spawn path produces). */
 function makeRun(overrides: Partial<SubAgentRun> = {}): SubAgentRun {
   return {
     runId: "run-1",
@@ -162,7 +162,7 @@ describe("steerRun — inject a steer message into a running sub-agent's live se
     // Structural assertion: a steer is a message, never a tool grant. SteerRunDeps
     // exposes only runs + the resolver/registry lookups + logger — there is no
     // tool-assembly / computeReachableToolNames / profile hook on the inject path.
-    // (The runtime denylist proof for a steered denied-tool request is Task 3.)
+    // (The runtime denylist for a steered denied-tool request is proven elsewhere.)
     const run = makeRun();
     const handle = makeHandle({ streaming: true });
     const deps = makeDeps({ run, handle });
@@ -176,7 +176,7 @@ describe("steerRun — inject a steer message into a running sub-agent's live se
 });
 
 // ---------------------------------------------------------------------------
-// WR-01 (175-REVIEW.md): end-to-end with the REAL registration key.
+// End-to-end with the REAL registration key.
 //
 // Every test above mocks the resolver to hand back the handle unconditionally,
 // so none exercised the REAL key formulas. This block wires a GENUINE
@@ -184,10 +184,10 @@ describe("steerRun — inject a steer message into a running sub-agent's live se
 // handle under the EXECUTOR's real registration key (pi-executor.ts:1152-1156)
 // — channelType = the runtime origin ("gateway" for a no-announce sub-agent),
 // userId = the sub-session channelId — then asserts steerRun resolves + injects
-// through it. RED before the WR-01 alignment (deriveCompositeForRun used
-// "sub-agent" as the channelType ⇒ key miss ⇒ {steered:false}); GREEN after.
+// through it. Guards against key drift: a deriveCompositeForRun that used
+// "sub-agent" as the channelType would key-miss and return {steered:false}.
 // ---------------------------------------------------------------------------
-describe("steerRun — end-to-end with the REAL executor registration key (WR-01)", () => {
+describe("steerRun — end-to-end with the REAL executor registration key", () => {
   const agentId = "researcher";
   const runId = "run-e2e-1";
   const subSessionChannelId = `sub-agent:${runId}`;

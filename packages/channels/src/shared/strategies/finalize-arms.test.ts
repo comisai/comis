@@ -2,10 +2,10 @@
 /**
  * Cross-strategy finalize-arm coverage.
  *
- * The per-strategy test files pin the §7.3 success/failure/trivial contract.
+ * The per-strategy test files pin the success/failure/trivial contract.
  * This file exercises the remaining reachable `TurnOutcome` arms — `silent`,
  * `aborted`, and `success_with_recovered_failures` — plus the `eventLabel`
- * fallback chain, so the strategy bodies meet the milestone coverage floor and
+ * fallback chain, so the strategy bodies meet the per-package coverage floor and
  * the keep-vs-delete decision is pinned for every outcome kind. The unreachable
  * exhaustive `never` defaults are exercised via the house pattern (an
  * out-of-union value cast through `as unknown`).

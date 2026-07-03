@@ -6,12 +6,12 @@
  * `image_generation` tool to the ChatGPT-backend Codex Responses endpoint and
  * parses the image SSE to base64. Every test mocks at the `fetch` /
  * `Response.body` boundary (a `ReadableStream` of SSE bytes) — NEVER the
- * network, NEVER a real ChatGPT login (Assumption A1: the live round-trip is
- * operator-opt-in UAT, deferred to Plan 02's `it.skipIf`).
+ * network, NEVER a real ChatGPT login (the live round-trip is an
+ * operator-opt-in UAT behind an `it.skipIf`).
  *
- * Covers CDX-02 (CF headers + Authorization), CDX-03 (body + partial/completed
- * SSE → base64; empty/failed/non-2xx/no-bearer → stopReason:"error"), and the
- * SEC-03 subset (no bearer / account-id / headers object in any log payload).
+ * Covers the CF headers + Authorization, the request body + partial/completed
+ * SSE → base64 (empty/failed/non-2xx/no-bearer → stopReason:"error"), and the
+ * secret-logging discipline (no bearer / account-id / headers object in any log payload).
  * @module
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -28,7 +28,7 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
-/** The hand-built codex image model the adapter (Plan 02) will pass. */
+/** The hand-built codex image model the adapter (`codex-image-adapter.ts`) passes. */
 function codexModel(): ImagesModel<"openai-codex-images"> {
   return {
     id: "gpt-image-1",
@@ -45,7 +45,8 @@ function codexModel(): ImagesModel<"openai-codex-images"> {
 /**
  * A codex JWT whose payload carries `chatgpt_account_id: "acct_123"` under the
  * `https://api.openai.com/auth` claim (base64url, header.payload.sig). The
- * bearer string itself is a SECRET — Test 7 asserts it never reaches a log.
+ * bearer string itself is a SECRET — the secret-logging-discipline tests
+ * below assert it never reaches a log.
  */
 const ACCOUNT_ID = "acct_123";
 const BEARER = (() => {
@@ -127,10 +128,10 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 1 — CDX-03: request body
+// Request body
 // ---------------------------------------------------------------------------
 
-describe("generateImagesCodex — request body (CDX-03)", () => {
+describe("generateImagesCodex — request body", () => {
   it("POSTs the hosted image_generation tool body to /codex/responses", async () => {
     const { captured } = stubFetch({
       body: sseStream(
@@ -152,22 +153,22 @@ describe("generateImagesCodex — request body (CDX-03)", () => {
     expect(body.input).toEqual([
       { role: "user", content: [{ type: "input_text", text: "a red cube" }] },
     ]);
-    // CDX-03: the Codex Responses endpoint 400s ("Instructions are required" —
+    // The Codex Responses endpoint 400s ("Instructions are required" —
     // VERIFIED LIVE) without a non-empty `instructions`. The working text path
     // (pi-ai) always sends one; the image path must too.
     expect(typeof body.instructions).toBe("string");
     expect((body.instructions as string).length).toBeGreaterThan(0);
-    // CDX-03: the endpoint 400s ("Store must be set to false" — VERIFIED LIVE)
+    // The endpoint 400s ("Store must be set to false" — VERIFIED LIVE)
     // unless store is explicitly false (the hosted-tool path is not storable).
     expect(body.store).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Task 1 — CDX-03: SSE partial + completed → base64
+// SSE partial + completed → base64
 // ---------------------------------------------------------------------------
 
-describe("generateImagesCodex — SSE base64 extraction (CDX-03)", () => {
+describe("generateImagesCodex — SSE base64 extraction", () => {
   it("prefers the completed b64_json over the partial image", async () => {
     stubFetch({
       body: sseStream(
@@ -215,10 +216,10 @@ describe("generateImagesCodex — SSE base64 extraction (CDX-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 1 — CDX-03: empty / failed → error
+// Empty / failed → error
 // ---------------------------------------------------------------------------
 
-describe("generateImagesCodex — empty/failed stream (CDX-03)", () => {
+describe("generateImagesCodex — empty/failed stream", () => {
   it("maps a stream with no image bytes to stopReason:error + empty_response", async () => {
     stubFetch({
       body: sseStream(
@@ -244,7 +245,7 @@ describe("generateImagesCodex — empty/failed stream (CDX-03)", () => {
     expect(res.stopReason).toBe("error");
   });
 
-  // WR-04 (184-REVIEW): a response.failed event carries the REAL cause in
+  // A response.failed event carries the REAL cause in
   // response.error.message (quota / content policy / auth). The transport must
   // surface that message (NOT discard it to the generic empty_response
   // fallback) so the shipped classifyImageError can map it to the right
@@ -290,8 +291,8 @@ describe("generateImagesCodex — empty/failed stream (CDX-03)", () => {
     expect(res.errorMessage).toContain("empty_response");
   });
 
-  it("surfaces the 4xx error BODY (not just the bare status) so the real cause is diagnosable (HTTP-400 incident)", async () => {
-    // A fast non-2xx (the live HTTP-400) — the transport must read the error
+  it("surfaces the 4xx error BODY (not just the bare status) so the real cause is diagnosable (live HTTP 400 incident)", async () => {
+    // A fast non-2xx (the live HTTP 400) — the transport must read the error
     // body so the REAL cause (e.g. an invalid model) reaches the caller's WARN,
     // not the bare "codex 400" the classifier collapsed to "non-image response".
     vi.stubGlobal(
@@ -314,7 +315,7 @@ describe("generateImagesCodex — empty/failed stream (CDX-03)", () => {
     expect(res.errorMessage).toContain("Invalid model");
   });
 
-  // IN-01 (184-REVIEW): a hostile/huge no-newline stream must not grow the SSE
+  // A hostile/huge no-newline stream must not grow the SSE
   // line buffer without bound. Past CODEX_SSE_MAX_BUFFER_BYTES the parser bails
   // to empty_response (honest degrade) instead of OOMing.
   it("caps the SSE line buffer and bails to empty_response on an unbounded no-newline stream", async () => {
@@ -343,10 +344,10 @@ describe("generateImagesCodex — empty/failed stream (CDX-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 1 — CDX-03: non-2xx / no body / thrown fetch / no bearer
+// Non-2xx / no body / thrown fetch / no bearer
 // ---------------------------------------------------------------------------
 
-describe("generateImagesCodex — failure branches (CDX-03)", () => {
+describe("generateImagesCodex — failure branches", () => {
   it("maps a non-2xx response to stopReason:error carrying the status", async () => {
     stubFetch({ body: null, status: 403 });
 
@@ -388,10 +389,10 @@ describe("generateImagesCodex — failure branches (CDX-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 1 — CDX-02: headers reach the request
+// Headers reach the request
 // ---------------------------------------------------------------------------
 
-describe("generateImagesCodex — headers (CDX-02)", () => {
+describe("generateImagesCodex — headers", () => {
   it("merges options.headers through and adds Authorization + SSE/JSON/beta headers", async () => {
     const { captured } = stubFetch({
       body: sseStream(
@@ -411,17 +412,17 @@ describe("generateImagesCodex — headers (CDX-02)", () => {
     expect(h.originator).toBe("codex_cli_rs");
     expect(h["ChatGPT-Account-ID"]).toBe(ACCOUNT_ID);
     expect(h["User-Agent"]).toMatch(/^codex_cli_rs\//);
-    // WR-01: the first-party SSE session headers ride options.headers through too.
+    // The first-party SSE session headers ride options.headers through too.
     expect(h["session-id"]).toBe(cfHeaders["session-id"]);
     expect(h["x-client-request-id"]).toBe(cfHeaders["session-id"]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// buildCodexImageHeaders — CDX-02 unit
+// buildCodexImageHeaders — unit
 // ---------------------------------------------------------------------------
 
-describe("buildCodexImageHeaders (CDX-02)", () => {
+describe("buildCodexImageHeaders", () => {
   it("builds the first-party codex identity from the JWT account-id", () => {
     const h = buildCodexImageHeaders(BEARER);
     expect(h.originator).toBe("codex_cli_rs");
@@ -433,10 +434,10 @@ describe("buildCodexImageHeaders (CDX-02)", () => {
     expect(h.Authorization).toBeUndefined();
   });
 
-  // WR-01 (184-REVIEW): the SDK's proven Codex Responses SSE path sends
+  // The SDK's proven Codex Responses SSE path sends
   // session-id + x-client-request-id (openai-codex-responses.js buildSSEHeaders)
-  // as part of the first-party request identity; the transport previously sent
-  // NEITHER. Match the SDK: both present, equal, and a valid UUID.
+  // as part of the first-party request identity.
+  // Match the SDK: both present, equal, and a valid UUID.
   it("sets matching session-id + x-client-request-id (first-party SSE identity)", () => {
     const h = buildCodexImageHeaders(BEARER);
     const sessionId = h["session-id"];
@@ -468,10 +469,10 @@ describe("buildCodexImageHeaders (CDX-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 1 — SEC-03 subset: no secret in any log payload
+// No secret in any log payload
 // ---------------------------------------------------------------------------
 
-describe("generateImagesCodex — secret-logging discipline (SEC-03 subset)", () => {
+describe("generateImagesCodex — secret-logging discipline", () => {
   it("never logs the bearer, the account-id, or a raw headers object on failure", async () => {
     stubFetch({ body: null, status: 403 });
     const cfHeaders = buildCodexImageHeaders(BEARER);
@@ -493,7 +494,7 @@ describe("generateImagesCodex — secret-logging discipline (SEC-03 subset)", ()
     expect(serialized).not.toContain(BEARER);
   });
 
-  // WR-04 surfaces response.failed.error.message as errorMessage for the
+  // The transport surfaces response.failed.error.message as errorMessage for the
   // classifier — but that raw provider message must NOT appear in any log
   // payload (it could in principle echo request content). The DEBUG line on the
   // failed branch carries only a static errorKind literal.

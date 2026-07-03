@@ -4,8 +4,6 @@
  *
  * Follows the existing section builder pattern from core-sections.ts:
  * receives pre-resolved parameters, returns string[] for preamble assembly.
- *
- * .
  */
 import type { VerbosityConfig, VerbosityLevel } from "@comis/core";
 

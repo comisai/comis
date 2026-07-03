@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Coverage tests for HANDLER_CAPABILITY_MAP (CAP-04 source-of-truth).
+ * Coverage tests for HANDLER_CAPABILITY_MAP (the single method→capability source-of-truth).
  *
  * Asserts the map classifies every orchestration-core method correctly and
  * that no value is a typo'd capability. The companion arch-test
@@ -42,7 +42,7 @@ describe("HANDLER_CAPABILITY_MAP", () => {
     const cronMutating = ["cron.add", "cron.update", "cron.remove", "cron.run"];
     for (const m of cronMutating) expect(HANDLER_CAPABILITY_MAP[m]).toBe("orch:cron");
 
-    // 210-GAP / §3.5: orch:message exposes ONLY the genuinely-outward send
+    // orch:message exposes ONLY the genuinely-outward send
     // subset (send/reply/react). edit/delete/fetch/attach stay admin-only
     // (deny-by-origin) and are NOT part of the cap.
     const messageOutward = ["message.send", "message.reply", "message.react"];
@@ -61,7 +61,7 @@ describe("HANDLER_CAPABILITY_MAP", () => {
     for (const m of skillsMutating) expect(HANDLER_CAPABILITY_MAP[m]).toBe("orch:skill");
   });
 
-  it("210-GAP MD-01: the arbitrary-session lifecycle ops (in-handler admin check) are deny-by-origin; the agent-reachable reads are ungated", () => {
+  it("classifies the arbitrary-session lifecycle ops (in-handler admin check) as deny-by-origin and the agent-reachable reads as ungated", () => {
     // delete/export/reset_conversation carry an in-handler _trustLevel === "admin"
     // check and target an ARBITRARY session by key → genuine control plane.
     for (const m of ["session.delete", "session.export", "session.reset_conversation"]) {
@@ -87,24 +87,24 @@ describe("HANDLER_CAPABILITY_MAP", () => {
   it("classifies read-only orchestration methods as ungated (proves the three-way classification is real)", () => {
     // At least one read-only method per family is explicitly ungated. Adding a
     // gated method without classifying it must NOT silently inherit a cap.
-    // (message.fetch is NOT here — §3.5 keeps it admin-only / deny-by-origin.)
+    // (message.fetch is NOT here — it stays admin-only / deny-by-origin.)
     expect(HANDLER_CAPABILITY_MAP["session.list"]).toBe("ungated");
     expect(HANDLER_CAPABILITY_MAP["graph.list"]).toBe("ungated");
     expect(HANDLER_CAPABILITY_MAP["cron.list"]).toBe("ungated");
     expect(HANDLER_CAPABILITY_MAP["skills.list"]).toBe("ungated");
   });
 
-  it("INTRO-02 (Phase 215): capabilities.introspect is ungated — read-only, agent-reachable, NO cap", () => {
+  it("capabilities.introspect is ungated — read-only, agent-reachable, NO cap", () => {
     // The agent can query its OWN caps + remaining budget with no cap required
     // (the read-only "ungated" class, beside session.status). The contract is
-    // scopes:["rpc"]; the handler (Plan 04) enforces _agentId self-scope, NOT a
+    // scopes:["rpc"]; the handler enforces _agentId self-scope, NOT a
     // requireCapability gate.
     expect(HANDLER_CAPABILITY_MAP["capabilities.introspect"]).toBe("ungated");
   });
 
-  it("210-GAP / §3.5: classifies the admin-only / deny-by-origin methods (proves the deny-by-origin class is populated)", () => {
-    // The deny-by-origin class is now non-empty (210-GAP): the message subset
-    // §3.5 keeps admin-only + the arbitrary-session lifecycle ops.
+  it("classifies the admin-only / deny-by-origin methods (proves the deny-by-origin class is populated)", () => {
+    // The deny-by-origin class is non-empty: the message subset kept
+    // admin-only + the arbitrary-session lifecycle ops.
     for (const m of [
       "message.edit",
       "message.delete",
@@ -135,7 +135,7 @@ describe("HANDLER_CAPABILITY_MAP", () => {
       "cron.update": "orch:cron",
       "cron.remove": "orch:cron",
       "cron.run": "orch:cron",
-      // §3.5: only the genuinely-outward send subset is gated on orch:message.
+      // Only the genuinely-outward send subset is gated on orch:message.
       "message.send": "orch:message",
       "message.reply": "orch:message",
       "message.react": "orch:message",
@@ -151,7 +151,7 @@ describe("HANDLER_CAPABILITY_MAP", () => {
   });
 });
 
-describe("SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception (CLI-01/02, v8 §15)", () => {
+describe("SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception", () => {
   // The audience exception (lease-manager.ts validate) lets ANY valid lease reach
   // exactly these three ungated, self-`_agentId`-scoped, scopes:["rpc"] reads
   // (whoami / status). The set is named + pinned here so a future typo adding a

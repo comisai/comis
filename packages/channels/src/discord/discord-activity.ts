@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discord EditPlace activity renderer (§7.2 / §18.2 row "EditPlace").
+ * Discord EditPlace activity renderer.
  *
  * Copies the canonical Telegram shape — only the error classifier and
  * the subagent thread-affordance differ. Three parts:
@@ -12,7 +12,7 @@
  *      sites). discord.js uses a numeric `.code` (10008 Unknown Message → drop
  *      edits; 50013 Missing Permissions → permission) and surfaces HTTP-429 via
  *      `RateLimitError.retryAfter` / `.status === 429`. It NEVER parses the
- *      generic "Failed to…" string. §19.3: the `.code` /
+ *      generic "Failed to…" string. The `.code` /
  *      `.message` is used ONLY to choose the closed `ActivityRenderError`
  *      variant — never rendered or logged as activity text.
  *
@@ -22,7 +22,7 @@
  *      the adapter creates a public thread (discord-adapter.ts:399-411). This is
  *      a DISPLAY affordance only — it registers NO interaction handler and signs
  *      no interaction payload; the signed-callback router lives in a separate
- *      component (§17.3). `edit`/`delete` GUARD the optional `ChannelPort`
+ *      component. `edit`/`delete` GUARD the optional `ChannelPort`
  *      methods (early `not_supported` — never a non-null `!` cluster, AGENTS.md
  *      §2.8) and map every `.error` through `classifyDiscordError`. All paths
  *      return `Result`; nothing throws across the boundary.
@@ -116,7 +116,7 @@ export interface DiscordRenderActionsDeps {
 const MAX_RETRY_ATTEMPTS = 4;
 
 /**
- * The subagent-expand marker the renderer paints into the parent line (§18.2-S7).
+ * The subagent-expand marker the renderer paints into the parent line.
  * When a placeholder send carries it, the Discord adapter surfaces the thread
  * affordance SHELL (a public thread) — a DISPLAY affordance, never a resolution.
  */
@@ -231,9 +231,9 @@ export function makeDiscordRenderActions(
  *
  * `signCallbackData` is the secret-bound signer injected at the composition root:
  * the renderer CONSUMES it to build signed approval components and never
- * imports the orchestrator package (Pitfall 5). When omitted, an
- * approval frame degrades to a button-less text prompt (the signer is wired in a
- * later step; the rest of the renderer is unaffected).
+ * imports the orchestrator package. When omitted, an
+ * approval frame degrades to a button-less text prompt (no signer, no buttons;
+ * the rest of the renderer is unaffected).
  */
 export function createDiscordActivityRenderer(
   adapter: ChannelPort,

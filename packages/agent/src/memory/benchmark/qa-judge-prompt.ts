@@ -20,7 +20,7 @@
  *      pi-ai `completeSimple` has NO response_format arg, so the JSON verdict
  *      contract is instructed IN-PROMPT and parsed by the judge-verdict parser.
  *
- * SECURITY (prompt-injection ordering, Pitfall 3): the rubric and
+ * SECURITY (prompt-injection ordering): the rubric and
  * instructions are placed FIRST; the UNTRUSTED dataset slots (`question`,
  * `goldAnswer`, `modelAnswer`) are appended AFTER, in clearly labeled fields, so
  * adversarial dataset content cannot masquerade as judge instructions. The judge

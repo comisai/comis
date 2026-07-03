@@ -156,7 +156,7 @@ describe("daemonStartStep", () => {
     );
   });
 
-  // Contract guard for the daemon-restart fix: the step must prompt with the
+  // Contract guard: the step must prompt with the
   // exact shared literals the NonInteractivePrompter keys off (DAEMON_*_PROMPT).
   // If someone edits the message here without updating the constant, headless
   // --start-daemon handling would silently break — these lock the two together.
@@ -317,7 +317,8 @@ describe("daemonStartStep", () => {
 
     await daemonStartStep.execute(stateWithGateway(), prompter);
 
-    // Critical: the buggy direct-spawn path must NOT run inside Docker.
+    // Critical: the direct-spawn path must NOT run inside Docker — a
+    // sibling daemon would collide with PID 1's gateway (EADDRINUSE).
     expect(spawn).not.toHaveBeenCalled();
 
     // The Docker branch can't actually find the daemon process in this
@@ -391,7 +392,7 @@ describe("daemonStartStep", () => {
     const killOrder = killSpy.mock.invocationCallOrder[0]!;
     expect(warnOrder).toBeLessThan(killOrder);
 
-    // Buggy direct-spawn must still not run.
+    // Direct spawn must still not run inside Docker.
     expect(spawn).not.toHaveBeenCalled();
 
     killSpy.mockRestore();

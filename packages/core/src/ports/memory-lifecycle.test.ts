@@ -26,10 +26,10 @@ import type {
 // Public-surface RED proof: the port types must be re-exported on the
 // @comis/core barrel (../index.js is the in-package equivalent of the bare
 // `@comis/core` specifier — index.ts `export *`s the curated exports/ports.js).
-// These imports fail to resolve (a tsc build error) until the export-wiring in
-// ports/index.ts + exports/ports.ts lands. The public-export-consumers gate
-// requires the port be on the public surface; the consumers (the @comis/memory
-// adapter + the daemon cron) land in later implementation phases.
+// These imports fail to resolve (a tsc build error) if the export-wiring in
+// ports/index.ts + exports/ports.ts is missing. The public-export-consumers gate
+// requires the port be on the public surface; the consumers are the
+// @comis/memory adapter + the daemon cron.
 import type {
   MemoryLifecyclePort as PublicMemoryLifecyclePort,
   MemoryLifecycleScope as PublicMemoryLifecycleScope,
@@ -47,13 +47,13 @@ const portSrc = readFileSync(resolve(here, "./memory-lifecycle.ts"), "utf8");
  * daemon cron wires it; they consume it by TYPE. The port carries the maintenance
  * `runLifecycleSweep` (scoped per (tenant, agent) with an injected `now`, Result-returning)
  * + the reversal `unevict`, plus the optional per-call `MemoryLifecycleEvictionOverride`
- * the daemon threads from each agent's `learningForgetting` policy (FORGET-06).
+ * the daemon threads from each agent's `learningForgetting` policy.
  *
- * THE binding contract (FORGET-01): the port soft-evicts ONLY under an eviction-enabled
+ * THE binding contract: the port soft-evicts ONLY under an eviction-enabled
  * policy (the `evicted_at` marker, never a DELETE; reversible via `unevict`), and stays
  * DORMANT (evicts/demotes nothing — byte-identical) by default. The default-OFF gate is the
  * behavior switch, not a back-compat fallback. Tier promote/demote moves remain deferred
- * (promoted/demoted stay 0). The port is a NEW segregated port — it does NOT widen the
+ * (promoted/demoted stay 0). The port is a segregated port — it does NOT widen the
  * security-reviewed MemoryPort.
  */
 describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
@@ -62,13 +62,13 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
     expect(portSrc, "MemoryLifecyclePort interface must be declared").toMatch(
       /export\s+interface\s+MemoryLifecyclePort\b/,
     );
-    // SIMPLIFY-02 (phase 226): MemoryLifecycleScope is UNIFIED onto the canonical
-    // `LearningScope {tenantId, agentId, now?}` — it no longer re-declares the
-    // isolation fields locally (that was the 15× repetition the collapse kills).
-    // It is now a type-alias that DERIVES `tenantId`/`agentId` from LearningScope
+    // MemoryLifecycleScope is UNIFIED onto the canonical
+    // `LearningScope {tenantId, agentId, now?}` — it must not re-declare the
+    // isolation fields locally (drift-prone repetition).
+    // It is a type-alias that DERIVES `tenantId`/`agentId` from LearningScope
     // and adds the lifecycle-specific narrowing (`now: number` required on the
-    // write/sweep path) + the per-call eviction `policy?` override. So the local
-    // standalone `interface MemoryLifecycleScope` MUST be gone.
+    // write/sweep path) + the per-call eviction `policy?` override. So a local
+    // standalone `interface MemoryLifecycleScope` must NOT exist.
     expect(
       portSrc,
       "MemoryLifecycleScope must NOT be a standalone interface (unified onto LearningScope)",
@@ -106,16 +106,16 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
     expect(portSrc, "no `export class` in a type-only port").not.toMatch(/^\s*export\s+class\s/m);
   });
 
-  it("documents the LIVE-but-gated soft-eviction contract VERBATIM (the FORGET-01 default-OFF gate + the agent↛memory cut)", () => {
-    // The LIVE-but-gated framing is load-bearing: 200-05 activated soft eviction behind the
-    // eviction-enabled policy (FORGET-01), so the doc must record that the sweep soft-evicts
+  it("documents the LIVE-but-gated soft-eviction contract VERBATIM (the default-OFF eviction gate + the agent↛memory cut)", () => {
+    // The LIVE-but-gated framing is load-bearing: soft eviction is active ONLY behind the
+    // eviction-enabled policy, so the doc must record that the sweep soft-evicts
     // ONLY under the policy and stays DORMANT (byte-identical) by default — so a future reader
     // understands the default-OFF gate is the behavior switch, NOT a back-compat fallback.
     expect(portSrc, "the doc must name LIVE soft eviction").toMatch(/LIVE soft eviction/);
     expect(portSrc, "the doc must record the DORMANT default (byte-identity)").toMatch(/DORMANT/);
     expect(portSrc, "the doc must record the (still-deferred) tier moves").toMatch(/deferred/i);
-    expect(portSrc, "the doc must cite the FORGET-01 requirement").toMatch(/FORGET-01/);
-    // The NEW-port framing carried verbatim from tuned-alpha-store.ts.
+    expect(portSrc, "the doc must record the eviction-enabled policy gate").toMatch(/eviction-enabled/);
+    // The segregated-port framing mirrors tuned-alpha-store.ts.
     expect(portSrc, "the doc must state the port does NOT widen MemoryPort").toMatch(
       /does NOT widen/i,
     );
@@ -132,7 +132,7 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
     void _bad;
   });
 
-  it("LifecycleSweepReport is a counts-only summary {scanned,promoted,demoted,evicted} (§2.7)", () => {
+  it("LifecycleSweepReport is a counts-only summary {scanned,promoted,demoted,evicted} (AGENTS.md §2.7)", () => {
     const report: LifecycleSweepReport = {
       scanned: 10,
       promoted: 0,
@@ -143,7 +143,7 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
     expectTypeOf(report.promoted).toEqualTypeOf<number>();
     expectTypeOf(report.demoted).toEqualTypeOf<number>();
     expectTypeOf(report.evicted).toEqualTypeOf<number>();
-    // Exactly these four counts — no id-list, no memory body (the §2.7 counts-only contract).
+    // Exactly these four counts — no id-list, no memory body (the AGENTS.md §2.7 counts-only contract).
     expect(Object.keys(report).sort()).toEqual(["demoted", "evicted", "promoted", "scanned"]);
   });
 
@@ -197,9 +197,7 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
  * The sole adapter and the daemon cron wiring consume these
  * TYPES from `@comis/core` (never @comis/memory). This block proves the port types
  * are on the public barrel — the same names, structurally identical to the
- * relative-path types. (The public-export-consumers gate requires the export; its
- * consumers land in later implementation phases, so this is an ahead-of-consumer
- * planned-orphan.)
+ * relative-path types. (The public-export-consumers gate requires the export.)
  */
 describe("MemoryLifecyclePort — public @comis/core re-export", () => {
   it("re-exports the port types on the public barrel, identical to the relative-path types", () => {

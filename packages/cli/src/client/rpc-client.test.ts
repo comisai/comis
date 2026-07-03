@@ -54,7 +54,7 @@ class MockWebSocket extends EventEmitter {
 vi.mock("ws", () => ({ default: MockWebSocket }));
 vi.mock("node:fs", () => ({ existsSync: vi.fn(), readFileSync: vi.fn() }));
 vi.mock("node:os", () => ({ default: { homedir: vi.fn(() => "/fake/home") } }));
-// F-CLI-AUTH: the CLI must be able to resolve a ${VAR} gateway token from the
+// The CLI must be able to resolve a ${VAR} gateway token from the
 // encrypted secrets store when it's absent from env/.env (the install.sh wizard
 // persists COMIS_GATEWAY_TOKEN into secrets.db, not ~/.comis/.env). Default to a
 // store-miss so token tests using literal secrets are unaffected.
@@ -86,13 +86,13 @@ function connectLastWsAsync(): void {
   }, 1);
 }
 
-// UX-2 (LOCAL re-test 2026-06-20): the CLI's gateway config resolution hardcoded
-// ~/.comis/config.yaml and ignored COMIS_CONFIG_PATHS, so a non-default data-dir
-// daemon (a test/second daemon on another port) was unreachable via the CLI even
-// with COMIS_CONFIG_PATHS exported — you had to discover COMIS_GATEWAY_URL. The
+// If the CLI's gateway config resolution hardcoded ~/.comis/config.yaml and
+// ignored COMIS_CONFIG_PATHS, a non-default data-dir daemon (a test/second
+// daemon on another port) would be unreachable via the CLI even with
+// COMIS_CONFIG_PATHS exported — you'd have to discover COMIS_GATEWAY_URL. The
 // gateway config path must honor COMIS_CONFIG_PATHS (first ":"-separated entry,
 // matching the daemon), falling back to the default home location.
-describe("resolveGatewayConfigPath — honors COMIS_CONFIG_PATHS (UX-2)", () => {
+describe("resolveGatewayConfigPath — honors COMIS_CONFIG_PATHS", () => {
   const SAVED = process.env.COMIS_CONFIG_PATHS;
   afterEach(() => {
     if (SAVED === undefined) delete process.env.COMIS_CONFIG_PATHS;
@@ -121,7 +121,7 @@ describe("resolveGatewayConfigPath — honors COMIS_CONFIG_PATHS (UX-2)", () => 
   });
 });
 
-describe("gateway auth rejection (W13 obs-llm-troubleshooting)", () => {
+describe("gateway auth rejection (WS close 4001/4003)", () => {
   beforeEach(() => {
     MockWebSocket.instances = [];
   });
@@ -685,10 +685,9 @@ describe("withClient", () => {
     delete process.env["COMIS_GATEWAY_URL"];
     delete process.env["COMIS_GATEWAY_TOKEN"];
     delete process.env["COMIS_INSECURE"];
-    // Fix A guard bypass: these tests exercise withClient's config /
-    // transport-construction paths via a mocked `ws` module — the
-    // WebSocket is fake, so opting into the E2E lane is the correct
-    // signal to the VITEST=true guard.
+    // These tests exercise withClient's config / transport-construction
+    // paths via a mocked `ws` module — the WebSocket is fake, so opting
+    // into the E2E lane is the correct signal to the VITEST=true guard.
     process.env["COMIS_CLI_E2E"] = "true";
     mockedExistsSync.mockReset();
     mockedReadFileSync.mockReset();
@@ -812,7 +811,7 @@ describe("withClient", () => {
       );
     });
 
-    it("resolves ${COMIS_GATEWAY_TOKEN} from the encrypted store when absent from env/.env (F-CLI-AUTH)", async () => {
+    it("resolves ${COMIS_GATEWAY_TOKEN} from the encrypted store when absent from env/.env", async () => {
       // Fresh install.sh + wizard flow: config references ${COMIS_GATEWAY_TOKEN}
       // but the wizard persists the token into the encrypted secrets.db, NOT
       // ~/.comis/.env. The daemon-host CLI must read it from the store to

@@ -101,12 +101,13 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
   });
 
   const handlers: MessageHandler[] = [];
-  // REACT-01: inbound reaction-add handlers (the binder logic is co-located in
+  // Inbound reaction-add handlers (the binder logic is co-located in
   // discord-reaction-binder.ts to hold the 800-line cap).
   const reactionHandlers: ReactionHandler[] = [];
   let _channelId = "discord-pending";
   // The bot's own user id, captured at start() from validateDiscordToken. Used
-  // by reconcileSend to match author=bot (Spoofing T-216-25); empty until start.
+  // by reconcileSend to match author=bot — a same-digest message from another
+  // author must never count as the bot's own send; empty until start.
   let _botUserId = "";
   let reconnectAttempt = 0;
 
@@ -208,7 +209,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         );
       });
 
-      // REACT-01: bind the inbound reaction-add listener (intents already held
+      // Bind the inbound reaction-add listener (intents already held
       // at :92-93). Co-located in discord-reaction-binder.ts (800-line cap).
       bindDiscordReactions(client, reactionHandlers, deps.logger);
 
@@ -677,7 +678,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     async reconcileSend(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>> {
       // We can only prove a bot send if we know who the bot is. If start() has
       // not captured the bot user id, we cannot tell -> unresolved (never a
-      // guess, ONCE-03).
+      // guess).
       if (!_botUserId) {
         deps.logger.debug(
           { channelType: "discord", hint: "reconcileSend called before start(): bot id unknown" },
@@ -700,8 +701,8 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
       }
 
       // discord.js throws on fetch failure / rate-limit. A failed or partial
-      // fetch can NEVER prove the message is absent (Pitfall 2 / T-216-22) —
-      // any throw is `unresolved`, never `not_sent`.
+      // fetch can NEVER prove the message is absent — any throw is
+      // `unresolved`, never `not_sent`.
       let fetched: Awaited<ReturnType<typeof tc.messages.fetch>>;
       try {
         fetched = await tc.messages.fetch({ limit: 50 });
@@ -721,7 +722,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
       // fetch({limit}) returns a Collection<Snowflake, Message> (Map-iterable).
       for (const [, m] of fetched) {
-        if (m.author?.id !== _botUserId) continue; // author=bot required (T-216-25)
+        if (m.author?.id !== _botUserId) continue; // author=bot required — other authors never count
         if (m.createdTimestamp < query.sentAfterMs || m.createdTimestamp > query.sentBeforeMs) {
           continue;
         }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SKILLS-SEED-01: generalize the bundled-skill seeder from a single hardcoded
+ * Generalize the bundled-skill seeder from a single hardcoded
  * `skill-creator` to an AUTO-SCAN of every `bundled-skills/<name>/` dir — so adding a
  * bundled skill (claude-code, codex, …) is ZERO engine code (drop the dir, it seeds).
  * Pure decision logic with injected fs seams (no real disk).

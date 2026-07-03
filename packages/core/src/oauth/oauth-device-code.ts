@@ -7,14 +7,14 @@
  * to `loginOpenAICodexDeviceCode` when callers select `method: "device-code"`,
  * so both files live together in @comis/core.
  *
- * Port of the upstream device-code reference module with Comis-specific
- * adaptations:
+ * Implementation notes:
  *   1. ORIGINATOR header is the literal "comis".
- *   2. The cosmetic version-header lookup is DROPPED — header is
- *      informational; CLAUDE.md forbids reading runtime env in library code.
+ *   2. Header values are fixed strings — no version-header lookup; the
+ *      header is informational, and CLAUDE.md forbids reading runtime env
+ *      in library code.
  *   3. trimNonEmptyString is INLINE (3-line helper; rule of three not met).
  *   4. resolveCodexAccessTokenExpiry is imported from Comis's
- *      oauth-identity.ts module (same signature as the upstream variant).
+ *      oauth-identity.ts module.
  *   5. Public boundary returns Result<T,E> (never throws) — internal
  *      helpers still throw, but the top-level loginOpenAICodexDeviceCode
  *      wraps everything in try/catch + rewriteOAuthError + narrowing.
@@ -105,7 +105,7 @@ interface OpenAICodexDeviceCodeCredentials {
   expires: number;
 }
 
-// -------- Helpers (port verbatim from upstream, with Comis adaptations) --------
+// -------- Helpers --------
 
 /**
  * INLINE 3-line helper (rule of three not met — same shape as the helper in
@@ -119,8 +119,7 @@ function trimNonEmptyString(value: unknown): string | undefined {
 
 /**
  * Build the 3-key header set for the device-code flow.
- * Adaptation vs upstream: drop the cosmetic version-header lookup.
- * Header values are fixed strings — no env reads.
+ * Header values are fixed strings — no version-header lookup, no env reads.
  */
 function resolveOpenAICodexDeviceCodeHeaders(contentType: string): Record<string, string> {
   return {

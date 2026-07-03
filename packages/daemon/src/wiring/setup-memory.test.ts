@@ -25,12 +25,12 @@ const mockSqliteMemoryAdapter = vi.hoisted(() => {
 const mockCreateSessionStore = vi.hoisted(() => vi.fn(() => ({ loadByFormattedKey: vi.fn(), save: vi.fn() })));
 // LCD lossless store factory (ContextStorePort) — mocked so setup wires it
 // without a real DB. setupMemory constructs it on the shared db handle beside
-// createSessionStore (Phase 127); without the mock entry the @comis/memory
+// createSessionStore; without the mock entry the @comis/memory
 // factory is undefined and EVERY setup call throws `createLcdStore is not a
 // function` (the MEMORY.md "setup-memory mock" gate). The two port methods are
 // stubbed (the append write + the conversation-scoped getMessages read).
 const mockCreateLcdStore = vi.hoisted(() => vi.fn(() => ({ append: vi.fn(), getMessages: vi.fn(() => []) })));
-// LcdProvenanceReadStore stub (Phase 173, DIST-03 read side) — setupMemory now also
+// LcdProvenanceReadStore stub — setupMemory also
 // builds the provenance read adapter on the shared db (buildProvenanceReadStore) and
 // threads it to createMemoryRecall's down-weighting pass. Without the mock entry the
 // factory is undefined and EVERY setup call throws (the setup-memory mock gate).
@@ -88,11 +88,11 @@ const mockCreateSqliteMemoryEntityStore = vi.hoisted(() => vi.fn(() => ({
   associativeLane: vi.fn(async () => ({ ok: true, value: [] })),
 })));
 // Consolidation store factory — mocked so setup wires it without a real DB.
-// setupMemory now builds this on the shared db handle (mirror the entity store); without
+// setupMemory builds this on the shared db handle (mirror the entity store); without
 // the mock entry the @comis/memory factory is undefined and every setup call throws.
-// Phase 226 (SIMPLIFY-02): the port is trimmed to its live read/maintenance
-// surface — the dead consolidation-cron writer methods (candidates/apply/fold/
-// knn/markReasoned) are gone; the mock carries only the surviving methods.
+// The port exposes only its live read/maintenance surface — there are no
+// consolidation-cron writer methods (candidates/apply/fold/knn/markReasoned); the
+// mock carries only the live methods.
 const mockCreateSqliteMemoryConsolidationStore = vi.hoisted(() => vi.fn(() => ({
   listObservations: vi.fn(async () => ({ ok: true, value: [] })),
   unlinkDeletedSources: vi.fn(async () => ({ ok: true, value: 0 })),
@@ -147,10 +147,7 @@ const mockCreateSqliteTripleStore = vi.hoisted(() => vi.fn(() => ({
 const mockCreateSqliteMemoryEmbeddingStore = vi.hoisted(() => vi.fn(() => ({
   readEmbeddings: vi.fn(async () => ({ ok: true, value: new Map() })),
 })));
-// (The directional relationship store factory mock — createSqliteRelationshipStore — was
-//  DELETED in Phase 226-04 with the rest of the social-modeling subsystem; setupMemory no
-//  longer constructs it, so no mock entry is needed.)
-// Outcome-signal store factory (Verified Learning WS1) — mocked so setupMemory wires it
+// Outcome-signal store factory — mocked so setupMemory wires it
 // (createSqliteOutcomeStore + wireLearningOutcome) without a real DB. Without the mock entry the
 // @comis/memory factory is undefined and EVERY setup call throws `createSqliteOutcomeStore is not
 // a function` (the MEMORY.md "setup-memory mock" gate). The 3 OutcomeSignalPort methods are
@@ -161,15 +158,15 @@ const mockCreateSqliteOutcomeStore = vi.hoisted(() => vi.fn(() => ({
   prune: vi.fn(() => ({ changes: 0 })),
 })));
 // Memory-lifecycle sweep store factory — mocked so setup wires
-// it without a real DB. setupMemory builds this on the shared db handle (mirror the tuned-alpha
-// store); without the mock entry the @comis/memory factory is undefined and EVERY setup call
+// it without a real DB. setupMemory builds this on the shared db handle; without
+// the mock entry the @comis/memory factory is undefined and EVERY setup call
 // throws `createSqliteMemoryLifecycleStore is not a function` (the MEMORY.md "setup-memory mock"
 // gate). The sole port method is stubbed (the DORMANT runLifecycleSweep — the
 // scaffold evicts/demotes 0 rows, so the all-0 report).
 const mockCreateSqliteMemoryLifecycleStore = vi.hoisted(() => vi.fn(() => ({
   runLifecycleSweep: vi.fn(async () => ({ ok: true, value: { scanned: 0, promoted: 0, demoted: 0, evicted: 0 } })),
 })));
-// Mental-model store factory (the kind-generic learned-skill store, SKILL-01) — mocked so setup wires it
+// Mental-model store factory (the kind-generic learned-skill store) — mocked so setup wires it
 // on the shared db without a real DB (mirror the outcome store). Without the mock entry the @comis/memory
 // factory is undefined and EVERY setup call throws `createSqliteMentalModelStore is not a function`. The
 // port methods are stubbed.
@@ -247,7 +244,7 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
     config: {
       memory: {
         dbPath: "/test/memory.db",
-        // Phase 226: the recall keepers (embeddingDimensions/rerankerModel) nest under memory.recall.
+        // The recall keepers (embeddingDimensions/rerankerModel) nest under memory.recall.
         recall: {
           embeddingModel: "text-embedding-3-small",
           embeddingDimensions: 768,
@@ -329,15 +326,14 @@ describe("setupMemory", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 1b. Builds + returns the LCD provenance read store (Phase 173, DIST-03 read
-  //     side, Link 1 of the carry-in wiring chain). The built-but-not-wired guard
-  //     for the FIRST link: setupMemory must construct buildProvenanceReadStore(db)
+  // 1b. Builds + returns the LCD provenance read store. This guards the FIRST link
+  //     of the wiring chain: setupMemory must construct buildProvenanceReadStore(db)
   //     on the shared db handle and expose it as `provenanceStore` so the daemon can
   //     thread it onward to createMemoryRecall's down-weighting pass. Paired with
   //     the prompt-assembly + setup-agents wiring guards (the last links).
   // -------------------------------------------------------------------------
 
-  it("builds buildProvenanceReadStore on the shared db and returns it as provenanceStore (DIST-03 Link 1)", async () => {
+  it("builds buildProvenanceReadStore on the shared db and returns it as provenanceStore", async () => {
     const container = createMinimalContainer({ embedding: { enabled: false } });
     const setupMemory = await getSetupMemory();
 
@@ -461,7 +457,7 @@ describe("setupMemory", () => {
     });
 
     // SqliteMemoryAdapter should receive adjusted config with provider's dimensions (384),
-    // nested under memory.recall (Phase 226).
+    // nested under memory.recall.
     const adapterArgs = mockSqliteMemoryAdapter.mock.calls[0];
     expect(adapterArgs[0].recall.embeddingDimensions).toBe(384);
   });
@@ -1007,7 +1003,7 @@ describe("setupMemory", () => {
   it("skips the probe entirely when no reranker model is configured (modelPresent=false)", async () => {
     // Unconfigured reranker (undefined modelUri) → there is nothing to probe; treat as
     // absent without calling the probe or computing safePath (the structurally-off path).
-    // Phase 226: the reranker model lives under memory.recall.
+    // The reranker model lives under memory.recall.
     const container = createMinimalContainer({
       recall: { rerankerModel: undefined },
     });
@@ -1207,9 +1203,6 @@ describe("setupMemory", () => {
     expect(result.usefulnessStore).toBeDefined();
   });
 
-  // (The tuned-alpha store construction test was removed in Phase 224 — the UCB recall bandit
-  // store was deleted; setup-memory no longer builds or returns a tunedAlphaStore.)
-
   it("builds the memory-lifecycle sweep store on the SAME shared db handle and returns it", async () => {
     const container = createMinimalContainer(); // all-default config (lifecycle cron OFF)
     const setupMemory = await getSetupMemory();
@@ -1363,7 +1356,7 @@ describe("setupMemory recall-counter wiring", () => {
       config: {
         memory: {
           dbPath: "/test/memory.db",
-          // Phase 226: the recall keepers nest under memory.recall.
+          // The recall keepers nest under memory.recall.
           recall: {
             embeddingModel: "text-embedding-3-small",
             embeddingDimensions: 768,

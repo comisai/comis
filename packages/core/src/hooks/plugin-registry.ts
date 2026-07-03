@@ -31,10 +31,10 @@ export interface PluginRegistry {
 /**
  * Options for creating a plugin registry.
  *
- * The `eventBus` parameter was removed because the only two events emitted
- * (`plugin:registered`, `plugin:deactivated`) had zero non-test subscribers.
- * Tests that inspect plugin lifecycle now poll PluginRegistry state directly
- * via the surviving accessor surface.
+ * Deliberately carries no `eventBus`: plugin registration/deactivation emits
+ * no observability events (there are no production subscribers for them).
+ * Tests that inspect plugin lifecycle poll PluginRegistry state directly via
+ * the accessor surface.
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- reserved for future option keys; intentionally empty
 export interface PluginRegistryOptions {}

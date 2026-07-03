@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeTelegramAdapter — a deterministic, clock-free `ChannelPort` test double
- * for the Telegram EditPlace renderer (§18.1 "fake adapter
- * records every method call").
+ * for the Telegram EditPlace renderer; it records every method call.
  *
- * Mirrors `createFakeEchoAdapter` (the Wave-1 template) but:
+ * Mirrors `createFakeEchoAdapter` (the reference template) but:
  *   - mints `tg-msg-N` ids (Telegram's determinism source for byte-stable
- *     fixtures — Pitfall 2), and
+ *     fixtures), and
  *   - records the `send` options so a fixture can pin the silent-notification
  *     flag (`{effects:["silent"]}` → `disable_notification:true`).
  *

@@ -408,13 +408,12 @@ function repairMidSessionAnomalies(sessionManager: SessionManager): RepairResult
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ---------------------------------------------------------------------------
-// One-time scrub for sessions poisoned by an earlier on-disk thinking-signature
-// stripper (removed in this same commit series). That stripper deleted
-// `thinkingSignature` while keeping the `thinking` text, producing a hybrid
-// that causes pi-ai to silently convert thinking→text on replay, which
+// One-time scrub for sessions whose on-disk entries carry hybrid thinking
+// blocks: `thinking` text present but `thinkingSignature` missing. Such a
+// hybrid causes pi-ai to silently convert thinking→text on replay, which
 // Anthropic then rejects with a 400 signature-validation error. We drop any
 // such hybrid block entirely from fileEntries, matching the in-memory cleaner's
-// behavior so disk and memory are finally in sync.
+// behavior so disk and memory stay in sync.
 // ---------------------------------------------------------------------------
 
 /** Result of scrubbing poisoned thinking blocks. */
@@ -430,9 +429,8 @@ export interface ScrubResult {
  *
  * A block is "poisoned" when it has `type:"thinking"` with non-empty `thinking`
  * text but missing/empty `thinkingSignature` and `redacted !== true`. Such
- * blocks are legacy artifacts of an earlier persister that deleted the
- * signature but left the block in place; they cause Anthropic to reject
- * subsequent extended-thinking continuations.
+ * blocks cannot be replayed — Anthropic rejects subsequent extended-thinking
+ * continuations whose thinking blocks lack a valid signature.
  *
  * Removes poisoned blocks entirely from `message.content` (does not attempt
  * to repair them) and flushes via `_rewriteFile()` exactly once if any

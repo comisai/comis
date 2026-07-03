@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 acceptance — "default-off" fail-closed regression guard.
+ * Acceptance — "default-off" fail-closed regression guard.
  *
  * Builds the SAME daemon-shaped `coordinatorFactory` the daemon wires (a per-turn
  * `createActivityTurnCoordinator` over a real redacted `ActivityStream`, with a
  * `killSwitch` getter that RE-READS `agents[ctx.agentId]?.activity` fresh on
  * every `flushApply`), but with the schema-default empty `channels: {}` map.
  *
- * The spec §22.2 Day-0 posture is fail-CLOSED: with no rendererKey explicitly
+ * The shipped default posture is fail-CLOSED: with no rendererKey explicitly
  * enabled, the kill-switch gate (`channels[rendererKey]?.enabled !== true`)
  * suppresses EVERY renderer, so a real turn's worth of tool events drives ZERO
  * `renderer.apply`. This test asserts `sink.recorded.frames.length === 0`.
@@ -61,8 +61,8 @@ function makeCtx(rendererKey: string, channelKey: string): TurnActivityContext {
   };
 }
 
-describe("§22.2 default-off: an empty channels map suppresses every renderer (fail-closed)", () => {
-  it("drives zero renderer.apply for a real tool turn when no rendererKey is enabled (Day-0 fail-closed)", async () => {
+describe("default-off: an empty channels map suppresses every renderer (fail-closed)", () => {
+  it("drives zero renderer.apply for a real tool turn when no rendererKey is enabled (fail-closed default)", async () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus });
     const sink = createTestSink();

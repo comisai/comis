@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the RES-02 image-provider selector (setup-image-provider.ts).
+ * Tests for the image-provider selector (setup-image-provider.ts).
  *
  * The selector decides, per the resolved config + the agent's main provider,
  * between the pi-image-adapter (provider:"auto"/openrouter) and the relegated
  * skills adapter (explicit fal/openai) — and returns an honest-unavailable
  * port (carrying the knob-naming hint) for an image-incapable main, never a
- * misroute or silence (RES-03). Uses pi-ai's REAL registry + a mock
+ * misroute or silence. Uses pi-ai's REAL registry + a mock
  * SecretManager; never the network.
  * @module
  */
@@ -108,7 +108,7 @@ describe("createImageProviderSelector", () => {
 
     const provider = selector();
     expect(provider).toBeDefined();
-    // RES-02 follow-main: the pi-adapter id is the resolved provider, NOT "fal".
+    // Follow-main: the pi-adapter id is the resolved provider, NOT "fal".
     expect(provider!.id).toBe("openrouter");
   });
 
@@ -136,7 +136,7 @@ describe("createImageProviderSelector", () => {
     });
 
     const provider = selector();
-    // RES-03: NOT a fal/openai fallback, NOT undefined — an unavailable PORT.
+    // NOT a fal/openai fallback, NOT undefined — an unavailable PORT.
     expect(provider).toBeDefined();
     expect(provider!.isAvailable()).toBe(false);
     const result = await provider!.execute({ prompt: "x" });
@@ -149,7 +149,7 @@ describe("createImageProviderSelector", () => {
     }
   });
 
-  it("emits a once-per-resolution INFO follow-main skip summary at the default log level (WR-04)", () => {
+  it("emits a once-per-resolution INFO follow-main skip summary at the default log level", () => {
     const logger = createMockLogger();
     const selector = createImageProviderSelector({
       imageGenConfig: makeConfig({ provider: "auto", fallbackChain: [] }),
@@ -172,7 +172,7 @@ describe("createImageProviderSelector", () => {
     );
   });
 
-  it("keeps per-fallback-entry skips at DEBUG (only the follow-main summary is promoted) (WR-04)", () => {
+  it("keeps per-fallback-entry skips at DEBUG (only the follow-main summary is promoted)", () => {
     const logger = createMockLogger();
     const selector = createImageProviderSelector({
       // A fallback chain whose entries cannot serve → per-entry DEBUG skips,
@@ -222,7 +222,7 @@ describe("createImageProviderSelector", () => {
     expect(provider).toBe(legacy);
   });
 
-  it("resolves the openrouter key from SecretManager with no image-specific secret (CRED-01)", async () => {
+  it("resolves the openrouter key from SecretManager with no image-specific secret", async () => {
     // ONLY OPENROUTER_API_KEY present — no FAL_KEY / OPENAI_API_KEY.
     const selector = createImageProviderSelector({
       imageGenConfig: makeConfig({ provider: "auto" }),
@@ -241,7 +241,7 @@ describe("createImageProviderSelector", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("WARNs (naming the model + knob + errorKind) when the configured model is not in the openrouter catalog (WR-02)", async () => {
+  it("WARNs (naming the model + knob + errorKind) when the configured model is not in the openrouter catalog", async () => {
     const logger = createMockLogger();
     const selector = createImageProviderSelector({
       // A model id guaranteed NOT to exist in the openrouter image catalog.
@@ -254,8 +254,8 @@ describe("createImageProviderSelector", () => {
 
     const provider = selector();
     expect(provider).toBeDefined();
-    // The operator's explicit (typo'd / future) model choice was silently
-    // discarded pre-fix; now a WARN names the unresolved id, the fallback, the
+    // Without this, the operator's explicit (typo'd / future) model choice would
+    // be silently discarded; a WARN names the unresolved id, the fallback, the
     // binding knob, and an errorKind so the substitution is not silent.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -270,7 +270,7 @@ describe("createImageProviderSelector", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("does NOT WARN about model substitution when the configured model IS in the catalog (WR-02)", () => {
+  it("does NOT WARN about model substitution when the configured model IS in the catalog", () => {
     const logger = createMockLogger();
     const selector = createImageProviderSelector({
       // No explicit model → sel.defaultModel (the per-provider default, which
@@ -303,23 +303,22 @@ describe("createImageProviderSelector", () => {
 });
 
 /**
- * Phase 184 — codex routing + codex-aware credsAvailable (CRED-01).
+ * Codex routing + codex-aware credsAvailable.
  *
- * The selector must flip the 183 not-yet-wired guard for the codex api:
+ * The selector routes the codex api:
  *  - a resolved `openai-codex` provider builds the per-call-bearer codex
  *    adapter (id "openai-codex"), NOT an honest-unavailable port; and
  *  - codex availability consults `oauthManager.hasCredentials("openai-codex")`,
  *    NOT `resolveImageApiKey`'s SecretManager (the bearer is OAuth, not an env
  *    key) — so a Codex-only agent with NO FAL_KEY/OPENAI_API_KEY/OPENROUTER_API_KEY
- *    resolves available (CRED-01).
- * `openai-images`/`google-images` STAY honest-unavailable (they land in 185).
+ *    resolves available.
  */
-describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", () => {
+describe("createImageProviderSelector codex routing", () => {
   it("Test A: routes a Codex-only agent (provider:auto, main openai-codex, no env keys) to the codex adapter", () => {
     const hasCredentials = vi.fn().mockReturnValue(true);
     const selector = createImageProviderSelector({
       imageGenConfig: makeConfig({ provider: "auto" }),
-      // CRED-01: NO FAL_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY — the only
+      // NO FAL_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY — the only
       // credential is the OAuth profile (via the manager below).
       secretManager: mockSecretManager({}),
       mainProviderId: "openai-codex",
@@ -333,7 +332,7 @@ describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", 
     expect(provider).toBeDefined();
     // The codex adapter id is "openai-codex" — NOT "unavailable", NOT "fal".
     expect(provider!.id).toBe("openai-codex");
-    // The codex-aware credsAvailable consulted the OAuth manager (CRED-01),
+    // The codex-aware credsAvailable consulted the OAuth manager,
     // keyed on the OAuth provider id "openai-codex" (NOT the images api).
     expect(hasCredentials).toHaveBeenCalledWith("openai-codex");
   });
@@ -378,15 +377,15 @@ describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", 
     expect(provider!.id).toBe("openai-codex");
   });
 
-  it("Test D (185 INVERTED): a resolved google provider now ROUTES to the pi-adapter (id \"google\", available)", () => {
+  it("Test D: a resolved google provider ROUTES to the pi-adapter (id \"google\", available)", () => {
     // provider:"google" → IMAGE_CAPABILITY["google"].imagesApi === "google-images",
-    // which 185 WIRES — the not-yet-wired guard no longer fires; the selector
+    // which is wired — the not-yet-wired guard does not fire; the selector
     // builds a createPiImageAdapter over GOOGLE_IMAGE_MODEL with the env key.
-    // The key is GOOGLE_API_KEY (the Plan-01 CRED-01 resolver fix), so a
+    // The key is GOOGLE_API_KEY (the resolver's google key), so a
     // GOOGLE_API_KEY-only google main resolves AVAILABLE.
     const selector = createImageProviderSelector({
       imageGenConfig: makeConfig({ provider: "google" }),
-      secretManager: mockSecretManager({ GOOGLE_API_KEY: "g-123" }), // CRED-01 fixed key
+      secretManager: mockSecretManager({ GOOGLE_API_KEY: "g-123" }), // the google env key
       mainProviderId: "google",
       legacyGetter: () => legacyAdapter(),
       logger: createMockLogger() as never,
@@ -507,17 +506,16 @@ describe("createImageProviderSelector codex routing (CDX-01 wiring + CRED-01)", 
 });
 
 /**
- * Phase 185 — openai-images / google-images selector wiring (PRV-01/02).
+ * openai-images / google-images selector wiring.
  *
- * The 185 keystone: the selector flips the 183/184 not-yet-wired guard for the
- * two new apis so a resolved `openai`/`google` main builds a `createPiImageAdapter`
- * (env-key creds via the FIXED `resolveImageApiKey`), NOT an honest-unavailable
- * port. Distinct from codex (which needs the per-call OAuth bearer): openai/google
- * use a static env key resolved once at boot. Pitfall 2 — key-auth `openai`
- * (`openai-images`) and `openai-codex` (`openai-codex-images`) are DISTINCT
- * transports and must not collide.
+ * The selector wires the two apis so a resolved `openai`/`google` main builds a
+ * `createPiImageAdapter` (env-key creds via `resolveImageApiKey`), NOT an
+ * honest-unavailable port. Distinct from codex (which needs the per-call OAuth
+ * bearer): openai/google use a static env key resolved once at boot. Key-auth
+ * `openai` (`openai-images`) and `openai-codex` (`openai-codex-images`) are
+ * DISTINCT transports and must not collide.
  */
-describe("createImageProviderSelector openai/google routing (PRV-01/02 wiring keystone)", () => {
+describe("createImageProviderSelector openai/google routing (wiring keystone)", () => {
   it("Test E: an openai main (OPENAI_API_KEY) routes to the pi-adapter (id \"openai\", available)", () => {
     const selector = createImageProviderSelector({
       imageGenConfig: makeConfig({ provider: "auto" }),
@@ -584,7 +582,7 @@ describe("createImageProviderSelector openai/google routing (PRV-01/02 wiring ke
     expect(google!.id).not.toBe("unavailable");
   });
 
-  it("Test G (Pitfall 2): key-auth openai and openai-codex resolve DISTINCT transports — no collision", () => {
+  it("Test G: key-auth openai and openai-codex resolve DISTINCT transports — no collision", () => {
     // An `openai` main resolves the env-key openai-images path and NEVER
     // consults the OAuth manager …
     const oauthHasCreds = vi.fn().mockReturnValue(true);
@@ -620,18 +618,18 @@ describe("createImageProviderSelector openai/google routing (PRV-01/02 wiring ke
 });
 
 /**
- * Built-but-not-wired guard (the milestone's #1 recurring blocker).
+ * Built-but-not-wired guard.
  *
- * Asserts the RES-01 keystone is wired into the LIVE daemon.ts composition
+ * Asserts the selector keystone is wired into the LIVE daemon.ts composition
  * root — NOT merely defined where a test imports it. Reads daemon.ts source and
- * proves (1) the accessor delegates to resolveAgentModel (I4 lockstep), and
+ * proves (1) the accessor delegates to resolveAgentModel (the lockstep), and
  * (2) `resolveAgentMainProvider` appears INSIDE the LIVE `imageHandlerDeps`
  * object literal region, and (3) the boot probe wires the selector +
  * registerComisImageProviders. A parallel copy / a stranded accessor would
  * fail this. (The daemon build is the type-level twin: the now-required field
  * forces the literal to supply it.)
  */
-describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", () => {
+describe("The selector keystone is wired into the LIVE daemon.ts composition root", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const daemonSrc = readFileSync(resolve(here, "../daemon.ts"), "utf8");
   const toolingSrc = readFileSync(
@@ -644,7 +642,7 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
   // calls the helper.
   const helpersSrc = readFileSync(resolve(here, "./main-helpers.ts"), "utf8");
 
-  it("delegates the handler accessor to the pure resolveAgentMainProvider helper, threading the configurable defaultAgentId (WR-01)", () => {
+  it("delegates the handler accessor to the pure resolveAgentMainProvider helper, threading the configurable defaultAgentId", () => {
     // The accessor is a thin local closure that delegates to the extracted,
     // unit-tested resolveAgentMainProvider helper — passing c.defaultAgentId
     // (the operator-configurable default), NOT a literal "default" fallback.
@@ -655,11 +653,11 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
     );
     expect(accessor).toContain("resolveAgentMainProvider(");
     expect(accessor).toContain("c.defaultAgentId");
-    // WR-01 regression guard: the broken literal-"default" fallback is gone.
+    // Regression guard: the broken literal-"default" fallback is gone.
     expect(accessor).not.toContain('agents["default"]');
   });
 
-  it("keeps the I4 lockstep: resolveAgentMainProvider delegates to the EXACT completion-path resolveAgentModel", () => {
+  it("keeps the lockstep: resolveAgentMainProvider delegates to the EXACT completion-path resolveAgentModel", () => {
     // The lockstep MECHANISM now lives in the helper (co-located with
     // resolveAgentModel), not inlined in daemon.ts. It must still call the
     // EXACT completion-path resolver so the image path can never disagree.
@@ -674,9 +672,9 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
   });
 
   it("threads resolveAgentMainProvider INTO the live imageHandlerDeps object literal", () => {
-    // WR-04 (186): the imageHandlerDeps construction moved from daemon.ts into
+    // The imageHandlerDeps construction lives in
     // buildImageHandlerDeps (main-helpers.ts) to relieve the line cap. The
-    // RES-01 keystone must still be threaded INTO the live composition root:
+    // selector keystone must still be threaded INTO the live composition root:
     //   (a) daemon.ts passes the per-request resolver into the helper call, and
     //   (b) the helper's returned literal threads it as resolveAgentMainProvider
     //       alongside getChannelAdapter.
@@ -704,11 +702,11 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
     expect(helpersSrc).toMatch(/mainProviderId:\s*defaultMain/);
   });
 
-  it("threads the DEFAULT agent's oauthManager into the LIVE buildImageGenBundle call (184 — built-but-not-wired guard)", () => {
+  it("threads the DEFAULT agent's oauthManager into the LIVE buildImageGenBundle call (built-but-not-wired guard)", () => {
     // The composition-root threading gap: the per-agent OAuthTokenManager must
     // reach the image selector through the LIVE daemon.ts wiring — not just be
     // defined where a test imports it. A parallel copy / a stranded manager
-    // would fail this (the milestone's #1 recurring blocker; 183-04 precedent).
+    // would fail this (the milestone's #1 recurring blocker).
     // (1) daemon.ts surfaces oauthManagers from setupAgents …
     expect(daemonSrc).toContain("oauthManagers");
     // (2) … and threads the DEFAULT agent's manager into the LIVE bundle call.
@@ -718,7 +716,7 @@ describe("RES-01 keystone is wired into the LIVE daemon.ts composition root", ()
     expect(callRegion).toMatch(/oauthManager:\s*[\w.]*oauthManagers\.get\(defaultAgentId\)/);
   });
 
-  it("buildImageGenBundle threads oauthManager + oauthProfiles into the LIVE selector call (184)", () => {
+  it("buildImageGenBundle threads oauthManager + oauthProfiles into the LIVE selector call", () => {
     // main-helpers.ts must pass the manager + the DEFAULT agent's profiles into
     // createImageProviderSelector — else the codex credsAvailable/adapter never
     // sees a manager and a Codex agent boots honest-unavailable despite login.

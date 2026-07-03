@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for `createEvictRegistry` (Phase 217-04, EVICT-01/03).
+ * Contract for `createEvictRegistry`.
  *
  * The daemon-wide evicted-`rootRunId` set — the shared state between the
- * `autonomy.evict` handler (writes via `mark`) and the Wave-2 chokepoint (reads
- * via `isEvicted` at the NEXT gate decision, EVICT-03 — mid-run, not next spawn).
+ * `autonomy.evict` handler (writes via `mark`) and the chokepoint (reads
+ * via `isEvicted` at the NEXT gate decision — mid-run, not next spawn).
  * Evict DEMOTES a run's profile to `default`; it does NOT abort. The registry is
  * the read/write primitive that makes the demotion mid-run-effective.
  *
@@ -14,7 +14,7 @@
  *   - `mark` is idempotent and reports `{ newlyEvicted }` (true first, false
  *     after — so the handler can report whether it changed state),
  *   - `clear` (run-end cleanup) drops the flag so the set cannot grow unbounded
- *     under a storm of completed roots (T-217-15),
+ *     under a storm of completed roots,
  *   - `mark` logs content-free (§2.7 — method/id-shaped fields only, no body).
  *
  * @module
@@ -23,7 +23,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createEvictRegistry } from "./evict-registry.js";
 
-describe("createEvictRegistry — the daemon-wide evicted-rootRunId set (EVICT-01/03)", () => {
+describe("createEvictRegistry — the daemon-wide evicted-rootRunId set", () => {
   it("isEvicted is false for a root that was never marked", () => {
     const reg = createEvictRegistry({ logger: createMockLogger() });
     expect(reg.isEvicted("root-A")).toBe(false);

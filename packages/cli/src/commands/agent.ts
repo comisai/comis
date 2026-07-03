@@ -53,8 +53,8 @@ export function registerAgentCommand(program: Command): void {
       try {
         const result = await withSpinner("Fetching agents...", () =>
           withClient(async (client) => {
-            // Retargeted from stale `config.get` method name (daemon implements
-            // `config.read`) to ConfigReadContract.
+            // ConfigReadContract targets `config.read` — the method name the
+            // daemon actually implements (there is no `config.get` RPC).
             return await callTyped(client, ConfigReadContract, {
               section: "agents",
             }) as Record<string, unknown>;
@@ -111,7 +111,7 @@ export function registerAgentCommand(program: Command): void {
         );
 
         // Initialize dedicated workspace for the new agent (honors
-        // COMIS_DATA_DIR like the daemon's resolution — 260611 dataDir fix).
+        // COMIS_DATA_DIR so the CLI resolves the same dir as the daemon).
         // systemGetEnv (not raw process.env) per the no-restricted-syntax gate.
         const workspaceDir = resolveWorkspaceDir(
           { workspacePath: undefined } as AgentConfig,

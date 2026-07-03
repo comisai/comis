@@ -1,8 +1,8 @@
-# The scripted GSD-like dialog (Plan 124-10, spec §10.3 TR-12 / §4.7)
+# The scripted GSD-like dialog
 
 This fixture defines the **deterministic scripted dialog sequence** that
 `terminal-attention-loop.linux.test.ts` drives end-to-end against a real driven
-CLI on the Linux+bwrap CI/VPS host. It is the TR-12 "scripted GSD-like dialog
+CLI on the Linux+bwrap CI/VPS host. It is the "scripted GSD-like dialog
 script across turns → completes, answering each" contract: an ordered list of
 steps, each `{ prompt the driven CLI receives, the structural awaiting-input
 signal the classifier must reach, the keystroke/answer to send, the expected
@@ -17,7 +17,7 @@ corpus"): the byte/keystroke patterns are explicit + reviewable, and the file is
 Pinned against **`claude --version` 2.1.161 (Claude Code)** — the same pin as the
 classifier corpus.
 
-> **REFRESH this script on each `claude` version bump (spec §10.4).** A new
+> **REFRESH this script on each `claude` version bump.** A new
 > `claude` release can rename a dialog, change a keystroke affordance, or shift
 > where the cursor parks. A drift surfaces as a failing live step in
 > `terminal-attention-loop.linux.test.ts` on the CI/VPS host (it SKIPS on the
@@ -56,9 +56,9 @@ echoing a marker after each answer, then exits. Each row is one woken turn.
 |---|------------------------------------|-----------------------|----------------------------------------|-------------------------|--------------------|
 | 1 | `Trust the files in this folder? (y/n)` | classifier `awaiting-input`, cursor parked after the `(y/n)` | `answer` (operator hint `Trust the files`) | `y` + Enter | the program echoes `TRUST_OK` and parks on prompt 2 |
 | 2 | `Which option? (1/2)` (an AskUserQuestion-like choice) | `awaiting-input`, cursor parked after the `(1/2)` | `answer` (operator hint `Which option`) | `1` + Enter | echoes `OPTION_1_OK` and parks on prompt 3 |
-| 3 | `Proceed with the plan? (y/n)` | `awaiting-input`, cursor parked after the `(y/n)` | **`escalate(approval)`** — the structural `proceed with` APPROVAL cue (SEC-12) WINS over the matching hint pattern | `y` + Enter, sent by the **woken AGENT** (the escalation consumer) | echoes `PLAN_DONE` then the program EXITS (the dialog COMPLETES) |
+| 3 | `Proceed with the plan? (y/n)` | `awaiting-input`, cursor parked after the `(y/n)` | **`escalate(approval)`** — the structural `proceed with` APPROVAL cue WINS over the matching hint pattern | `y` + Enter, sent by the **woken AGENT** (the escalation consumer) | echoes `PLAN_DONE` then the program EXITS (the dialog COMPLETES) |
 
-**Step 3 is the SEC-12 escalate-always gate, live.** `terminal-auto-answer.ts`
+**Step 3 is the escalate-always gate, live.** `terminal-auto-answer.ts`
 checks the structural auth/destructive/approval cues BEFORE the operator
 safe-pattern match, so a prompt containing `proceed with` escalates even though
 the operator hint `Proceed with the plan` matches the same screen — auto-answer

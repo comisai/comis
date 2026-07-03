@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * acp-projection — pure pass-through projection (spec §9).
+ * acp-projection — pure pass-through projection.
  *
  * ACP and Web surfaces want full fidelity: every step, no coalescing, no
  * verbosity policy. So this projection emits all events verbatim,

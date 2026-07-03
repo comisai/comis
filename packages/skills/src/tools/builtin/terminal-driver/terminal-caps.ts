@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-session usage caps for the terminal driver (spec §3.8, §4.6).
+ * Per-session usage caps for the terminal driver.
  *
  * `createSessionCaps(limits, nowMs)` is a pure, fully-injected primitive that enforces
  * the per-entry operator caps from the closed config `limits`:

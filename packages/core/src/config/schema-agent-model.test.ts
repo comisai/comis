@@ -327,14 +327,14 @@ describe("OperationModelsSchema", () => {
     expect(result.cron?.model).toBeUndefined();
   });
 
-  it("rejects legacy flat model string (cron: string)", () => {
+  it("rejects a bare model string for an operation entry (cron: string — entries must be objects)", () => {
     const result = OperationModelsSchema.safeParse({
       cron: "anthropic:claude-haiku-4-5",
     });
     expect(result.success).toBe(false);
   });
 
-  it("rejects legacy flat timeout keys (cronTimeout)", () => {
+  it("rejects flat sibling timeout keys (cronTimeout — each entry owns its timeout)", () => {
     const result = OperationModelsSchema.safeParse({
       cronTimeout: 150_000,
     });
@@ -390,17 +390,17 @@ describe("OperationModelsSchema", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // R4/R5: verification + planning operation types (Phase 154)
+  // Verification + planning operation types
   // ---------------------------------------------------------------------------
 
-  it("accepts verification entry (R4: pre-delivery critic)", () => {
+  it("accepts verification entry (pre-delivery critic)", () => {
     const result = OperationModelsSchema.parse({
       verification: { model: "anthropic:claude-haiku-4-5" },
     });
     expect(result.verification?.model).toBe("anthropic:claude-haiku-4-5");
   });
 
-  it("accepts planning entry (R5: pre-execution planner)", () => {
+  it("accepts planning entry (pre-execution planner)", () => {
     const result = OperationModelsSchema.parse({
       planning: { model: "anthropic:claude-haiku-4-5", timeout: 90_000 },
     });

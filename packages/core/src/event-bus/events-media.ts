@@ -2,7 +2,7 @@
 /**
  * MediaGenerationEvents: image-generation lifecycle events (image:*).
  *
- * OBS-04 (Phase 186, v2.23): the daemon image RPC handler records an image
+ * The daemon image RPC handler records an image
  * turn's lifecycle onto the per-session trajectory so `comis explain
  * <sessionKey>` can reconstruct it (provider / model / costUsd / outcome).
  *
@@ -15,11 +15,11 @@
  * nonetheless, for trajectory-type ARCH CLOSURE (the arch test enumerates the
  * mapping) and so a future bus emitter is already wired.
  *
- * CONTENT-FREE (T-186-08): every payload carries ids / labels / counts /
+ * CONTENT-FREE: every payload carries ids / labels / counts /
  * `costUsd` / booleans ONLY — NEVER the prompt text, the generated image bytes,
  * a credential, or a raw provider error message. `costUsd` rides
  * `image:generated` so the trajectory reconstruction surfaces the image turn's
- * cost (OBS-03 Route a — the binding bar). The redaction-safe detail (if any)
+ * cost. The redaction-safe detail (if any)
  * rides the structured Pino LOG, never the bus/trajectory.
  */
 export interface MediaGenerationEvents {
@@ -31,7 +31,7 @@ export interface MediaGenerationEvents {
   "image:requested": {
     /** The executing image provider id (the boot-selected port — `deps.provider.id`). */
     provider: string;
-    /** The caller agent's resolved main provider id (RES-01 lockstep label). */
+    /** The caller agent's resolved main provider id (lockstep label). */
     mainProvider: string;
     /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
     agentId?: string;
@@ -42,7 +42,7 @@ export interface MediaGenerationEvents {
 
   /**
    * An image was generated successfully. Carries the cost + provider + model +
-   * size + outcome — the OBS-03 cost-carry record (`costUsd`) so `comis
+   * size + outcome — the cost-carry record (`costUsd`) so `comis
    * explain` reconstructs the turn's cost from the trajectory. NO image bytes.
    */
   "image:generated": {
@@ -50,7 +50,7 @@ export interface MediaGenerationEvents {
     provider: string;
     /** The image model the provider used (e.g. "gpt-image-1"). Optional — some adapters omit it. */
     model?: string;
-    /** The image generation cost in USD (from the widened ImageGenOutput — OBS-03). Optional. */
+    /** The image generation cost in USD (from ImageGenOutput). Optional. */
     costUsd?: number;
     /** The persisted/encoded image size in bytes (a size signal, not the content). Optional. */
     sizeBytes?: number;
@@ -98,7 +98,7 @@ export interface MediaGenerationEvents {
 }
 
 /**
- * The `path` a vision turn took — VIS-03's "which path" signal (the locked
+ * The `path` a vision turn took — the "which path" signal (the locked
  * ladder order). `unavailable` is failure-only (no tier served).
  */
 export type VisionPath = "main-vision" | "registry" | "gemini-video" | "unavailable";
@@ -106,14 +106,14 @@ export type VisionPath = "main-vision" | "registry" | "gemini-video" | "unavaila
 /**
  * MediaVisionEvents: vision-analysis lifecycle events (media.vision:*).
  *
- * VIS-04 (Phase 187, v2.23): the daemon vision RPC handler
+ * The daemon vision RPC handler
  * (`image.analyze` / `media.describe_video`) records a vision turn's lifecycle
  * onto the per-session trajectory so `comis explain <sessionKey>` can
  * reconstruct it (provider / mainProvider / model / path / costUsd / outcome) —
- * the SAME observability image generation got in Phase 186 (the `image.*`
+ * the SAME observability image generation gets (the `image.*`
  * machinery is the template).
  *
- * APPEND-ONLY (Pitfall 5): this is a NEW event set ALONGSIDE the SemVer-frozen
+ * APPEND-ONLY: this is a NEW event set ALONGSIDE the SemVer-frozen
  * `MediaGenerationEvents` `image:*` shape — never a rename of an `image.*`
  * literal (a rename trips the bridge-entry-count guard + the
  * `IncidentReport.image` reconstruction + the web codegen cascade).
@@ -125,12 +125,12 @@ export type VisionPath = "main-vision" | "registry" | "gemini-video" | "unavaila
  * trajectory registries + a translator) for trajectory-type ARCH CLOSURE and so
  * a future bus emitter is already wired.
  *
- * CONTENT-FREE (T-187-12): every payload carries ids / labels / the `path` /
+ * CONTENT-FREE: every payload carries ids / labels / the `path` /
  * `costUsd` / `outcome` / `errorKind` ONLY — NEVER the image bytes, the analysis
  * prompt, the model's answer, or a credential. `costUsd` rides
  * `media.vision:completed` (= `AssistantMessage.usage.cost.total`, optional —
- * absent on the registry/gemini-video tiers which return no cost; Pitfall 4) so
- * the trajectory reconstruction surfaces the vision turn's cost (Route a).
+ * absent on the registry/gemini-video tiers which return no cost) so
+ * the trajectory reconstruction surfaces the vision turn's cost.
  */
 export interface MediaVisionEvents {
   /**
@@ -153,10 +153,10 @@ export interface MediaVisionEvents {
   /**
    * A vision analysis completed successfully on some tier. Carries the
    * executing provider + the resolved main provider + model + the `path` label +
-   * an OPTIONAL `costUsd` — the VIS-04 cost-carry record (Route a) so `comis
+   * an OPTIONAL `costUsd` — the cost-carry record so `comis
    * explain` reconstructs the turn's cost. `costUsd` is present only on the
    * main-vision tier (the bridge returns it); the registry/gemini-video tiers
-   * return no cost (Pitfall 4). NO model answer text.
+   * return no cost. NO model answer text.
    */
   "media.vision:completed": {
     /** The executing vision provider id (e.g. "anthropic" on main-vision, "gemini" on the registry tier). */
@@ -165,9 +165,9 @@ export interface MediaVisionEvents {
     mainProvider: string;
     /** The vision model used (e.g. "claude-sonnet-4-5"). Optional — some adapters omit it. */
     model?: string;
-    /** The analysis cost in USD (from AssistantMessage.usage.cost.total — VIS-04). Optional (absent on registry/gemini-video). */
+    /** The analysis cost in USD (from AssistantMessage.usage.cost.total). Optional (absent on registry/gemini-video). */
     costUsd?: number;
-    /** Which ladder tier served the turn (VIS-03's "which path" signal). */
+    /** Which ladder tier served the turn (the "which path" signal). */
     path: VisionPath;
     /** Closed outcome label (always "ok" on this event — failures emit media.vision:failed). */
     outcome: "ok";
@@ -204,7 +204,7 @@ export interface MediaVisionEvents {
 /**
  * MediaVideoGenerationEvents: video-generation lifecycle events (video:*).
  *
- * OBS-04 (Phase 192, v2.24): the daemon video RPC handler (`video.generate`,
+ * The daemon video RPC handler (`video.generate`,
  * in-turn) AND the off-turn background poller (`setup-video-poller.ts`) record a
  * video turn's lifecycle onto the per-session trajectory so `comis explain
  * <sessionKey>` can reconstruct it — INCLUDING a job that completes in the
@@ -212,7 +212,7 @@ export interface MediaVisionEvents {
  * completion via `traceId`/`jobId`; the persisted `session_key` job-row column is
  * how the off-turn poller resolves the recorder.
  *
- * APPEND-ONLY (Pitfall 8): a NEW event set ALONGSIDE the SemVer-frozen
+ * APPEND-ONLY: a NEW event set ALONGSIDE the SemVer-frozen
  * `MediaGenerationEvents` `image:*` shape + `MediaVisionEvents` `media.vision:*`
  * shape — never a rename of an `image.*`/`media.vision.*` literal (a rename trips
  * the bridge-entry-count guard + the `IncidentReport` reconstruction + the web
@@ -225,10 +225,10 @@ export interface MediaVisionEvents {
  * trajectory registries + a translator) for trajectory-type ARCH CLOSURE and so
  * a future bus emitter is already wired.
  *
- * CONTENT-FREE (T-192-01): every payload carries ids / labels / counts /
+ * CONTENT-FREE: every payload carries ids / labels / counts /
  * `costUsd` / `outcome` / `errorKind` / booleans ONLY — NEVER the prompt, the
  * video bytes, a credential, the Veo keyed-download-URL, or a raw provider
- * message. `costUsd` rides `video:generated` (OBS-03 Route a — FAL/Veo estimate,
+ * message. `costUsd` rides `video:generated` (FAL/Veo estimate,
  * Grok actual; optional so an absent value never appears) so the trajectory
  * reconstruction surfaces the video turn's cost. The redaction-safe detail rides
  * the structured Pino LOG, never the bus/trajectory.
@@ -242,7 +242,7 @@ export interface MediaVideoGenerationEvents {
   "video:requested": {
     /** The executing video provider id (the boot-selected port — `deps.provider.id`). */
     provider: string;
-    /** The caller agent's resolved main provider id (RES-01 lockstep label). */
+    /** The caller agent's resolved main provider id (lockstep label). */
     mainProvider: string;
     /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
     agentId?: string;
@@ -270,7 +270,7 @@ export interface MediaVideoGenerationEvents {
 
   /**
    * A video was generated successfully (the off-turn poller's done branch).
-   * Carries the cost + provider + model + size + duration + outcome — the OBS-03
+   * Carries the cost + provider + model + size + duration + outcome — the
    * cost-carry record (`costUsd`) so `comis explain` reconstructs the turn's cost
    * from the trajectory. NO video bytes, NO keyed-download-URL.
    */
@@ -279,7 +279,7 @@ export interface MediaVideoGenerationEvents {
     provider: string;
     /** The video model the provider used (e.g. "veo-3.1"). Optional. */
     model?: string;
-    /** The reconciled generation cost in USD (OBS-03; FAL/Veo estimate, Grok actual). Optional. */
+    /** The reconciled generation cost in USD (FAL/Veo estimate, Grok actual). Optional. */
     costUsd?: number;
     /** The persisted video size in bytes (a size signal, not the content). Optional. */
     sizeBytes?: number;
@@ -332,7 +332,7 @@ export interface MediaVideoGenerationEvents {
 
 /**
  * The resolved STT/TTS selection rung — the provenance `source` of the chosen
- * provider (design §17 / OBS-03). Matches `SttSelection.source` in
+ * provider. Matches `SttSelection.source` in
  * `resolve-transcription-provider.ts` / `resolve-tts-provider.ts`; kept local to
  * the EventMap so a consumer can type-narrow the rung without the resolver
  * barrel. `keyless-local` is the default; `follow-main-key` reuses the main
@@ -345,15 +345,15 @@ export type VoiceSelectionSource = "explicit" | "keyless-local" | "follow-main-k
  * MediaSttEvents + MediaTtsEvents: voice (speech-to-text / text-to-speech)
  * lifecycle events (`media.stt:*` / `media.tts:*`).
  *
- * OBS-02/03 (Phase 196, v2.25): the daemon voice RPC handler (`media.transcribe`
+ * The daemon voice RPC handler (`media.transcribe`
  * / `tts.synthesize`) records a voice turn's lifecycle onto the per-session
  * trajectory so `comis explain <sessionKey>` reconstructs it (provider /
  * keyless? / model / durationMs / costUsd / the resolved `source` rung + the
- * `onSkip` reasons / outcome) — the SAME observability image/vision/video got in
- * Phases 186/187/192 (the `video:*` machinery is the cleanest twin: record-only,
+ * `onSkip` reasons / outcome) — the SAME observability the image/vision/video
+ * events provide (the `video:*` machinery is the cleanest twin: record-only,
  * because the voice handlers/pipeline already carry §2.7 logging).
  *
- * APPEND-ONLY (Pitfall 8): a NEW event set ALONGSIDE the SemVer-frozen
+ * APPEND-ONLY: a NEW event set ALONGSIDE the SemVer-frozen
  * `MediaGenerationEvents` `image:*` / `MediaVisionEvents` `media.vision:*` /
  * `MediaVideoGenerationEvents` `video:*` shapes — never a rename of a frozen
  * literal (a rename trips the bridge-entry-count guard + the `IncidentReport`
@@ -366,13 +366,13 @@ export type VoiceSelectionSource = "explicit" | "keyless-local" | "follow-main-k
  * registries + a translator) for trajectory-type ARCH CLOSURE and so a future
  * bus emitter is already wired.
  *
- * CONTENT-FREE (T-196-04): every payload carries ids / labels / numbers /
+ * CONTENT-FREE: every payload carries ids / labels / numbers /
  * booleans / closed-enum reasons ONLY — NEVER the audio bytes, the transcript
  * text, the synthesized audio, or a credential. `costUsd` rides `*:completed`
- * (OBS-05 Route a; keyless = `0` EXPLICIT so "free" is visible — never absent;
- * keyed omits it where the provider returns no per-call cost — Pitfall 4) so the
+ * (keyless = `0` EXPLICIT so "free" is visible — never absent;
+ * keyed omits it where the provider returns no per-call cost) so the
  * trajectory reconstruction surfaces the voice turn's cost. The `onSkip` reasons
- * (a closed rung-list, no free text) ride `*:requested` (OBS-03 — WHY `auto`
+ * (a closed rung-list, no free text) ride `*:requested` (WHY `auto`
  * picked the rung, beyond the chosen `source`). The domain `SttErrorKind` rides
  * `*:failed.errorKind` verbatim (the redaction-safe detail + the closed log union
  * via `STT_ERR_TO_LOG` ride the structured Pino LOG, never the trajectory).
@@ -383,16 +383,16 @@ export interface MediaSttEvents {
   /**
    * A transcription was requested (entry, after the keyless-first resolve).
    * Carries the resolved provider + keyless flag + the selection `source` rung +
-   * the `onSkip` reasons (the rungs `auto` skipped + why — OBS-03). NO audio.
+   * the `onSkip` reasons (the rungs `auto` skipped + why). NO audio.
    */
   "media.stt:requested": {
     /** The resolved/executing STT provider id (e.g. "local", "openai"). */
     provider: string;
     /** Whether the resolved provider is keyless (no audio key needed). */
     keyless: boolean;
-    /** The resolved selection rung (OBS-03 — which rung `auto` chose). */
+    /** The resolved selection rung (which rung `auto` chose). */
     source: VoiceSelectionSource;
-    /** The resolver's onSkip reasons (the rungs auto SKIPPED + why — OBS-03; a
+    /** The resolver's onSkip reasons (the rungs auto SKIPPED + why; a
      *  closed rung-list, NOT a credential). Optional — absent on an explicit pin. */
     onSkip?: string[];
     /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
@@ -406,7 +406,7 @@ export interface MediaSttEvents {
 
   /**
    * A transcription completed successfully. Carries provider + keyless + model +
-   * durationMs + audioBytes + an OPTIONAL `costUsd` (OBS-05 Route a — keyless = 0
+   * durationMs + audioBytes + an OPTIONAL `costUsd` (keyless = 0
    * EXPLICIT, keyed omits where no per-call cost) + the selection `source`. NO
    * transcript text.
    */
@@ -421,7 +421,7 @@ export interface MediaSttEvents {
     durationMs?: number;
     /** The inbound audio size in bytes (a size signal, not the content). Optional. */
     audioBytes?: number;
-    /** The transcription cost in USD (OBS-05; keyless = 0 explicit, keyed omitted). Optional. */
+    /** The transcription cost in USD (keyless = 0 explicit, keyed omitted). Optional. */
     costUsd?: number;
     /** The resolved selection rung. */
     source: VoiceSelectionSource;
@@ -464,22 +464,22 @@ export interface MediaSttEvents {
 
 /**
  * MediaTtsEvents: text-to-speech lifecycle events (`media.tts:*`). The TTS twin
- * of {@link MediaSttEvents} — the same content-free shape, the same OBS-02/03/05
- * obligations (see the `MediaSttEvents` header). APPEND-ONLY alongside the frozen
+ * of {@link MediaSttEvents} — the same content-free shape, the same cost-carry
+ * and selection-provenance obligations (see the `MediaSttEvents` header). APPEND-ONLY alongside the frozen
  * media.stt:* / video:* shapes — never a rename.
  */
 export interface MediaTtsEvents {
   /** A synthesis was requested (entry, after the keyless-first resolve). Carries
    *  the resolved provider + keyless flag + the selection `source` rung + the
-   *  `onSkip` reasons (OBS-03). NO text. */
+   *  `onSkip` reasons. NO text. */
   "media.tts:requested": {
     /** The resolved/executing TTS provider id (e.g. "edge", "elevenlabs"). */
     provider: string;
     /** Whether the resolved provider is keyless. */
     keyless: boolean;
-    /** The resolved selection rung (OBS-03). */
+    /** The resolved selection rung. */
     source: VoiceSelectionSource;
-    /** The resolver's onSkip reasons (the rungs auto SKIPPED + why — OBS-03). Optional. */
+    /** The resolver's onSkip reasons (the rungs auto SKIPPED + why). Optional. */
     onSkip?: string[];
     /** Multi-tenant agent identifier (envelope correlation — stripped from trajectory data). */
     agentId?: string;
@@ -504,7 +504,7 @@ export interface MediaTtsEvents {
     durationMs?: number;
     /** The produced audio size in bytes (a size signal, not the content). Optional. */
     audioBytes?: number;
-    /** The synthesis cost in USD (OBS-05; keyless = 0 explicit, keyed omitted). Optional. */
+    /** The synthesis cost in USD (keyless = 0 explicit, keyed omitted). Optional. */
     costUsd?: number;
     /** The resolved selection rung. */
     source: VoiceSelectionSource;

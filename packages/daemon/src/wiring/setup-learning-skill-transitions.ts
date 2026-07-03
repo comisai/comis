@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SURFACE-04/05/06 learned-skill promote/demote — the resolve-seam loop body.
+ * Learned-skill promote/demote — the resolve-seam loop body.
  *
  * Extracted to its own leaf (like `setup-learning-corroboration.ts`) so
  * `setup-learning.ts` stays under the 800-line cap. It imports `failureCorroborated`
@@ -9,10 +9,10 @@
  * `setup-learning.ts` (one-directional — no cycle). The caller's `deps` is a superset of
  * the narrow {@link SkillTransitionDeps} declared here, so it passes `deps` verbatim.
  *
- * The loop iterates `verdict.usedSkillIds` (skill NAMES, ATTR-01) and AWAITS the
- * name-keyed store transition to read rows-changed (CR-01) so a 0-row write never
- * inflates the counters/emits. It scope-qualifies the corroboration/trend keys (WR-05)
- * and refreshes the per-agent surface cache on a real transition (WR-01). NEVER throws
+ * The loop iterates `verdict.usedSkillIds` (skill NAMES) and AWAITS the
+ * name-keyed store transition to read rows-changed so a 0-row write never
+ * inflates the counters/emits. It scope-qualifies the corroboration/trend keys
+ * and refreshes the per-agent surface cache on a real transition. NEVER throws
  * (each store call is wrapped; a reject/err WARNs and is skipped).
  *
  * @module
@@ -52,18 +52,18 @@ export interface SkillOutcomeDeps {
   skillStore: MentalModelStorePort;
   /** The per-agent `promoteAtProofCount` threshold (candidate→active proof bar). */
   threshold: number;
-  /** WR-05: scope-qualified corroboration tally (skillGaugeKey → distinct failing sessions). */
+  /** Scope-qualified corroboration tally (skillGaugeKey → distinct failing sessions). */
   skillFailureCorroborationTally: Map<string, Set<string>>;
-  /** WR-05: the decay-aware trend tracker (keyed on the SAME scope-qualified key). */
+  /** The decay-aware trend tracker (keyed on the SAME scope-qualified key). */
   skillTrend: SkillTrendTracker;
-  /** WR-01: refresh the per-agent surface cache after a promote/demote moved a row, so
-   *  the NEXT session's freeze captures the new active set (SURFACE-03 next-session
+  /** Refresh the per-agent surface cache after a promote/demote moved a row, so
+   *  the NEXT session's freeze captures the new active set (next-session
    *  pickup, never a frozen-snapshot mutation). Absent ⇒ no refresh. */
   refreshSurface?: (agentId: string) => void;
 }
 
 /**
- * WR-05: build the scope-qualified key the in-process skill gauges (corroboration
+ * Build the scope-qualified key the in-process skill gauges (corroboration
  * tally + trend tracker) MUST key on — `(tenantId, agentId, skillName)`. Keying on
  * the bare skill NAME aliases two different (tenant, agent) scopes that each surface
  * a skill of the same name, so tenant A's failures could drive tenant B's skill
@@ -76,13 +76,13 @@ function skillGaugeKey(tenantId: string, agentId: string, skillName: string): st
 }
 
 /**
- * SURFACE-04/05/06 + OBS-01 — the resolve-seam learned-skill promote/demote body,
+ * The resolve-seam learned-skill promote/demote body,
  * fire-and-forget / non-fatal. AWAITS the name-keyed store transition to read
- * rows-changed (CR-01: the loop holds skill NAMES, not the hash id; the store resolves
+ * rows-changed (the loop holds skill NAMES, not the hash id; the store resolves
  * name→id internally AND reports whether a row moved) and increments the counter +
  * emits ONLY when a row actually transitioned (the telemetry stops lying about 0-row
- * writes). Scope-qualifies the corroboration/trend keys (WR-05). On a real transition
- * it refreshes the per-agent surface cache (WR-01). NEVER throws (each store call is
+ * writes). Scope-qualifies the corroboration/trend keys. On a real transition
+ * it refreshes the per-agent surface cache. NEVER throws (each store call is
  * wrapped; a reject/err WARNs and is skipped).
  */
 export async function applySkillOutcomeTransitions(

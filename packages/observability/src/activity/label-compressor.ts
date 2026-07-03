@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * label-compressor — pure, one-pass, idempotent display-shortener for activity
- * labels (spec §8.4). Consumes strings that redactValue has already
+ * labels. Consumes strings that redactValue has already
  * sanitized and path-compacted: it does NOT mask secrets (redactValue owns that
  * upstream) and does NOT re-compact paths (a `~`-rooted or ≤2-segment path is a
- * fixed point — Pitfall 2). It handles ONLY three display categories:
+ * fixed point). It handles ONLY three display categories:
  *
  *   - URLs:       `https://api.tavily.com/v1/search?q=…` → `tavily.com/search`
  *   - Timestamps: `2025-05-22T18:42:00.123Z`            → `18:42:00`
@@ -128,7 +128,7 @@ export function compressLabel(label: string): string {
   //     absolute paths to their last 2 segments; a `~`-rooted or ≤2-segment path
   //     is a fixed point here, and none of the regexes above match one.
   //
-  // (5) CLAMP: hard-cap the produced label to the schema bound (FIX 3). The
+  // (5) CLAMP: hard-cap the produced label to the schema bound. The
   //     category transforms never grow the input, but the input itself can exceed
   //     120 chars (a long static label / a verbose template render). Clamping last
   //     keeps every direct consumer + the buildLabel returns within the cap.

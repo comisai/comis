@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discord subagent parent-line + thread-expand tests (§18.2-S7 / §17.3).
+ * Discord subagent parent-line + thread-expand tests.
  *
  * A `kind:"subagent"` event's `defaultLabel` carries the `🤖` marker the
  * activity-stream projection set; `renderFrameText` paints it verbatim,
@@ -52,7 +52,7 @@ describe("Discord subagent parent line + thread-expand affordance", () => {
   it("renders the subagent parent line (text carries the agentId) and requests a thread", async () => {
     const timer = createFakeTimers();
     const fake = createFakeDiscordAdapter();
-    // Drop clock so the §8.5 elapsed fallback
+    // Drop clock so the "(running N s)" elapsed fallback
     // is skipped — the test asserts send.text byte-stably.
     const r = createDiscordActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 

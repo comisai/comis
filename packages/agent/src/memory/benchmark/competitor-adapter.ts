@@ -15,7 +15,7 @@
  * — a shape that carries NO score field. {@link AdapterResult} is a DISCRIMINATED
  * UNION whose `ran:false` arm has no `accuracy`/`overall`/`score`/`manifestRef`,
  * so it is structurally IMPOSSIBLE for an absent system to fabricate a number
- * (CONTEXT.md decision 4; the anti-fabrication threat). The keyless CI
+ * (the anti-fabrication threat). The keyless CI
  * always hits the skip branch (no env, no install) — that IS the wiring proof; the
  * operator-costed run (keys + competitor installs + LLM spend) fills the real
  * numbers in a costed re-run, honestly deferred.

@@ -54,20 +54,20 @@ describe("STRUCTURED_PROMPT instruction invariants", () => {
   });
 
   it("states an explicit selectivity rubric: 'Extract durable facts' / 'Skip filler' lead-ins", () => {
-    // Pin the EXACT current rubric lead-ins, not the incidental earlier wording.
-    // The bare /durable/i half passed on the earlier prompt too (its ✅ list already
-    // read "durable relationships"), so it did not prove the move from a
-    // generic "Extract:" header to the "Extract durable facts:" / "Skip filler:"
-    // rubric. Asserting the lead-in phrases flips RED if a future edit reverts the
-    // explicit rubric while leaving "durable relationships" buried in a list.
-    expect(STRUCTURED_PROMPT).toMatch(/Extract durable facts/i); // new ✅ lead-in
-    expect(STRUCTURED_PROMPT).toMatch(/Skip filler/i); // new ❌ lead-in
+    // Pin the EXACT rubric lead-ins, not an incidental substring: a bare
+    // /durable/i match would also pass with "durable relationships" merely
+    // buried inside the ✅ list, so it would not prove the explicit
+    // "Extract durable facts:" / "Skip filler:" lead-ins are present.
+    // Asserting the lead-in phrases flips RED if an edit collapses the
+    // explicit rubric back into a generic "Extract:" header.
+    expect(STRUCTURED_PROMPT).toMatch(/Extract durable facts/i); // the ✅ lead-in
+    expect(STRUCTURED_PROMPT).toMatch(/Skip filler/i); // the ❌ lead-in
   });
 
   // -------------------------------------------------------------------------
   // The additive, DECLARATIVE causal-emission paragraph.
   //
-  // The prompt now instructs the LLM to emit `causes` (each `{ effect }`) when a
+  // The prompt instructs the LLM to emit `causes` (each `{ effect }`) when a
   // cause→effect link is EXPLICIT in the conversation. This MUST stay declarative
   // (injection-safe: the model is told to EXTRACT a consequence as data, never to
   // execute it) and MUST NOT regress the coreference/selectivity/language
@@ -87,17 +87,17 @@ describe("STRUCTURED_PROMPT instruction invariants", () => {
     expect(STRUCTURED_PROMPT).toMatch(/explicit/i);
   });
 
-  it("adds `causes` to the per-fact output envelope line (the LLM knows the field is optional)", () => {
-    // The envelope line `output an object: { "content", ... }` must now list
+  it("lists `causes` in the per-fact output envelope line (the LLM knows the field is optional)", () => {
+    // The envelope line `output an object: { "content", ... }` must list
     // "causes" so the model emits it in the right place (omittable).
     const envelopeLine = STRUCTURED_PROMPT.split("\n").find((l) => l.includes("output an object"));
     expect(envelopeLine).toBeDefined();
     expect(envelopeLine).toContain("causes");
   });
 
-  it("does NOT regress the coreference + selectivity + language instructions when adding causes", () => {
+  it("keeps the coreference + selectivity + language instructions alongside the causes paragraph", () => {
     // Zero-regression guard: the additive causal paragraph must leave the
-    // pre-existing instructions byte-present.
+    // other instructions byte-present.
     expect(STRUCTURED_PROMPT).toMatch(/coreference|pronoun|refers to/i);
     expect(STRUCTURED_PROMPT).toMatch(/canonical/i);
     expect(STRUCTURED_PROMPT).toContain("✅");
@@ -131,8 +131,8 @@ describe("parseExtractionResult is total and zod-gated", () => {
     expect(parseExtractionResult('{"foo":1}')).toBeUndefined();
   });
 
-  it("returns undefined on the OLD flat array shape (schema mismatch — no longer accepted)", () => {
-    // The earlier flat path emitted [{content, session}]; the structured
+  it("returns undefined on a flat array shape (schema mismatch — a bare array is rejected)", () => {
+    // A flat [{content, session}] array is not the structured envelope; the
     // schema MUST reject it (it expects { memories: [...] }, not a bare array).
     expect(parseExtractionResult('[{"content":"X","session":"s1"}]')).toBeUndefined();
   });

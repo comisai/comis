@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the VideoCostLimiter (SEC-02 / DIVERGENCE 3).
+ * Tests for the VideoCostLimiter.
  *
  * Unlike the image cost limiter (post-hoc `canSpend(agentId)` with no estimate),
- * video is dollars-per-clip and ALREADY rendering once submitted (I6), so the
+ * video is dollars-per-clip and ALREADY rendering once submitted, so the
  * ceiling MUST be gated against a worst-case estimate BEFORE the provider call:
  * `canSpend(agentId, estimateUsd)` returns false when `(accumulated + estimate)`
  * would exceed `maxCostPerHourUsd`. The boundary is INCLUSIVE (== ceiling is ok).
@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { createVideoCostLimiter } from "./video-cost-limiter.js";
 
-describe("createVideoCostLimiter (DIVERGENCE 3 — pre-submit estimate gate)", () => {
+describe("createVideoCostLimiter (pre-submit estimate gate)", () => {
   it("blocks when the estimate ALONE would exceed the ceiling (no prior spend)", () => {
     // maxCostPerHourUsd=10, no accumulated spend: an 11 estimate exceeds.
     const limiter = createVideoCostLimiter({ maxCostPerHourUsd: 10, nowMs: () => 0 });

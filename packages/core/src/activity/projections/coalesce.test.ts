@@ -2,7 +2,7 @@
 /**
  * Coalesce engine tests.
  *
- * Pure rules engine (spec §9): drop fast successes at `normal`, group
+ * Pure rules engine: drop fast successes at `normal`, group
  * consecutive same-tool/same-action events <800ms apart, preserve failures
  * unconditionally, enforce the maxLines cap per verbosity.
  */
@@ -149,28 +149,26 @@ describe("coalesce applies the chat coalescing rules", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Three render-side activity scaffold bugs.
+  // Phase-pair dedup + surrogate distinct-id counting.
   //
-  // RED tests for Bug A (phase-pair dedup by activityId) and Bug B (surrogate
-  // count counts distinct activityIds). Surfaced by a live IBM-info turn
-  // (instance 0bf2104a, trace 5d1cf3e1) where a slow-success start+end pair
-  // rendered as two lines and surrogate ×N counts inflated to 2× the true
-  // call count.
+  // Regression tests for two render-side scaffold defects observed on a live
+  // turn: a slow-success start+end pair rendered as two lines, and surrogate
+  // ×N counts inflated to 2× the true call count.
   // ---------------------------------------------------------------------------
 
-  it("dedupes start+end pairs by activityId, preferring the end event (Bug A — slow-success duplicates)", () => {
-    // Live-evidence reconstruction: a single slow tool call ("managing MCP
+  it("dedupes start+end pairs by activityId, preferring the end event (slow-success duplicate lines)", () => {
+    // A single slow tool call ("managing MCP
     // servers", 2300ms) emits two events sharing the same activityId — a
     // start/running with the running marker baked into defaultLabel by
     // activity-stream (emit-site behavior), and an end/completed
-    // with a BARE defaultLabel (no marker). Pre-patch coalesce passes both
+    // with a BARE defaultLabel (no marker). Without dedup, both pass
     // through Step 1's "drop fast successes" filter (the end has
     // durationMs:2300 > 1500ms, so it's kept; the start has no durationMs
     // so the `(e.durationMs ?? 0) < FAST_SUCCESS_MS` clause keeps it too) →
     // two visible events render as "🔧 managing MCP servers\nmanaging MCP
-    // servers" — the duplicate the user saw. Post-patch: phase-pair dedup
-    // collapses to ONE event, preferring the end (terminal state, drives
-    // Bug C's failure-marker prefix downstream).
+    // servers" — a duplicate line the user sees. Phase-pair dedup
+    // collapses to ONE event, preferring the end (terminal state, which also
+    // drives the renderer's failure-marker prefix downstream).
     const sharedActivityId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
     const startEvt = ev({
       activityId: sharedActivityId,
@@ -202,15 +200,16 @@ describe("coalesce applies the chat coalescing rules", () => {
     expect(survivor.activityId).toBe(sharedActivityId);
   });
 
-  it("surrogate count counts distinct activityIds, not raw constituent length (Bug B — defense-in-depth)", () => {
+  it("surrogate count counts distinct activityIds, not raw constituent length (defense-in-depth)", () => {
     // Defense-in-depth: a future change that re-introduces same-activityId
-    // events into a coalesced run (e.g. a Bug-A regression) must not inflate
-    // the ×N count. Construction: 4 events with two distinct activityIds,
-    // each id appearing twice in the input array. Step 1 (fast-success drop)
+    // events into a coalesced run (e.g. a phase-pair-dedup regression) must
+    // not inflate the ×N count. Construction: 4 events with two distinct
+    // activityIds, each id appearing twice in the input array. Step 1
+    // (fast-success drop)
     // keeps all 4 because they are end/completed with durationMs:3000 > 1500.
     // Step 1.5 (phase-pair dedup) collapses identical activityId duplicates
     // to one each (kept-first behavior for non-end-vs-start duplicates) →
-    // post-Fix-A there are 2 events in the grouped run, count is 2. But this
+    // there are then 2 events in the grouped run, count is 2. But this
     // test directly exercises the surrogate-count map's distinct-id logic by
     // feeding 4 events with 2 distinct ids — even if a future regression
     // re-introduced same-id events into the grouped run, `new Set(...)`
@@ -246,7 +245,7 @@ describe("coalesce applies the chat coalescing rules", () => {
     const surrogateId = visible[0]!.activityId;
     // The surrogate carries the count of DISTINCT activityIds (2), not the
     // raw constituent count from the post-dedup slice (which is also 2
-    // post-Fix-A, but the assertion pins the `new Set(...)` invariant).
+    // after dedup, but the assertion pins the `new Set(...)` invariant).
     expect(grouped[surrogateId]).toHaveLength(2);
     expect(new Set(grouped[surrogateId])).toEqual(new Set([idA, idB]));
   });

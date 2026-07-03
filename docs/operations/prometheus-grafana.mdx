@@ -49,9 +49,9 @@ never crashes boot. The full key reference is in
 [Configuration → observability](/reference/config-yaml).
 
 <Note>
-The OTLP transport ships as `http/protobuf` this release. Setting
+The OTLP transport is `http/protobuf`. Setting
 `protocol: "grpc"` validates, but the daemon falls back to `http/protobuf` with a
-logged warning (gRPC is a documented later addition — no silent wrong-transport).
+logged warning (gRPC support is planned — the fallback is never a silent wrong-transport).
 </Note>
 
 ## Security posture — trusted-operator, honestly
@@ -165,8 +165,8 @@ files manually. Each dashboard carries template variables for `datasource`,
 Every dashboard panel carries a **data link** to Comis's incident report
 (`comis explain`) — the chart-to-root-cause pivot. Click through from a spiking
 series to the deterministic [`IncidentReport`](/reference/cli) for that session
-(outcome, cost, per-tool failures, breaker timeline, and — since the cost/audit
-work — the cache-break and audit sections).
+(outcome, cost, per-tool failures, breaker timeline, and the cache-break and
+audit sections).
 
 <Note>
 **Exemplar honesty.** OpenMetrics *exemplars* (the trace id riding on a histogram

@@ -9,10 +9,10 @@
  *   - session.export: dump full session payload (admin-only)
  *   - session.reset_conversation: COMPLETE cross-mode forget — clears ALL
  *     THREE transcript layers: the LCD lossless-store history, the daemon
- *     sessionStore working transcript (Phase 164-06; supersedes Phase 164-03
- *     context.reset_lcd), and the pi runtime session (live finding 2026-06-11:
- *     without the runtime destroy the surviving JSONL re-ingested wholesale on
- *     the next turn and the "forgotten" conversation resurrected).
+ *     sessionStore working transcript, and the pi runtime session (observed
+ *     live: without the runtime destroy the surviving JSONL re-ingested
+ *     wholesale on the next turn and the "forgotten" conversation
+ *     resurrected).
  *
  * @module
  */
@@ -63,14 +63,14 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // stale cached approvals from auto-approving in a new session with the same key.
       deps.approvalGate?.clearApprovalCache(sessionKey);
 
-      // CR-02 (175-REVIEW): session destroy also drops the executor's
-      // session-scoped state for this key (schema snapshots, the GBNF-02
-      // strip-retry once-gate, JIT-guide delivery, cache latches) so a new
-      // session reusing the key starts genuinely fresh.
+      // Session destroy also drops the executor's session-scoped state for
+      // this key (schema snapshots, the grammar strip-retry once-gate,
+      // JIT-guide delivery, cache latches) so a new session reusing the key
+      // starts genuinely fresh.
       deps.clearAgentSessionState?.(sessionKey);
 
-      // Delete ⊇ reset: sever the OTHER two transcript layers too (live C7
-      // finding, 2026-06-12). Without the runtime destroy, the surviving
+      // Delete ⊇ reset: sever the OTHER two transcript layers too (observed
+      // live). Without the runtime destroy, the surviving
       // live JSONL re-surfaces the "deleted" session via session.list's
       // scanJsonlSessions merge; without the LCD delete, a recreated
       // same-key session re-reads the old conversation (the resurrection
@@ -137,7 +137,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // Clear messages but preserve metadata (identity)
       deps.sessionStore.saveByFormattedKey(sessionKey, [], data.metadata);
 
-      // COMPACT-STORE-MISS (30uc-20260624): a live chat is file-JSONL-only, so the
+      // A live chat is file-JSONL-only, so the
       // SQLite saveByFormattedKey([]) above is a NO-OP for it — the runtime destroy
       // is what actually clears the working transcript (mirrors session.delete +
       // reset_conversation). Without it, reset reported success while the JSONL
@@ -185,8 +185,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       };
     },
 
-    // Phase 164-06: COMPLETE cross-mode conversation reset.
-    // Supersedes Phase 164-03 context.reset_lcd (LCD-only).
+    // COMPLETE cross-mode conversation reset (an LCD-only reset is not enough).
     //
     // This operation clears BOTH layers to guarantee a clean slate in all modes:
     //   1. LCD store (dag mode: the durable history the model reads at turn-start)
@@ -215,10 +214,10 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
 
       const startMs = systemNowMs();
 
-      // TARGET-01: this is an ADMIN RPC, so the caller is trusted to name which agent's
+      // This is an ADMIN RPC, so the caller is trusted to name which agent's
       // conversation to forget. An explicit `agentId` selects the scope; absent, fall
-      // back to the default. (tenantId stays from trusted daemon context.) Live finding
-      // 2026-06-13: hardcoding defaultAgentId reset the wrong agent's LCD (0 rows).
+      // back to the default. (tenantId stays from trusted daemon context.) Observed
+      // live: hardcoding defaultAgentId reset the wrong agent's LCD (0 rows).
       const resolvedAgentId = params.agentId ?? deps.defaultAgentId;
       const scope: ContextStoreScope = {
         conversationId: sessionKey,
@@ -248,7 +247,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // fresh context after the reset (same pattern as session.delete + session.reset).
       deps.approvalGate?.clearApprovalCache(sessionKey);
 
-      // Layer 3: pi runtime session (live finding 2026-06-11). Without this
+      // Layer 3: pi runtime session. Without this
       // destroy, the surviving runtime JSONL re-ingests WHOLESALE on the next
       // turn (lcd-ingest epoch rebase — the deleted cursor makes live[0] a new
       // epoch) and the "forgotten" conversation resurrects into the DAG.
@@ -269,8 +268,8 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         );
       }
 
-      // CR-02 (175-REVIEW): a COMPLETE forget must also drop the executor's
-      // session-scoped state for this key — most importantly the GBNF-02
+      // A COMPLETE forget must also drop the executor's
+      // session-scoped state for this key — most importantly the grammar
       // strip-retry once-gate (a reset session previously inherited the
       // closed gate and terminal-failed its first grammar-400 with zero
       // repair attempts), plus tool-schema snapshots / JIT-guide delivery /
@@ -294,7 +293,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         "Conversation reset (LCD + sessionStore + runtime)",
       );
 
-      // Phase 172-03 (DIST-05): --memory honest reset. Deletes the RAG-memory
+      // --memory honest reset. Deletes the RAG-memory
       // rows by source_session_key — ONE query covers BOTH paired-conversation
       // memories AND lcd-distilled episodic memories — then unlinks them from
       // consolidated observations (orphan→delete, multi-source→keep). The
@@ -315,7 +314,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         lcdRowsDeleted,
         sessionMessagesCleared,
         runtimeSessionDestroyed,
-        resolvedAgentId, // TARGET-01: state the agent acted on (no silent default)
+        resolvedAgentId, // state the agent acted on (no silent default)
       };
 
       const requestMemory = (rawParams.memory ?? false) as boolean;
@@ -326,7 +325,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         let memoriesDeleted: number | undefined;
         if (!deps.memoryPort?.deleteBySessionKey) {
           // Graceful degrade: the deployment did not wire a MemoryPort (or the
-          // adapter predates DIST-05). LCD + sessionStore are still cleared; the
+          // adapter lacks deleteBySessionKey). LCD + sessionStore are still cleared; the
           // --memory flag is honestly reported as ignored (no false success).
           deps.logger.warn(
             {
@@ -343,7 +342,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           // "attempted, nothing deleted"), never undefined.
           memoriesDeleted = 0;
 
-          // WR-02: capture THIS session's memory ids BEFORE the destructive
+          // Capture THIS session's memory ids BEFORE the destructive
           // delete, so --purge-derived can be session-scoped (source_ids ∩
           // thisSessionIds) instead of the coarse "any dangling source id" sweep
           // that would over-delete unrelated observations. Non-fatal: if the
@@ -395,7 +394,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
             // sources — orphan→delete, multi-source→keep. Only when something was
             // deleted (nothing to unlink otherwise). Non-fatal.
             if (memoriesDeleted > 0 && deps.consolidationStore) {
-              // WR-05: thread agentId so the unlink scope matches the delete's
+              // Thread agentId so the unlink scope matches the delete's
               // (tenant, agent) scope exactly (a different agent's observation is
               // never touched).
               const unlinkResult = await deps.consolidationStore.unlinkDeletedSources(
@@ -433,7 +432,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           // corroboration). Only fires when explicitly requested. Non-fatal.
           const purgeDerived = (rawParams.purge_derived ?? false) as boolean;
           if (purgeDerived && deps.consolidationStore) {
-            // WR-05: agentId scopes the purge to this agent. WR-02: thisSessionIds
+            // agentId scopes the purge to this agent; thisSessionIds
             // (captured before the delete) makes the purge match
             // source_ids ∩ thisSessionIds — only observations derived from THIS
             // session, never an unrelated observation with a prior dangling id.

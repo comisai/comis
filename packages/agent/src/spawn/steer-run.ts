@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * steerRun — the live-child inject mechanism for STEER-01 (Phase 175).
+ * steerRun — the live-child inject mechanism for mid-flight steering.
  *
- * Extracted from sub-agent-runner.ts (which is over the §2.8 800-line cap) so
+ * Extracted from sub-agent-runner.ts (which is over the 800-line module cap) so
  * the heavy mechanism does not grow that file. The runner exposes a thin
  * `steerRun(runId, message)` method that delegates here.
  *
- * MECHANISM (RESEARCH §Pattern 1 + 175-00-SUMMARY A1 resolution):
+ * MECHANISM:
  *   1. resolve the RUNNING child's live RunHandle via the SAME lookup killRun
  *      uses for abort() — `resolveActiveSession(deriveCompositeForRun(run))`
  *      (sub-agent-runner.ts:1936). The by-sessionKey `activeRunRegistry.get`
- *      is the documented fallback (175-00 confirmed the composite resolves).
+ *      is the fallback (the composite lookup resolves today).
  *   2. inject via the channel-path streaming-aware branch (setup-and-route.ts:267):
  *        isStreaming() && !isCompacting() ? handle.steer(msg) : handle.followUp(msg)
  *      — the message lands at the child's NEXT STEP BOUNDARY after transcript
@@ -19,14 +19,14 @@
  * NEVER: killRun, spawn, or run.status mutation — the run's identity
  * (runId/transcript/progress) is preserved (kill ≠ steer). A steer is a
  * MESSAGE, never a tool grant — this helper has no path to tool assembly, so
- * the child's spawn-fixed denylist still governs (Task 3 proves the runtime
- * classification a steered denied-tool request hits).
+ * the child's spawn-fixed denylist still governs (a steered denied-tool request
+ * hits the same runtime classification as any other denied call).
  *
  * Result-shaped per AGENTS.md §2.1 (mirrors killRun's `{killed, error?}` →
  * `{steered, mode?, error?}`); the daemon RPC handler (`@allow-throw`) maps a
  * `!steered` result to a thrown JSON-RPC error.
  *
- * L2 TYPE-SURFACE NOTE: SteerRunDeps declares the FULL `RunHandle`
+ * TYPE-SURFACE NOTE: SteerRunDeps declares the FULL `RunHandle`
  * (steer/followUp/isStreaming/isCompacting) — it needs all four. The RUNNER's
  * SubAgentRunnerDeps.sessionResolver/activeRunRegistry are deliberately
  * narrowed to `{ abort(): Promise<void> }` (sub-agent-runner.ts:219-233) to
@@ -84,12 +84,12 @@ export interface SteerableRun {
  *     — the executor never keys on the announce channelId; it keys on
  *     subSessionKey.channelId)
  *
- * WR-01 (175-REVIEW.md): the prior formula used `"sub-agent"` for channelType
- * and `run.announceChannelId ?? parsed?.channelId` for channelId, which DIVERGED
- * from the registration key and made `steerRun` return `{steered:false}` for a
- * genuinely-running sub-agent (and made the kill/ghost/watchdog abort lookups
+ * PITFALL: a formula using `"sub-agent"` for channelType or
+ * `run.announceChannelId ?? parsed?.channelId` for channelId DIVERGES
+ * from the registration key and makes `steerRun` return `{steered:false}` for a
+ * genuinely-running sub-agent (and makes the kill/ghost/watchdog abort lookups
  * silently miss — best-effort there, so latent, but fatal for steer). Mirror the
- * IDENTICAL formula in sub-agent-runner.ts:`deriveCompositeForRun`; the 175-00
+ * IDENTICAL formula in sub-agent-runner.ts:`deriveCompositeForRun`; the resolution
  * spike (sub-agent-runner.steer-resolve.spike.test.ts) fails loudly on drift.
  */
 function deriveCompositeForRun(run: SteerableRun): {
@@ -107,23 +107,23 @@ function deriveCompositeForRun(run: SteerableRun): {
 
 /**
  * Test-only alias for the module-private {@link deriveCompositeForRun}. The
- * 175-00 A1 spike (sub-agent-runner.steer-resolve.spike.test.ts) imports the
+ * resolution spike (sub-agent-runner.steer-resolve.spike.test.ts) imports the
  * REAL formula so a drift between it and the executor registration key
  * (pi-executor.ts:1152-1156) fails loudly — NOT a reconstructed replica
- * (WR-01 correction: the old inline replica made the drift guard a tautology).
+ * (an inline replica would make the drift guard a tautology).
  * @internal
  */
 export const deriveCompositeForRunForTest = deriveCompositeForRun;
 
 /**
  * Dependencies for {@link steerRun}. The resolver/registry are typed to the
- * FULL RunHandle (unlike the runner's narrowed `{abort()}` deps — see the L2
- * note in the module header).
+ * FULL RunHandle (unlike the runner's narrowed `{abort()}` deps — see the
+ * TYPE-SURFACE NOTE in the module header).
  */
 export interface SteerRunDeps {
   /** READ only — never mutated (no status change, no spawn). */
   runs: Map<string, SteerableRun>;
-  /** Composite-key resolver (the A1-chosen lookup, mirrors killRun). */
+  /** Composite-key resolver (the same lookup killRun uses). */
   sessionResolver?: {
     resolveActiveSession(key: {
       agentId: string;
@@ -131,7 +131,7 @@ export interface SteerRunDeps {
       channelId: string;
     }): RunHandle | undefined;
   };
-  /** By-sessionKey fallback (175-00 documented; composite resolves today). */
+  /** By-sessionKey fallback (the composite lookup resolves today). */
   activeRunRegistry?: {
     get(sessionKey: string): RunHandle | undefined;
   };
@@ -166,7 +166,7 @@ export async function steerRun(
     return { steered: false, error: `Unknown run ID: ${runId}` };
   }
 
-  // Resolve the live handle via the A1-chosen composite lookup (the same lookup
+  // Resolve the live handle via the composite lookup (the same lookup
   // killRun uses for abort), falling back to the by-sessionKey registry.
   const handle =
     deps.sessionResolver?.resolveActiveSession(deriveCompositeForRun(run)) ??

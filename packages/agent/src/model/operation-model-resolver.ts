@@ -31,7 +31,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Which level of the timeout resolution bound the effective timeout (LAT-01).
+ * Which level of the timeout resolution bound the effective timeout.
  * Born HERE — producers thread it; decodeExecutionOverrides merges it; hints
  * render knobs from it via executor/timeout-knob.ts. Deriving the label
  * anywhere downstream cannot work: the cron producer materializes
@@ -62,7 +62,7 @@ export interface OperationModelResolution {
   operationType: ModelOperationType;
   /** Resolved timeout in milliseconds. */
   timeoutMs: number;
-  /** Which resolution level bound timeoutMs (LAT-01) — mirrors `source` for
+  /** Which resolution level bound timeoutMs — mirrors `source` for
    *  the MODEL pick. Carried through ExecutionOverrides so hints can name the
    *  binding knob without re-deriving it. */
   timeoutSource: TimeoutSource;
@@ -126,18 +126,12 @@ function buildResult(
 /**
  * Resolve a provider name to its canonical ID for operation-tier catalog lookup.
  *
- * SA8: routes through normalizeProviderId (resolves user-facing aliases like
+ * Routes through normalizeProviderId (resolves user-facing aliases like
  * "bedrock" → "amazon-bedrock", "aws-bedrock" → "amazon-bedrock") and returns
  * the normalized ID as-is. Both "amazon-bedrock" and "google-vertex" are native
  * pi-ai KnownProvider entries in getProviders() — stripping the suffix to
- * "amazon" or "google" was never correct and caused resolveOperationDefaults
- * to return {} (Level 5 silent fallback) for Bedrock/Vertex agents.
- *
- * Side-effect on executor-context-engine-setup.ts:284 (currentApi drift):
- * Existing Bedrock and Vertex sessions will emit ONE api_change drift event
- * on first execution post-deploy (old value: "amazon"/"google", new value:
- * "amazon-bedrock"/"google-vertex"). This drops signed thinking state once,
- * then stabilizes. See T-162-05b.
+ * "amazon" or "google" would make resolveOperationDefaults return {}
+ * (Level 5 silent fallback) for Bedrock/Vertex agents.
  *
  * @param provider - Provider name (e.g., "amazon-bedrock", "google-vertex",
  *                   "bedrock", "openai")
@@ -190,9 +184,9 @@ export function resolveOperationModel(params: {
   } = params;
 
   // -- Resolve timeout (independent of which level picks the model) --
-  // LAT-01: the binding provenance is born at these branch points — never
+  // The binding provenance is born at these branch points — never
   // re-derived downstream (value-equality inference is ambiguous when an
-  // operator sets a value equal to a default; T-177-06).
+  // operator sets a value equal to a default).
   const entry = (operationModels as Partial<Record<ModelOperationType, OperationModelEntry>>)[operationType];
   const explicitTimeout = entry?.timeout;
   const operationDefaultTimeout = OPERATION_TIMEOUT_DEFAULTS[operationType];

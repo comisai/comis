@@ -68,10 +68,10 @@ describe("buildGoldMap (multiple refs union into one Set)", () => {
 
 describe("buildGoldMap (session-qualified refs resolve to distinct docs)", () => {
   it("resolves two questions whose gold refs share a dia index to DISTINCT uuids", () => {
-    // With the fixed loader, gold refs carry the session prefix ("D1:1" vs
-    // "D2:1") and the side-map is keyed by that SAME full form. The two refs are
-    // distinct keys, so the resolver returns distinct session uuids. Under the
-    // old index-only key both refs would collapse to "1" -> a single uuid (the
+    // Gold refs carry the session prefix ("D1:1" vs "D2:1") and the side-map is
+    // keyed by that SAME full form. The two refs are distinct keys, so the
+    // resolver returns distinct session uuids. Keyed by the bare dia index
+    // alone, both refs would collapse to "1" -> a single uuid (the
     // last-ingested session), silently zeroing one session's lane.
     const goldRefs = new Map([
       ["collide:0", new Set(["D1:1"])],

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AppendOnly — one opening status + a conditional closing follow-up (§7.2 / §7.3
- * row "AppendOnly"). Used by iMessage / LINE (no edit, no delete).
+ * AppendOnly — one opening status + a conditional closing follow-up.
+ * Used by iMessage / LINE (no edit, no delete).
  *
  * State machine:
  *   - `apply(frame)`: post the opening status ONCE (the first non-trivial frame);
  *     later frames are no-ops (these channels cannot edit, so we don't spam).
  *   - `finalize`:
- *       • success: NO closing follow-up. (The §7.3 success-marker branch is the
- *         windowed-edit case, unavailable on append-only channels; posting a
+ *       • success: NO closing follow-up. (The closing success marker is a
+ *         windowed-edit affordance, unavailable on append-only channels; posting a
  *         closing on every success would be noise.)
  *       • failure: exactly one themed failure follow-up ("{marker} {errorKind}").
  *       • trivial / silent / aborted: nothing emitted.
@@ -32,21 +32,21 @@ import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
 
 export interface AppendOnlyDeps {
   actions: ActivityRenderActions;
-  /** §8.5 — optional clock for "(running N s)" fallback.
+  /** Optional clock for the "(running N s)" elapsed-time fallback.
    *  Read-only display arithmetic (no scheduling, no I/O); omitted →
-   *  graceful-degrade. Pitfall 5 was about delete-sequencing TimerPort. */
+   *  graceful-degrade. Distinct from the TimerPort used for delete sequencing. */
   clock?: ClockPort;
   /**
-   * Build the plain-text approval prompt for a frame's visible events
-   * (§6.4.6). Wired by a button-less channel (iMessage) as a closure over
+   * Build the plain-text approval prompt for a frame's visible events.
+   * Wired by a button-less channel (iMessage) as a closure over
    * `buildApprovalPrompt`; the opening status carries the prompt appended after
    * the frame text. Omitted by channels with a button surface. Returns `""` for a
    * non-approval frame (nothing appended).
    */
   buildPrompt?: (events: readonly ActivityEvent[]) => string;
   /**
-   * Build the signed native-approval button rows for a frame's visible events
-   * (§7.7). Wired by a button-capable send-only channel (LINE) as a
+   * Build the signed native-approval button rows for a frame's visible events.
+   * Wired by a button-capable send-only channel (LINE) as a
    * closure over `buildApprovalButtons` + the injected `SignCallbackData`; the
    * opening status `send` carries the returned rows as LINE Quick-Reply chips.
    * Omitted by text-only channels (iMessage). Returns `[]` for a non-approval
@@ -61,7 +61,7 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
   const { actions, clock, buildPrompt, buildButtons, markers } = deps;
 
   let opened = false;
-  /** First-apply clock snapshot. AppendOnly posts ONCE so the §8.5
+  /** First-apply clock snapshot. AppendOnly posts ONCE so the elapsed-time
    *  fallback fires only on the FIRST frame — exactly the pre-SEP window. */
   let startedAtMs: number | undefined;
 

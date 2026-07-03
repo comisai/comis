@@ -8,9 +8,9 @@
  * doctor resolution substitutes them the way daemon boot does: process env
  * -> `~/.comis/.env` -> the encrypted secret store. A reference nothing
  * resolved is exactly what breaks the adapter at runtime, so that — not a
- * bare env-var probe — is what this check reports. (The env-only probe used
- * to claim "Missing telegram credentials" on a live deployment whose token
- * sits in the encrypted store; 2026-06-12 C1 live finding.)
+ * bare env-var probe — is what this check reports. (An env-only probe would
+ * claim "Missing telegram credentials" on a live deployment whose token
+ * sits in the encrypted store.)
  *
  * Does NOT perform live API validation — resolution presence only.
  *

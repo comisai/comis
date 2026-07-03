@@ -34,8 +34,8 @@ import type { FileLockPort } from "@comis/core";
 // `makeFileLockStub()`.
 //
 // `mockWithLock` invokes the supplied callback inline, so refresh-path tests
-// observe the same control flow they did under the previous scheduler-mock
-// regime: the fn runs in the same tick, the result Result-wraps the value.
+// observe deterministic control flow: the fn runs in the same tick, and the
+// result Result-wraps the value.
 const mockWithLock = vi.fn(
   async (_path: string, fn: () => Promise<unknown>, _opts?: unknown) => ({
     ok: true as const,
@@ -114,11 +114,10 @@ function makeMockLogger() {
 }
 
 /**
- * Build the legacy 13-test required-deps stub (credentialStore + logger +
- * dataDir). The factory keeps these fields REQUIRED while the original 13
- * tests continue to exercise the env-bootstrap path through default-empty
- * mocks. The original 13 tests were authored against the old 3-deps
- * signature; the rewire requires extra mocks supplied here at the call-site.
+ * Build the required-deps stub (credentialStore + logger + dataDir +
+ * fileLock) for the env-bootstrap test block. The factory keeps these fields
+ * REQUIRED, but those tests only exercise the env-bootstrap path, so
+ * default-empty mocks satisfy the signature without affecting behavior.
  */
 function legacyOAuthDeps(): {
   credentialStore: OAuthCredentialStorePort;
@@ -478,8 +477,8 @@ describe("createOAuthTokenManager", () => {
 // Helpers (makeMockCredentialStore, makeMockLogger, createFileLock/withLock
 // module-mock) are defined ONCE at the top of this file so both the original
 // 13-test block and this port-backed block can share them. legacyOAuthDeps()
-// supplies the required fields to the original 13 tests (which were authored
-// against the pre-rewire deps signature).
+// supplies the required deps fields that the original 13 tests do not
+// construct themselves.
 // =============================================================================
 
 /** Realistic Codex-shape JWT with the supplied payload. */
@@ -1354,10 +1353,10 @@ describe("OAuthTokenManager — port-backed", () => {
   // ---------------------------------------------------------------------------
 
   describe("H. hot-path cache", () => {
-    // REMOVED: persisted-write cache-coherency is already exercised by two
-    // existing tests in this file and by the integration suite — adding a
-    // third assertion would duplicate coverage without strengthening the
-    // invariant.
+    // Persisted-write cache-coherency is deliberately NOT re-asserted here —
+    // it is already exercised by two tests in this file and by the
+    // integration suite, so a third assertion would duplicate coverage
+    // without strengthening the invariant.
     //
     //   1. Unit:        oauth-token-manager.test.ts line ~1920 "bypass success
     //      path — cache.set, store.set called, auth:token_rotated emitted"
@@ -1378,11 +1377,10 @@ describe("OAuthTokenManager — port-backed", () => {
     //      and asserts the second getApiKey returns the NEW token AND that
     //      no second refresh request fired (i.e. cache served the read).
     //
-    // The original it.todo described an internal "no second store-read"
-    // accounting predicate that would only be observable by leaking the
-    // private hot-path cache through a test seam. The three tests above
-    // verify the same end-to-end invariant (post-refresh, the cache hot-paths
-    // subsequent reads) without that intrusion. No coverage regression.
+    // A direct "no second store-read" accounting assertion would only be
+    // observable by leaking the private hot-path cache through a test seam.
+    // The three tests above verify the same end-to-end invariant (post-refresh,
+    // the cache hot-paths subsequent reads) without that intrusion.
   });
 });
 
@@ -1643,10 +1641,10 @@ describe("OAuthTokenManager.getApiKey resolver chain", () => {
     expect(credentialStore.list).not.toHaveBeenCalled();
   });
 
-  // H2: the configured-profile-resolved INFO now goes through withDedup, keyed
-  // on a `dedupKey` field of "${providerId}::${configured}". It fires ONCE per
-  // distinct key across repeated resolves (log-once parity with the prior
-  // loggedConfiguredProviders Set), and the 3 behavior-gating Sets are untouched.
+  // The configured-profile-resolved INFO goes through withDedup, keyed on a
+  // `dedupKey` field of "${providerId}::${configured}". It fires ONCE per
+  // distinct key across repeated resolves, and the 3 behavior-gating Sets
+  // are untouched.
   it("(a1) logs 'OAuth profile resolved via agent config' ONCE via withDedup, carrying the dedupKey field", async () => {
     const profile = buildProfile(CONFIGURED_PROFILE, "ACCESS_WORK");
     vi.mocked(credentialStore.has).mockResolvedValue(_ok(true));
@@ -1663,7 +1661,7 @@ describe("OAuthTokenManager.getApiKey resolver chain", () => {
       ._calls()
       .filter((c) => c.level === "info" && c.msg === "OAuth profile resolved via agent config");
 
-    // Log-once parity: fired exactly once across the two resolves.
+    // Log-once semantics: fired exactly once across the two resolves.
     expect(resolvedInfos).toHaveLength(1);
     // Carries the withDedup composite key + the documented payload fields.
     const payload = resolvedInfos[0]?.payload as Record<string, unknown>;
@@ -2226,31 +2224,18 @@ describe("refresh_token_reused detection", () => {
 });
 
 // =============================================================================
-// OAuthTokenManager.invalidate() RED test
+// OAuthTokenManager.invalidate()
 //
-// OAuthTokenManager must expose an invalidate() method that
-// clears the in-memory cache so that the next getApiKey() call re-fetches from
-// the credential store. This is the encrypted-mode gap closure: when a CLI
-// `auth login` writes a new OAuth profile (a separate process), the daemon's
-// OAuthTokenManager must be able to invalidate its hot-path cache so the new
-// profile is visible without a daemon restart.
-//
-// This test MUST fail RED because invalidate() does NOT exist on the
-// OAuthTokenManager interface or the object returned by createOAuthTokenManager.
-// The invalidate() method will be added later.
-//
-// Implementation notes (confirmed reading oauth-token-manager.ts):
-//   (a) Cache: `const cache = new Map<string, OAuthProfile>()` at line ~506 —
-//       factory-closure variable, not a class field. Implementation is `cache.clear()`.
-//   (b) Interface: `OAuthTokenManager` is an exported named interface at line ~142.
-//       `invalidate(): void` must be added as a required method.
-//   (c) auth.set handler (auth-handlers.ts): does NOT emit auth:profile_added —
-//       it only emits audit:event. The auth.set handler must add the auth:profile_added
-//       emission (after successful write) so that the encrypted-mode
-//       subscription in setup-agents-oauth.ts can fire tokenManager.invalidate().
+// OAuthTokenManager exposes an invalidate() method that clears the in-memory
+// cache so that the next getApiKey() call re-fetches from the credential
+// store. This closes the encrypted-mode gap: when a CLI `auth login` writes a
+// new OAuth profile (a separate process), the daemon's OAuthTokenManager must
+// be able to invalidate its hot-path cache so the new profile is visible
+// without a daemon restart (the encrypted-mode subscription in
+// setup-agents-oauth.ts fires tokenManager.invalidate() on auth:profile_added).
 // =============================================================================
 
-describe("OAuthTokenManager.invalidate() RED test (not yet implemented)", () => {
+describe("OAuthTokenManager.invalidate()", () => {
   let eventBus: TypedEventBus;
   let fetchShim: { restore: () => void };
 
@@ -2270,8 +2255,7 @@ describe("OAuthTokenManager.invalidate() RED test (not yet implemented)", () => 
     fetchShim.restore();
   });
 
-  // invalidate() RED test
-  it("invalidate() clears the cache so getApiKey() re-fetches from store after a profile update (RED — method does not exist yet)", async () => {
+  it("invalidate() clears the cache so getApiKey() re-fetches from store after a profile update", async () => {
     // Arrange: construct manager with a mock store that returns profile v1 initially.
     const credentialStore = makeMockCredentialStore();
     mockGetOAuthProvider.mockReturnValue(makeFakeProvider("openai-codex"));
@@ -2309,12 +2293,9 @@ describe("OAuthTokenManager.invalidate() RED test (not yet implemented)", () => 
     });
 
     // Assert: invalidate() must exist as a function on the manager.
-    // This is the RED assertion — the method is not yet implemented.
     expect(typeof (manager as unknown as Record<string, unknown>).invalidate).toBe("function");
 
     // After invalidate(), getApiKey() must return the v2 access token.
-    // (This assertion will only be reached if the line above passes GREEN —
-    // i.e., after the method is added.)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only cast for missing method
     await (manager as unknown as Record<string, (...args: unknown[]) => unknown>).invalidate?.();
 

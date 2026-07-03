@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for VerificationConfigSchema and HonestyConfigSchema.
- *
- * Phase 154 (R4/S2): pre-delivery critic config keys.
- *
- * RED tests: these will fail until VerificationConfigSchema and HonestyConfigSchema
- * are exported from schema-agent-prompt.ts and wired into schema-agent-runtime.ts.
+ * Tests for VerificationConfigSchema and HonestyConfigSchema — the
+ * pre-delivery critic config keys, exported from schema-agent-prompt.ts and
+ * wired into schema-agent-runtime.ts.
  */
 import { describe, it, expect } from "vitest";
 import { VerificationConfigSchema, HonestyConfigSchema } from "./schema-agent/index.js";
@@ -101,7 +98,7 @@ describe("HonestyConfigSchema", () => {
 // PerAgentConfigSchema — wiring: verification + honesty keys
 // ---------------------------------------------------------------------------
 
-describe("PerAgentConfigSchema — verification + honesty wiring (Phase 154)", () => {
+describe("PerAgentConfigSchema — verification + honesty wiring", () => {
   it("accepts verification block with defaults applied", () => {
     const cfg = PerAgentConfigSchema.parse({ verification: { enabled: true } });
     expect(cfg.verification?.enabled).toBe(true);

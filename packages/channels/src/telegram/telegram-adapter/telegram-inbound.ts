@@ -255,14 +255,14 @@ export function bindInboundHandlers(
     }
   });
 
-  // REACT-01: inbound reaction-add capture. Requires the runner allowed_updates
+  // Inbound reaction-add capture. Requires the runner allowed_updates
   // opt-in to include "message_reaction" (telegram-lifecycle.ts) — without it
   // Telegram never delivers this update. A reaction-ADD = an emoji present in
   // new_reaction but NOT in old_reaction; a removal-only update is skipped.
   // NOTE (webhook mode): telegram-webhook.ts picks runner vs webhook via
   // shouldUseRunner; the allowed_updates opt-in covers the runner (polling)
   // path. A webhook deployment must pass the same allowed_updates list to
-  // setWebhook (operator-side config, DOC-01) — out of scope for this binder.
+  // setWebhook (operator-side config) — out of scope for this binder.
   state.bot.on("message_reaction", (ctx) => {
     const mr = ctx.messageReaction;
     if (!mr || !mr.user) return; // anonymous channel reaction → no reactor id
@@ -334,7 +334,7 @@ export function registerMessageHandler(
   state.handlers.push(handler);
 }
 
-/** Append a ReactionHandler to the adapter's reaction dispatch list (REACT-01). */
+/** Append a ReactionHandler to the adapter's reaction dispatch list. */
 export function registerReactionHandler(
   state: TelegramAdapterState,
   handler: import("@comis/core").ReactionHandler,

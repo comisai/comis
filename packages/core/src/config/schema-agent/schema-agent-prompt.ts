@@ -61,9 +61,9 @@ export const RagConfigSchema = z.strictObject({
     /** Minimum BASE relevance score (pre-boost) for memory injection.
      *  Boosts cannot resurrect a memory whose base score is below this threshold.
      *  Gates on ScoreBreakdown.base (the un-boosted cosine/RRF score), applied AFTER
-     *  scoreWithBreakdown() and BEFORE the trust-filter (T-153-poison mitigation).
-     *  Default=0 means no floor — all memories pass, preserving exact prior behavior.
-     *  S6: a weaker ModelProfile cannot lower this below the operator-set value. */
+     *  scoreWithBreakdown() and BEFORE the trust-filter (memory-poisoning mitigation).
+     *  Default=0 means no floor — all memories pass.
+     *  Frozen: a weaker ModelProfile cannot lower this below the operator-set value. */
     baseFloor: z.number().min(0).max(1).default(0).describe(
       "Minimum BASE relevance score (pre-boost) for memory injection. " +
       "Boosts cannot resurrect a memory whose base score is below this threshold. " +
@@ -103,13 +103,13 @@ export const RagConfigSchema = z.strictObject({
         /** Usefulness boost weight (the SINGLE canonical usefulness knob —
          *  the recall-utility feedback loop reads `rag.scoring.usefulnessAlpha`, NOT a knob on
          *  `rag.feedback`). Bounded small (same magnitude as trust/proof) so a proven-useful
-         *  memory is boosted but CANNOT overturn trust-first ordering — Pitfall 5. Neutral
+         *  memory is boosted but CANNOT overturn trust-first ordering. Neutral
          *  (factor 1.0) whenever the per-memory usefulness signal is absent. */
         usefulnessAlpha: z.number().min(0).max(1).default(0.1),
         /** FadeMem decay boost weight (the SINGLE canonical decay knob —
          *  the recall-side gate `rag.forget` carries only the on/off toggle, NOT a magnitude).
          *  Bounded small (same magnitude as trust/proof/usefulness) so a stale memory's decay
-         *  RANKS but CANNOT overturn trust-first ordering — Pitfall 2. The factor only ever
+         *  RANKS but CANNOT overturn trust-first ordering. The factor only ever
          *  demotes (∈ [0.5,1], wrapped by this alpha), and is neutral (factor 1.0) at
          *  event-age 0 (the neutral-in-time byte-identity point), regardless of the
          *  `rag.forget` toggle (which defaults ON), OR when forget is explicitly disabled. */
@@ -123,14 +123,13 @@ export const RagConfigSchema = z.strictObject({
         usefulnessAlpha: 0.1,
         forgetAlpha: 0.1,
       })),
-    /** Per-lane RRF weights for the FTS + vector fusion lanes. These REPLACE the
-     *  weights hybridSearch.ts hardcoded (computeRRF 1.0/1.5) — they now live at the agent's
+    /** Per-lane RRF weights for the FTS + vector fusion lanes, applied at the agent's
      *  fuse() seam so an operator can tune the fts-vs-vector balance. The DEFAULTS {fts:1.0,
      *  vector:1.5} are the PARITY GUARD: with defaults the recall ranking is byte-for-byte
-     *  identical to the prior hardcoded behaviour (the characterization test enforces it). Bounded `min(0)`
-     *  so a negative weight (which could invert RRF ordering) is rejected at parse;
-     *  the upper bound is left open like entityLane.weight (a large finite weight only
-     *  re-orders). NB: a `temporal` sub-lane is added under `lanes` — additive. */
+     *  identical to the hybrid-search computeRRF weights (the characterization test enforces
+     *  it). Bounded `min(0)` so a negative weight (which could invert RRF ordering) is
+     *  rejected at parse; the upper bound is left open like entityLane.weight (a large
+     *  finite weight only re-orders). The `temporal` sub-lane under `lanes` is additive. */
     lanes: z
       .strictObject({
         /** FTS (BM25) lane weight. Default 1.0 — the parity value (hybrid-search.ts:310). */
@@ -195,9 +194,9 @@ export const RagConfigSchema = z.strictObject({
       .strictObject({
         /** Opt-out posture: default-ON. */
         enabled: z.boolean().default(true),
-        /** How many top search hits seed the self-join (design §4.4 seedCount). */
+        /** How many top search hits seed the self-join. */
         seedCount: z.number().int().positive().default(5),
-        /** Max shared-entity neighbour rows the lane returns (design §4.4 perEntityCap default 200). */
+        /** Max shared-entity neighbour rows the lane returns (default 200). */
         perEntityCap: z.number().int().positive().default(200),
         /** RRF weight for the entity lane (parity with the other lanes). */
         weight: z.number().min(0).default(1.0),
@@ -235,7 +234,7 @@ export const RagConfigSchema = z.strictObject({
      *  `0.5 + 0.5·exp(−λ·Δt^β)`. $0 at recall — a pure closed-form decay over event age (no API
      *  budget). OFF ⇒ forgetFactor forced to EXACTLY 1.0 in score.ts. The neutral-importance
      *  byte-identity holds even when ON: at event-age 0 the factor is exactly 1.0, so a
-     *  legacy/neutral fresh row never silently shifts. The magnitude is the single canonical
+     *  neutral fresh row never silently shifts. The magnitude is the single canonical
      *  `rag.scoring.forgetAlpha` (NOT duplicated here — one knob, no drift). A `.strictObject` so
      *  a stray field (e.g. a smuggled `forgetAlpha`) is REJECTED at parse, structurally enforcing
      *  the single-knob invariant. */
@@ -252,7 +251,7 @@ export const RagConfigSchema = z.strictObject({
       .default(() => ({ enabled: false, maxPinnedInjection: 5 })),
     /** LLM-free query understanding. Opt-out posture: all
      *  default-ON. $0 at recall — each toggle is an additive DETERMINISTIC, LLM-FREE capability
-     *  over the existing recall path (NO LLM call on the recall hot path — binding constraint #1).
+     *  over the existing recall path (NO LLM call on the recall hot path — a binding constraint).
      *  `intentReweight` multiplies the existing lane weights by a pure intent classifier;
      *  `synonyms` expands the FTS query terms via a bounded static map; `temporalParse` parses NL
      *  time expressions into an occurred_at range filter. */
@@ -408,10 +407,10 @@ export type SepConfig = z.infer<typeof SepConfigSchema>;
 /**
  * GoalAnchor configuration: tail-injects the current execution objective +
  * uncompleted steps into the system prompt. Gated on scaffoldLevel==="max"
- * (small + nano models only) in the prompt assembly layer (Plan 02).
+ * (small + nano models only) in the prompt assembly layer.
  *
  * Default enabled=false ensures frontier/mid receive no injection until
- * explicitly configured (behavior-neutral for all existing agents).
+ * explicitly configured.
  * Output is bounded by maxChars (default 500) to cap tail injection size.
  */
 export const GoalAnchorConfigSchema = z.strictObject({
@@ -428,14 +427,14 @@ export const GoalAnchorConfigSchema = z.strictObject({
 export type GoalAnchorConfig = z.infer<typeof GoalAnchorConfigSchema>;
 
 /**
- * Pre-delivery verification critic configuration (R4, Phase 154).
+ * Pre-delivery verification critic configuration.
  *
  * The critic scores a completion-claiming response against the GoalAnchor
  * checklist and returns verified / not-verified / skipped. Gated on
  * scaffoldLevel==="max" (small + nano models only) when enabled.
  *
  * Default enabled=false ensures the critic does not fire until explicitly
- * configured by the operator. Behavior-neutral for all existing agents.
+ * configured by the operator.
  */
 export const VerificationConfigSchema = z.strictObject({
   /** Enable pre-delivery verification critic. Default: false (opt-in; meaningful only for scaffoldLevel=max). */
@@ -451,7 +450,7 @@ export const VerificationConfigSchema = z.strictObject({
 export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
 
 /**
- * Honesty guardrail configuration (R4/S2, Phase 154).
+ * Honesty guardrail configuration.
  *
  * Bounds critic retry redirects and enforces an honest unmet-list when
  * the redirect budget is exhausted. Prevents the executor from looping

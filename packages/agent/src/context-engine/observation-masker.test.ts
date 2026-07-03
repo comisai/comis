@@ -76,9 +76,9 @@ function makeOffloadedToolResult(toolCallId: string, toolName: string): AgentMes
 }
 
 function makeMaskedToolResult(toolCallId: string, toolName: string): AgentMessage {
-  // Helper emits the canonical `[Tool result summarized:` prefix; the
-  // earlier `[Tool result cleared:` prefix is no longer recognized by
-  // `isAlreadyMasked` — see cleanup-helpers.ts.
+  // Helper emits the canonical `[Tool result summarized:` prefix — the only
+  // prefix `isAlreadyMasked` recognizes (a `[Tool result cleared:` prefix is
+  // NOT recognized) — see cleanup-helpers.ts.
   return {
     role: "toolResult",
     toolCallId,
@@ -142,7 +142,7 @@ describe("createObservationMaskerLayer", () => {
     const toolResults = result.filter((m) => m.role === "toolResult");
     expect(toolResults).toHaveLength(6);
 
-    // Oldest 3 should be masked with new summarized format
+    // Oldest 3 should be masked with the summarized-placeholder format
     for (let i = 0; i < 3; i++) {
       const tr = toolResults[i] as any;
       expect(tr.content[0].text).toContain("[Tool result summarized: bash");
@@ -204,8 +204,8 @@ describe("createObservationMaskerLayer", () => {
       makeToolResult("tc_store", "memory_store", "Stored successfully"),
       makeUserMsg("Q4"),
       makeAssistantMsg("A4"),
-      // Use canonical `read` (protected-tier) — the legacy `file_read`
-      // alias has been removed.
+      // Use canonical `read` (protected-tier) — there is no `file_read`
+      // alias.
       makeToolResult("tc_file", "read", "File contents here..."),
       // 4 more bash results that will be within keep window (3)
       makeUserMsg("Q5"),
@@ -363,7 +363,7 @@ describe("createObservationMaskerLayer", () => {
     // _rewriteFile should have been called once
     expect(mockSm._rewriteFile).toHaveBeenCalledTimes(1);
 
-    // fileEntries for tc_0, tc_1, tc_2 should have masked content (new format)
+    // fileEntries for tc_0, tc_1, tc_2 should have masked content (summarized-placeholder format)
     const entry0 = mockSm.fileEntries.find(
       (e: any) => e.type === "message" && e.message?.toolCallId === "tc_0",
     ) as any;
@@ -781,10 +781,10 @@ describe("createObservationMaskerLayer", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Backward compatibility with protected/offloaded results
+  // Protected tools and already-offloaded/masked results
   // -------------------------------------------------------------------------
 
-  it("should preserve existing behavior for protected tools and already-offloaded results", async () => {
+  it("keeps protected tools and already-offloaded/masked results intact while masking eligible ones", async () => {
     const config: ObservationMaskerConfig = {
       observationTriggerChars: 100,
       observationDeactivationChars: 50,
@@ -923,11 +923,13 @@ describe("createObservationMaskerLayer", () => {
   });
 
   // -------------------------------------------------------------------------
-  // isAlreadyOffloaded format compatibility
+  // isAlreadyOffloaded detection across reference body shapes
   // -------------------------------------------------------------------------
 
-  describe("isAlreadyOffloaded format compatibility", () => {
-    it("skips masking messages with OLD offloaded format", async () => {
+  // isAlreadyOffloaded keys on the `[Tool result offloaded to disk:` prefix,
+  // so an offloaded reference passes through regardless of its body shape.
+  describe("isAlreadyOffloaded detection across reference body shapes", () => {
+    it("skips masking offloaded references with a narration-line body", async () => {
       const layer = createObservationMaskerLayer(LOW_THRESHOLD_CONFIG);
 
       const oldFormatMsg: AgentMessage = {
@@ -959,13 +961,13 @@ describe("createObservationMaskerLayer", () => {
 
       const result = await layer.apply(messages, BUDGET);
 
-      // Old format should pass through unchanged (not masked, not double-processed)
+      // The narration-body reference passes through unchanged (not masked, not double-processed)
       const oldFmt = result.find((m) => (m as any).toolCallId === "tc-old-fmt") as any;
       expect(oldFmt.content[0].text).toContain("[Tool result offloaded to disk:");
       expect(oldFmt.content[0].text).toContain("The agent's analysis");
     });
 
-    it("skips masking messages with NEW preview offloaded format", async () => {
+    it("skips masking offloaded references with a head/tail preview body", async () => {
       const layer = createObservationMaskerLayer(LOW_THRESHOLD_CONFIG);
 
       const newFormatMsg: AgentMessage = {
@@ -997,7 +999,7 @@ describe("createObservationMaskerLayer", () => {
 
       const result = await layer.apply(messages, BUDGET);
 
-      // New format should pass through unchanged (not masked, not double-processed)
+      // The preview-body reference passes through unchanged (not masked, not double-processed)
       const newFmt = result.find((m) => (m as any).toolCallId === "tc-new-fmt") as any;
       expect(newFmt.content[0].text).toContain("[Tool result offloaded to disk:");
       expect(newFmt.content[0].text).toContain("hasMore=true");
@@ -1138,7 +1140,7 @@ describe("createObservationMaskerLayer", () => {
         makeToolResult("tc_mem_store", "memory_store", "stored ok"),
         makeUserMsg("Q4"),
         makeAssistantMsg("A4"),
-        // `file_read` is no longer a protected-tier alias; use the
+        // `file_read` is not a protected-tier alias; use the
         // canonical `read` tool name to keep 5-protected-tool coverage.
         makeToolResult("tc_read", "read", "file content"),
         makeUserMsg("Q5"),
@@ -1221,8 +1223,8 @@ describe("createObservationMaskerLayer", () => {
       const layer = createObservationMaskerLayer(config);
 
       // [bash, read, bash, read, bash] with observationKeepWindow=2
-      // -> 2 most recent bash kept, read all kept. Uses canonical `read`
-      // (protected-tier) instead of the removed `file_read` alias.
+      // -> 2 most recent bash kept, read all kept. Uses the canonical `read`
+      // tool name (protected-tier); there is no `file_read` alias.
       const messages: AgentMessage[] = [
         makeUserMsg("Q1"),
         makeAssistantMsg("A1"),
@@ -1309,7 +1311,7 @@ describe("createObservationMaskerLayer", () => {
       };
       const layer = createObservationMaskerLayer(config);
 
-      // 4 MCP tool results -- now classified as ephemeral tier
+      // 4 MCP tool results -- classified as ephemeral tier
       const messages: AgentMessage[] = [];
       for (let i = 0; i < 4; i++) {
         messages.push(makeUserMsg(`Q${i}`));
@@ -1421,7 +1423,7 @@ describe("createObservationMaskerLayer", () => {
       expect(shared.content[0].text).toBe("protected results");
     });
 
-    it("non-protected standard tool in everMaskedIds is still force-masked (uses new format)", async () => {
+    it("non-protected standard tool in everMaskedIds is still force-masked (summarized-placeholder format)", async () => {
       const config: ObservationMaskerConfig = {
         observationKeepWindow: 1,
         observationTriggerChars: 100,
@@ -1456,7 +1458,7 @@ describe("createObservationMaskerLayer", () => {
 
       const result2 = await layer.apply(messages2, BUDGET);
 
-      // tc-std must be force-masked (monotonic, standard tier, uses new format)
+      // tc-std must be force-masked (monotonic, standard tier, summarized-placeholder format)
       const std = result2.find((m) => (m as any).toolCallId === "tc-std") as any;
       expect(std.content[0].text).toContain("[Tool result summarized:");
     });
@@ -1745,7 +1747,7 @@ describe("createObservationMaskerLayer", () => {
       expect(text).toContain("Final");
     });
 
-    it("persistMaskedEntries writes new summarized format to disk", async () => {
+    it("persistMaskedEntries writes the summarized-placeholder format to disk", async () => {
       const mockSm = {
         fileEntries: [
           { type: "message", message: { role: "user", content: "Q1" } },
@@ -1791,14 +1793,14 @@ describe("createObservationMaskerLayer", () => {
       // _rewriteFile should have been called
       expect(mockSm._rewriteFile).toHaveBeenCalledTimes(1);
 
-      // fileEntries for tc_0 should have new format
+      // fileEntries for tc_0 should have the summarized-placeholder format
       const entry0 = mockSm.fileEntries.find(
         (e: any) => e.type === "message" && e.message?.toolCallId === "tc_0",
       ) as any;
       expect(entry0.message.content[0].text).toContain("[Tool result summarized:");
       expect(entry0.message.content[0].text).not.toContain("[Tool result cleared:");
 
-      // fileEntries for tc_1 should also have new format
+      // fileEntries for tc_1 should also have the summarized-placeholder format
       const entry1 = mockSm.fileEntries.find(
         (e: any) => e.type === "message" && e.message?.toolCallId === "tc_1",
       ) as any;
@@ -1811,7 +1813,7 @@ describe("createObservationMaskerLayer", () => {
       expect(entry2.message.content[0].text).toBe("recent output");
     });
 
-    it("existing monotonic masking (everMaskedIds) still works with new format", async () => {
+    it("monotonic masking (everMaskedIds) re-masks with the summarized-placeholder format", async () => {
       const config: ObservationMaskerConfig = {
         observationTriggerChars: 500,
         observationDeactivationChars: 200,
@@ -1851,13 +1853,13 @@ describe("createObservationMaskerLayer", () => {
       ];
       const result2 = await layer.apply(messages2, BUDGET);
 
-      // tc-1 must still be masked (monotonic via everMaskedIds, new format)
+      // tc-1 must still be masked (monotonic via everMaskedIds, summarized placeholder)
       const tc1r2 = result2.find((m) => (m as any).toolCallId === "tc-1") as any;
       expect(tc1r2.content[0].text).not.toBe("x".repeat(300));
       expect(tc1r2.content[0].text).toContain("[Tool result summarized:");
     });
 
-    it("cache fence protection still works unchanged", async () => {
+    it("cache fence protection applies on the digest-based masking path", async () => {
       const config: ObservationMaskerConfig = {
         observationKeepWindow: 0,
         observationTriggerChars: 100,

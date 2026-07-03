@@ -1,33 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TELEM-02 — the pre-committed, PURE, deterministic pipeline-authoring decision
- * rule that gates Phase 174 (P2/AUTHOR).
+ * The pre-committed, PURE, deterministic pipeline-authoring decision rule.
  *
- * D-RULE: the RULE is the deliverable, not a live verdict. Given the small-vs-
- * frontier authoring aggregate (counts + rates), `pipelineAuthoringGate` returns
+ * The RULE is the deliverable, not a live verdict. Given the small-vs-frontier
+ * authoring aggregate (counts + rates), `pipelineAuthoringGate` returns
  * `{ buildAuthor, reason }` — it is PURE (no I/O, no clock, no globals; the
  * `test/architecture/globals.test.ts` gate enforces this repo-wide), so the same
- * aggregate reproduces the same verdict forever (the X3 determinism /
- * Repudiation control, T-173-09). It mirrors the ordered first-match-wins
+ * aggregate reproduces the same verdict forever (determinism makes the decision
+ * reproducible and non-repudiable). It mirrors the ordered first-match-wins
  * determinism of `fleetRootCause` / `likelyRootCause`.
  *
  * The pre-committed thresholds (committed BEFORE the data exists — the
  * measure-first discipline):
  *   - non-trivial sample  := smallTierInvocations >= {@link MIN_SMALL_TIER_SAMPLE} (20)
  *   - materially below    := (frontierValidRate - smallTierValidRate) >= {@link MATERIAL_GAP_PP} (15) percentage points
- * Build P2 ONLY when BOTH hold. No data / below either threshold -> defer.
+ * Build the author pipeline ONLY when BOTH hold. No data / below either
+ * threshold -> defer.
  *
- * In a build-from-scratch run there is no production telemetry, so the aggregate
- * is `{0,0,0}` and the rule returns `defer` — Phase 174 ships gated-off
- * regardless (invariant N4).
+ * With no production telemetry the aggregate is `{0,0,0}` and the rule returns
+ * `defer` — the author pipeline stays gated-off until real data justifies it.
  *
  * LEAF ISOLATION (`test/architecture/observability-package-isolation.test.ts`):
  * this file imports NOTHING — not the daemon, agent, cli, orchestrator, or
  * memory packages, not even core — it is a pure function over a plain counts
  * interface (no DiagnosticRow, no store).
  *
- * INFO-DISCLOSURE (T-173-10): the `reason` carries ONLY counts + the pp gap — no
- * agent ids, no body, no secret.
+ * INFO-DISCLOSURE: the `reason` carries ONLY counts + the pp gap — no agent ids,
+ * no body, no secret.
  *
  * @module
  */
@@ -39,10 +38,10 @@ export const MIN_SMALL_TIER_SAMPLE = 20;
 export const MATERIAL_GAP_PP = 15;
 
 /**
- * The small-vs-frontier pipeline-authoring aggregate the gate consumes. The
- * CANONICAL home of this type (Plan 173-03's reducer in fleet-findings.ts
- * imports it from here — `@comis/observability` is the single source). Field
- * names + order are load-bearing (the reducer returns this exact shape):
+ * The small-vs-frontier pipeline-authoring aggregate the gate consumes. This is
+ * the CANONICAL home of this type — the reducer in fleet-findings.ts imports it
+ * from here, so `@comis/observability` is the single source. Field names + order
+ * are load-bearing (the reducer returns this exact shape):
  * `smallTierInvocations`, `smallTierValidRate`, `frontierValidRate`.
  */
 export interface PipelineAuthoringAggregate {
@@ -75,14 +74,14 @@ export function pipelineAuthoringGate(
       reason: `defer: insufficient telemetry (${agg.smallTierInvocations} small-tier invocations < ${MIN_SMALL_TIER_SAMPLE})`,
     };
   }
-  // IN-01 (Phase 173 review): fail-safe on a non-finite rate. The sole
-  // production feeder (pipelineAuthoringAggregateFromRows) guards
-  // division-by-zero and can only ever produce finite 0..1 rates, so this is
-  // unreachable today — but the gate is an exported pure function on the
-  // package's public API, and `NaN < MATERIAL_GAP_PP` / `Infinity < ...` both
-  // evaluate false, which would otherwise fall through to a WRONG buildAuthor:
-  // true. A non-finite aggregate defers (fail-safe), never builds. Pure: no I/O,
-  // no clock, no globals — Number.isFinite is a stateless numeric predicate.
+  // Fail-safe on a non-finite rate. The sole production feeder
+  // (pipelineAuthoringAggregateFromRows) guards division-by-zero and can only
+  // ever produce finite 0..1 rates, so this is unreachable today — but the gate
+  // is an exported pure function on the package's public API, and
+  // `NaN < MATERIAL_GAP_PP` / `Infinity < ...` both evaluate false, which would
+  // otherwise fall through to a WRONG buildAuthor: true. A non-finite aggregate
+  // defers (fail-safe), never builds. Pure: no I/O, no clock, no globals —
+  // Number.isFinite is a stateless numeric predicate.
   if (!Number.isFinite(agg.smallTierValidRate) || !Number.isFinite(agg.frontierValidRate)) {
     return { buildAuthor: false, reason: "defer: non-finite validity rate (invalid aggregate)" };
   }

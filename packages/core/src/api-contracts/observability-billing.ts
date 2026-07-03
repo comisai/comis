@@ -3,7 +3,7 @@
  * The five `obs.billing.*` contracts (per-provider / per-agent / per-session /
  * total / 24h usage) + the billing-only `BillingSnapshot` response schema.
  * Extracted from `observability.ts` to keep that module under the file-size cap
- * (the incident-report.ts sibling-split precedent from Phase 153).
+ * (the same sibling-split pattern as incident-report.ts).
  *
  * Barrel-only: external consumers import these from `"@comis/core"`. The
  * `observability.ts` barrel re-exports every contract here (and the
@@ -97,7 +97,7 @@ export const ObsBillingByProviderContract = defineContract({
  * tools?: ToolCost[] }`. The handler spreads `merged` (a BillingSnapshot) then
  * adds an optional `budgetUsed` field — modeled as a loose record because
  * `perExecution`/`perHour`/`perDay` carry a nested `{ used, limit? }` shape — and
- * the CR-01 optional `tools[]` per-tool even-split (HG-01 aggregateToolCostByAgent;
+ * the optional `tools[]` per-tool even-split (`aggregateToolCostByAgent`;
  * present-only when non-empty), modeled as a loose-record array (the per-tool
  * `{ tool, cost, tokens, calls }` rows — content-free names + numbers).
  */

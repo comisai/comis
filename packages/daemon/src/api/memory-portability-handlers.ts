@@ -53,7 +53,7 @@ export function createMemoryPortabilityHandlers(
       const exportAgentId = exportParams.agent_id;
       const exportLimit = exportParams.limit ?? 10_000;
 
-      // WR-01: capture start time for accurate durationMs in the completion log.
+      // Capture start time for accurate durationMs in the completion log.
       const exportStart = systemNowMs();
 
       const exportEntries = deps.memoryApi.inspect({
@@ -64,7 +64,7 @@ export function createMemoryPortabilityHandlers(
       });
 
       const exportedEntries = exportEntries.map((e) => {
-        // CR-01: scrub ALL free-text fields — not just content — to prevent secret exfil
+        // Scrub ALL free-text fields — not just content — to prevent secret exfil
         // via source provenance or tags. scrubSecretsFromText only redacts secret-shaped values;
         // non-secret text (e.g. "operator", "discord") passes through unchanged.
         const { text: scrubbedContent } = scrubSecretsFromText(e.content);
@@ -147,7 +147,7 @@ export function createMemoryPortabilityHandlers(
       const importAgentId = importParams.agent_id;
       const importDryRun = importParams.dry_run ?? false;
 
-      // CR-02: fail-closed firewall guard — a missing validator is a wiring mistake.
+      // Fail-closed firewall guard — a missing validator is a wiring mistake.
       // Silently bypassing the security firewall is more dangerous than refusing the batch.
       // Production daemon always wires validateMemoryWrite (daemon.ts); this protects against
       // test-harness wiring errors and future DI mistakes.
@@ -157,7 +157,7 @@ export function createMemoryPortabilityHandlers(
         );
       }
 
-      // WR-01: capture start time for accurate durationMs in the completion log.
+      // Capture start time for accurate durationMs in the completion log.
       const importStart = systemNowMs();
 
       let importCount = 0;
@@ -165,7 +165,7 @@ export function createMemoryPortabilityHandlers(
       let downgradedCount = 0;
       let dedupedCount = 0;
 
-      // MEM-IMPORT-DUP (30uc-20260624 UC-22): build the set of content already present in the
+      // Duplicate-content idempotency: build the set of content already present in the
       // TARGET scope so the import is idempotent — re-importing an export (or an overlapping set)
       // skips entries that already exist instead of inserting fresh-id duplicates (live: a 34-entry
       // re-import doubled a 33-row store to 67). A DELETED memory is still restored (its content is
@@ -241,7 +241,7 @@ export function createMemoryPortabilityHandlers(
           entryTrustLevel = envelopeTrust === "external" ? "external" : "learned";
         }
 
-        // MEM-IMPORT-DUP: idempotent skip — content already present in the target scope (or earlier
+        // Idempotent skip — content already present in the target scope (or earlier
         // in THIS batch). Counted separately from blocked (security) and downgraded. Security wins:
         // a CRITICAL entry was already blocked above before reaching here.
         if (existingContent.has(entryContent)) {
@@ -253,7 +253,7 @@ export function createMemoryPortabilityHandlers(
         if (!importDryRun) {
           const importEntryId = randomUUID();
           const rawTags = rawEntry["tags"];
-          // WR-03: filter to string elements only — z.record(z.string(), z.unknown()) allows
+          // Filter to string elements only — z.record(z.string(), z.unknown()) allows
           // non-string array elements in the imported payload; they must not reach the store.
           const envelopeTags = Array.isArray(rawTags)
             ? rawTags.filter((t): t is string => typeof t === "string")
@@ -261,7 +261,7 @@ export function createMemoryPortabilityHandlers(
 
           // Pinned pin state is NOT imported: `pinned` is deliberately absent from storeEntry.
           // The `pinned` column defaults to 0 at the SQLite level — imported entries are never
-          // pre-pinned. Pin state is local operator curation, not portable across scopes (R6).
+          // pre-pinned. Pin state is local operator curation, not portable across scopes.
           const storeEntry = {
             id: importEntryId,
             tenantId: importTenantId,    // re-stamp to target — NEVER trust envelope's tenantId

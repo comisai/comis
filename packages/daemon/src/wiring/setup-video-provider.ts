@@ -1,26 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Video-provider SELECTION (RES-01/RES-02/RES-03/CRED-01, Phase 188 + 190).
+ * Video-provider SELECTION.
  *
  * `createVideoProviderSelector` returns a lazy getter (read-on-use at boot —
  * mirrors `createImageProviderSelector` in setup-image-provider.ts) that, per the
  * resolved config + the agent's main provider, decides between:
  *   - the skills FAL adapter (explicit `provider:"fal"`, via the `legacyGetter` →
  *     `createVideoGenProvider`); or
- *   - the follow-main LIVE adapter via the Plan-01 `resolveVideoProvider` (one
+ *   - the follow-main LIVE adapter via `resolveVideoProvider` (one
  *     source of truth), resolving creds from the SAME `SecretManager`/
- *     `OAuthTokenManager` the main provider uses (CRED-01 — no video-specific
- *     secret, I9): `auto`+`google`→`createVeoVideoAdapter` (GOOGLE_API_KEY,
+ *     `OAuthTokenManager` the main provider uses (no video-specific
+ *     secret): `auto`+`google`→`createVeoVideoAdapter` (GOOGLE_API_KEY,
  *     static-key) / `auto`+`xai`→`createGrokVideoAdapter` (XAI_API_KEY key-primary,
- *     with a defensive forward-looking SuperGrok-OAuth branch — A1: no xAI OAuth
+ *     with a defensive forward-looking SuperGrok-OAuth branch — no xAI OAuth
  *     provider is registered yet, so key-auth is the proven path); or
  *   - an honest-unavailable port (carrying the resolver's knob-naming hint) for a
- *     video-incapable main (RES-03), or for a capable main with no credential —
+ *     video-incapable main, or for a capable main with no credential —
  *     NEVER a misroute to a different paid provider, NEVER silence.
  *
  * The selector selects ONCE here (one source of truth — `resolveVideoProvider`);
- * the handler NEVER re-derives selection (the RES-01 keystone / the v2.20
- * keyless-summarizer two-source firewall). It reads creds via `SecretManager` /
+ * the handler NEVER re-derives selection (a single source of truth — a two-source
+ * firewall that prevents selection and credential resolution from diverging). It
+ * reads creds via `SecretManager` /
  * the `OAuthTokenManager`, never the raw environment.
  *
  * Placement: `@comis/daemon` (the boot selector is daemon-side; the FAL adapter
@@ -46,7 +47,7 @@ import { createGrokVideoAdapter, XAI_OAUTH_PROVIDER_ID } from "../api/grok-adapt
 
 /**
  * A port whose every method returns a classified `VideoGenError` Result err —
- * the RES-03 honest-unavailable carrier. The agent gets a hint (naming the
+ * the honest-unavailable carrier. The agent gets a hint (naming the
  * binding config knob, or the missing credential for a capable main), not
  * silence. `isAvailable()` is `false` so callers that probe it know it cannot serve.
  */
@@ -79,23 +80,23 @@ export function makeUnavailableVideoPort(
  * key rotation requires a daemon restart to take effect (NOT live per-request;
  * parity with the image selector). Returns `undefined` only when video generation
  * is unconfigured (`videoGenConfig` absent) — a video-incapable main yields an
- * unavailable PORT (RES-03), never `undefined`, so the handler is still
+ * unavailable PORT, never `undefined`, so the handler is still
  * constructed and surfaces the hint.
  */
 export function createVideoProviderSelector(deps: {
   videoGenConfig: VideoGenerationConfig | undefined;
   secretManager: SecretManager;
-  /** Resolved at boot for the DEFAULT agent (the common case for Phase 188). */
+  /** Resolved at boot for the DEFAULT agent (the common case). */
   mainProviderId: string;
   /** The skills `createVideoGenProvider` getter (explicit `fal` path). */
   legacyGetter: () => VideoGenerationPort | undefined;
   logger: ComisLogger;
   /**
-   * The DEFAULT agent's OAuthTokenManager (190 / CRED-01). The Grok video path
+   * The DEFAULT agent's OAuthTokenManager. The Grok video path
    * resolves a SuperGrok OAuth bearer through this manager when no XAI_API_KEY is
    * present. Surfaced from setupAgents → buildVideoGenBundle (the buildImageGenBundle
    * precedent). Absent → grok is key-only (honest-unavailable without a key, never a
-   * crash). A1: no xAI OAuth provider is registered yet, so this branch is
+   * crash). No xAI OAuth provider is registered yet, so this branch is
    * forward-looking; key-auth is the proven primary.
    */
   oauthManager?: OAuthTokenManager;
@@ -113,23 +114,23 @@ export function createVideoProviderSelector(deps: {
       return deps.legacyGetter();
     }
 
-    // auto / google / xai → the follow-main path via the Plan-01 resolver (one
-    // source of truth; creds via the SecretManager closure — CRED-01).
+    // auto / google / xai → the follow-main path via the resolver (one
+    // source of truth; creds via the SecretManager closure).
     const sel = resolveVideoProvider(
       cfg,
       deps.mainProviderId,
-      // CRED-01: video creds resolve from the SAME SecretManager/OAuthTokenManager
+      // Video creds resolve from the SAME SecretManager/OAuthTokenManager
       // the main provider uses. veo → GOOGLE_API_KEY; grok → XAI_API_KEY OR a
       // SuperGrok OAuth bearer (mirrors image's codex key-or-OAuth credsAvailable
-      // at setup-image-provider.ts:128-131); every other (explicit fal etc.) →
+      // in setup-image-provider.ts); every other (explicit fal etc.) →
       // FAL_KEY. A Google-only agent with no FAL_KEY resolves available on its
-      // existing GOOGLE_API_KEY (the design thesis — no video-specific secret, I9).
+      // existing GOOGLE_API_KEY (no video-specific secret).
       (videoApi) => {
         if (videoApi === "veo") return deps.secretManager.get("GOOGLE_API_KEY") !== undefined;
         if (videoApi === "grok")
           return (
             deps.secretManager.get("XAI_API_KEY") !== undefined ||
-            // IN-02: gate on the adapter's exported provider-id constant (single
+            // Gate on the adapter's exported provider-id constant (single
             // source of truth) — never a bare "xai" literal that could drift.
             (deps.oauthManager?.hasCredentials(XAI_OAUTH_PROVIDER_ID) ?? false)
           );
@@ -145,15 +146,15 @@ export function createVideoProviderSelector(deps: {
     );
 
     if (!sel.ok) {
-      // RES-03 honest-unavailable: a port that surfaces the resolver's err (the
+      // Honest-unavailable: a port that surfaces the resolver's err (the
       // handler forwards its knob-naming hint). e.g. a video-incapable main
       // (openai) or explicit-but-no-creds.
       return makeUnavailableVideoPort(sel.errorKind, sel.hint, deps.logger);
     }
 
-    // VEO = the STATIC-KEY case (exactly like setup-image-provider.ts:183-192
-    // google-images). CRED-01: the SAME GOOGLE_API_KEY the completion + image
-    // paths use — no video-specific secret (I9). credsAvailable above already
+    // VEO = the STATIC-KEY case (exactly like the google-images path in
+    // setup-image-provider.ts). The SAME GOOGLE_API_KEY the completion + image
+    // paths use — no video-specific secret. credsAvailable above already
     // gated on GOOGLE_API_KEY, so `ok` implies a present key; the defensive guard
     // keeps the adapter's required `apiKey: string` honest rather than a `!`.
     if (sel.videoApi === "veo") {
@@ -175,8 +176,8 @@ export function createVideoProviderSelector(deps: {
 
     // GROK = the KEY-OR-OAUTH case (mirrors image's codex branch). The key is the
     // PROVEN primary (XAI_API_KEY Bearer); the OAuth branch is built defensively
-    // codex-shaped so CRED-01's key-or-OAuth contract holds structurally, but it
-    // is forward-looking — A1: no xAI/SuperGrok OAuth provider is registered in
+    // codex-shaped so the key-or-OAuth contract holds structurally, but it
+    // is forward-looking — no xAI/SuperGrok OAuth provider is registered in
     // the codebase today, so `hasCredentials("xai")` no-ops, and GROK is NEVER
     // blocked on it. The adapter resolves the bearer (the selector never reads a
     // raw key into a log; the adapter's SEC tests prove the bearer is leak-free).
@@ -190,8 +191,8 @@ export function createVideoProviderSelector(deps: {
         });
       }
       if (deps.oauthManager?.hasCredentials(XAI_OAUTH_PROVIDER_ID)) {
-        // Forward-looking (A1) — activates if/when an xAI OAuth provider exists.
-        // IN-02: same exported constant as the adapter resolves (no literal drift).
+        // Forward-looking — activates if/when an xAI OAuth provider exists.
+        // Same exported constant as the adapter resolves (no literal drift).
         return createGrokVideoAdapter({
           oauthManager: deps.oauthManager,
           oauthProfiles: deps.oauthProfiles,

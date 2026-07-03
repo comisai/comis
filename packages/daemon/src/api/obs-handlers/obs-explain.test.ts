@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs.explain` handler acceptance tests — the Phase-153 centerpiece (X1/X2/X3).
+ * `obs.explain` handler acceptance tests.
  *
  * Drives the WIRED handler (resolver → readers → normalize → assemble →
- * heuristics → bound) against the two FROZEN Phase-149 fixtures via the
+ * heuristics → bound) against the two FROZEN diagnosis fixtures via the
  * `incidentReader` injection seam (so the pipeline runs the REAL
  * `toIncidentSignals` + `assembleIncidentReport` + `rootCause` +
  * `boundIncidentReport` over real log-shaped records — only the file reads are
  * stubbed).
  *
- *   X3 — the 678 fixture yields content_heuristic_misclassification + degraded +
- *        a non-empty breaker timeline + costUsd 1.320669; the 503 fixture yields
- *        breaker_opened_repeated_failure + web_fetch.
- *   X1 — by-traceId == by-sessionKey: both 678 traceIds resolve (via the REAL
- *        resolveTraceToSession against a seeded session-index) to the one
- *        sessionKey → one assembler path → byte-identical reports.
- *   X2 — depth:"summary" serializes ≤6144 bytes end-to-end and NEVER inlines the
- *        678 "SECURITY NOTICE" prompt-injection block (summary AND full).
+ *   - the 678 fixture yields content_heuristic_misclassification + degraded +
+ *     a non-empty breaker timeline + costUsd 1.320669; the 503 fixture yields
+ *     breaker_opened_repeated_failure + web_fetch.
+ *   - by-traceId == by-sessionKey: both 678 traceIds resolve (via the REAL
+ *     resolveTraceToSession against a seeded session-index) to the one
+ *     sessionKey → one assembler path → byte-identical reports.
+ *   - depth:"summary" serializes ≤6144 bytes end-to-end and NEVER inlines the
+ *     678 "SECURITY NOTICE" prompt-injection block (summary AND full).
  *
- * Plus the admin gate (T-153-13) and the neither-id refine (T-153-15).
+ * Plus the admin gate and the neither-id refine.
  *
  * @module
  */
@@ -70,7 +70,7 @@ function todayKey(): string {
 /**
  * Seed a `<dataDir>/logs/session-index.<today>.jsonl` mapping BOTH 678 traceIds
  * to the one sessionKey, so the REAL resolveTraceToSession canonicalizes either
- * traceId to SESSION_678 (the X1 structural-identity proof).
+ * traceId to SESSION_678 (the structural-identity proof).
  */
 function seedSessionIndex(): string {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-x1-"));
@@ -92,10 +92,10 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // X3 — the two frozen fixtures (the centerpiece acceptance).
+  // The two frozen fixtures (the centerpiece acceptance).
   // ------------------------------------------------------------------------
 
-  it("X3 (678): content_heuristic_misclassification + degraded + breaker timeline + costUsd 1.320669", async () => {
+  it("678 fixture: content_heuristic_misclassification + degraded + breaker timeline + costUsd 1.320669", async () => {
     const reader = makeFixtureReader("session-678314278");
     const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
     const r = (await handlers["obs.explain"]!({
@@ -110,7 +110,7 @@ describe("bindObsExplainHandlers", () => {
     expect(r.cost.costUsd).toBeCloseTo(1.320669, 4);
   });
 
-  it("X3 (503): breaker_opened_repeated_failure + offending toolName web_fetch", async () => {
+  it("503 fixture: breaker_opened_repeated_failure + offending toolName web_fetch", async () => {
     // The injected reader returns the 503 records for ANY sessionKey, so trace
     // resolution is bypassed (the 503 fixture has no real session-index row).
     const reader = makeFixtureReader("live-503-breaker");
@@ -126,12 +126,12 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // QT2/QT3 — the named degradation causes surface END-TO-END through the
+  // The named degradation causes surface END-TO-END through the
   // handler: the metadata endReason flows to outcome.endReason AND drives
   // likelyRootCause (the handler threads it into signals before rootCause).
   // ------------------------------------------------------------------------
 
-  it("QT2: a context_exhausted session (no tool failures) → outcome.endReason + likelyRootCause name the cause", async () => {
+  it("a context_exhausted session (no tool failures) → outcome.endReason + likelyRootCause name the cause", async () => {
     const reader: IncidentSourceReader = {
       readSessionRecords: async () => [],
       readCacheTraceRecords: async () => [],
@@ -154,7 +154,7 @@ describe("bindObsExplainHandlers", () => {
     expect(r.likelyRootCause?.code).toBe("context_exhausted");
   });
 
-  it("QT3: an output_starved session → likelyRootCause names output_starved", async () => {
+  it("an output_starved session → likelyRootCause names output_starved", async () => {
     const reader: IncidentSourceReader = {
       readSessionRecords: async () => [],
       readCacheTraceRecords: async () => [],
@@ -175,10 +175,10 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // X1 — by-traceId == by-sessionKey (both 678 traceIds → one report).
+  // by-traceId == by-sessionKey (both 678 traceIds → one report).
   // ------------------------------------------------------------------------
 
-  it("X1: by-sessionKey == by-traceId(A) == by-traceId(B) — identical reports", async () => {
+  it("by-sessionKey == by-traceId(A) == by-traceId(B) — identical reports", async () => {
     const dataDir = seedSessionIndex();
     const reader = makeFixtureReader("session-678314278");
     const handlers = bindObsExplainHandlers(makeDeps({ dataDir, incidentReader: reader }));
@@ -203,10 +203,10 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // X2 — depth:summary ≤6 KB, no raw body (end-to-end over a real fixture).
+  // depth:summary ≤6 KB, no raw body (end-to-end over a real fixture).
   // ------------------------------------------------------------------------
 
-  it("X2 (summary): ≤6144 bytes, no SECURITY NOTICE inlined, errorPreview ≤200 chars", async () => {
+  it("depth summary: ≤6144 bytes, no SECURITY NOTICE inlined, errorPreview ≤200 chars", async () => {
     const reader = makeFixtureReader("session-678314278");
     const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
     const r = (await handlers["obs.explain"]!({
@@ -223,7 +223,7 @@ describe("bindObsExplainHandlers", () => {
     }
   });
 
-  it("X2 (full): SECURITY NOTICE still never inlined (digest-only is depth-independent)", async () => {
+  it("depth full: SECURITY NOTICE still never inlined (digest-only is depth-independent)", async () => {
     const reader = makeFixtureReader("session-678314278");
     const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
     const r = (await handlers["obs.explain"]!({
@@ -234,7 +234,7 @@ describe("bindObsExplainHandlers", () => {
     expect(JSON.stringify(r)).not.toContain("SECURITY NOTICE");
   });
 
-  it("X2: default depth (omitted) behaves as summary (≤6144 bytes)", async () => {
+  it("default depth (omitted) behaves as summary (≤6144 bytes)", async () => {
     const reader = makeFixtureReader("session-678314278");
     const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
     const r = (await handlers["obs.explain"]!({
@@ -254,7 +254,7 @@ describe("bindObsExplainHandlers", () => {
     await expect(handlers["obs.explain"]!({ sessionKey: SESSION_678, _trustLevel: "user" })).rejects.toThrow(/Admin/i);
   });
 
-  it("OBS-5: the admin-deny message names the operator route (comis explain offline)", async () => {
+  it("the admin-deny message names the operator route (comis explain offline)", async () => {
     const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: makeFixtureReader("session-678314278") }));
     // The message must point the operator at the working route instead of leaving them to guess.
     await expect(handlers["obs.explain"]!({ sessionKey: SESSION_678, _trustLevel: "user" })).rejects.toThrow(/comis explain/i);
@@ -293,11 +293,11 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // WR-04 — an unresolvable traceId must be DISTINGUISHABLE from a clean,
-  // empty session. Pre-fix both yielded the same empty report keyed on "".
+  // An unresolvable traceId must be DISTINGUISHABLE from a clean, empty
+  // session. Without the marker both yield the same empty report keyed on "".
   // ------------------------------------------------------------------------
 
-  it("WR-04: an unresolvable traceId yields a session_not_found marker, not a silent empty report", async () => {
+  it("an unresolvable traceId yields a session_not_found marker, not a silent empty report", async () => {
     // Empty dataDir → no session-index files → resolveTraceToSession returns "".
     // The report must SIGNAL the unresolvability rather than masquerade as a
     // healthy zero-activity session.
@@ -321,7 +321,7 @@ describe("bindObsExplainHandlers", () => {
     expect(r.failures).toEqual([]);
   });
 
-  it("WR-04: an EMPTY but RESOLVED session keeps the no-throw, null-rootCause behavior (only the UNRESOLVED case is marked)", async () => {
+  it("an EMPTY but RESOLVED session keeps the no-throw, null-rootCause behavior (only the UNRESOLVED case is marked)", async () => {
     // A real sessionKey that simply has no telemetry on disk must NOT be tagged
     // session_not_found — it resolved fine; it is just empty. Only the
     // unresolved-traceId case gets the marker.
@@ -337,19 +337,20 @@ describe("bindObsExplainHandlers", () => {
 });
 
 // ===========================================================================
-// assembleIncidentReportFromSources — the extracted shared assembler (154-03).
+// assembleIncidentReportFromSources — the extracted shared assembler.
 // ===========================================================================
 //
 // The post-gate assembler body (resolve → read → signals → assemble →
-// rootCause + WR-04 → bound) is extracted so the admin RPC handler (which keeps
-// its admin gate) AND the operator-allowlisted obs_explain MCP tool (which has
-// NO admin gate — its authorization is the per-client allowlist) share ONE
-// frozen pipeline. The extracted fn takes ALREADY-VALIDATED params and contains
-// NO admin check and NO contract.request.parse — it is reachable under daemon
-// authority directly. These tests pin that seam: the fn produces the SAME X3
+// rootCause + not-found marker → bound) is extracted so the admin RPC handler
+// (which keeps its admin gate) AND the operator-allowlisted obs_explain MCP
+// tool (which has NO admin gate — its authorization is the per-client
+// allowlist) share ONE frozen pipeline. The extracted fn takes
+// ALREADY-VALIDATED params and contains NO admin check and NO
+// contract.request.parse — it is reachable under daemon authority directly.
+// These tests pin that seam: the fn produces the SAME
 // report as the RPC handler for the SAME inputs, WITHOUT any _trustLevel param.
 describe("assembleIncidentReportFromSources", () => {
-  it("X3 (678): produces content_heuristic_misclassification + degraded + breaker timeline WITHOUT any admin/_trustLevel param", async () => {
+  it("678 fixture: produces content_heuristic_misclassification + degraded + breaker timeline WITHOUT any admin/_trustLevel param", async () => {
     // The seam the obs_explain MCP path uses: call the EXTRACTED assembler
     // DIRECTLY (no admin gate, no contract parse, no _trustLevel) with the SAME
     // 678 fixture reader the admin RPC test uses, and prove it yields the SAME
@@ -386,8 +387,8 @@ describe("assembleIncidentReportFromSources", () => {
     expect(viaAssembler).toEqual(viaRpc);
   });
 
-  it("WR-04: an unresolvable traceId yields session_not_found via the extracted fn (no admin needed)", async () => {
-    // The WR-04 not-found marker logic lives INSIDE the extracted fn, so the MCP
+  it("an unresolvable traceId yields session_not_found via the extracted fn (no admin needed)", async () => {
+    // The not-found marker logic lives INSIDE the extracted fn, so the MCP
     // path inherits the honest not-found verdict. Empty dataDir → resolve "".
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-asm-unresolved-"));
     const report = await assembleIncidentReportFromSources(
@@ -408,22 +409,23 @@ describe("assembleIncidentReportFromSources", () => {
   });
 
   // -------------------------------------------------------------------------
-  // TREE-02 (215-03) — THE HEADLINE: a 2-level spawn tree round-trips from
-  // FIXTURE trajectory sources into report.spawnTree (the 149/156 fixture-reader
-  // mold). This proves the FOLD + the new section + the reader seam end-to-end
-  // WITHOUT modifying the FROZEN assembler — exactly how Plan 03 reconstructs
-  // "the root→children spawn tree, one call to root-cause an unattended run".
+  // THE HEADLINE: a 2-level spawn tree round-trips from
+  // FIXTURE trajectory sources into report.spawnTree (the fixture-reader
+  // mold). This proves the FOLD + the spawnTree section + the reader seam
+  // end-to-end WITHOUT modifying the FROZEN assembler — how obs.explain
+  // reconstructs the root→children spawn tree to root-cause an unattended run
+  // in one call.
   //
-  // PRODUCER coverage (Pitfall 2 / G3, AGENTS §2.10): this fixture test proves
+  // PRODUCER coverage (AGENTS.md §2.10): this fixture test proves
   // the FOLD half. The PRODUCER half ("the gate chokepoint emits
-  // capability:audited") is proven by Plan 01's emit tests
+  // capability:audited") is proven by the emit tests
   // (setup-capability-endpoint-audit.test.ts + the rpc-dispatch in-process emit
-  // test) — do NOT re-test the emit here; Plan 01 owns it. The two halves stitch
+  // test) — do NOT re-test the emit here. The two halves stitch
   // via the capability.audited trajectory record both sides agree on.
-  it("TREE-02 (headline): a 2-level spawn tree round-trips into report.spawnTree", async () => {
+  it("headline: a 2-level spawn tree round-trips into report.spawnTree", async () => {
     const SESSION_KEY = "default:unattended:unattended:peer:0";
     // The 2-level tree of hand-built capability.audited records — the exact shape
-    // the Plan-01 translator emits (data: {capability, tool, decision, leaseId,
+    // the translator emits (data: {capability, tool, decision, leaseId,
     // parentLeaseId, rootRunId}; agentId on the envelope).
     const records = [
       {
@@ -475,21 +477,21 @@ describe("assembleIncidentReportFromSources", () => {
     expect(root.parentLeaseId).toBeUndefined();
     expect(root.toolsInvoked).toContain("memory_search");
     expect(root.caps).toContain("orch:read");
-    // Child: the parent edge points to the root; the denied cap surfaces (TREE-02).
+    // Child: the parent edge points to the root; the denied cap surfaces.
     expect(child.parentLeaseId).toBe("L-root");
     expect(child.denials).toContain("orch:web");
   });
 
   // -------------------------------------------------------------------------
-  // FLEET-05 — the fleet→explain drill-down by rootRunId. fleet (Plan 03) names
+  // The fleet→explain drill-down by rootRunId. fleet names
   // the worst run's rootRunId; pasting it into obs.explain must resolve to the
   // run's sessionKey and render its spawn-tree. The rootRunId arm is FIRST in
-  // the 3-way resolution; an unresolvable rootRunId yields the WR-04 not-found
+  // the 3-way resolution; an unresolvable rootRunId yields the not-found
   // marker (not a clean-looking empty report). REAL session-index layout per
-  // AGENTS §2.10 — the day-key PATH resolution is exercised, not just the LOGIC.
+  // AGENTS.md §2.10 — the day-key PATH resolution is exercised, not just the LOGIC.
   // -------------------------------------------------------------------------
 
-  it("FLEET-05: assemble by rootRunId resolves the run's sessionKey and renders its spawnTree (REAL layout)", async () => {
+  it("assemble by rootRunId resolves the run's sessionKey and renders its spawnTree (REAL layout)", async () => {
     const ROOT_RUN_ID = "run-fleet-05-headline";
     const SESSION_KEY = "default:unattended:unattended:peer:7";
     // Seed a REAL <dataDir>/logs/session-index.<dayKey>.jsonl carrying a
@@ -548,7 +550,7 @@ describe("assembleIncidentReportFromSources", () => {
     expect(root.rootRunId).toBe(ROOT_RUN_ID);
   });
 
-  it("FLEET-05: an unresolvable rootRunId yields the WR-04 not-found marker (not a clean session)", async () => {
+  it("an unresolvable rootRunId yields the session_not_found marker (not a clean session)", async () => {
     // Empty dataDir → no session-index → resolveRootRunToSession returns "" (and
     // the id is not a synthetic root). The report must SIGNAL unresolvability.
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-fleet05-nope-"));

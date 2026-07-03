@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Greeting variant routing tests (spec §12).
+ * Greeting variant routing tests.
  *
  * Asserts the three GreetingTrigger variants (standard / onboarding-pending /
  * onboarding-limited) route to three DISTINCT system prompts, and that the
@@ -30,7 +30,7 @@ import {
 
 const ALL_TRIGGERS: readonly GreetingTrigger[] = ["standard", "onboarding-pending", "onboarding-limited"];
 
-describe("GreetingGenerator three-variant routing (§12)", () => {
+describe("GreetingGenerator three-variant routing", () => {
   const baseDeps: GreetingGeneratorDeps = {
     provider: "openai",
     modelId: "gpt-4o-mini",

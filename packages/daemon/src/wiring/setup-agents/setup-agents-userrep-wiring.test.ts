@@ -14,10 +14,9 @@
  * no-op. (The prompt-assembly / setup-memory forward-presence tests check OTHER layers, NOT
  * this executor-construction hop.)
  *
- * v2.31 Phase 225-05: the `<user_profile>` source was the deleted `userRepresentationStore`;
- * FOLD-01 (Plan 02) rewired it onto the MentalModelStorePort `kind:"profile"` path
- * (`mentalModelStore.list(scope,"profile")` → `buildProfileBlock`). This test now pins the
- * SAME executor-construction hop for the live source (`mentalModelStore`), preserving the guard.
+ * The `<user_profile>` source is the MentalModelStorePort `kind:"profile"` path
+ * (`mentalModelStore.list(scope,"profile")` → `buildProfileBlock`). This test pins the
+ * executor-construction hop for that live source (`mentalModelStore`).
  *
  * Mirrors the setup-agents-rerank-wiring.test.ts harness (the established analog
  * for asserting a deps field reaches the mocked createPiExecutor).
@@ -48,7 +47,7 @@ vi.mock("@comis/agent", () => ({
   createAuthRotationAdapter: vi.fn(() => ({})),
   resolveCompactionModel: vi.fn(() => ""),
   resolveOperationDefaults: vi.fn(() => ({ mid: "concrete-model" })),
-  // KNOB-01 + FLOOR-01 (176-05): the boot-honesty block runs unconditionally in
+  // The boot-honesty block runs unconditionally in
   // setupSingleAgent — stubbed inert here (this suite pins a different wire).
   compareServedWindowForProvider: vi.fn(() => undefined),
   collectAgentBootWindowInfo: vi.fn(() => ({})),
@@ -167,7 +166,7 @@ describe("setupSingleAgent forwards mentalModelStore into createPiExecutor (the 
 
   it("passes the SingleAgentDeps.learnedSkillStore through to the executor deps as mentalModelStore", async () => {
     // The createPiExecutor object literal must forward mentalModelStore (= deps.learnedSkillStore),
-    // else the executor (and thus prompt-assembly) never sees the store → the FOLD-01 <user_profile>
+    // else the executor (and thus prompt-assembly) never sees the store → the <user_profile>
     // standing block is a silent no-op in the live daemon.
     const agentId = "default";
     const container = makeContainer(agentId);

@@ -6,8 +6,8 @@
  *   - runPrompt (value) — orchestrator
  *   - PromptRunnerBridge, RunPromptParams, PromptRunResult (types)
  *
- * Names are kept byte-identical (no `as` aliases) so the parity snapshot
- * reproduces verbatim.
+ * Names are kept byte-identical (no `as` aliases) so consumers see the
+ * exact canonical names the defining modules export.
  *
  * @module
  */

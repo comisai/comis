@@ -380,8 +380,8 @@ Override the model and timeout for specific internal operation types. Each entry
 | `compaction` | Context compaction summarization | Capable model or `contextEngine.compaction.strongerSummarizerModel` |
 | `taskExtraction` | Task extraction from conversation | — |
 | `condensation` | Memory condensation | Capable model |
-| `verification` | Pre-delivery critic (R4). Fires when `agents.<id>.verification.enabled=true` and the response is a completion-claiming response meeting `minResponseChars`. | Cheap model: `"anthropic:claude-haiku-4-5-20250929"` or `"ollama:qwen3.6:27b"` for local self-check. Omit to use the primary model. |
-| `planning` | Pre-execution planner (R5, deferrable on M2). | Capable model for checklist generation. Omit to use the primary model. |
+| `verification` | Pre-delivery critic. Fires when `agents.<id>.verification.enabled=true` and the response is a completion-claiming response meeting `minResponseChars`. | Cheap model: `"anthropic:claude-haiku-4-5-20250929"` or `"ollama:qwen3.6:27b"` for local self-check. Omit to use the primary model. |
+| `planning` | Pre-execution planner. | Capable model for checklist generation. Omit to use the primary model. |
 
 ```yaml
 agents:
@@ -436,11 +436,11 @@ See [Resilience](/agents/resilience) for how prompt timeouts fit into the full r
 | `includeTrustLevels` | `string[]` | `["system", "learned"]` | Trust levels to include in retrieval |
 | `baseFloor` | `number` (0–1) | `0` for frontier/mid; `0.15` for small/nano (capability-gated) | Minimum BASE relevance score (pre-boost) for memory injection. Boosts cannot resurrect a memory whose base score falls below this threshold. Gates on `ScoreBreakdown.base` (un-boosted cosine/RRF score), applied after `scoreWithBreakdown()`. Setting `baseFloor: 0` is the unset sentinel — the capability default applies (0.15 for small/nano). Any value greater than 0 is treated as explicit and wins over the capability default. |
 
-> **Security (S6):** A weaker ModelProfile cannot lower this below the operator-set value. `FROZEN_TRUST_PATHS` and `MemoryWriteValidator` remain enforced for all `capabilityClass`es regardless of this setting.
+> **Security:** A weaker ModelProfile cannot lower this below the operator-set value. `FROZEN_TRUST_PATHS` and `MemoryWriteValidator` remain enforced for all `capabilityClass`es regardless of this setting.
 
-> **Capability-gated default (Phase 158):** For `small`/`nano` agents, `rag.baseFloor` defaults
-> to `0.15` — dropping memories with a base relevance score below 0.15 (the Phase 153 poison
-> mitigation). For `frontier`/`mid`, the default remains `0` (no filter). Setting
+> **Capability-gated default:** For `small`/`nano` agents, `rag.baseFloor` defaults
+> to `0.15` — dropping memories with a base relevance score below 0.15 (a mitigation
+> against low-relevance poison memories). For `frontier`/`mid`, the default remains `0` (no filter). Setting
 > `rag.baseFloor: 0` explicitly is treated the same as "unset" — the capability default applies.
 > To disable the relevance floor on a small/nano agent, set
 > `providers.<id>.capabilityClass: "frontier"` to override the capability class, or set
@@ -516,7 +516,7 @@ diagnostics:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `maxChars` | `number` | `20000` for frontier/mid; `3500` for small/nano (capability-gated) | Per-file character limit for workspace files injected into system prompt. For `capabilityClass` in `{small, nano}`, the effective default drops to `3_500` chars per file (SD6, Phase 159). Setting `maxChars: 20000` explicitly is treated the same as "unset" — the capability default of `3_500` still applies for small/nano. Use `capabilityClassOverride: frontier` or set an explicit value other than `20000` to override. |
+| `maxChars` | `number` | `20000` for frontier/mid; `3500` for small/nano (capability-gated) | Per-file character limit for workspace files injected into system prompt. For `capabilityClass` in `{small, nano}`, the effective default drops to `3_500` chars per file. Setting `maxChars: 20000` explicitly is treated the same as "unset" — the capability default of `3_500` still applies for small/nano. Use `capabilityClassOverride: frontier` or set an explicit value other than `20000` to override. |
 | `promptMode` | `enum` | `"full"` | Verbosity: `full`, `minimal` (sub-agents), `none` (identity only) |
 | `groupChatFiltering` | `boolean` | `true` | Exclude USER.md from bootstrap in group chats (privacy) |
 
@@ -584,7 +584,7 @@ Per-agent configuration for Gemini explicit CachedContent caching. On by default
 
 #### Context Engine (agents.*.contextEngine)
 
-Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **dag** (the v2.12 lossless LCD engine). The **pipeline** value (the simpler sequential layered engine) is the first-class **opt-in** — set `version: "pipeline"` to use it. DAG does lossless verbatim assembly (full faithful history + a verbatim fresh tail of the most recent steps + transcript repair), zoomably compresses the oldest history under a token budget, and exposes the in-session `ctx_*` expansion tools. See [Compaction](/agents/compaction) for a user-friendly explanation.
+Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **dag** (the lossless LCD engine). The **pipeline** value (the simpler sequential layered engine) is the first-class **opt-in** — set `version: "pipeline"` to use it. DAG does lossless verbatim assembly (full faithful history + a verbatim fresh tail of the most recent steps + transcript repair), zoomably compresses the oldest history under a token budget, and exposes the in-session `ctx_*` expansion tools. See [Compaction](/agents/compaction) for a user-friendly explanation.
 
 **Core fields**
 
@@ -616,7 +616,7 @@ Context engine configuration. Controls the system that manages what your agent s
 | `observationDeactivationChars` | `number` | `80000` | Character threshold to deactivate observation masking entirely (20K-500K) |
 | `ephemeralKeepWindow` | `number` | `10` | Recent ephemeral tool results to keep unmasked (1-50) |
 
-**DAG mode fields** (`version: "dag"`) — `freshTailTurns`, the leaf/condense summarization fields, and budget-bounded eviction are **active** in the current release (lossless verbatim assembly + threshold-triggered leaf summarization + multi-tier condensation + budget eviction); only the on-demand `ctx_*` recall keys (`maxExpandTokens`, `maxRecallsPerDay`, `recallTimeoutMs`) remain **reserved** until the recall tools land in a later phase:
+**DAG mode fields** (`version: "dag"`) — `freshTailTurns`, the leaf/condense summarization fields, and budget-bounded eviction are **active** (lossless verbatim assembly + threshold-triggered leaf summarization + multi-tier condensation + budget eviction); only the on-demand `ctx_*` recall keys (`maxExpandTokens`, `maxRecallsPerDay`, `recallTimeoutMs`) are **reserved** for the planned recall tools and not yet consumed:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -654,7 +654,7 @@ Context engine configuration. Controls the system that manages what your agent s
 </Note>
 
 <Note>
-  The DAG cross-agent isolation adds an `agent_id` column to the full-text search index, created once on a fresh database (no migration — sessions start fresh on the LCD engine). A pre-existing development `~/.comis` database created before this release may need to be wiped to pick up the isolated index; a fresh install needs nothing. See [Compaction](/agents/compaction#per-tenant-agent-session-isolation).
+  The DAG cross-agent isolation adds an `agent_id` column to the full-text search index, created once when the database is first initialized — a fresh install needs nothing. See [Compaction](/agents/compaction#per-tenant-agent-session-isolation).
 </Note>
 
 <Note>
@@ -712,7 +712,7 @@ Controls how the context engine handles LLM summarization for low-capability mod
 | `agents.<id>.contextEngine.compaction.preferEvictionByCapability` | `boolean` | `true` | When `true`: `small`/`nano` capabilityClass → eviction-first (or `strongerSummarizerModel` if set) instead of same-model LLM summarization. Prevents degraded summaries from a weak model. A `context:compaction_routed` event fires when routing occurs. |
 | `agents.<id>.contextEngine.compaction.strongerSummarizerModel` | `string` | `""` | Optional `"provider:modelId"` for a stronger summarizer when `small`/`nano` models are detected. Empty string = pure eviction/deterministic fallback. Example: `"anthropic:claude-haiku-4-5-20250929"`. A keyless local provider (Ollama / LM Studio) is also valid (e.g. `"qwen36-local:qwen3.6:35b"`) — no API key required. |
 
-> **Security (S4):** Eviction never drops security-relevant context (sender-trust, safety reinforcement, untrusted-content markers, canary token). The `security-context-pinner` enforces this fail-closed.
+> **Security:** Eviction never drops security-relevant context (sender-trust, safety reinforcement, untrusted-content markers, canary token). The `security-context-pinner` enforces this fail-closed.
 
 #### Compact Prompt (agents.\*.contextEngine.compactPrompt)
 
@@ -723,17 +723,17 @@ Controls the compact-secure promptMode for `small`/`nano` models. This mode asse
 | `agents.<id>.contextEngine.compactPrompt.enabled` | `boolean` | `true` | Enable compact-secure promptMode for `small`/`nano` capabilityClass. When `true`, retains the FULL safety core, sender-trust, and config-secret sections — never falls back to minimal mode's empty safety. `frontier`/`mid` agents are unaffected. |
 | `agents.<id>.contextEngine.compactPrompt.targetTokens` | `number` (500–8000) | `3000` | Soft token target for the compact prompt (~chars/3.5). At 3000 ≈ 10,500 chars. |
 
-> **Security warning (S1):** Setting `enabled=false` does **not** make the prompt smaller — it restores the full-size `full` promptMode. The compact prompt is safe for all deployments because it retains the security core. It is **not safe** to use `minimal` promptMode (which drops the safety block) for any security-sensitive deployment.
+> **Security warning:** Setting `enabled=false` does **not** make the prompt smaller — it restores the full-size `full` promptMode. The compact prompt is safe for all deployments because it retains the security core. It is **not safe** to use `minimal` promptMode (which drops the safety block) for any security-sensitive deployment.
 
 #### Relevance Policy (agents.\*.contextEngine.relevance)
 
-Controls whether within-conversation history is assembled **relevance-first** (the margin arbiter allocates the contended history budget across tiers by fused rank, with the fresh-tail and security-pinned floors guaranteed) or **recency-first** (the existing newest-kept eviction). The decision is **capability-gated**: `small`/`nano` models on a **non-caching** provider default relevance-first (reordering is free when there is no prompt cache to break); `frontier`/`mid` and any prompt-caching model default recency-first and are **byte-identical** to prior releases (the arbiter does not run for them). Precedence: **explicit per-agent config > capability default > off**.
+Controls whether within-conversation history is assembled **relevance-first** (the margin arbiter allocates the contended history budget across tiers by fused rank, with the fresh-tail and security-pinned floors guaranteed) or **recency-first** (the existing newest-kept eviction). The decision is **capability-gated**: `small`/`nano` models on a **non-caching** provider default relevance-first (reordering is free when there is no prompt cache to break); `frontier`/`mid` and any prompt-caching model default recency-first (the arbiter does not run for them, so their assembly is untouched). Precedence: **explicit per-agent config > capability default > off**.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `agents.<id>.contextEngine.relevance.firstByDefault` | `boolean` (optional) | unset → capability default (`small`/`nano` + non-caching → relevance-first; `frontier`/`mid` + caching → recency-first) | Force the relevance policy. `true` runs the margin arbiter at the eviction seam (relevance-first); `false` keeps recency-first. The field is **optional with no default** — omit it to let the capability gate decide. An explicit value (either direction) always wins. Setting `true` on a `frontier`/`mid` agent opts that agent into relevance-first; setting `false` on a non-caching `small`/`nano` agent forces recency-first. |
 
-> **Capability-gated default (Phase 173):** The `small`/`nano` relevance-first default is gated on
+> **Capability-gated default:** The `small`/`nano` relevance-first default is gated on
 > `supportsPromptCache=false` — a non-caching local model (typical Ollama) reorders history for
 > free, while a caching model stays recency-first below the cache fence (reordering would break the
 > prefix cache). `frontier`/`mid` are **byte-identical** by default (the arbiter never runs for them).
@@ -741,7 +741,7 @@ Controls whether within-conversation history is assembled **relevance-first** (t
 > being relied upon in production); the mechanism ships behind this flag. Precedence:
 > **explicit per-agent config > capability default > off**.
 
-> **Security (RETR-05):** The arbiter never demotes security-relevant history (canary token,
+> **Security:** The arbiter never demotes security-relevant history (canary token,
 > untrusted-content delimiters, safety reinforcement, sender-trust markers) — those items are
 > **unconditional floors**, excluded from relevance candidacy and always kept, exactly as the
 > recency path's pre-flight already protects them. A content-free `context:arbitrated` event
@@ -757,13 +757,13 @@ The **Verified Learning** outcome signal: a durable record of each finished traj
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Enable outcome capture for this agent (opt-in; additionally force-disabled when `memory.enabled` is `false`) |
 | `sources` | `string[]` | `["tool", "pipeline"]` | Which signal sources may contribute observations (closed set: `tool` / `pipeline` / `correction` / `judge` / `reaction` / `explicit`) |
-| `reactionMap` | `object` | `{ success: ["👍", "✅"], failure: ["👎", "❌"] }` | Maps an inbound-reaction emoji to an outcome. **Now consumed** (WS1 P0.5): a reaction added to one of this agent's own outbound messages on Discord/Slack/Telegram is matched against this map and recorded as a `reaction`-source observation (see the note below). Slack short names (`thumbsup`/`white_check_mark`/`thumbsdown`/`x` and the `+1`/`-1` aliases) reconcile to the Unicode defaults automatically. |
+| `reactionMap` | `object` | `{ success: ["👍", "✅"], failure: ["👎", "❌"] }` | Maps an inbound-reaction emoji to an outcome: a reaction added to one of this agent's own outbound messages on Discord/Slack/Telegram is matched against this map and recorded as a `reaction`-source observation (see the note below). Slack short names (`thumbsup`/`white_check_mark`/`thumbsdown`/`x` and the `+1`/`-1` aliases) reconcile to the Unicode defaults automatically. |
 | `judge.enabled` | `boolean` | `true` | Cost-gated LLM judge as the **fallback** outcome source (opt-out). Runs ONE cheap-model pass ONLY when the deterministic resolve is `unknown` — i.e. a conversational turn with no tool/pipeline signal — and records a `judge`-source observation (reward capped at 0.7, always out-ranked by a deterministic signal). Routed via the `outcomeJudge` model tier (below); force-disabled when `memory.enabled` is `false` |
 | `correction.enabled` | `boolean` | `false` | Enable the optional cost-gated correction detector: a follow-up "no, do X instead" turn is classified (via the `outcomeJudge` tier) and emits a `corrected` soft-failure of the prior trajectory. Default off — an LLM over untrusted follow-up text is a net-new surface; also force-disabled by `memory.enabled: false` |
 | `minConfidenceToLearn` | `number` (0–1) | `0.6` | Minimum fused confidence required before a resolved outcome drives learning |
 | `retentionDays` | `number` | `90` | Age horizon for the `outcome_events` ledger; rows older than this are pruned at daemon startup (anti-DoS, runs regardless of the enable flag). Best-out-of-box `90` (larger outcome corpus for reflection; was `30`) |
 
-> **Inbound reactions as a corroborating source (v2.26 WS1 P0.5).** When `learningOutcome.enabled` is on, Comis captures emoji reactions added to the agent's **own outbound messages** on Discord, Slack, and Telegram and records them through the `reaction` source. This is **corroboration, not control**: a reaction can only *weight* an outcome the deterministic tool/pipeline signal already resolved — it never overrides it. Three safeguards bound the signal:
+> **Inbound reactions as a corroborating source.** When `learningOutcome.enabled` is on, Comis captures emoji reactions added to the agent's **own outbound messages** on Discord, Slack, and Telegram and records them through the `reaction` source. This is **corroboration, not control**: a reaction can only *weight* an outcome the deterministic tool/pipeline signal already resolved — it never overrides it. Three safeguards bound the signal:
 > - **Fail-closed scope.** A reaction is observed only when its `message_id` maps to an agent-authored outbound trajectory. A reaction on a user's message, or on an id the daemon never sent, is silently ignored.
 > - **Reactor trust-weighting.** The confidence is scaled by the reactor's channel-sender trust (`elevatedReply.senderTrustMap[reactorId]`, falling back to `elevatedReply.defaultTrustLevel`). An **unknown / external** reactor is capped near zero (~0.05) — a stranger's 👍 barely moves the needle.
 > - **Per-sender rate limit.** Reaction-spam from one reactor is throttled so it cannot flood the ledger.
@@ -772,9 +772,9 @@ The **Verified Learning** outcome signal: a durable record of each finished traj
 
 #### Learning (agents.*.learning)
 
-The **one outcome-gated reflection engine** (v2.31): a single per-agent learning layer that maintains named **Mental Model** docs (`kind: skill | profile | topic`) at `trust=learned` via byte-stable delta-ops, plus the wrongness-based soft eviction. It **replaces** the five separate per-loop blocks earlier versions carried (skill-synthesis, ranking-tuning, wrongness-forgetting, user-representation, consolidation/reasoning) — see [Memory configuration › Removed in v2.31](/agents/memory-config#removed-in-v2-31). **One flag** — `enabled` — gates the WHOLE layer, **default-ON (opt-out)** and **gated by the master cost switch** (`memory.enabled` -- when that is `false`, the whole learning layer is force-disabled regardless of the per-agent flag). It gates on the [`learningOutcome`](#learning-outcome-agents-learningoutcome) signal (a real task outcome), not a text-overlap proxy. Recall **ranking** itself is always the fixed `rag.scoring` fusion (deterministic RRF + the cross-encoder reranker) — the learning layer learns docs and forgets wrong memories, but tunes **no** recall weight.
+The **one outcome-gated reflection engine**: a single per-agent learning layer that maintains named **Mental Model** docs (`kind: skill | profile | topic`) at `trust=learned` via byte-stable delta-ops, plus the wrongness-based soft eviction. There are no separate per-loop blocks — skill-synthesis, profile, and topic learning all run through this one layer. **One flag** — `enabled` — gates the WHOLE layer, **default-ON (opt-out)** and **gated by the master cost switch** (`memory.enabled` -- when that is `false`, the whole learning layer is force-disabled regardless of the per-agent flag). It gates on the [`learningOutcome`](#learning-outcome-agents-learningoutcome) signal (a real task outcome), not a text-overlap proxy. Recall **ranking** itself is always the fixed `rag.scoring` fusion (deterministic RRF + the cross-encoder reranker) — the learning layer learns docs and forgets wrong memories, but tunes **no** recall weight.
 
-When the reflection cron admits a doc that **promotes to `active`** and is **read-only**, it is **surfaced** to the agent: it is listed in `<available_skills>` (appended after platform skills so the prompt-cache prefix stays stable — see [prompt cache](/agents/cache#learned-skill-listing-stability)) and materialized to a per-agent `.learned-skills/<name>/SKILL.md` listed by its absolute path (the same shape platform skills use, so the `read` tool opens it directly and skill-use attribution matches). Promotion is gated by `reflect.promoteAtProofCount` from attributed successful reuse; corroborated, sustained failing reuse demotes (`active` → `stale` → `archived`) and drops it from the surface. A learned doc is **advisory** (no executable column) and can **never** exceed `learned` trust (a DB `CHECK` makes `system` structurally impossible — see [data-directory.mdx](/operations/data-directory#learned-skills-verified-learning-v2-26)).
+When the reflection cron admits a doc that **promotes to `active`** and is **read-only**, it is **surfaced** to the agent: it is listed in `<available_skills>` (appended after platform skills so the prompt-cache prefix stays stable — see [prompt cache](/agents/cache#learned-skill-listing-stability)) and materialized to a per-agent `.learned-skills/<name>/SKILL.md` listed by its absolute path (the same shape platform skills use, so the `read` tool opens it directly and skill-use attribution matches). Promotion is gated by `reflect.promoteAtProofCount` from attributed successful reuse; corroborated, sustained failing reuse demotes (`active` → `stale` → `archived`) and drops it from the surface. A learned doc is **advisory** (no executable column) and can **never** exceed `learned` trust (a DB `CHECK` makes `system` structurally impossible — see [data-directory.mdx](/operations/data-directory)).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -789,7 +789,7 @@ When the reflection cron admits a doc that **promotes to `active`** and is **rea
 
 > **Reflection is fail-closed and anti-domination-bounded.** Reflection clusters trusted-origin **successful** trajectories by **distinct `(session, sender)`** (so N near-identical successes from one sender count once) and writes a **low** initial proof count regardless of cluster size — two independent belts so a doc cannot be minted to a high trust by repeating one success. External-trust sources are excluded by the engine's two-axis anti-poison SELECT. On a `small`/`nano` agent below the synthesis capability gate the reflection cron **abstains** (Defer ≠ Retry — a benign skip, never a failure or a retry). The whole loop is **observable** (counts/ids only) via [`comis explain`](/reference/cli#comis-explain) (the `learning` signal + the `learned_skill_failing` verdict) and the [`comis memory skills`](/reference/cli#comis-memory) admission funnel.
 
-> **Gate composition.** `learning.enabled` is the single switch for the whole layer: the outcome-reward write (`recordUsage` on success / `recordFailure` on failure-or-corrected — the `memory_usefulness.failure_count` source), the reflection cron, and the wrongness-based soft eviction (`forget.*`). The soft eviction **composes with** — does not replace — the `memoryLifecycle` cron (the schedule that runs the sweep) and the `rag.forget` recall-score decay. Eviction is **soft and reversible** — a memory un-evicts on renewed usefulness, is never hard-deleted, and stays resolvable via `asOf`/inspect — and emits counts-only `learning:memory_demoted` / `learning:memory_evicted` signals for `comis explain` / `comis fleet`. See the `memory_usefulness.failure_count` / `memories.evicted_at` columns in [data-directory.mdx](/operations/data-directory#ranking--forgetting-verified-learning-v2-26).
+> **Gate composition.** `learning.enabled` is the single switch for the whole layer: the outcome-reward write (`recordUsage` on success / `recordFailure` on failure-or-corrected — the `memory_usefulness.failure_count` source), the reflection cron, and the wrongness-based soft eviction (`forget.*`). The soft eviction **composes with** — does not replace — the `memoryLifecycle` cron (the schedule that runs the sweep) and the `rag.forget` recall-score decay. Eviction is **soft and reversible** — a memory un-evicts on renewed usefulness, is never hard-deleted, and stays resolvable via `asOf`/inspect — and emits counts-only `learning:memory_demoted` / `learning:memory_evicted` signals for `comis explain` / `comis fleet`. See the `memory_usefulness.failure_count` / `memories.evicted_at` columns in [data-directory.mdx](/operations/data-directory).
 
 > **Model tier `outcomeJudge`.** The optional outcome judge runs on the `fast` model operation tier (`outcomeJudge`), like the other lightweight classification operations -- a cheap model resolved by name and injected daemon-side. It is dormant while `learningOutcome.judge.enabled` is `false`. (The reflection cron itself runs on the `mid` `skillSynthesis` operation tier — an offline batch op, capability-routed like the other tiers.)
 
@@ -809,7 +809,7 @@ Injects the current execution objective and uncompleted step checklist at the co
 | `agents.<id>.goalAnchor.enabled` | `boolean` | automatic for small/nano (no config needed); false for frontier/mid | Enable GoalAnchor tail injection. Default-ON for `small`/`nano` (no config needed); off for `frontier`/`mid` unless `enabled: true` is set explicitly (which injects on `frontier`/`mid` too). When effective, the execution objective and uncompleted step checklist is tail-appended each turn. Precedence: explicit per-agent config > capability default > off. |
 | `agents.<id>.goalAnchor.maxChars` | `number` (100–2000) | `500` | Maximum characters for the injected GoalAnchor block. ~5–10 steps at ~50 chars/step. |
 
-> **Capability-gated default (Phase 158):** For `capabilityClass` in `{small, nano}` (e.g. any Ollama
+> **Capability-gated default:** For `capabilityClass` in `{small, nano}` (e.g. any Ollama
 > qwen3.6 deployment), `goalAnchor` is **default-ON** — no `enabled: true` required. Set
 > `agents.<id>.goalAnchor.enabled: false` explicitly to disable it on a small/nano agent.
 > For `frontier`/`mid` agents, behavior is unchanged (default off). Precedence:
@@ -824,9 +824,9 @@ A pre-delivery critic that checks the terminal response against the GoalAnchor c
 | `agents.<id>.verification.enabled` | `boolean` | cost-gated automatic for small/nano when a distinct cheap critic is configured; false otherwise | Enable pre-delivery verification critic. Fires only when a completion-claiming response meets `minResponseChars`. Default `false` for frontier/mid and for small/nano when no distinct cheap critic model is configured = opt-in. |
 | `agents.<id>.verification.minResponseChars` | `number` (50–2000) | `200` | Minimum response length in characters before the critic is invoked. Prevents firing on short acks, clarifying questions, and non-completion replies. |
 
-> **Security (S2):** The critic treats the output-under-review as untrusted (`wrapExternalContent`), inherits the safety core, embeds the canary, fails closed (uncertain → not-verified, never auto-approve), and re-validates any implied tool calls through the same exec gates. Use `agents.<id>.operationModels.verification` to run the critic on a cheaper or faster model.
+> **Security:** The critic treats the output-under-review as untrusted (`wrapExternalContent`), inherits the safety core, embeds the canary, fails closed (uncertain → not-verified, never auto-approve), and re-validates any implied tool calls through the same exec gates. Use `agents.<id>.operationModels.verification` to run the critic on a cheaper or faster model.
 
-> **Capability-gated default + cost-gate (Phase 158):** For `capabilityClass` in `{small, nano}`,
+> **Capability-gated default + cost-gate:** For `capabilityClass` in `{small, nano}`,
 > `verification` is **default-ON** — but **only when `agents.<id>.operationModels.verification`
 > resolves to a distinct cheaper model** (i.e. `operationModels.verification.model` is explicitly
 > configured to a different, faster model). If no distinct critic model is configured, the default
@@ -1478,7 +1478,7 @@ Security configuration for log redaction, audit logging, permissions, action con
 | `subAgentToolGroups` | `enum[]` | `["coding"]` | Default tool profile groups: `minimal`, `coding`, `messaging`, `supervisor`, `full` |
 | `subAgentMcpTools` | `enum` | `"inherit"` | MCP tool inheritance: `inherit` or `none` |
 | `tokenBudget` | `number \| null` | `null` | Per-spawn token budget for graph sub-agents. `null` (default) means inherit the graph share -- `budget.max_tokens` divided by the total node count -- but **only when the graph sets a token budget**; otherwise sub-agents are unbounded (today's behavior, unchanged). A positive integer caps every graph node's sub-agent at that many tokens. A graph node's own per-node budget overrides this default. A breach fails that node (honoring the graph's `on_failure`). See [Execution Graphs: Token budgets](/agents/execution-graphs#token-budgets). |
-| `sandboxNoDowngrade` | `boolean` | `true` | Fail-closed **no-downgrade invariant** on the sub-agent spawn path: a child spawn is **refused before any run or session is created** if the child's resolved sandbox posture would be *less confined* than its spawner's on any dimension, and a [`security:sandbox_downgrade_refused`](/developer-guide/event-bus) event is emitted. Posture is compared across exec / filesystem / network / uid; missing config folds to the most-confined value (the posture is never inferred more permissive than reality). For sub-agents today the **exec sandbox** dimension is the active one (exec `always` is more confined than exec `never`); the filesystem/network/uid dimensions are present in the comparator but inert until the deferred terminal path lands. See the [Threat Model](/security/threat-model) and [Skill Sandboxing](/security/sandbox) for the invariant. **Migration note** -- this is the one operator-visible behavior change in v2.27: a config where a parent agent's exec sandbox is `always` and a child it spawns is `never` will now have that spawn **refused** (previously allowed). The refusal is the intended default-on behavior; set `false` to disable -- like all `security.*` keys it is runtime-immutable, so toggling the off-switch means editing `config.yaml` and restarting the daemon (agents cannot self-disable it). No migration shim. |
+| `sandboxNoDowngrade` | `boolean` | `true` | Fail-closed **no-downgrade invariant** on the sub-agent spawn path: a child spawn is **refused before any run or session is created** if the child's resolved sandbox posture would be *less confined* than its spawner's on any dimension, and a [`security:sandbox_downgrade_refused`](/developer-guide/event-bus) event is emitted. Posture is compared across exec / filesystem / network / uid; missing config folds to the most-confined value (the posture is never inferred more permissive than reality). For sub-agents today the **exec sandbox** dimension is the active one (exec `always` is more confined than exec `never`); the filesystem/network/uid dimensions are present in the comparator but inert until the deferred terminal path lands. See the [Threat Model](/security/threat-model) and [Skill Sandboxing](/security/sandbox) for the invariant. A config where a parent agent's exec sandbox is `always` and a child it spawns is `never` has that spawn **refused**. The refusal is the intended default-on behavior; set `false` to disable -- like all `security.*` keys it is runtime-immutable, so toggling the off-switch means editing `config.yaml` and restarting the daemon (agents cannot self-disable it). |
 | `steerInject` | `boolean` | `false` | Selects how [`subagent.steer`](/reference/json-rpc#subagent-steer) delivers a steering message to a running child. **`false` (default)** -- kill the running child and respawn a fresh run with the message as the new task (the child's transcript and progress are discarded). **`true`** -- inject the message into the *running* child's live session at its next step boundary, preserving the transcript and prior work (no kill, no respawn; the same runId continues). The injected message is a user turn, never a capability grant -- a steered request for a tool on the sub-agent tool denylist is still refused, and the child's sandbox posture is unchanged. Ships **off**; enable once you observe operators wanting to steer children mid-run. Like all `security.*` keys it is runtime-immutable (edit `config.yaml` and restart the daemon). |
 
 **Delivery (security.agentToAgent.delivery)**
@@ -1909,20 +1909,20 @@ Controls the `video_generate` tool. By default (`provider: auto`) video generati
 | `maxPerHour` | `number` | `5` | Max video generations per hour per agent (rate limit). |
 | `timeoutMs` | `number` | `300000` | Inline `execute()` poll-loop timeout in ms (a render can take 30 s–5 min). |
 | `pollIntervalMs` | `number` | `10000` | Poll cadence in ms while awaiting a terminal job state. |
-| `maxConcurrentJobs` | `number` | _(unset)_ | Optional cap on concurrent in-flight jobs (consumed by the background poller in a later phase). |
+| `maxConcurrentJobs` | `number` | _(unset)_ | Optional cap on concurrent in-flight jobs, enforced by the background poller. |
 | `maxDeliveryAttempts` | `number` | `5` | Max delivery/completion attempts the background poller makes before it **dead-letters** a job to `failed`. Each sweep re-drives a still-`pending` job whose channel delivery failed; this bounds that retry so a **persistent** delivery failure (channel down, oversize attachment, bad credential) converges to `failed` instead of re-polling + re-downloading the clip every `pollIntervalMs` forever. The render cost is recorded on the limiter **only** on a successful terminal delivery, so a dead-lettered job is never billed. |
 | `fallbackChain` | `enum[]` | `[]` | Ordered providers consulted **only after** follow-main fails (same value set as `provider`). Each skipped entry is logged with a reason. |
 | `maxCostPerHourUsd` | `number` | _(unset)_ | Optional per-agent hourly **cost** ceiling (USD), gated **estimate-first**. **Enforced:** because a video clip is already rendering once submitted, the ceiling is checked against a **worst-case pre-submit estimate** (duration × per-second rate, audio/4k upper bound) — if `(accumulated + estimate)` would exceed this value the request is blocked with `quota_exceeded` (a `success: false` + a hint naming this key) **before** the provider is called; the actual cost is reconciled after a successful render. Orthogonal to and additive over `maxPerHour`. When unset there is no cost ceiling. |
 
 <Note>
-**This release (v2.24 Phase 188)** wires the **FAL** path as the loop-prover: set `provider: fal` + `FAL_KEY` to generate today. The native **Veo** and **Grok Imagine** adapters land in **Phase 190** — under `provider: auto` a `google`/`xai` main currently resolves the selection but reports an honest "unavailable" naming Phase 190 (use `provider: fal` + `FAL_KEY` in the meantime).
+All three backends are wired: under `provider: auto` a `google` main renders via **Veo** and an `xai` main via **Grok Imagine**, each reusing the main provider's credentials; the explicit `fal` path renders via the FAL queue API and needs `FAL_KEY`.
 </Note>
 
 ```yaml
 integrations:
   media:
     videoGeneration:
-      provider: auto        # follow the agent's main provider (google→Veo, xai→Grok; wired Phase 190)
+      provider: auto        # follow the agent's main provider (google→Veo, xai→Grok)
       maxPerHour: 5
 ```
 
@@ -1930,7 +1930,7 @@ integrations:
 integrations:
   media:
     videoGeneration:
-      provider: fal                  # explicit — the wired baseline this release (needs FAL_KEY)
+      provider: fal                  # explicit FAL queue path (needs FAL_KEY)
       model: fal-ai/veo3.1/fast
       defaultDurationSecs: 8
       timeoutMs: 300000
@@ -2121,18 +2121,18 @@ Small-model DAG-authoring gates. These flags help a **weaker** model author mult
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `repairProducer` | `boolean` | `false` | **AUTHOR-01.** Enable the conservative weak-model graph repair producer. When a weak-tier model emits a schema-invalid pipeline graph, the daemon attempts a deterministic match to a canonical template (`research-fanout` / `debate` / `vote` / `map-reduce`) and repairs it; an ambiguous match returns a structured "did you mean this template?" instead of synthesizing. The calling tier is resolved **server-side** (never tool-supplied). Off → the existing fail-closed validation error throws unchanged. |
-| `intentAction` | `boolean` | `false` | **AUTHOR-02.** Enable the `pipeline` tool's `from_intent` action and its deterministic synthesizer — a one-line intent (`{ pattern, agents \| tasks, budget? }`) expands into a validated, **template-shaped** graph (plain agent nodes, not the typed multi-round drivers). Off → the daemon refuses any `from_intent` call before a graph runs. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent). |
-| `gbnfConstrain` | `boolean` | `false` | **AUTHOR-03 (best-effort).** Grammar-constrain the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family — never a cloud provider by name). This is a removal/relaxation-only structural transform; it **never widens field value validation**. The daemon-side schema validation remains the single source of truth. Off → byte-identical schema normalization. |
+| `repairProducer` | `boolean` | `false` | Enable the conservative weak-model graph repair producer. When a weak-tier model emits a schema-invalid pipeline graph, the daemon attempts a deterministic match to a canonical template (`research-fanout` / `debate` / `vote` / `map-reduce`) and repairs it; an ambiguous match returns a structured "did you mean this template?" instead of synthesizing. The calling tier is resolved **server-side** (never tool-supplied). Off → the existing fail-closed validation error throws unchanged. |
+| `intentAction` | `boolean` | `false` | Enable the `pipeline` tool's `from_intent` action and its deterministic synthesizer — a one-line intent (`{ pattern, agents \| tasks, budget? }`) expands into a validated, **template-shaped** graph (plain agent nodes, not the typed multi-round drivers). Off → the daemon refuses any `from_intent` call before a graph runs. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent). |
+| `gbnfConstrain` | `boolean` | `false` | **Best-effort.** Grammar-constrain the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family — never a cloud provider by name). This is a removal/relaxation-only structural transform; it **never widens field value validation**. The daemon-side schema validation remains the single source of truth. Off → byte-identical schema normalization. |
 
 Governance is preserved regardless of these flags: a repaired or synthesized graph runs the **same** validation, denylist, and child⊆parent sandbox checks as a hand-authored graph — the producer/synthesizer return a graph and never execute one directly. See [Execution Graphs: Small-model authoring](/agents/execution-graphs#small-model-authoring) for the behavior and [Event Bus](/developer-guide/event-bus) for the `graph:repaired` and `graph:synthesized_from_intent` audit events.
 
 ```yaml
 orchestration:
   authoring:
-    repairProducer: false   # AUTHOR-01 — flip on once telemetry justifies it
-    intentAction: false     # AUTHOR-02
-    gbnfConstrain: false    # AUTHOR-03 (best-effort)
+    repairProducer: false   # flip on once telemetry justifies it
+    intentAction: false
+    gbnfConstrain: false    # best-effort
 ```
 
 ## Streaming & Messaging
@@ -2309,14 +2309,14 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 | `capabilityClass` | `"frontier"` \| `"mid"` \| `"small"` \| `"nano"` | _(resolver heuristic)_ | Explicit capability-class override for all models on this provider. Overrides the default resolver heuristic (which keys off model context-window and provider-family). Forces `scaffoldLevel` (GoalAnchor, critic) and `securityLevel` (lockdown intensity). Use `"small"` for an Ollama provider running qwen3.6. Setting `"frontier"` for a weak model silences scaffolding — not recommended for production. |
 | `probeServedWindow` | `boolean` | `true` for `type: "ollama"` | Probe the Ollama served `num_ctx` at daemon boot and reconcile with the configured `contextWindow`. When unset (or `true`), Comis queries `GET /api/ps` and `POST /api/show` on start and uses the smaller of the served window vs. configured. Set to `false` to skip the probe if Ollama is offline at daemon start. |
 
-> **v2.15 capability-gated defaults:** The v2.14 reliability scaffold (GoalAnchor, relevance floor,
-> cost-gated critic) is now **default-ON for `small`/`nano` agents** — no per-agent opt-in required.
-> Phase 159 adds two capacity defaults for `small`/`nano`: `bootstrap.maxChars` drops to `3_500`
-> chars per file (SD6), and the active-tool ceiling is set to 24 tools (SD7; overflow tools stay
-> reachable via `discover_tools`). Phase 160 adds a total bootstrap budget (5,000 chars sum-cap
+> **Capability-gated defaults:** The reliability scaffold (GoalAnchor, relevance floor,
+> cost-gated critic) is **default-ON for `small`/`nano` agents** — no per-agent opt-in required.
+> Two capacity defaults also apply to `small`/`nano`: `bootstrap.maxChars` drops to `3_500`
+> chars per file, and the active-tool ceiling is set to 24 tools (overflow tools stay
+> reachable via `discover_tools`). Additionally: a total bootstrap budget (5,000 chars sum-cap
 > for small/nano), capability-gated graph concurrency (small/nano→2, frontier/mid→4), and a
-> corrected bootstrap-budget warn threshold. `frontier`/`mid` behavior is **byte-identical** to
-> v2.14 (the non-regression guarantee). The security guarantee holds: a weaker model class cannot
+> bootstrap-budget warn threshold based on the real context denominator. `frontier`/`mid`
+> behavior is unaffected by all of these. The security guarantee holds: a weaker model class cannot
 > lower the platform's security posture; the scaffolding defaults reinforce it.
 
 **UserModel (providers.entries.{name}.models[])**
@@ -2409,7 +2409,7 @@ providers:
 
 ### Recommended Secure qwen3.6 Configuration
 
-The following `config.yaml` snippet shows the recommended settings for a secure, scaffolded qwen3.6 local deployment. All security-relevant keys from Phases 151–155 are shown with their recommended values.
+The following `config.yaml` snippet shows the recommended settings for a secure, scaffolded qwen3.6 local deployment. All security-relevant keys are shown with their recommended values.
 
 ```yaml
 providers:
@@ -2449,13 +2449,13 @@ agents:
       baseFloor: 0.3         # Memory relevance floor; capability default is 0.15 for small/nano (0 = sentinel)
 ```
 
-### Capability-gated capacity defaults (Phase 159/160 — D2/D3)
+### Capability-gated capacity defaults
 
-These defaults fire only for `capabilityClass` in `{small, nano}` (e.g., any Ollama qwen3.6 deployment). The 2026-06-08 re-verification measured ~32K input tokens per qwen3.6 turn — 98 active tool schemas and a 14.4K-char bootstrap file drove a 495% bootstrap warning. Phase 159 adds two capability-gated defaults to address this without changing `frontier`/`mid` behavior. Phase 160 adds a total bootstrap budget, capability-gated graph concurrency, and a corrected bootstrap-budget warn threshold.
+These defaults fire only for `capabilityClass` in `{small, nano}` (e.g., any Ollama qwen3.6 deployment). Without them, a live measurement of a qwen3.6 deployment showed ~32K input tokens per turn — 98 active tool schemas and a 14.4K-char bootstrap file drove a 495% bootstrap warning. The capacity defaults below address this without changing `frontier`/`mid` behavior: a per-file bootstrap cap, an active-tool ceiling, a total bootstrap budget, capability-gated graph concurrency, and a bootstrap-budget warn threshold based on the real prompt denominator.
 
-#### bootstrap.maxChars capability default (SD6)
+#### bootstrap.maxChars capability default
 
-For `capabilityClass` in `{small, nano}`, `bootstrap.maxChars` defaults to `3_500` chars per file (down from the schema baseline of `20_000`). For `frontier`/`mid`, the value is unchanged (`20_000` per file — byte-identical to v2.14).
+For `capabilityClass` in `{small, nano}`, `bootstrap.maxChars` defaults to `3_500` chars per file (down from the schema baseline of `20_000`). For `frontier`/`mid`, the value is unchanged (`20_000` per file).
 
 Key properties:
 
@@ -2476,7 +2476,7 @@ agents:
       maxChars: 8000   # override the small/nano default of 3_500
 ```
 
-#### Active-tool ceiling (SD7)
+#### Active-tool ceiling
 
 For `capabilityClass: small`, at most **24 tool schemas** are active in each prompt request. The cold long-tail (tools not in the core set and not recently used) is deferred.
 
@@ -2489,19 +2489,19 @@ The ceiling applies only to `capabilityClass: small`. Key properties:
 - **CORE_TOOLS are never deferred.** The following tools are always kept active regardless of the ceiling: `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process`, `message`, `memory_search`, `memory_store`, `memory_get`, `web_search`, `web_fetch`.
 - **Recently-used tools are never deferred.** Any tool the agent invoked in recent turns is preserved in the active set.
 - **`nano` class is not affected.** Nano already uses aggressive CORE_TOOLS-only deferral; the 24-tool ceiling does not change its behavior.
-- **`frontier`/`mid` classes are not affected.** No ceiling applies — behavior is unchanged from v2.14.
+- **`frontier`/`mid` classes are not affected.** No ceiling applies — behavior is unchanged.
 - **Savings:** 15 CORE_TOOLS + 9 discretionary slots at 24 active tools vs. the previous 40 saves approximately 750–1,250 tokens per turn (~300 chars per tool schema average).
 
-#### Total bootstrap budget (Phase 160 — F2)
+#### Total bootstrap budget
 
-For `capabilityClass` in `{small, nano}`, the **total bootstrap budget** caps the sum of all bootstrap file content at **5,000 chars**, applied as a second pass after the per-file `3_500`-char cap (SD6).
+For `capabilityClass` in `{small, nano}`, the **total bootstrap budget** caps the sum of all bootstrap file content at **5,000 chars**, applied as a second pass after the per-file `3_500`-char cap.
 
 Key properties:
 
 - **Sum-cap, not per-file.** If all workspace files together would exceed 5,000 chars after per-file truncation, each file is proportionally scaled down to fit the total budget.
 - **Per-file floor.** Each file retains at least **300 chars**, regardless of how many files compete for the budget. No file is silenced entirely.
-- **Proportional truncation.** Each file's allocation is `(file_chars / total_chars) * totalMaxChars`, floored at 300. Content is taken from the beginning of the file (direct slice — not head+tail; the per-file SD6 pass already applied head+tail truncation).
-- **`frontier`/`mid` unaffected.** No total cap is applied; behavior is byte-identical to v2.14.
+- **Proportional truncation.** Each file's allocation is `(file_chars / total_chars) * totalMaxChars`, floored at 300. Content is taken from the beginning of the file (direct slice — not head+tail; the per-file pass already applied head+tail truncation).
+- **`frontier`/`mid` unaffected.** No total cap is applied; behavior is unchanged.
 - **Config override.** Explicit `agents.<id>.bootstrap.maxChars` always takes precedence over both the per-file and total-budget capability defaults.
 
 Typical result: with the default workspace files (AGENTS.md, SOUL, IDENTITY, USER, ROLE, TOOLS, HEARTBEAT, BOOT), the total bootstrap fits within 5,000 chars after per-file truncation — the proportional pass is a safety net, not the primary reducer.
@@ -2518,9 +2518,9 @@ agents:
       # or use capabilityClassOverride: frontier to remove both caps entirely.
 ```
 
-#### Capability-gated graph concurrency (Phase 160 — F3)
+#### Capability-gated graph concurrency
 
-For `capabilityClass` in `{small, nano}`, the graph coordinator's `maxConcurrency` defaults to **2** (down from 4). For `frontier`/`mid`, the default remains **4** (byte-identical to v2.14).
+For `capabilityClass` in `{small, nano}`, the graph coordinator's `maxConcurrency` defaults to **2** (down from 4). For `frontier`/`mid`, the default remains **4**.
 
 **Why lower concurrency for small/nano?** Local inference on Ollama (or any local GPU-bound runtime) serializes model loads in practice. With 4 concurrent sub-agents, all four issue simultaneous inference requests; the GPU queues them, producing peak saturation that can cause 50–80% of sub-agents to time out on longer prompts. Lowering the default to 2 staggers the load while keeping two in-flight at all times.
 
@@ -2547,13 +2547,11 @@ A served context window smaller than configured makes prefill behavior harder to
 
 **Fallback-model recommendation.** For deep multi-agent pipelines on local hardware, configure a `models.failoverModel` pointing to a lighter local model (e.g., a faster quantized variant) that can handle sub-agent calls when the primary model is loaded. This provides graceful degradation rather than timeout cascades.
 
-#### Bootstrap-budget warn re-base (Phase 160 — F4)
+#### Bootstrap-budget warn threshold
 
 The `Bootstrap content exceeds budget threshold` WARN fires when bootstrap files exceed **40%** of the estimated total prompt (system prompt chars + tool schema definition chars).
 
-**Old behavior (pre-Phase 160):** The threshold was 85% of the system prompt character count alone. With the compact-secure prompt (~2,800 chars), this meant bootstrap content over ~2,380 chars triggered the warning — which fired on every small-model turn even with a normal workspace (false-alarm rate: ~100%).
-
-**New behavior:** The denominator is `systemPromptChars + toolDefOverheadChars` (the same formula used by `executor-tool-assembly.ts` for the context-budget breakdown). With a compact-secure system prompt (~2,800 chars) and 24 active tool schemas (~12,000 chars overhead), the denominator is ~14,800 chars. With the Phase 160 F2 total bootstrap budget of 5,000 chars, the ratio is ~34% — below the 40% threshold, so no warning fires under normal conditions.
+The denominator is `systemPromptChars + toolDefOverheadChars` (the same formula used by `executor-tool-assembly.ts` for the context-budget breakdown) — deliberately not the system prompt alone, which would make the warning fire on virtually every small-model turn with a normal workspace. With a compact-secure system prompt (~2,800 chars) and 24 active tool schemas (~12,000 chars overhead), the denominator is ~14,800 chars. With the total bootstrap budget of 5,000 chars, the ratio is ~34% — below the 40% threshold, so no warning fires under normal conditions.
 
 **When does the warn still fire?** If an operator adds large custom workspace files that push the total bootstrap above 5,920 chars (40% of ~14,800), the warn fires correctly — signaling that bootstrap content is crowding out the system prompt and tool schemas in a meaningful way.
 
@@ -2565,16 +2563,16 @@ The `Bootstrap content exceeds budget threshold` WARN fires when bootstrap files
 | `small` | `3_500` (capability default) | `5_000` chars sum-cap | 24 tools active | 2 |
 | `nano` | `3_500` (capability default) | `5_000` chars sum-cap | CORE_TOOLS-only (existing) | 2 |
 
-All capability defaults follow the same precedence: **explicit per-agent config > capability default**. The D2/D3 capacity defaults are additive: all behaviors activate together for `small`/`nano` agents with no per-agent config required.
+All capability defaults follow the same precedence: **explicit per-agent config > capability default**. The capacity defaults are additive: all behaviors activate together for `small`/`nano` agents with no per-agent config required.
 
-> **Relationship to Phase 158 D1 (reliability defaults):** The GoalAnchor, `rag.baseFloor`, and verification critic defaults from Phase 158 follow the same precedence model — explicit per-agent config > capability default > off. The D2/D3 capacity defaults (bootstrap budget, tool ceiling, graph concurrency) are additive: all default-on behaviors activate together for `small`/`nano` agents with no per-agent config required.
+> **Relationship to the reliability defaults:** The GoalAnchor, `rag.baseFloor`, and verification critic defaults follow the same precedence model — explicit per-agent config > capability default > off. The capacity defaults (bootstrap budget, tool ceiling, graph concurrency) are additive: all default-on behaviors activate together for `small`/`nano` agents with no per-agent config required.
 
 ### General vs. Coding-Tuned Model Guidance
 
 For agent reliability, prefer **general-purpose** qwen3.6 variants over coding-tuned models:
 
 - **General models** (e.g., `qwen3.6:35b`, `qwen3.6:27b`) are the right choice for agentic tasks. They handle multi-turn conversations, multi-constraint instructions, and tool use reliably.
-- **Coding-tuned models** can exhibit **goal fixation** — continuing to pursue a sub-task at the expense of the original objective. The Comis scaffold (GoalAnchor, verification critic, compact-secure prompt) is designed to detect and correct this behavior, but general models avoid the problem in the first place. The v2.14 small-model milestone originated from a snake game incident involving a coding-tuned model; general-purpose qwen3.6 reproduces this scenario far less.
+- **Coding-tuned models** can exhibit **goal fixation** — continuing to pursue a sub-task at the expense of the original objective. The Comis scaffold (GoalAnchor, verification critic, compact-secure prompt) is designed to detect and correct this behavior, but general models avoid the problem in the first place. This guidance originated from a live incident in which a coding-tuned model fixated on a game-building sub-task; general-purpose qwen3.6 reproduces this scenario far less.
 - The Comis scaffold is designed for general models. It is not a substitute for choosing the right model class.
 
 For local model runtime selection (MLX vs. GGUF), see the [Environment Variables](/reference/environment-variables#local-model-runtime-selection-mlx-vs-gguf) reference.
@@ -2637,7 +2635,7 @@ served-bound window, the `context_exhausted` error text carries the suffix
 `(model contextWindow 131072 but Ollama serves only 8192 — fix: OLLAMA_CONTEXT_LENGTH=131072 ollama serve, or Modelfile 'PARAMETER num_ctx 131072')`
 — both Ollama knobs plus the TRUE configured window. In logs and `comis explain`,
 `rawContextWindowTokens` reports the **configured** window with `windowCapSource: "served"`
-(previously the served value masqueraded as the model's declared window with source `"none"`).
+(never the served value masquerading as the model's declared window).
 When both the served window and a capability-class cap clamp, the message names the full chain:
 `(model contextWindow 131072, Ollama serves 50000, capped to 32000 by contextEngine.budget.effectiveContextCapSmall — raise it (0 = uncapped) or reduce active tool schemas)`.
 The cap wording is **branched by the lever that actually binds**: the

@@ -3,13 +3,13 @@
  * Complete-conversation-reset factory — the ONE routine that severs a
  * conversation across ALL THREE transcript layers.
  *
- * Live finding 2026-06-11 (LIVEMEM run): a DAG conversation survives every
- * existing "forget" surface because each one clears a different subset:
+ * A DAG conversation survives every existing "forget" surface because each
+ * one clears a different subset:
  *
  *   - `session.reset_conversation` cleared LCD (L1) + daemon sessionStore (L2)
  *     but left the pi runtime session JSONL (L3) intact — the next turn's
  *     `live` array still contained the full history, and the epoch-rebase
- *     branch in lcd-ingest.ts (RR2) faithfully RE-INGESTED all of it. The
+ *     branch in lcd-ingest.ts faithfully RE-INGESTED all of it. The
  *     "COMPLETE cross-mode forget" resurrected 36/36 messages.
  *   - `/new` and `/reset` destroyed the runtime session (L3) via the pi
  *     adapter but left LCD (L1) intact — the DAG presented the old context
@@ -188,9 +188,8 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
       // session_key-format mismatch — the LCD is keyed by the FORMATTED key
       // ("<tenant>:<agent>:<chat>:peer:<chat>"), so a caller passing the
       // trajectory-filename form ("<chat>~peer~<chat>") silently clears 0 rows and
-      // a "cross-session" test then runs against an un-severed LCD (openclaw-usecases
-      // 2026-06-25 — a near-miss invalid test). Surface it as a WARN naming the
-      // formatted key instead of a silent 0-count info line.
+      // a "cross-session" test then runs against an un-severed LCD. Surface it as
+      // a WARN naming the formatted key instead of a silent 0-count info line.
       if (lcdRowsDeleted === 0 && sessionMessagesCleared === 0 && !runtimeSessionDestroyed) {
         logger.warn(
           {

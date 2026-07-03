@@ -2,7 +2,7 @@
 /**
  * Unit tests for the agents + models + providers-domain contract registry.
  *
- * Mirrors the per-domain test pattern established in Plans 35-06..35-15:
+ * Follows the shared per-domain contract-registry test pattern:
  *   - Aggregator sanity: count + method-name presence + scope assignments.
  *   - INTERNAL_FIELD_NAMES paired sanity (no contract request schema declares
  *     a dispatcher-injected `_X` key).

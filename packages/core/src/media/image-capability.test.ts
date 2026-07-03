@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { IMAGE_CAPABILITY } from "./image-capability.js";
 
 /**
- * CAP-01: IMAGE_CAPABILITY is the single source of truth for "which resolved
+ * IMAGE_CAPABILITY is the single source of truth for "which resolved
  * main provider can generate images, and via which images API + default model".
  * Keys are RESOLVED-provider ids only (never the config selection enum) — a
  * provider absent from the map is image-incapable (undefined ⇒ unsupported).

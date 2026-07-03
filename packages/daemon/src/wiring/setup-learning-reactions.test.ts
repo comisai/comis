@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the reaction + correction outcome wiring (Verified Learning WS1,
- * Phase 199, REACT-02/03/04 + CORRECT-01) co-located in setup-learning-reactions.ts.
+ * Tests for the reaction + correction outcome wiring (Verified Learning),
+ * co-located in setup-learning-reactions.ts.
  *
  * Three units under test:
  *  1. createReactionTrajectoryMap — the bounded in-memory `messageId -> trajectory
@@ -9,12 +9,12 @@
  *     ack. Look-up of an unknown messageId is undefined (fail-closed input).
  *  2. wireLearningReactions — `channel:reaction_received` -> map lookup -> reactionMap
  *     -> trust-scaled confidence -> per-sender rate-limit -> observe source:"reaction".
- *     A reaction on a user message (unmapped messageId) records NOTHING (REACT-02
- *     keystone). An external reactor yields near-zero confidence (REACT-03/04).
+ *     A reaction on a user message (unmapped messageId) records NOTHING (the
+ *     keystone). An external reactor yields near-zero confidence.
  *  3. wireLearningCorrection — `graph:completed` (ALS sessionKey) records the prior
  *     trajectory; a follow-up `message:received` with the SAME sessionKey + a
  *     correction text -> detector -> observe source:"correction" against that prior
- *     trajectory (the WARNING-2 end-to-end join). A graph:completed with NO ALS
+ *     trajectory (the end-to-end join). A graph:completed with NO ALS
  *     sessionKey records nothing -> a later correction fails-closed (no mis-join).
  */
 
@@ -144,7 +144,7 @@ describe("createReactionTrajectoryMap — bounded outbound trajectory map", () =
     expect(map.lookup("c")).toBeDefined();
   });
 
-  it("WR-05: re-recording an existing key REFRESHES its recency so eviction drops the genuinely-oldest key (LRU invariant the O(1) eviction must preserve)", () => {
+  it("re-recording an existing key REFRESHES its recency so eviction drops the genuinely-oldest key (LRU invariant the O(1) eviction must preserve)", () => {
     const clock = createFakeClock(NOW);
     const map = createReactionTrajectoryMap(
       { clock, timers: createFakeTimers(NOW) },
@@ -189,8 +189,8 @@ describe("createReactionTrajectoryMap — bounded outbound trajectory map", () =
 // 2. wireLearningReactions — channel:reaction_received → observe source:"reaction"
 // ===========================================================================
 
-describe("wireLearningReactions — reaction → trust-scaled observe (REACT-02/03/04)", () => {
-  it("REACT-02 keystone: a reaction on a USER message (unmapped messageId) records NOTHING (fail-closed)", async () => {
+describe("wireLearningReactions — reaction → trust-scaled observe", () => {
+  it("keystone: a reaction on a USER message (unmapped messageId) records NOTHING (fail-closed)", async () => {
     const bus = new TypedEventBus();
     const { deps, observe } = makeDeps({ eventBus: bus });
     wireLearningReactions(deps);
@@ -242,7 +242,7 @@ describe("wireLearningReactions — reaction → trust-scaled observe (REACT-02/
     expect(observe.mock.calls[0]![0].outcome).toBe("failure");
   });
 
-  it("WR-03: an EXTERNAL reactor's near-zero confidence is BELOW the write floor → NO ledger row written (skip)", async () => {
+  it("an EXTERNAL reactor's near-zero confidence is BELOW the write floor → NO ledger row written (skip)", async () => {
     const bus = new TypedEventBus();
     const map = createReactionTrajectoryMap({ clock: createFakeClock(NOW), timers: createFakeTimers(NOW) });
     map.record("msg-out-1", { traceId: TRACE, tenantId: TENANT, agentId: AGENT, sessionId: "sess-1" });
@@ -263,7 +263,7 @@ describe("wireLearningReactions — reaction → trust-scaled observe (REACT-02/
     expect(observe).not.toHaveBeenCalled();
   });
 
-  it("WR-03: a KNOWN reactor's confidence is ABOVE the write floor → the reaction IS observed (the floor only drops near-zero external)", async () => {
+  it("a KNOWN reactor's confidence is ABOVE the write floor → the reaction IS observed (the floor only drops near-zero external)", async () => {
     const bus = new TypedEventBus();
     const map = createReactionTrajectoryMap({ clock: createFakeClock(NOW), timers: createFakeTimers(NOW) });
     map.record("msg-out-1", { traceId: TRACE, tenantId: TENANT, agentId: AGENT, sessionId: "sess-1" });
@@ -328,7 +328,7 @@ describe("wireLearningReactions — reaction → trust-scaled observe (REACT-02/
     expect(observe).not.toHaveBeenCalled();
   });
 
-  it("REACT-03 anti-flood: past the per-sender audit rate limit the reaction is SKIPPED", async () => {
+  it("anti-flood: past the per-sender audit rate limit the reaction is SKIPPED", async () => {
     const bus = new TypedEventBus();
     const map = createReactionTrajectoryMap({ clock: createFakeClock(NOW), timers: createFakeTimers(NOW) });
     map.record("msg-out-1", { traceId: TRACE, tenantId: TENANT, agentId: AGENT, sessionId: "sess-1" });
@@ -369,7 +369,7 @@ describe("wireLearningReactions — reaction → trust-scaled observe (REACT-02/
 // 3. wireLearningCorrection — message:received → observe source:"correction"
 // ===========================================================================
 
-describe("wireLearningCorrection — correction → prior-trajectory observe (CORRECT-01, WARNING-2 join)", () => {
+describe("wireLearningCorrection — correction → prior-trajectory observe", () => {
   /** A shared bounded session→trajectory map so the writer + reader use one instance. */
   function makeSessionMap() {
     const inner = createReactionTrajectoryMap({ clock: createFakeClock(NOW), timers: createFakeTimers(NOW) });
@@ -409,7 +409,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     };
   }
 
-  it("CR-02 first-GREEN end-to-end join: a SINGLE-AGENT turn completes (diagnostic:message_processed) → message:received(same key) observes a 'corrected' outcome against the prior trajectory", async () => {
+  it("end-to-end join: a SINGLE-AGENT turn completes (diagnostic:message_processed) → message:received(same key) observes a 'corrected' outcome against the prior trajectory", async () => {
     const bus = new TypedEventBus();
     const sk = sessionKey();
     const sessionMap = makeSessionMap();
@@ -494,7 +494,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe (CO
     expect(detector).not.toHaveBeenCalled();
   });
 
-  it("CR-02 fail-closed: a diagnostic:message_processed with an EMPTY traceId records nothing → a later correction observes NOTHING (no mis-join)", async () => {
+  it("fail-closed: a diagnostic:message_processed with an EMPTY traceId records nothing → a later correction observes NOTHING (no mis-join)", async () => {
     const bus = new TypedEventBus();
     const recordSpy = vi.fn();
     const sessionMap = makeSessionMap();
@@ -584,7 +584,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     return {
       config: {
         agents: over.agents ?? {},
-        // Phase 226: the master kill-switch is `memory.enabled` (was memory.costFeatures.enabled).
+        // The master kill-switch is `memory.enabled`.
         memory: { enabled: over.costFeatures ?? true },
         providers: { entries: {} },
       },
@@ -615,7 +615,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(built.deps.reactionTrajectoryMap.lookup("msg-1")).toEqual({ traceId: TRACE, tenantId: TENANT, agentId: "a1", sessionId: TRACE });
   });
 
-  it("the learningOutcomeEnabled gate force-disables on the master cost switch (costFeatures.enabled=false)", () => {
+  it("the learningOutcomeEnabled gate force-disables on the master cost switch (memory.enabled=false)", () => {
     const built = buildReactionWiringDeps(
       makeContainer({ agents: { a1: { learningOutcome: { enabled: true } } }, costFeatures: false }),
       createFakeClock(NOW),
@@ -626,17 +626,14 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
   });
 
   // -------------------------------------------------------------------------
-  // H-1 (Phase 226): the master-kill-switch rename `memory.costFeatures.enabled`
-  // → `memory.enabled` MUST NOT silently invert the gate. This reader once
-  // declared a LOOSE local type `memory?: { costFeatures?: { enabled?: boolean } }`
-  // gating on `memory?.costFeatures?.enabled !== false`. After the schema collapse
-  // deletes `costFeatures`, a config with ONLY `memory.enabled:false` (the NEW
-  // shape) would read `undefined !== false === true` → FORCE-ENABLED (the
-  // kill-switch inverts), invisible to tsc. This pins the CORRECT post-rename
-  // behavior (force-DISABLE) — RED against the pre-rename loose reader. The fix
-  // re-points the local slice to the real MemoryConfig type AND this is the belt.
+  // The master kill-switch `memory.enabled` MUST NOT silently invert the gate.
+  // A LOOSE local slice type (e.g. `memory?: { costFeatures?: { enabled?: boolean } }`)
+  // would let a config with ONLY `memory.enabled:false` read a missing key as
+  // `undefined !== false === true` → FORCE-ENABLED (the kill-switch inverts),
+  // invisible to tsc. This pins the correct behavior (force-DISABLE); the local
+  // slice points at the real MemoryConfig type so tsc enforces it, and this is the belt.
   // -------------------------------------------------------------------------
-  it("H-1: memory.enabled:false (the renamed master kill-switch) force-DISABLES the reaction/outcome wiring for every agent", () => {
+  it("memory.enabled:false (the master kill-switch) force-DISABLES the reaction/outcome wiring for every agent", () => {
     const { store } = makeStubStore();
     const built = buildReactionWiringDeps(
       // The NEW shape: memory.enabled is the master gate; NO costFeatures key exists.
@@ -655,7 +652,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
       createFakeTimers(NOW),
     );
     // The master kill-switch is OFF → the outcome gate must be closed for every agent.
-    // (Pre-rename: reads costFeatures (absent) → undefined !== false === true → force-ENABLED → RED.)
+    // (A loose slice type would misread this as force-ENABLED — the fail-open this guards against.)
     expect(built.deps.learningOutcomeEnabled("a1")).toBe(false);
     // And byte-identity: the outbound capture is off when the master switch is off.
     expect(built.recordOutboundMessage).toBeUndefined();
@@ -679,7 +676,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
   });
 
   // -------------------------------------------------------------------------
-  // FLAG-2 (group reaction-spoof): defaultTrustLevel is the CONVERSATION
+  // Group reaction-spoof guard: defaultTrustLevel is the CONVERSATION
   // PARTICIPANT's privilege, NOT a blanket grant to every unmapped group member.
   // The participant is the inbound sender (RequestContext.userId, threaded onto
   // OutboundTrajectoryEntry.participantId). An unmapped NON-participant group
@@ -687,7 +684,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
   // reaction-learning signal by reacting to the bot's reply.
   // -------------------------------------------------------------------------
 
-  it("FLAG-2: an unmapped reactor that IS the conversation participant inherits defaultTrustLevel", () => {
+  it("an unmapped reactor that IS the conversation participant inherits defaultTrustLevel", () => {
     const built = buildReactionWiringDeps(
       makeContainer({
         agents: {
@@ -704,7 +701,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(built.deps.resolveSenderTrust("a1", "participant-u1", "participant-u1")).toBe("known");
   });
 
-  it("FLAG-2: an unmapped reactor that is NOT the participant resolves to external (a group bystander cannot inherit defaultTrustLevel)", () => {
+  it("an unmapped reactor that is NOT the participant resolves to external (a group bystander cannot inherit defaultTrustLevel)", () => {
     const built = buildReactionWiringDeps(
       makeContainer({
         agents: {
@@ -721,7 +718,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(built.deps.resolveSenderTrust("a1", "bystander-u2", "participant-u1")).toBe("external");
   });
 
-  it("FLAG-2: an EXPLICITLY-mapped reactor keeps its mapped trust even when it is NOT the participant (the map is an intentional grant)", () => {
+  it("an EXPLICITLY-mapped reactor keeps its mapped trust even when it is NOT the participant (the map is an intentional grant)", () => {
     const built = buildReactionWiringDeps(
       makeContainer({
         agents: {
@@ -739,7 +736,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(built.deps.resolveSenderTrust("a1", "boss", "participant-u1")).toBe("admin");
   });
 
-  it("FLAG-2 fail-safe: participantId undefined falls back to defaultTrustLevel for an unmapped reactor (legacy/unthreaded path keeps reaction-learning alive)", () => {
+  it("fail-safe: participantId undefined falls back to defaultTrustLevel for an unmapped reactor (legacy/unthreaded path keeps reaction-learning alive)", () => {
     const built = buildReactionWiringDeps(
       makeContainer({
         agents: {
@@ -792,7 +789,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(built.deps.correctionEnabled("a1")).toBe(true);
   });
 
-  it("WR-01: exposes destroyReactionWiring() that cancels EVERY timer of the reaction map, session map, and reaction rate limiter (shutdown leak fix)", () => {
+  it("exposes destroyReactionWiring() that cancels EVERY timer of the reaction map, session map, and reaction rate limiter (shutdown leak fix)", () => {
     const clock = createFakeClock(NOW);
     const timers = createFakeTimers(NOW);
     const built = buildReactionWiringDeps(
@@ -820,9 +817,9 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(timers.unrefRecord().every((e) => e.cancelled)).toBe(true);
   });
 
-  it("WR-04: the DEDICATED reaction rate limiter caps a per-sender flood TIGHTLY (the Nth+ reaction in a window is skipped, not 9-through-then-skip)", async () => {
+  it("the DEDICATED reaction rate limiter caps a per-sender flood TIGHTLY (the Nth+ reaction in a window is skipped, not 9-through-then-skip)", async () => {
     // Drive the REAL reaction rate limiter (constructed inside buildReactionWiringDeps)
-    // through the wired handler. A trusted sender clears the WR-03 write floor, so the
+    // through the wired handler. A trusted sender clears the write floor, so the
     // ONLY thing that should stop a flood is the per-sender rate cap.
     const observe = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
     const bus = new TypedEventBus();
@@ -843,7 +840,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
       logger: createMockLogger(),
     } as never;
     const built = buildReactionWiringDeps(container, createFakeClock(NOW), createFakeTimers(NOW));
-    // Seed the outbound trajectory so each reaction resolves (REACT-02).
+    // Seed the outbound trajectory so each reaction resolves.
     built.recordOutboundMessage!("msg-out-1", { traceId: TRACE, tenantId: TENANT, agentId: "a1", sessionId: "sess-1" });
     wireLearningReactions(built.deps);
 
@@ -860,7 +857,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(observe.mock.calls.length).toBeGreaterThan(0); // the first few still land (the signal is real)
   });
 
-  it("FLAG-2 end-to-end: a group BYSTANDER (unmapped, NOT the participant) reacting on the bot reply drives ZERO learning, while the PARTICIPANT's identical reaction IS observed", async () => {
+  it("end-to-end: a group BYSTANDER (unmapped, NOT the participant) reacting on the bot reply drives ZERO learning, while the PARTICIPANT's identical reaction IS observed", async () => {
     // Drive the REAL resolveSenderTrust closure (built inside buildReactionWiringDeps
     // off the agent's elevatedReply config) through the wired reaction handler. The
     // outbound trajectory carries participantId = the inbound sender (RequestContext.

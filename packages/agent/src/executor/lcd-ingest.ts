@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD afterTurn ingest write-path (Phase 128 dag-mode, A1).
+ * LCD afterTurn ingest write-path (dag mode).
  *
  * Appends a turn's NEW messages to the injected LCD `ContextStorePort` at the
  * `postExecution` (afterTurn) boundary. Extracted into its own module because
@@ -13,18 +13,19 @@
  *      is wrapped per-entry (try/catch + log); the caller gates on
  *      `deps.contextStore` presence so a missing store skips cleanly.
  *   2. AGENT-SIDE TOKENS: `tokenCount` is computed here via
- *      `estimateMessageTokens` (which counts the F3 `thinking` block) — the
- *      store NEVER computes tokens (the 127 contract keeps core/memory free of
+ *      `estimateMessageTokens` (which counts the `thinking` block) — the
+ *      store NEVER computes tokens (the contract keeps core/memory free of
  *      the agent estimator dependency).
  *   3. VERBATIM PARTS: `parts` come from the core `messageToParts` codec
  *      (verbatim `metadata.raw` blocks + envelope) — NEVER flatten a
- *      `tool_use`/`tool_result` to text (the deleted dag-assembler loop bug).
+ *      `tool_use`/`tool_result` to text (flattening loses the stable id and
+ *      breaks tool-result pairing on read-back).
  *
  * Idempotency is the CALLER's responsibility: it derives `startSeq` from the
  * store's persisted count and passes ONLY the not-yet-persisted delta. This
  * helper appends exactly `messages.length` rows starting at `startSeq`; an
  * empty delta appends nothing. The store's unique index on `(conversationId,
- * seq)` is the final guard against a duplicate seq (T-128-09).
+ * seq)` is the final guard against a duplicate seq.
  *
  * Architecture cut (agent↛memory): this module imports ONLY the CORE
  * `ContextStorePort`/`ContextStoreScope` TYPES + the core `messageToParts`
@@ -42,8 +43,8 @@ import type { Message } from "@earendil-works/pi-ai";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 
 /**
- * Append a turn's NEW messages to the LCD store at the afterTurn boundary
- * (A1 write-path). Non-fatal; tokenCount computed agent-side; parts verbatim
+ * Append a turn's NEW messages to the LCD store at the afterTurn boundary.
+ * Non-fatal; tokenCount computed agent-side; parts verbatim
  * via the codec. See the module header for the full contract.
  *
  * @param store    The injected core ContextStorePort (the concrete store is daemon-injected).
@@ -55,13 +56,13 @@ import { estimateMessageTokens } from "../safety/token-estimator.js";
  */
 /**
  * Carve the TRANSIENT inline-recall block out of a USER message before it is
- * persisted (the F1 lossless store must keep the conversation, not the per-turn
+ * persisted (the lossless store must keep the conversation, not the per-turn
  * rendered prompt's recalled memory). The envelope-wrapper prepends the top-1 RAG
  * memory to the user text for the model; persisting it cross-contaminates the
  * session, bloats the store, and feeds back into later recall. Assistant /
  * toolResult messages never carry the prefix → pass through referentially
  * unchanged. Pure: returns a NEW message only when something was stripped, so the
- * common (no-recall) path keeps the verbatim original (F1).
+ * common (no-recall) path keeps the verbatim original.
  */
 function stripRecallFromUserMessage(m: Message): Message {
   if (m.role !== "user") return m;
@@ -103,7 +104,7 @@ export function ingestTurn(
     // The agent message is structurally the pi-ai canonical Message at this
     // boundary; the codec + estimator are typed against pi-ai `Message`. Carve the
     // transient inline-recall block out of user turns BEFORE token-count + parts so
-    // BOTH reflect the clean conversation (not the per-turn recalled prompt) — F1.
+    // BOTH reflect the clean conversation (not the per-turn recalled prompt).
     const m = stripRecallFromUserMessage(msg as unknown as Message);
     const currentSeq = seq;
     seq += 1;
@@ -112,14 +113,14 @@ export function ingestTurn(
         scope,
         seq: currentSeq,
         role: m.role, // "user" | "assistant" | "toolResult" (LcdRole)
-        tokenCount: estimateMessageTokens(m), // agent-side (F3 counts thinking) — store never computes it
+        tokenCount: estimateMessageTokens(m), // agent-side (counts the thinking block) — store never computes it
         createdAt: now,
-        parts: messageToParts(m), // verbatim metadata.raw blocks + envelope (F1)
+        parts: messageToParts(m), // verbatim metadata.raw blocks + envelope
       });
       appended += 1;
     } catch (err) {
       // Non-fatal: an ingest failure degrades gracefully (no history persisted
-      // this turn) but must NEVER crash the live turn (T-128-10). Per-entry
+      // this turn) but must NEVER crash the live turn. Per-entry
       // try/catch so a single bad message does not abort the rest of the batch.
       logger.warn(
         {
@@ -151,21 +152,20 @@ export function ingestTurn(
 }
 
 /**
- * R3 (132-04) fail-closed rollover predicate: is `scope` safe to ingest a turn
+ * Fail-closed rollover predicate: is `scope` safe to ingest a turn
  * under, or is it ambiguous/malformed and must REFUSE the write?
  *
- * LOSSLESS-CLAW §5 posture: an ambiguous session rollover fails CLOSED — it
+ * Fail-closed posture: an ambiguous session rollover fails CLOSED — it
  * refuses the write rather than silently reattaching a turn's messages to the
- * WRONG (prior) conversation (the silent cross-session-merge threat,
- * T-132-04-02). This is the ambiguity guard the codebase lacked: today a
- * malformed scope's append proceeds and stamps cross-session-readable / mis-
- * attached rows.
+ * WRONG (prior) conversation (the silent cross-session-merge threat).
+ * Without this ambiguity guard, a malformed scope's append would proceed and
+ * stamp cross-session-readable / mis-attached rows.
  *
  * Two refusal conditions (conservative — refuse, never guess):
  *  1. **Empty/blank security column.** Each of conversationId / agentId /
- *     tenantId / sessionKey MUST be a non-empty TRIMMED string (mirrors the
- *     T-128-08 "SECURITY columns must never be empty" intent + the
- *     {@link ingestTurnGuarded} WR-01 skip+WARN shape). An empty column produces
+ *     tenantId / sessionKey MUST be a non-empty TRIMMED string (SECURITY
+ *     columns must never be empty; mirrors the
+ *     {@link ingestTurnGuarded} shrink-guard skip+WARN shape). An empty column produces
  *     a row reachable by an unrelated scope.
  *  2. **conversationId ↔ sessionKey conflict.** The codebase invariant is
  *     `conversationId === sessionKey === formattedKey`
@@ -188,7 +188,7 @@ export function isScopeSafeForIngest(
   if (scope.sessionKey.trim() === "") return { ok: false, reason: "empty sessionKey" };
   // Condition 2: conversationId must equal sessionKey (the formattedKey invariant).
   // A mismatch means the scope is internally inconsistent — refuse rather than
-  // reattach to either candidate conversation (LOSSLESS-CLAW §5).
+  // reattach to either candidate conversation (fail closed, never guess).
   if (scope.conversationId !== scope.sessionKey) {
     return { ok: false, reason: "conversationId/sessionKey conflict" };
   }
@@ -196,7 +196,7 @@ export function isScopeSafeForIngest(
 }
 
 /**
- * RR1: Derive a stable epoch anchor string from the identity of the first message
+ * Derive a stable epoch anchor string from the identity of the first message
  * in the live array. Used to detect JSONL re-bases (the live transcript re-starting
  * from a fresh disjoint session).
  *
@@ -234,17 +234,17 @@ export function messageEpochAnchor(msg: AgentMessage): string {
  * 1. **New epoch** (live[0] anchor differs from stored cursor, or no cursor yet):
  *    The live transcript re-based (JSONL deleted/re-created). Anchor at the
  *    store's current max seq and append the entire new live array as a
- *    continuation (RR2 — close the ~39-message gap). Emits onRebase("session_rebase").
+ *    continuation (closing the re-base gap). Emits onRebase("session_rebase").
  *
  * 2. **Genuine in-session shrink** (same anchor, live.length < cursor.ingestedLiveLen):
  *    A real heal/compaction shrank state.messages within the same epoch. SKIP +
- *    WARN (the original WR-01 fail-safe — unchanged). Emits onDivergence.
+ *    WARN (the original shrink fail-safe — unchanged). Emits onDivergence.
  *
  * 3. **Steady state** (same anchor, live grows monotonically): delta =
- *    live.slice(ingestedLiveLen). Byte-identical to the pre-patch path when
- *    ingestedLiveLen === persisted (RR3 keystone).
+ *    live.slice(ingestedLiveLen). Byte-identical to the plain
+ *    live.slice(persisted) path when ingestedLiveLen === persisted.
  *
- * Also refuses writes on an ambiguous/malformed scope (R3 fail-closed rollover —
+ * Also refuses writes on an ambiguous/malformed scope (fail-closed rollover —
  * see {@link isScopeSafeForIngest}).
  *
  * ATOMICITY: `upsertIngestCursor` is called inside the same `store.runOnConversation`
@@ -256,14 +256,14 @@ export function messageEpochAnchor(msg: AgentMessage): string {
  * @param live         The live canonical AgentMessage[] (the full conversation).
  * @param now          Injected wall-clock ms (`deps.clock.now()`).
  * @param logger       For the divergence WARN + the delegated ingest logs.
- * @param onFailClosed Optional callback fired ONLY on the R3 fail-closed-rollover
+ * @param onFailClosed Optional callback fired ONLY on the fail-closed-rollover
  *                     refuse path, carrying the refusal `reason`. Never carries
  *                     message content; keeps this module bus-free.
- * @param onDivergence Optional callback fired ONLY on the WR-01 genuine in-session
+ * @param onDivergence Optional callback fired ONLY on the genuine in-session
  *                     shrink skip, carrying `"live_store_divergence"`. Never carries
  *                     message content.
  * @param onRebase     Optional callback fired ONLY on an epoch re-base continuation,
- *                     carrying `"session_rebase"`. RR6: INFO signal (correct continuation,
+ *                     carrying `"session_rebase"`. An INFO signal (correct continuation,
  *                     not degradation). Never carries message content.
  */
 export function ingestTurnGuarded(
@@ -276,10 +276,10 @@ export function ingestTurnGuarded(
   onDivergence?: (reason: string) => void,
   onRebase?: (reason: string) => void,
 ): void {
-  // R3 (132-04) fail-closed rollover: refuse the write on an ambiguous/malformed
+  // Fail-closed rollover: refuse the write on an ambiguous/malformed
   // scope BEFORE touching the store, so a mis-derived session key can never
-  // silently reattach this turn's messages to a prior conversation (T-132-04-02).
-  // Skip + WARN (errorKind precondition) — non-fatal, like the WR-01 guard below;
+  // silently reattach this turn's messages to a prior conversation.
+  // Skip + WARN (errorKind precondition) — non-fatal, like the shrink guard below;
   // NEVER throw (the afterTurn path must not fail the live turn).
   const safe = isScopeSafeForIngest(scope);
   if (!safe.ok) {
@@ -299,25 +299,25 @@ export function ingestTurnGuarded(
     return;
   }
 
-  // RR1: guard empty live array (nothing to ingest; no anchor to read — Pitfall 4
-  // prevention: messageEpochAnchor must not be called on live[0] when live is empty).
+  // Guard empty live array (nothing to ingest; no anchor to read —
+  // messageEpochAnchor must not be called on live[0] when live is empty).
   if (live.length === 0) return;
 
-  // RR1: read the durable epoch cursor (null = no prior ingest for this conversation).
+  // Read the durable epoch cursor (null = no prior ingest for this conversation).
   const storedCursor = store.getIngestCursor(scope);
 
-  // RR1: compute the identity of the current live[0].
+  // Compute the identity of the current live[0].
   const currentAnchor = messageEpochAnchor(live[0]!);
 
-  // RR1: epoch change detection — if the anchor differs from the stored cursor,
+  // Epoch change detection — if the anchor differs from the stored cursor,
   // the live transcript has re-based (JSONL deleted/re-created).
   const isNewEpoch = storedCursor === null || storedCursor.epochAnchor !== currentAnchor;
 
   if (isNewEpoch) {
-    // RR2: new epoch — re-base continuation.
+    // New epoch — re-base continuation.
     // The store's current message count is the seq base; we append from live[0].
-    // R4 (132-03): getMessages is AGENT-SCOPED so each agent keeps an independent
-    // seq sequence (WR-02). The unique (conversation_id, agent_id, tenant_id, seq)
+    // getMessages is AGENT-SCOPED so each agent keeps an independent
+    // seq sequence. The unique (conversation_id, agent_id, tenant_id, seq)
     // index is the per-agent backstop against duplicate seqs.
     const persisted = store.getMessages(scope).length;
     const delta = live; // ingest the entire new live array starting from live[0]
@@ -325,7 +325,7 @@ export function ingestTurnGuarded(
     // Persist the cursor INSIDE the same runOnConversation lambda (see call site).
     // Guarantees cursor + rows are written in the same serialized slot (atomicity).
     store.upsertIngestCursor(scope, { epochAnchor: currentAnchor, ingestedLiveLen: live.length }, now);
-    // RR6: emit the session_rebase signal (INFO — a correct continuation, not
+    // Emit the session_rebase signal (INFO — a correct continuation, not
     // degradation). onDivergence is NOT called (this is not a shrink/corruption).
     onRebase?.("session_rebase");
     return;
@@ -335,8 +335,8 @@ export function ingestTurnGuarded(
   const { ingestedLiveLen } = storedCursor;
 
   if (live.length < ingestedLiveLen) {
-    // RR5: genuine in-session shrink (same epoch, live shorter than cursor).
-    // This is the original WR-01 fail-safe — still skip + WARN so the divergence
+    // Genuine in-session shrink (same epoch, live shorter than cursor).
+    // This is the original shrink fail-safe — still skip + WARN so the divergence
     // is observable. onRebase is NOT called (this is not a re-base; the anchor matched).
     logger.warn(
       {
@@ -351,16 +351,16 @@ export function ingestTurnGuarded(
       "LCD ingest skipped: live/store divergence",
     );
     // Let the agent-side caller emit a content-free context:dag_degraded
-    // (reason: live_store_divergence) so the WR-01 divergence is queryable as a
-    // health_signal (Phase 160 I1), not log-file-only.
+    // (reason: live_store_divergence) so the shrink divergence is queryable as a
+    // health_signal, not log-file-only.
     onDivergence?.("live_store_divergence");
     return;
   }
 
-  // RR3: steady state — append only the delta (live.slice(ingestedLiveLen)).
+  // Steady state — append only the delta (live.slice(ingestedLiveLen)).
   // When ingestedLiveLen === persisted (the common path), this is byte-identical
-  // to the pre-patch live.slice(persisted) behavior (keystone test S1).
-  // R4 (132-03): persisted is AGENT-SCOPED via getMessages(scope).
+  // to the plain live.slice(persisted) behavior (pinned by the steady-state parity test).
+  // persisted is AGENT-SCOPED via getMessages(scope).
   const persisted = store.getMessages(scope).length;
   const delta = live.slice(ingestedLiveLen);
   if (delta.length > 0) {

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS HEAD-TO-HEAD PROVING-MACHINE harness -- the latest replay of
- * the keyless gate discipline: a deterministic, no-API-cost ($0) proof that the
- * WHOLE believability machine built across the first wave runs end-to-end, keyless,
+ * Env-gated KEYLESS HEAD-TO-HEAD PROVING-MACHINE harness -- a
+ * deterministic, no-API-cost ($0) proof that the
+ * WHOLE believability machine runs end-to-end, keyless,
  * before a single dollar of competitor/judge spend is paid.
  *
  * THE HONEST SCOPE SPLIT (the reason VERDICT is PARTIAL):
@@ -62,7 +62,7 @@ import { SqliteMemoryAdapter, createSqliteTripleStore } from "@comis/memory";
 import { createMemoryRecall, type MemoryRecallDeps, type MemoryRecallConfig } from "@comis/agent";
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
-// The six Wave-1 modules this harness drives at $0 (in-package imports).
+// The six pure proving-machine modules this harness drives at $0 (in-package imports).
 import { computeCrossJudgeSpread, type CategorySpread } from "./cross-judge-spread.js";
 import { twoProportionTest, wilsonInterval } from "./significance.js";
 import { appendLedgerRow, buildLedgerRow, ledgerRowPath } from "./results-ledger.js";
@@ -163,7 +163,7 @@ function explicitOffBaseline(): MemoryRecallConfig {
  * The INJECTED deterministic judge stub: two fixed per-category accuracy maps (one
  * per "judge"). There is NO LLM -- these are the verdicts a real cross-judge pass
  * would PRODUCE, supplied directly so the machine's fold is exercised at $0. One
- * category (single-session-preference) deliberately disagrees by 15pt (the j1
+ * category (single-session-preference) deliberately disagrees by 15pt (the
  * non-survival case); the rest agree within tolerance.
  */
 const INJECTED_JUDGE_A: Record<string, number> = {

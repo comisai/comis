@@ -1,5 +1,5 @@
 {
-  "_provenance": "Derived from the PrefEval format (ICLR 2025 Oral; preference-following / preference-adherence eval, github.com/amazon-science/PrefEval); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see Plan 08 DATASETS.md) and never committed.",
+  "_provenance": "Derived from the PrefEval format (ICLR 2025 Oral; preference-following / preference-adherence eval, github.com/amazon-science/PrefEval); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see benchmarks/DATASETS.md) and never committed.",
   "items": [
     {
       "preference": "user_a prefers concise, bulleted placeholder answers over long prose.",

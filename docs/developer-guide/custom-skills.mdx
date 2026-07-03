@@ -223,7 +223,7 @@ The `SkillRegistry` manages skill discovery and lifecycle:
 - **Hot reload** -- When enabled, file changes in the skills directory trigger re-parsing and cache invalidation. Skills that fail validation on reload are kept at their previous version.
 - **Visibility** -- Skills with `disableModelInvocation: true` are hidden from the model's available skills listing but can still be invoked directly by users.
 
-The available skills listing is injected into the system prompt as an XML block, giving the agent awareness of all skills it can invoke. Each entry also carries a `<source>` tag — `bundled`, `workspace`, `local`, or `learned` — so the model can see where a skill came from (in particular the `learned` trust tier for v2.26 Verified Learning procedures). The tag defaults to `bundled` when a skill does not set a source:
+The available skills listing is injected into the system prompt as an XML block, giving the agent awareness of all skills it can invoke. Each entry also carries a `<source>` tag — `bundled`, `workspace`, `local`, or `learned` — so the model can see where a skill came from (in particular the `learned` trust tier for Verified Learning procedures). The tag defaults to `bundled` when a skill does not set a source:
 
 ```xml
 <available_skills>

@@ -1,28 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AUDIT-01 / AUDIT-02 / TREE (v2.29 Phase 215 Plan 01) — the per-capability
- * audit emitter at the gate chokepoints.
+ * The per-capability audit emitter at the gate chokepoints.
  *
  * For every capability-gated call (an ALLOWED *and* a DENIED one), this emits
  * the authorization decision at the SINGLE chokepoint as TWO bus events:
  *
- *   1. `audit:event` — the DURABLE trail (AUDIT-02). Rides the shipped
+ *   1. `audit:event` — the DURABLE trail. Rides the shipped
  *      `wireAuditSink` → `obs_audit_events` + `0600 security-audit.jsonl` +
  *      `.audit()` log, reconstructable offline (no gateway). The per-cap tuple
  *      rides the content-free `metadata` free-map (sanitized at the sink).
- *   2. `capability:audited` — the TREE record (the spawn-tree's per-node
- *      producer Plan 03 folds). A typed, content-free event on the trajectory.
+ *   2. `capability:audited` — the TREE record (folded by the spawn-tree's
+ *      per-node producer). A typed, content-free event on the trajectory.
  *
  * One chokepoint emits BOTH (see `rpc-dispatch.ts` in-process +
  * `setup-capability-endpoint.ts` socket). This module is a PURE emitter — it
  * emits, never throws (no `@allow-throw`); the throwing gate is the caller's
  * `requireCapability` / `assertNotAgentOrigin`.
  *
- * CONTENT-FREE (T-215-01 / Pitfall 5): the record carries ids + caps + tool
+ * CONTENT-FREE: the record carries ids + caps + tool
  * NAME + method + decision ONLY — NEVER the `tool.invoke` args, a message body,
  * a file path, or a secret name. There is deliberately no args/body parameter.
  *
- * Chokepoint asymmetry (G1): the in-process path has NO lease, so `leaseId` /
+ * Chokepoint asymmetry: the in-process path has NO lease, so `leaseId` /
  * `parentLeaseId` / `tool` are honestly ABSENT (omitted) and `rootRunId` is the
  * synthetic `root-session-<key>`. The socket path passes the full real tuple.
  * NEVER fabricate a `lease-<synthetic>` for the in-process record.
@@ -65,12 +64,12 @@ export interface CapabilityAuditRecord {
   readonly runId?: string;
   /**
    * The tree-stable root (the real lease's rootRunId, or the synthetic in-process
-   * root). Optional (WR-02): a gated decision with no resolvable root is still a
+   * root). Optional: a gated decision with no resolvable root is still a
    * durable security fact and emits `audit:event`; only the `capability:audited`
    * TREE producer (which needs a placeable root) is suppressed when this is absent.
    */
   readonly rootRunId?: string;
-  /** The real lease id (socket). ABSENT in-process — NEVER fabricated (G1). */
+  /** The real lease id (socket). ABSENT in-process — NEVER fabricated. */
   readonly leaseId?: string;
   /** The parent lease id (socket, when present) — the spawn-tree parent edge. */
   readonly parentLeaseId?: string;
@@ -80,8 +79,8 @@ export interface CapabilityAuditRecord {
 
 /**
  * Emit the per-cap audit for a gated call's authorization decision — BOTH the
- * durable `audit:event` (AUDIT-02) and the `capability:audited` trajectory
- * record (TREE). Pure emitter: emits, never throws.
+ * durable `audit:event` and the `capability:audited` trajectory
+ * record. Pure emitter: emits, never throws.
  *
  * @param deps - structural deps carrying `container.eventBus` + tenant config.
  * @param record - the content-free per-cap fact. Optional fields
@@ -96,8 +95,8 @@ export function emitCapabilityAudit(
   const timestamp = systemNowMs();
   const tenantId = deps.container.config.tenantId ?? "default";
 
-  // 1. The durable AUDIT-02 trail — ALWAYS emitted for a gated decision (WR-02:
-  //    the security trail is NOT coupled to tree-root resolution). The per-cap
+  // 1. The durable audit trail — ALWAYS emitted for a gated decision (the
+  //    security trail is NOT coupled to tree-root resolution). The per-cap
   //    tuple rides the content-free `metadata` free-map; optional ids (incl.
   //    rootRunId) are present only when known (honest absence in-process).
   deps.container.eventBus.emit("audit:event", {
@@ -122,7 +121,7 @@ export function emitCapabilityAudit(
   });
 
   // 2. The TREE record (the spawn-tree's per-node producer) — emitted ONLY with a
-  //    resolvable root (WR-02): a node with no root is unplaceable in the tree,
+  //    resolvable root: a node with no root is unplaceable in the tree,
   //    and `capability:audited.rootRunId` is a required string. The translator
   //    (translate-orchestration-payload.ts) strips the envelope; this carries the
   //    typed content-free tuple.

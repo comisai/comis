@@ -99,13 +99,13 @@ export interface VoiceResponsePipelineDeps {
     outputFormats?: Record<string, string>;
     providerFormatKey?: "openai" | "elevenlabs" | "edge";
     /**
-     * OBS-01 voice-identity fields (Phase 196) for the §2.7 completion INFO line.
-     * Threaded from the wiring point (the resolved TTS provider). `keyless` true
-     * for the keyless `edge`/`local` defaults; `costUsd` is logged as `0` when
-     * keyless (so "free" is visible) and OMITTED for a keyed provider (no
-     * per-call cost source today — FLAG 4). The selection `source` rung is the
-     * Phase-193 resolver-only field the pipeline tier does not receive — the
-     * daemon RPC path (Plan 03) owns `source` on the trajectory.
+     * Voice-identity fields for the "Voice response sent" completion INFO
+     * line. Threaded from the wiring point (the resolved TTS provider).
+     * `keyless` is true for the keyless `edge`/`local` defaults; `costUsd` is
+     * logged as `0` when keyless (so "free" is visible) and OMITTED for a
+     * keyed provider (there is no per-call cost source). The selection
+     * `source` field is resolver-only and never reaches the pipeline tier —
+     * the daemon RPC path owns `source` on the trajectory.
      */
     provider?: string;
     keyless?: boolean;
@@ -355,12 +355,12 @@ export async function executeVoiceResponse(
     }
 
     // Step 13: Success
-    // OBS-01 §2.7 completion INFO — extend with the §17 voice-identity fields
+    // Completion INFO line, extended with the voice-identity fields
     // (provider/keyless/model) the wiring threads in. costUsd is logged as 0 for
     // a keyless provider (so "free" is visible, not absent) and OMITTED for a
-    // keyed provider (no per-call cost source today — FLAG 4). The selection
-    // `source` rung is the Phase-193 resolver-only field the pipeline tier does
-    // not receive; the daemon RPC path (Plan 03) owns `source` on the trajectory.
+    // keyed provider (there is no per-call cost source). The selection
+    // `source` field is resolver-only and never reaches the pipeline tier;
+    // the daemon RPC path owns `source` on the trajectory.
     deps.logger.info(
       {
         channelType: ctx.channelType,

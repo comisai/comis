@@ -155,40 +155,27 @@ This page covers the most common issues you might encounter with Comis. Each ent
     Config validation failed: security: Unrecognized key(s) in object: 'oauth'
     ```
 
-    (The exact key name in the message varies: you may also see `'secrets'` or a similar unrecognized-key name.)
+    (The exact key name in the message varies with whatever unrecognized key your config contains.)
 
-    **What happened:** Your `config.yaml` contains one or more configuration keys that were removed in v1.5. The `security` section uses strict schema validation — any unrecognized key causes an immediate boot failure. There is no silent fallback.
-
-    The three keys removed in v1.5 are:
-    - `oauth.storage` (under `security:`)
-    - `security.secrets.enabled`
-    - `COMIS_DISABLE_ENCRYPTED_SECRETS` (in `~/.comis/.env`)
+    **What happened:** Your `config.yaml` contains a configuration key the schema does not recognize. The `security` section uses strict schema validation — any unrecognized key causes an immediate boot failure. There is no silent fallback.
 
     **How to fix:**
 
-    1. **Detect legacy keys** in your config and env:
+    1. **Locate the key** named in the error message:
        ```bash
-       grep -n "oauth\.storage\|secrets\.enabled" ~/.comis/config.yaml
-       grep -n "COMIS_DISABLE_ENCRYPTED_SECRETS" ~/.comis/.env
+       grep -n "<key-name>" ~/.comis/config.yaml
        ```
 
-    2. **Remove each legacy key** from the file it appears in:
-       - Delete the `oauth.storage:` line under `security:` in `config.yaml`
-       - Delete the `security.secrets.enabled:` line from `config.yaml`
-       - Delete the `COMIS_DISABLE_ENCRYPTED_SECRETS=` line from `.env`
-
-    3. **Add the replacement key** `security.storage` (if not already present):
+    2. **Remove or rename it.** Check the [Config Reference](/reference/config-yaml) for the supported keys in that section — a typo or a key placed under the wrong section produces the same error. Secret-storage behavior, for example, is controlled by the single `security.storage` key:
        ```yaml title="~/.comis/config.yaml"
        security:
          storage: encrypted   # encrypted (default) | file | env
        ```
 
-    4. **Verify boot:**
+    3. **Verify boot:**
        ```bash
        node packages/cli/dist/cli.js secrets list
        ```
-
-    For a full migration walkthrough, see [Secrets — Migrating from Pre-v1.5 Configuration](/security/secrets#migrating-from-pre-v15-configuration).
   </Accordion>
 
   <Accordion title="Daemon fails to start: ERR_ACCESS_DENIED in startup logs">
@@ -204,27 +191,21 @@ This page covers the most common issues you might encounter with Comis. Each ent
     Error [ERR_ACCESS_DENIED]: ... is disabled when permission model is enabled
     ```
 
-    **What happened:** The daemon is running under `node --permission` (the Node.js permission model), which categorically disables fd-based fs APIs (`fsync`, `fchmod`, `fchown`) at the process level. On pre-guard releases, calling `fsyncSync` on the data-dir lock file during boot threw `ERR_ACCESS_DENIED` before any log line was emitted, causing every start attempt to fail.
+    **What happened:** The daemon is running under `node --permission` (the Node.js permission model), which categorically disables fd-based fs APIs (`fsync`, `fchmod`, `fchown`) at the process level.
 
     This behavior is **Linux-only** and occurs only when `security.permission.enableNodePermissions: true` is set or the systemd unit passes `--permission` in `ExecStart`.
 
-    **Is this still a problem?** Current Comis versions guard all fd-API call sites via `isFsyncDisabledByPermissionModel` — the daemon will not crash on this. If you are seeing this error, you may be running an older release or a custom Node.js build that raises `ERR_ACCESS_DENIED` for a different reason.
+    **Is this a problem?** Comis guards all fd-API call sites via `isFsyncDisabledByPermissionModel` — the daemon does not crash on this. If you are seeing this error, you may be running a custom Node.js build that raises `ERR_ACCESS_DENIED` for a different reason.
 
     **How to fix:**
 
-    1. **Check your Comis version:**
-       ```bash
-       node packages/cli/dist/cli.js --version
-       ```
-       Ensure you are on v1.4 or later (the guard was introduced in v1.4).
-
-    2. **Check if --permission is active:**
+    1. **Check if --permission is active:**
        ```bash
        ps aux | grep 'node.*--permission'
        ```
        If you did not intend to enable the permission model, remove `security.permission.enableNodePermissions: true` from `config.yaml` and remove `--permission` from your systemd unit.
 
-    3. **If you want to keep --permission:** Upgrade to v1.4 or later. The daemon handles the fd-API disablement gracefully (credential writes are best-effort durability; this is expected behavior).
+    2. **If you want to keep --permission:** The daemon handles the fd-API disablement gracefully (credential writes are best-effort durability; this is expected behavior).
 
     For full detail on the fd-API impact, see [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux).
   </Accordion>
@@ -694,7 +675,7 @@ The credential broker intercepts HTTPS requests from driven-CLI spawns, injects 
   </Accordion>
 
   <Accordion title="Broker returns 501 (WebSocket upgrade)">
-    **What happened:** A WebSocket upgrade from the credentialed sandbox returned 501 with `broker:denied` reason `ws_upgrade_not_supported`. This is an intentional fail-closed guard — WebSocket credential injection is not supported in this release. The error is returned explicitly rather than hanging silently.
+    **What happened:** A WebSocket upgrade from the credentialed sandbox returned 501 with `broker:denied` reason `ws_upgrade_not_supported`. This is an intentional fail-closed guard — WebSocket credential injection is not supported. The error is returned explicitly rather than hanging silently.
 
     **Resolution:** Use HTTPS (not WebSocket) for API calls that require credential injection. WS credential injection is on the roadmap.
   </Accordion>

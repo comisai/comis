@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TestSink strategy tests (§7.3 + §17.1 row "test-sink").
+ * TestSink strategy tests.
  *
  * The TestSink is the Echo terminus: it records every `apply(frame)` and the
  * single `finalize(outcome)` with full payload, applies NO coalescing, and

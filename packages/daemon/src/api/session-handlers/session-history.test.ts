@@ -252,7 +252,7 @@ describe("session.history deliveryStatus join", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CR-02: agent-origin self-scoping. The tool.invoke rpc route injects
+// Agent-origin self-scoping. The tool.invoke rpc route injects
 // `_agentId = lease.agentId` (setup-capability-endpoint.ts:321), so its
 // PRESENCE is the unforgeable agent-origin signal (inbound _agentId is
 // stripped from external callers). Without a self-scope, a jailed orch:read
@@ -263,7 +263,7 @@ describe("session.history deliveryStatus join", () => {
 // / CLI, whose _agentId was stripped at the gateway), full access is
 // preserved.
 // ---------------------------------------------------------------------------
-describe("session.history agent-origin self-scoping (CR-02)", () => {
+describe("session.history agent-origin self-scoping", () => {
   it("session.history denies an agent-origin caller reading a session that is not the caller's own", async () => {
     // _agentId is injected (agent-origin). The seeded session key
     // "test:user-1:chan-A" does not belong to the caller agent, so the read

@@ -102,7 +102,7 @@ describe("registerMcpCommand — subcommand registration", () => {
     expect(optionNames).toContain("--args");
     expect(optionNames).toContain("--url");
     expect(optionNames).toContain("--token");
-    // Pitfall 5: connect must NOT carry the YAML-only filtering/idle flags.
+    // connect must NOT carry the YAML-only filtering/idle flags.
     expect(optionNames).not.toContain("--allowlist");
     expect(optionNames).not.toContain("--blocklist");
     expect(optionNames).not.toContain("--idle-ttl");

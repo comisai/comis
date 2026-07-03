@@ -124,9 +124,9 @@ if (isMain) {
   loadLiveEnv();
 
   // --readiness: generate the honest READINESS.md and exit. This runs BEFORE the
-  // COMIS_LIVE gate — the keyless PARTIAL readiness IS the headline §16 DoD
+  // COMIS_LIVE gate — the keyless PARTIAL readiness IS the headline readiness
   // artifact (most categories PARTIAL: deterministic Stage-A/B certified, real-
-  // provider Stage-C deferred §20; NO faked CERTIFIED). An operator run with
+  // provider Stage-C deferred to an operator run; NO faked CERTIFIED). An operator run with
   // COMIS_LIVE set generates the live readiness. Parsed from process.argv directly
   // so parseArgs's {dry,mode,profile} shape is unchanged (runner.test.ts toEqual).
   if (process.argv.slice(2).includes("--readiness")) {

@@ -53,9 +53,8 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts. Single source of truth:
-// ChannelsApiDeps (shared with message-handlers). Handler bodies and call
-// sites unchanged.
+// Aliased from the cluster slice in api/types.ts. Single source of truth:
+// ChannelsApiDeps (shared with message-handlers).
 import type { ChannelsApiDeps as ChannelHandlerDeps } from "./types.js";
 export type { ChannelHandlerDeps };
 

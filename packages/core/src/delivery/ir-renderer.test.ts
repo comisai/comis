@@ -498,10 +498,10 @@ describe("ordered list sequential numbering", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cross-platform cases from plan spec
+// Cross-platform rendering contract — same Markdown input across channels
 // ---------------------------------------------------------------------------
 
-describe("cross-platform spec cases", () => {
+describe("cross-platform rendering contract", () => {
   it("renderIR(parse('**bold**'), 'telegram') -> <b>bold</b>", () => {
     expect(render("**bold**", "telegram")).toBe("<b>bold</b>");
   });

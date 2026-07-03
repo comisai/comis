@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * ActivityEvent — the canonical, redacted, structured event for the activity
- * pipeline (spec §4.1).
+ * pipeline.
  *
  * Carries *redacted structured data*, not final user-visible English strings.
  * Projections produce render frames per surface from the same canonical event
@@ -80,9 +80,8 @@ export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
 
 /**
  * Single failure variant. Zod's `.max()` returns its own issue on the schema
- * branch — a separate `size_exceeded` variant would be unreachable (reviewer
- * caught this). Tests assert on Zod issues directly when bound violations
- * occur.
+ * branch — a separate `size_exceeded` variant would be unreachable. Tests
+ * assert on Zod issues directly when bound violations occur.
  */
 export type ActivityParseError = { kind: "schema"; issues: z.ZodIssue[] };
 

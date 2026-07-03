@@ -10,9 +10,9 @@
  * inside `.content[].text` rather than at the very start — search anywhere for
  * the first snake_case bracketed token.
  *
- * Surfacing that code in the hint names the failure CATEGORY (the §2.7
- * "name which knob" rule) instead of the generic "check errorText" — which, in
- * the 2026-06-20 live run (UC-C2), pointed a tmux/macOS dependency diagnosis at
+ * Surfacing that code in the hint names the failure CATEGORY (the AGENTS.md
+ * §2.7 "name which knob" rule) instead of the generic "check errorText" — which,
+ * in a 2026-06-20 live run, pointed a tmux/macOS dependency diagnosis at
  * what was actually a command-allowlist policy block. `errorKind` is left
  * unchanged (this is an advisory hint enrichment — no obs-classifier ripple).
  *

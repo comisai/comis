@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveCompactionStrategy } from "./compaction-capability-router.js";
 
-describe("resolveCompactionStrategy — C4", () => {
+describe("resolveCompactionStrategy — capability-routed compaction", () => {
   describe("frontier and mid: always use llm (unchanged behavior)", () => {
     it("frontier, preferEviction=true → llm", () => {
       expect(resolveCompactionStrategy("frontier", true, "")).toBe("llm");
@@ -15,7 +15,7 @@ describe("resolveCompactionStrategy — C4", () => {
     });
   });
 
-  describe("small/nano: prefer eviction by default (C4)", () => {
+  describe("small/nano: prefer eviction by default", () => {
     it("small, preferEviction=true, no strongerModel → eviction", () => {
       expect(resolveCompactionStrategy("small", true, "")).toBe("eviction");
     });
@@ -25,7 +25,7 @@ describe("resolveCompactionStrategy — C4", () => {
   });
 
   describe("opt-out: preferEviction=false restores llm", () => {
-    it("small, preferEviction=false → llm (backward-compat opt-out)", () => {
+    it("small, preferEviction=false → llm (operator opt-out)", () => {
       expect(resolveCompactionStrategy("small", false, "")).toBe("llm");
     });
     it("nano, preferEviction=false → llm", () => {

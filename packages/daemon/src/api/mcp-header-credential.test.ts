@@ -442,7 +442,7 @@ describe("processHeaderCredentials — mutableSecretManager live-apply", () => {
     expect(mutableSecretManager.upsert).not.toHaveBeenCalled();
   });
 
-  it("works without mutableSecretManager (optional — legacy callers unaffected)", () => {
+  it("works without mutableSecretManager (optional — callers that omit it are unaffected)", () => {
     const rawValue = "sk-ant-abc123defghijklmnopqrstuvwxyz";
     const secretStore = makeSecretStore();
     const headers: Record<string, string> = { "X-Api-Key": rawValue };

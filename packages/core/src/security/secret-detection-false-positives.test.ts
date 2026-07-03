@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Secret-value heuristic negative + positive control (relocated from
- * test/architecture/mcp-plaintext-secret-false-positives.test.ts).
+ * Secret-value heuristic negative + positive control.
  *
  * Table-driven invariant: representative NON-SECRET strings (Notion/Linear
  * UUIDs, Stripe customer IDs, OpenAI org IDs, file paths, env-ref

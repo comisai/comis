@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * activity-stream — the canonical, redacted `ActivityEvent` source (spec §5).
+ * activity-stream — the canonical, redacted `ActivityEvent` source.
  *
  * Subscribes to the typed EventBus (consume only — `core/event-bus/bus.ts` is
- * frozen, §17.7) and maps each real `tool:*` / `model:*` / `approval:*` event to
+ * frozen) and maps each real `tool:*` / `model:*` / `approval:*` event to
  * an `ActivityEvent` via the core helpers (`resolveLabel`/`applyTemplate`/
  * `classifySemanticPhase` + `redactValue` defense-in-depth), validates the
  * output with `parseActivityEvent`, and delivers it to per-turn subscribers
@@ -11,10 +11,10 @@
  * `cache-trace/event-bus-bridge.ts` subscription-bag + single-`unsubscribe()`
  * idiom (the canonical EventBus-subscriber pattern).
  *
- * Canonical + UNFILTERED (spec §5.0): zero verbosity / coalescing / maxLines
+ * Canonical + UNFILTERED: zero verbosity / coalescing / maxLines
  * here — projections (in `core/activity/projections`) apply consumer policy.
  *
- * Correlation index (spec §4.2): an in-memory `requestId → { activityId, … }`
+ * Correlation index: an in-memory `requestId → { activityId, … }`
  * map populated from `approval:requested` lets `approval:resolved` (which
  * carries only `requestId`) close the matching activity. A resolved event with
  * no matching index entry is ignored for live activity (the durable approval
@@ -22,12 +22,12 @@
  * stable `activityId` across `tool:started` → `tool:executed`.
  *
  * Subagent lifecycle events (`session:sub_agent_spawned`/`completed`) map to
- * `kind:"subagent"` ActivityEvents (§17.3). The spawn payload carries
+ * `kind:"subagent"` ActivityEvents. The spawn payload carries
  * `{runId, parentSessionKey, agentId, task}` — NO `traceId` and NO parent
  * `activityId` — so subagent events are delivered to every turn subscriber whose
  * `{agentId, sessionKey}` match `{agentId, parentSessionKey}`, stamping that
  * subscriber's `traceId` onto the delivered copy. `parentActivityId` is left
- * unset here: the per-turn coordinator (the §4.5 single owner) annotates the
+ * unset here: the per-turn coordinator (the single owner) annotates the
  * parent link from its active-subagent stack. The free-text `task` is never
  * reflected into the rendered label (only `agentId` + the `🤖` marker).
  *
@@ -38,9 +38,9 @@
  * when a mapped event's `redactionsApplied` is non-empty (a tool tried to
  * substitute a secret-keyed value); a `parseActivityEvent` failure logs ERROR.
  *
- * Counters (spec §20.1): there is no metrics-sink primitive in
+ * Counters: there is no metrics-sink primitive in
  * `@comis/observability` (the package logs + emits on the bus — see
- * `health-aggregator`). The §20.1 counters are therefore kept as an in-process
+ * `health-aggregator`). The counters are therefore kept as an in-process
  * counter snapshot (`counters()`) — incremented on each emit/drop/redaction and
  * surfaced for the daemon's metrics scrape + the test harness. Per-event emit is
  * traced at DEBUG.
@@ -93,7 +93,7 @@ export interface CreateActivityStreamDeps {
   readonly nowMs?: () => number;
 }
 
-/** In-process counter snapshot mirroring the spec §20.1 activity counters. */
+/** In-process counter snapshot mirroring the activity counters. */
 export interface ActivityCounters {
   /** `activity.events.emitted` total. */
   readonly emitted: number;
@@ -126,11 +126,11 @@ export interface ActivityStream {
 interface TurnSubscriber {
   readonly ctx: TurnActivityContext;
   readonly onEvent: (e: ActivityEvent) => void;
-  /** Per-consumer bounded queue at the subscription boundary (spec §5.1). */
+  /** Per-consumer bounded queue at the subscription boundary. */
   readonly queue: BoundedQueue<ActivityEvent>;
 }
 
-/** A failure event bypasses the bounded-queue drop policy (spec §5.1). */
+/** A failure event bypasses the bounded-queue drop policy. */
 function isFailureEvent(e: ActivityEvent): boolean {
   return e.status === "failed" || e.kind === "approval";
 }
@@ -198,7 +198,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   const subscribers = new Set<TurnSubscriber>();
   // toolCallId/requestId → minted activityId (stable across start↔end).
   const activityIds = new Map<string, string>();
-  // requestId → correlation context (spec §4.2 approval index).
+  // requestId → correlation context (approval index).
   const approvalIndex = new Map<string, CorrelationEntry>();
   // runId → parentSessionKey: the spawn payload carries the session, the
   // completed payload does NOT, so remember it to scope the close event.
@@ -233,7 +233,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
    * the compressor runs AFTER `redactValue` (which `applyTemplate` already
    * applied), so it never lets a raw URL/path escape redaction and never
    * re-compacts an already-compacted (`~`-rooted / ≤2-segment) path (it is a
-   * fixed point — see Pitfall 2). It is NOT called inside `applyTemplate`
+   * fixed point). It is NOT called inside `applyTemplate`
    * (a `core` redaction-only primitive) and NOT on the subagent/model marker
    * labels (those bypass `buildLabel` — short static `markers.subagent`/
    * "switching model provider" strings; compressing them is a needless no-op).
@@ -262,7 +262,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
     }
     if (result.value.redactionsApplied.length > 0) {
       redactionReplacements += result.value.redactionsApplied.length;
-      // §10.1: exactly one WARN when a tool tried to substitute a
+      // Exactly one WARN when a tool tried to substitute a
       // secret-keyed value. Object-first; module-identity field never set.
       childLogger?.warn?.(
         {
@@ -331,7 +331,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       });
     }
     // Deliver to every turn subscriber whose ids match (turn-scoped filter).
-    // The per-consumer bounded queue (§5.1) absorbs backpressure: push then
+    // The per-consumer bounded queue absorbs backpressure: push then
     // drain synchronously to the consumer. A push that drops (main-ring or
     // failure-overflow overflow) increments the `dropped` counter.
     for (const sub of subscribers) {
@@ -448,13 +448,14 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       semanticPhase,
       toolName: p.toolName,
       ...(p.action !== undefined ? { action: p.action } : {}),
-      // §3.1: mirror subagent precedent at lines 602/621.
+      // Prepend the themed running marker to the start-phase label, consistent
+      // with the subagent labels below.
       // The running marker is themed (default: 🔧, ascii: [..]) and resolved
-      // once at construction (line 198). DO NOT apply to onToolExecuted
-      // (phase:"end") — that violates Pitfall 7 (the running marker conveys
-      // in-flight status only). Clamp the marker-prepended label to the schema
-      // cap (FIX 3): the marker is added AFTER compressLabel, so without this a
-      // near-cap label would exceed 120 and the event would be DROPPED.
+      // once at construction. DO NOT apply to onToolExecuted
+      // (phase:"end") — the running marker conveys in-flight status only. Clamp
+      // the marker-prepended label to the schema cap: the marker is added AFTER
+      // compressLabel, so without this a near-cap label would exceed 120 and the
+      // event would be DROPPED.
       defaultLabel: clampLabel(`${markers.running} ${defaultLabel}`),
     });
   }
@@ -523,15 +524,14 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       status: "running",
       kind: "model",
       semanticPhase: "thinking",
-      // §3.1: themed running marker on the static label.
-      // Mirrors the subagent precedent at lines 602/621. Clamped to the cap (FIX 3)
-      // — consistent with the tool path; a custom theme could supply a long marker.
+      // Themed running marker on the static label, consistent with the tool path.
+      // Clamped to the cap because a custom theme could supply a long marker.
       defaultLabel: clampLabel(`${markers.running} switching model provider`),
     });
   }
 
   function onApprovalRequested(p: EventMap["approval:requested"]): void {
-    if (p.traceId === undefined) return; // trace-less restored approvals: not live activity (§4.2)
+    if (p.traceId === undefined) return; // trace-less restored approvals: not live activity
     const activityId = activityIdFor(`approval:${p.requestId}`);
     dispatch(
       {
@@ -563,7 +563,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
 
   function onApprovalResolved(p: EventMap["approval:resolved"]): void {
     const entry = approvalIndex.get(p.requestId);
-    if (entry === undefined) return; // no matching index → ignore for live activity (§4.2)
+    if (entry === undefined) return; // no matching index → ignore for live activity
     approvalIndex.delete(p.requestId);
     dispatch({
       schemaVersion: 1,
@@ -596,7 +596,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
     // The label uses only agentId + the resolved subagent marker
     // (`markers.subagent`; 🤖 for default/no theme, [SUB] for ascii) — never the
     // free-text `task` (which could echo user content). parentActivityId is set
-    // by the coordinator (§4.5), not here.
+    // by the coordinator, not here.
     subagentSessions.set(p.runId, p.parentSessionKey);
     dispatchSubagent({
       schemaVersion: 1,

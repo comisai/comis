@@ -50,12 +50,12 @@ describe("observability-domain contracts", () => {
     expect(OBSERVABILITY_CONTRACTS.length).toBe(29);
   });
 
-  it("all contracts are admin-scoped EXCEPT the agent self-observability pair (OBS-SELF-DEAD)", () => {
+  it("all contracts are admin-scoped EXCEPT the agent self-observability pair", () => {
     // obs.explain + obs.diagnostics are scopes:["rpc"] — the obs_query agent tool's
-    // self-diagnose path ("why did my session degrade?") needs them agent-reachable
-    // (30uc-20260624 UC-14; CLAUDE.md "Glass Box as an agent capability"). Read-only +
-    // scrubbed (zero secret residency), single-tenant. The daemon-wide/sensitive obs
-    // contracts (fleet/audit/billing/channels/delivery) stay admin.
+    // self-diagnose path ("why did my session degrade?") needs them agent-reachable.
+    // Read-only + scrubbed (zero secret residency), single-tenant. The
+    // daemon-wide/sensitive obs contracts (fleet/audit/billing/channels/delivery)
+    // stay admin.
     const SELF_OBS = new Set(["obs.explain", "obs.diagnostics"]);
     for (const c of OBSERVABILITY_CONTRACTS) {
       const expected = SELF_OBS.has(c.method) ? ["rpc"] : ["admin"];
@@ -68,14 +68,14 @@ describe("observability-domain contracts", () => {
     expect(methods).toEqual([
       "agent.cacheStats",
       "memory.embeddingCache",
-      // Durable security-decision audit read surface (AUDIT-05 / Phase 176).
+      // Durable security-decision audit read surface.
       "obs.audit.query",
       "obs.billing.byAgent",
       "obs.billing.byProvider",
       "obs.billing.bySession",
       "obs.billing.total",
       "obs.billing.usage24h",
-      // Cache-break rate by reason + $-lost (WEBUI-02 / Phase 179).
+      // Cache-break rate by reason + $-lost.
       "obs.cacheBreaks.byReason",
       // Durable cache-stats window aggregator.
       "obs.cacheStats.window",
@@ -87,14 +87,14 @@ describe("observability-domain contracts", () => {
       "obs.delivery.recent",
       "obs.delivery.stats",
       "obs.diagnostics",
-      // Incident-report assembler (Phase 153 centerpiece).
+      // Incident-report assembler.
       "obs.explain",
-      // Cross-session fleet-health digest (Phase 161 / v2.15).
+      // Cross-session fleet-health digest.
       "obs.fleet.health",
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
-      // Live spend snapshot the kill-switch enforces (WEBUI-02 / Phase 179).
+      // Live spend snapshot the kill-switch enforces.
       "obs.spend.snapshot",
       // SystemPromptReport surface.
       "obs.systemPromptReport.latest",
@@ -773,40 +773,35 @@ describe("observability-domain contracts", () => {
 // ---------------------------------------------------------------------------
 
 describe("ObsTrace contracts", () => {
-  // Test 1
   it("ObsTraceSearchContract method equals obs.trace.search", () => {
     expect(ObsTraceSearchContract.method).toBe("obs.trace.search");
   });
 
-  // Test 2
   it("ObsTraceSearchContract request accepts empty object (all fields optional)", () => {
     expect(() => ObsTraceSearchContract.request.parse({})).not.toThrow();
   });
 
-  // Test 3
   it("ObsTraceSearchContract request rejects limit above 1000", () => {
     expect(() =>
       ObsTraceSearchContract.request.parse({ limit: 1500 }),
     ).toThrow();
   });
 
-  // Test 4
   it("ObsTraceSearchContract response accepts rows array of loose records", () => {
     expect(() =>
       ObsTraceSearchContract.response.parse({ rows: [{ a: 1 }, { b: "x" }] }),
     ).not.toThrow();
   });
 
-  // Test 5
   it("ObsTraceSearchContract scopes equals [admin]", () => {
     expect(ObsTraceSearchContract.scopes).toEqual(["admin"]);
   });
 
-  // D9: includeSynthetic admin opt-in (default-exclude synthetic rows).
+  // includeSynthetic admin opt-in (default-exclude synthetic rows).
   it("ObsTraceSearchContract request parses and retains includeSynthetic:false", () => {
-    // A z.object WITHOUT the field strips the unknown key → the parsed result
-    // would NOT contain includeSynthetic (RED on pre-patch). Once the field is
-    // declared, the boolean survives the parse.
+    // A z.object WITHOUT the field strips the unknown key, silently losing the
+    // opt-in — the schema must declare includeSynthetic so the boolean survives
+    // the parse.
     const parsed = ObsTraceSearchContract.request.parse({ includeSynthetic: false });
     expect(parsed).toHaveProperty("includeSynthetic", false);
   });
@@ -817,58 +812,49 @@ describe("ObsTrace contracts", () => {
     ).toBe(false);
   });
 
-  // Test 6
   it("ObsTraceTailContract method equals obs.trace.tail", () => {
     expect(ObsTraceTailContract.method).toBe("obs.trace.tail");
   });
 
-  // Test 7
   it("ObsTraceTailContract request rejects empty chatId (min 1)", () => {
     expect(() =>
       ObsTraceTailContract.request.parse({ chatId: "" }),
     ).toThrow();
   });
 
-  // Test 8
   it("ObsTraceTailContract request rejects limit above 100", () => {
     expect(() =>
       ObsTraceTailContract.request.parse({ chatId: "abc", limit: 150 }),
     ).toThrow();
   });
 
-  // Test 9
   it("ObsTraceTailContract response accepts events array and nextSinceMs", () => {
     expect(() =>
       ObsTraceTailContract.response.parse({ events: [], nextSinceMs: 1234 }),
     ).not.toThrow();
   });
 
-  // Test 10
   it("ObsTraceExportContract method equals obs.trace.export", () => {
     expect(ObsTraceExportContract.method).toBe("obs.trace.export");
   });
 
-  // Test 11
   it("ObsTraceExportContract request rejects empty sessionId (min 1)", () => {
     expect(() =>
       ObsTraceExportContract.request.parse({ sessionId: "" }),
     ).toThrow();
   });
 
-  // Test 12
   it("ObsTraceExportContract response accepts bundlePath string", () => {
     expect(() =>
       ObsTraceExportContract.response.parse({ bundlePath: "/tmp/bundle" }),
     ).not.toThrow();
   });
 
-  // Test 13
   it("OBSERVABILITY_CONTRACTS has exactly 29 entries", () => {
     expect(OBSERVABILITY_CONTRACTS.length).toBe(29);
   });
 
-  // Test 14
-  it("OBSERVABILITY_CONTRACTS includes all three new contracts by method name", () => {
+  it("OBSERVABILITY_CONTRACTS includes each obs.trace contract exactly once by method name", () => {
     const methods = OBSERVABILITY_CONTRACTS.map((c) => c.method);
     expect(methods.filter((m) => m === "obs.trace.search")).toHaveLength(1);
     expect(methods.filter((m) => m === "obs.trace.tail")).toHaveLength(1);
@@ -876,17 +862,18 @@ describe("ObsTrace contracts", () => {
   });
 
   // -------------------------------------------------------------------------
-  // obs.explain (Phase 153 centerpiece — IncidentReport assembler)
+  // obs.explain (IncidentReport assembler)
   // -------------------------------------------------------------------------
 
   it("obs.explain: declares the method name", () => {
     expect(ObsExplainContract.method).toBe("obs.explain");
   });
 
-  it("obs.explain: is agent-reachable (rpc) for self-observability — OBS-SELF-DEAD", () => {
-    // Re-scoped admin→rpc (30uc-20260624 UC-14): the obs_query tool's explain/session_report
-    // action needs obs.explain agent-reachable; read-only + scrubbed digest, single-tenant.
-    // As ["admin"] it was in the deny-by-origin set and killed the agent's self-diagnose.
+  it("obs.explain: is agent-reachable (rpc) for self-observability", () => {
+    // Scoped rpc, NOT admin: the obs_query tool's explain/session_report action
+    // needs obs.explain agent-reachable; read-only + scrubbed digest, single-tenant.
+    // As ["admin"] it would sit in the deny-by-origin set and kill the agent's
+    // self-diagnose path.
     expect(ObsExplainContract.scopes).toEqual(["rpc"]);
   });
 
@@ -902,10 +889,10 @@ describe("ObsTrace contracts", () => {
     ).not.toThrow();
   });
 
-  // D9: includeSynthetic admin opt-in (default-exclude synthetic sessions).
+  // includeSynthetic admin opt-in (default-exclude synthetic sessions).
   it("obs.explain: request parses and retains includeSynthetic:true alongside a traceId", () => {
-    // Pre-patch the field is stripped by the z.object → the parsed result lacks
-    // includeSynthetic (RED). After the opt-in is declared the boolean survives.
+    // A z.object WITHOUT the field strips the unknown key, silently losing the
+    // opt-in — the schema must declare includeSynthetic so the boolean survives.
     const parsed = ObsExplainContract.request.parse({ traceId: "t-1", includeSynthetic: true });
     expect(parsed).toHaveProperty("includeSynthetic", true);
   });
@@ -923,13 +910,13 @@ describe("ObsTrace contracts", () => {
   it("obs.explain: a present empty sessionKey is REJECTED (min(1) fires before optional)", () => {
     // `.optional()` only skips validation when the key is ABSENT. A present "" still
     // hits `.min(1)` and throws — so a malformed empty id is rejected, not silently
-    // ignored (the security-correct behavior; X1 Pitfall 5).
+    // ignored (the security-correct behavior).
     expect(() =>
       ObsExplainContract.request.parse({ sessionKey: "", traceId: "t-1" }),
     ).toThrow();
   });
 
-  it("obs.explain: response parses a minimal §6.3 IncidentReport sample", () => {
+  it("obs.explain: response parses a minimal IncidentReport sample", () => {
     const sample = {
       schemaVersion: 1,
       sessionKey: "sk-1",
@@ -951,7 +938,7 @@ describe("ObsTrace contracts", () => {
     expect(() => ObsExplainContract.response.parse(sample)).not.toThrow();
   });
 
-  it("obs.explain: response accepts the optional contextBudget section (W3)", () => {
+  it("obs.explain: response accepts the optional contextBudget section", () => {
     const sample = {
       schemaVersion: 1,
       sessionKey: "sk-1",

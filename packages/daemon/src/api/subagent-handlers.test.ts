@@ -45,7 +45,7 @@ function createMockDeps(): SubagentHandlerDeps {
     },
     defaultAgentId: "default",
     tenantId: "default",
-    // STEER-01: securityConfig.agentToAgent.steerInject gates the steer handler
+    // securityConfig.agentToAgent.steerInject gates the steer handler
     // (flag-on inject / flag-off byte-identical kill+respawn). Default the flag
     // OFF here — individual tests flip it on.
     securityConfig: { agentToAgent: { waitTimeoutMs: 30_000, steerInject: false } },
@@ -192,7 +192,7 @@ describe("createSubagentHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // STEER-01: flag-gated inject branch (security.agentToAgent.steerInject)
+  // Flag-gated inject branch (security.agentToAgent.steerInject)
   // -------------------------------------------------------------------------
 
   // NOTE: the 2s rate-limit map (`steerTimestamps`) is module-level and SHARED
@@ -200,7 +200,7 @@ describe("createSubagentHandlers", () => {
   // uses a DISTINCT target id (mirroring the existing "run-rate-test" pattern)
   // to avoid cross-test rate-limit collisions.
 
-  describe("STEER-01 — flag-OFF is byte-identical kill+respawn (the load-bearing golden)", () => {
+  describe("steer flag-OFF is byte-identical kill+respawn (the load-bearing golden)", () => {
     it("with steerInject:false, subagent.steer kills+respawns and returns {status:'steered', oldRunId, newRunId} EXACTLY as today", async () => {
       deps.securityConfig = { agentToAgent: { waitTimeoutMs: 30_000, steerInject: false } };
       vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
@@ -243,7 +243,7 @@ describe("createSubagentHandlers", () => {
     });
   });
 
-  describe("STEER-01 — flag-ON injects into the live child", () => {
+  describe("steer flag-ON injects into the live child", () => {
     /** A RUNNING run for the inject path (it is NOT killed). */
     function mockRunningRun(runId: string): void {
       vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
@@ -306,7 +306,7 @@ describe("createSubagentHandlers", () => {
       expect(deps.eventBus!.emit).not.toHaveBeenCalled();
     });
 
-    // WR-03 (175-REVIEW.md §2.7): the inject-failure branch is a path an operator
+    // The inject-failure branch is a path an operator
     // must diagnose, so before the throw it must log a WARN carrying an
     // operator-actionable hint + errorKind (the success branch already logs INFO
     // + emits an event; failure had only the raw thrown string).
@@ -343,7 +343,7 @@ describe("createSubagentHandlers", () => {
       expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
     });
 
-    // WR-02 (175-REVIEW.md): the inject path must mirror killRun's status guard.
+    // The inject path must mirror killRun's status guard.
     // getRunStatus returns a run for ANY status inside the retention window, so a
     // completed/failed/queued target would otherwise proceed to steerRun, find no
     // live handle, and throw the generic "No live session" — a worse, less
@@ -378,7 +378,7 @@ describe("createSubagentHandlers", () => {
     );
   });
 
-  describe("STEER-01 — the 2s rate limit is shared across both flag settings", () => {
+  describe("the steer 2s rate limit is shared across both flag settings", () => {
     it("rate-limits a second steer to the same target within 2s regardless of the flag (flag ON)", async () => {
       deps.securityConfig = { agentToAgent: { waitTimeoutMs: 30_000, steerInject: true } };
       vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
@@ -400,7 +400,7 @@ describe("createSubagentHandlers", () => {
     });
   });
 
-  describe("STEER-01 — kill ≠ steer: subagent.kill is unchanged on both flag settings", () => {
+  describe("kill ≠ steer: subagent.kill is unchanged on both flag settings", () => {
     it("subagent.kill calls killRun and returns {killed, runId} with steerInject:false", async () => {
       deps.securityConfig = { agentToAgent: { waitTimeoutMs: 30_000, steerInject: false } };
       handlers = createSubagentHandlers(deps);

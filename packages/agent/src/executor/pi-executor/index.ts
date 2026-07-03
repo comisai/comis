@@ -4,8 +4,9 @@
  *
  * Named re-exports only — no `as` aliases. The canonical public names
  * (createPiExecutor + PiExecutorDeps + createBeforeToolCallGuard +
- * mergeSessionStats) are preserved byte-identical so the parity snapshot
- * reproduces verbatim.
+ * mergeSessionStats) keep their exact spellings: they are the package's
+ * public surface (re-exported by @comis/agent's index), so aliasing or
+ * renaming here is a breaking API change.
  *
  * @module
  */

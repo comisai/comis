@@ -66,8 +66,8 @@ export interface PiExecutorDeps {
   lastKnownModel?: import("../../model/last-known-model.js").LastKnownModelTracker;
   budgetGuard: BudgetGuard;
   costTracker: CostTracker;
-  stepCounter: StepCounter; spendAccumulator?: import("../../budget/spend-accumulator.js").SpendAccumulator; spendConfig?: import("@comis/core").SpendConfig; // Phase 177 kill-switch: daemon-wide accumulator REFERENCE (per-turn bridge) + config; absent ⇒ no-op.
-  /** Phase 213-08 (BUDGET-01/02): late-bound per-root budget holder + rootRunId resolver, threaded into the bridge like spendAccumulator; absent ⇒ no-op. */
+  stepCounter: StepCounter; spendAccumulator?: import("../../budget/spend-accumulator.js").SpendAccumulator; spendConfig?: import("@comis/core").SpendConfig; // Spend kill-switch: daemon-wide accumulator REFERENCE (per-turn bridge) + config; absent ⇒ no-op.
+  /** Late-bound per-root budget holder + rootRunId resolver, threaded into the bridge like spendAccumulator; absent ⇒ no-op. */
   boundedAutonomyBudget?: import("../../bridge/pi-event-bridge.js").BoundedAutonomyBudgetHolder;
   resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
   eventBus: TypedEventBus;
@@ -99,13 +99,13 @@ export interface PiExecutorDeps {
   agentDir: string;
   // Optional
   memoryPort?: MemoryPort;
-  /** Optional LCD context store (Phase 128 dag-mode write-path + assembly).
+  /** Optional LCD context store (dag-mode write-path + assembly).
    *  TYPE-only from @comis/core — the agent never imports the memory package
    *  (the agent↛memory cut); the daemon injects the concrete createLcdStore.
    *  Absent ⇒ no afterTurn ingest + the dag branch falls through to the
    *  pipeline (never crashes, never no-ops). */
   contextStore?: ContextStorePort;
-  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. ONE
+  /** The daemon-owned per-tenant summarizer spend+breaker. ONE
    *  instance constructed at the composition root (mirrors the embedding breaker,
    *  setup-memory.ts) and injected here so it bounds AGGREGATE per-tenant
    *  summarizer spend across all of a tenant's sessions/agents. Threaded into
@@ -152,29 +152,27 @@ export interface PiExecutorDeps {
    *  passed as `memoryPort` — it implements both `MemoryPort` AND `MemoryPinnedStore`. Passed
    *  separately so prompt-assembly's createMemoryRecall Step-0 pinned-first lane gate
    *  (`cfg_pinned?.enabled === true && deps.pinnedStore !== undefined`) can fire at runtime.
-   *  Without this forward the pinned lane is a silent no-op in every live agent response
-   *  (the R6 blocker). DEFAULT-OFF BYTE-IDENTITY: with `rag.pinned.enabled=false` or absent,
+   *  Without this forward the pinned lane is a silent no-op in every live agent
+   *  response. DEFAULT-OFF BYTE-IDENTITY: with `rag.pinned.enabled=false` or absent,
    *  no pinnedStore query runs. TYPE-only from @comis/core (the agent↛memory cut). */
   pinnedStore?: MemoryPinnedStore;
-  /** Optional LCD provenance read store (Phase 173, DIST-03 read side — the C1→C2
-   *  carry-in). Built in the daemon on the shared memory db handle
+  /** Optional LCD provenance read store — the read side of distillation
+   *  provenance. Built in the daemon on the shared memory db handle
    *  (buildProvenanceReadStore); threaded into prompt-assembly's createMemoryRecall.
    *  When present AND a recalled distilled summary carries the `summary:<id>` tag, the
    *  post-fusion provenance pass down-weights (×0.5, NEVER deletes) the EXACT
    *  provenance-linked paired memories. Without this forward the pass gate
    *  (`deps.provenanceStore != null`) is always false and the pass is a silent no-op —
-   *  the "built-but-not-wired" blocker the milestone hit 3×. DEFAULT-OFF BYTE-IDENTITY:
+   *  the classic "built-but-not-wired" failure mode. DEFAULT-OFF BYTE-IDENTITY:
    *  absent OR no lcd_distilled result -> no read, recall order unchanged. TYPE-only from
    *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   provenanceStore?: LcdProvenanceReadStore;
-  /** Optional mental-model store (v2.31 Reflection doc store; the SAME store feeding the
-   *  learned-skill surface). FOLD-01 (Phase 225): threaded into prompt-assembly's
-   *  LLM-free `<user_profile>` injection via ToolAssemblyDeps as the kind:"profile" read source
-   *  (the standalone userRepresentationStore was deleted in Plan 05). Absent -> no profile list,
-   *  byte-identical prompt (cost gate). TYPE-only from @comis/core (the agent↛memory cut). */
+  /** Optional mental-model store (the Reflection doc store; the SAME store feeding the
+   *  learned-skill surface). Threaded into prompt-assembly's LLM-free `<user_profile>`
+   *  injection via ToolAssemblyDeps as the kind:"profile" read source. Absent -> no
+   *  profile list, byte-identical prompt (cost gate). TYPE-only from @comis/core
+   *  (the agent↛memory cut). */
   mentalModelStore?: MentalModelStorePort;
-  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
-  //  social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
   hookRunner?: HookRunner;
   // System prompt config
   outboundMediaEnabled?: boolean;
@@ -271,7 +269,7 @@ export interface PiExecutorDeps {
   providerCapabilities?: import("@comis/core").ProviderCapabilities;
   /** Discovered Ollama served num_ctx from the boot-time capacity probe,
    *  PAIRED with the provider config key (providers.entries space) it was
-   *  probed from. WR-02 (Phase 176 review): the binding is executor-static
+   *  probed from. The binding is executor-static
    *  (the agent's PRIMARY provider), but per-execution model overrides (graph
    *  per-node models, subagent spawns) can switch providers — the reconcile
    *  applies `window` ONLY when the executing model resolves to `providerKey`,
@@ -282,13 +280,13 @@ export interface PiExecutorDeps {
    *  to configured). */
   servedContextWindow?: { providerKey: string; window: number };
   /** Resolve a provider entry's declared config `type` (free string, e.g. "ollama", "xai").
-   *  Consumer: normalizeModelCompat auto-detection (GBNF-01). Resolver form (not a static
+   *  Consumer: normalizeModelCompat auto-detection. Resolver form (not a static
    *  value) because per-execution model overrides can switch providers mid-agent. */
   getProviderType?: (provider: string) => string | undefined;
   /** Resolve a model's user-declared comisCompat from providers.entries.<provider>.models[].
    *  Consumer: normalizeModelCompat (closes the built-but-not-wired comisCompat gap). */
   getModelCompat?: (provider: string, modelId: string) => import("@comis/core").ModelCompatConfig | undefined;
-  /** AUTHOR-03 (174-05 / CR-01): live read of
+  /** Live read of
    *  `config.orchestration.authoring.gbnfConstrain`. Resolver form because the
    *  gate is runtime-mutable via config.write (not in IMMUTABLE_CONFIG_PREFIXES)
    *  — a boot snapshot would go stale. Forwarded through frozenDeps into the
@@ -337,7 +335,7 @@ export interface PiExecutorDeps {
    * `createSessionTrajectoryHandleRegistry()` from @comis/observability.
    * The daemon's shutdown chain MUST call `closeAll()` to drain open
    * recorders. When `undefined`, the per-turn fallback construction
-   * path lights up — kept for tests + the pre-rrm-260519 lifecycle.
+   * path lights up — kept for tests and callers without a registry.
    */
   trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
   /**

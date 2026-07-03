@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * P5 (Phase 124) attention + audit event payloads for the skills-side structural
- * `TerminalEventBus` (terminal-tools.ts). These mirror the four new core
- * `TerminalEvents` keys (events-terminal.ts, 124-02 site 1) one-for-one so the
+ * Attention + audit event payloads for the skills-side structural
+ * `TerminalEventBus` (terminal-tools.ts). These mirror the core
+ * `TerminalEvents` keys (events-terminal.ts) one-for-one so the
  * daemon's `TypedEventBus` stays structurally compatible with the bus the skills
- * layer emits on (the proven 3-site plumbing — site 2 is the overloads in
+ * layer emits on (the 3-site plumbing — the second site is the overloads in
  * terminal-tools.ts; this file holds their payload types).
  *
  * They live in this sibling rather than terminal-tools.ts because that file is at
  * the 800-line file-size cap (`test/architecture/file-size.test.ts`); the overloads
  * themselves stay on `TerminalEventBus` there.
  *
- * REDACTION-SAFE BY CONSTRUCTION (the `TerminalKeystrokeEvent` precedent, T-124-03):
+ * REDACTION-SAFE BY CONSTRUCTION (the `TerminalKeystrokeEvent` precedent):
  * every payload carries counts / ids / a typed `reason` or `state` + `timestamp`
  * ONLY — there is NO `text`/`keys`/`screen`/`payload` field, so an emit site
  * cannot leak screen contents or a keystroke onto the bus even by mistake. The
@@ -24,7 +24,7 @@
  */
 
 /**
- * Attention wake (TR-11): the classifier settled the grid to a state that needs
+ * Attention wake: the classifier settled the grid to a state that needs
  * the agent. Carries a typed `state` + a SHORT STRUCTURAL `reason` tag
  * (e.g. "settled_cursor_parked") — NEVER screen text.
  */
@@ -35,7 +35,7 @@ export interface TerminalInputNeededEvent {
   /** A short structural classification tag (e.g. "settled_cursor_parked") — NEVER screen text. */
   reason: string;
   /**
-   * Classifier confidence (CLASS-02) — `high` for the structural certainties,
+   * Classifier confidence — `high` for the structural certainties,
    * `medium` for the heuristics. A 2-value enum, content-free. Mirrors the core
    * `TerminalEvents["terminal:input_needed"]` field one-for-one.
    */
@@ -44,7 +44,7 @@ export interface TerminalInputNeededEvent {
 }
 
 /**
- * Stuck signal (OPS-04): settled, no affordance, no progress beyond `stuckMs`.
+ * Stuck signal: settled, no affordance, no progress beyond `stuckMs`.
  * `noProgressMs` is a DURATION signal, not content.
  */
 export interface TerminalStuckEvent {
@@ -54,17 +54,17 @@ export interface TerminalStuckEvent {
   noProgressMs: number;
   /**
    * The classifier's structural reason tag (e.g. "no_progress") — surface-only for
-   * observability symmetry (CLASS-02). A machine tag, NEVER screen text. Mirrors the
+   * observability symmetry. A machine tag, NEVER screen text. Mirrors the
    * core `TerminalEvents["terminal:stuck"]` field one-for-one.
    */
   reason: string;
-  /** Classifier confidence (CLASS-02) — a 2-value enum, content-free (see input_needed). */
+  /** Classifier confidence — a 2-value enum, content-free (see input_needed). */
   confidence: "high" | "medium";
   timestamp: number;
 }
 
 /**
- * Escalation audit (SEC-11/SEC-12): the auto-answer policy or a guard escalated to
+ * Escalation audit: the auto-answer policy or a guard escalated to
  * a human instead of acting. Carries a typed closed `reason` ONLY (the audited
  * WHY); the prompt that triggered it rides the structured LOG, never the bus.
  */
@@ -83,7 +83,7 @@ export interface TerminalEscalatedEvent {
 }
 
 /**
- * Auto-answer audit (SEC-12): a safe-pattern answer was sent. Carries the matched
+ * Auto-answer audit: a safe-pattern answer was sent. Carries the matched
  * operator-pattern INDEX + the count of keystrokes sent — NEVER the keystroke
  * itself (mirrors `TerminalKeystrokeEvent`'s redaction-safe summary).
  */
@@ -93,7 +93,7 @@ export interface TerminalAutoAnsweredEvent {
   /** Index of the matched safe affordance (a hintPattern OR a profile dialog — see `source`) — an id, not the prompt. */
   matchedPatternIndex: number;
   /** WHICH allowlist authorized the keystroke: `"hint"` (operator hintPattern) or `"dialog"` (the
-   *  selected platform profile's safe dialog, v2.26 DIALOG-01) — the audit provenance for a
+   *  selected platform profile's safe dialog) — the audit provenance for a
    *  security-sensitive auto-answer; content-free. Absent on the worker fd3-republish path. */
   source?: "hint" | "dialog";
   /** Count of keystrokes the canned answer sent — a size signal, not the content. */
@@ -102,14 +102,14 @@ export interface TerminalAutoAnsweredEvent {
 }
 
 /**
- * Autonomous-drive promotion (DRIVE-02, Phase 164, v2.24): a drive crossed the
- * inline→detached threshold. The wait tool (Context A) emits it on a qualifying wait
- * (`shouldPromoteDrive(out, mode) === true`); the daemon wake dispatcher (Context B)
+ * Autonomous-drive promotion: a drive crossed the
+ * inline→detached threshold. The wait tool (skills side) emits it on a qualifying wait
+ * (`shouldPromoteDrive(out, mode) === true`); the daemon wake dispatcher
  * consumes it into a closure-local promoted-Set + fires ONE "drive started
  * (backgrounded)" notification (promote-once). Mirrors the core
  * `TerminalEvents["terminal:drive_promoted"]` field one-for-one.
  *
- * CONTENT-FREE BY CONSTRUCTION (I3 / T-164-11): carries sessionId/agentId + a typed
+ * CONTENT-FREE BY CONSTRUCTION: carries sessionId/agentId + a typed
  * `reason` enum (the WHY) + `timestamp` ONLY — there is NO `screen`/`text`/`keys`/
  * `payload` field, so an emit site cannot leak the screen onto the bus even by mistake.
  * The screen digest that drove the wait rides the structured LOG, never the bus.

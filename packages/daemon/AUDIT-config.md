@@ -27,7 +27,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. `configGitManager` and `configWebhook` are operator-configured audit/notification subsystems; `oauthCredentialStore` is a credential-validation hook that mirrors the same field on AgentsApiDeps + AuthApiDeps (multi-extends parity); `auditEnabled` honors `diagnostics.configAudit.enabled` and gates the config.patch JSONL append. `secretStore` is required (Plan 02-04) — the adapter is always wired (file/encrypted/env) so env.set always has a backend.
+**None.** Every optional field corresponds to a feature-gate documented above. `configGitManager` and `configWebhook` are operator-configured audit/notification subsystems; `oauthCredentialStore` is a credential-validation hook that mirrors the same field on AgentsApiDeps + AuthApiDeps (multi-extends parity); `auditEnabled` honors `diagnostics.configAudit.enabled` and gates the config.patch JSONL append. `secretStore` is required — the adapter is always wired (file/encrypted/env) so env.set always has a backend.
 
 ## Summary
 

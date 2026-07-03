@@ -8,7 +8,7 @@
  *
  * Mirrors longmemeval-loader.test.ts: LongMemEval-V2 is the same
  * `haystack_sessions` family as v1, so the loader is a near-copy with a v2
- * module-doc. The eval-integrity control (Pitfall 1): no emitted document's
+ * module-doc. The eval-integrity control: no emitted document's
  * stringified `content` may contain the substring "has_answer" — the fixture
  * carries `has_answer: true` on one turn so a naive `JSON.stringify(session)`
  * would leak it and fail this test pre-strip.

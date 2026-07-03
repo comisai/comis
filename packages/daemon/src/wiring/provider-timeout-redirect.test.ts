@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LAT-03 (option b): `providers.entries.<id>.timeoutMs` is config-echo only —
+ * `providers.entries.<id>.timeoutMs` is config-echo only —
  * its sole consumer is the daemon provider-config echo (provider-handlers.ts),
  * so an operator-set value silently does nothing on completion calls. These
  * fixtures pin the one-time boot redirect WARN that points such operators at
@@ -8,10 +8,7 @@
  * (`agents.<id>.promptTimeout.promptTimeoutMs`), using the
  * served-window-comparator latch + structural-logger shape.
  *
- * RED on pre-patch code: the module does not exist, and `@comis/core` exports
- * no `PROVIDER_TIMEOUT_MS_DEFAULT`.
- *
- * Acknowledged limitation (Critical Finding 5): an operator who explicitly
+ * Acknowledged limitation: an operator who explicitly
  * writes the default value (120000) gets no WARN — post-parse, a zod
  * `.default()` is indistinguishable from an explicit write, and their value
  * matches behavior-neutral reality anyway.
@@ -57,15 +54,15 @@ interface WarnFields {
 }
 
 // ---------------------------------------------------------------------------
-// warnOnProviderTimeoutRedirect — LAT-03
+// warnOnProviderTimeoutRedirect
 // ---------------------------------------------------------------------------
 
-describe("warnOnProviderTimeoutRedirect (LAT-03)", () => {
+describe("warnOnProviderTimeoutRedirect", () => {
   beforeEach(() => {
     resetProviderTimeoutRedirectWarnForTest();
   });
 
-  it("LAT-03-1: non-default timeoutMs 30000 → exactly ONE WARN carrying both numbers, errorKind config, and the real-knob hint", () => {
+  it("non-default timeoutMs 30000 → exactly ONE WARN carrying both numbers, errorKind config, and the real-knob hint", () => {
     const { warnCalls, logger } = createRecordingLogger();
 
     warnOnProviderTimeoutRedirect({
@@ -88,8 +85,8 @@ describe("warnOnProviderTimeoutRedirect (LAT-03)", () => {
     expect(fields.errorKind).toBe("config");
     expect(fields.submodule).toBe("provider-timeout-redirect");
 
-    // I7: hint names the exact dead key, says it is not enforced, and points
-    // at the real knob — never at providers.* (D-11).
+    // The hint names the exact dead key, says it is not enforced, and points
+    // at the real knob — never at providers.*.
     const hint = String(fields.hint);
     expect(hint).toMatch(/providers\.entries\.local\.timeoutMs/);
     expect(hint).toMatch(/not enforced on completion calls/);
@@ -97,7 +94,7 @@ describe("warnOnProviderTimeoutRedirect (LAT-03)", () => {
     expect(hint).toContain("30000");
   });
 
-  it("LAT-03-2: per-provider once-per-boot latch — repeat calls silent; a second non-default provider gets its own single WARN; the test reset clears", () => {
+  it("per-provider once-per-boot latch — repeat calls silent; a second non-default provider gets its own single WARN; the test reset clears", () => {
     const { warnCalls, logger } = createRecordingLogger();
 
     // First call WARNs once for `local`.
@@ -132,7 +129,7 @@ describe("warnOnProviderTimeoutRedirect (LAT-03)", () => {
     expect(warnCalls).toHaveLength(3);
   });
 
-  it("LAT-03-3: default value, absent timeoutMs, and empty/undefined entries → ZERO warns, no throw", () => {
+  it("default value, absent timeoutMs, and empty/undefined entries → ZERO warns, no throw", () => {
     const { warnCalls, logger } = createRecordingLogger();
 
     // Explicit default 120000 → silent (acknowledged limitation: post-parse a
@@ -158,7 +155,7 @@ describe("warnOnProviderTimeoutRedirect (LAT-03)", () => {
     expect(warnCalls).toHaveLength(0);
   });
 
-  it("LAT-03-4: single-sourcing — the ≠-default comparison uses PROVIDER_TIMEOUT_MS_DEFAULT imported from @comis/core", () => {
+  it("single-sourcing — the ≠-default comparison uses PROVIDER_TIMEOUT_MS_DEFAULT imported from @comis/core", () => {
     const { warnCalls, logger } = createRecordingLogger();
 
     // The shared constant IS the schema default — docs, schema, and WARN agree.

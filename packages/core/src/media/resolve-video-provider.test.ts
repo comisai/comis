@@ -5,20 +5,20 @@ import { resolveVideoProvider, isBlockedObjectKey } from "./resolve-video-provid
 /**
  * resolveVideoProvider is a PURE priority resolver (no I/O) for video-generation
  * provider selection. Purity is preserved by injecting a `credsAvailable`
- * predicate (a boolean closure the daemon supplies in Plan 03/04) and an
+ * predicate (a boolean closure the daemon supplies) and an
  * optional `onSkip` callback — the resolver never touches SecretManager,
  * OAuthTokenManager, process.env, or the network.
  *
- * Covers RES-02 (auto follow-main + explicit override + model override), RES-03
- * (honest-unavailable with errorKind + a knob-naming hint naming FAL_KEY), RES-04
- * (fallbackChain consulted only after follow-main, each skip reported), and the
- * NEW SEC-04 prototype-pollution guard (DIVERGENCE 4) the image resolver lacks.
+ * Covers auto follow-main + explicit override + model override,
+ * honest-unavailable with errorKind + a knob-naming hint naming FAL_KEY, the
+ * fallbackChain (consulted only after follow-main, each skip reported), and the
+ * prototype-pollution guard the image resolver lacks.
  */
 describe("resolveVideoProvider", () => {
   const ALL_CREDS = (): boolean => true;
   const NO_CREDS = (): boolean => false;
 
-  it("follows the main provider when provider is auto and creds are available (RES-02)", () => {
+  it("follows the main provider when provider is auto and creds are available", () => {
     const sel = resolveVideoProvider({ provider: "auto" }, "google", ALL_CREDS);
     expect(sel).toEqual({
       ok: true,
@@ -29,7 +29,7 @@ describe("resolveVideoProvider", () => {
     });
   });
 
-  it("follows an xai main to the grok backend when creds are available (RES-02)", () => {
+  it("follows an xai main to the grok backend when creds are available", () => {
     const sel = resolveVideoProvider({ provider: "auto" }, "xai", ALL_CREDS);
     expect(sel.ok).toBe(true);
     if (sel.ok) {
@@ -38,7 +38,7 @@ describe("resolveVideoProvider", () => {
     }
   });
 
-  it("returns honest-unavailable for an openai main, hint naming the knob and FAL_KEY (RES-03)", () => {
+  it("returns honest-unavailable for an openai main, hint naming the knob and FAL_KEY", () => {
     const sel = resolveVideoProvider({ provider: "auto" }, "openai", ALL_CREDS);
     expect(sel.ok).toBe(false);
     if (!sel.ok) {
@@ -48,7 +48,7 @@ describe("resolveVideoProvider", () => {
     }
   });
 
-  it("returns auth_required with a knob+FAL_KEY hint when follow-main creds are absent (RES-03)", () => {
+  it("returns auth_required with a knob+FAL_KEY hint when follow-main creds are absent", () => {
     const sel = resolveVideoProvider({ provider: "auto" }, "google", NO_CREDS);
     expect(sel.ok).toBe(false);
     if (!sel.ok) {
@@ -58,7 +58,7 @@ describe("resolveVideoProvider", () => {
     }
   });
 
-  it("lets a config model override the per-backend default model (RES-02)", () => {
+  it("lets a config model override the per-backend default model", () => {
     const sel = resolveVideoProvider({ provider: "auto", model: "veo-3.1-fast" }, "google", ALL_CREDS);
     expect(sel.ok).toBe(true);
     if (sel.ok) {
@@ -67,7 +67,7 @@ describe("resolveVideoProvider", () => {
   });
 
   it("treats explicit fal as honest-unavailable (fal is not a follow-main capability key)", () => {
-    // fal's real adapter is wired in Plan 04's selector; the pure resolver
+    // fal's real adapter is wired in the daemon's selector; the pure resolver
     // returns unavailable for it, exactly as the image resolver treats explicit fal.
     const sel = resolveVideoProvider({ provider: "fal" }, "google", ALL_CREDS);
     expect(sel.ok).toBe(false);
@@ -76,7 +76,7 @@ describe("resolveVideoProvider", () => {
     }
   });
 
-  it("consults the fallback chain only after follow-main fails, reporting the skip (RES-04)", () => {
+  it("consults the fallback chain only after follow-main fails, reporting the skip", () => {
     const onSkip = vi.fn();
     const sel = resolveVideoProvider(
       { provider: "auto", fallbackChain: ["google"] },
@@ -90,7 +90,7 @@ describe("resolveVideoProvider", () => {
     expect(onSkip.mock.calls[0]?.[0]).toContain("openai");
   });
 
-  it("WR-04: does NOT emit a follow-main skip when the fallback chain is empty (no log noise)", () => {
+  it("does NOT emit a follow-main skip when the fallback chain is empty (no log noise)", () => {
     const onSkip = vi.fn();
     // Empty fallbackChain (the schema default) + a video-incapable main: there
     // is no fallback to try, so the follow-main-skip INFO line is pure noise.
@@ -99,7 +99,7 @@ describe("resolveVideoProvider", () => {
     expect(onSkip).not.toHaveBeenCalled();
   });
 
-  it("WR-04: does NOT emit a follow-main skip on a no-creds main with an empty chain", () => {
+  it("does NOT emit a follow-main skip on a no-creds main with an empty chain", () => {
     const onSkip = vi.fn();
     // google is video-capable (veo) but creds are absent, and the chain is empty.
     const sel = resolveVideoProvider({ provider: "auto", fallbackChain: [] }, "google", NO_CREDS, onSkip);
@@ -107,7 +107,7 @@ describe("resolveVideoProvider", () => {
     expect(onSkip).not.toHaveBeenCalled();
   });
 
-  it("WR-04: STILL emits the follow-main skip when a non-empty chain is consulted (load-bearing)", () => {
+  it("STILL emits the follow-main skip when a non-empty chain is consulted (load-bearing)", () => {
     const onSkip = vi.fn();
     const sel = resolveVideoProvider(
       { provider: "auto", fallbackChain: ["google"] },
@@ -121,7 +121,7 @@ describe("resolveVideoProvider", () => {
     expect(reasons.some((r) => r.includes("follow-main skipped"))).toBe(true);
   });
 
-  it("reports each skipped fallback entry with a reason before succeeding (RES-04)", () => {
+  it("reports each skipped fallback entry with a reason before succeeding", () => {
     const onSkip = vi.fn();
     const sel = resolveVideoProvider(
       { provider: "auto", fallbackChain: ["openai", "google"] },
@@ -134,9 +134,9 @@ describe("resolveVideoProvider", () => {
     expect(reasons.some((r) => r.includes("openai"))).toBe(true);
   });
 
-  // --- SEC-04: the prototype-pollution guard (DIVERGENCE 4) ---
+  // --- The prototype-pollution guard ---
 
-  describe("isBlockedObjectKey (SEC-04)", () => {
+  describe("isBlockedObjectKey", () => {
     it("blocks the three prototype-pollution keys and passes a normal provider id", () => {
       expect(isBlockedObjectKey("__proto__")).toBe(true);
       expect(isBlockedObjectKey("constructor")).toBe(true);
@@ -145,7 +145,7 @@ describe("resolveVideoProvider", () => {
     });
   });
 
-  describe("SEC-04 — provider-id lookups never index a poisoned key", () => {
+  describe("provider-id lookups never index a poisoned key", () => {
     // Poison Object.prototype so that a NAIVE `VIDEO_CAPABILITY[k]` lookup for a
     // blocked key would falsely "find" this entry. A guarded resolver rejects
     // the key BEFORE indexing, so it must NEVER return this planted selection.

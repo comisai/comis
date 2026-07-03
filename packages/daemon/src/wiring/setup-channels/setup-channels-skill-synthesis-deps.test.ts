@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for buildReflectionCronDeps — the closed-graph REFLECTION bundle assembler
- * (v2.31 Reflection, Phase 223 Plan 05, REFLECT-01/02 — the reflect-engine
+ * (the reflect-engine
  * replacement for the deleted buildSkillSynthesisCronDeps). The daemon is the SOLE
  * composition root joining @comis/memory (the mental-model + outcome stores) +
  * @comis/agent (the reflection job); this helper builds the bundle the `__REFLECT__`
  * sentinel injects.
  *
- * What CHANGED from the synthesis deps tests (delete-order step 2): the embedding-
+ * What CHANGED from the synthesis deps tests: the embedding-
  * clustering attach (`attachClusteringEmbeddings`), the sandbox validation adapter,
  * and the approval gate are GONE — those describes are removed. The enumerate-then-
  * resolve source builder is KEPT, now emitting `{ trajectoryId, sessionId, sender,
  * text, signature, trustedOrigin }` (NO embedding). NEW: the daemon-derived
- * `trustedOrigin` (INV-5/D-04) is proven BOTH directions, including deny-on-unknown.
+ * `trustedOrigin` is proven BOTH directions, including deny-on-unknown.
  *
  * @module
  */
@@ -86,7 +86,7 @@ describe("buildReflectionCronDeps", () => {
     expect(trajectories[0].signature).toBe("do X");
     // No clustering embedding on the reflect source (group-by topicKey replaces it).
     expect((trajectories[0] as Record<string, unknown>).embedding).toBeUndefined();
-    // FOLD-04 AXIS 2 (Phase 225): a SKILL source is an OUTCOME trajectory (a finished
+    // Trust axis 2: a SKILL source is an OUTCOME trajectory (a finished
     // session), NOT a per-memory source — the per-memory source-trust axis is always
     // false for kind:skill (the session-origin `trustedOrigin` is the operative belt).
     expect(trajectories[0].sourceTrustExternal).toBe(false);
@@ -117,13 +117,13 @@ describe("buildReflectionCronDeps", () => {
     expect(await bundle.buildSourceTrajectories("skill", "agent-1", "t")).toHaveLength(0);
   });
 
-  // ── REGRESSION (live VPS incident 2026-06-18): trajectory-identity mismatch ──
+  // ── REGRESSION: trajectory-identity mismatch ──
   // The SELECT step resolves each source trajectory's `trajectoryId` against the
   // outcome signal. Outcomes are keyed by the PER-TURN traceId, not the sessionKey —
-  // so the source must emit a traceId that resolves. Pre-fix it emitted the sessionKey
+  // so the source must emit a traceId that resolves. Emitting the sessionKey
   // → resolve()=`unknown` → `selected:0` forever. (Carried over from the synthesis
   // deps suite — the reflection SELECT inherits the identity contract verbatim.)
-  it("emits a trajectoryId the outcome signal can resolve (the §3 identity mismatch — FIXED)", async () => {
+  it("emits a trajectoryId the outcome signal can resolve (the identity mismatch — FIXED)", async () => {
     const SESSION_KEY = "default:openai-api:openai";
     const TURN_TRACE_ID = "942cc2e5-48e9-434e-8d1d-aa55fb1f06d6"; // the per-turn id outcomes are keyed on
     const sessionStore = {
@@ -149,13 +149,13 @@ describe("buildReflectionCronDeps", () => {
     expect(resolved.value.outcome).toBe("success");
   });
 
-  // ── TRUSTED-ORIGIN DERIVATION (INV-5/D-04, M-1) — daemon-side, deny-on-unknown ──
-  // `ResolvedOutcome` does NOT carry sender_trust (Research A2), so the daemon derives
+  // ── TRUSTED-ORIGIN DERIVATION — daemon-side, deny-on-unknown ──
+  // `ResolvedOutcome` does NOT carry sender_trust, so the daemon derives
   // trust here from the per-agent elevatedReply.senderTrustMap + defaultTrustLevel.
-  // The JOB FILTERS on the resulting `trustedOrigin` (reflection-job.ts SELECT, RED both
-  // directions in Plan 04); these tests pin the DERIVATION feeding it. CRITICAL: an
+  // The JOB FILTERS on the resulting `trustedOrigin` (reflection-job.ts SELECT);
+  // these tests pin the DERIVATION feeding it. CRITICAL: an
   // unknown/unmapped sender must be `false` (deny-on-unknown) — never trusted.
-  describe("trustedOrigin derivation (INV-5/D-04 — deny-on-unknown)", () => {
+  describe("trustedOrigin derivation (deny-on-unknown)", () => {
     const ONE_TURN = (over: Record<string, unknown> = {}) => ({
       sessionStore: {
         listDetailed: vi.fn(() => [{ sessionKey: "s1", userId: "u1", tenantId: "t", channelId: "c", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
@@ -186,7 +186,7 @@ describe("buildReflectionCronDeps", () => {
       expect(traj[0].trustedOrigin).toBe(false);
     });
 
-    it("DENY-ON-UNKNOWN: an UNMAPPED sender with the default 'external' tier is NOT trusted (the M-1 guard)", async () => {
+    it("DENY-ON-UNKNOWN: an UNMAPPED sender with the default 'external' tier is NOT trusted", async () => {
       // No senderTrustMap entry for u1, default is the external tier ⇒ deny.
       const container = withAgentTrust({ senderTrustMap: {}, defaultTrustLevel: "external" });
       const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
@@ -223,16 +223,16 @@ describe("buildReflectionCronDeps", () => {
     });
   });
 
-  // ── PROFILE / TOPIC SOURCE BUILDERS (Phase 225 FOLD-04 daemon side, axis 2) ──
+  // ── PROFILE / TOPIC SOURCE BUILDERS (daemon side, axis 2) ──
   // The profile/topic kinds build sources from the agent's high-trust SOURCE MEMORIES
   // (memoryApi.inspect over system+learned), NOT outcome trajectories. The load-bearing
-  // FOLD-04 daemon wiring: each source carries `sourceTrustExternal = (trustLevel ===
+  // daemon wiring: each source carries `sourceTrustExternal = (trustLevel ===
   // "external")` — the OLD user-rep layer-1 firewall (memory-user-representation-job.ts:322
   // `s.trustLevel !== "external"`). A planted external memory rides through with
-  // sourceTrustExternal:true and Plan 01's engine SELECT excludes it EVEN on a trusted
+  // sourceTrustExternal:true and the engine SELECT excludes it EVEN on a trusted
   // session (the two anti-poison axes compose). Profile groups by USER (the doc's topicKey
-  // === userId, which Plan 02's <user_profile> read selects on); topic groups like skill.
-  describe("profile/topic source builders (FOLD-04 axis 2 — the per-memory source-trust belt)", () => {
+  // === userId, which the <user_profile> read selects on); topic groups like skill.
+  describe("profile/topic source builders (axis 2 — the per-memory source-trust belt)", () => {
     function withMemRows(rows: Array<Record<string, unknown>>) {
       // The profile/topic builders read source memories via the injected memoryApi.inspect.
       return makeInput({ memoryApi: memoryApiReturning(rows) });

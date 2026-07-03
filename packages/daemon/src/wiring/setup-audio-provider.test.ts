@@ -2,14 +2,14 @@
 /**
  * Tests for the keyless-first audio-provider selector (setup-audio-provider.ts).
  *
- * The selector threads the Plan-01 pure resolvers (resolveTranscriptionProvider /
+ * The selector threads the pure resolvers (resolveTranscriptionProvider /
  * resolveTtsProvider) + the daemon-supplied `audioKeyAvailable` closure (a lookup
  * over SecretManager) + the `localEngineAvailable`/`edgeAvailable` seams, and
  * returns the discriminated SttSelection / TtsSelection. The daemon (setup-media.ts)
  * consumes `sel.ok` BEFORE constructing any STT/TTS adapter — so when a Codex/
  * OAuth-only (or any keyless) main has no audio key, `resolveStt()` returns
- * {ok:false} and the empty-bearer createOpenAISttAdapter is NEVER reached (no 401,
- * STEER-01). Uses a mock SecretManager; never the network.
+ * {ok:false} and the empty-bearer createOpenAISttAdapter is NEVER reached (no
+ * 401). Uses a mock SecretManager; never the network.
  *
  * @module
  */
@@ -48,7 +48,7 @@ function ttsConfig(provider: string, fallbackProviders: string[] = []) {
 }
 
 describe("createAudioProviderSelector — resolveStt", () => {
-  it("steers a Codex-only agent (main openai-codex, no OPENAI_API_KEY, local off) to honest-unavailable, never a keyed openai selection (STEER-01/02)", () => {
+  it("steers a Codex-only agent (main openai-codex, no OPENAI_API_KEY, local off) to honest-unavailable, never a keyed openai selection", () => {
     // The headline: today's setup-media path constructs
     // createOpenAISttAdapter({ apiKey: secretManager.get("OPENAI_API_KEY") ?? "" })
     // (empty bearer → 401). The resolver must return {ok:false} so the daemon
@@ -74,13 +74,13 @@ describe("createAudioProviderSelector — resolveStt", () => {
       expect(sel.hint).toMatch(/Codex OAuth login cannot be used for audio/i);
       expect(sel.hint).toMatch(/GROQ_API_KEY|OPENAI_API_KEY/);
     }
-    // STEER-01 defensive: the audioKeyAvailable closure is NEVER called with
+    // Defensive: the audioKeyAvailable closure is NEVER called with
     // "openai" on the codex path — MAIN_PROVIDER_AUDIO["openai-codex"] is
     // undefined, so the resolver short-circuits before any key lookup.
     expect(audioKeyAvailable).not.toHaveBeenCalledWith("openai");
   });
 
-  it("follows the main provider's audio key when it genuinely exists (CRED-01, source follow-main-key)", () => {
+  it("follows the main provider's audio key when it genuinely exists (source follow-main-key)", () => {
     const selector = createAudioProviderSelector({
       transcriptionConfig: sttConfig("auto"),
       ttsConfig: ttsConfig("edge"),
@@ -99,7 +99,7 @@ describe("createAudioProviderSelector — resolveStt", () => {
     });
   });
 
-  it("resolves an explicit keyed provider with a present key as source explicit (success-criterion #4)", () => {
+  it("resolves an explicit keyed provider with a present key as source explicit", () => {
     const selector = createAudioProviderSelector({
       transcriptionConfig: sttConfig("openai"),
       ttsConfig: ttsConfig("edge"),
@@ -132,7 +132,7 @@ describe("createAudioProviderSelector — resolveStt", () => {
   it("builds the AUDIO_ENV_KEY-backed predicate with NO codex branch (the default closure reads SecretManager)", () => {
     // When audioKeyAvailable is NOT injected, the selector builds its own closure
     // over secretManager — proving a follow-main openai key reuse works end-to-end
-    // through the default predicate (CRED-01), and that it is the SecretManager
+    // through the default predicate, and that it is the SecretManager
     // lookup (not a codex/OAuth gate).
     const selector = createAudioProviderSelector({
       transcriptionConfig: sttConfig("auto"),
@@ -177,7 +177,7 @@ describe("createAudioProviderSelector — resolveStt", () => {
 });
 
 describe("createAudioProviderSelector — resolveTts", () => {
-  it("resolves a Codex-only (or any) auto TTS to the keyless edge adapter (RES-02)", () => {
+  it("resolves a Codex-only (or any) auto TTS to the keyless edge adapter", () => {
     const selector = createAudioProviderSelector({
       transcriptionConfig: sttConfig("auto"),
       ttsConfig: ttsConfig("auto"),
@@ -221,8 +221,8 @@ describe("createAudioProviderSelector — resolveTts", () => {
 });
 
 // =============================================================================
-// IN-02 (Phase 193 code review): the default audioKeyAvailable closure must
-// surface an AUDIO_ENV_KEY map-coverage gap.
+// The default audioKeyAvailable closure must surface an AUDIO_ENV_KEY
+// map-coverage gap.
 //
 // When a provider the resolver actually queries has no AUDIO_ENV_KEY entry
 // (e.g. a future provider added to the config enum / MAIN_PROVIDER_AUDIO but
@@ -231,11 +231,10 @@ describe("createAudioProviderSelector — resolveTts", () => {
 // (honest-unavailable, the SAFE direction). That is correct-by-design, but it
 // silently swallows the map gap forever. A once-per-call DEBUG breadcrumb (no
 // secret — provider id + step only) shortens the next "why is voice
-// unavailable for <provider>" diagnosis, per the program's built-but-not-wired
-// history. The fail-closed behavior MUST be preserved.
+// unavailable for <provider>" diagnosis. The fail-closed behavior MUST be preserved.
 // =============================================================================
 
-describe("createAudioProviderSelector — default closure surfaces an AUDIO_ENV_KEY map gap (IN-02)", () => {
+describe("createAudioProviderSelector — default closure surfaces an AUDIO_ENV_KEY map gap", () => {
   it("emits a DEBUG breadcrumb (provider + step only, no secret) when a queried provider has no AUDIO_ENV_KEY mapping, and stays fail-closed", () => {
     const logger = createMockLogger();
     // "mystery" is not in AUDIO_ENV_KEY and not in VOICE_KEYLESS, so the resolver
@@ -290,16 +289,15 @@ describe("createAudioProviderSelector — default closure surfaces an AUDIO_ENV_
 });
 
 // =============================================================================
-// Phase 194 (LOCAL-02 / LOCAL-03): buildAudioResolverDeps runs the one-shot
-// detectLocalSttEngine boot probe and threads its captured boolean as the
-// SYNCHRONOUS localEngineAvailable predicate — replacing the Phase-193
-// hardcoded () => false. The probe runs ONCE at boot (mirror detectFfmpeg),
-// logs availability exactly once at INFO (step: stt_local_probe), and the
-// resolver predicate is a captured boolean (Pitfall 4: no per-resolution I/O,
-// no boot-time model download). When available → an auto/local STT with no main
-// key resolves to the `local` rung; when unavailable → honest-degrade (the
-// Phase-193 fallthrough, no regression). A reachable local.baseUrl makes the
-// probe true WITHOUT the in-process engine (mode "baseUrl").
+// buildAudioResolverDeps runs the one-shot detectLocalSttEngine boot probe and
+// threads its captured boolean as the SYNCHRONOUS localEngineAvailable predicate
+// — replacing a hardcoded () => false. The probe runs ONCE at boot (mirror
+// detectFfmpeg), logs availability exactly once at INFO (step: stt_local_probe),
+// and the resolver predicate is a captured boolean (Pitfall 4: no per-resolution
+// I/O, no boot-time model download). When available → an auto/local STT with no
+// main key resolves to the `local` rung; when unavailable → honest-degrade (the
+// keyless-unavailable fallthrough, no regression). A reachable local.baseUrl
+// makes the probe true WITHOUT the in-process engine (mode "baseUrl").
 // =============================================================================
 
 /**
@@ -336,8 +334,8 @@ function probeContainer(opts: {
   } as unknown as AppContainer;
 }
 
-describe("buildAudioResolverDeps — the real localEngineAvailable boot probe (Phase 194)", () => {
-  it("runs the in-process probe and resolves an auto/no-key STT to the local rung when the engine is available (LOCAL-02)", async () => {
+describe("buildAudioResolverDeps — the real localEngineAvailable boot probe", () => {
+  it("runs the in-process probe and resolves an auto/no-key STT to the local rung when the engine is available", async () => {
     const detectEngine = vi.fn(
       async () => ({ available: true, mode: "in-process" }) as const,
     ) as unknown as typeof detectLocalSttEngine;
@@ -351,12 +349,12 @@ describe("buildAudioResolverDeps — the real localEngineAvailable boot probe (P
 
     const sel = selector.resolveStt();
     // Engine available → keyless-local rung wins even though the codex main has
-    // no audio key (the Phase-193 fallthrough is now activated).
+    // no audio key (the keyless-local fallthrough is now activated).
     expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true, source: "keyless-local" });
     expect(detectEngine).toHaveBeenCalledTimes(1);
   });
 
-  it("honest-degrades an auto/no-key STT to unavailable when the probe says unavailable (no Phase-193 regression)", async () => {
+  it("honest-degrades an auto/no-key STT to unavailable when the probe says unavailable (no regression)", async () => {
     const detectEngine = vi.fn(
       async () => ({ available: false, mode: "none" }) as const,
     ) as unknown as typeof detectLocalSttEngine;
@@ -373,7 +371,7 @@ describe("buildAudioResolverDeps — the real localEngineAvailable boot probe (P
     if (!sel.ok) expect(sel.errorKind).toBe("no_keyless_engine");
   });
 
-  it("makes localEngineAvailable true via a reachable local.baseUrl WITHOUT the in-process engine (LOCAL-03)", async () => {
+  it("makes localEngineAvailable true via a reachable local.baseUrl WITHOUT the in-process engine", async () => {
     const baseUrl = "http://127.0.0.1:9000/v1";
     const detectEngine = vi.fn(
       async () => ({ available: true, mode: "baseUrl" }) as const,
@@ -388,13 +386,13 @@ describe("buildAudioResolverDeps — the real localEngineAvailable boot probe (P
 
     const sel = selector.resolveStt();
     expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true });
-    // The probe was consulted with the configured baseUrl (LOCAL-03 seam).
+    // The probe was consulted with the configured baseUrl.
     expect((detectEngine as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toMatchObject({
       baseUrl,
     });
   });
 
-  it("logs availability exactly once at INFO with step stt_local_probe and the boolean (LOCAL-02)", async () => {
+  it("logs availability exactly once at INFO with step stt_local_probe and the boolean", async () => {
     const logger = createMockLogger();
     const detectEngine = vi.fn(
       async () => ({ available: true, mode: "in-process" }) as const,
@@ -437,7 +435,7 @@ describe("buildAudioResolverDeps — the real localEngineAvailable boot probe (P
   // media.transcription.local.baseUrl with validateLocalServerUrl BEFORE
   // threading it into the probe. A non-loopback baseUrl is rejected at boot —
   // the probe receives baseUrl:undefined (not a reachable server) and a
-  // host-only WARN/DEBUG (step) is logged WITHOUT the URL (T-194-11).
+  // host-only WARN/DEBUG (step) is logged WITHOUT the URL.
   // ===========================================================================
 
   it("does NOT thread a cloud-metadata baseUrl into the probe — it rejects it at boot and passes baseUrl:undefined (SEC-02)", async () => {
@@ -492,7 +490,7 @@ describe("buildAudioResolverDeps — the real localEngineAvailable boot probe (P
     expect(probeArg).toMatchObject({ baseUrl: goodUrl });
   });
 
-  it("never logs the rejected baseUrl — the boot rejection log is host-only / step-only (T-194-11)", async () => {
+  it("never logs the rejected baseUrl — the boot rejection log is host-only / step-only", async () => {
     const badUrl = "http://169.254.169.254/latest/meta-data?token=supersecretvalue1234567890";
     const logger = createMockLogger();
     const detectEngine = vi.fn(

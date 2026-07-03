@@ -2,8 +2,8 @@
 /**
  * Channel health check unit tests.
  *
- * Tests channel-health check against the resolution-driven contract
- * (2026-06-12 doctor split-brain fix): enabled channels pass when their
+ * Tests channel-health check against the resolution-driven contract:
+ * enabled channels pass when their
  * `${VAR}` credential references resolved (env, ~/.comis/.env, or the
  * encrypted secret store), fail naming the exact unresolved reference,
  * and the no-config skip names the resolution failure instead of

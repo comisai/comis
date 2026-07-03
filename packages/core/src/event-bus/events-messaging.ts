@@ -90,11 +90,11 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** Sub-agent progress (COORD-03 — the ~30s read-only progress fork).
+  /** Sub-agent progress (the ~30s read-only progress fork).
    *  A long-running child surfaces its advance every ~30s WITHOUT completing,
    *  via a read-only state summary (coordinator-progress-fork.ts) — NOT a
    *  re-execution: the fork never calls a tool, spawns, or re-runs the child.
-   *  §2.7 CONTENT-FREE (T-218-14): the payload carries ONLY a 3-5 word status
+   *  §2.7 CONTENT-FREE: the payload carries ONLY a 3-5 word status
    *  `progressLine` (e.g. "running, step 4"), the elapsed wall-clock, the steps
    *  executed, and identifiers — NEVER the child's output, message body, or any
    *  tool result. The `progressLine` is a status descriptor, not child content. */
@@ -240,10 +240,10 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** RETR-02 (Phase 173): the tiered margin arbiter allocated the discretionary
+  /** The tiered margin arbiter allocated the discretionary
    *  history pool across tiers by fused rank (relevance-first classes only —
    *  frontier/mid never run the arbiter, so this event never fires for them).
-   *  CONTENT-FREE (AGENTS.md §2.2/§2.7; T-173-03-04): per-tier kept COUNTS
+   *  CONTENT-FREE (AGENTS.md §2.2/§2.7): per-tier kept COUNTS
    *  (`perTierKept` — e.g. { history, ltm, kg }), the discretionary pool TOKENS
    *  (offered AND consumed) + the floor-token weight, a `relevanceFirst` BOOLEAN,
    *  the kept LTM/KG ids + a timestamp ONLY. NEVER message, memory, or query content
@@ -251,13 +251,13 @@ export interface MessagingEvents {
    *  (no new ambient clock). A counts-only internal-health signal (same class as
    *  context:compaction_routed) — NOT a turn-level trajectory step.
    *
-   *  WR-03/WR-02 (Phase 173-05): the payload now distinguishes the pool OFFERED
+   *  The payload distinguishes the pool OFFERED
    *  (`discretionaryPoolTokens`) from the pool CONSUMED (`poolTokensUsed`) and carries
    *  the unconditional `floorTokens` weight, so an operator diagnosing a small-model
    *  context-exhaustion can see whether the S4-pinned floors dwarfed the pool. It also
    *  carries the `keptLtmIds`/`keptKgIds` the arbiter computes — the cross-tier winners
    *  an operator needs to reconstruct WHICH candidates won (the §2.7 reconstructable-from-
-   *  events bar; empty on the C2 history-only assembly path until Phase 174 flows LTM/KG). */
+   *  events bar; empty on the history-only assembly path, where LTM/KG do not flow). */
   "context:arbitrated": {
     agentId: string;
     sessionKey: string;
@@ -265,15 +265,15 @@ export interface MessagingEvents {
     perTierKept: Record<string, number>;
     /** The discretionary pool OFFERED (budget.availableHistoryTokens) to the arbiter. */
     discretionaryPoolTokens: number;
-    /** WR-03: the discretionary pool CONSUMED (non-floor tokens actually allocated) — always
+    /** The discretionary pool CONSUMED (non-floor tokens actually allocated) — always
      *  ≤ discretionaryPoolTokens. Offered-vs-consumed is the small-model-exhaustion signal. */
     poolTokensUsed: number;
-    /** WR-03: the UNCONDITIONAL floor weight (T0 fresh-tail + S4-pinned, step-atomic) that
+    /** The UNCONDITIONAL floor weight (T0 fresh-tail + S4-pinned, step-atomic) that
      *  rides ON TOP of the pool — surfaced so blown-past-pool pinned floors are visible. */
     floorTokens: number;
-    /** WR-02: the kept LTM candidate ids (content-free memory keys; empty pre-Phase-174). */
+    /** The kept LTM candidate ids (content-free memory keys; empty on the history-only path). */
     keptLtmIds: string[];
-    /** WR-02: the kept KG candidate ids (content-free memory keys; empty pre-Phase-174). */
+    /** The kept KG candidate ids (content-free memory keys; empty on the history-only path). */
     keptKgIds: string[];
     /** Whether the relevance-first arbiter path ran (always true when this fires). */
     relevanceFirst: boolean;
@@ -303,7 +303,7 @@ export interface MessagingEvents {
   };
 
   /** An in-session expansion tool (ctx_search/ctx_inspect/ctx_expand) recovered
-   *  compressed detail (O1). Identifiers + the tool + a recovered/hit count +
+   *  compressed detail. Identifiers + the tool + a recovered/hit count +
    *  durationMs ONLY — NEVER message or summary content (the lossless store;
    *  AGENTS.md §2.2/§2.7). Distinct from context:reread (the re-read-loop
    *  detector) — this is a deliberate zoom into the DAG. */
@@ -319,32 +319,32 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** LCD entered a DEGRADED path (R3 + R1, Phase 132). A robustness/integrity
+  /** LCD entered a DEGRADED path. A robustness/integrity
    *  signal — NOT a normal completion. Mirrors `context:dag_compacted`'s
    *  identifiers + durationMs, but carries a CLOSED-union `reason` instead of
    *  counts. Payload is identifiers + a reason + durationMs ONLY — NEVER message
    *  or summary content (the lossless store; AGENTS.md §2.2/§2.8).
    *  - `fail_closed_rollover`: an ambiguous/malformed scope refused the ingest
-   *    write (132-04, R3) rather than silently reattaching to a prior conversation.
+   *    write rather than silently reattaching to a prior conversation.
    *  - `serialized_wait`: an ingest/compaction write waited on the per-conversation
-   *    single-flight serializer (132-04, R3) — reserved for the bounded-wait signal.
+   *    single-flight serializer — reserved for the bounded-wait signal.
    *  - `breaker_open` / `spend_cap`: the summarizer circuit breaker opened or a
-   *    per-tenant summarizer spend ceiling was hit (132-05, R1) — reserved here so
+   *    per-tenant summarizer spend ceiling was hit — reserved here so
    *    the union is closed from the start (no later open-string widening).
-   *  - `live_store_divergence`: the WR-01 afterTurn ingest skipped because the
+   *  - `live_store_divergence`: the afterTurn ingest skipped because the
    *    live message array is SHORTER than the LCD store high-water mark
-   *    (`lcd-ingest.ts` divergence branch) — Phase 160 I1.
+   *    (`lcd-ingest.ts` divergence branch).
    *  - `leaf_window_divergence`: a leaf compaction pass skipped because the chunk
    *    message ids did not resolve to a `context_items` ordinal window
-   *    (`lcd-compaction-trigger.ts`) — Phase 160 I1.
+   *    (`lcd-compaction-trigger.ts`).
    *  - `condense_window_divergence`: a condense pass skipped on an inverted
-   *    ordinal window (`lcd-condense-trigger.ts`) — Phase 160 I1. */
+   *    ordinal window (`lcd-condense-trigger.ts`). */
   "context:dag_degraded": {
     conversationId: string;
     agentId: string;
     sessionKey: string;
     /** Closed union — never an open string (AGENTS.md §2.8). The three
-     *  `*_divergence` members (Phase 160 I1) widen the union with closed
+     *  `*_divergence` members are closed
      *  literals (the sanctioned §2.8 extension) so the LCD-divergence WARN sites
      *  emit this event for `health_signal` persistence. */
     reason:
@@ -355,7 +355,7 @@ export interface MessagingEvents {
       | "live_store_divergence"
       | "leaf_window_divergence"
       | "condense_window_divergence"
-      /** Phase 164 (RR6): a fresh/disjoint live transcript was detected (JSONL
+      /** A fresh/disjoint live transcript was detected (JSONL
        *  re-based) and the ingest continued appending at the store's current max
        *  seq — NOT a degradation, a correct continuation. Distinct from
        *  `live_store_divergence` (the genuine-shrink fail-safe) so operators can
@@ -365,8 +365,8 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** Per-LLM-call context budget equation from the LCD pre-flight fit check
-   *  (W2 obs-llm-troubleshooting). Emitted once per runPreflightFitCheck —
+  /** Per-LLM-call context budget equation from the LCD pre-flight fit check.
+   *  Emitted once per runPreflightFitCheck —
    *  verdict "fits" | "downshifted" (thinking governor fired) | "exhausted"
    *  (ContextExhaustionError thrown right after). Bridged to the trajectory as
    *  `context.budget` so obs.explain can reconstruct WHY a context_exhausted
@@ -380,9 +380,9 @@ export interface MessagingEvents {
     /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
     rawContextWindowTokens: number;
     /** What clamped the window (closed union — never an open string). The cap
-     *  members are contextEngine.budget.* knob names; "served" (KNOB-02) means
+     *  members are contextEngine.budget.* knob names; "served" means
      *  the Ollama-served num_ctx bound the window (knobs: OLLAMA_CONTEXT_LENGTH
-     *  env / Modelfile PARAMETER num_ctx); "capabilityClass" (WR-01) means the
+     *  env / Modelfile PARAMETER num_ctx); "capabilityClass" means the
      *  executor-side class cap from the operator's
      *  providers.entries.<id>.capabilities.capabilityClass pin bound — the pin
      *  is the lever (the budget knobs are inert on that branch). */
@@ -403,16 +403,15 @@ export interface MessagingEvents {
     verdict: "fits" | "downshifted" | "exhausted";
   };
 
-  /** A non-Latin search returned zero hits on a CLEANLY-executed lane (OBS-01,
-   *  Phase 180). The milestone's marquee failure mode — "Hebrew finds nothing" —
-   *  made fleet-visible instead of DEBUG-only (the prior `cjkZeroHit` DEBUG line
-   *  in ctx-search-tool.ts). Bridged to the trajectory as
+  /** A non-Latin search returned zero hits on a CLEANLY-executed lane.
+   *  The marquee non-Latin failure mode — "Hebrew finds nothing" —
+   *  made fleet-visible instead of DEBUG-only. Bridged to the trajectory as
    *  `context.script_zero_hit` (the explain timeline) AND persisted as a
-   *  `health_signal` row (the fleet path); both paths are required (OBS-01).
+   *  `health_signal` row (the fleet path); both paths are required.
    *  Payload is a closed `ScriptClass` enum + a closed lane union + identifiers
-   *  ONLY — NEVER the query text or any tokens (I8; §2.7 the lossless store).
+   *  ONLY — NEVER the query text or any tokens (§2.7; the lossless store).
    *  Fires only when the lane executed cleanly: a `safeAll`-swallowed FTS5 syntax
-   *  error is NOT a zero-hit and must not emit (signal purity, ROADMAP criterion 4). */
+   *  error is NOT a zero-hit and must not emit (signal purity). */
   "context:script_zero_hit": {
     conversationId: string;
     agentId: string;
@@ -424,13 +423,13 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** A summary's dominant script diverged from its source chunk's (OBS-01, Phase
-   *  180): a non-Latin source produced a Latin summary. VISIBILITY ONLY — never
-   *  gated (I8; a mixed code-heavy chunk legitimately skews Latin via the 0.3
+  /** A summary's dominant script diverged from its source chunk's:
+   *  a non-Latin source produced a Latin summary. VISIBILITY ONLY — never
+   *  gated (a mixed code-heavy chunk legitimately skews Latin via the 0.3
    *  dominance threshold in `dominantScript`, so this is a count an operator
    *  reviews, not an error to block). Bridged to the trajectory as
    *  `context.summary_language_mismatch` AND persisted as a `health_signal` row;
-   *  both paths required (OBS-01). Payload is closed `ScriptClass` enums + a depth
+   *  both paths required. Payload is closed `ScriptClass` enums + a depth
    *  count + identifiers ONLY — NEVER the summary or source body (§2.7). */
   "context:summary_language_mismatch": {
     agentId: string;
@@ -527,22 +526,22 @@ export interface MessagingEvents {
   };
 
   /** Execution aborted by user /stop command or programmatic abort.
-   *  SPEND-02 (Phase 177-01): `spend_exceeded` is the dollars kill-switch abort —
-   *  ADDITIVE, distinct from the token-budget `budget_exceeded` so the
+   *  `spend_exceeded` is the dollars kill-switch abort —
+   *  distinct from the token-budget `budget_exceeded` so the
    *  dollars-vs-tokens cause stays clear in the terminal. The unpriceable nuance
    *  rides the distinct `observability:spend_unpriceable` event, NOT a second
-   *  reason member (RESEARCH A3).
-   *  BREAK-02 (Phase 217-02): `denial_breaker` is the denial-limit breaker abort —
+   *  reason member.
+   *  `denial_breaker` is the denial-limit breaker abort —
    *  N consecutive floor-blocks tripped the per-rootRunId breaker, so the run
    *  aborts + escalates instead of retry-looping (the "never loop" guarantee).
-   *  ADDITIVE; distinct from `circuit_breaker`, which is the TOOL-FAILURE breaker
+   *  Distinct from `circuit_breaker`, which is the TOOL-FAILURE breaker
    *  (provider cascade) — this is the CAPABILITY-DENIAL breaker. */
   "execution:aborted": {
     sessionKey: SessionKey;
     reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded" | "denial_breaker";
     agentId: string;
     timestamp: number;
-    /** OBS-3: on a per-ROOT autonomy.budget abort, the exact tripped limb + its
+    /** On a per-ROOT autonomy.budget abort, the exact tripped limb + its
      *  numbers in their own unit (token/wall-clock breaches carry tokens/ms, NOT
      *  dollars). Content-free (closed-enum limb + unit strings + 2 numbers). Lets
      *  `explain` name the exact knob ("token limb: 30640/60000") instead of an
@@ -562,8 +561,8 @@ export interface MessagingEvents {
   };
 
   /** Prompt execution timed out (wall-clock timeout exceeded).
-   *  LAT-04 (177-03): all post-v2.20 fields are optional — old rows and
-   *  legacy emitters stay valid. Content-free by construction: numbers,
+   *  Every field beyond the first four is optional — emitters and stored
+   *  rows that omit them stay valid. Content-free by construction: numbers,
    *  closed enums, and the pre-rendered config-KEY string only. */
   "execution:prompt_timeout": {
     agentId: string;
@@ -572,9 +571,9 @@ export interface MessagingEvents {
     timestamp: number;
     /** Elapsed wall-clock ms at kill (clock.now() - retryStartMs). */
     durationMs?: number;
-    /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path/pre-LAT-02 rows). */
+    /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path rows). */
     limit?: "stall" | "makespan";
-    /** Binding resolution level (LAT-01). */
+    /** Binding resolution level. */
     source?: "operation_explicit" | "operation_default" | "agent_config" | "builtin_default" | "graph_constant";
     /** Pre-rendered config-key string (content-free — knob NAME + ids only, never values/bodies). */
     bindingKnob?: string;
@@ -609,16 +608,16 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** GBNF-02 self-heal fired: the provider rejected the tool JSON Schema at
+  /** Tool-schema self-heal fired: the provider rejected the tool JSON Schema at
    *  grammar-compile/unmarshal time (llama.cpp "JSON schema conversion
    *  failed", Ollama Go-side tools unmarshal). The runner stripped
    *  pattern/format from the named session-held tool schemas and retried
    *  exactly once per session ('retried' false when nothing was strippable).
-   *  Payload is content-free: tool + keyword NAMES only, never schema bodies
-   *  (I7). 'succeeded' reports whether the retry produced a non-empty
-   *  response. 'reason' discriminates the branch (175-REVIEW WR-05 — the two
-   *  terminal branches were otherwise byte-identical and the obs verdict
-   *  misdirected the operator): "stripped" = strip applied + one retry fired;
+   *  Payload is content-free: tool + keyword NAMES only, never schema bodies.
+   *  'succeeded' reports whether the retry produced a non-empty
+   *  response. 'reason' discriminates the branch (the two
+   *  terminal branches are otherwise byte-identical and the obs verdict
+   *  would misdirect the operator): "stripped" = strip applied + one retry fired;
    *  "nothing_to_strip" = no pattern/format anywhere, futile retry skipped;
    *  "gate_closed" = the session's single strip-retry was already consumed
    *  earlier (a repair WAS attempted this session). */

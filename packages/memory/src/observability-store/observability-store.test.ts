@@ -281,7 +281,7 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(store.aggregateSessionsInWindow(0)).toHaveLength(0);
   });
 
-  it("parses source from details and exposes it on the rollup (the field 159-02 filters on)", () => {
+  it("parses source from details and exposes it on the rollup (the field synthetic-source filtering reads)", () => {
     store.insertDiagnostic({
       timestamp: 1_000,
       category: "session_summary",
@@ -323,11 +323,11 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(byKey["legacy-1"]!.endReason).toBe("unknown");
   });
 
-  it("does not abort the scan on a non-object `details` (WR-01: \"null\"/primitive JSON degrade-on-error)", () => {
+  it("does not abort the scan on a non-object `details` (\"null\"/primitive JSON degrade-on-error)", () => {
     // `details = "null"` is VALID JSON that parses to JS `null`; an unguarded
     // `d.degraded` then throws TypeError and aborts the WHOLE fleet aggregate —
-    // the exact failure the file's "a corrupt details never aborts the scan
-    // (T-159-01)" contract forbids. Seed the toxic shapes alongside valid rows.
+    // the exact failure the file's "a corrupt details never aborts the scan"
+    // contract forbids. Seed the toxic shapes alongside valid rows.
     store.insertDiagnostic({
       timestamp: 1_000,
       category: "session_summary",
@@ -379,7 +379,7 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(v1.costUsd).toBe(0.5);
   });
 
-  it("does not let a malformed nested toolStats/topErrorKinds value reach the rollup (WR-02)", () => {
+  it("does not let a malformed nested toolStats/topErrorKinds value reach the rollup", () => {
     // toolStats carries a number-instead-of-{ok,failed}; topErrorKinds carries a
     // string-instead-of-number. The blind `as` cast would pass these straight
     // through; they must instead be validated/dropped so the rollup exposes only
@@ -422,7 +422,7 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
       expect(Number.isFinite(r.topErrorKinds.timeout)).toBe(true);
     }
 
-    // End-to-end: feeding the rollup into the A2 reducer must yield finite numbers
+    // End-to-end: feeding the rollup into the fleet reducer must yield finite numbers
     // (this is the corruption the reducer would otherwise propagate).
     const fleet = reduceFleetWindow(rollups, { excludeSynthetic: true });
     for (const s of Object.values(fleet.toolStats)) {
@@ -434,7 +434,7 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     }
   });
 
-  it("keeps a session whose only in-window row is not the global-latest (WR-04: windowed MAX(id) subquery)", () => {
+  it("keeps a session whose only in-window row is not the global-latest (windowed MAX(id) subquery)", () => {
     // Session "D" has an in-window row (higher timestamp) AND a later-INSERTED
     // (higher id) but BACKDATED row whose timestamp falls OUTSIDE the window. An
     // unwindowed MAX(id) subquery picks the backdated row, the outer window
@@ -482,9 +482,9 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PERSIST-02 (observability-excellence WS5) — the obs_token_usage cost-correctness
-// columns + the dead cache_retention DROP + the obs_audit_events DDL, plus the
-// load-bearing insertTokenUsageStmt write-path round-trip.
+// The obs_token_usage cost-correctness columns + the dead cache_retention DROP
+// + the obs_audit_events DDL, plus the load-bearing insertTokenUsageStmt
+// write-path round-trip.
 //
 // These prove the schema change (ensureObsTokenColumns + the table-rebuild) AND
 // the FIXED prepared statement move together: without the statement edit, Test 6's
@@ -492,7 +492,7 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
 // silently never persists the 5 new columns.
 // ---------------------------------------------------------------------------
 
-/** A minimal valid TokenUsageRow with the new PERSIST-02 fields populated. */
+/** A minimal valid TokenUsageRow with the cost-correctness fields populated. */
 function makeTokenRow(overrides: Partial<TokenUsageRow> = {}): TokenUsageRow {
   return {
     timestamp: 1_700_000_000_000,
@@ -518,7 +518,7 @@ function makeTokenRow(overrides: Partial<TokenUsageRow> = {}): TokenUsageRow {
   };
 }
 
-describe("schema — obs_token_usage PERSIST-02 columns + cache_retention DROP", () => {
+describe("schema — obs_token_usage cost-correctness columns + cache_retention DROP", () => {
   let db: Database.Database;
 
   beforeEach(() => {
@@ -620,7 +620,7 @@ describe("schema — obs_token_usage PERSIST-02 columns + cache_retention DROP",
   });
 });
 
-describe("ObservabilityStore — insertTokenUsage write-path round-trip (PERSIST-02/03)", () => {
+describe("ObservabilityStore — insertTokenUsage write-path round-trip", () => {
   let db: Database.Database;
   let store: ObservabilityStore;
 
@@ -668,19 +668,19 @@ describe("ObservabilityStore — insertTokenUsage write-path round-trip (PERSIST
 });
 
 // ---------------------------------------------------------------------------
-// COST-01 (Phase 179 Plan 01) — the `tool_tag` column: the IDENTICAL 6th
-// additive guarded-ALTER via ensureObsTokenColumns (176 added 5), + the
-// insertTokenUsageStmt lockstep persist of the JSON-stringified DISTINCT tool
-// array. The tag is content-free (tool NAMES/ids only — never args/output);
-// per-tool $ attribution itself is best-effort/labeled and lives on the EMIT
-// (Task 2), not in the persisted shape.
+// The `tool_tag` column: the IDENTICAL 6th additive guarded-ALTER via
+// ensureObsTokenColumns (the same migration added the 5 cost-correctness
+// columns), + the insertTokenUsageStmt lockstep persist of the JSON-stringified
+// DISTINCT tool array. The tag is content-free (tool NAMES/ids only — never
+// args/output); per-tool $ attribution itself is best-effort/labeled and lives
+// on the emit, not in the persisted shape.
 //
-// RED-first: Test 7 (column presence) + Test 8 (real round-trip stores+reads
+// Test 7 (column presence) + Test 8 (real round-trip stores+reads
 // ["bash","read"]) + Test 9 (an existing 5-column DB gains tool_tag with its
 // pre-existing rows read back tool_tag NULL — survive-verbatim) all fail on
 // pre-patch because the column does not exist / insertTokenUsage drops toolTag.
 // ---------------------------------------------------------------------------
-describe("schema — obs_token_usage tool_tag column (COST-01, the 6th additive ALTER)", () => {
+describe("schema — obs_token_usage tool_tag column (the 6th additive ALTER)", () => {
   let db: Database.Database;
 
   beforeEach(() => {
@@ -697,9 +697,9 @@ describe("schema — obs_token_usage tool_tag column (COST-01, the 6th additive 
     expect(cols.has("tool_tag")).toBe(true);
   });
 
-  it("Test 9: a pre-176 DB (5 cost-correctness cols, no tool_tag) gains it; pre-existing rows read tool_tag NULL (verbatim survival)", () => {
-    // Simulate an already-176-migrated DB that predates tool_tag: the 5
-    // cost-correctness columns present, tool_tag absent, carrying one row.
+  it("Test 9: a DB with the 5 cost-correctness cols but no tool_tag gains it; pre-existing rows read tool_tag NULL (verbatim survival)", () => {
+    // Simulate a DB that predates tool_tag: the 5 cost-correctness columns
+    // present, tool_tag absent, carrying one row.
     const legacy = new Database(":memory:");
     legacy.exec(`
       CREATE TABLE obs_token_usage (
@@ -745,7 +745,7 @@ describe("schema — obs_token_usage tool_tag column (COST-01, the 6th additive 
   });
 });
 
-describe("ObservabilityStore — insertTokenUsage tool_tag persist round-trip (COST-01)", () => {
+describe("ObservabilityStore — insertTokenUsage tool_tag persist round-trip", () => {
   let db: Database.Database;
   let store: ObservabilityStore;
 
@@ -778,19 +778,19 @@ describe("ObservabilityStore — insertTokenUsage tool_tag persist round-trip (C
 });
 
 // ---------------------------------------------------------------------------
-// SPEND-03 — getRollingSpendUsd(windowMs): the spend-accumulator's BOOT
-// rehydration read (NOT a per-check read). A per-agent SUM(cost_total) over the
-// rolling window from obs_token_usage. The rows ARE the durability — this is the
-// accumulator's one source of truth at boot, replacing any per-check SQL re-sum.
+// getRollingSpendUsd(windowMs): the spend-accumulator's BOOT rehydration read
+// (NOT a per-check read). A per-agent SUM(cost_total) over the rolling window
+// from obs_token_usage. The rows ARE the durability — this is the accumulator's
+// one source of truth at boot, replacing any per-check SQL re-sum.
 //
-// L1: obs_token_usage has NO tenant_id column (schema.ts) — the boot read groups
+// obs_token_usage has NO tenant_id column (schema.ts) — the boot read groups
 // by agent_id ONLY; per-tenant accrues live-from-boot (documented honest
-// degradation, Plan 03). The window bound is derived from systemNowMs() inside
+// degradation). The window bound is derived from systemNowMs() inside
 // the method (the prune() precedent in observability-reset.ts), so the tests seed
 // timestamps relative to a captured `now` with offsets far larger than any
 // wall-clock drift between the two systemNowMs() reads.
 // ---------------------------------------------------------------------------
-describe("ObservabilityStore — getRollingSpendUsd (SPEND-03 boot rehydration)", () => {
+describe("ObservabilityStore — getRollingSpendUsd (boot rehydration)", () => {
   let db: Database.Database;
   let store: ObservabilityStore;
 
@@ -870,12 +870,12 @@ describe("ObservabilityStore — getRollingSpendUsd (SPEND-03 boot rehydration)"
     expect(store.getRollingSpendUsd(ONE_HOUR_MS)).toEqual([]);
   });
 
-  it("LOW-1 (177-obs-loop): spend-queries.ts validates rows via createRowMapper/parseRows (NO inline `as {...}[]` cast — AGENTS.md §6.8)", () => {
+  it("spend-queries.ts validates rows via createRowMapper/parseRows (NO inline `as {...}[]` cast — AGENTS.md §6.8)", () => {
     // The cast `.all(since) as { agent_id; total_cost }[]` bypassed the Zod row
     // validation §6.8 mandates (the untyped-sqlite arch gate's regex only catches
-    // NAMED-type casts, so an inline OBJECT-literal cast slipped through silently —
-    // the security-review LOW-1 finding). The boot-read must route rows through a
-    // mapper like the cloned-from observability-queries.ts agentAggMapper.
+    // NAMED-type casts, so an inline OBJECT-literal cast slipped through silently).
+    // The boot-read must route rows through a mapper like the cloned-from
+    // observability-queries.ts agentAggMapper.
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "spend-queries.ts"), "utf-8");
     const stripped = src
@@ -891,19 +891,19 @@ describe("ObservabilityStore — getRollingSpendUsd (SPEND-03 boot rehydration)"
 });
 
 // ---------------------------------------------------------------------------
-// COST-03 (Phase 179 Plan 03) — aggregateQuarterHourly: the aggregateHourly SQL
-// with a 900000-ms (15-min) divisor in place of 3600000. The CONSERVATION pin:
-// 4 distinct quarter-hour buckets inside one hour SUM (cost + tokens + callCount
-// + cacheSaved) to that hour's single aggregateHourly bucket. The export rows
-// additionally carry a pricingState/missingPricingCount coverage column (E1) so a
-// finance review sees how trustworthy the number is — content-free (a count + the
-// dominant 3-state enum), never a body/secret/query.
+// aggregateQuarterHourly: the aggregateHourly SQL with a 900000-ms (15-min)
+// divisor in place of 3600000. The CONSERVATION pin: 4 distinct quarter-hour
+// buckets inside one hour SUM (cost + tokens + callCount + cacheSaved) to that
+// hour's single aggregateHourly bucket. The export rows additionally carry a
+// pricingState/missingPricingCount coverage column so a finance review sees how
+// trustworthy the number is — content-free (a count + the dominant 3-state
+// enum), never a body/secret/query.
 //
-// RED-first: aggregateQuarterHourly does not exist on the store pre-patch, so the
-// import + call fail to type-check / throw — the conservation + coverage asserts
-// cannot run until the 900000 aggregate + its pricing-coverage columns land.
+// aggregateQuarterHourly does not exist on the store pre-patch, so the import +
+// call fail to type-check / throw — the conservation + coverage asserts cannot
+// run until the 900000 aggregate + its pricing-coverage columns land.
 // ---------------------------------------------------------------------------
-describe("ObservabilityStore — aggregateQuarterHourly (COST-03, the 900000-ms bucket)", () => {
+describe("ObservabilityStore — aggregateQuarterHourly (the 900000-ms bucket)", () => {
   let db: Database.Database;
   let store: ObservabilityStore;
 
@@ -1073,11 +1073,11 @@ describe("ObservabilityStore — aggregateQuarterHourly (COST-03, the 900000-ms 
 });
 
 // ---------------------------------------------------------------------------
-// HG-01 (Phase 179 wiring) — aggregateToolCostByAgent(agentId, sinceMs): the
-// REAL per-tool even-split that turns the persisted `tool_tag` distinct-tool set
-// into a per-tool cost share. COST-01 only ever persisted the distinct tool-NAME
-// set + asserted the even-split in a bridge-level comment/test; no query ever
-// projected it, so the billing per-tool table was permanently empty in prod.
+// aggregateToolCostByAgent(agentId, sinceMs): the REAL per-tool even-split that
+// turns the persisted `tool_tag` distinct-tool set into a per-tool cost share.
+// The tool_tag column only ever held the distinct tool-NAME set + asserted the
+// even-split in a bridge-level comment/test; no query ever projected it, so the
+// billing per-tool table was permanently empty in prod.
 //
 // The even-split (the comment's promise, now a real contract): for a row whose
 // tool_tag lists N distinct tools, EACH tool is attributed cost_total/N (+
@@ -1089,7 +1089,7 @@ describe("ObservabilityStore — aggregateQuarterHourly (COST-03, the 900000-ms 
 //
 // These FAIL on pre-wiring code because aggregateToolCostByAgent does not exist.
 // ---------------------------------------------------------------------------
-describe("ObservabilityStore — aggregateToolCostByAgent (HG-01 even-split + conservation)", () => {
+describe("ObservabilityStore — aggregateToolCostByAgent (even-split + conservation)", () => {
   let db: Database.Database;
   let store: ObservabilityStore;
 

@@ -91,8 +91,8 @@ export function buildFillPrompt(args: FillPromptArgs): string {
         `Existing manifest description: "${args.skillDescription}"`,
       );
       sections.push(
-        // REFINE / CONDENSE: do not invent. "REFINE" must appear in
-        // uppercase per acceptance test.
+        // REFINE / CONDENSE: do not invent. "REFINE" must stay uppercase —
+        // tests assert the literal token.
         "Task: REFINE OR CONDENSE the existing description (do not invent " +
           "a new one). Then list any npm/pip packages this skill replaces — " +
           "usually [] for skills, but supported (e.g. a markdown-formatter " +

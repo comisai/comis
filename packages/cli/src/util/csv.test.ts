@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the pure RFC4180 CSV serializer (COST-03, Phase 179 WS6).
+ * Tests for the pure RFC4180 CSV serializer.
  *
- * Greenfield — no CSV module existed in the repo (the `join(",")` hits elsewhere
- * are list-formatting). `toCsv` is the backend serializer the `comis cost export`
- * command emits; the SPA `<a download>` blob (diagnostics-view.ts:383) is the
- * separate web side (Wave 2), not this.
+ * `toCsv` is the backend serializer the `comis cost export` command emits; the
+ * SPA `<a download>` blob (diagnostics-view.ts) is a separate web-side path,
+ * not covered here.
  *
  * The load-bearing guarantees the tests pin:
  *   - RFC4180 escaping: a field with a comma/quote/newline is wrapped in `"`
@@ -14,7 +13,7 @@
  *   - null/undefined → an empty field; numbers/booleans serialize predictably.
  *   - CONTENT-FREE BY CONSTRUCTION: `toCsv` projects ONLY the explicit `columns`
  *     allowlist — never `Object.keys(row)` — so a body/secret/query key planted
- *     in a source row can never leak into the CSV (threat T-179-07).
+ *     in a source row can never leak into the CSV.
  *
  * @module
  */

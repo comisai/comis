@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * bounded-queue — the per-consumer backpressure ring at the ActivityStream
- * subscription boundary (spec §5.1).
+ * subscription boundary.
  *
- * Spec §5.1: every consumer downstream of ActivityStream uses a bounded queue
+ * Every consumer downstream of ActivityStream uses a bounded queue
  * with a documented drop policy so the agent loop never blocks on a slow
  * consumer:
  *
@@ -18,7 +18,7 @@
  *
  * Pure data structure. No logger here — the *consumer* (ActivityStream /
  * coordinator) reads `droppedCount()` / `highWater()` and emits the
- * `activity.events.dropped` + `queue_high_water` counters (spec §20.1).
+ * `activity.events.dropped` + `queue_high_water` counters.
  *
  * The optional `timer: TimerPort` is accepted only so a test can assert the
  * producer schedules NO timer (it does not — `push` is synchronous). It is
@@ -29,9 +29,9 @@
  */
 import type { TimerPort } from "@comis/core";
 
-/** Default main-ring capacity (spec §5.1 — per-channel renderer). */
+/** Default main-ring capacity (per-channel renderer). */
 export const DEFAULT_QUEUE_CAPACITY = 64;
-/** Default high-priority failure-overflow capacity (spec §5.1). */
+/** Default high-priority failure-overflow capacity. */
 export const DEFAULT_FAILURE_OVERFLOW = 16;
 
 /** Options for {@link createBoundedQueue}. */
@@ -74,7 +74,7 @@ export interface BoundedQueue<T> {
 }
 
 /**
- * Create a per-consumer bounded queue per spec §5.1.
+ * Create a per-consumer bounded queue.
  */
 export function createBoundedQueue<T>(opts: BoundedQueueOptions<T> = {}): BoundedQueue<T> {
   const capacity = opts.capacity ?? DEFAULT_QUEUE_CAPACITY;
@@ -111,7 +111,7 @@ export function createBoundedQueue<T>(opts: BoundedQueueOptions<T> = {}): Bounde
       } else {
         main.push(item);
         if (main.length > capacity) {
-          // Drop the OLDEST non-failure (FIFO drop, spec §5.1).
+          // Drop the OLDEST non-failure (FIFO drop).
           main.shift();
           dropped += 1;
           droppedByThisPush = 1;

@@ -22,7 +22,7 @@ import type { ModelAllowlist } from "./model-allowlist.js";
 /**
  * Result of initial model resolution.
  *
- * SA6a: This interface mirrors the shape of `InitialModelResult` in
+ * This interface mirrors the shape of `InitialModelResult` in
  * `@earendil-works/pi-coding-agent` (dist/core/model-resolver.d.ts).
  * The SDK type is structurally identical but is NOT re-exported from the
  * package root and `./core/model-resolver` is absent from the package's

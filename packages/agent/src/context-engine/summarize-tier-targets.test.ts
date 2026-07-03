@@ -13,10 +13,10 @@ function makeMsg(role: string, content: string): AgentMessage {
 }
 
 // ---------------------------------------------------------------------------
-// resolveSummaryTargetTokens — SUM-02 tier floors
+// resolveSummaryTargetTokens — tier floors
 // ---------------------------------------------------------------------------
 
-describe("resolveSummaryTargetTokens — SUM-02 tier-aware token floors", () => {
+describe("resolveSummaryTargetTokens — tier-aware token floors", () => {
   describe("nano tier — capped at 256", () => {
     it("nano configured=1200 returns 256 (nano floor applied)", () => {
       expect(resolveSummaryTargetTokens("nano", 0, 1200)).toBe(256);
@@ -70,10 +70,10 @@ describe("resolveSummaryTargetTokens — SUM-02 tier-aware token floors", () => 
 });
 
 // ---------------------------------------------------------------------------
-// buildNanoStructuredExtraction — SUM-02 nano deterministic extractor
+// buildNanoStructuredExtraction — nano deterministic extractor
 // ---------------------------------------------------------------------------
 
-describe("buildNanoStructuredExtraction — SUM-02 nano structured extractor", () => {
+describe("buildNanoStructuredExtraction — nano structured extractor", () => {
   it("output carries LEAF_FALLBACK_SUMMARY_MARKER prefix", () => {
     const messages = [
       makeMsg("user", "We decided to use TypeScript for the project."),

@@ -2,10 +2,9 @@
 //
 // Structured-extraction suite for runMemoryReview.
 //
-// The flat-string `[{content, session}]` path was DELETED outright (no dual
-// mode, no fallback). Its assertions are GONE, not
-// skipped. Every test now feeds the structured `{ "memories": [...] }`
-// envelope the job parses via `parseExtractionResult`. A fixed
+// Every test feeds the structured `{ "memories": [...] }`
+// envelope the job parses via `parseExtractionResult` — there is no flat-string
+// `[{content, session}]` fallback shape. A fixed
 // injected `clock` makes relative-date resolution + createdAt deterministic
 // (no wall-clock reads).
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
@@ -137,7 +136,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Filtering / batching / lifecycle (still valid — fed STRUCTURED output)
+  // Filtering / batching / lifecycle (fed STRUCTURED output)
   // -------------------------------------------------------------------------
 
   it("skips sessions with messageCount below minMessages", async () => {
@@ -156,9 +155,9 @@ describe("runMemoryReview", () => {
   });
 
   it("logs a counts INFO line when nothing qualifies so a no-op nightly run is diagnosable at default level", async () => {
-    // Live C11 finding (2026-06-12): the zero-qualifying early exit logged
-    // only DEBUG — at default INFO the operator saw 'Job started/completed'
-    // bracketing silence, indistinguishable from a productive run.
+    // If the zero-qualifying early exit logged only DEBUG, an operator at the
+    // default INFO level would see 'Job started/completed' bracketing silence,
+    // indistinguishable from a productive run.
     const deps = makeDeps();
     (deps.sessionStore.listDetailed as Mock).mockReturnValue([
       makeSession("default:user1:ch1", 3), // below 5 -> nothing qualifies
@@ -186,7 +185,7 @@ describe("runMemoryReview", () => {
     expect(completeSimple).not.toHaveBeenCalled();
   });
 
-  it("WR-04: flattens array/multi-block message content into the extraction batch (does not drop it)", async () => {
+  it("flattens array/multi-block message content into the extraction batch (does not drop it)", async () => {
     const deps = makeDeps();
     (deps.sessionStore.listDetailed as Mock).mockReturnValue([
       makeSession("default:user1:ch1", 10, 2000),
@@ -371,7 +370,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Persist the LLM-classified memoryType (no longer dropped to 'semantic')
+  // Persist the LLM-classified memoryType (not dropped to 'semantic')
   // -------------------------------------------------------------------------
 
   it("threads the classified memoryType onto the stored entry (episodic)", async () => {
@@ -387,7 +386,7 @@ describe("runMemoryReview", () => {
 
     const storeCall = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
     expect(storeCall).toBeDefined();
-    // Today this drops to the adapter's 'semantic' default (the field is never set).
+    // The LLM-classified type is persisted, not dropped to the adapter's 'semantic' default.
     expect(storeCall.memoryType).toBe("episodic");
   });
 
@@ -509,10 +508,10 @@ describe("runMemoryReview", () => {
   // No flat-string fallback
   // -------------------------------------------------------------------------
 
-  it("rejects the OLD flat array shape as malformed (no fallback)", async () => {
+  it("rejects a flat array shape as malformed (no fallback)", async () => {
     const deps = makeDeps();
     arrangeOneSession(deps, 4242);
-    // The DELETED flat shape — must NOT be parsed; there is no fallback path.
+    // The flat array shape must NOT be parsed; there is no fallback path.
     (completeSimple as Mock).mockResolvedValue({
       content: [{ type: "text", text: JSON.stringify([{ content: "x", session: "s" }]) }],
     });
@@ -886,8 +885,8 @@ describe("runMemoryReview", () => {
 
   it("a pathological budget (cannot fit ANY summary) skips LOUDLY instead of silently", async () => {
     // maxReviewTokens 1 → maxChars 4; below the truncate-to-fit floor, so the
-    // session is skipped — but with a WARN naming the knob (live finding
-    // 2026-06-11: the silent skip left the session unwatermarked and
+    // session is skipped — but with a WARN naming the knob (a silent skip
+    // would leave the session unwatermarked and
     // re-skipped on every run, an invisible permanent blind spot).
     const deps = makeDeps({ config: makeConfig({ maxReviewTokens: 1 }) });
     (deps.sessionStore.listDetailed as Mock).mockReturnValue([
@@ -915,9 +914,9 @@ describe("runMemoryReview", () => {
   });
 
   it("a long real conversation (one 6K-char essay turn) is still reviewed — capped per message, never skipped", async () => {
-    // Live finding 2026-06-11: a 16-message conversation totalling ~25K chars
-    // (one assistant essay alone 6,137 chars) exceeded the whole 16K batch
-    // budget and was skipped ENTIRELY on every run. Per-message caps keep the
+    // Without per-message caps, a 16-message conversation totalling ~25K chars
+    // (one assistant essay alone 6,137 chars) exceeds the whole 16K batch
+    // budget and is skipped ENTIRELY on every run. Per-message caps keep the
     // summary inside the budget so the session is reviewed and watermarked.
     const essay = "x".repeat(6137);
     const deps = makeDeps(); // default maxReviewTokens 4096 → 16384 chars
@@ -1335,7 +1334,8 @@ describe("runMemoryReview", () => {
   /**
    * A stub MemoryCausalStore whose `linkCausal` captures each call into
    * `linkCalls` and returns `ok(1)` by default (one edge written). `causalLane`
-   * is a no-op spy (the read lane is Wave 3). Pass a custom `linkCausal` (e.g.
+   * is a no-op spy (the read lane is not exercised here). Pass a custom
+   * `linkCausal` (e.g.
    * one returning `err(...)` or a rejecting mock) for the non-fatal tests.
    */
   function makeCausalStore(
@@ -1448,7 +1448,7 @@ describe("runMemoryReview", () => {
       expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
       expect.any(String),
     );
-    // The effect-text body ("User moved to Berlin") must NEVER appear in any WARN object (§2.7).
+    // The effect-text body ("User moved to Berlin") must NEVER appear in any WARN object (AGENTS.md §2.7).
     const warnObjs = (deps.logger.warn as Mock).mock.calls.map((c) => JSON.stringify(c[0]));
     for (const o of warnObjs) {
       expect(o).not.toContain("Berlin");

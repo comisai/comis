@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 acceptance — "emergency": `emergencyDisabled: true` suppresses
+ * Acceptance — "emergency": `emergencyDisabled: true` suppresses
  * ALL activity for the agent, overriding an otherwise-enabled channel.
  *
  * Builds the SAME daemon-shaped `coordinatorFactory` the daemon wires (a per-turn
@@ -59,7 +59,7 @@ function makeCtx(rendererKey: string, channelKey: string): TurnActivityContext {
   };
 }
 
-describe("§22.2 emergency: emergencyDisabled suppresses an otherwise-enabled channel", () => {
+describe("emergency: emergencyDisabled suppresses an otherwise-enabled channel", () => {
   it("paints zero frames for an enabled rendererKey when the agent is emergency-disabled (emergency wins)", async () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus });

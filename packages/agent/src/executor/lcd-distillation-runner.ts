@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD→LTM distillation runner (Phase 172, DIST-01..04).
+ * LCD→LTM distillation runner.
  *
  * Fires after `store.appendCondensedSummary` returns a summaryId (via the
  * `onCondensed` callback seam on `lcd-condense-trigger.ts`). Gate-heavy,
@@ -11,7 +11,7 @@
  * Architecture cut (agent↛memory): this module imports ONLY TYPE-only ports
  * from @comis/core and agent-side helpers. It NEVER imports @comis/memory.
  * The concrete ContextStorePort and MemoryPort implementations are daemon-injected.
- * It NEVER logs summary content — ids/counts/durations/errorKinds only (T-130-09).
+ * It NEVER logs summary content — ids/counts/durations/errorKinds only.
  *
  * @module
  */
@@ -65,7 +65,7 @@ export interface RunDistillationPassParams {
     /** Fire-and-forget embedding queue. Optional — absent ⇒ no embedding. */
     embeddingEnqueue?: (entryId: string, content: string) => void;
     /**
-     * WR-03: optional injected clock CALLABLE for the write-path completion
+     * Optional injected clock CALLABLE for the write-path completion
      * timing (entry → emit two reads → durationMs). Bound to the daemon's
      * ClockPort — NEVER Date.now(). Absent ⇒ durationMs is omitted from the INFO
      * line (timing degrades, the pass still runs).
@@ -95,14 +95,14 @@ export interface RunDistillationPassParams {
 // ---------------------------------------------------------------------------
 
 /**
- * Non-fatal distillation pass (T-130-07 pattern). Gate-heavy; returns early on
+ * Non-fatal distillation pass. Gate-heavy; returns early on
  * every gate miss. The outer try/catch degrades the ENTIRE pass to a WARN on
  * unexpected failure — the live turn is NEVER affected.
  */
 export async function runDistillationPassAfterTurn(params: RunDistillationPassParams): Promise<void> {
   const { summaryId, scope, content, fallback, depth, now, deps } = params;
 
-  // GATE 1: R4 fail-closed — incomplete scope → return without any write.
+  // GATE 1: fail-closed scope isolation — incomplete scope → return without any write.
   // An empty agentId, tenantId, or conversationId is a misconfigured session;
   // never write cross-scope memory rows from an unknown scope.
   if (!scope.tenantId || !scope.agentId || !scope.conversationId) {
@@ -190,7 +190,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
   }
 
   // All gates passed — enter the write path (non-fatal).
-  // WR-03: time the whole write boundary via the injected clock (entry read);
+  // Time the whole write boundary via the injected clock (entry read);
   // the completion read happens at the INFO line below. `now` is the entry value
   // when no clock callable is injected (durationMs then degrades to 0/omitted).
   const startMs = deps.nowFn ? deps.nowFn() : now;
@@ -215,7 +215,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
         },
         "LCD distillation skipped: failed the memory-write security scan",
       );
-      // IN-04: emit the documented reason:"validation" skip so the
+      // Emit the documented reason:"validation" skip so the
       // security-relevant secret-egress block is fleet-observable (consistent
       // with every other gate). CONTENT-FREE: ids/agentId/sessionKey only —
       // NEVER the matched secret text or the verdict patterns.
@@ -228,14 +228,14 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
       return;
     }
 
-    // GATE 8: dedup check (DIST-02) — cosine when vec present, FTS/lexical fallback.
-    // R4 read-isolation (CR-02): SqliteMemoryAdapter.search() filters rows by
+    // GATE 8: dedup check — cosine when vec present, FTS/lexical fallback.
+    // Agent read-isolation: SqliteMemoryAdapter.search() filters rows by
     // sessionKey.tenantId for the TENANT boundary, but applies the load-bearing
     // `agent_id = ?` AGENT predicate ONLY when options.agentId is set (it ignores
     // sessionKey.agentId/.userId/.channelId entirely). So the agent filter MUST
     // ride in the options object — passing it on the SessionKey alone is a no-op
     // and would let a different agent's near-duplicate in the same tenant suppress
-    // this agent's write (a cross-agent dedup false positive + R4 read gap).
+    // this agent's write (a cross-agent dedup false positive + a read-isolation gap).
     const dedupThreshold = deps.distillConfig?.dedupCosineThreshold ?? 0.92;
     // The SessionKey only carries the tenant filter into search(); userId and
     // channelId are required-by-type fields the adapter does NOT consume here.
@@ -248,7 +248,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
     const searchResult = await deps.memoryPort.search(
       searchSessionKey,
       content,
-      { limit: 1, minScore: dedupThreshold, agentId: scope.agentId }, // <-- the actual R4 agent filter
+      { limit: 1, minScore: dedupThreshold, agentId: scope.agentId }, // <-- the actual agent-isolation filter
     );
     if (searchResult.ok && searchResult.value.length > 0) {
       const topScore = searchResult.value[0]?.score ?? 0;
@@ -270,19 +270,19 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
       id: entryId,
       tenantId: scope.tenantId,
       agentId: scope.agentId,
-      userId: scope.tenantId, // distillation writes at the tenant scope (§14)
+      userId: scope.tenantId, // distillation writes at the tenant scope (deliberate: not per-user)
       content,
-      trustLevel: "learned",    // LOCKED: §14 decision 2
-      memoryType: "episodic",    // LOCKED: §14 decision 2
+      trustLevel: "learned",    // LOCKED: distilled rows always carry learned trust
+      memoryType: "episodic",    // LOCKED: distilled rows are always episodic
       source: {
         who: "lcd_distillation",
         sessionKey: scope.sessionKey,
       },
-      // The summary:<id> tag (Phase 173, DIST-03 carry-in) keys the recall
+      // The summary:<id> tag keys the recall
       // provenance pass's PROVENANCE-PRECISE branch (recall-provenance.ts:88,
       // SUMMARY_TAG_PREFIX="summary:") so it can query getProvenanceForSummary for
       // the EXACT linked memoryIds this distilled summary subsumes. It adds an id
-      // only — NO content (Security Domain V8).
+      // only — NO content ever rides in a tag.
       tags: ["lcd_distilled", `depth:${depth}`, `summary:${summaryId}`],
       createdAt: now,
     });
@@ -305,7 +305,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
     deps.embeddingEnqueue?.(entryId, content);
 
     // STEP 11: PROVENANCE — link the distilled memory to its LCD source summary.
-    // Optional method gate (172-03 adds the concrete SQL impl; 172-02 calls via ?.).
+    // Optional method gate — the concrete SQL impl is daemon-wired and may be absent.
     const provenanceInput: AppendProvenanceInput = {
       provenanceId: randomUUID(),
       memoryId: entryId,
@@ -317,7 +317,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
       createdAt: now,
     };
     if (deps.lcdStore.appendProvenance == null) {
-      // WR-03: a write occurred but provenance cannot be linked (a realistic
+      // A write occurred but provenance cannot be linked (a realistic
       // partial-wire: memoryPort present, appendProvenance not implemented). Do
       // NOT silently optional-chain past it — surface it so an operator can see
       // the distilled memory has no provenance row (recall down-weighting will be
@@ -342,7 +342,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
     // itself — only its descendants. See markDescendantsSuperseded below.
     await markDescendantsSuperseded(summaryId, entryId, scope, deps);
 
-    // STEP 13: completion. WR-03: an INFO line carrying durationMs (the §2.7
+    // STEP 13: completion — an INFO line carrying durationMs (the §2.7
     // boundary-completion requirement) — content-free, ids/depth only — PLUS the
     // bus event. durationMs is from the injected clock (nowFn); 0 when no clock
     // callable was injected (timing degrades, never Date.now()).
@@ -367,7 +367,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
       sessionKey: scope.sessionKey,
     });
   } catch (err) {
-    // Non-fatal (T-130-07): any failure degrades to a WARN + return — the live
+    // Non-fatal: any failure degrades to a WARN + return — the live
     // turn is NEVER affected. errorKind "dependency" (store/queue failure).
     deps.logger.warn(
       {
@@ -405,7 +405,7 @@ async function markDescendantsSuperseded(
     logger: ComisLogger;
   },
 ): Promise<void> {
-  // WR-05 (Phase 173-05): mirror the appendProvenance sibling (~STEP 11) — do NOT
+  // Mirror the appendProvenance sibling (STEP 11) — do NOT
   // silently optional-chain past a missing markProvenanceSuperseded. Branch on
   // `== null` ONCE (the method ref is stable) and emit a content-free DEBUG so a
   // realistic partial-wire (appendProvenance present, markProvenanceSuperseded not)
@@ -442,8 +442,8 @@ async function markDescendantsSuperseded(
     // getSummaryChildren is synchronous (better-sqlite3).
     const children = deps.lcdStore.getSummaryChildren(scope, id);
     for (const child of children) {
-      // WR-01: thread scope.tenantId/agentId — the UPDATE is R4-scoped fail-closed.
-      // markFn is proven non-null above (WR-05), so no optional-chain here.
+      // Thread scope.tenantId/agentId — the UPDATE is tenant+agent-scoped fail-closed.
+      // markFn is proven non-null above, so no optional-chain here.
       markFn(child.summaryId, supersededByMemoryId, scope.tenantId, scope.agentId);
       queue.push(child.summaryId);
     }

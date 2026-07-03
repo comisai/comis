@@ -3,8 +3,7 @@
  * OpenAI-compatible type definitions for /v1/chat/completions.
  *
  * Provides Zod schemas for request validation and TypeScript interfaces
- * for response construction. Used by openai-completions.ts and consumed
- * by plans 68-02 and 68-05.
+ * for response construction. Used by openai-completions.ts.
  *
  * @module
  */
@@ -17,11 +16,11 @@ import { z } from "zod";
 
 /**
  * A single block in the OpenAI multimodal `content` array. Standard OpenAI
- * shape: a `text` block or an `image_url` block. V1-NO-VISION (30uc-20260624):
- * accepting the array form lets a standard multimodal request PARSE (instead of
- * the confusing "expected string, received array" schema 400); the handler
- * flattens text blocks and returns a NAMED unsupported-vision error for
- * image_url blocks (vision input is not yet wired through /v1).
+ * shape: a `text` block or an `image_url` block. Accepting the array form lets
+ * a standard multimodal request PARSE (instead of the confusing "expected
+ * string, received array" schema 400); the handler flattens text blocks and
+ * returns a NAMED unsupported-vision error for image_url blocks (vision input
+ * is not yet wired through /v1).
  */
 export const ContentBlockSchema = z.union([
   z.strictObject({ type: z.literal("text"), text: z.string() }),
@@ -32,7 +31,7 @@ export const ContentBlockSchema = z.union([
 ]);
 
 /** Schema for a single message in the chat completions request. `content` is a
- *  plain string OR the OpenAI multimodal content-block array (V1-NO-VISION). */
+ *  plain string OR the OpenAI multimodal content-block array. */
 export const ChatMessageSchema = z.strictObject({
   role: z.enum(["system", "user", "assistant"]),
   content: z.union([z.string(), z.array(ContentBlockSchema)]),

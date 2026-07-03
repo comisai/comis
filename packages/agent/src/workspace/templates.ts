@@ -24,9 +24,9 @@ export type WorkspaceFileName = (typeof WORKSPACE_FILE_NAMES)[number];
  * Platform-owned workspace files — content-hash-refreshed by `ensureWorkspace`
  * on every invocation when the on-disk sha256 differs from `DEFAULT_TEMPLATES`.
  *
- * 2026-05-20 lineage: the prior `wx`-only seed flow let stale pre-fix templates
- * persist forever, so a sub-agent's inherited workspace kept promising a
- * pre-warmed venv that no code provisioned. These three files declare themselves
+ * A `wx`-only seed flow would let stale templates persist forever, so a
+ * sub-agent's inherited workspace could keep promising behavior no code
+ * provisions. These three files declare themselves
  * read-only platform contract in their own prose — this partition makes that
  * contract real.
  */

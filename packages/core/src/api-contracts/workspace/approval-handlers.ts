@@ -3,8 +3,8 @@
  * Approval-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/approval-handlers.ts` (4 methods).
- * Spread order in `APPROVAL_HANDLERS_CONTRACTS` matches the previous
- * `WORKSPACE_CONTRACTS` array byte for byte to keep
+ * Spread order in `APPROVAL_HANDLERS_CONTRACTS` fixes this slice's
+ * position within `WORKSPACE_CONTRACTS`, keeping
  * `contracts.generated.*` artifacts byte-identical.
  *
  * @module
@@ -145,9 +145,8 @@ export const AdminApprovalClearDenialCacheContract = defineContract({
 });
 
 /**
- * approval-handlers slice (4 contracts). Spread order matches the
- * previous `WORKSPACE_CONTRACTS` array byte for byte — determinism-critical
- * for codegen output stability.
+ * approval-handlers slice (4 contracts). Spread order is
+ * determinism-critical for codegen output stability.
  */
 export const APPROVAL_HANDLERS_CONTRACTS = [
   AdminApprovalPendingContract,

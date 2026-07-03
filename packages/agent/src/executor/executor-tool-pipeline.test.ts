@@ -161,9 +161,9 @@ describe("applyJitGuideWrapping — JIT guide injection wrapper around tool exec
 // applySchemasPruning
 // ---------------------------------------------------------------------------
 
-describe("applySchemasPruning — nano-class schema pruning gated on capabilityClass (Phase 151: behavior-neutral)", () => {
+describe("applySchemasPruning — nano-class schema pruning gated on capabilityClass", () => {
   it("passes tools through unchanged for 'small' capabilityClass models without invoking pruning", () => {
-    // Phase 151 behavior-neutral: only "nano" triggers pruning; "small" (qwen3.6 27B/256K) is NOT pruned.
+    // Only "nano" triggers pruning; "small" (qwen3.6 27B/256K) is NOT pruned.
     const logger = createMockLogger();
     const tools = [makeTool({ name: "a", description: "do a" }), makeTool({ name: "b", description: "do b" })];
     const result = applySchemasPruning({ tools, capabilityClass: "small", logger });
@@ -288,7 +288,7 @@ describe("applyProviderNormalization — provider-specific tool normalization an
     expect((decoded as { url: string }).url).toBe("a & b");
   });
 
-  it("attaches a universal prepareArguments hook even without provider compat flags (F-3 coercion)", () => {
+  it("attaches a universal prepareArguments hook even without provider compat flags (stringified-JSON coercion)", () => {
     const tools = [makeTool({ name: "calculator" })];
     const result = applyProviderNormalization({
       tools,
@@ -296,13 +296,13 @@ describe("applyProviderNormalization — provider-specific tool normalization an
       modelId: "claude-sonnet-4-5-20250929",
     });
     expect(result.map((t) => t.name)).toEqual(["calculator"]);
-    // Every tool now carries the F-3 stringified-JSON coercer; it is an identity
+    // Every tool now carries the stringified-JSON coercer; it is an identity
     // no-op when nothing needs coercing (empty-properties schema here).
     expect(typeof result[0].prepareArguments).toBe("function");
     expect(result[0].prepareArguments!({ a: "1" })).toEqual({ a: "1" });
   });
 
-  it("coerces a stringified array field to an array via prepareArguments (F-3, live 2026-06-12)", () => {
+  it("coerces a stringified array field to an array via prepareArguments (observed live with a small model)", () => {
     const tools = [
       makeTool({
         name: "memory_manage",
@@ -321,7 +321,7 @@ describe("applyProviderNormalization — provider-specific tool normalization an
     expect(prepared).toEqual({ action: "delete", ids: ["abc-123"] });
   });
 
-  it("does NOT coerce a JSON-array-shaped string when the field is declared a string (F-3 safety)", () => {
+  it("does NOT coerce a JSON-array-shaped string when the field is declared a string (schema-aware safety)", () => {
     const tools = [
       makeTool({
         name: "file_write",
@@ -336,7 +336,7 @@ describe("applyProviderNormalization — provider-specific tool normalization an
     expect(prepared).toEqual({ path: "a.json", content: "[1,2,3]" });
   });
 
-  it("composes xAI html-entity decode THEN F-3 coercion in prepareArguments", () => {
+  it("composes xAI html-entity decode THEN stringified-JSON coercion in prepareArguments", () => {
     const tools = [
       makeTool({
         name: "tool",
@@ -358,17 +358,17 @@ describe("applyProviderNormalization — provider-specific tool normalization an
 });
 
 // ---------------------------------------------------------------------------
-// CR-01 (174-REVIEW): gbnfConstrain (AUTHOR-03) must be threaded END-TO-END
+// gbnfConstrain must be threaded END-TO-END
 // through applyProviderNormalization → normalizeToolSchemasForProvider. The
-// 174-05 read-side gate honors ctx.gbnfConstrain, but nothing forwarded the
-// config flag at the production call site, so flipping it ON did NOTHING
-// (the recurring "works-in-isolation-never-wired" class — 172-WR-02 /
-// 173-BLOCKER-2). These tests assert the flag ACTUALLY engages the Layer 3.5
+// read-side gate honors ctx.gbnfConstrain, but if nothing forwards the
+// config flag at the production call site, flipping it ON does NOTHING
+// (the recurring "works-in-isolation-never-wired" defect class). These
+// tests assert the flag ACTUALLY engages the Layer 3.5
 // transform THROUGH the pipeline helper, and that FLAGS-OFF stays
 // byte-identical end-to-end.
 // ---------------------------------------------------------------------------
 
-describe("CR-01: gbnfConstrain threaded through applyProviderNormalization (end-to-end wiring)", () => {
+describe("gbnfConstrain threaded through applyProviderNormalization (end-to-end wiring)", () => {
   /** A gbnf-eligible local provider NOT pinned to the gbnf profile. */
   const ELIGIBLE = { provider: "my-ollama", modelId: "qwen3.6:35b" };
 
@@ -437,8 +437,8 @@ describe("CR-01: gbnfConstrain threaded through applyProviderNormalization (end-
     expect(props.assignee).toEqual({ anyOf: [{ type: "string" }, { type: "null" }], description: "who" });
   });
 
-  it("flag ON on a CLOUD-family provider (anthropic) does NOT engage GBNF (D-08 blast radius)", () => {
-    // IN-03: the engaged scope is gbnf-ELIGIBLE (local/default family) only;
+  it("flag ON on a CLOUD-family provider (anthropic) does NOT engage GBNF (bounded blast radius)", () => {
+    // The engaged scope is gbnf-ELIGIBLE (local/default family) only;
     // the flag never infers GBNF from a cloud provider name.
     const result = applyProviderNormalization({
       tools: [makeHostileTool()],
@@ -453,7 +453,7 @@ describe("CR-01: gbnfConstrain threaded through applyProviderNormalization (end-
   });
 
   it("wiring: assembleTools reads config.orchestration.authoring.gbnfConstrain and forwards it to applyProviderNormalization (source pin)", () => {
-    // Source-grep wiring pin (CR-02 precedent above): the unit tests prove the
+    // Source-grep wiring pin: the unit tests prove the
     // helper forwards the flag; this proves the production caller reads the
     // config gate and passes it down (guards against the dead-wiring class).
     const here = dirname(fileURLToPath(import.meta.url));
@@ -488,7 +488,7 @@ describe("applyMutationSerializer — mutation serializer wrapping for parallel-
 });
 
 // ---------------------------------------------------------------------------
-// CR-02 (175-REVIEW): reactive strip must persist across turns; the
+// The reactive strip must persist across turns; the
 // once-per-session gate must clear on session reset.
 //
 // The per-turn assembly order is snapshot → normalize: applySchemaSnapshot
@@ -501,7 +501,7 @@ describe("applyMutationSerializer — mutation serializer wrapping for parallel-
 // — the session is permanently bricked after one heal.
 // ---------------------------------------------------------------------------
 
-describe("CR-02: reactive strip persistence across turns + session-reset gate clearing", () => {
+describe("reactive strip persistence across turns + session-reset gate clearing", () => {
   beforeEach(() => {
     resetToolSchemaStripGateForTest();
   });
@@ -578,7 +578,7 @@ describe("CR-02: reactive strip persistence across turns + session-reset gate cl
   }
 
   it("turn N+1 after a healed turn N sends STRIPPED wire schemas — the heal survives the snapshot→normalize rebuild", async () => {
-    const sessionKey = { tenantId: "t1", userId: "u1", channelId: "cr02-multiturn" };
+    const sessionKey = { tenantId: "t1", userId: "u1", channelId: "strip-multiturn" };
     const snapshotKey = formatSessionKey(sessionKey);
 
     // Turn N: assemble, grammar-400, strip-retry heals (invokeRetry succeeds).
@@ -598,7 +598,7 @@ describe("CR-02: reactive strip persistence across turns + session-reset gate cl
   });
 
   it("session reset clears the once-gate: a reset session gets its one strip-retry again instead of instant terminal failure", async () => {
-    const sessionKey = { tenantId: "t1", userId: "u1", channelId: "cr02-reset" };
+    const sessionKey = { tenantId: "t1", userId: "u1", channelId: "strip-reset" };
     const snapshotKey = formatSessionKey(sessionKey);
 
     // Turn N: the session consumes its one strip-retry.

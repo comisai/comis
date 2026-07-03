@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { buildAnnounceKey, createDeliveryDedup } from "./announce-key.js";
 
 // ---------------------------------------------------------------------------
-// buildAnnounceKey (INFO-DRY): single source of truth for the idempotency key
+// buildAnnounceKey: single source of truth for the idempotency key
 // `${callerSessionKey}::${runId}` that the success path (deliverAnnouncement)
 // and the failure path (deliverFailureNotification) both build. Two hand-rolled
 // literals risk silent divergence → dedup misses; this pins one format.
@@ -22,8 +22,8 @@ describe("buildAnnounceKey", () => {
     expect(buildAnnounceKey("", "r1")).toBeUndefined();
   });
 
-  it("matches the exact literal both delivery paths previously hand-built", () => {
-    // Mirrors the pre-extraction literals at result-processor :514 and :641.
+  it("produces the exact literal shape both delivery paths dedup on", () => {
+    // Pins the literal template so the success and failure paths cannot drift.
     const callerSessionKey = "tenantA:userB:discord:42";
     const runId = "8c1f-uuid";
     expect(buildAnnounceKey(callerSessionKey, runId)).toBe(`${callerSessionKey}::${runId}`);
@@ -31,9 +31,9 @@ describe("buildAnnounceKey", () => {
 });
 
 // ---------------------------------------------------------------------------
-// createDeliveryDedup (WR-02 + WR-03): a small bounded delivery-dedup primitive
+// createDeliveryDedup: a small bounded delivery-dedup primitive
 // shared by the batcher success path, the no-batcher success branches, the
-// failure path, and DLQ recovery. WR-03: the set MUST be bounded (a long-running
+// failure path, and DLQ recovery. The set MUST be bounded (a long-running
 // daemon spawning thousands of sub-agents must not leak one Set entry each).
 // ---------------------------------------------------------------------------
 
@@ -46,7 +46,7 @@ describe("createDeliveryDedup", () => {
     expect(dedup.has("k2")).toBe(false);
   });
 
-  it("is bounded: marking many distinct keys never grows the set past the cap (WR-03)", () => {
+  it("is bounded: marking many distinct keys never grows the set past the cap", () => {
     const cap = 8;
     const dedup = createDeliveryDedup(cap);
     for (let i = 0; i < cap * 10; i++) dedup.mark(`key-${i}`);

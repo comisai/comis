@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for SessionLatch utility and session latch container (SESS-LATCH).
+ * Unit tests for the SessionLatch utility and the per-session latch container.
  *
  * @module
  */
@@ -183,10 +183,10 @@ describe("AccumulativeLatch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SESS-LATCH: Session latch container tests (pi-executor integration)
+// Session latch container tests (pi-executor integration)
 // ---------------------------------------------------------------------------
 
-describe("SessionLatch container (SESS-LATCH)", () => {
+describe("SessionLatch container (per-session latch registry)", () => {
   const sessionA = "agent:platform:channelA:userA";
   const sessionB = "agent:platform:channelB:userB";
 

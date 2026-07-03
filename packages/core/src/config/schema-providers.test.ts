@@ -215,7 +215,7 @@ describe("ModelCostSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("ProviderEntrySchema (extended)", () => {
-  it("parses existing minimal config -- backward compatibility", () => {
+  it("parses a minimal type-only entry, filling every optional field's default", () => {
     const result = ProviderEntrySchema.safeParse({ type: "openai" });
     expect(result.success).toBe(true);
     if (result.success) {

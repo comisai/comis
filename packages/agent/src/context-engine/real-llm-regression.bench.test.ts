@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated real-LLM regression driver — the design's "/v1" (version-1 of the
- * real-LLM harness; NOT a route or an existing repo symbol).
+ * Env-gated real-LLM regression driver.
  *
- * It stands up the MINIMAL real-provider driver for the Lossless Context DAG
- * (v2.12) work: two probes that drive a context turn through the REAL pipeline
+ * It stands up the MINIMAL real-provider driver for the Lossless Context
+ * DAG: two probes that drive a context turn through the REAL pipeline
  * context engine (`createContextEngine({ version: "pipeline" }).transformContext`)
  * + the cache-trace wrapper (`buildCacheTraceWrapper(trace)(next)`), recording
- * the `stream:context` cache-trace event so the assembled-array invariant (O2 —
- * the `assembledShape` descriptor added in Plan 126-05) can be asserted against a
+ * the `stream:context` cache-trace event so the assembled-array invariant
+ * (the `assembledShape` descriptor) can be asserted against a
  * REAL provider:
  *
  *   1. TOOL-FREE BASELINE — drive one tool-free turn against the real answer
@@ -21,12 +20,12 @@
  *      pipeline + wrapper; assert the recorded `stream:context`
  *      `assembledShape.hasToolResult === true`, the tool_use<->tool_result
  *      pairing holds, and the array GREW vs the baseline turn.
- *   3. <=2-READS LOOP-FIX PROBE (Phase 128, A4) — the headline regression. Drive
+ *   3. <=2-READS LOOP-FIX PROBE — the headline regression. Drive
  *      a REAL agentic loop (the pi-agent-core `Agent`) whose `transformContext`
  *      is the live `dag`-mode LCD engine wired to a REAL `createLcdStore(:memory:)`,
  *      with the afterTurn write-path (`ingestTurn`) feeding each turn back into
  *      the store. The model is forced to `read` a file once, then must answer from
- *      the fed-back `tool_result`. The deleted dag-assembler flattened the
+ *      the fed-back `tool_result`. An earlier (since deleted) dag-assembler flattened the
  *      reconstructed `tool_use`/`tool_result` to TEXT, so the model never saw a
  *      provider-valid pairing for its own prior action and re-issued the same
  *      `read` 54 times (124 s). The corrected codec round-trip pairs by id, so the
@@ -38,14 +37,14 @@
  * TWO-TIER GATE (mirrors qa-judge-harness.bench.test.ts):
  *   - UNGATED (default CI, `pnpm test` / `pnpm validate`): `COMIS_LCD_REGRESSION`
  *     is unset, so `describe.skipIf` SKIPS this entire suite — no provider call,
- *     no network, no cost reaches CI. (The deterministic O2 invariant is already
- *     pinned by the always-on provider-boundary-harness.test.ts.)
+ *     no network, no cost reaches CI. (The deterministic assembled-array invariant
+ *     is already pinned by the always-on provider-boundary-harness.test.ts.)
  *   - GATED (this file, run by hand): `COMIS_LCD_REGRESSION=1` enables the suite;
  *     the provider-backed probes additionally nest behind the answer-model env
  *     (`COMIS_LCD_ANSWER_{PROVIDER,MODEL,API_KEY}`). Absent any of those ->
  *     `it.skipIf` skips the probe.
  *
- * SECURITY (Shared Pattern E + T-126-16/T-126-17):
+ * SECURITY:
  *   - The operator places the provider key ONLY in a git-ignored
  *     `scripts/lcd-regression.env` (mirroring `scripts/bench-memory.env`); the
  *     committed `scripts/lcd-regression.env.example` documents the vars. The key
@@ -96,7 +95,8 @@ import { ingestTurn } from "../executor/lcd-ingest.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ENV GATES — read process.env ONLY at the test boundary (allowed in a .test.ts;
-// the globals rule scopes to src/**). Names pinned by this plan (126-06).
+// the globals rule scopes to src/**). Names match the committed
+// scripts/lcd-regression.env.example contract.
 const COMIS_LCD_REGRESSION = process.env.COMIS_LCD_REGRESSION; // master gate
 const ANSWER_PROVIDER = process.env.COMIS_LCD_ANSWER_PROVIDER;
 const ANSWER_MODEL = process.env.COMIS_LCD_ANSWER_MODEL;
@@ -106,7 +106,7 @@ const COMIS_LCD_LIMIT = process.env.COMIS_LCD_LIMIT; // cost-bound: cap probe co
 /** Per-LLM-call wall-clock deadline (a standard timer is allowed in a .test.ts). */
 const LLM_TIMEOUT_MS = 120_000;
 /** Harness version stamp — a number is always attributable to fixed harness code. */
-const DRIVER_VERSION = "phase-126-v1";
+const DRIVER_VERSION = "lcd-regression-v1";
 
 let tmpDir: string;
 
@@ -206,7 +206,7 @@ function toolResultMsg(toolCallId: string): AgentMessage {
 /**
  * Drive one turn through the REAL pipeline engine + the cache-trace wrapper, then
  * read back the recorded `stream:context` line. The assembled array is the SAME
- * one a real provider call would receive; the wrapper records its shape (O2).
+ * one a real provider call would receive; the wrapper records its shape.
  */
 async function recordTurn(
   messages: AgentMessage[],
@@ -248,7 +248,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
 }
 
 // ---------------------------------------------------------------------------
-// Probe 3: the <=2-reads loop-fix driver (Phase 128, A4) — the REAL dag engine
+// Probe 3: the <=2-reads loop-fix driver — the REAL dag engine
 // + a REAL LCD store + the REAL agentic loop.
 // ---------------------------------------------------------------------------
 
@@ -336,8 +336,8 @@ function countReadToolUses(messages: AgentMessage[]): number {
 }
 
 /** Record `stream:context` off a `dag`-assembled array (the live store-fed engine),
- *  so the O2 invariants (hasToolResult + pairing + growth) can be asserted against
- *  the SAME array the provider would receive. */
+ *  so the assembled-array invariants (hasToolResult + pairing + growth) can be asserted
+ *  against the SAME array the provider would receive. */
 async function recordDagTurn(
   store: ContextStorePort,
   liveMessages: AgentMessage[],
@@ -407,7 +407,7 @@ describe.skipIf(!COMIS_LCD_REGRESSION)("real-LLM regression (/v1)", () => {
         }
       }
 
-      // 2. Assemble the tool-free turn through the pipeline + wrapper, record O2.
+      // 2. Assemble the tool-free turn through the pipeline + wrapper, record its shape.
       const baseline = await recordTurn(
         [userMsg("hello"), assistantTextMsg("world")],
         join(tmpDir, "baseline.jsonl"),
@@ -447,9 +447,9 @@ describe.skipIf(!COMIS_LCD_REGRESSION)("real-LLM regression (/v1)", () => {
       );
 
       // Turn 2: a forced single-read tool turn — user -> assistant-with-tool_use
-      // -> toolResult -> assistant. (The deep <=2-reads loop assertion now exists
-      // as the third probe below, driving the real dag engine + a real store; this
-      // probe records O2 against the pipeline shape for the baseline comparison.)
+      // -> toolResult -> assistant. (The deep <=2-reads loop assertion is
+      // the third probe below, driving the real dag engine + a real store; this
+      // probe records the assembled shape against the pipeline for the baseline comparison.)
       const singleRead = await recordTurn(
         [
           userMsg("read the file"),
@@ -494,15 +494,15 @@ describe.skipIf(!COMIS_LCD_REGRESSION)("real-LLM regression (/v1)", () => {
   );
 
   it.skipIf(!haveAnswer)(
-    "drives the dag engine + a real store and the model answers in <=2 reads (the loop fix, A4)",
+    "drives the dag engine + a real store and the model answers in <=2 reads (the loop fix)",
     async () => {
       // The HEADLINE regression. A REAL agentic loop whose `transformContext` is
       // the live `dag`-mode LCD engine wired to a REAL `createLcdStore(:memory:)`,
       // with the afterTurn write-path (`ingestTurn`) feeding each turn into the
       // store. Forced to `read` once, the model must answer from the fed-back
-      // `tool_result`. The deleted dag-assembler flattened the reconstructed
-      // tool_use/tool_result to TEXT -> the model re-issued `read` 54 times; the
-      // corrected codec round-trip pairs by id -> <=2 reads.
+      // `tool_result`. An earlier (since deleted) dag-assembler flattened the
+      // reconstructed tool_use/tool_result to TEXT -> the model re-issued `read`
+      // 54 times; the correct codec round-trip pairs by id -> <=2 reads.
       const store = makeLcdStore();
       const dagEngine = createContextEngine(dagConfig, makeDagDeps(store));
 
@@ -593,7 +593,7 @@ describe.skipIf(!COMIS_LCD_REGRESSION)("real-LLM regression (/v1)", () => {
       expect(answerText.length).toBeGreaterThan(0);
       const usedSecret = answerText.toUpperCase().includes(SECRET_WORD);
 
-      // (O2 on the dag array) record stream:context off the dag-assembled context
+      // (shape on the dag array) record stream:context off the dag-assembled context
       // and assert hasToolResult + valid pairing + growth vs an empty-store turn.
       const emptyStore = makeLcdStore();
       const emptyTurn = await recordDagTurn(

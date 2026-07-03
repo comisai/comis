@@ -1,35 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * A1 de-risk spike for STEER-01 (Phase 175 — real mid-flight steering).
+ * De-risk spike for real mid-flight steering.
  *
  * PURPOSE
  * -------
- * Phase 175 adds a true `steer` (inject) path to the `subagents` tool that
+ * The `subagents` tool's true `steer` (inject) path
  * delivers a high-priority message into a RUNNING child's live SDK session at
- * the next step boundary — instead of today's kill+respawn (which discards the
+ * the next step boundary — instead of a kill+respawn (which would discard the
  * child's transcript and progress). The inject handler must resolve the running
  * child's live `RunHandle` (exposing
  * `steer`/`followUp`/`abort`/`isStreaming`/`isCompacting`).
  *
- * The single LOAD-BEARING assumption (A1, RESEARCH Assumptions Log) is:
+ * The single LOAD-BEARING assumption is:
  *   a RUNNING sub-agent's `RunHandle` is reachable from the runner via the
  *   SAME lookup `killRun` uses for `abort()` —
  *   `sessionResolver.resolveActiveSession(deriveCompositeForRun(run))`
  *   (sub-agent-runner.ts:1938).
  *
- * WR-01 CORRECTION (175-REVIEW.md)
- * --------------------------------
- * The ORIGINAL spike gave FALSE confirmation: it registered the handle under a
- * key derived from `deriveCompositeForRunReplica(run)` — i.e. the RESOLUTION
- * formula — and then resolved with the SAME formula, so both sides trivially
- * agreed (a tautology). The "drift guard" compared two byte-identical
- * `formatSessionKey(...)` calls (`x === x`). Neither exercised the REAL executor
+ * TAUTOLOGY HAZARD
+ * ----------------
+ * A naive spike gives FALSE confirmation: registering the handle under a
+ * key derived from a replica of the RESOLUTION
+ * formula and then resolving with the SAME formula trivially
+ * agrees (a tautology) — a "drift guard" comparing two byte-identical
+ * `formatSessionKey(...)` calls (`x === x`). Neither side exercises the REAL executor
  * registration formula, which uses the child's runtime origin channelType
  * (`deliveryOrigin?.channelType ?? channelType ?? "gateway"`) and
- * `userId = msg.channelId` (the sub-session channelId) — NOT the resolver's
+ * `userId = msg.channelId` (the sub-session channelId) — NOT a
  * `"sub-agent"` fallback nor `run.announceChannelId`.
  *
- * This rewrite reproduces the GENUINE divergence:
+ * This spike therefore exercises the GENUINE pair:
  *   - REGISTRATION key (channel/sub-agent path): pi-executor.ts:1152-1156
  *       formatSessionKey({ tenantId: agentId ?? "default",
  *                          channelId: `${originChannelType}:${msg.channelId}`,
@@ -123,7 +123,7 @@ function makeRunHandle(): { handle: RunHandle; steer: ReturnType<typeof vi.fn>; 
   return { handle, steer, followUp };
 }
 
-describe("A1 resolution spike (STEER-01 de-risk): kill-path lookup reaches a running sub-agent's RunHandle", () => {
+describe("resolution spike: the kill-path lookup reaches a running sub-agent's RunHandle", () => {
   // A realistic running sub-agent: sessionKey built EXACTLY as the spawn path
   // emits it (sub-agent-runner.ts:1184) —
   //   { tenantId, userId: `sub-agent-${runId}`, channelId: `sub-agent:${runId}` }
@@ -170,8 +170,8 @@ describe("A1 resolution spike (STEER-01 de-risk): kill-path lookup reaches a run
 
     // ── THE LOAD-BEARING ASSERTION: the kill/steer-path lookup
     //    (sub-agent-runner.ts:1938 / steer-run.ts) resolves the live handle for
-    //    a running sub-agent. Before the WR-01 fix this returned undefined
-    //    (channelType "sub-agent" ≠ registration "gateway").
+    //    a running sub-agent. A drifted resolution formula returns undefined
+    //    here (e.g. channelType "sub-agent" ≠ registration "gateway").
     const resolved = resolver.resolveActiveSession(deriveCompositeForRunForTest(run));
     expect(resolved).toBeDefined();
     expect(resolved).toBe(handle); // identity-equal — the very handle registered
@@ -208,7 +208,7 @@ describe("A1 resolution spike (STEER-01 de-risk): kill-path lookup reaches a run
   });
 
   it("formula-drift guard: the REAL executor registration key === the resolver key from deriveCompositeForRun (two INDEPENDENT derivations)", () => {
-    // This is the genuine regression guard (WR-01 correction): the two keys are
+    // This is the genuine regression guard: the two keys are
     // derived from DIFFERENT inputs —
     //   executorFormatted  ← executor's own (originChannelType, subSessionChannelId)
     //   resolverFormatted  ← deriveCompositeForRun(run) → formatComposite

@@ -368,7 +368,7 @@ describe("createStaticRetention", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Turn-count-based escalation (design 2.4)
+// Turn-count-based escalation
 // ---------------------------------------------------------------------------
 
 describe("createAdaptiveCacheRetention turn-based escalation", () => {

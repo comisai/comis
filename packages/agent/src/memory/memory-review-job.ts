@@ -91,19 +91,20 @@ export interface MemoryReviewDeps {
   provider: string;
   modelId: string;
   apiKey: string;
-  customModel?: CustomCompletionsModelSpec; // keyless/local model spec (#223/DIALECTIC-FIX)
+  customModel?: CustomCompletionsModelSpec; // keyless/local model spec so a YAML provider resolves (#223)
   /** Wall-clock reads — relative-date RESOLUTION ref + stored-entry timestamps. Never `Date.now()` (globals); daemon wires `createSystemClock()`. */
   clock: ClockPort;
   logger: ReviewLogger;
   /**
-   * R6: the capability class of the agent's model (from ModelProfile.capabilityClass).
+   * The capability class of the agent's model (from ModelProfile.capabilityClass).
    * When small/nano without a capable override, extraction is skipped — no LLM call
-   * is made and the watermark advances (T-153-fabricate mitigation).
+   * is made and the watermark advances (a weak model fabricates memories rather
+   * than extracting them, so abstaining is safer than storing invented facts).
    * Optional: defaults to "frontier" behavior (capable) when absent.
    */
   capabilityClass?: CapabilityClass;
   /**
-   * R6: operator override — a stronger cheap model is configured for the memory
+   * Operator override — a stronger cheap model is configured for the memory
    * pipeline. When true, small/nano are treated as capable for extraction.
    * Optional; defaults to false.
    */
@@ -136,8 +137,8 @@ interface ReviewWatermark {
  * An extracted memory paired with its emitted entity mentions.
  *
  * Entities are EMITTED on this in-memory result carrying the stored memory's
- * inherited trust + provenance — they are NOT persisted (no entity table exists
- * yet). `memoryId` is the link target the entity resolver consumes.
+ * inherited trust + provenance — persistence happens separately via the optional
+ * injected `entityStore`. `memoryId` is the link target the entity resolver consumes.
  */
 interface ExtractedMemoryWithEntities {
   memoryId: string;
@@ -219,8 +220,8 @@ function extractMessageContent(msg: unknown): string {
   // ([{type:"text",text:"..."}, {type:"tool_use",...}]). Concatenate the text
   // blocks (and skip non-text blocks) instead of collapsing the whole turn to
   // "[role]: " — otherwise the extraction LLM silently sees a biased subset
-  // (string-only turns), so memories are extracted from an incomplete picture
-  // (WR-04). Mirrors the extractResponseText helper below.
+  // (string-only turns), so memories are extracted from an incomplete picture.
+  // Mirrors the extractResponseText helper below.
   let content = "";
   if (typeof m.content === "string") {
     content = m.content;
@@ -233,9 +234,9 @@ function extractMessageContent(msg: unknown): string {
   return `[${role}]: ${content}`;
 }
 
-/** Per-message char cap in a session summary (live 2026-06-11: one 6K-char essay
- *  pushed a 16-message conversation past the whole batch budget → the session was
- *  skipped entirely AND, unwatermarked, re-skipped every run). Facts live in turn
+/** Per-message char cap in a session summary. Without it, one multi-thousand-char
+ *  essay message can push a whole conversation past the batch budget → the session
+ *  is skipped entirely AND, unwatermarked, re-skipped every run. Facts live in turn
  *  heads; an essay tail adds tokens, not extractable facts. */
 const PER_MESSAGE_SUMMARY_MAX_CHARS = 500;
 
@@ -318,9 +319,9 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   const startTime = clock.now();
   // Scope the per-stage step logs to a `submodule` child logger so an
   // operator can answer "what did extraction do?" from logs alone (AGENTS.md
-  // §2.6/§2.7). The pre-existing `logger.*` WARN/DEBUG calls are left intact
-  // (their byte-identical strings are guarded by the degradation/forensic
-  // tests); only the new stage INFO lines route through `log`.
+  // §2.6/§2.7). The `logger.*` WARN/DEBUG calls keep their byte-identical
+  // strings (guarded by the degradation/forensic
+  // tests); only the stage INFO lines route through `log`.
   const log = logger.child({ submodule: "memory-review" });
 
   // Load watermark
@@ -331,7 +332,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   const allSessions = sessionStore.listDetailed(tenantId);
   const qualifyingSessions = filterSessions(allSessions, config, watermark);
 
-  // Early-exit counts ride an INFO line so a no-op nightly run is visible at the default level (live C11 finding, 2026-06-12; was DEBUG-only).
+  // Early-exit counts ride an INFO line so a no-op nightly run is visible at the default log level.
   if (qualifyingSessions.length === 0) {
     log.info(
       { agentId, totalSessions: allSessions.length, qualifying: 0, watermark, step: "early-exit" },
@@ -364,7 +365,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     );
 
     if (batchContent.length + summary.length > maxChars) {
-      // Livelock backstop (live 2026-06-11): a skipped FIRST session stays
+      // Livelock backstop: a skipped FIRST session stays
       // unwatermarked → re-skipped every run. Truncate-to-fit when a useful
       // budget remains; only a pathological budget skips, and loudly.
       const remaining = maxChars - batchContent.length;
@@ -404,8 +405,9 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     return ok(undefined);
   }
 
-  // R6 capability routing: skip the LLM extraction call for small/nano without a
-  // capable-model override (T-153-fabricate mitigation). Advance the watermark first
+  // Capability routing: skip the LLM extraction call for small/nano without a
+  // capable-model override (a weak model fabricates memories rather than extracting
+  // them). Advance the watermark first
   // so this run is not re-processed on the next cron tick (non-stalling abstain).
   const capabilityClass = deps.capabilityClass ?? "frontier";
   const hasCapableModelOverride = deps.hasCapableModelOverride ?? false;
@@ -483,8 +485,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
   // Parse LLM response into the zod-validated structured envelope. A total
   // parser: undefined on ANY whole-payload failure (bad JSON, schema
-  // mismatch, or the DELETED flat `[{content, session}]` shape — there is NO
-  // fallback to the old path).
+  // mismatch, or a flat `[{content, session}]` array — there is NO lenient
+  // fallback shape).
   const extraction = parseExtractionResult(responseText);
   if (!extraction) {
     // Whole-batch non-fatal: warn + advance the watermark for EVERY
@@ -566,10 +568,10 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     const verdict = validateMemoryWrite(m.content);
     if (verdict.severity === "critical") {
       // The audit record for a security-blocking event must carry the
-      // COMPLETE matched-pattern set, not just the critical subset. The previous
-      // code logged the value `verdict.criticalPatterns` under the misleading
-      // field name `patterns`, silently dropping the broader `verdict.patterns`
-      // (for a dangerous-command match that set includes every matched pattern).
+      // COMPLETE matched-pattern set, not just the critical subset — for a
+      // dangerous-command match `verdict.patterns` includes every matched
+      // pattern, and collapsing it to `verdict.criticalPatterns` under one
+      // field name would silently drop the broader set.
       // Log both, each under its accurate name. Never log the offending content.
       logger.warn(
         {
@@ -772,7 +774,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   }
   await saveWatermark(watermarkPath, watermark);
 
-  // Emit completion event (entitiesExtracted is additive/harmless — Open Q Q3).
+  // Emit completion event (entitiesExtracted is additive — consumers that do not know the field ignore it).
   eventBus.emit("memory:review_completed", {
     agentId,
     sessionsReviewed: reviewedSessions.length,

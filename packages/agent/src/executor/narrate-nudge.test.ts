@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the narrate-without-emit continuation nudge (Issue 4,
- * small-model e2e 2026-06-12, UC-2 turn 2 + UC-5 vague run).
+ * Tests for the narrate-without-emit continuation nudge.
  *
- * RED-first: this module did not exist pre-patch — the live runs delivered
- * mid-task narration ("Found the image analyze tool. Let me use it now.") as
- * the final visible answer with the turn recorded as a clean success.
+ * Motivating live failure: small-model runs delivered mid-task narration
+ * ("Found the image analyze tool. Let me use it now.") as the final visible
+ * answer with the turn recorded as a clean success.
  */
 import { describe, it, expect, vi } from "vitest";
 import { isIntentPrelude, runNarrateNudge, type RunNarrateNudgeDeps } from "./narrate-nudge.js";
@@ -49,11 +48,11 @@ function makeDeps(overrides: Partial<RunNarrateNudgeDeps> = {}): RunNarrateNudge
 // ---------------------------------------------------------------------------
 
 describe("isIntentPrelude", () => {
-  it("matches the live UC-2 shape — narration ending with a colon", () => {
+  it("matches live-observed narration ending with a colon", () => {
     expect(isIntentPrelude("Now let me write the comparison script:")).toBe(true);
   });
 
-  it("matches the live UC-5 shape — final sentence opening with 'Let me'", () => {
+  it("matches live-observed narration whose final sentence opens with 'Let me'", () => {
     expect(isIntentPrelude("Found the image analyze tool. Let me use it now.")).toBe(true);
   });
 

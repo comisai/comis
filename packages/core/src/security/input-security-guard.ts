@@ -68,7 +68,7 @@ export interface InputSecurityGuard {
 }
 
 /**
- * Defense-in-depth bound on the scan input (GIANT-INPUT-WEDGE, 30uc-20260624). The scan is a
+ * Defense-in-depth bound on the scan input. The scan is a
  * heuristic over `text` — `stripCodeBlocks` (regex over the whole string) + per-pattern regex
  * tests + a `split(/\s+/)` typoglycemia loop (O(words)). On a multi-MB message that is millions
  * of synchronous string ops that block the Node event loop. A jailbreak directive is realistically

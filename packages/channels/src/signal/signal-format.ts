@@ -10,8 +10,6 @@
  * matching Signal's offset scheme. Surrogate pairs (emoji, non-BMP chars) naturally
  * count as 2 units in both JS and Signal.
  *
- * Adapted from Comis's signal/format.ts for Comis's MarkdownIR structure.
- *
  * @module
  */
 

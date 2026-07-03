@@ -3,14 +3,14 @@
  * Shared announcement idempotency-key construction + a bounded delivery-dedup
  * primitive, used by every sub-agent completion-delivery path.
  *
- * INFO-DRY: `buildAnnounceKey` is the single source of truth for the
+ * `buildAnnounceKey` is the single source of truth for the
  * `${callerSessionKey}::${runId}` key. The success path (`deliverAnnouncement`)
  * and the failure path (`deliverFailureNotification`) both build it; two
  * hand-rolled literals would silently diverge on any delimiter/operand change
- * and break the cross-path dedup (the DELIVERY-03 premise) with no test
- * catching the drift. One helper converts that into a one-edit guarantee.
+ * and break the cross-path dedup with no test catching the drift. One helper
+ * converts that into a one-edit guarantee.
  *
- * WR-02 / WR-03: `createDeliveryDedup` owns the delivered-key set OUTSIDE the
+ * `createDeliveryDedup` owns the delivered-key set OUTSIDE the
  * batcher so the no-batcher success branches can mark too (consistent dedup
  * whether or not a batcher is wired), and it is BOUNDED (FIFO eviction) like
  * every sibling structure in this subsystem (`runs` MAX_RUNS, the DLQ

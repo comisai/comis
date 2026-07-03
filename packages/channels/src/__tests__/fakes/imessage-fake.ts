@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeIMessageAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the iMessage AppendOnly renderer (§18.1 "fake adapter records every method
- * call").
+ * the iMessage AppendOnly renderer; it records every method call.
  *
  * Mirrors `createFakeSignalAdapter` (the non-EditPlace template) but for the
  * AppendOnly shape:
  *   - mints `imsg-msg-N` ids (iMessage's determinism source for byte-stable
- *     fixtures — Pitfall 2; clock-free, no wall-time call that would flap),
+ *     fixtures; clock-free, no wall-time call that would flap),
  *   - records NO `silent` flag on `send` (iMessage does not send the silent
  *     effect — AppendOnly posts a single plain opening status), and
  *   - OMITS `editMessage` / `deleteMessage` entirely. iMessage is send-only; the

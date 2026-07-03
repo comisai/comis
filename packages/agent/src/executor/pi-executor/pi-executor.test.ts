@@ -243,7 +243,7 @@ vi.mock("../../bridge/pi-event-bridge.js", () => ({
     // end-of-turn backstop drainAt sharing the same composite-key Map.
     // The mock returns a fresh Map per construction.
     getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
-    // ATTR-02: postExecution reads the per-turn skill-use carrier back. Default
+    // postExecution reads the per-turn skill-use carrier back. Default
     // empty (no skill attributed) → memory:skill_used not emitted.
     getUsedSkillIds: () => new Set<string>(),
   }),
@@ -365,7 +365,7 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       reset: vi.fn(),
     },
     budgetGuard: (() => {
-      // CR-01: resetExecution now returns an execution-local window. The mock
+      // resetExecution returns an execution-local window. The mock
       // window carries the same checkBudget/recordUsage/estimateCost/getSnapshot
       // surface; resetExecution returns it so the executor threads a real handle.
       const win = {
@@ -573,11 +573,11 @@ describe("PiExecutor", () => {
       );
     });
 
-    // WT-01: a `spawn --worktree` child runs IN an isolated git worktree, so the
+    // A `spawn --worktree` child runs IN an isolated git worktree, so the
     // SDK session cwd (the file-tool jail for exec/read/write/edit) MUST be the
     // worktree dir, NOT the agent's shared workspace. ExecutionOverrides.workspaceDir
     // carries the per-run override; absent ⇒ deps.workspaceDir (byte-identical).
-    it("uses overrides.workspaceDir as the SDK session cwd when provided (WT-01)", async () => {
+    it("uses overrides.workspaceDir as the SDK session cwd when provided", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
       const worktreeDir = `${deps.workspaceDir}/.worktrees/wt-run-xyz`;
@@ -721,7 +721,7 @@ describe("PiExecutor", () => {
       expect(deps.budgetGuard.resetExecution).toHaveBeenCalled();
     });
 
-    // BUDGET-01: the per-execution token cap rides ExecutionOverrides.tokenBudget
+    // The per-execution token cap rides ExecutionOverrides.tokenBudget
     // into resetExecution(cap) — the child's BudgetGuard per-execution ceiling.
     it("passes overrides.tokenBudget to budgetGuard.resetExecution as the per-execution cap", async () => {
       const deps = createMockDeps();
@@ -890,7 +890,7 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // LAT-04 (Phase 177): the PromptTimeoutError terminal carries its OWN
+      // The PromptTimeoutError terminal carries its OWN
       // named finishReason (END_REASON_MAP → endReason "timeout") instead of
       // flattening into the generic "error" bucket.
       expect(result.finishReason).toBe("prompt_timeout");
@@ -1254,11 +1254,11 @@ describe("PiExecutor", () => {
       ];
 
       // Bridge result tuned so the upstream silent-failure handlers
-      // at executor-prompt-runner.ts:394-436 (silent-02 recovery) and
-      // ~821 (all-thinking continuation) BOTH skip — letting L4 be the
-      // one that fires:
-      //   - textEmitted: true   → silent-02 skips (treats empty final after
-      //                            text in earlier turns as expected).
+      // (the strip-and-retry recovery in prompt-runner/silent-failure-handlers.ts
+      // and the all-thinking continuation in prompt-runner/output-escalation.ts)
+      // BOTH skip — letting L4 be the one that fires:
+      //   - textEmitted: true   → silent-failure recovery skips (treats empty
+      //                            final after text in earlier turns as expected).
       //   - stepsExecuted: 0    → all-thinking continuation skips.
       //   - llmCalls: 1, finishReason: "stop" → not stuck-session.
       // L4's detection reads session.messages directly (not the bridge
@@ -1332,7 +1332,7 @@ describe("PiExecutor", () => {
           // Same drain-state stub as the top-level mock so the per-test
           // override in this it() block matches the PostExecutionBridge interface.
           getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
-          // ATTR-02: per-turn skill-use carrier read-back (empty in the mock).
+          // Per-turn skill-use carrier read-back (empty in the mock).
           getUsedSkillIds: () => new Set<string>(),
         };
       });
@@ -3123,7 +3123,7 @@ describe("PiExecutor", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Image passthrough vision gating ()
+  // Image passthrough vision gating
   // -------------------------------------------------------------------------
 
   describe("image passthrough vision gating", () => {
@@ -3278,8 +3278,9 @@ describe("PiExecutor", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Progressive context pruner removed (superseded by observation masker)
-  // Legacy tests removed -- pruner and budget guard no longer in wrapper chain.
+  // No pruner/budget-guard wrapper tests: the wrapper chain contains no
+  // progressive context pruner or budget-guard wrapper -- observation masking
+  // covers context reduction.
   // -------------------------------------------------------------------------
 
   // -------------------------------------------------------------------------
@@ -3308,7 +3309,7 @@ describe("PiExecutor", () => {
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      // +1 for ttlGuard, +1 for toolCallRepairWrapper (L3 Phase 155-02), +1 for stubFilterInjector (now 8)
+      // +1 for ttlGuard, +1 for toolCallRepairWrapper, +1 for stubFilterInjector (now 8)
       expect(composedLog![0].wrapperCount).toBe(8);
     });
 
@@ -3340,7 +3341,7 @@ describe("PiExecutor", () => {
       expect(traceLog![0].apiPayloadPath).toContain("/tmp/test-traces/");
       expect(traceLog![0].apiPayloadPath).toContain(".api-payload.jsonl");
 
-      // Should have 9 wrappers applied (8 base + 1 api-payload trace, L3 Phase 155-02 added toolCallRepairWrapper)
+      // Should have 9 wrappers applied (8 base incl. toolCallRepairWrapper + 1 api-payload trace)
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
       const composedLog = debugCalls.find(
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
@@ -3362,10 +3363,10 @@ describe("PiExecutor", () => {
 
       // Verify wrapper names from the summary log.
       // wrapperNames array order matches the wrappers array (outermost first):
-      // ttlGuard, toolCallRepairWrapper (L3 Phase 155-02), validationErrorFormatter,
+      // ttlGuard, toolCallRepairWrapper, validationErrorFormatter,
       //   toolResultSizeBouncer, turnResultBudget, configResolver, requestBodyInjector,
       //   cacheTraceWriter, apiPayloadTraceWriter
-      // (added toolCallRepairWrapper between ttlGuard and validationErrorFormatter)
+      // (toolCallRepairWrapper sits between ttlGuard and validationErrorFormatter)
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
       const composedLog = debugCalls.find(
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
@@ -3413,7 +3414,7 @@ describe("PiExecutor", () => {
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      // +1 for ttlGuard, +1 for toolCallRepairWrapper (L3 Phase 155-02), +1 for stubFilterInjector (now 8)
+      // +1 for ttlGuard, +1 for toolCallRepairWrapper, +1 for stubFilterInjector (now 8)
       expect(composedLog![0].wrapperCount).toBe(8);
     });
 
@@ -4225,7 +4226,7 @@ describe("PiExecutor", () => {
     });
 
     // ---------------------------------------------------------------------
-    // Source traceability (4C)
+    // Source traceability
     // ---------------------------------------------------------------------
 
     it("stores sessionKey in memory source for traceability", async () => {
@@ -5999,7 +6000,7 @@ describe("ExcludeDeferralResult wiring", () => {
       expect(decoded).toEqual({ query: "foo & bar <baz>" });
     });
 
-    it("sets a universal prepareArguments (F-3 coercer; identity no-op) even when provider is not xai", async () => {
+    it("sets a universal prepareArguments stringified-JSON coercer (identity no-op) even when provider is not xai", async () => {
       const mockTool = {
         name: "anthropic_tool",
         label: "Anthropic Tool",
@@ -6027,7 +6028,7 @@ describe("ExcludeDeferralResult wiring", () => {
         (t: any) => t.name === "anthropic_tool",
       );
       expect(testToolInSession).toBeDefined();
-      // F-3: every tool now carries the universal stringified-JSON coercer via
+      // Every tool carries the universal stringified-JSON coercer via
       // prepareArguments (no xAI html-entity decode for a non-xai provider). On an
       // empty-properties schema it is an identity no-op.
       expect(testToolInSession).toHaveProperty("prepareArguments");
@@ -6540,13 +6541,13 @@ describe("buildPromptingSnapshot redaction scaffold", () => {
 });
 
 // ---------------------------------------------------------------------------
-// capabilityClassOverride from providerCapabilities (Q3)
+// capabilityClassOverride from providerCapabilities
 // ---------------------------------------------------------------------------
 // Tests that the resolveModelProfile call in pi-executor correctly threads the
 // operator-supplied capabilityClassOverride from deps.providerCapabilities?.capabilityClass.
 // Validates the wiring contract: when override is present it wins; absent → heuristic.
 
-describe("capabilityClassOverride from providerCapabilities (Q3)", () => {
+describe("capabilityClassOverride from providerCapabilities", () => {
   it("providerCapabilities.capabilityClass overrides provider-family heuristic", () => {
     // resolveModelProfile with an ollama provider (→ "small" by default)
     // but an explicit override forces "frontier"
@@ -6582,7 +6583,7 @@ describe("capabilityClassOverride from providerCapabilities (Q3)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CWF-03-H: Non-keyless (anthropic) characterization — effectiveWindow unchanged
+// Non-keyless (anthropic) characterization — effectiveWindow unchanged
 // ---------------------------------------------------------------------------
 // Verifies that DEFAULT_EFFECTIVE_CAP_BY_CLASS is exported from budget-capacity-cap.ts
 // and that for anthropic (frontier, cap=Infinity, no servedContextWindow), the
@@ -6590,7 +6591,7 @@ describe("capabilityClassOverride from providerCapabilities (Q3)", () => {
 // This is a wiring-correctness characterization: if the import fails or the cap table
 // is wrong, the test fails and blocks the pi-executor reconcile wiring.
 
-describe("CWF-03-H: anthropic provider — effectiveWindow byte-identical to configured", () => {
+describe("anthropic provider — effectiveWindow byte-identical to configured", () => {
   it("DEFAULT_EFFECTIVE_CAP_BY_CLASS exported from budget-capacity-cap (precondition for pi-executor wiring)", async () => {
     // This dynamic import FAILS before the export is added → RED gate.
     const mod = await import("../../context-engine/budget-capacity-cap.js");
@@ -6603,7 +6604,7 @@ describe("CWF-03-H: anthropic provider — effectiveWindow byte-identical to con
     expect(cap["frontier"]).toBe(Infinity);
   });
 
-  it("resolveEffectiveContextWindow: anthropic no served → effectiveWindow=200000, source='configured' (CWF-03-H exact-pin)", async () => {
+  it("resolveEffectiveContextWindow: anthropic no served → effectiveWindow=200000, source='configured' (exact-pin)", async () => {
     const { resolveEffectiveContextWindow } = await import("../../model/effective-context-window.js");
     const mod = await import("../../context-engine/budget-capacity-cap.js");
     const cap = (mod as Record<string, unknown>).DEFAULT_EFFECTIVE_CAP_BY_CLASS as Record<string, number>;
@@ -6622,9 +6623,9 @@ describe("CWF-03-H: anthropic provider — effectiveWindow byte-identical to con
 });
 
 // ---------------------------------------------------------------------------
-// IN-01: CR-01 regression — pi-executor wiring with providerCapabilities=undefined
+// Regression — pi-executor wiring with providerCapabilities=undefined
 // ---------------------------------------------------------------------------
-// The CR-01 bug: when providerCapabilities is absent (plain anthropic/openai provider,
+// The bug: when providerCapabilities is absent (plain anthropic/openai provider,
 // no providers.entries block), the old code defaulted capabilityClass to "nano" (16K cap),
 // silently capping a 200K anthropic context to 16K on every execution.
 //
@@ -6633,7 +6634,7 @@ describe("CWF-03-H: anthropic provider — effectiveWindow byte-identical to con
 // that NO capability-cap debug log is emitted (source === "configured"), proving the
 // effective window stays 200_000 (not capped to 16_000).
 
-describe("IN-01 (CR-01 regression): pi-executor capabilityCap absent-providerCapabilities=Infinity", () => {
+describe("regression: pi-executor capabilityCap is Infinity when providerCapabilities is absent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearSessionToolNameSnapshot(formatSessionKey(testSessionKey));
@@ -6668,7 +6669,7 @@ describe("IN-01 (CR-01 regression): pi-executor capabilityCap absent-providerCap
 
     await executor.execute(testMessage, testSessionKey);
 
-    // With the CR-01 fix, capabilityCap = Infinity (no explicit class).
+    // With the fix, capabilityCap = Infinity (no explicit class).
     // resolveEffectiveContextWindow({configured:200000,served:undefined,capabilityCap:Infinity})
     //   → source="configured" (Infinity excluded from the min race).
     // The debug log "Context window reconciled" is ONLY emitted when source !== "configured",
@@ -6722,19 +6723,19 @@ describe("IN-01 (CR-01 regression): pi-executor capabilityCap absent-providerCap
 });
 
 // ---------------------------------------------------------------------------
-// WR-02 (Phase 176 review): the primary provider's served window must NOT be
+// The primary provider's served window must NOT be
 // applied (or attributed) to per-execution override models on other providers.
 // ---------------------------------------------------------------------------
 // deps.servedContextWindow is bound ONCE at executor construction to the
 // agent's PRIMARY provider. Pre-patch, the reconcile consumed the bare number
 // unconditionally: an Ollama-primary agent with served num_ctx 8192 whose
 // graph node overrides to anthropic:claude-* (200K) had its window silently
-// crushed to 8K, with the KNOB-02 surfaces confidently asserting
+// crushed to 8K, with the window-provenance surfaces confidently asserting
 // `source: "served"` / "Ollama serves only 8192" for a model Ollama does not
 // serve. Post-patch the dep pairs {providerKey, window} and the reconcile
 // applies the window only when the executing model resolves to that provider.
 
-describe("WR-02: served-window gate on per-execution provider identity", () => {
+describe("served-window gate on per-execution provider identity", () => {
   /** The probed primary provider (config providers.entries key space). */
   const OLLAMA_PRIMARY = "qwen-local";
   const ollamaConfig: PerAgentConfig = {
@@ -6841,17 +6842,16 @@ describe("WR-02: served-window gate on per-execution provider identity", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LAT-02 (177-03): delta→stall-reset wiring at the composition root.
+// Delta→stall-reset wiring at the composition root.
 // ---------------------------------------------------------------------------
 // The bridge presence-gates on deps.onDelta (pi-event-bridge.ts message_update
 // case), so the hand-off at the bridge-deps literal must be an ALWAYS-DEFINED
 // composed wrapper — not the raw channel callback, which is undefined for
 // channel-less runs (cron, graph, this harness) and silently disables
-// delta→reset: a silent local prefill then dies at the whole-turn race
-// (Critical Finding 6). Per the 177-01 DECISION the wrapper is unconditional
-// (gate_scope: all-providers — no providerType gating).
+// delta→reset: a silent local prefill then dies at the whole-turn race.
+// The wrapper is unconditional for ALL providers — no providerType gating.
 
-describe("LAT-02: composed onDelta wrapper at the bridge hand-off (177-03)", () => {
+describe("composed onDelta wrapper at the bridge hand-off", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearSessionToolNameSnapshot(formatSessionKey(testSessionKey));
@@ -6866,7 +6866,7 @@ describe("LAT-02: composed onDelta wrapper at the bridge hand-off (177-03)", () 
     mockSubscribe.mockReturnValue(vi.fn());
   });
 
-  it("LAT-02-W-8: bridge deps onDelta is ALWAYS defined with no channel callback, and invoking it re-arms the stall timer through the live ref", async () => {
+  it("bridge deps onDelta is ALWAYS defined with no channel callback, and invoking it re-arms the stall timer through the live ref", async () => {
     // Hung prompt keeps the resettable race live while the bridge deps are
     // probed (the resetTimer hand-off happens when the race starts).
     mockPrompt.mockReturnValue(new Promise(() => {}));
@@ -6912,17 +6912,17 @@ describe("LAT-02: composed onDelta wrapper at the bridge hand-off (177-03)", () 
 });
 
 // ---------------------------------------------------------------------------
-// Source-text wiring guard: normalizeModelCompat call-site threading (175-04)
+// Source-text wiring guard: normalizeModelCompat call-site threading
 // ---------------------------------------------------------------------------
 
-describe("normalizeModelCompat call-site wiring guard (175-04)", () => {
+describe("normalizeModelCompat call-site wiring guard", () => {
   it("passes providerType and comisCompat from deps resolvers into normalizeModelCompat", () => {
-    // GBNF-01 built-but-not-wired guard. RED on pre-patch code: the call
+    // Built-but-not-wired guard. RED on pre-patch code: the call
     // passed only {provider, id}, dropping the user's models[].comisCompat
     // entirely and giving auto-detection no provider-type signal. Resolver
     // form (deps.getProviderType / deps.getModelCompat) is load-bearing:
     // per-execution model overrides can switch providers mid-agent, so a
-    // static agent-primary value would mis-gate (WR-04 precedent).
+    // static agent-primary value would mis-gate.
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
 
@@ -6942,7 +6942,7 @@ describe("normalizeModelCompat call-site wiring guard (175-04)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Source-text wiring guard: agent-level capabilityClass pin (2026-06-22)
+// Source-text wiring guard: agent-level capabilityClass pin
 // The agents.<id>.capabilityClass operator pin must (a) take precedence over the
 // provider-level value when resolving explicitClass, AND (b) flow into BOTH the
 // capabilityCap derivation and the resolveModelProfile override — so a pinned

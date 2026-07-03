@@ -2,9 +2,6 @@
 /**
  * Tests for the lcd_memory_provenance DDL in schema-lcd.ts.
  *
- * RED (172-01): These tests fail on pre-patch code because the
- * lcd_memory_provenance table does not yet exist in ensureLcdTables.
- *
  * They verify:
  *   1. DDL creates the table with all 9 required columns (idempotent).
  *   2. ON DELETE CASCADE: deleting a memories row removes its provenance row.
@@ -17,7 +14,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { initSchema } from "./schema.js";
 
-describe("lcd_memory_provenance DDL (Phase 172-01)", () => {
+describe("lcd_memory_provenance DDL", () => {
   let db: Database.Database;
 
   beforeEach(() => {

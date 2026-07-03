@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs.spend.snapshot` handler acceptance tests (WEBUI-02, Phase 179 Plan 04).
+ * `obs.spend.snapshot` handler acceptance tests.
  *
- * Drives the REAL handler over (a) a threaded LIVE spend reader (the locked-A1
+ * Drives the REAL handler over (a) a threaded LIVE spend reader (the
  * `spendAccumulator.getSnapshot()` shape, NOT the lagging SQL) and (b) a seeded
  * `:memory:` ObservabilityStore for the pricing-coverage GROUP BY. Mirrors the
  * `obs-audit.test.ts` / `obs-cache-breaks.test.ts` seam.
  *
  * Cases pinned:
  *   1. LIVE — the snapshot reflects an in-flight reservation the accumulator holds
- *      (A1: the kill-switch value, not a lagging re-sum).
+ *      (the kill-switch value, not a lagging re-sum).
  *   2. HEADROOM — headroom = ceiling - spend per scope (null ceiling ⇒ no headroom).
  *   3. PRICING-COVERAGE — {priced, free, unknown} counts from obs_token_usage.
- *   4. H1 admin gate — a non-admin `_trustLevel` is rejected.
+ *   4. Admin gate — a non-admin `_trustLevel` is rejected.
  *   5. DISABLED — neither source present ⇒ an honest `enabled:false` shape (NOT a
  *      blank/misleading $0 success).
  *   6. CONTENT-FREE — dollar counts + scope enums + pricing-state counts ONLY.
@@ -52,10 +52,10 @@ function makeHandler(opts: {
   return bindObsSpendHandlers(deps)["obs.spend.snapshot"];
 }
 
-describe("obs.spend.snapshot handler (WEBUI-02)", () => {
+describe("obs.spend.snapshot handler", () => {
   it("reflects the LIVE accumulator (an in-flight reservation), not a lagging SQL re-sum", async () => {
     // A real accumulator with a per-agent ceiling; reserve spend through it so the
-    // snapshot sees the in-flight reservation (locked A1).
+    // snapshot sees the in-flight reservation.
     const acc = createSpendAccumulator({
       clock,
       ceilings: { perAgentUsd: 10, perTenantUsd: null, daemonGlobalUsd: 100, warnAtFraction: 0.8 },
@@ -135,7 +135,7 @@ describe("obs.spend.snapshot handler (WEBUI-02)", () => {
     expect(result.snapshot.pricingCoverage.unknown).toBe(1);
   });
 
-  it("rejects a non-admin _trustLevel (H1 dual-layer admin gate)", async () => {
+  it("rejects a non-admin _trustLevel (dual-layer admin gate)", async () => {
     const handler = makeHandler({
       spendSnapshot: () => ({ perAgent: new Map(), perTenant: new Map(), global: 0, ceilings: { perAgentUsd: null, perTenantUsd: null, daemonGlobalUsd: null } }),
     });

@@ -76,13 +76,13 @@ describe("applyPromptRunOutcome", () => {
 });
 
 describe("handleEnvelopeException", () => {
-  // LAT-01-H-8 (Phase 177): the second classify chokepoint. A
-  // PromptTimeoutError reaching the envelope handler now carries the named
-  // terminal finishReason "prompt_timeout" (END_REASON_MAP → endReason
-  // "timeout", LAT-04) and the WARN carries errorKind "timeout" + the
-  // knob-named hint — pre-patch it flattened to finishReason "error" with
-  // errorKind "internal" and a generic hint.
-  it("LAT-01-H-8: PromptTimeoutError → finishReason 'prompt_timeout', WARN errorKind 'timeout' + knob-named hint; userMessage stays generic", () => {
+  // The second classify chokepoint. A PromptTimeoutError reaching the
+  // envelope handler must carry the named terminal finishReason
+  // "prompt_timeout" (END_REASON_MAP → endReason "timeout") and the WARN
+  // must carry errorKind "timeout" + the knob-named hint — pre-patch it
+  // flattened to finishReason "error" with errorKind "internal" and a
+  // generic hint.
+  it("PromptTimeoutError → finishReason 'prompt_timeout', WARN errorKind 'timeout' + knob-named hint; userMessage stays generic", () => {
     const result = makeResult();
     const warn = vi.fn();
     const logger = makeNoopLogger();
@@ -100,12 +100,12 @@ describe("handleEnvelopeException", () => {
     expect(warnCall).toBeDefined();
     expect(warnCall![0].errorKind).toBe("timeout");
     expect(warnCall![0].hint).toMatch(/agents\..*promptTimeout/);
-    // User-safety (T-177-13): knob detail rides the hint only — never the reply.
+    // User-safety: knob detail rides the hint only — never the reply.
     expect(result.response).toContain("too long");
     expect(result.response).not.toContain("agents.");
   });
 
-  it("177-REVIEW IN-02: the envelope-seam timeout WARN carries durationMs and the hint carries the elapsed time (executionStartMs threaded through ctx)", () => {
+  it("the envelope-seam timeout WARN carries durationMs and the hint carries the elapsed time (executionStartMs threaded through ctx)", () => {
     const result = makeResult();
     const warn = vi.fn();
     const logger = makeNoopLogger();
@@ -122,8 +122,8 @@ describe("handleEnvelopeException", () => {
     const warnCall = warn.mock.calls.find((c) => c[1] === "Unexpected execution error");
     expect(warnCall).toBeDefined();
     // Pre-patch this second classify consumer passed only { agentId } and no
-    // elapsedMs, and the WARN had no durationMs — the §2.7 matrix wants
-    // elapsed on failure lines, and the failure-path consumer has both.
+    // elapsedMs, and the WARN had no durationMs — failure log lines must
+    // carry elapsed time, and the failure-path consumer has both.
     expect(warnCall![0].durationMs).toBe(195_000);
     expect(warnCall![0].hint).toMatch(/after 195000ms/);
   });
@@ -137,7 +137,7 @@ describe("handleEnvelopeException", () => {
     expect(result.errorContext?.originalError).toBe("kaboom");
   });
 
-  it("LAT-01-H-8 regression: a non-timeout error keeps finishReason 'error' + WARN errorKind 'internal' (unchanged path)", () => {
+  it("regression: a non-timeout error keeps finishReason 'error' + WARN errorKind 'internal' (unchanged path)", () => {
     const result = makeResult();
     const warn = vi.fn();
     const logger = makeNoopLogger();
@@ -175,15 +175,15 @@ describe("handleEnvelopeException", () => {
     expect(result.finishReason).toBe("error");
   });
 
-  // CR-01 integration test: ContextExhaustionError → "context_exhausted" finishReason
-  it("CR-01: ContextExhaustionError maps to finishReason 'context_exhausted' (not 'error')", () => {
+  // ContextExhaustionError → "context_exhausted" finishReason
+  it("ContextExhaustionError maps to finishReason 'context_exhausted' (not 'error')", () => {
     const result = makeResult();
     const err = new ContextExhaustionError(32_768, 31_500);
     handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
     // Must map to context_exhausted so END_REASON_MAP fires the correct degradation cause
     expect(result.finishReason).toBe("context_exhausted");
     expect(result.response).toContain("conversation history");
-    // Issue-6: errorContext now carries the exhaustion message (the `[cause: …]`
+    // errorContext carries the exhaustion message (the `[cause: …]`
     // tag rides originalError so postExecution can branch the degraded reply's
     // advice) — but the clean-escalation contract holds: the type is the named
     // "ContextExhaustion" (never the generic "UnexpectedError" classification)
@@ -195,7 +195,7 @@ describe("handleEnvelopeException", () => {
     expect(result.errorContext?.originalError).toContain("Context exhausted");
   });
 
-  it("Issue-6: the exhaustion CAUSE tag survives into errorContext.originalError for the degraded-reply branch", () => {
+  it("the exhaustion CAUSE tag survives into errorContext.originalError for the degraded-reply branch", () => {
     const result = makeResult();
     const err = new ContextExhaustionError(32_768, 48_000, undefined, "oversized_history_message");
     handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
@@ -203,7 +203,7 @@ describe("handleEnvelopeException", () => {
     expect(result.errorContext?.originalError).toContain("[cause: oversized_history_message]");
   });
 
-  it("CR-01: ContextExhaustionError user-facing message does not expose internal details", () => {
+  it("ContextExhaustionError user-facing message does not expose internal details", () => {
     const result = makeResult();
     const err = new ContextExhaustionError(32_768, 31_500);
     handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
@@ -213,7 +213,7 @@ describe("handleEnvelopeException", () => {
     expect(result.response.length).toBeGreaterThan(0);
   });
 
-  it("CR-01: non-ContextExhaustionError still maps to 'error' (regression guard)", () => {
+  it("non-ContextExhaustionError still maps to 'error' (regression guard)", () => {
     const result = makeResult();
     handleEnvelopeException({ result }, makeDeps(), { error: new Error("generic"), sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
     expect(result.finishReason).toBe("error");

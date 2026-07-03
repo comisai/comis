@@ -1,37 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED (165-07 Task 1, DUR-01): the DAEMON-side durable SESSION-DESCRIPTOR store
- * (`createSessionDescriptorStore` → a {@link SessionDescriptorStorePort} impl).
+ * The DAEMON-side durable SESSION-DESCRIPTOR store (`createSessionDescriptorStore` → a
+ * {@link SessionDescriptorStorePort} impl).
  *
- * RED-first: `terminal-session-descriptor-persistence.ts` does not exist when this
- * file is first committed — the import fails, every case is RED. The production
- * module turns them GREEN. (Mirrors the "module absent on first commit" idiom of
- * `terminal-drive-journal-persistence.test.ts` / `terminal-wake-persistence.test.ts`.)
- *
- * This is the SIBLING of the DUR-02 journal store (165-04): the daemon impl of the
- * port 165-06's registry recover-on-boot consumes. It persists the content-free
- * {@link SessionDescriptor} (the I5 IDENTITY — allowId/owner/scope/tmuxName) at
+ * This is the SIBLING of the drive-journal store: the daemon impl of the port the
+ * registry recover-on-boot consumes. It persists the content-free
+ * {@link SessionDescriptor} (the session IDENTITY — allowId/owner/scope/tmuxName) at
  * create-time + recovers every descriptor on boot + removes one explicitly, all over
  * the confined per-agent `<dataDir>/terminal-drive/<agentId>/descriptors/` tree. It
  * mirrors VERBATIM-in-shape the atomic-durable-write substrate of the journal store —
  * `ensureContainedDir` (dir `0o700`) + `writeRegularFile` (file `0o600`) with `dataDir`
  * as the `confinedBaseDir` ancestor-symlink defense, a boot-time recover scan that
- * SKIPS a corrupt/partial file via 165-01's `deserializeDescriptor`, the best-effort
+ * SKIPS a corrupt/partial file via `deserializeDescriptor`, the best-effort
  * swallowed-error contract, and an ENOENT-tolerant remove.
  *
  * The port is INSTANCE-bound to one `(dataDir, agentId)` because
  * `SessionDescriptorStorePort.persist(descriptor)`/`recover()`/`remove(sessionId)` are
- * the agent-scoped surface the registry deps inject; the daemon (165-07 Task 4)
- * constructs one per agent rooted at the SAME `<dataDir>` the journal store uses.
+ * the agent-scoped surface the registry deps inject; the daemon constructs one per
+ * agent rooted at the SAME `<dataDir>` the journal store uses.
  *
  * The load-bearing properties pinned here:
  *   - ROUND-TRIP ACROSS A SIMULATED RESTART: persist → a FRESH store instance's
  *     recover() re-reads the same dir and yields the same descriptor (the recover-on-
  *     boot substrate). persist NEVER deletes — only the explicit remove does.
- *   - I3 CONTENT-FREE: the persisted bytes carry ONLY ids/enums/counts (no screen text,
- *     no credential KEY), 0o600 in a 0o700 confined dir (V8).
- *   - I5 IDENTITY VERBATIM: the recovered descriptor carries the SAME
- *     allowId/owner/scope it was persisted with (durability changes WHERE not WHAT).
+ *   - CONTENT-FREE: the persisted bytes carry ONLY ids/enums/counts (no screen text,
+ *     no credential KEY), 0o600 in a 0o700 confined dir.
+ *   - IDENTITY VERBATIM: the recovered descriptor carries the SAME allowId/owner/scope
+ *     it was persisted with (durability changes WHERE not WHAT).
  *   - TOTAL recover: a corrupt-after-crash descriptor is a corrupt-SKIP
  *     (`deserializeDescriptor` → undefined), NEVER a throw; a write fault is swallowed
  *     best-effort (the registry's in-memory handle already exists).
@@ -56,7 +51,7 @@ import {
 
 const AGENT = "agent-1";
 
-/** A realistic content-free descriptor (the SHIPPED 165-01 shape; the store never rewrites it). */
+/** A realistic content-free descriptor (the store never rewrites it). */
 function makeDescriptor(overrides: Partial<SessionDescriptor> = {}): SessionDescriptor {
   return {
     sessionId: "sess-a",
@@ -120,7 +115,7 @@ describe("terminal-session-descriptor-persistence (durable descriptor store, rea
     expect(createSessionDescriptorStore({ dataDir, agentId: "other-agent" }).recover()).toHaveLength(0);
   });
 
-  it("I5: the recovered descriptor carries the SAME allowId/owner/scope it was persisted with (WHERE not WHAT)", () => {
+  it("recovers the SAME allowId/owner/scope it was persisted with (durability changes WHERE not WHAT)", () => {
     const descriptor = makeDescriptor({
       allowId: "privileged-cli",
       owner: { agentId: AGENT, sessionKey: "" },
@@ -143,12 +138,12 @@ describe("terminal-session-descriptor-persistence (durable descriptor store, rea
     const entries = readdirSync(dir);
     expect(entries).toContain("sess-x.json");
 
-    // Dir mode 0o700, file mode 0o600 — the @comis/observability fs-safe invariants (V8).
+    // Dir mode 0o700, file mode 0o600 — the @comis/observability fs-safe invariants.
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     expect(statSync(join(dir, "sess-x.json")).mode & 0o777).toBe(0o600);
   });
 
-  it("I3: the persisted file carries only content-free identity keys (no credential KEY, no screen)", () => {
+  it("persists only content-free identity keys (no credential KEY, no screen text)", () => {
     createSessionDescriptorStore({ dataDir, agentId: AGENT }).persist(makeDescriptor({ sessionId: "sess-secret" }));
 
     const raw = readFileSync(join(descriptorDir(dataDir, AGENT), "sess-secret.json"), "utf-8");

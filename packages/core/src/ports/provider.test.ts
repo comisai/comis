@@ -12,10 +12,10 @@ import type {
 } from "./provider.js";
 
 describe("ImageGenerationPort interface", () => {
-  // NOTE: Inlined the previous Provider<TInput, TOutput> generic into
-  // ImageGenerationPort and dropped the optional estimateCost field
-  // (zero production callers). Tests that exercised estimateCost or the
-  // generic-as-Provider shape were dropped in the same commit.
+  // NOTE: ImageGenerationPort is a concrete interface — there is no
+  // Provider<TInput, TOutput> generic and no estimateCost field (a generic
+  // would have a single consumer, and estimateCost would have zero
+  // production callers), so neither shape is exercised here.
 
   /**
    * Type-level test: a mock implementation satisfies ImageGenerationPort.
@@ -61,15 +61,14 @@ describe("ImageGenerationPort interface", () => {
 });
 
 /**
- * VPORT-01: a mock VideoGenerationPort must round-trip submit → poll(done) →
- * fetchResult and yield a VideoGenOutput. This pins the port's job-handle shape
- * (the inline execute() baseline is wired in Plan 03; the type must expose
- * submit/poll/fetchResult so Phase 189's background poller can drive the loop
- * externally byte-for-byte).
+ * A mock VideoGenerationPort must round-trip submit → poll(done) →
+ * fetchResult and yield a VideoGenOutput. This pins the port's job-handle shape:
+ * the type must expose submit/poll/fetchResult so the daemon's background
+ * poller can drive the loop externally byte-for-byte.
  *
- * VPORT-03: VideoGenJob.jobId is a plain string field documented opaque and
- * secret-free (the opaque FAL request_id). The no-secret RUNTIME assertion lands
- * in Plan 03's adapter test; here the TYPE must carry jobId: string.
+ * VideoGenJob.jobId is a plain string field documented opaque and
+ * secret-free (the opaque FAL request_id). The no-secret RUNTIME assertion
+ * lives in the adapter tests; here the TYPE must carry jobId: string.
  */
 describe("VideoGenerationPort interface", () => {
   /** A minimal in-memory port that records a submit and returns a done status. */
@@ -102,14 +101,14 @@ describe("VideoGenerationPort interface", () => {
     };
   }
 
-  it("round-trips submit then poll(done) then fetchResult to a VideoGenOutput (VPORT-01)", async () => {
+  it("round-trips submit then poll(done) then fetchResult to a VideoGenOutput", async () => {
     const port = createMockVideoPort();
 
     const submitted = await port.submit({ prompt: "a cat riding a skateboard" });
     expect(submitted.ok).toBe(true);
     if (!submitted.ok) return;
 
-    // VPORT-03: the durable handle carries a plain-string opaque jobId.
+    // The durable handle carries a plain-string opaque jobId.
     const job = submitted.value;
     expect(typeof job.jobId).toBe("string");
     expect(job.jobId.length).toBeGreaterThan(0);
@@ -117,7 +116,7 @@ describe("VideoGenerationPort interface", () => {
     const status = await port.poll(job);
     expect(status.ok).toBe(true);
     if (!status.ok) return;
-    // The jobId is stable across poll() (Phase 189 poller relies on this).
+    // The jobId is stable across poll() (the background poller relies on this).
     expect(status.value.jobId).toBe(job.jobId);
     expect(status.value.state).toBe("done");
 

@@ -3,7 +3,7 @@
  * Tests for buildSyntheticCriticDeps — the post-execution hook's CriticDeps
  * constructor (extracted from verification-gate.ts for file-size budget).
  *
- * Pins the security-relevant invariants the WR-02 fix relies on:
+ * Pins the security-relevant invariants the keyless-critic contract relies on:
  *  - small/nano ⇒ scaffoldLevel "max" + securityLevel "locked" (weaker model ⇒ stricter)
  *  - frontier/mid (or undefined→nano) class mapping is deterministic
  *  - apiKey is "" by construction (keyless-only contract; gated upstream by shouldRunCritic)
@@ -53,7 +53,7 @@ describe("buildSyntheticCriticDeps", () => {
     expect(deps.modelProfile.securityLevel).toBe("locked");
   });
 
-  it("constructs apiKey as the empty string (WR-02 keyless-only contract; cloud gated upstream)", () => {
+  it("constructs apiKey as the empty string (keyless-only contract; cloud gated upstream)", () => {
     const { deps } = buildSyntheticCriticDeps(baseParams({ provider: "ollama" }));
     expect(deps.apiKey).toBe("");
   });

@@ -35,7 +35,7 @@ export interface SpawnPacketBuildParams {
   toolGroups?: string[];
   includeParentHistory?: "none" | "summary";
   domainKnowledge?: string[];
-  /** Inherited conversation language (DET-02 tag); omitted from the packet when undefined. */
+  /** Inherited conversation language; omitted from the packet when undefined. */
   language?: string;
 }
 

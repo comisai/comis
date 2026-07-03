@@ -4,11 +4,8 @@
  *
  * Barrel file re-exporting all types, constants, classes, functions,
  * and validators that make up the init wizard. Consuming code (the
- * init command, tests, future phases) imports from this single entry
+ * init command, tests, future callers) imports from this single entry
  * point rather than reaching into individual wizard files.
- *
- * Legacy wizard files (flow-types.ts, quickstart-flow.ts, manual-flow.ts,
- * config-writer.ts) were removed -- superseded by the step-based architecture.
  *
  * @module
  */

@@ -1,28 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: NONE — this substrate is best-effort THROUGHOUT (unlike
 // terminal-wake-persistence.ts's removeWakeStateFile, which re-raises a genuine
-// non-ENOENT unlink fault). DUR-02's remove is called off the drive-cleanup path
+// non-ENOENT unlink fault). The remove is called off the drive-cleanup path
 // where a surfaced fs fault would abort an unrelated teardown; the in-memory
-// holder (165-07) is the source of truth, so a removal that cannot complete
+// holder is the source of truth, so a removal that cannot complete
 // degrades to "the file lingers and is overwritten/recovered next boot", never a
 // throw. ENOENT is swallowed (already gone); a genuine fault is logged-by-absence.
 /**
- * The DUR-02 DAEMON-side durable journal store — the single genuinely-new
- * capability of Phase 165.
+ * The DAEMON-side durable journal store.
  *
- * The Phase-164 rolling journal (`terminal-drive-journal.ts` in `@comis/skills`:
- * pure, bounded, content-free, total `serialize`/`deserialize`) was built
- * DUR-02-ready. This module adds the durable ATOMIC PERSISTENCE + recover-on-boot
+ * The rolling journal (`terminal-drive-journal.ts` in `@comis/skills`:
+ * pure, bounded, content-free, total `serialize`/`deserialize`) is designed for
+ * durable persistence. This module adds the durable ATOMIC PERSISTENCE + recover-on-boot
  * + resume read, so a 40h drive that crosses a daemon restart RESUMES from its
  * journal (objective + last classification + answered prompts + steps tried)
- * rather than starting over or re-answering prompts (I10). It WRAPS the shipped
- * pure `serializeJournal`/`deserializeJournal` — NO journal-shape rewrite
- * (CONTEXT §7.1.6 LOCKED).
+ * rather than starting over or re-answering prompts. It WRAPS the shipped
+ * pure `serializeJournal`/`deserializeJournal` — NO journal-shape rewrite.
  *
  * **Daemon-side placement (a deliberate CO-LOCATION CHOICE, NOT a forced
  * constraint).** The store lives in the daemon layer as a sibling of
  * `terminal-wake-persistence.ts` because it is co-located with the `driveJournals`
- * holder (`setup-terminal-wake.ts`, 165-07) + the daemon-side recover-on-boot
+ * holder (`setup-terminal-wake.ts`) + the daemon-side recover-on-boot
  * wiring — exactly where `terminal-wake-persistence.ts` already lives. The
  * `skills → observability` edge it would otherwise traverse is ALLOWED (the
  * architecture graph permits `skills: {shared, core, observability}`, and the MCP
@@ -43,29 +41,29 @@
  * session is missed on recover", never a throw (the wake-persistence semantics —
  * the in-memory holder has already updated).
  *
- * **The confined durable dir (resolved Q2):**
+ * **The confined durable dir:**
  * `<dataDir>/terminal-drive/<agentId>/journals/<sessionId>.json` — the confined
  * background-task per-agent pattern (runtime state OUT of the agent's
  * user-visible `<agentWs>/terminal/` workspace).
  *
- * **Content-free + secret-redacted (I3).** The journal is content-free BY
+ * **Content-free + secret-redacted.** The journal is content-free BY
  * CONSTRUCTION and the woken-turn driver runs `scrubSecretsFromText` UPSTREAM
  * before any tag/digest lands in it (`terminal-wake-turn.ts`); `clipTag`
  * byte-caps every field. This store does NOT re-redact — it persists the opaque,
  * already-redacted bytes verbatim and never re-structures them into a credential
- * field. The persisted file is mode-`0o600` in a `0o700` confined dir (V8).
+ * field. The persisted file is mode-`0o600` in a `0o700` confined dir.
  *
- * **I10 preserve-on-failure.** `persistDriveJournal` NEVER deletes a journal — a
+ * **Preserve-on-failure.** `persistDriveJournal` NEVER deletes a journal — a
  * genuinely-gone session keeps its journal for a fresh drive to pick up. {@link
  * removeDriveJournal} is a DISTINCT explicit call.
  *
- * **Per-session resume read (NO bulk recover).** DUR-02 resumes ONE journal per
+ * **Per-session resume read (NO bulk recover).** The store resumes ONE journal per
  * re-attach via {@link loadDriveJournal} — the wake holder seeds the in-memory
- * journal lazily on the first woken turn of a recovered session (165-REVIEW BL-02).
+ * journal lazily on the first woken turn of a recovered session.
  * There is deliberately NO bulk `recover(agentId)` scan: it had no production caller
  * (the resume design reads one journal per re-attach, not the whole agent set), so it
  * was removed per KISS/YAGNI (AGENTS.md §2.3 — no port methods without a concrete
- * caller; 165-REVIEW ME-03).
+ * caller).
  *
  * No raw timers / clock here — pure confined I/O (the `globals` architecture gate).
  *
@@ -126,7 +124,7 @@ export interface DriveJournalPersistenceDeps {
 
 /**
  * The confined per-agent journals dir:
- * `<dataDir>/terminal-drive/<agentId>/journals` (resolved Q2). Path-traversal
+ * `<dataDir>/terminal-drive/<agentId>/journals`. Path-traversal
  * guarded by `safePath` (a degenerate `dataDir`/`agentId` throws
  * `PathTraversalError`, which the callers swallow best-effort).
  */
@@ -178,9 +176,9 @@ function bestEffortFsync(deps: DriveJournalPersistenceDeps, filePath: string): v
  *
  * Best-effort: a failure (a `PathTraversalError` from a degenerate
  * `dataDir`/`agentId`, an unwritable target, a write fault) is SWALLOWED — it
- * must not propagate to the holder (165-07), which has already updated the
+ * must not propagate to the holder, which has already updated the
  * in-memory journal. The recovery scan simply misses this session. NEVER deletes
- * (I10 preserve-on-failure).
+ * (preserve-on-failure).
  */
 export function persistDriveJournal(
   deps: DriveJournalPersistenceDeps,
@@ -208,7 +206,7 @@ export function persistDriveJournal(
 }
 
 /**
- * The resume read (I10): load ONE drive's persisted journal.
+ * The resume read: load ONE drive's persisted journal.
  *
  * Returns `undefined` when the file is MISSING (no journal to resume); for a
  * corrupt/partial file returns {@link deserializeJournal}'s SAFE default (the
@@ -238,8 +236,8 @@ export function loadDriveJournal(
 }
 
 /**
- * Remove a drive's journal file from disk — the DISTINCT explicit call (I10:
- * persist/recover NEVER delete; only this does). Best-effort: ENOENT is swallowed
+ * Remove a drive's journal file from disk — the DISTINCT explicit call
+ * (persist/recover NEVER delete; only this does). Best-effort: ENOENT is swallowed
  * (already gone) and, per the module's all-best-effort contract, a genuine fault
  * is swallowed too (the in-memory holder is the source of truth; a lingering file
  * is overwritten/recovered next boot). NEVER throws — it is called off the

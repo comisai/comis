@@ -2,14 +2,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { createVoiceObsEmitter, wireVoiceObs } from "./voice-obs-emit.js";
 
-// OBS-02/03 (Phase 196): createVoiceObsEmitter — the null-safe, off-turn-safe
+// createVoiceObsEmitter — the null-safe, off-turn-safe
 // voice (STT/TTS) trajectory direct-emit helper, and wireVoiceObs — the thin
-// emitter+§2.7-logger-closure helper Plan 03's media-handlers.ts (799/800, ZERO
+// emitter+logger-closure helper media-handlers.ts (at its 800-line cap, ZERO
 // allowlist cushion) calls so its per-handler wiring delta is a few lines. The
 // emitter is the createVideoObsEmitter twin (record-only, because the voice
-// handlers/pipeline already carry §2.7 logging — a fused log would double-emit);
-// wireVoiceObs adds the SEPARATE §2.7 logger line BESIDE the record (the
-// video-handler convention), sanitizing the provider error before logging.
+// handlers/pipeline already carry structured logging — a fused log would
+// double-emit); wireVoiceObs adds the SEPARATE logger line BESIDE the record
+// (the video-handler convention), sanitizing the provider error before logging.
 
 /** A capture recorder mirroring the SessionTrajectoryHandleRegistry recorder. */
 function captureRecorder() {
@@ -50,7 +50,7 @@ describe("createVoiceObsEmitter — STT", () => {
     });
   });
 
-  it("completed() records media.stt.completed with costUsd:0 PRESENT (keyless — FLAG 4) + outcome:ok", () => {
+  it("completed() records media.stt.completed with costUsd:0 PRESENT (keyless — free is visible) + outcome:ok", () => {
     const recorder = captureRecorder();
     const obs = createVoiceObsEmitter({
       sessionKey: "s",
@@ -126,7 +126,7 @@ describe("createVoiceObsEmitter — TTS", () => {
   });
 });
 
-describe("createVoiceObsEmitter — onSkip on requested (OBS-03)", () => {
+describe("createVoiceObsEmitter — onSkip reasons on the requested record", () => {
   it("forwards the onSkip reasons on media.stt.requested so an operator sees WHY auto picked the rung", () => {
     const recorder = captureRecorder();
     createVoiceObsEmitter({
@@ -162,7 +162,7 @@ describe("createVoiceObsEmitter — onSkip on requested (OBS-03)", () => {
   });
 });
 
-describe("createVoiceObsEmitter — off-turn safety + content-free (SEC-01)", () => {
+describe("createVoiceObsEmitter — off-turn safety + content-free records", () => {
   it("no sessionKey / no registry → active=false, every method no-ops (no throw, no record)", () => {
     const obs1 = createVoiceObsEmitter({
       sessionKey: undefined,
@@ -210,7 +210,7 @@ describe("createVoiceObsEmitter — off-turn safety + content-free (SEC-01)", ()
   });
 });
 
-describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger closure)", () => {
+describe("wireVoiceObs — the handler-wiring helper (emitter + logger closure)", () => {
   it("returns { obs, completed, failed }; the *.requested record already fired", () => {
     const recorder = captureRecorder();
     const logger = captureLogger();
@@ -228,7 +228,7 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(recorder.calls[0]!.type).toBe("media.stt.requested");
   });
 
-  it("completed() records media.stt.completed AND emits ONE logger.info with the §2.7 fields", () => {
+  it("completed() records media.stt.completed AND emits ONE logger.info with the structured completion fields", () => {
     const recorder = captureRecorder();
     const logger = captureLogger();
     const w = wireVoiceObs({
@@ -243,7 +243,7 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     // trajectory record
     const rec = recorder.calls.find((c) => c.type === "media.stt.completed");
     expect(rec!.data.costUsd).toBe(0);
-    // §2.7 INFO line (one call)
+    // INFO completion line (one call)
     expect(logger.info).toHaveBeenCalledTimes(1);
     const [fields, msg] = logger.info.mock.calls[0]!;
     expect(fields).toMatchObject({ provider: "local", keyless: true, model: "base", durationMs: 1200, audioBytes: 5000, source: "keyless-local" });
@@ -251,13 +251,13 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(msg).toMatch(/transcription/i);
   });
 
-  // WR-02 (196 review): the OBS-05 keyless `costUsd:0` rule is centralized in
+  // The keyless `costUsd:0` rule is centralized in
   // wireVoiceObs/the emitter — the caller need not pass `0`. A keyless completion
-  // WITHOUT costUsd must still show `costUsd:0` (free is VISIBLE — FLAG 4) on BOTH
-  // the trajectory record AND the §2.7 log line; a keyed completion without cost
+  // WITHOUT costUsd must still show `costUsd:0` (free is VISIBLE) on BOTH
+  // the trajectory record AND the log line; a keyed completion without cost
   // omits it; an explicit cost always wins. This pins the invariant in one place
   // so a future voice handler can't silently regress keyless $0 visibility.
-  it("WR-02: keyless completion WITHOUT costUsd derives costUsd:0 on the record AND the log line", () => {
+  it("keyless completion WITHOUT costUsd derives costUsd:0 on the record AND the log line", () => {
     const recorder = captureRecorder();
     const logger = captureLogger();
     const w = wireVoiceObs({
@@ -275,7 +275,7 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(logger.info.mock.calls[0]![0].costUsd).toBe(0);
   });
 
-  it("WR-02: keyed completion WITHOUT costUsd omits costUsd; an explicit cost wins on both record and log", () => {
+  it("keyed completion WITHOUT costUsd omits costUsd; an explicit cost wins on both record and log", () => {
     const recorder = captureRecorder();
     const logger = captureLogger();
     const w = wireVoiceObs({
@@ -313,7 +313,7 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     // trajectory record (domain kind verbatim)
     const rec = recorder.calls.find((c) => c.type === "media.stt.failed");
     expect(rec!.data).toEqual({ errorKind: "model_load_failed", provider: "local", outcome: "failed", source: "keyless-local" });
-    // §2.7 WARN line (one call): closed log union + the domain kind
+    // WARN failure line (one call): closed log union + the domain kind
     expect(logger.warn).toHaveBeenCalledTimes(1);
     const [fields, msg] = logger.warn.mock.calls[0]!;
     // model_load_failed maps to the closed log union "dependency" (STT_ERR_TO_LOG)
@@ -342,7 +342,7 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(logger.warn.mock.calls[0]![1]).toMatch(/synthesis|speech/i);
   });
 
-  it("SEC-01 no-leak: a credential-bearing URL/Bearer in errMessage never survives in the WARN err: line, and no credential reaches the trajectory data", () => {
+  it("no-leak: a credential-bearing URL/Bearer in errMessage never survives in the WARN err: line, and no credential reaches the trajectory data", () => {
     const recorder = captureRecorder();
     const logger = captureLogger();
     const w = wireVoiceObs({
@@ -366,16 +366,16 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(JSON.stringify(rec!.data)).not.toContain("Bearer");
   });
 
-  // CR-02 (Phase 196 review): SEC-01 leak — an OPAQUE bearer token (NOT sk-/hex/
+  // An OPAQUE bearer token (NOT sk-/hex/
   // a known-prefix shape — e.g. a Deepgram/ElevenLabs/custom STT-TTS provider
   // token) must not survive in the WARN err: line. The only sanitizeLogString
   // rule that catches a generic opaque bearer is BEARER_TOKEN_LOG, which is
-  // ANCHORED on the literal `Bearer `. The pre-fix redactVoiceLogMessage stripped
-  // `Bearer` BEFORE calling sanitizeLogString, destroying that anchor → the
-  // opaque token leaked verbatim. The single sk-proj- token in the test above is
+  // ANCHORED on the literal `Bearer `. Stripping
+  // `Bearer` BEFORE calling sanitizeLogString destroys that anchor → the
+  // opaque token leaks verbatim. The single sk-proj- token in the test above is
   // caught by the bare-sk- pattern, masking the gap; these opaque/16-char tokens
-  // expose it. Reproduced RED on the strip-before-sanitize order.
-  it("SEC-01 no-leak: an OPAQUE (non-sk-/non-hex) Bearer token from a custom STT/TTS provider never survives in the WARN err: line", () => {
+  // expose it — they fail on a strip-before-sanitize order.
+  it("no-leak: an OPAQUE (non-sk-/non-hex) Bearer token from a custom STT/TTS provider never survives in the WARN err: line", () => {
     const recorder = captureRecorder();
     const logger = captureLogger();
     const w = wireVoiceObs({
@@ -404,7 +404,7 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
     expect(JSON.stringify(rec!.data)).not.toContain(opaqueShort);
   });
 
-  it("wireVoiceObs is off-turn-safe: no recorder → no throw, but the §2.7 log lines STILL fire", () => {
+  it("wireVoiceObs is off-turn-safe: no recorder → no throw, but the log lines STILL fire", () => {
     const logger = captureLogger();
     const w = wireVoiceObs({
       sessionKey: undefined,
@@ -426,7 +426,7 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
 });
 
 // ---------------------------------------------------------------------------
-// OBS-04 (Phase 196) — the voice_degraded fleet emit (route-(b)-minimal).
+// The voice_degraded fleet emit.
 //
 // On a transcription/synthesis FAILURE, wireVoiceObs.failed() ALSO inserts a
 // `voice_degraded` health_signal diagnostic row (when an obsStore is wired) so the
@@ -434,9 +434,7 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + §2.7 logger clo
 // source. The row is CONTENT-FREE: signal + the closed domain errorKind + the
 // voice family ONLY — never the raw provider message, never a secret. Insertion is
 // best-effort: an absent store no-ops, and a throwing store never breaks the
-// handler (the §2.7 lines + the trajectory record are the primary obligations).
-//
-// RED: wireVoiceObs does not accept/use an obsStore yet, so no row is inserted.
+// handler (the log lines + the trajectory record are the primary obligations).
 // ---------------------------------------------------------------------------
 
 /** A capture ObservabilityStore exposing only insertDiagnostic (+ an optional throw). */
@@ -451,7 +449,7 @@ function captureObsStore(opts: { throwOnInsert?: boolean } = {}) {
   };
 }
 
-describe("wireVoiceObs — OBS-04 voice_degraded fleet emit", () => {
+describe("wireVoiceObs — voice_degraded fleet emit", () => {
   it("failed() inserts ONE voice_degraded health_signal row carrying the closed domain errorKind + the voice family", () => {
     const logger = captureLogger();
     const obsStore = captureObsStore();
@@ -490,7 +488,7 @@ describe("wireVoiceObs — OBS-04 voice_degraded fleet emit", () => {
     expect(obsStore.insertDiagnostic).not.toHaveBeenCalled();
   });
 
-  it("the inserted row is CONTENT-FREE — no raw provider message, no secret in details (SEC-01)", () => {
+  it("the inserted row is CONTENT-FREE — no raw provider message, no secret in details", () => {
     const logger = captureLogger();
     const obsStore = captureObsStore();
     const w = wireVoiceObs({
@@ -535,7 +533,7 @@ describe("wireVoiceObs — OBS-04 voice_degraded fleet emit", () => {
       requested: { provider: "local", mainProvider: "openai-codex", source: "keyless-local" },
     });
     expect(() => wThrow.failed({ sttErrorKind: "timeout", provider: "local", source: "keyless-local", errMessage: "x" })).not.toThrow();
-    // the §2.7 WARN line still fired despite the insert throwing
+    // the WARN failure line still fired despite the insert throwing
     expect(logger.warn).toHaveBeenCalled();
   });
 });

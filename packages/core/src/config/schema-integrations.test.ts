@@ -106,35 +106,35 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   it("includes imageGeneration with defaults from empty input", () => {
     const result = MediaConfigSchema.parse({});
     expect(result.imageGeneration).toBeDefined();
-    // CFG-01: provider-following default flipped fal -> auto (binding invariant I2).
+    // The provider default is "auto" — follow the agent's main provider.
     expect(result.imageGeneration.provider).toBe("auto");
     expect(result.imageGeneration.safetyChecker).toBe(true);
     expect(result.imageGeneration.maxPerHour).toBe(10);
     expect(result.imageGeneration.defaultSize).toBe("1024x1024");
-    // 120s default (raised from 60s): the Codex hosted image_generation takes
-    // ~20-60s (verified live — 19s/45s/59.5s), so the 60s default clipped the
-    // slow ones (~25% "timeout"). 120s gives headroom; fast providers
-    // (openai/google/openrouter) finish well under it.
+    // 120s default: the Codex hosted image_generation takes ~20-60s in
+    // practice, so a 60s cap would clip the slow generations as "timeout".
+    // 120s gives headroom; fast providers (openai/google/openrouter) finish
+    // well under it.
     expect(result.imageGeneration.timeoutMs).toBe(120_000);
-    // CFG-01: fallbackChain defaults to an empty array; maxCostPerHourUsd is omitted.
+    // fallbackChain defaults to an empty array; maxCostPerHourUsd is omitted.
     expect(result.imageGeneration.fallbackChain).toEqual([]);
     expect(result.imageGeneration.maxCostPerHourUsd).toBeUndefined();
   });
 
   it("keeps the fal provider valid for existing operator configs", () => {
-    // CFG-01 additive guarantee: a deployed config.yaml with provider:"fal" must still parse.
+    // A config.yaml with the explicit provider:"fal" must still parse.
     const result = MediaConfigSchema.parse({ imageGeneration: { provider: "fal" } });
     expect(result.imageGeneration.provider).toBe("fal");
   });
 
   it("keeps the openai provider valid for existing operator configs", () => {
-    // CFG-01 additive guarantee: provider:"openai" still parses and round-trips.
+    // provider:"openai" parses and round-trips.
     const result = MediaConfigSchema.parse({ imageGeneration: { provider: "openai" } });
     expect(result.imageGeneration.provider).toBe("openai");
   });
 
-  it("accepts the new follow-main provider enum values", () => {
-    // CFG-01 widened enum: openrouter / openai-codex / google all parse without throwing.
+  it("accepts the follow-main provider enum values", () => {
+    // openrouter / openai-codex / google all parse without throwing.
     for (const provider of ["openrouter", "openai-codex", "google"] as const) {
       const result = MediaConfigSchema.parse({ imageGeneration: { provider } });
       expect(result.imageGeneration.provider).toBe(provider);
@@ -142,7 +142,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   });
 
   it("rejects an unknown provider value at parse (closed enum)", () => {
-    // T-183-05: config-injection backstop — an unknown/typo'd provider fails at parse.
+    // Config-injection backstop — an unknown/typo'd provider fails at parse.
     expect(() =>
       MediaConfigSchema.parse({ imageGeneration: { provider: "totally-bogus" } }),
     ).toThrow();
@@ -156,7 +156,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   });
 
   it("parses a fallbackChain of valid provider enum values", () => {
-    // CFG-01 RES-04 surface: fallbackChain entries validate against the same closed enum.
+    // fallbackChain entries validate against the same closed enum.
     const result = MediaConfigSchema.parse({
       imageGeneration: { provider: "auto", fallbackChain: ["openrouter"] },
     });
@@ -164,7 +164,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   });
 
   it("rejects a fallbackChain entry outside the provider enum", () => {
-    // T-183-05: fallbackChain entries share the closed enum — a bogus entry fails at parse.
+    // fallbackChain entries share the closed enum — a bogus entry fails at parse.
     expect(() =>
       MediaConfigSchema.parse({
         imageGeneration: { provider: "auto", fallbackChain: ["bogus"] },
@@ -173,7 +173,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   });
 
   it("parses an optional positive maxCostPerHourUsd ceiling", () => {
-    // CFG-01: lands additively now (positive number); enforcement is Phase 186 (SEC-02).
+    // The ceiling parses as a positive number; enforcement happens in the cost limiter.
     const result = MediaConfigSchema.parse({
       imageGeneration: { provider: "auto", maxCostPerHourUsd: 5 },
     });
@@ -181,7 +181,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   });
 
   it("rejects a non-positive maxCostPerHourUsd value", () => {
-    // CFG-01: the cost ceiling must be a positive number.
+    // The cost ceiling must be a positive number.
     expect(() =>
       MediaConfigSchema.parse({
         imageGeneration: { provider: "auto", maxCostPerHourUsd: -1 },
@@ -189,12 +189,12 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     ).toThrow();
   });
 
-  // ─── CFG-01 (188): videoGeneration additive sibling of imageGeneration ──────
+  // ─── videoGeneration: sibling of imageGeneration ─────────────────────────────
 
-  it("includes videoGeneration with defaults from empty input (CFG-01)", () => {
+  it("includes videoGeneration with defaults from empty input", () => {
     const result = MediaConfigSchema.parse({});
     expect(result.videoGeneration).toBeDefined();
-    // CFG-01: provider-following default is "auto" (follows the agent's main provider, I2).
+    // The provider default is "auto" — follow the agent's main provider.
     expect(result.videoGeneration.provider).toBe("auto");
     expect(result.videoGeneration.defaultDurationSecs).toBe(8);
     expect(result.videoGeneration.defaultAspectRatio).toBe("16:9");
@@ -202,20 +202,20 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     expect(result.videoGeneration.maxPerHour).toBe(5);
     expect(result.videoGeneration.timeoutMs).toBe(300_000);
     expect(result.videoGeneration.pollIntervalMs).toBe(10_000);
-    // CR-01 (189 review): the poller's bounded-redelivery max attempts defaults
-    // to 5 (a persistent delivery failure dead-letters to `failed` after this).
+    // The poller's bounded-redelivery max attempts defaults to 5 (a persistent
+    // delivery failure dead-letters to `failed` after this).
     expect(result.videoGeneration.maxDeliveryAttempts).toBe(5);
-    // CFG-01: fallbackChain defaults empty; the optional knobs are omitted.
+    // fallbackChain defaults empty; the optional knobs are omitted.
     expect(result.videoGeneration.fallbackChain).toEqual([]);
     expect(result.videoGeneration.generateAudio).toBeUndefined();
     expect(result.videoGeneration.maxConcurrentJobs).toBeUndefined();
     expect(result.videoGeneration.maxCostPerHourUsd).toBeUndefined();
   });
 
-  it("validates an existing image-only media config unchanged (CFG-01 non-regression)", () => {
-    // CFG-01 non-regression: a deployed config with an image block and NO
-    // videoGeneration key must still parse — videoGeneration fills from defaults
-    // and the image block is byte-identical to a parse WITHOUT video present.
+  it("validates an image-only media config unchanged (video block optional)", () => {
+    // A config with an image block and NO videoGeneration key must still
+    // parse — videoGeneration fills from defaults and the image block is
+    // byte-identical to a parse WITHOUT video present.
     const existing = MediaConfigSchema.parse({
       imageGeneration: { provider: "fal", maxPerHour: 3 },
     });
@@ -225,7 +225,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     expect(existing.videoGeneration.provider).toBe("auto");
   });
 
-  it("accepts the fal / google / xai video provider enum values (CFG-01)", () => {
+  it("accepts the fal / google / xai video provider enum values", () => {
     for (const provider of ["fal", "google", "xai"] as const) {
       const result = MediaConfigSchema.parse({ videoGeneration: { provider } });
       expect(result.videoGeneration.provider).toBe(provider);
@@ -233,7 +233,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   });
 
   it("rejects an unknown video provider value at parse (closed enum)", () => {
-    // T-188-... config-injection backstop — an unknown/typo'd provider fails at parse.
+    // Config-injection backstop — an unknown/typo'd provider fails at parse.
     expect(() =>
       MediaConfigSchema.parse({ videoGeneration: { provider: "sora" } }),
     ).toThrow();
@@ -246,7 +246,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     ).toThrow();
   });
 
-  it("parses a video fallbackChain of valid provider enum values (CFG-01 / RES-04)", () => {
+  it("parses a video fallbackChain of valid provider enum values", () => {
     const result = MediaConfigSchema.parse({
       videoGeneration: { provider: "auto", fallbackChain: ["fal"] },
     });
@@ -261,14 +261,14 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     ).toThrow();
   });
 
-  it("parses a positive integer video maxDeliveryAttempts override (CR-01)", () => {
+  it("parses a positive integer video maxDeliveryAttempts override", () => {
     const result = MediaConfigSchema.parse({
       videoGeneration: { provider: "auto", maxDeliveryAttempts: 3 },
     });
     expect(result.videoGeneration.maxDeliveryAttempts).toBe(3);
   });
 
-  it("rejects a non-positive or non-integer video maxDeliveryAttempts (CR-01)", () => {
+  it("rejects a non-positive or non-integer video maxDeliveryAttempts", () => {
     expect(() =>
       MediaConfigSchema.parse({ videoGeneration: { provider: "auto", maxDeliveryAttempts: 0 } }),
     ).toThrow();
@@ -277,7 +277,7 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     ).toThrow();
   });
 
-  it("parses an optional positive video maxCostPerHourUsd ceiling (CFG-01)", () => {
+  it("parses an optional positive video maxCostPerHourUsd ceiling", () => {
     const result = MediaConfigSchema.parse({
       videoGeneration: { provider: "auto", maxCostPerHourUsd: 5 },
     });
@@ -292,33 +292,33 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     ).toThrow();
   });
 
-  it("does not edit the image config when video defaults are applied (CFG-01 no-image-edit)", () => {
+  it("does not edit the image config when video defaults are applied", () => {
     // The image block must be byte-identical whether or not videoGeneration is present.
     const withVideo = MediaConfigSchema.parse({ videoGeneration: { provider: "fal" } });
     const imageOnly = MediaConfigSchema.parse({});
     expect(withVideo.imageGeneration).toEqual(imageOnly.imageGeneration);
   });
 
-  // ─── RES-03 / CFG-01 (193): keyless-first STT/TTS default flip ──────────────
+  // ─── keyless-first STT/TTS defaults ──────────────────────────────────────────
 
-  it("defaults transcription.provider to auto (keyless-first, RES-03 flip)", () => {
-    // RES-03: the headline default flip — a fresh install with no audio key
-    // resolves STT via `auto` (keyless-first / follow-main) instead of
-    // constructing an empty-bearer OpenAI adapter (the 401 this milestone fixes).
+  it("defaults transcription.provider to auto (keyless-first)", () => {
+    // A fresh install with no audio key resolves STT via `auto`
+    // (keyless-first / follow-main) instead of constructing an empty-bearer
+    // OpenAI adapter that would 401 on first use.
     // Assert both the schema directly and the MediaConfigSchema round-trip.
     expect(TranscriptionConfigSchema.parse({}).provider).toBe("auto");
     expect(MediaConfigSchema.parse({}).transcription.provider).toBe("auto");
   });
 
-  it("defaults tts.provider to edge (keyless, RES-03 flip)", () => {
-    // RES-03: TTS defaults to the keyless Edge provider (zero credentials).
+  it("defaults tts.provider to edge (keyless, zero credentials)", () => {
+    // TTS defaults to the keyless Edge provider (zero credentials).
     expect(TtsConfigSchema.parse({}).provider).toBe("edge");
     expect(MediaConfigSchema.parse({}).tts.provider).toBe("edge");
   });
 
-  it("keeps every existing explicit STT provider valid (CFG-01 additive)", () => {
-    // I9 additive guarantee: every pre-flip + new STT provider still parses and
-    // round-trips identically through MediaConfigSchema.
+  it("keeps every explicit STT provider valid alongside the auto default", () => {
+    // Every explicit STT provider parses and round-trips identically
+    // through MediaConfigSchema.
     for (const provider of ["openai", "groq", "deepgram", "local"] as const) {
       expect(
         MediaConfigSchema.parse({ transcription: { provider } }).transcription.provider,
@@ -326,14 +326,14 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     }
   });
 
-  it("keeps every existing explicit TTS provider valid (CFG-01 additive)", () => {
-    // I9 additive guarantee: every pre-flip + new TTS provider still parses.
+  it("keeps every explicit TTS provider valid alongside the edge default", () => {
+    // Every explicit TTS provider parses and round-trips.
     for (const provider of ["openai", "elevenlabs", "edge", "local"] as const) {
       expect(MediaConfigSchema.parse({ tts: { provider } }).tts.provider).toBe(provider);
     }
   });
 
-  it("rejects an unknown STT/TTS provider at parse (closed enum, T-193-05)", () => {
+  it("rejects an unknown STT/TTS provider at parse (closed enum)", () => {
     // Config-injection backstop — a typo'd/injected provider fails at parse, not
     // at a transport. fallbackProviders shares the closed STT enum.
     expect(() =>
@@ -348,8 +348,8 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
   });
 
   it("defaults transcription.local.model to base and rejects an unknown local key (strictObject)", () => {
-    // CFG-01: the local STT sub-config defaults model to "base"; the strictObject
-    // invariant means an injected unknown key (T-193-06) fails at parse.
+    // The local STT sub-config defaults model to "base"; the strictObject
+    // invariant means an injected unknown key fails at parse.
     expect(TranscriptionConfigSchema.parse({ provider: "local" }).local.model).toBe("base");
     const explicit = TranscriptionConfigSchema.parse({
       provider: "local",
@@ -403,8 +403,8 @@ describe("McpServerEntrySchema", () => {
 });
 
 describe("McpServerEntrySchema transport inference", () => {
-  // Case 1: Claude-Desktop-style stdio config (the smoking-gun case from
-  //         the production log: yfinance MCP via Telegram).
+  // Case 1: Claude-Desktop-style stdio config ({name, command, args} with
+  //         no explicit transport).
   it("infers transport='stdio' when command is provided and transport is omitted", () => {
     const result = McpServerEntrySchema.parse({
       name: "yfinance",
@@ -446,11 +446,11 @@ describe("McpServerEntrySchema transport inference", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Regression — schema must reject inconsistent command + url combinations
-  // BEFORE the runtime gets a chance to silently ignore one of them. The
-  // first matching inference branch (command -> stdio) won and the unused
-  // url field passed through, silently ignored at runtime by createTransport.
-  // Operator misconfiguration produced no warning.
+  // The schema must reject inconsistent command + url combinations
+  // BEFORE the runtime gets a chance to silently ignore one of them. Without
+  // this guard, the first matching inference branch (command -> stdio) would
+  // win and the unused url field would pass through, silently ignored at
+  // runtime by createTransport — operator misconfiguration with no warning.
   // -------------------------------------------------------------------------
   it("rejects entries that supply BOTH command and url without an explicit transport", () => {
     expect(() =>
@@ -464,8 +464,8 @@ describe("McpServerEntrySchema transport inference", () => {
 
   it("ACCEPTS entries with both command and url when an explicit transport='stdio' is given", () => {
     // The explicit transport disambiguates — the url becomes a no-op
-    // by-design, surfaced via runtime ignore (matches the pre-fix
-    // behaviour but the explicit-transport opts the operator IN).
+    // by design, ignored at runtime; the explicit transport opts the
+    // operator IN to that interpretation.
     const result = McpServerEntrySchema.parse({
       name: "both-stdio",
       transport: "stdio",
@@ -490,9 +490,9 @@ describe("McpServerEntrySchema transport inference", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Additive safety-hardening fields.
+// Safety-hardening fields.
 //
-// Five additive Zod fields land on McpConfigSchema (3) and McpServerEntrySchema
+// Five optional Zod fields across McpConfigSchema (3) and McpServerEntrySchema
 // (2). The tests pin both default values and validator rejection of bad inputs
 // so downstream code can rely on a stable schema contract.
 // ---------------------------------------------------------------------------
@@ -586,7 +586,7 @@ describe("McpServerEntrySchema — safety hardening additive fields", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Additive reliability fields (keepalive, circuit breaker).
+// Reliability fields (keepalive, circuit breaker).
 // ---------------------------------------------------------------------------
 
 describe("McpConfigSchema — reliability additive fields", () => {
@@ -644,7 +644,7 @@ describe("McpServerEntrySchema — per-server reliability overrides", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Per-server OAuth opt-in fields. Two additive optional fields land on
+// Per-server OAuth opt-in fields. Two optional fields on
 // McpServerEntrySchema: `auth` (enum none/bearer/oauth) and an `oauth`
 // strictObject (authorizationEndpoint URL fallback, scope, Stripe-Account).
 // The reject tests pin strictObject + enum tampering defence.
@@ -735,10 +735,9 @@ describe("McpServerEntrySchema — OAuth opt-in fields", () => {
   });
 
   // Operator escape hatch for RFC 8628 device-flow when the
-  // device-authorization server has no RFC 8414 metadata (Higgsfield reality
-  // 2026-05-28: fnf-device-auth.higgsfield.ai returns 404 on every probed
-  // well-known path). Sibling of authorizationEndpoint; consumed by
-  // runDeviceFlow's discovery cascade.
+  // device-authorization server has no RFC 8414 metadata (some real-world
+  // servers return 404 on every probed well-known path). Sibling of
+  // authorizationEndpoint; consumed by runDeviceFlow's discovery cascade.
   it("McpServerEntrySchema oauth strictObject accepts deviceAuthorizationEndpoint URL field", () => {
     const result = McpServerEntrySchema.parse({
       name: "higgsfield",
@@ -825,7 +824,7 @@ describe("McpServerEntrySchema — bundle provenance + archive", () => {
     expect(result._bundleSource).toBe("my-skill");
   });
 
-  it("parses a baseline entry without _bundleSource (no regression on existing fixtures)", () => {
+  it("parses a baseline entry without _bundleSource (absent markers stay undefined)", () => {
     const result = McpServerEntrySchema.parse({
       name: "x",
       transport: "stdio",
@@ -878,7 +877,7 @@ describe("McpServerEntrySchema — bundle provenance + archive", () => {
 });
 
 // ===========================================================================
-// VideoGenerateContract (188 CFG-01 / VideoGenerateContract in MEDIA_CONTRACTS)
+// VideoGenerateContract (the video.generate member of MEDIA_CONTRACTS)
 // ===========================================================================
 
 describe("VideoGenerateContract", () => {

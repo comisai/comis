@@ -19,7 +19,7 @@
  * (`orderByTrust`, `memory-dialectic-synthesis.ts`), NEVER from the LLM. Any
  * `trust`/`trustLevel` the model emits anyway is STRIPPED by the lenient `z.object` (unknown
  * keys dropped, NOT rejected). The parser is TOTAL — a malformed/adversarial payload
- * degrades to `{ abstain: true }` (the Pitfall-5 default; never throws into recall).
+ * degrades to `{ abstain: true }` (the mandatory-abstention default; never throws into recall).
  *
  * @module
  */
@@ -105,7 +105,7 @@ const DialecticOutputSchema = z.object({
  *
  * TOTAL function — NEVER throws (the non-fatal contract at the parse boundary): a
  * malformed/adversarial payload returns `{ abstain: true }` so the synthesis degrades to
- * abstention (Pitfall 5), never a fabricated answer. Steps:
+ * abstention, never a fabricated answer. Steps:
  *   1. strip markdown code fences,
  *   2. `JSON.parse` inside try/catch (parse error ⇒ `{ abstain: true }`),
  *   3. `safeParse` against the lenient schema (unknown keys — incl. any `trust`/`trustLevel`
@@ -135,7 +135,7 @@ export function parseDialecticOutput(raw: string): DialecticParsed {
   if (!parsed.success) return { abstain: true };
 
   const { answer, abstain, citedIds } = parsed.data;
-  // Explicit abstention, or no usable answer ⇒ abstain (the Pitfall-5 default).
+  // Explicit abstention, or no usable answer ⇒ abstain (the mandatory-abstention default).
   if (abstain === true) return { abstain: true };
   if (typeof answer !== "string" || answer.length === 0) return { abstain: true };
 

@@ -36,7 +36,7 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-/** DIFF-CONTENT: Maximum chars per category (system, tools) for serialized snapshot content. */
+/** Maximum chars per category (system, tools) for serialized snapshot content. */
 export const MAX_SNAPSHOT_CHARS = 50_000;
 
 /** Maximum number of tracked sessions before LRU eviction. */
@@ -51,7 +51,7 @@ const EXCLUDED_MODEL_PATTERN = /haiku/i;
 
 interface DetectorState {
   currentSnapshot: PromptStateSnapshot | null;
-  /** DIFF-CONTENT: Previous snapshot retained for serialized content diffing. */
+  /** Previous snapshot retained for serialized content diffing. */
   previousSnapshot: PromptStateSnapshot | null;
   previousCacheReadTokens: number | null;
   pendingChanges: PendingChanges | null;
@@ -151,7 +151,7 @@ export function createCacheBreakDetector(
       // Compare with previous snapshot if exists
       if (state.currentSnapshot) {
         state.pendingChanges = buildPendingChanges(state.currentSnapshot, newSnapshot);
-        // DIFF-CONTENT: Retain previous snapshot for serialized content diffing
+        // Retain previous snapshot for serialized content diffing
         state.previousSnapshot = state.currentSnapshot;
       }
 
@@ -240,7 +240,7 @@ export function createCacheBreakDetector(
 
       // Attribute reason
       const changes = state.pendingChanges ?? NO_CHANGES;
-      // Thread messageBlockCount for lookback window detection (default 0 for backward compat)
+      // Thread messageBlockCount for lookback window detection (default 0 when the caller does not report it)
       const conversationBlockCount = input.messageBlockCount ?? 0;
       const reason = attributeReason(changes, state.ttlExpired, input.lastResponseElapsedMs, conversationBlockCount);
 
