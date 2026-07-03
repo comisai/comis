@@ -21,7 +21,9 @@
  *      gone) → not_supported:edit (drop edits); anything else → internal.
  *
  *   2. `makeMSTeamsRenderActions` — the `ActivityRenderActions` adapter. `send`
- *      posts the placeholder (plain text; no native buttons in this phase).
+ *      posts the placeholder and forwards the signed approval buttons when an
+ *      approval frame produced them (a DISPLAY affordance — the
+ *      InteractiveCallbackRouter owns resolution).
  *      `edit`/`delete` GUARD the optional `ChannelPort` methods (early
  *      `not_supported` — never a non-null `!` cluster) and map every `.error`
  *      through `classifyMSTeamsError`. `delete` is the required delete-on-success
@@ -50,7 +52,10 @@ import type {
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
-import type { SignCallbackData } from "../shared/strategies/approval-render.js";
+import {
+  buildApprovalButtons,
+  type SignCallbackData,
+} from "../shared/strategies/approval-render.js";
 
 /** Structural subset of a Connector error the classifier reads (also off `error.cause`). */
 interface MsTeamsErrorFields {
@@ -173,9 +178,11 @@ export function makeMSTeamsRenderActions(
 
   return {
     async send(text, opts): Promise<Result<string, ActivityRenderError>> {
-      // Plain-text placeholder. Buttons are forwarded when present so the
-      // actions contract stays faithful, but this renderer paints none (no
-      // signer is wired), so a Teams placeholder is a bare text activity.
+      // The placeholder carries the signed approval buttons when an approval
+      // frame produced them (each button's callback_data is the wire string
+      // v1.<choice>.<shortId>.<hmac>); a non-approval / absent-signer frame
+      // forwards none, leaving a bare text activity. Buttons are a DISPLAY
+      // affordance — the InteractiveCallbackRouter owns resolution.
       const r = await adapter.sendMessage(
         channelId,
         text,
@@ -206,22 +213,27 @@ export function makeMSTeamsRenderActions(
  * adapter. The daemon composition root constructs this with its runtime
  * `TimerPort` / `ClockPort` and the conversation id.
  *
- * `signCallbackData` is accepted so this factory's signature stays uniform with
- * the other edit-capable channel renderers (a shared factory-map slot). This
- * renderer is plain text: it paints no native buttons, so `buildButtons` is
- * `undefined` and the signer is not consumed here.
+ * `signCallbackData` is the secret-bound signer injected at the composition root:
+ * the renderer CONSUMES it to build the signed approval button rows and never
+ * imports the orchestrator package. When omitted, an approval frame degrades to
+ * a button-less text prompt.
  */
 export function createMSTeamsActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
   deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData; markers?: ActivityStatusMarkers },
 ): ChannelActivityRenderer {
+  const { signCallbackData } = deps;
   return createEditPlaceRenderer({
     actions: makeMSTeamsRenderActions(adapter, channelId, { timer: deps.timer }),
     timer: deps.timer,
     clock: deps.clock,
     markers: deps.markers,
-    // Plain-text: no native approval buttons are painted.
-    buildButtons: undefined,
+    // Approval frame → signed native button rows. The signer is the only path to
+    // the callback wire; without it, no buttons are painted.
+    buildButtons:
+      signCallbackData === undefined
+        ? undefined
+        : (events) => events.flatMap((event) => buildApprovalButtons(event, signCallbackData)),
   });
 }

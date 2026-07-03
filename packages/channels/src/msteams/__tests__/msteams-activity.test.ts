@@ -13,8 +13,9 @@
  * optional `editMessage` / `deleteMessage` methods (early not_supported, no
  * non-null cluster), and drives a bounded latest-text 429-retry buffer through
  * the injected FakeTimers. `createMSTeamsActivityRenderer` wraps the shared
- * `createEditPlaceRenderer` — no duplicated state machine — and is plain-text in
- * this phase (`buildButtons: undefined`; no signer / native buttons).
+ * `createEditPlaceRenderer` — no duplicated state machine — and consumes the
+ * injected signer to paint signed approval buttons (the signed-row behavior is
+ * pinned in the sibling `msteams-activity.approval.test.ts`).
  *
  * Time discipline: every test drives the injected FakeTimers / FakeClock — no
  * raw setTimeout / Date.now. The fake adapter records every op and exposes a
@@ -339,7 +340,7 @@ describe("makeMSTeamsRenderActions (Result discipline, optional-method guards, b
   });
 });
 
-// --- createMSTeamsActivityRenderer (EditPlace wiring; plain-text) ------------
+// --- createMSTeamsActivityRenderer (EditPlace wiring; signer consumption) ----
 
 describe("createMSTeamsActivityRenderer (EditPlace wiring + delete-on-success)", () => {
   it("returns the EditPlace ChannelActivityRenderer surface", () => {
@@ -401,10 +402,12 @@ describe("createMSTeamsActivityRenderer (EditPlace wiring + delete-on-success)",
     expect(deletes[0].id).toBe("msteams-msg-0");
   });
 
-  it("is plain-text: buildButtons is undefined and no native approval buttons are wired", () => {
+  it("consumes the injected signer: buildButtons wires buildApprovalButtons with a button-less fallback", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = fs.readFileSync(`${here}/../msteams-activity.ts`, "utf8");
-    expect(src).toMatch(/buildButtons:\s*undefined/);
-    expect(src).not.toMatch(/buildApprovalButtons/);
+    // The signer is threaded from deps into the button builder.
+    expect(src).toMatch(/buildButtons[\s\S]*buildApprovalButtons/);
+    // Absent signer → no buttons: the byte-stable text fallback is preserved.
+    expect(src).toMatch(/signCallbackData === undefined/);
   });
 });
