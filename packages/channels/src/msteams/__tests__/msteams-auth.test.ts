@@ -292,4 +292,29 @@ describe("createConnectorTokenProvider — client-credentials mint", () => {
     );
     expect(preconditionWarn).toBeDefined();
   });
+
+  it("returns an error and warns as network when the token fetch rejects at the transport level", async () => {
+    const loggerSpy = makeLoggerSpy();
+    const spy = vi.fn(async () => {
+      throw new Error("connect ECONNREFUSED");
+    });
+    const provider = createConnectorTokenProvider({
+      appId: "app-client-id",
+      appPassword: APP_PASSWORD,
+      tenantId: TENANT,
+      logger: loggerSpy.logger,
+      fetchImpl: spy as unknown as typeof fetch,
+      now: () => 1_000_000,
+    });
+    const result = await provider.getToken();
+    expect(result.ok).toBe(false);
+    const warnPayloads = loggerSpy.warn.mock.calls.map((c) => c[0]);
+    const networkWarn = warnPayloads.find(
+      (p) =>
+        p !== null &&
+        typeof p === "object" &&
+        (p as { errorKind?: string }).errorKind === "network",
+    );
+    expect(networkWarn).toBeDefined();
+  });
 });
