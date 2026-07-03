@@ -1837,6 +1837,30 @@ describe("setupSchedulers", () => {
       expect(warn, "a config-kind WARN fired for the malformed quiet-hours window").toBeDefined();
       expect((warn![0] as { errorKind?: string }).errorKind).toBe("config");
     });
+
+    // -------------------------------------------------------------------------
+    // A deliver verdict on a job with NO deliveryTarget is dropped (there is no
+    // channel to deliver to), but with a distinguishing DEBUG so a gate author sees
+    // their status was discarded — instead of the generic no-deliver skip signal.
+    // -------------------------------------------------------------------------
+
+    it("logs a distinct DEBUG when a deliver verdict lands on a job with no deliveryTarget (nothing to deliver to)", async () => {
+      const gate = vi.fn(async () => ({ wake: false, deliver: "✓ nightly OK" }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(gate) });
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()(gatedAgentTurnJob({ deliveryTarget: undefined }));
+
+      // No delivery (no channel), still records the skip and re-arms ok.
+      expect(deps.container.eventBus.emit).not.toHaveBeenCalledWith("scheduler:job_result", expect.anything());
+      expect(result).toEqual(expect.objectContaining({ status: "ok", summary: "wake-gate: skipped" }));
+      // The discarded deliver is visible as a distinct DEBUG (not the generic skip INFO).
+      const dbg = (deps.schedulerLogger.debug as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => (c[1] as string)?.includes("deliver dropped (no delivery target)"),
+      );
+      expect(dbg, "a distinct debug signals the discarded deliver").toBeDefined();
+    });
   });
 });
 
