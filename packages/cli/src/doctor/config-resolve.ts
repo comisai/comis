@@ -158,6 +158,12 @@ export function resolveDoctorConfig(
     };
   }
 
+  // Raw top-level keys BEFORE schema defaults — the config-membership source.
+  // Captured here (past the object-shape guard) so it rides both the success
+  // and validation-failure returns; the loadError returns above intentionally
+  // omit it, as a file that never parsed to an object has no section membership.
+  const rawTopLevelKeys = Object.keys(parsed as Record<string, unknown>);
+
   const getSecret = buildSecretChain(deps);
   const substituted = substituteLeavingUnresolved(parsed, getSecret);
   const unresolved = findUnresolvedEnvRefs(parsed, getSecret);
@@ -169,6 +175,7 @@ export function resolveDoctorConfig(
     );
     return {
       foundPath,
+      rawTopLevelKeys,
       validationIssues: issues,
       ...(unresolved.length > 0 && { unresolvedRefs: unresolved }),
     };
@@ -177,6 +184,7 @@ export function resolveDoctorConfig(
   return {
     config: result.data,
     foundPath,
+    rawTopLevelKeys,
     ...(unresolved.length > 0 && { unresolvedRefs: unresolved }),
   };
 }
