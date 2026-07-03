@@ -158,11 +158,12 @@ describe("createMsTeamsAdapter — route-driven lifecycle (start/stop/getStatus)
     expect(adapter.getStatus?.().connected).toBe(false);
   });
 
-  it("exposes channelId and channelType as adapter properties", () => {
+  it("exposes a stable channelId and channelType as adapter properties", () => {
     const { deps } = makeAdapterDeps();
     const adapter = createMsTeamsAdapter(deps);
     expect(adapter.channelType).toBe("msteams");
-    expect(typeof adapter.channelId).toBe("string");
+    expect(adapter.channelId).toBe("msteams");
+    expect(adapter.getStatus?.().channelId).toBe("msteams");
   });
 
   it("returns a validation err with a WARN for an unsupported platform action", async () => {

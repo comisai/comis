@@ -179,7 +179,9 @@ export function createMsTeamsAdapter(
   });
 
   const handlers: MessageHandler[] = [];
-  const _channelId = "msteams-pending";
+  // Stable channel identity. This webhook adapter has no self-identity fetch
+  // (unlike Slack resolving botUserId at start), so it reports a constant id.
+  const _channelId = "msteams";
 
   // Health tracking. `_lastError` is a string because ChannelStatus.error is a
   // string; the message is captured on failure branches for getStatus().
