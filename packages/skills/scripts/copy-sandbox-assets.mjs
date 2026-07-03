@@ -14,12 +14,12 @@
  *      has no blob → the loader degrades to null and buildArgs omits
  *      `--seccomp`), so the build never fails for lack of the blob.
  *
- *   2. The generated `comis_tools.{d.ts,js}` SDK (emitted from
+ *   2. The generated `comis_tools.{d.ts,js,py}` SDK (emitted from
  *      `TOOL_CAPABILITY_MAP` by `scripts/orchestrate-sdk/generate-comis-tools-sdk.ts`).
  *      It is committed SOURCE (the byte-identical drift gate pins it),
- *      but tsc skips a hand-written `.js`, so it is copied here so the
- *      runner can read it from `dist/` and write it into the jailed workspace,
- *      and so it ships in the published tarball.
+ *      but tsc never copies a hand-written `.js` or a `.py`, so they are copied
+ *      here so the runner can read them from `dist/` and write them into the
+ *      jailed workspace, and so they ship in the published tarball.
  *
  * Runs inside `pnpm -r run build` (and therefore inside the Docker image build),
  * so committed assets ride the normal build output into both the published
@@ -47,14 +47,14 @@ if (existsSync(sandboxSrc)) {
 }
 
 // 2. Orchestrate SDK artifacts + the comis-agent manifest:
-//    copy the generated comis_tools.{d.ts,js} AND the committed
+//    copy the generated comis_tools.{d.ts,js,py} AND the committed
 //    comis-agent-manifest.json → dist so the runner / resolveJailAgentCli read
 //    them from dist (via import.meta.url) and they ship in the tarball. tsc
-//    ignores the hand-written .js (allowJs: false) and does NOT copy .json data
-//    assets, so this copy is required for both.
+//    ignores the hand-written .js (allowJs: false), never touches a .py, and
+//    does NOT copy .json data assets, so this copy is required for all of them.
 const orchSrc = join(pkgRoot, "src", "tools", "builtin", "orchestrate");
 const orchDist = join(pkgRoot, "dist", "tools", "builtin", "orchestrate");
-const sdkArtifacts = ["comis_tools.js", "comis_tools.d.ts", "comis-agent-manifest.json"];
+const sdkArtifacts = ["comis_tools.js", "comis_tools.d.ts", "comis_tools.py", "comis-agent-manifest.json"];
 const presentArtifacts = sdkArtifacts.filter((f) => existsSync(join(orchSrc, f)));
 if (presentArtifacts.length > 0) {
   mkdirSync(orchDist, { recursive: true });
