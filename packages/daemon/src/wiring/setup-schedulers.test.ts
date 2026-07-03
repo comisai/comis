@@ -1962,6 +1962,96 @@ describe("setupSchedulers", () => {
 
       expect(wakeGateEmits(deps)).toHaveLength(0);
     });
+
+    // -------------------------------------------------------------------------
+    // The incident fork producer: a WOKE fire writes a direct, content-free
+    // scheduler.wake_gate record onto the job's MAIN-session trajectory (off-turn:
+    // no live bus bridge in the cron/daemon context — mirrors the image:* /
+    // capability:audited direct emits) so `comis explain` folds it. A SKIP records
+    // NOTHING (it opens no session; its lens is the enriched cron.runs row) — the
+    // producer-side negative. The record is best-effort: an absent registry or a
+    // recorder that resolves undefined must never throw or block the dispatch.
+    // -------------------------------------------------------------------------
+
+    /** A capture recorder + a registry resolving it by sessionKey. */
+    function captureRegistry() {
+      const calls: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const recorder = {
+        recordEvent: vi.fn((type: string, data: Record<string, unknown>) => {
+          calls.push({ type, data });
+          return "queued" as const;
+        }),
+      };
+      const getRecorder = vi.fn(() => recorder);
+      return { calls, getRecorder };
+    }
+
+    it("records ONE content-free scheduler.wake_gate on the job's main session on a WOKE fire", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true }, { durationMs: 42, toolCalls: 3 }));
+      const reg = captureRegistry();
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate), trajectoryRegistry: reg }));
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      // Keyed to the job's main session — the SAME key the gate's lease used, so
+      // `comis explain <sessionKey|rootRunId>` reconstructs the fire + its cap-calls.
+      expect(reg.getRecorder).toHaveBeenCalledWith("test|heartbeat|hb-agent-1");
+      expect(reg.calls).toHaveLength(1);
+      expect(reg.calls[0].type).toBe("scheduler.wake_gate");
+      expect(reg.calls[0].data).toEqual({
+        jobId: "job-wg-1", agentId: "agent-1", wake: true,
+        durationMs: 42, toolCalls: 3, estTurnsSaved: 0,
+      });
+      // Content-free (I5): no gathered finding / script / deliver in the record.
+      for (const forbidden of ["context", "deliver", "script", "payload"]) {
+        expect(reg.calls[0].data).not.toHaveProperty(forbidden);
+      }
+    });
+
+    it("records NO trajectory event on a SKIP — the skip opens no session (the OBS-05 producer negative)", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }, { durationMs: 42, toolCalls: 3 }));
+      const reg = captureRegistry();
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate), trajectoryRegistry: reg });
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      // A skip is reconstructed via the enriched cron.runs row, never the trajectory.
+      expect(reg.getRecorder).not.toHaveBeenCalled();
+      expect(reg.calls).toHaveLength(0);
+    });
+
+    it("off-turn safe: a WOKE fire does NOT throw and STILL dispatches when the registry resolves no recorder", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true }, { durationMs: 42, toolCalls: 3 }));
+      const getRecorder = vi.fn(() => undefined); // closed session / daemon restart → no recorder
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate), trajectoryRegistry: { getRecorder } }));
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()(gatedAgentTurnJob());
+
+      expect(getRecorder).toHaveBeenCalledWith("test|heartbeat|hb-agent-1");
+      expect(result.status).toBe("ok"); // the best-effort record no-op never degraded the job
+      // The woke fire STILL runs the model (the dispatch fired).
+      const dispatched = (deps.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "scheduler:job_result");
+      expect(dispatched).toBeDefined();
+    });
+
+    it("off-turn safe: a WOKE fire does NOT throw and STILL dispatches when no trajectoryRegistry is threaded", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true }, { durationMs: 42, toolCalls: 3 }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) })); // no trajectoryRegistry
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()(gatedAgentTurnJob());
+
+      expect(result.status).toBe("ok");
+      const dispatched = (deps.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "scheduler:job_result");
+      expect(dispatched).toBeDefined();
+    });
   });
 });
 
