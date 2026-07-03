@@ -157,7 +157,8 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
     label: "Cron Scheduler",
     description:
       "Manage cron jobs, scheduled tasks, wake events. Write reminder text as user-facing message. " +
-      "SCHEDULING RULE: for a RELATIVE reminder ('in 2 minutes', 'in an hour', 'remind me in 30 seconds', 'N minutes from now') you MUST use schedule_kind='in' with schedule_in_seconds = the number of seconds — do NOT compute an absolute datetime or timezone for a relative request (that is the #1 source of wrong-time reminders). Use schedule_kind='at' ONLY for an explicit clock time like 'at 9am tomorrow', and then always pass the user's timezone.",
+      "SCHEDULING RULE: for a RELATIVE reminder ('in 2 minutes', 'in an hour', 'remind me in 30 seconds', 'N minutes from now') you MUST use schedule_kind='in' with schedule_in_seconds = the number of seconds — do NOT compute an absolute datetime or timezone for a relative request (that is the #1 source of wrong-time reminders). Use schedule_kind='at' ONLY for an explicit clock time like 'at 9am tomorrow', and then always pass the user's timezone. " +
+      "MONITORING (wake-gate): for a job that watches something, supply a wake_gate_script that fetches or greps the thing to watch and prints a JSON verdict on stdout — {\"wake\":false} when nothing changed (the fire is skipped cheaply), or {\"wake\":true,\"context\":\"what you found\"} otherwise. The model runs ONLY when the gate wakes it, so a quiet monitor costs almost nothing. Example: a wake_gate_script that fetches a CI status prints {\"wake\":false} while the build is green, else {\"wake\":true,\"context\":\"build #123 failed\"}; set wake_gate_language to js (default) or ts. This wake-gate is NOT the `wake` action — that action just wakes/replays the scheduler loop to re-check due jobs, it is not a pre-run gate.",
     parameters: CronToolParams,
 
     async execute(
