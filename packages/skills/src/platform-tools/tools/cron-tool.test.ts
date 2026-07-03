@@ -427,6 +427,44 @@ describe("cron tool", () => {
     });
   });
 
+  describe("cron tool — wake-gate monitoring pattern in the description", () => {
+    // The tool description is how a model learns to author a monitor that runs
+    // nearly free: a pre-run gate script that prints a JSON wake verdict, so the
+    // model only runs when something actually changed.
+    function getToolDescription(): string {
+      const mockRpcCall: RpcCall = vi.fn(async () => ({}));
+      return createCronTool(mockRpcCall).description;
+    }
+
+    it('teaches the skip verdict — print {"wake":false} when nothing changed', () => {
+      expect(getToolDescription()).toContain('{"wake":false}');
+    });
+
+    it('teaches the wake verdict — {"wake":true,"context":"…"} with what changed', () => {
+      const desc = getToolDescription();
+      expect(desc).toContain('"wake":true');
+      expect(desc).toContain("context");
+    });
+
+    it("states the model runs only when the gate wakes", () => {
+      expect(getToolDescription().toLowerCase()).toContain("only when the gate wakes");
+    });
+
+    it("includes a worked gate example demonstrating the verdict", () => {
+      const desc = getToolDescription();
+      expect(desc.toLowerCase()).toContain("example");
+      // The worked example demonstrates the skip verdict a second time (rule + example).
+      const skipVerdicts = desc.split('{"wake":false}').length - 1;
+      expect(skipVerdicts).toBeGreaterThanOrEqual(2);
+    });
+
+    it("disambiguates the wake-gate from the `wake` action (a scheduler-loop restart-replay)", () => {
+      const desc = getToolDescription();
+      expect(desc).toContain("`wake` action");
+      expect(desc.toLowerCase()).toContain("not the");
+    });
+  });
+
   describe("session_strategy parameter description", () => {
     // The tool steers the LLM toward `fresh` for long cadences via the
     // session_strategy parameter description. Cron uses a 5-min prompt cache TTL
