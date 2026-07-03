@@ -136,4 +136,57 @@ describe("createMsTeamsIngress", () => {
     expect(text).not.toContain("pipeline exploded");
     expect(text).not.toContain("10.0.0.5");
   });
+
+  it("returns a 200 AdaptiveCardInvokeResponse and still dispatches an adaptiveCard/action invoke", async () => {
+    const { app, handleWebhookEvents } = createApp();
+
+    const res = await post(
+      app,
+      { authorization: "Bearer good" },
+      JSON.stringify({
+        type: "invoke",
+        name: "adaptiveCard/action",
+        value: {
+          action: {
+            verb: "comis.approval.resolve",
+            data: { cb: "v1.approve.Abc123Def456.QWERTYuiop123456" },
+          },
+        },
+      }),
+    );
+
+    // A card-action invoke is request/response: it must be acked synchronously
+    // with a 200 AdaptiveCardInvokeResponse (a content-free message-type value
+    // that clears the client's button spinner) — never the bare 202.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      statusCode: 200,
+      type: "application/vnd.microsoft.activity.message",
+      value: "",
+    });
+
+    // The ack is synchronous, but the invoke is STILL dispatched for the
+    // out-of-band resolution + edit-in-place.
+    expect(handleWebhookEvents).toHaveBeenCalledOnce();
+    const [activities] = handleWebhookEvents.mock.calls[0] as [unknown[]];
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      type: "invoke",
+      name: "adaptiveCard/action",
+    });
+  });
+
+  it("keeps the bare 202 fast-ack for a normal message activity and dispatches it once", async () => {
+    const { app, handleWebhookEvents } = createApp();
+
+    const res = await post(
+      app,
+      { authorization: "Bearer good" },
+      JSON.stringify({ type: "message", text: "hi" }),
+    );
+
+    // A message activity is fire-and-forget — it keeps the bare 202 ack.
+    expect(res.status).toBe(202);
+    expect(handleWebhookEvents).toHaveBeenCalledOnce();
+  });
 });
