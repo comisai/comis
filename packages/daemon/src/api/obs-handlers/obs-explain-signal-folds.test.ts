@@ -24,7 +24,10 @@ import {
   accumulateSkillTransitionRecord,
   accumulateMemoryFailureRecord,
   buildLearningSignal,
+  accumulateOrchestrateRunSummaryRecord,
+  accumulateOrchestrateToolCall,
 } from "./obs-explain-signal-folds.js";
+import type { OrchestrateRunFold, OrchestrateToolCallFold } from "./obs-explain-signal-folds.js";
 
 describe("obs-explain-signal-folds — EXTENDED learning fold", () => {
   it("an absent learning block (no records at all) ⇒ undefined (no regression)", () => {
@@ -257,5 +260,119 @@ describe("obs-explain-signal-folds — EXTENDED learning fold", () => {
     const state = emptyLearningFold();
     accumulateReflectFunnelRecord(state, { admitted: 1, admissionOutcome: "admitted" });
     expect(buildLearningSignal(state)).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The orchestrate run-summary + per-run tool-call folds (EXPLAIN-03/04, SAVE-02).
+// The run skeleton is folded from `orchestrate.run_summary`; each run's tool
+// calls/denials are tallied from `capability.audited` keyed by the PER-RUN child
+// leaseId (Plan 02) — so a deny groups under THE RUN, not the assembly.
+// ---------------------------------------------------------------------------
+
+describe("obs-explain-signal-folds — orchestrate run + tool-call folds", () => {
+  it("a run_summary record builds the run skeleton (outcome from exitCode, resultRefs, savings)", () => {
+    const runs = new Map<string, OrchestrateRunFold>();
+    accumulateOrchestrateRunSummaryRecord(runs, {
+      runId: "orch-1",
+      leaseId: "lease-child-1",
+      rootRunId: "root-x",
+      language: "ts",
+      durationMs: 4200,
+      exitCode: 1,
+      failureClass: "nonzero_exit",
+      stdoutBytesRaw: 480,
+      stdoutCharsReentered: 480,
+      resultRefCount: 3,
+      resultRefBytes: 120_000,
+      estSavedTokens: 29_500,
+      savedRatio: 0.98,
+    });
+    expect(runs.get("orch-1")).toMatchObject({
+      runId: "orch-1",
+      leaseId: "lease-child-1",
+      outcome: "failure",
+      durationMs: 4200,
+      exitCode: 1,
+      failureClass: "nonzero_exit",
+      resultRefs: { count: 3, bytes: 120_000 },
+      savings: { estSavedTokens: 29_500, savedRatio: 0.98 },
+    });
+  });
+
+  it("a clean exit-0 run is outcome:success; a lease_absent may ride an exit-0 run", () => {
+    const runs = new Map<string, OrchestrateRunFold>();
+    accumulateOrchestrateRunSummaryRecord(runs, { runId: "orch-ok", exitCode: 0, durationMs: 10, resultRefCount: 0, resultRefBytes: 0 });
+    accumulateOrchestrateRunSummaryRecord(runs, { runId: "orch-noLease", exitCode: 0, failureClass: "lease_absent", durationMs: 5, resultRefCount: 0, resultRefBytes: 0 });
+    expect(runs.get("orch-ok")?.outcome).toBe("success");
+    expect(runs.get("orch-ok")?.failureClass).toBeUndefined();
+    expect(runs.get("orch-noLease")?.outcome).toBe("success");
+    expect(runs.get("orch-noLease")?.failureClass).toBe("lease_absent");
+  });
+
+  it("first-seen kept — a second run_summary with the same runId does not overwrite", () => {
+    const runs = new Map<string, OrchestrateRunFold>();
+    accumulateOrchestrateRunSummaryRecord(runs, { runId: "orch-1", exitCode: 0, durationMs: 10, resultRefCount: 1, resultRefBytes: 100 });
+    accumulateOrchestrateRunSummaryRecord(runs, { runId: "orch-1", exitCode: 1, durationMs: 999, failureClass: "timeout", resultRefCount: 9, resultRefBytes: 9 });
+    expect(runs.size).toBe(1);
+    expect(runs.get("orch-1")?.outcome).toBe("success"); // the FIRST record kept
+    expect(runs.get("orch-1")?.exitCode).toBe(0);
+  });
+
+  it("a run_summary missing runId is dropped (malformed → no junk run)", () => {
+    const runs = new Map<string, OrchestrateRunFold>();
+    accumulateOrchestrateRunSummaryRecord(runs, { exitCode: 0, durationMs: 10, resultRefCount: 0, resultRefBytes: 0 });
+    expect(runs.size).toBe(0);
+  });
+
+  it("an out-of-enum failureClass is dropped (the run stays, failureClass absent)", () => {
+    const runs = new Map<string, OrchestrateRunFold>();
+    accumulateOrchestrateRunSummaryRecord(runs, { runId: "orch-x", exitCode: 1, durationMs: 3, failureClass: "kaboom", resultRefCount: 0, resultRefBytes: 0 });
+    expect(runs.get("orch-x")?.outcome).toBe("failure");
+    expect(runs.get("orch-x")?.failureClass).toBeUndefined();
+  });
+
+  it("savings is omitted when the record carries no estSavedTokens/savedRatio (a sub-threshold run)", () => {
+    const runs = new Map<string, OrchestrateRunFold>();
+    accumulateOrchestrateRunSummaryRecord(runs, { runId: "orch-nosave", exitCode: 0, durationMs: 3, resultRefCount: 0, resultRefBytes: 0 });
+    expect(runs.get("orch-nosave")?.savings).toBeUndefined();
+  });
+
+  // EXPLAIN-04: the per-run child leaseId groups each tool call/deny under THE RUN.
+  it("capability.audited records tally per-run tool calls keyed by leaseId (deny attributed to the run)", () => {
+    const byLease = new Map<string, Map<string, OrchestrateToolCallFold>>();
+    accumulateOrchestrateToolCall(byLease, { leaseId: "L", tool: "web_fetch", capability: "orch:read", decision: "allow" });
+    accumulateOrchestrateToolCall(byLease, { leaseId: "L", tool: "web_fetch", capability: "orch:read", decision: "allow" });
+    accumulateOrchestrateToolCall(byLease, { leaseId: "L", tool: "web_browse", capability: "orch:web", decision: "deny" });
+    const calls = [...(byLease.get("L")?.values() ?? [])];
+    expect(calls).toContainEqual({ tool: "web_fetch", capability: "orch:read", decision: "allow", count: 2 });
+    expect(calls).toContainEqual({ tool: "web_browse", capability: "orch:web", decision: "deny", count: 1 });
+  });
+
+  it("a capability.audited record missing leaseId is dropped (no run correlation → no junk tally)", () => {
+    const byLease = new Map<string, Map<string, OrchestrateToolCallFold>>();
+    accumulateOrchestrateToolCall(byLease, { tool: "web_fetch", capability: "orch:read", decision: "allow" });
+    expect(byLease.size).toBe(0);
+  });
+
+  it("an off-vocabulary decision is dropped (content-free — closed allow|deny only)", () => {
+    const byLease = new Map<string, Map<string, OrchestrateToolCallFold>>();
+    accumulateOrchestrateToolCall(byLease, { leaseId: "L", tool: "x", capability: "orch:web", decision: "maybe" });
+    expect(byLease.size).toBe(0);
+  });
+
+  it("the tally is content-free — no smuggled arg/body reaches the fold", () => {
+    const byLease = new Map<string, Map<string, OrchestrateToolCallFold>>();
+    accumulateOrchestrateToolCall(byLease, {
+      leaseId: "L",
+      tool: "web_fetch",
+      capability: "orch:web",
+      decision: "deny",
+      args: { url: "https://leak.example/secret" },
+      body: "sk-leaked",
+    });
+    const json = JSON.stringify([...(byLease.get("L")?.values() ?? [])]);
+    expect(json).not.toContain("leak.example");
+    expect(json).not.toContain("sk-leaked");
   });
 });
