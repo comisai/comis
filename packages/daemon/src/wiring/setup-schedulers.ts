@@ -267,7 +267,24 @@ export async function setupSchedulers(deps: {
                 return { status: "ok" as const, summary: "wake-gate: skipped" };
               }
               if (verdict.context) {
-                job = withInjectedContext(job, wrapExternalContent(verdict.context, { source: "unknown" }));
+                // The wrapExternalContent markers exist to inform the MODEL, so
+                // only inject where the payload actually reaches one: an agent_turn
+                // (always model) or a main-routed system_event (heartbeat → model).
+                // A non-main system_event with a deliveryTarget is delivered as RAW
+                // text with no model — injecting there would leak the untrusted-
+                // content boundary markers verbatim to the channel. Mirror the
+                // main+system_event → heartbeat branch condition below exactly.
+                const reachesModel =
+                  job.payload.kind === "agent_turn" ||
+                  (job.sessionTarget === "main" && job.payload.kind === "system_event" && !!systemEventQueue);
+                if (reachesModel) {
+                  job = withInjectedContext(job, wrapExternalContent(verdict.context, { source: "unknown" }));
+                } else {
+                  jobLogger.debug(
+                    { step: "wake-gate", wake: true },
+                    "Wake-gate context dropped — this fire delivers verbatim (no model to inform)",
+                  );
+                }
               }
             }
           }
