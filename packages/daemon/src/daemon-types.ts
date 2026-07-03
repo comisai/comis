@@ -722,6 +722,8 @@ export interface BootContext {
   bgNotifyFn: (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task" }) => Promise<void>;
   /** Populated by bootChannels post-wakeCoalescer; read by setupSchedulers onCronWake (bootAgents). */
   cronWakeCallbackRef?: { ref?: (reason: string) => void };
+  /** Populated by bootChannels post-cap-layer; read by setupSchedulers executeJob (bootAgents) at fire time. */
+  wakeGateRunnerRef?: { ref?: import("./wiring/wake-gate-runner.js").WakeGateRunner };
   /** Populated by bootGateway post-setupGateway; read by setupCrossSession's gatewaySend (bootChannels). */
   gatewaySendRef?: { ref?: (channelId: string, text: string) => boolean };
   /** Populated by bootShutdown post-setupShutdown; read by hot-add closure (bootGateway). */
