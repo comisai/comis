@@ -462,6 +462,100 @@ export function accumulateGraphNodeSpawnedRecord(
 // Schema-validated LAST-wins folds (context.budget / prompt_timeout).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The orchestrate run-summary + per-run tool-call folds (EXPLAIN-03/04, SAVE-02).
+// ---------------------------------------------------------------------------
+
+/** The run skeleton the `orchestrate.run_summary` fold accumulates (one per
+ *  runId). Derived from IncidentSignals (already imported) so this fold does NOT
+ *  import the internal Acc from obs-explain-signals-acc.ts — that file imports
+ *  from HERE, so the reverse would cycle. `toolCalls` is joined at materialization
+ *  from the per-run leaseId tally, so the fold state OMITS it (ids + closed enums +
+ *  counts + savings only). */
+export type OrchestrateRunFold = Omit<NonNullable<IncidentSignals["orchestrate"]>[number], "toolCalls">;
+
+/** One tallied per-run tool call (tool NAME + capability + the closed decision +
+ *  a running count) — the inner-map value of `orchestrateToolCallsByLease`. */
+export type OrchestrateToolCallFold = NonNullable<IncidentSignals["orchestrate"]>[number]["toolCalls"][number];
+
+const ORCHESTRATE_FAILURE_CLASSES = ["timeout", "stdout_cap", "nonzero_exit", "spawn_fail", "lease_absent"] as const;
+
+/**
+ * Fold one `orchestrate.run_summary` trajectory record into the run-keyed
+ * `orchestrateRunsByRunId` working map (one skeleton per `runId`, FIRST-SEEN kept —
+ * a duplicate re-emit is idempotent). Builds the content-free run skeleton from the
+ * record's `data` (the translator forwards ids + the closed `failureClass` enum +
+ * counts + token estimates; agentId/sessionKey/stderr never cross). `outcome` is
+ * derived from `exitCode` (0 → success, else failure) — a `lease_absent` run may
+ * ride a clean exit-0 (still outcome:success). A record with NO `runId` is not a
+ * reconstructable run — dropped (the accumulateCapabilityAuditedRecord malformed→drop
+ * precedent). `savings` is carried only when BOTH `estSavedTokens` and `savedRatio`
+ * are present (a sub-threshold run has neither). `toolCalls` are NOT set here — they
+ * are joined at materialization from the per-run leaseId tally (accumulateOrchestrateToolCall).
+ *
+ * Mutates the passed map (the learning-fold delegation mold); typed structurally to
+ * avoid importing the internal Acc (no cycle).
+ */
+export function accumulateOrchestrateRunSummaryRecord(
+  orchestrateRunsByRunId: Map<string, OrchestrateRunFold>,
+  data: Record<string, unknown>,
+): void {
+  const runId = asString(data.runId);
+  if (runId === undefined) return; // malformed → drop (never a junk run)
+  if (orchestrateRunsByRunId.has(runId)) return; // first-seen kept (idempotent re-emit)
+  const exitCode = asNumber(data.exitCode) ?? 0;
+  const failureClass = narrow(ORCHESTRATE_FAILURE_CLASSES, data.failureClass);
+  const leaseId = asString(data.leaseId);
+  const estSavedTokens = asNumber(data.estSavedTokens);
+  const savedRatio = asNumber(data.savedRatio);
+  orchestrateRunsByRunId.set(runId, {
+    runId,
+    ...(leaseId !== undefined ? { leaseId } : {}),
+    outcome: exitCode === 0 ? "success" : "failure",
+    durationMs: asNumber(data.durationMs) ?? 0,
+    exitCode,
+    ...(failureClass !== undefined ? { failureClass } : {}),
+    resultRefs: {
+      count: asNumber(data.resultRefCount) ?? 0,
+      bytes: asNumber(data.resultRefBytes) ?? 0,
+    },
+    ...(estSavedTokens !== undefined && savedRatio !== undefined
+      ? { savings: { estSavedTokens, savedRatio } }
+      : {}),
+  } satisfies OrchestrateRunFold);
+}
+
+/**
+ * Fold one `capability.audited` trajectory record into the per-run tool-call
+ * tally `orchestrateToolCallsByLease` — keyed by the record's `leaseId` (the
+ * daemon-minted PER-RUN child lease), then by the `${tool}\0${capability}\0${decision}`
+ * tuple → a `{tool,capability,decision,count}` running count. This is EXPLAIN-04:
+ * because the leaseId is per-run, a `decision:"deny"` groups under THE RUN that made
+ * the call, not the assembly. Reads the SAME records the spawn-tree fold sees (called
+ * alongside it — no duplicate event). Content-free (tool NAME + capability + the
+ * closed allow|deny decision + count only). A record with no `leaseId` (no run
+ * correlation), a missing tool/capability, or an off-vocabulary decision is dropped.
+ *
+ * Mutates the passed map (typed structurally — no Acc import, no cycle).
+ */
+export function accumulateOrchestrateToolCall(
+  orchestrateToolCallsByLease: Map<string, Map<string, OrchestrateToolCallFold>>,
+  data: Record<string, unknown>,
+): void {
+  const leaseId = asString(data.leaseId);
+  if (leaseId === undefined) return; // no run correlation → drop
+  const tool = asString(data.tool);
+  const capability = asString(data.capability);
+  const decision = data.decision === "allow" ? "allow" : data.decision === "deny" ? "deny" : undefined;
+  if (tool === undefined || capability === undefined || decision === undefined) return;
+  const inner = orchestrateToolCallsByLease.get(leaseId) ?? new Map<string, OrchestrateToolCallFold>();
+  const key = `${tool} ${capability} ${decision}`;
+  const prev = inner.get(key);
+  if (prev !== undefined) prev.count += 1;
+  else inner.set(key, { tool, capability, decision, count: 1 });
+  orchestrateToolCallsByLease.set(leaseId, inner);
+}
+
 /**
  * Validate one `context.budget` record (the per-call budget equation from
  * the LCD pre-flight) wholesale; return the parsed value or `undefined` (a

@@ -21,7 +21,11 @@ import type {
   IncidentVideoSignal,
   IncidentVoiceSignal,
 } from "./obs-explain-signals-fields.js";
-import type { LearningFoldState } from "./obs-explain-signal-folds.js";
+import type {
+  LearningFoldState,
+  OrchestrateRunFold,
+  OrchestrateToolCallFold,
+} from "./obs-explain-signal-folds.js";
 
 /** The per-node working shape the `capability.audited` fold
  *  accumulates into (one per leaseId). Materialized into
@@ -44,6 +48,15 @@ export interface Acc {
    *  (in-process records key on the synthetic rootRunId). Materialized into
    *  `spawnTree` at the end; absent → the section is omitted. */
   spawnNodesByLease: Map<string, SpawnNode>;
+  /** The `orchestrate.run_summary` fold groups runs by runId (first-seen kept).
+   *  Materialized (with joined toolCalls) into `orchestrate` at the end of
+   *  toIncidentSignals; absent → the section is omitted. */
+  orchestrateRunsByRunId: Map<string, OrchestrateRunFold>;
+  /** The per-run tool-call tally from `capability.audited`, keyed by the PER-RUN
+   *  child leaseId → the `${tool} ${capability} ${decision}` tuple → count. Joined
+   *  onto each run's `toolCalls` at materialization (EXPLAIN-04: the per-run leaseId
+   *  attributes a deny to THE RUN). */
+  orchestrateToolCallsByLease: Map<string, Map<string, OrchestrateToolCallFold>>;
   breakerOpenedTool?: string;
   hasDoNotRetrySignal: boolean;
   /** Tools for which a log-shape breaker "opened" event was already synthesized
