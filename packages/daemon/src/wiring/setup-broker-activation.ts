@@ -101,6 +101,13 @@ export interface BrokerSpawnEnv {
   HTTPS_PROXY?: string;
   NODE_EXTRA_CA_CERTS?: string;
   placeholders: Record<string, string>;
+  /**
+   * The assembly leaseId — the `parentLeaseId` for per-run orchestrate child
+   * leases (D5). Set only when a capability lease was minted (`capMint` present);
+   * the exec/terminal consumers ignore it. The autonomy wiring reads it to mint
+   * each orchestrate run's short-TTL child lease off this assembly lease.
+   */
+  leaseId?: string;
 }
 
 /**
@@ -167,6 +174,10 @@ export function buildBrokerSpawnEnv(
     };
     const issued: IssuedLease = capMint.leaseManager.mintLease(mintInput);
     const bearer = issued.bearer;
+    // Expose the assembly leaseId so the autonomy wiring can mint each
+    // orchestrate run's short-TTL child lease with parentLeaseId = this lease
+    // (D5). Additive — no existing exec/terminal consumer reads it.
+    result.leaseId = issued.leaseId;
     // Register the bearer BEFORE it leaves this function so any later log/model
     // output that echoes it is redacted (Pitfall 1 — never logged).
     capMint.outputGuard.registerSecret(bearer);
