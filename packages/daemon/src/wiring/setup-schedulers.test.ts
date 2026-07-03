@@ -39,6 +39,9 @@ const mockMkdir = vi.hoisted(() => vi.fn(async () => {}));
 const mockWrapExternalContent = vi.hoisted(() =>
   vi.fn((content: string) => `<<<UNTRUSTED_boundary>>>\n${content}\n<<<END_UNTRUSTED_boundary>>>`),
 );
+// Default-false quiet-hours spy: the deliver-on-skip path consults it before
+// emitting, so a test can force an in-quiet-hours window per case.
+const mockIsInQuietHours = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("@comis/scheduler", () => ({
   createCronScheduler: mockCreateCronScheduler,
@@ -46,6 +49,7 @@ vi.mock("@comis/scheduler", () => ({
   createExecutionTracker: mockCreateExecutionTracker,
   resolveEffectiveHeartbeatConfig: vi.fn(() => ({ enabled: false, intervalMs: 60000 })),
   resolveHeartbeatSessionKey: vi.fn(() => ({ tenantId: "test", userId: "heartbeat", channelId: "hb-agent-1" })),
+  isInQuietHours: mockIsInQuietHours,
 }));
 
 vi.mock("@comis/agent", () => ({
@@ -150,6 +154,7 @@ describe("setupSchedulers", () => {
       toolPolicy: { profile: "default" },
     });
     mockResolveAutonomy.mockReturnValue({ enabled: false, capabilities: [] });
+    mockIsInQuietHours.mockReturnValue(false);
   });
 
   async function getSetupSchedulers() {
@@ -1681,6 +1686,120 @@ describe("setupSchedulers", () => {
         "scheduler:job_result",
         expect.objectContaining({ result: "Hello from cron" }),
       );
+    });
+
+    // -------------------------------------------------------------------------
+    // Deliver-on-skip: a wake:false verdict that carries a `deliver` ships that
+    // routine ✓ status directly — reusing the cron-delivery event with NO model
+    // turn (payloadKind:"system_event" → the listener's raw verbatim branch, and
+    // NO onComplete → nothing triggers the model), honoring quiet-hours, and
+    // ALWAYS recording the status:"skipped" row so the job re-arms.
+    // -------------------------------------------------------------------------
+
+    it("delivers a wake:false+deliver verdict via a raw scheduler:job_result (no onComplete, no model turn) and still records the skip", async () => {
+      const runWakeGate = vi.fn(async () => ({ wake: false, deliver: "✓ backup OK" }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
+      // Mirror the delivery listener: the model runs ONLY for an agent_turn payload
+      // carrying a deferred resolver. Wire that here so a stray model turn trips the
+      // spy — even though the gated job below is itself an agent_turn.
+      const modelDispatch = vi.fn();
+      deps.container.eventBus.emit = vi.fn((_e: string, payload?: { payloadKind?: string; onComplete?: (r: { status: string }) => void }) => {
+        if (payload?.payloadKind === "agent_turn" && payload.onComplete) {
+          modelDispatch();
+          payload.onComplete({ status: "ok" });
+        }
+      });
+      await setupSchedulers(deps);
+      const tracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
+
+      // An AGENT_TURN gated job — proves even an agent_turn payload delivers verbatim, no model.
+      const result = await extractExecuteJob()(gatedAgentTurnJob());
+
+      const emitCall = (deps.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => c[0] === "scheduler:job_result",
+      );
+      expect(emitCall, "a deliver verdict emits scheduler:job_result").toBeDefined();
+      const dispatched = emitCall![1] as {
+        result: string; success: boolean;
+        deliveryTarget?: unknown; payloadKind?: string;
+        onComplete?: unknown;
+      };
+      expect(dispatched.result).toBe("✓ backup OK");
+      expect(dispatched.success).toBe(true);
+      expect(dispatched.deliveryTarget).toEqual({ channelType: "telegram", channelId: "chat-1" });
+      // NO model turn: no deferred resolver + a non-agent_turn kind (the raw verbatim branch).
+      expect(dispatched.onComplete, "no onComplete → nothing triggers the model").toBeUndefined();
+      expect(dispatched.payloadKind, "system_event routes to the raw verbatim branch").not.toBe("agent_turn");
+      expect(modelDispatch, "the model never runs on a deliver-skip").not.toHaveBeenCalled();
+      // The skip is ALWAYS recorded so it stays visible on cron.runs.
+      expect(tracker.record).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: "job-wg-1", status: "skipped", summary: "wake-gate: skipped" }),
+      );
+      expect(result).toEqual(expect.objectContaining({ status: "ok", summary: "wake-gate: skipped" }));
+    });
+
+    it("wires a trailing [SILENT] status through to delivery; a HEARTBEAT_OK / NO_REPLY verdict (no deliver) skips with NO delivery", async () => {
+      const setupSchedulers = await getSetupSchedulers();
+
+      // A trailing [SILENT] <text> gate yields deliver:"<text>" → it egresses.
+      const deliverGate = vi.fn(async () => ({ wake: false, deliver: "backup OK" }));
+      const depsDeliver = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(deliverGate) });
+      await setupSchedulers(depsDeliver);
+      const resDeliver = await extractExecuteJob()(gatedAgentTurnJob());
+      const deliverEmit = (depsDeliver.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => c[0] === "scheduler:job_result",
+      );
+      expect(deliverEmit, "a [SILENT] status wires through to delivery").toBeDefined();
+      expect((deliverEmit![1] as { result: string }).result).toBe("backup OK");
+      expect(resDeliver).toEqual(expect.objectContaining({ status: "ok", summary: "wake-gate: skipped" }));
+
+      // Reset between the contrast halves so extractExecuteJob() reads the second setup.
+      vi.clearAllMocks();
+      mockIsInQuietHours.mockReturnValue(false);
+
+      // A HEARTBEAT_OK / NO_REPLY gate yields {wake:false} with NO deliver → pure skip, NO emit.
+      const silentGate = vi.fn(async () => ({ wake: false }));
+      const depsSilent = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(silentGate) });
+      await setupSchedulers(depsSilent);
+      const silentTracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
+      const resSilent = await extractExecuteJob()(gatedAgentTurnJob());
+      expect(depsSilent.container.eventBus.emit).not.toHaveBeenCalledWith("scheduler:job_result", expect.anything());
+      expect(silentTracker.record).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "skipped", summary: "wake-gate: skipped" }),
+      );
+      expect(resSilent.status).toBe("ok");
+    });
+
+    it("suppresses the deliver during quiet hours but STILL records the skip; delivers when quiet hours are clear", async () => {
+      const setupSchedulers = await getSetupSchedulers();
+
+      // Quiet hours ACTIVE → the routine ✓ must not ping: NO delivery emit...
+      mockIsInQuietHours.mockReturnValue(true);
+      const quietGate = vi.fn(async () => ({ wake: false, deliver: "✓ backup OK" }));
+      const depsQuiet = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(quietGate) });
+      await setupSchedulers(depsQuiet);
+      const quietTracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
+      const resQuiet = await extractExecuteJob()(gatedAgentTurnJob());
+      expect(depsQuiet.container.eventBus.emit).not.toHaveBeenCalledWith("scheduler:job_result", expect.anything());
+      // ...but the skip IS still recorded (quiet suppresses delivery, never the skip).
+      expect(quietTracker.record).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "skipped", summary: "wake-gate: skipped" }),
+      );
+      expect(resQuiet).toEqual(expect.objectContaining({ status: "ok" }));
+
+      // Companion (quiet hours CLEAR) → the same verdict DOES emit.
+      vi.clearAllMocks();
+      mockIsInQuietHours.mockReturnValue(false);
+      const clearGate = vi.fn(async () => ({ wake: false, deliver: "✓ backup OK" }));
+      const depsClear = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(clearGate) });
+      await setupSchedulers(depsClear);
+      await extractExecuteJob()(gatedAgentTurnJob());
+      const clearEmit = (depsClear.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => c[0] === "scheduler:job_result",
+      );
+      expect(clearEmit, "a clear-quiet-hours deliver DOES emit").toBeDefined();
+      expect((clearEmit![1] as { result: string }).result).toBe("✓ backup OK");
     });
   });
 });
