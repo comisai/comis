@@ -16,6 +16,10 @@ Keep `docs/**/*.mdx` up to date in the **same change** that alters anything they
 
 A bug is usually a **layer mismatch** — two parts of the system disagreeing — not a defect at the site that throws. Before fixing: read the docs/design for the *intended* behavior (you may be about to contradict it), trace the mechanism **end-to-end across every layer** (don't stop at the first file that throws), and fix the **authoritative** layer — never a parallel guard/allowlist/special-case at a convenient layer that hides the symptom and leaves the architecture inconsistent. Prove it against **ground truth** — the real artifact (trajectory, `~/.comis` db, `comis explain`) or a live drive — never a green mock that passes while the real wiring is broken. When the right fix is a genuine design/product tradeoff, settle it with the user first. (AGENTS.md §2.11.) This cost a wrong-fix-then-revert here: a denylist that *hid* the dead admin `*_manage` tools instead of reconciling the deny-by-origin/trust layers; and a mock-store test that went green while compact failed against the real empty store.
 
+## No Pre-History in Comments/Docs/Strings
+
+The public repo shows no build pre-history. Never add (AGENTS.md §2.12): process/traceability IDs (`WR-01`, `Phase 193`, `.planning/…`, `design §…`), Comis version pre-history (`v2.31`, "added in vX", migration framing), milestone codenames ("Glass Box"), or reference-project names (Hermes, OpenClaw/clawdbot, Deer-Flow). State the constraint, not its origin. **Runtime strings — log messages, `hint`s, tool/CLI output — carry ZERO of these; cleaning one is a behavior change, so update its asserting test in the same commit.** Keep third-party/standards versions, GitHub `#refs`, real code identifiers (`SEC-GW-003` codes, live-test scenario IDs, `architecture-allowlist` phase types), and license attributions in `NOTICE`.
+
 ## Project
 
 Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 16 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.

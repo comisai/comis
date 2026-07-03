@@ -157,6 +157,17 @@ Architecture and lint rules are enforced by their own tests — that is the same
 
 A bug is often a **layer mismatch** — two parts of the system disagreeing — not a defect at the site that throws. Before writing a fix: read the docs/design for the *intended* behavior (you may be about to contradict it), trace the mechanism **end-to-end across every layer** it touches, and fix the **authoritative** layer — never a parallel guard/allowlist/special-case at a convenient layer that hides the symptom and leaves two layers inconsistent. Prove the fix against **ground truth** (the real artifact or a live run), not a green mock that can pass while the real wiring stays broken. When the right fix is a genuine design/product tradeoff, settle it with the maintainer before coding.
 
+### 2.12 Self-contained comments, docs, tests, and runtime strings
+
+Comments, docs, test titles, and runtime strings (log messages, `hint`s, tool/CLI output) must read cleanly for someone with **only this repo** — no build pre-history is visible in the public source. State the *constraint*, never its origin (`// WR-01: never claim success on a keyless run` → `// never claim success on a keyless run`). Never introduce:
+
+- **Process / traceability IDs** — requirement or finding markers (`WR-01`, `SEC-02`, `KNOB-02-1`), phase/plan/review refs (`Phase 193`, `Plan 128-03`, `R7 #1`, dated `(30uc-…)` tags), or `.planning/…` / `design §…` shorthand.
+- **Version pre-history** — Comis's own past versions (`v2.31`, "since 1.0.25", "added in vX", "NEW in …") or migration framing. Describe current behavior unconditionally (matches §2.9's no-BC policy).
+- **Milestone codenames** — "Glass Box" and the like; name the mechanism, not the release.
+- **Reference-project names** — Hermes, OpenClaw / clawdbot, Deer-Flow. Keep any license-required attribution in `NOTICE`, not in a source comment.
+
+**Runtime strings carry ZERO of the above** — a residue-carrying string is a behavior change: clean it and its asserting test in the same commit. **Keep-list** (these are API/contracts, not prose): third-party/dependency/model versions, standards tokens (SHA-256, TLS-1.3, ES2023, BCP-47), GitHub `#refs`, and real code identifiers such as the `SEC-GW-003` security-check codes, live-test scenario IDs, and the `architecture-allowlist` `phase-X` template types.
+
 ## 3) Naming Contract
 
 | Kind | Convention | Example |
