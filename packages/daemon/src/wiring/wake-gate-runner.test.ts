@@ -39,6 +39,14 @@ function makeLogger(): WakeGateRunnerDeps["logger"] {
   return { child: vi.fn(() => child), ...child } as unknown as WakeGateRunnerDeps["logger"];
 }
 
+/** A logger whose child `warn` spy is returned so a test can read its fields. */
+function makeCapturingLogger(): { logger: WakeGateRunnerDeps["logger"]; warn: ReturnType<typeof vi.fn> } {
+  const warn = vi.fn();
+  const child = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+  const logger = { child: vi.fn(() => child), ...child } as unknown as WakeGateRunnerDeps["logger"];
+  return { logger, warn };
+}
+
 const GATE = { script: "noop", language: "js" as const, timeoutSeconds: 30 };
 const CTX: WakeGateRunContext = { agentId: "agent-1", jobId: "job-1", sessionKey: "main:agent-1" };
 
@@ -133,6 +141,48 @@ describe("createWakeGateRunner — exception-safety (fail-open, never throws)", 
     });
     const runner = createWakeGateRunner(deps);
     await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual({ wake: true });
+  });
+});
+
+describe("createWakeGateRunner — fail-open WARN classifies the cause honestly", () => {
+  /** Read the errorKind field of the (single) fail-open WARN. */
+  function warnedErrorKind(warn: ReturnType<typeof vi.fn>): unknown {
+    expect(warn).toHaveBeenCalledTimes(1);
+    return (warn.mock.calls[0]![0] as { errorKind?: unknown }).errorKind;
+  }
+
+  it("classifies a genuine timeout as errorKind:timeout", async () => {
+    const { logger, warn } = makeCapturingLogger();
+    const { deps, runJailedScriptFn } = makeDeps({ logger });
+    runJailedScriptFn.mockRejectedValue(new Error("orchestrate run exceeded its 30000ms timeout"));
+    await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+    expect(warnedErrorKind(warn)).toBe("timeout");
+  });
+
+  it("classifies a stdout overflow as errorKind:resource (NOT timeout)", async () => {
+    const { logger, warn } = makeCapturingLogger();
+    const { deps, runJailedScriptFn } = makeDeps({ logger });
+    runJailedScriptFn.mockRejectedValue(new Error("orchestrate stdout exceeded the 4194304B hard cap"));
+    await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+    expect(warnedErrorKind(warn)).toBe("resource");
+  });
+
+  it("classifies a non-zero gate exit as errorKind:dependency (NOT timeout)", async () => {
+    const { logger, warn } = makeCapturingLogger();
+    const { deps, runJailedScriptFn } = makeDeps({ logger });
+    runJailedScriptFn.mockRejectedValue(new Error("orchestrate jailed child exited with code 1"));
+    await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+    expect(warnedErrorKind(warn)).toBe("dependency");
+  });
+
+  it("classifies a lease-mint fault as errorKind:dependency (NOT timeout)", async () => {
+    const { logger, warn } = makeCapturingLogger();
+    const { deps, mintLease } = makeDeps({ logger });
+    mintLease.mockImplementation(() => {
+      throw new Error("lease mint boom");
+    });
+    await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+    expect(warnedErrorKind(warn)).toBe("dependency");
   });
 });
 
