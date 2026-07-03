@@ -20,6 +20,15 @@ for all invocations below. If you've created a shell alias (e.g. `alias comis='n
 the shorter form works too.
 </Info>
 
+<Note>
+The incident bundle is **per-session** — one session's full trajectory. For a **host-scoped**
+snapshot of the whole daemon (health checks, cross-session fleet digest, config posture) in one
+paste-ready offline directory, use [`comis support-bundle`](/reference/cli#comis-support-bundle). Its
+`--session` / `--deep` flags **embed this per-session bundle** — the `explain` digest, and with
+`--deep` the trace bundle — inside the host bundle, so a single `support-bundle --deep --session <id>`
+hands an engineer both the daemon-wide posture and the one session's raw trajectory.
+</Note>
+
 ---
 
 ## Operator Workflow
@@ -48,7 +57,7 @@ See [Trace CLI](/operations/trace-cli) for the full subcommand reference.
 
 ```bash
 node packages/cli/dist/cli.js trace export <sessionId>
-# Output: Bundle written to: /workspace/.comis/trace-exports/comis-trace-<sid8>-<ts>/
+# Output: Bundle written to: /workspace/trace-exports/comis-trace-<sid8>-<ts>/
 ```
 
 The pipeline reads the session file, reconstructs the branch, merges and sorts events, applies
@@ -57,7 +66,7 @@ The pipeline reads the session file, reconstructs the branch, merges and sorts e
 ### Step 3 — Inspect the bundle (optional)
 
 ```bash
-cd /workspace/.comis/trace-exports/comis-trace-<sid8>-<ts>/
+cd /workspace/trace-exports/comis-trace-<sid8>-<ts>/
 ls -la
 
 # Count events by type
@@ -95,7 +104,7 @@ rm -rf comis-trace-<sid8>-<ts>/ bundle.tar.gz
 Each export produces a single directory containing exactly 8 files. The directory path is:
 
 ```
-<workspaceDir>/.comis/trace-exports/comis-trace-<sid8>-<ts>/
+<workspaceDir>/trace-exports/comis-trace-<sid8>-<ts>/
 ```
 
 The directory is created with mode `0o700` (owner-only access). Every file inside is written with
@@ -203,9 +212,10 @@ Bundle contents reflect the raw session and runtime trajectory at export time. R
 The `/export-trajectory` slash command gives the daemon owner a way to trigger a bundle export
 from within Telegram itself, without needing terminal access.
 
-**Owner gate:** Only the configured daemon owner can invoke this command. Non-owner invocations
-are silently ignored — the command name `export-trajectory` is in `KNOWN_COMMANDS`, so the text
-never reaches the LLM.
+**Owner gate:** Only the configured daemon owner can invoke this command. A non-owner invocation is
+answered with `Access denied: /export-trajectory is owner-only.` in the same chat — the command name
+`export-trajectory` is in `KNOWN_COMMANDS`, so the text never reaches the LLM, but the handler still
+replies rather than staying silent.
 
 ### In a Telegram DM
 
@@ -216,7 +226,7 @@ When the owner types `/export-trajectory` in a direct message with the bot:
 
 ```
 /export-trajectory
-→  Bundle written to: /workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
+→  Bundle written to: /workspace/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
 ```
 
 ### In a Telegram group
@@ -229,9 +239,10 @@ When the owner types `/export-trajectory` in a group chat:
    bundle path is routed exclusively to the owner's DM, not to `deliverToChannel`.
 
 <Warning>
-Owner gate is enforced at the slash-command handler. Non-owner invocations are silently ignored —
-the command name `export-trajectory` is in `KNOWN_COMMANDS` so the text never reaches the LLM.
-This means non-owners see no reply at all when they type the command.
+Owner gate is enforced at the slash-command handler. A non-owner invocation is rejected with an
+`Access denied: /export-trajectory is owner-only.` reply in the same chat — the command name
+`export-trajectory` is in `KNOWN_COMMANDS` so the text never reaches the LLM, but the handler
+answers the denial rather than staying silent.
 </Warning>
 
 ---
@@ -253,12 +264,12 @@ node packages/cli/dist/cli.js trace export <sessionId>
 
 **Human-readable (default):**
 ```
-Bundle written to: /workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
+Bundle written to: /workspace/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
 ```
 
 **JSON mode (`--json`):**
 ```json
-{"bundlePath": "/workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/"}
+{"bundlePath": "/workspace/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/"}
 ```
 
 **JSON mode is useful for scripting:**
@@ -282,7 +293,7 @@ A complete diagnostic walkthrough using only the bundle directory and `jq`:
 
 ```bash
 # Navigate to the bundle
-cd /workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
+cd /workspace/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
 
 # 1. Count events by type — understand what happened at a glance
 jq -r '.event' events.jsonl | sort | uniq -c | sort -rn | head
@@ -330,5 +341,8 @@ and exact tool definitions active during the session.
   </Card>
   <Card title="Daemon" icon="server" href="/operations/daemon">
     The process that runs all of this — startup, shutdown, and configuration.
+  </Card>
+  <Card title="Support Bundle" icon="box-archive" href="/reference/cli#comis-support-bundle">
+    The host-scoped sibling — a paste-ready diagnostic bundle (health checks, fleet digest, config posture) that embeds this per-session bundle with `--deep --session`.
   </Card>
 </CardGroup>
