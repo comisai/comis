@@ -10,8 +10,21 @@
  * @module
  */
 
+import type { FleetHealthReport, IncidentReport } from "@comis/core";
 import type { DoctorFinding, DoctorResult } from "../doctor/types.js";
-import type { SupportTriage } from "./types.js";
+import type { HostSnapshot, SupportTriage } from "./types.js";
+
+/**
+ * Inputs to the reducer. `fleet`/`explain` are optional upstream verdicts that
+ * later enrichment populates; they are declared now so the status rule can
+ * already consume them without a schema change.
+ */
+export interface SupportTriageInputs {
+  readonly host: HostSnapshot;
+  readonly doctor: DoctorResult;
+  readonly fleet?: FleetHealthReport;
+  readonly explain?: IncidentReport;
+}
 
 /**
  * Map one finding to its signal, or `undefined` when it carries none (passes,
@@ -74,5 +87,20 @@ export function buildDoctorSummary(doctor: DoctorResult): SupportTriage["doctorS
     skip: doctor.skipCount,
     repairable: doctor.repairableCount,
     failing,
+  };
+}
+
+/** Fold the inputs into the deterministic triage verdict. (WIP — assembly next.) */
+export function buildSupportTriage(inputs: SupportTriageInputs): SupportTriage {
+  return {
+    schemaVersion: 1,
+    status: "healthy",
+    activeSignals: deriveDoctorSignals(inputs.doctor),
+    host: inputs.host,
+    doctorSummary: buildDoctorSummary(inputs.doctor),
+    reporterNextSteps: [],
+    maintainerNextSteps: [],
+    evidenceFiles: [],
+    privacy: { redaction: "platform-aware-v1", excludes: [] },
   };
 }

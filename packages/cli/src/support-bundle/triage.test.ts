@@ -20,7 +20,9 @@ import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
 import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
 import { resolveDoctorConfig } from "../doctor/config-resolve.js";
 import type { DoctorFinding, DoctorResult } from "../doctor/types.js";
-import { buildDoctorSummary, deriveDoctorSignals } from "./triage.js";
+import { buildDoctorSummary, buildSupportTriage, deriveDoctorSignals } from "./triage.js";
+import type { HostSnapshot } from "./types.js";
+import { parseSupportTriage } from "./types.js";
 
 // Injected secret-lookup seams keep the real resolver hermetic from the
 // machine's env / ~/.comis/.env / encrypted store while still running the
@@ -181,5 +183,174 @@ describe("buildDoctorSummary", () => {
     ]);
 
     expect(buildDoctorSummary(doctor).failing).toEqual([]);
+  });
+});
+
+const HOST: HostSnapshot = { nodeVersion: "v22.3.0", platform: "linux", arch: "x64" };
+
+describe("buildSupportTriage status precedence", () => {
+  it("ranks a config-health failure as misconfigured over other failures", () => {
+    const doctor = makeDoctorResult([
+      finding({
+        category: "config",
+        check: "Config file exists",
+        status: "fail",
+        repairable: true,
+        suggestion: "Run comis init to create config",
+      }),
+      finding({ category: "gateway", check: "Gateway reachable", status: "fail" }),
+      finding({ category: "daemon", check: "PID file", status: "warn" }),
+    ]);
+
+    expect(buildSupportTriage({ host: HOST, doctor }).status).toBe("misconfigured");
+  });
+
+  it("reports degraded when the daemon is down without a config failure", () => {
+    const doctor = makeDoctorResult([
+      finding({ category: "daemon", check: "PID file", status: "warn" }),
+      finding({ category: "config", check: "Config files", status: "pass" }),
+    ]);
+
+    expect(buildSupportTriage({ host: HOST, doctor }).status).toBe("degraded");
+  });
+
+  it("reports degraded on a non-config failure such as an unreachable gateway", () => {
+    const doctor = makeDoctorResult([
+      finding({ category: "gateway", check: "Gateway reachable", status: "fail" }),
+      finding({ category: "config", check: "Config files", status: "pass" }),
+    ]);
+
+    expect(buildSupportTriage({ host: HOST, doctor }).status).toBe("degraded");
+  });
+
+  it("returns insufficient_evidence for an empty read rather than healthy", () => {
+    const doctor = makeDoctorResult([]);
+
+    expect(buildSupportTriage({ host: HOST, doctor }).status).toBe("insufficient_evidence");
+  });
+
+  it("reports healthy only when checks pass with no failure or daemon-down", () => {
+    const doctor = makeDoctorResult([
+      finding({ category: "config", check: "Config files", status: "pass" }),
+      finding({ category: "daemon", check: "Process alive", status: "pass" }),
+    ]);
+
+    expect(buildSupportTriage({ host: HOST, doctor }).status).toBe("healthy");
+  });
+});
+
+describe("buildSupportTriage assembly", () => {
+  it("produces a deeply identical verdict for the same input", () => {
+    const doctor = makeDoctorResult([
+      finding({ category: "gateway", check: "Gateway reachable", status: "fail" }),
+      finding({ category: "config", check: "Config files", status: "pass" }),
+    ]);
+
+    const first = buildSupportTriage({ host: HOST, doctor });
+    const second = buildSupportTriage({ host: HOST, doctor });
+
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+  });
+
+  it("reuses finding suggestions and known commands for reporter next steps", () => {
+    const doctor = makeDoctorResult([
+      finding({
+        category: "config",
+        check: "Config file exists",
+        status: "fail",
+        repairable: true,
+        suggestion: "Run comis init to create config",
+      }),
+      finding({
+        category: "daemon",
+        check: "PID file",
+        status: "warn",
+        suggestion: "Start the daemon: comis daemon start",
+      }),
+    ]);
+
+    const steps = buildSupportTriage({ host: HOST, doctor }).reporterNextSteps;
+
+    expect(steps).toContain("Run comis init to create config");
+    expect(steps).toContain("Start the daemon: comis daemon start");
+    expect(steps).toContain("comis doctor --repair");
+    expect(steps).toContain("comis init");
+    expect(new Set(steps).size).toBe(steps.length);
+    expect(steps.length).toBeLessThanOrEqual(8);
+  });
+
+  it("dedupes and caps reporter next steps at the ceiling", () => {
+    const findings: DoctorFinding[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      findings.push(
+        finding({
+          category: "channels",
+          check: `channel ${i}`,
+          status: "fail",
+          suggestion: `reconnect channel ${i}`,
+        }),
+      );
+    }
+    findings.push(
+      finding({
+        category: "channels",
+        check: "duplicate",
+        status: "fail",
+        suggestion: "reconnect channel 0",
+      }),
+    );
+
+    const steps = buildSupportTriage({ host: HOST, doctor: makeDoctorResult(findings) }).reporterNextSteps;
+
+    expect(steps.length).toBeLessThanOrEqual(8);
+    expect(new Set(steps).size).toBe(steps.length);
+  });
+
+  it("offers content-free maintainer commands that name no host detail", () => {
+    const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]) });
+
+    expect(triage.maintainerNextSteps.length).toBeGreaterThan(0);
+    for (const step of triage.maintainerNextSteps) {
+      expect(step.startsWith("comis ")).toBe(true);
+    }
+  });
+
+  it("declares the privacy exclusion set the writer must honor", () => {
+    const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]) });
+
+    expect(triage.privacy.redaction).toBe("platform-aware-v1");
+    for (const excluded of ["secrets", "raw-config-values", "message-bodies", "file-contents", ".env"]) {
+      expect(triage.privacy.excludes).toContain(excluded);
+    }
+  });
+
+  it("lists the bundle output files as evidence with descriptions", () => {
+    const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]) });
+
+    const paths = triage.evidenceFiles.map((file) => file.path);
+    expect(paths).toContain("triage.json");
+    expect(paths).toContain("doctor.json");
+    for (const entry of triage.evidenceFiles) {
+      expect(entry.description.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("round-trips the built verdict through the strict schema parser", () => {
+    const doctor = makeDoctorResult([
+      finding({
+        category: "config",
+        check: "Config file exists",
+        status: "fail",
+        repairable: true,
+        suggestion: "Run comis init to create config",
+      }),
+    ]);
+
+    const triage = buildSupportTriage({ host: HOST, doctor });
+
+    expect(triage.schemaVersion).toBe(1);
+    const parsed = parseSupportTriage(triage);
+    expect(parsed.ok).toBe(true);
   });
 });
