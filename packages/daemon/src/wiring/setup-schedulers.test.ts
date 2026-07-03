@@ -1509,8 +1509,14 @@ describe("setupSchedulers", () => {
       return { ref: { runWakeGate } as unknown as WakeGateRunner };
     }
 
+    /** Wrap a bare verdict in the richer runWakeGate outcome. The hook reads only
+     *  `verdict`; the additive durationMs/toolCalls metrics are 0 in these cases. */
+    function wgOutcome(verdict: unknown) {
+      return { verdict, durationMs: 0, toolCalls: 0 };
+    }
+
     it("runs the gate and SKIPS the payload on wake:false — no scheduler:job_result dispatch, a status:skipped row, and status:ok re-arm", async () => {
-      const runWakeGate = vi.fn(async () => ({ wake: false }));
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }));
       const setupSchedulers = await getSetupSchedulers();
       const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
       await setupSchedulers(deps);
@@ -1530,7 +1536,7 @@ describe("setupSchedulers", () => {
     });
 
     it("prepends the wrapExternalContent-wrapped context to the agent_turn message on wake:true before dispatch", async () => {
-      const runWakeGate = vi.fn(async () => ({ wake: true, context: "CI is RED" }));
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true, context: "CI is RED" }));
       const setupSchedulers = await getSetupSchedulers();
       const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
       await setupSchedulers(deps);
@@ -1556,7 +1562,7 @@ describe("setupSchedulers", () => {
       // A non-main system_event with a deliveryTarget is delivered as RAW text,
       // no model. The wrapExternalContent markers exist to inform the MODEL, so
       // injecting them here would leak internal framing verbatim to the channel.
-      const runWakeGate = vi.fn(async () => ({ wake: true, context: "disk 91%" }));
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true, context: "disk 91%" }));
       const setupSchedulers = await getSetupSchedulers();
       const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
       await setupSchedulers(deps);
@@ -1584,7 +1590,7 @@ describe("setupSchedulers", () => {
     it("STILL injects the wrapped context on a main-routed system_event (the heartbeat reaches the model)", async () => {
       // The main+system_event path enqueues to the heartbeat pipeline (model runs),
       // so the wrapped context must still be prepended there.
-      const runWakeGate = vi.fn(async () => ({ wake: true, context: "disk 91%" }));
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true, context: "disk 91%" }));
       const mockQueue = createMockSystemEventQueue();
       const setupSchedulers = await getSetupSchedulers();
       const deps = createMinimalDeps({ cronEnabled: true, systemEventQueue: mockQueue, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
@@ -1609,7 +1615,7 @@ describe("setupSchedulers", () => {
     });
 
     it("does NOT call the gate and dispatches byte-identically when the job carries no wakeGate", async () => {
-      const runWakeGate = vi.fn(async () => ({ wake: false }));
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }));
       const setupSchedulers = await getSetupSchedulers();
       const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
       await setupSchedulers(deps);
@@ -1659,7 +1665,7 @@ describe("setupSchedulers", () => {
       const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef }));
       await setupSchedulers(deps);
       // Populate the ref AFTER setup, BEFORE the fire — the hook must still pick it up.
-      const runWakeGate = vi.fn(async () => ({ wake: false }));
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }));
       wakeGateRunnerRef.ref = { runWakeGate } as unknown as WakeGateRunner;
 
       await extractExecuteJob()(gatedAgentTurnJob());
@@ -1697,7 +1703,7 @@ describe("setupSchedulers", () => {
     // -------------------------------------------------------------------------
 
     it("delivers a wake:false+deliver verdict via a raw scheduler:job_result (no onComplete, no model turn) and still records the skip", async () => {
-      const runWakeGate = vi.fn(async () => ({ wake: false, deliver: "✓ backup OK" }));
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false, deliver: "✓ backup OK" }));
       const setupSchedulers = await getSetupSchedulers();
       const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
       // Mirror the delivery listener: the model runs ONLY for an agent_turn payload
@@ -1743,7 +1749,7 @@ describe("setupSchedulers", () => {
       const setupSchedulers = await getSetupSchedulers();
 
       // A trailing [SILENT] <text> gate yields deliver:"<text>" → it egresses.
-      const deliverGate = vi.fn(async () => ({ wake: false, deliver: "backup OK" }));
+      const deliverGate = vi.fn(async () => wgOutcome({ wake: false, deliver: "backup OK" }));
       const depsDeliver = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(deliverGate) });
       await setupSchedulers(depsDeliver);
       const resDeliver = await extractExecuteJob()(gatedAgentTurnJob());
@@ -1759,7 +1765,7 @@ describe("setupSchedulers", () => {
       mockIsInQuietHours.mockReturnValue(false);
 
       // A HEARTBEAT_OK / NO_REPLY gate yields {wake:false} with NO deliver → pure skip, NO emit.
-      const silentGate = vi.fn(async () => ({ wake: false }));
+      const silentGate = vi.fn(async () => wgOutcome({ wake: false }));
       const depsSilent = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(silentGate) });
       await setupSchedulers(depsSilent);
       const silentTracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
@@ -1776,7 +1782,7 @@ describe("setupSchedulers", () => {
 
       // Quiet hours ACTIVE → the routine ✓ must not ping: NO delivery emit...
       mockIsInQuietHours.mockReturnValue(true);
-      const quietGate = vi.fn(async () => ({ wake: false, deliver: "✓ backup OK" }));
+      const quietGate = vi.fn(async () => wgOutcome({ wake: false, deliver: "✓ backup OK" }));
       const depsQuiet = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(quietGate) });
       await setupSchedulers(depsQuiet);
       const quietTracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
@@ -1791,7 +1797,7 @@ describe("setupSchedulers", () => {
       // Companion (quiet hours CLEAR) → the same verdict DOES emit.
       vi.clearAllMocks();
       mockIsInQuietHours.mockReturnValue(false);
-      const clearGate = vi.fn(async () => ({ wake: false, deliver: "✓ backup OK" }));
+      const clearGate = vi.fn(async () => wgOutcome({ wake: false, deliver: "✓ backup OK" }));
       const depsClear = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(clearGate) });
       await setupSchedulers(depsClear);
       await extractExecuteJob()(gatedAgentTurnJob());
@@ -1814,7 +1820,7 @@ describe("setupSchedulers", () => {
       mockIsInQuietHours.mockImplementation(() => {
         throw new Error('Invalid time format: "25:99" (expected HH:MM)');
       });
-      const gate = vi.fn(async () => ({ wake: false, deliver: "✓ backup OK" }));
+      const gate = vi.fn(async () => wgOutcome({ wake: false, deliver: "✓ backup OK" }));
       const setupSchedulers = await getSetupSchedulers();
       const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(gate) });
       await setupSchedulers(deps);
@@ -1845,7 +1851,7 @@ describe("setupSchedulers", () => {
     // -------------------------------------------------------------------------
 
     it("logs a distinct DEBUG when a deliver verdict lands on a job with no deliveryTarget (nothing to deliver to)", async () => {
-      const gate = vi.fn(async () => ({ wake: false, deliver: "✓ nightly OK" }));
+      const gate = vi.fn(async () => wgOutcome({ wake: false, deliver: "✓ nightly OK" }));
       const setupSchedulers = await getSetupSchedulers();
       const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(gate) });
       await setupSchedulers(deps);

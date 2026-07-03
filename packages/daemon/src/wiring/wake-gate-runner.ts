@@ -59,16 +59,29 @@ export interface WakeGateRunContext {
   readonly sessionKey: string;
 }
 
+/**
+ * The content-free outcome of a gated fire. A run that reached a verdict carries
+ * the verdict plus two counts an operator can reconstruct the fire from — the
+ * `durationMs` the gate took (measured on the clean AND the fail-open path) and
+ * the `toolCalls` it made (the scoped allow-decision cap-audit count). A host
+ * that cannot jail / has autonomy disabled honestly degrades to `runAsToday`
+ * (the job ran as today) and carries NO metrics — there was no gate to measure.
+ */
+export type WakeGateOutcome =
+  | { verdict: WakeGateVerdict; durationMs: number; toolCalls: number }
+  | { runAsToday: true };
+
 /** The late-bound runner the scheduler holds a ref to. */
 export interface WakeGateRunner {
   /**
-   * Run the gate. NEVER throws. Returns a wake decision, OR a run-as-today
-   * signal when the host cannot jail / autonomy is disabled.
+   * Run the gate. NEVER throws. Returns a verdict WITH its per-fire counts
+   * ({@link WakeGateOutcome}), OR a run-as-today signal when the host cannot jail
+   * / autonomy is disabled.
    */
   runWakeGate(
     gate: { script: string; language: "js" | "ts"; timeoutSeconds: number },
     ctx: WakeGateRunContext,
-  ): Promise<WakeGateVerdict | { runAsToday: true }>;
+  ): Promise<WakeGateOutcome>;
 }
 
 /** Injected collaborators for {@link createWakeGateRunner} (AGENTS §2.4). */
@@ -142,6 +155,14 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
       // status:error would trigger scheduler backoff → auto-suspend). The
       // `runAsToday` degrade is a normal return from inside the try (not a throw),
       // so the catch is skipped for it.
+      //
+      // Metrics wrap the WHOLE fail-open region: `startedAt` (and the tool-call
+      // counter) are captured BEFORE the try so the catch still reports a real
+      // `durationMs` — a rejected / timed-out gate has a genuine span — and the
+      // count survives into the fail-open return.
+      const now = deps.now ?? systemNowMs;
+      const startedAt = now();
+      const toolCalls = 0;
       try {
         // 1. Honest degrade. Resolve the agent's autonomy through the SAME
         //    preflight-driven downshift the tool wiring uses; a disabled posture
@@ -163,7 +184,7 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
         //    COMIS_CAP_LEASE/COMIS_ORCH_SOCKET). Caps are the agent's RESOLVED
         //    autonomy caps enforced at the cap socket — never a job tool policy.
         //    A fault here is caught below and fails OPEN (waking), never closed.
-        const ts = (deps.now ?? systemNowMs)().toString(36);
+        const ts = now().toString(36);
         const rootRunId = `root-wakegate-${ctx.jobId}-${ts}`;
         const capMint: CapabilityMintDeps = {
           leaseManager: deps.leaseManager,
@@ -213,7 +234,11 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
         if (verdict.deliver !== undefined) {
           const scanned = deps.outputGuard.scan(verdict.deliver);
           if (scanned.ok) {
-            return { ...verdict, deliver: scanned.value.sanitized };
+            return {
+              verdict: { ...verdict, deliver: scanned.value.sanitized },
+              durationMs: now() - startedAt,
+              toolCalls,
+            };
           }
           // A scrub fault must never egress unscrubbed untrusted text: DROP the
           // deliver, degrading to a plain skip (no delivery). The pure-skip path
@@ -228,9 +253,13 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
             },
             "Wake-gate deliver scrub failed — dropping deliver",
           );
-          return { wake: verdict.wake, ...(verdict.context !== undefined ? { context: verdict.context } : {}) };
+          return {
+            verdict: { wake: verdict.wake, ...(verdict.context !== undefined ? { context: verdict.context } : {}) },
+            durationMs: now() - startedAt,
+            toolCalls,
+          };
         }
-        return verdict;
+        return { verdict, durationMs: now() - startedAt, toolCalls };
       } catch (err) {
         log.warn(
           {
@@ -242,7 +271,7 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
           },
           "Wake-gate failed — waking (fail-open)",
         );
-        return { wake: true };
+        return { verdict: { wake: true }, durationMs: now() - startedAt, toolCalls };
       }
     },
   };

@@ -128,7 +128,7 @@ describe("createWakeGateRunner — exception-safety (fail-open, never throws)", 
       runJailedScriptFn.mockRejectedValue(err);
       const runner = createWakeGateRunner(deps);
       // `.resolves` proves the promise did not reject — the never-throw invariant.
-      await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual({ wake: true });
+      await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }));
     });
   }
 
@@ -150,7 +150,7 @@ describe("createWakeGateRunner — exception-safety (fail-open, never throws)", 
       throw new Error("lease mint boom");
     });
     const runner = createWakeGateRunner(deps);
-    await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual({ wake: true });
+    await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }));
   });
 });
 
@@ -200,22 +200,21 @@ describe("createWakeGateRunner — clean-run verdict resolution", () => {
   it("resolves an explicit {wake:false} to skip", async () => {
     const { deps, runJailedScriptFn } = makeDeps();
     runJailedScriptFn.mockResolvedValue('{"wake":false}');
-    await expect(createWakeGateRunner(deps).runWakeGate(GATE, CTX)).resolves.toEqual({ wake: false });
+    await expect(createWakeGateRunner(deps).runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: false }));
   });
 
   it("resolves {wake:true,context} preserving the context", async () => {
     const { deps, runJailedScriptFn } = makeDeps();
     runJailedScriptFn.mockResolvedValue('{"wake":true,"context":"x"}');
-    await expect(createWakeGateRunner(deps).runWakeGate(GATE, CTX)).resolves.toEqual({
-      wake: true,
-      context: "x",
-    });
+    await expect(createWakeGateRunner(deps).runWakeGate(GATE, CTX)).resolves.toEqual(
+      outcome({ wake: true, context: "x" }),
+    );
   });
 
   it("fails open (wake:true) on empty stdout — an empty gate is never resolved to silent", async () => {
     const { deps, runJailedScriptFn } = makeDeps();
     runJailedScriptFn.mockResolvedValue("");
-    await expect(createWakeGateRunner(deps).runWakeGate(GATE, CTX)).resolves.toEqual({ wake: true });
+    await expect(createWakeGateRunner(deps).runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }));
   });
 });
 
@@ -343,7 +342,7 @@ describe("createWakeGateRunner — deliver egress-scrub", () => {
 
     const verdict = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
-    expect(verdict).toEqual({ wake: false, deliver: `backup OK ${REDACTED}` });
+    expect(verdict).toEqual(outcome({ wake: false, deliver: `backup OK ${REDACTED}` }));
     expect(scan).toHaveBeenCalledTimes(1);
     expect(scan).toHaveBeenCalledWith(`backup OK ${SECRET}`);
   });
@@ -355,7 +354,7 @@ describe("createWakeGateRunner — deliver egress-scrub", () => {
 
     const verdict = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
-    expect(verdict).toEqual({ wake: false, deliver: "backup OK" });
+    expect(verdict).toEqual(outcome({ wake: false, deliver: "backup OK" }));
     expect(scan).toHaveBeenCalledWith("backup OK");
   });
 
@@ -366,7 +365,7 @@ describe("createWakeGateRunner — deliver egress-scrub", () => {
 
     const verdict = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
-    expect(verdict).toEqual({ wake: true, context: "CI red" });
+    expect(verdict).toEqual(outcome({ wake: true, context: "CI red" }));
     expect(scan).not.toHaveBeenCalled();
   });
 
@@ -377,7 +376,7 @@ describe("createWakeGateRunner — deliver egress-scrub", () => {
 
     const verdict = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
-    expect(verdict).toEqual({ wake: false });
+    expect(verdict).toEqual(outcome({ wake: false }));
     expect(scan).not.toHaveBeenCalled();
   });
 });

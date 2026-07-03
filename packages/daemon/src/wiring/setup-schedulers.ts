@@ -248,12 +248,16 @@ export async function setupSchedulers(deps: {
           // runner ref) is byte-identical to today.
           const gateRunner = wakeGateRunnerRef?.ref;
           if (job.wakeGate && gateRunner) {
-            const verdict = await gateRunner.runWakeGate(job.wakeGate, {
+            const outcome = await gateRunner.runWakeGate(job.wakeGate, {
               agentId: job.agentId,
               jobId: job.id,
               sessionKey: resolveMainSessionKey(job.agentId),
             });
-            if (!("runAsToday" in verdict)) {
+            if (!("runAsToday" in outcome)) {
+              // The verdict drives the existing skip/deliver/context branches
+              // unchanged; the additive per-fire metrics (durationMs, toolCalls)
+              // are consumed by the observability emit, not here.
+              const { verdict } = outcome;
               if (!verdict.wake) {
                 // Deliver-on-skip: a routine ✓ status delivered directly with NO
                 // model turn. verdict.deliver is already OutputGuard-scrubbed by the
