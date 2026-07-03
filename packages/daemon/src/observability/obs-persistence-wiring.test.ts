@@ -14,6 +14,7 @@ import {
   summaryLanguageMismatchEventToRow,
   generationQualityEventToRow,
   pipelineAuthoredEventToRow,
+  orchestrateRunSummaryEventToRow,
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
@@ -918,6 +919,107 @@ describe("pipelineAuthoredEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// orchestrateRunSummaryEventToRow (the fleet efficiency path).
+// Like pipelineAuthoredEventToRow: an `orchestrate:run_summary` event → a
+// `health_signal` DiagnosticRow with `signal:"orchestrate_efficiency"`. details
+// carries counts + token ESTIMATES + the closed failureClass ONLY — NEVER the
+// runId, the raw stdout, the resultRefBytes body, or the stderr tail (§2.7). The
+// `sessionKey` rides the row as the correlation key (the event carries it even
+// though the trajectory translator strips it from the trajectory `data`). severity
+// is ALWAYS info: a completed run is standing signal, never a fleet degrade.
+// ---------------------------------------------------------------------------
+
+describe("orchestrateRunSummaryEventToRow", () => {
+  it("maps an orchestrate:run_summary event to a content-free orchestrate_efficiency health_signal row (counts/estimates only)", () => {
+    const row = orchestrateRunSummaryEventToRow({
+      runId: "orch-abc-123",
+      leaseId: "lease-xyz",
+      rootRunId: "root-1",
+      sessionKey: "t:u:c",
+      language: "ts",
+      durationMs: 4200,
+      exitCode: 1,
+      failureClass: "nonzero_exit",
+      stdoutBytesRaw: 512,
+      stdoutCharsReentered: 480,
+      resultRefCount: 3,
+      resultRefBytes: 120832,
+      estSavedTokens: 30208,
+      savedRatio: 0.98,
+      timestamp: 1_700_000_000_000,
+    });
+
+    expect(row.timestamp).toBe(1_700_000_000_000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("info"); // a completed run is standing signal, never a degrade
+    expect(row.message).toBe("orchestrate:run_summary");
+    expect(row.traceId).toBeUndefined();
+    // sessionKey rides the row as the correlation key.
+    expect(row.sessionKey).toBe("t:u:c");
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "orchestrate_efficiency",
+      failureClass: "nonzero_exit",
+      estSavedTokens: 30208,
+      savedRatio: 0.98,
+      resultRefCount: 3,
+    });
+  });
+
+  it("NO-LEAK (§2.7 core control): details carry ONLY the closed counts/estimates set — no runId / stdout / resultRefBytes / durationMs body", () => {
+    const row = orchestrateRunSummaryEventToRow({
+      runId: "orch-secret-runid",
+      rootRunId: "root-2",
+      sessionKey: "t:u:c",
+      language: "js",
+      durationMs: 999,
+      exitCode: 137,
+      failureClass: "stdout_cap",
+      stdoutBytesRaw: 65536,
+      stdoutCharsReentered: 42,
+      resultRefCount: 1,
+      resultRefBytes: 65536,
+      estSavedTokens: 16000,
+      savedRatio: 0.95,
+      timestamp: 2,
+    });
+    const serialized = JSON.stringify(row);
+    // The runId + the raw stdout/bytes numbers never reach the details body.
+    expect(serialized).not.toContain("orch-secret-runid");
+    // details has EXACTLY the closed keys — no runId/stdout/resultRefBytes/durationMs/leaseId.
+    expect(Object.keys(JSON.parse(row.details ?? "{}")).sort()).toEqual([
+      "estSavedTokens",
+      "failureClass",
+      "resultRefCount",
+      "savedRatio",
+      "signal",
+    ]);
+  });
+
+  it("omits failureClass on a clean run (undefined → absent, not null) and keeps resultRefCount:0", () => {
+    const row = orchestrateRunSummaryEventToRow({
+      runId: "orch-clean",
+      rootRunId: "root-3",
+      language: "ts",
+      durationMs: 5,
+      exitCode: 0,
+      stdoutBytesRaw: 10,
+      stdoutCharsReentered: 10,
+      resultRefCount: 0,
+      resultRefBytes: 0,
+      timestamp: 3,
+    });
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("orchestrate_efficiency");
+    expect("failureClass" in details).toBe(false); // undefined omitted by JSON.stringify
+    expect(details.resultRefCount).toBe(0);
+    // A heartbeat/cron run with no session → no sessionKey correlation key.
+    expect(row.sessionKey).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Orchestration-observability — three daemon-side orchestration events
 // that were DARK (no fleet/trajectory surface): a fail-closed sandbox-downgrade
 // spawn refusal, a dead-lettered sub-agent delivery, and a per-node
@@ -1300,6 +1402,8 @@ describe("setupObsPersistence", () => {
     // The pipeline-authoring health_signal subscription
     // (beside the generation-quality .on).
     expect(eventBus.on).toHaveBeenCalledWith("pipeline:authored", expect.any(Function));
+    // The orchestrate run-summary efficiency subscription (beside pipeline:authored).
+    expect(eventBus.on).toHaveBeenCalledWith("orchestrate:run_summary", expect.any(Function));
     // The three previously-dark daemon-side orchestration subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("security:sandbox_downgrade_refused", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_deadlettered", expect.any(Function));
@@ -1369,16 +1473,22 @@ describe("setupObsPersistence", () => {
     eventBus.emit("autonomy:revoked", { rootRunId: "root-3", revoked: 2, timestamp: 1011 });
     eventBus.emit("autonomy:killed", { rootRunId: "root-4", killed: 1, timestamp: 1012 });
     eventBus.emit("autonomy:denial_breaker_tripped", { rootRunId: "root-5", timestamp: 1013 });
+    // n. A completed orchestrate run (the per-run efficiency signal).
+    eventBus.emit("orchestrate:run_summary", {
+      runId: "orch-1", rootRunId: "root-6", sessionKey: "sk-1", language: "ts",
+      durationMs: 1200, exitCode: 0, stdoutBytesRaw: 40, stdoutCharsReentered: 40,
+      resultRefCount: 2, resultRefBytes: 80000, estSavedTokens: 19960, savedRatio: 0.99, timestamp: 1014,
+    });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (14 total), each with the right message.
+    // Exactly one health_signal row per event (15 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(14);
+    expect(healthRows).toHaveLength(15);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "autonomy:denial_breaker_tripped",
@@ -1391,6 +1501,7 @@ describe("setupObsPersistence", () => {
       "durable:resumed",
       "health:budget_exceeded",
       "mcp:server:reconnect_failed",
+      "orchestrate:run_summary",
       "pipeline:authored",
       "security:sandbox_downgrade_refused",
       "subagent:budget_exceeded",
@@ -1409,6 +1520,12 @@ describe("setupObsPersistence", () => {
     // The pipeline-authoring row carries the closed signal label.
     const pipelineRow = healthRows.find((r) => r.message === "pipeline:authored")!;
     expect(JSON.parse(pipelineRow.details ?? "{}").signal).toBe("pipeline_authoring");
+    // The orchestrate run-summary row carries the closed efficiency signal label
+    // and NEVER the runId (content-free).
+    const orchRow = healthRows.find((r) => r.message === "orchestrate:run_summary")!;
+    expect(JSON.parse(orchRow.details ?? "{}").signal).toBe("orchestrate_efficiency");
+    expect(JSON.parse(orchRow.details ?? "{}").estSavedTokens).toBe(19960);
+    expect(orchRow.details ?? "").not.toContain("orch-1");
     // The three ORCH-OBS rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "security:sandbox_downgrade_refused")!.details ?? "{}").signal).toBe("sandbox_downgrade_refused");
     expect(JSON.parse(healthRows.find((r) => r.message === "subagent:delivery_deadlettered")!.details ?? "{}").signal).toBe("delivery_deadlettered");
