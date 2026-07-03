@@ -29,18 +29,21 @@ import { EventEmitter } from "node:events";
 
 import type { ComisLogger } from "@comis/core";
 
+import { createOrchestrateTool } from "./orchestrate-tool.js";
+// The env-scrub + the clamp + the caps now live in the shared jailed-run core;
+// import them (and the spawn seam types) from there. Aliased to their prior
+// names so the assertions below stay byte-identical (import-only diff).
 import {
-  createOrchestrateTool,
   scrubSecretEnv,
   clampTimeoutMs,
   MAX_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   STDOUT_HARD_CAP_BYTES,
-} from "./orchestrate-tool.js";
+} from "./jailed-script-runner.js";
 import type {
-  OrchestrateSpawnFn,
-  OrchestrateSpawnedChild,
-} from "./orchestrate-tool.js";
+  JailedScriptSpawnFn as OrchestrateSpawnFn,
+  JailedScriptSpawnedChild as OrchestrateSpawnedChild,
+} from "./jailed-script-runner.js";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 
 function makeLogger(): ComisLogger {

@@ -46,7 +46,8 @@ import { join } from "node:path";
 
 import { systemNowMs, type ComisLogger, type ResultRef } from "@comis/core";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
-import { createOrchestrateTool, type OrchestrateResultStore } from "./orchestrate-tool.js";
+import { createOrchestrateTool } from "./orchestrate-tool.js";
+import type { JailedScriptResultStore } from "./jailed-script-runner.js";
 
 /** Linux + real bwrap gate (mirrors bwrap-cap-socket.linux.test.ts). */
 function canJailRun(): boolean {
@@ -75,7 +76,7 @@ function makeLogger(): ComisLogger {
 }
 
 /** A no-op store (the containment proofs don't assert on the run lifecycle). */
-const noopStore: OrchestrateResultStore = {
+const noopStore: JailedScriptResultStore = {
   materialize: async () => undefined,
   gcRun: async () => {},
   cleanupRun: async () => {},
