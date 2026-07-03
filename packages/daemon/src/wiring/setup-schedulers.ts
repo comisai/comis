@@ -308,6 +308,18 @@ export async function setupSchedulers(deps: {
                       "Wake-gate delivered a routine status (no model turn)",
                     );
                   }
+                } else if (verdict.deliver) {
+                  // A deliver on a deliveryTarget-less job is dropped — there is no
+                  // channel to send to. Log it distinctly so a gate author sees the
+                  // status was discarded (vs a plain no-deliver skip).
+                  jobLogger.debug(
+                    {
+                      step: "wake-gate",
+                      wake: false,
+                      hint: "gate returned a deliver but the job has no deliveryTarget — nothing to deliver to; recording skip only",
+                    },
+                    "Wake-gate deliver dropped (no delivery target)",
+                  );
                 } else {
                   jobLogger.info(
                     { step: "wake-gate", wake: false },
