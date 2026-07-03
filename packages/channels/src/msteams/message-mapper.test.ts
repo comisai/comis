@@ -151,4 +151,61 @@ describe("mapMsTeamsActivityToNormalized", () => {
     expect(result?.timestamp ?? 0).toBeGreaterThan(0);
     expect(result?.attachments).toEqual([]);
   });
+
+  it("extracts the channel thread root from the messageid suffix, leaving channelId stripped", () => {
+    const result = mapMsTeamsActivityToNormalized(
+      makeActivity({
+        conversation: {
+          id: "19:abc@thread.tacv2;messageid=1700000000000",
+          conversationType: "channel",
+        },
+      }),
+    );
+    expect(result?.metadata.msteamsThreadId).toBe("1700000000000");
+    // The stripped channelId is unchanged — the send path interpolates it.
+    expect(result?.channelId).toBe("19:abc@thread.tacv2");
+  });
+
+  it("falls back to replyToId for the channel thread root when no messageid suffix is present", () => {
+    const result = mapMsTeamsActivityToNormalized(
+      makeActivity({
+        conversation: { id: "19:plain@thread.tacv2", conversationType: "channel" },
+        replyToId: "reply-root-9",
+      }),
+    );
+    expect(result?.metadata.msteamsThreadId).toBe("reply-root-9");
+  });
+
+  it("sets no thread root for a personal (1:1) activity", () => {
+    const result = mapMsTeamsActivityToNormalized(
+      makeActivity({
+        conversation: {
+          id: "19:dm@thread.tacv2;messageid=1700000000000",
+          conversationType: "personal",
+        },
+        replyToId: "reply-root-9",
+      }),
+    );
+    expect(result?.metadata.msteamsThreadId).toBeUndefined();
+  });
+
+  it("flags mentionedBot true when an entity mentions the recipient id", () => {
+    const result = mapMsTeamsActivityToNormalized(
+      makeActivity({
+        recipient: { id: "28:bot-app-id" },
+        entities: [{ type: "mention", mentioned: { id: "28:bot-app-id" } }],
+      }),
+    );
+    expect(result?.metadata.mentionedBot).toBe(true);
+  });
+
+  it("flags mentionedBot false when no entity mentions the recipient id", () => {
+    const result = mapMsTeamsActivityToNormalized(
+      makeActivity({
+        recipient: { id: "28:bot-app-id" },
+        entities: [{ type: "mention", mentioned: { id: "29:someone-else" } }],
+      }),
+    );
+    expect(result?.metadata.mentionedBot).toBe(false);
+  });
 });
