@@ -811,6 +811,55 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
     });
     expect(loggerSpy.serialized()).not.toContain(token);
   });
+
+  it("attaches one Adaptive Card carrying an Action.Execute when options.buttons are present", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    // An approval frame ships its signed buttons: the outbound body must carry ONE
+    // Adaptive Card attachment whose first action is the interactive Action.Execute.
+    const result = await adapter.sendMessage("19:dm-convo", "approval required: bash", {
+      extra: { serviceUrl: SERVICE_URL },
+      buttons: [[{ text: "Approve", callback_data: CB, style: "primary" }]],
+    });
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as {
+      type: string;
+      text: string;
+      attachments?: Array<{
+        contentType: string;
+        content: { actions: Array<{ type: string }> };
+      }>;
+    };
+    expect(body.attachments).toBeDefined();
+    expect(body.attachments!.length).toBe(1);
+    expect(body.attachments![0]!.contentType).toBe(
+      "application/vnd.microsoft.card.adaptive",
+    );
+    expect(body.attachments![0]!.content.actions[0]!.type).toBe("Action.Execute");
+  });
+
+  it("omits the attachments key for a plain text send, leaving the body byte-identical", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    // No buttons and no cards: the body stays the bare { type, text } shape with no
+    // attachments key, so a non-approval send is unaffected by the card path.
+    const result = await adapter.sendMessage("19:dm-convo", "plain text", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as Record<
+      string,
+      unknown
+    >;
+    expect("attachments" in body).toBe(false);
+    expect(body).toEqual({ type: "message", text: "plain text" });
+  });
 });
 
 /** A shape-valid Bot Framework bot id (`28:<guid>`) — mentionable. */
