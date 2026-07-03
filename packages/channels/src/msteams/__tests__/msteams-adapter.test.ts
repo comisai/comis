@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { ComisLogger, MessageHandler, NormalizedMessage } from "@comis/core";
 import { createMsTeamsAdapter, type MsTeamsAdapterDeps } from "../msteams-adapter.js";
+import { createMsTeamsPlugin } from "../msteams-plugin.js";
 import type { TeamsActivity } from "../message-mapper.js";
 
 // A fixed clock so lastMessageAt / uptime / durationMs are deterministic.
@@ -490,5 +491,53 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
       extra: { serviceUrl: SERVICE_URL },
     });
     expect(loggerSpy.serialized()).not.toContain(token);
+  });
+});
+
+describe("createMsTeamsPlugin — honest text-only capabilities", () => {
+  it("declares every feature flag false, buttons none, and the Teams text limits", () => {
+    const { deps } = makeAdapterDeps();
+    const plugin = createMsTeamsPlugin(deps);
+    expect(plugin.capabilities).toEqual({
+      features: {
+        reactions: false,
+        editMessages: false,
+        deleteMessages: false,
+        fetchHistory: false,
+        attachments: false,
+        typing: false,
+        threads: false,
+        buttons: "none",
+      },
+      limits: { maxMessageChars: 28000 },
+      replyToMetaKey: "teamsActivityId",
+    });
+  });
+
+  it("keeps 228 out of the EditPlace union and the adaptivecard button variant", () => {
+    const { deps } = makeAdapterDeps();
+    const plugin = createMsTeamsPlugin(deps);
+    // editMessages:false keeps msteams out of the closed EditPlaceChannel union.
+    expect(plugin.capabilities.features.editMessages).toBe(false);
+    // buttons "none" — the adaptivecard enum variant is a later phase.
+    expect(plugin.capabilities.features.buttons).not.toBe("adaptivecard");
+  });
+
+  it("exposes the plugin metadata and a msteams adapter", () => {
+    const { deps } = makeAdapterDeps();
+    const plugin = createMsTeamsPlugin(deps);
+    expect(plugin.id).toBe("channel-msteams");
+    expect(plugin.name).toBe("Microsoft Teams Channel Plugin");
+    expect(plugin.version).toBe("1.0.0");
+    expect(plugin.channelType).toBe("msteams");
+    expect(plugin.adapter.channelType).toBe("msteams");
+  });
+
+  it("delegates register/activate/deactivate to the adapter lifecycle", async () => {
+    const { deps } = makeAdapterDeps();
+    const plugin = createMsTeamsPlugin(deps);
+    expect(plugin.register({} as never).ok).toBe(true);
+    expect((await plugin.activate()).ok).toBe(true);
+    expect((await plugin.deactivate()).ok).toBe(true);
   });
 });
