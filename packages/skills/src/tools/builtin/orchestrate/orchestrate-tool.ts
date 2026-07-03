@@ -43,23 +43,20 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
 import {
   registerActivityLabelSpec,
   safePath,
-  systemClearTimeout,
   systemNowMs,
-  systemSetTimeout,
   tryGetContext,
   type AgentCapability,
   type ComisLogger,
   type EventMap,
-  type SystemTimeoutHandle,
 } from "@comis/core";
-import { autoRepairForClass, createToolResultSizeGuard } from "@comis/agent";
+import { createToolResultSizeGuard } from "@comis/agent";
 import type { CapabilityClass } from "@comis/agent";
 
 import {
@@ -83,12 +80,20 @@ import type {
   RunAggregateContext,
 } from "./result-ref-store.js";
 import { estimateSavings } from "./savings-estimate.js";
-import {
-  buildDescribeDigest,
-  classifyRecoverableStderr,
-  extractCapabilityFootprint,
-} from "./orchestrate-preflight.js";
+import { extractCapabilityFootprint } from "./orchestrate-preflight.js";
+import { classifyRunError, runScriptWithOneShotRepair } from "./orchestrate-repair.js";
+import type {
+  OrchestrateFailureClass,
+  OrchestrateSpawnFn,
+  OrchestrateSpawnedChild,
+} from "./orchestrate-repair.js";
 import type { ResultRef } from "@comis/core";
+
+// The jailed-child execution engine + its seam types live in orchestrate-repair;
+// re-export the public surface the runner has always exposed here (the barrel +
+// the unit suite import these names from this module).
+export { STDOUT_HARD_CAP_BYTES } from "./orchestrate-repair.js";
+export type { OrchestrateSpawnFn, OrchestrateSpawnedChild } from "./orchestrate-repair.js";
 
 // Activity label (channel render): the descriptor name equals the emitted tool
 // name (`"orchestrate"`). A static fallback so the render is not the bare
@@ -129,22 +134,6 @@ type OrchestrateParamsType = {
 // Injected seams + deps.
 // ---------------------------------------------------------------------------
 
-/** The bits of a spawned child the runner consumes (a `child_process` subset). */
-export interface OrchestrateSpawnedChild {
-  readonly stdout: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
-  readonly stderr: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
-  on(event: "close", cb: (code: number | null) => void): void;
-  on(event: "error", cb: (err: Error) => void): void;
-  kill(signal?: NodeJS.Signals): void;
-}
-
-/** The spawn seam — injected so the macOS unit suite runs WITHOUT a real spawn. */
-export type OrchestrateSpawnFn = (
-  bin: string,
-  args: string[],
-  opts: { env: Record<string, string | undefined>; cwd?: string },
-) => OrchestrateSpawnedChild;
-
 /** Minimal store surface the runner needs (the runner owns the run lifecycle). */
 export interface OrchestrateResultStore {
   materialize(
@@ -166,6 +155,16 @@ export interface OrchestrateResultStore {
 }
 
 /** Dependencies for the orchestrate runner (AGENTS.md §2.4 — injected). */
+// @optional-field-count: 16 — the daemon-minted optional wiring seams. Six
+// required fields (logger / workspace / cap-socket / sandbox / store / baseEnv)
+// are always present; each optional field is a presence-conditional collaborator
+// the composition root threads ONLY when its feature is active — the broker
+// lease-env + per-run lease mint, the event-bus run_summary, the pre-flight
+// allowed-caps + approval gate, and the capability-class + one-shot repair seam —
+// plus the test-injected seams (spawn / jail-node / jail-python / jail-agent-cli /
+// seccomp-fd / clock / sdk-assets-dir) that default to the real implementation
+// when absent. Each read site already guards on its own presence; clustering them
+// would couple unrelated wiring. Grows by one per new daemon-threaded seam.
 export interface OrchestrateToolDeps {
   /** Structured logger — instruments the boundary crossing (model → jailed child). */
   readonly logger: ComisLogger;
@@ -332,28 +331,6 @@ const COMIS_AGENT_MANIFEST_FILENAME = "comis-agent-manifest.json";
 /** Max stdout characters that re-enter context — the rest is size-bounced. */
 const STDOUT_MAX_CHARS = 30_000;
 
-/**
- * The hard in-stream ceiling on the daemon-side stdout collector. The
- * `STDOUT_MAX_CHARS` bounce only runs AFTER the child exits, so without this an
- * unbounded jailed `console.log` flood grows the daemon heap for the whole run.
- * A few × `STDOUT_MAX_CHARS` (4 MiB) leaves ample headroom for a legitimate
- * large result while bounding memory; past it the runner SIGKILLs the child and
- * fails closed. Exported so the bound is unit-testable.
- */
-export const STDOUT_HARD_CAP_BYTES = 4 * 1024 * 1024;
-
-/**
- * Max chars of the jailed child's stderr retained as a diagnostic TAIL. On the
- * success path stderr is dropped (stdout-only — diagnostic noise stays out of
- * context); on a NON-ZERO exit this bounded tail is the only signal of WHY the
- * child died (a thrown `TypeError`, a bad import, a comis_tools misuse) and is
- * surfaced in the rejection so the failure is diagnosable without a re-run.
- * Bounded so a stderr flood can neither
- * grow the daemon heap nor swamp the error/context. The surfaced tail still
- * passes the daemon OutputGuard on egress, and the jail env is secret-scrubbed.
- */
-const STDERR_TAIL_MAX_CHARS = 2_000;
-
 /** Default hard timeout for a jailed run (ms). Exported for the clamp tests. */
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -368,61 +345,6 @@ export const MAX_TIMEOUT_MS = 10 * 60_000;
 
 /** The per-run aggregate `results/` budget passed to the store's GC. */
 const PER_RUN_AGGREGATE_CAP_BYTES = 64 * 1024 * 1024;
-
-/** The closed run-degradation classes on `orchestrate:run_summary.failureClass`. */
-type OrchestrateFailureClass = NonNullable<EventMap["orchestrate:run_summary"]["failureClass"]>;
-
-/** Exit-code sentinels for the kill / spawn-fail paths where the child returns none. */
-const EXIT_CODE_TIMEOUT = 124; // GNU `timeout` convention.
-const EXIT_CODE_SIGKILL = 137; // 128 + SIGKILL(9) — the stdout hard-cap kill.
-const EXIT_CODE_SPAWN_FAIL = 127; // exec/spawn failure convention.
-
-/**
- * A classified orchestrate-run failure: the closed {@link OrchestrateFailureClass}
- * + the process exit code (a sentinel where the child produced none). The runner
- * maps each throw site to a member BEFORE the run_summary emit (the
- * `durable:orphaned` closed-enum discipline); the free-text message stays on the
- * bounded tool-error surface, NEVER on the bus.
- */
-class OrchestrateRunFailure extends Error {
-  readonly failureClass: OrchestrateFailureClass;
-  readonly exitCode: number;
-  /**
-   * The bounded, already-scrubbed stderr tail captured at the non-zero exit (empty
-   * on the timeout / stdout-cap / spawn-throw paths, which carry no child stderr).
-   * A STRUCTURED field so the one-shot repair path can classify + feed it directly,
-   * never by re-parsing {@link Error.message}.
-   */
-  readonly stderrTail: string;
-  constructor(
-    message: string,
-    failureClass: OrchestrateFailureClass,
-    exitCode: number,
-    stderrTail = "",
-  ) {
-    super(message);
-    this.name = "OrchestrateRunFailure";
-    this.failureClass = failureClass;
-    this.exitCode = exitCode;
-    this.stderrTail = stderrTail;
-  }
-}
-
-/**
- * Map a thrown run error to its closed failure class + exit code. A carried
- * {@link OrchestrateRunFailure} forwards its own class; any UNCLASSIFIED throw (a
- * synchronous spawn throw, a child `error` event, a jail-unavailable refusal) is
- * a spawn-class failure — the jail could not run.
- */
-function classifyRunError(err: unknown): {
-  failureClass: OrchestrateFailureClass;
-  exitCode: number;
-} {
-  if (err instanceof OrchestrateRunFailure) {
-    return { failureClass: err.failureClass, exitCode: err.exitCode };
-  }
-  return { failureClass: "spawn_fail", exitCode: EXIT_CODE_SPAWN_FAIL };
-}
 
 // ---------------------------------------------------------------------------
 // Pure exported helper — the env-scrub (macOS-unit-testable).
@@ -641,16 +563,16 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // it — the parent (daemon) keeps its OWN copy after fork and MUST close it
       // in the finally below, or every jailed run leaks one descriptor and a
       // long-running daemon exhausts its fd table. Opening it here (not inside
-      // the try) means the finally always closes it even when writeFileSync /
-      // copyFileSync / resolveNode throws (those run after this point today, so
+      // the try) means the finally always closes it even when copyFileSync /
+      // resolveNode / the jailed run throws (those run after this point today, so
       // a throw there would otherwise leak the fd). Null on macOS (blob absent →
       // no --seccomp); closeSeccompProfileFd is null-safe + double-close-safe.
       const seccompFd = loadSeccompFd();
 
       try {
         // 1. Resolve the script path in the jailed workspace. The actual write is
-        //    deferred to attemptRun (step 6) so the one-shot repair can re-write the
-        //    SAME path with the regenerated script and re-run it, sharing the
+        //    deferred to the run engine (step 6) so the one-shot repair can re-write
+        //    the SAME path with the regenerated script and re-run it, sharing the
         //    identical jail/cap/lease envelope.
         const scriptName = `${runId}.${params.language}`;
         const scriptPath = safePath(workspacePath, scriptName);
@@ -794,80 +716,28 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // mintRunLease). A run with none is degraded — flagged lease_absent below.
         const leasePresent = childEnv.COMIS_CAP_LEASE !== undefined;
 
-        // 6. Run the jailed child, with a bounded one-shot auto-repair. attemptRun
-        //    writes the script into the workspace then drives the jailed child to
-        //    completion (stdout ONLY re-enters; stderr/intermediate never do).
-        //    Defined here — after the env + args + child-lease are built — so BOTH
-        //    the initial run and the single repaired re-run share the identical
-        //    jail/cap/lease envelope: the regenerated script has the SAME blast
-        //    radius as the original (no cap widening).
-        const attemptRun = async (scriptText: string): Promise<string> => {
-          writeFileSync(scriptPath, scriptText);
-          return runJailedChild(
-            spawnFn,
-            bin,
-            spawnArgs,
-            { env: childEnv, cwd: undefined },
-            timeoutMs,
-            { runId, log },
-          );
-        };
-
-        // On a non-zero exit whose bounded stderr tail matches a known-recoverable
-        // class, do ONE utility-model re-prompt (the injected repairSeam) and re-run
-        // the regenerated script EXACTLY once. Class-gated: ON for weaker models,
-        // OFF for stronger; an absent class defaults to the repair-eligible class
-        // (fail-safe ON for an unknown small-target deployment). Bounded to a single
-        // attempt: a repaired-then-failed run surfaces the ORIGINAL bounded error —
-        // no loop. The repair resolves the FINAL outcome HERE, before the terminal
-        // run_summary emit below, so a repaired-then-succeeded run emits exactly one
-        // (success) summary and an escaping error emits once in the outer catch.
-        let stdout: string;
-        try {
-          stdout = await attemptRun(params.script);
-        } catch (runErr) {
-          const { failureClass } = classifyRunError(runErr);
-          const recoverable =
-            runErr instanceof OrchestrateRunFailure
-              ? classifyRecoverableStderr(runErr.stderrTail)
-              : undefined;
-          if (
-            failureClass === "nonzero_exit" &&
-            autoRepairForClass(deps.capabilityClass ?? "small") &&
-            deps.repairSeam !== undefined &&
-            recoverable !== undefined
-          ) {
-            log.debug(
-              { runId, step: "repair", recoverable },
-              "orchestrate one-shot repair attempt",
-            );
-            const regenerated = await deps.repairSeam({
-              script: params.script,
-              language: params.language,
-              // Sound: recoverable !== undefined implies runErr is an
-              // OrchestrateRunFailure (the ternary above only classifies that case).
-              stderrTail: (runErr as OrchestrateRunFailure).stderrTail,
-              describeDigest: buildDescribeDigest(),
-            });
-            if (regenerated !== undefined && regenerated.trim() !== "") {
-              // The ONE re-run — no loop. A repaired-then-failed run re-throws the
-              // ORIGINAL bounded error (the seam's output did not fix the script).
-              try {
-                stdout = await attemptRun(regenerated);
-              } catch {
-                throw runErr;
-              }
-            } else {
-              // The seam gave up (no regenerated script) — honest-degrade to the
-              // original bounded error.
-              throw runErr;
-            }
-          } else {
-            // Not a recoverable class, class-gated off, or no repair seam wired —
-            // surface the original bounded error unchanged.
-            throw runErr;
-          }
-        }
+        // 6. Run the jailed child, with a bounded one-shot auto-repair. Writes the
+        //    script into the workspace then drives the jailed child to completion
+        //    (stdout ONLY re-enters; stderr/intermediate never do). The initial run
+        //    and the single repaired re-run share the identical jail/cap/lease
+        //    envelope built above (bin / spawnArgs / childEnv / scriptPath). The
+        //    repair resolves the FINAL outcome HERE, before the terminal run_summary
+        //    emit below, so a repaired-then-succeeded run emits exactly one (success)
+        //    summary and an escaping error emits once in the outer catch.
+        const stdout = await runScriptWithOneShotRepair({
+          spawnFn,
+          bin,
+          spawnArgs,
+          childEnv,
+          scriptPath,
+          timeoutMs,
+          script: params.script,
+          language: params.language,
+          capabilityClass: deps.capabilityClass,
+          repairSeam: deps.repairSeam,
+          log,
+          runId,
+        });
 
         const bounced = sizeBounceStdout(stdout);
         // The POST-bounce char count — the tokens that actually re-entered
@@ -926,125 +796,6 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
 // ---------------------------------------------------------------------------
 // Internals.
 // ---------------------------------------------------------------------------
-
-/**
- * Drive the jailed child to completion: collect stdout, surface a non-zero exit
- * or a spawn error as a tool error (NEVER a silent success), kill on timeout.
- * stderr is read+discarded (it never re-enters context — stdout-only).
- */
-function runJailedChild(
-  spawnFn: OrchestrateSpawnFn,
-  bin: string,
-  args: string[],
-  opts: { env: Record<string, string | undefined>; cwd?: string },
-  timeoutMs: number,
-  ctx: { runId: string; log: ComisLogger },
-): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    let child: OrchestrateSpawnedChild;
-    try {
-      child = spawnFn(bin, args, opts);
-    } catch (err) {
-      reject(err instanceof Error ? err : new Error(String(err)));
-      return;
-    }
-
-    let stdout = "";
-    let stdoutBytes = 0;
-    let stderrTail = "";
-    let settled = false;
-    const timer: SystemTimeoutHandle = systemSetTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* already gone */
-      }
-      reject(
-        new OrchestrateRunFailure(
-          `orchestrate run exceeded its ${timeoutMs}ms timeout`,
-          "timeout",
-          EXIT_CODE_TIMEOUT,
-        ),
-      );
-    }, timeoutMs);
-    timer.unref?.();
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      if (settled) return;
-      // Bound the in-stream accumulation. The post-exit STDOUT_MAX_CHARS
-      // bounce does not protect the daemon heap DURING the run, so a jailed
-      // `while(true) console.log(...)` flood must be stopped here — fail closed:
-      // stop appending, SIGKILL the runaway child, and reject.
-      stdoutBytes += chunk.length;
-      if (stdoutBytes > STDOUT_HARD_CAP_BYTES) {
-        settled = true;
-        systemClearTimeout(timer);
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          /* already gone */
-        }
-        ctx.log.warn(
-          { runId: ctx.runId, errorKind: "resource" as const, stdoutBytes, hint: `Jailed stdout exceeded the ${STDOUT_HARD_CAP_BYTES}B hard cap — the script was killed. Have it write high-volume output to a ResultRef (materialize) and slice it in-jail instead of console.log-ing it.` },
-          "orchestrate jailed child exceeded the stdout hard cap — killed",
-        );
-        reject(
-          new OrchestrateRunFailure(
-            `orchestrate stdout exceeded the ${STDOUT_HARD_CAP_BYTES}B hard cap`,
-            "stdout_cap",
-            EXIT_CODE_SIGKILL,
-          ),
-        );
-        return;
-      }
-      stdout += chunk.toString("utf8");
-    });
-    // Read stderr but keep only a BOUNDED TAIL — it cannot back-pressure the child
-    // and never re-enters context on the SUCCESS path (stdout-only). But on a
-    // NON-ZERO exit the tail is the only signal of WHY the child died, so the close
-    // handler surfaces it in the rejection (otherwise the failure is just
-    // "exited with code N" and undiagnosable without a re-run).
-    child.stderr?.on("data", (chunk: Buffer) => {
-      if (settled) return;
-      stderrTail = (stderrTail + chunk.toString("utf8")).slice(-STDERR_TAIL_MAX_CHARS);
-    });
-    child.on("error", (err: Error) => {
-      if (settled) return;
-      settled = true;
-      systemClearTimeout(timer);
-      reject(err);
-    });
-    child.on("close", (code: number | null) => {
-      if (settled) return;
-      settled = true;
-      systemClearTimeout(timer);
-      if (code !== 0 && code !== null) {
-        const tail = stderrTail.trim();
-        ctx.log.warn(
-          {
-            runId: ctx.runId,
-            errorKind: "internal" as const,
-            exitCode: code,
-            stderrTail: tail ? tail.slice(-512) : undefined,
-          },
-          "orchestrate jailed child exited non-zero",
-        );
-        reject(
-          new OrchestrateRunFailure(
-            `orchestrate jailed child exited with code ${code}${tail ? `:\n${tail}` : ""}`,
-            "nonzero_exit",
-            code,
-            tail,
-          ),
-        );
-        return;
-      }
-      resolve(stdout);
-    });
-  });
-}
 
 /** A text content block (the only shape the runner returns — stdout-only). */
 interface TextBlock {
