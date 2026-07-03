@@ -100,6 +100,18 @@ export function deriveFleetSignals(fleet: FleetHealthReport): string[] {
 }
 
 /**
+ * Explain-sourced signal, consumed verbatim — the embedded report's
+ * `likelyRootCause.code` when it made a verdict, and nothing otherwise. Like the
+ * fleet root-cause append, the reducer forwards the code as-is (no curated
+ * allow-list, no re-derivation): the explain assembler owns the verdict, so a
+ * new root-cause code surfaces without a change here. The caller dedupes it into
+ * the active-signal set after the doctor and fleet signals.
+ */
+export function deriveExplainSignals(explain: IncidentReport): string[] {
+  return explain.likelyRootCause != null ? [explain.likelyRootCause.code] : [];
+}
+
+/**
  * Whether a fleet report carries positive operator evidence — at least one real
  * session or one diagnostic finding. Evidence is keyed on the
  * synthetic-EXCLUDED population (matching `sessions.total`), NOT on the
@@ -149,6 +161,20 @@ export function buildFleetSummary(fleet: FleetHealthReport): NonNullable<Support
     breakerTripTotal: fleet.breakerTripTotal,
     findingCodes: fleet.findings.map((f) => f.code),
     likelyRootCause: fleet.likelyRootCause !== null ? fleet.likelyRootCause.code : null,
+  };
+}
+
+/**
+ * Content-free summary of the embedded incident report — the three fields copied
+ * verbatim from the `IncidentReport` (never recomputed). `degraded` and
+ * `endReason` are consumed as-is from the report's outcome, and `likelyRootCause`
+ * collapses the report's nullable verdict object to its code (or `null`).
+ */
+export function buildExplainSummary(explain: IncidentReport): NonNullable<SupportTriage["explainSummary"]> {
+  return {
+    degraded: explain.outcome.degraded,
+    endReason: explain.outcome.endReason,
+    likelyRootCause: explain.likelyRootCause?.code ?? null,
   };
 }
 
@@ -295,12 +321,13 @@ const PRIVACY_EXCLUDES: readonly string[] = [
  */
 export function buildSupportTriage(inputs: SupportTriageInputs): SupportTriage {
   const { host, doctor, fleet, explain } = inputs;
-  // Doctor signals first, then fleet signals, deduped first-seen-wins: a fleet
-  // code that repeats a doctor signal keeps the doctor entry's earlier slot.
+  // Doctor signals first, then fleet, then explain, deduped first-seen-wins: a
+  // later code that repeats an earlier signal keeps the earlier entry's slot.
   const activeSignals = [
     ...new Set([
       ...deriveDoctorSignals(doctor),
       ...(fleet !== undefined ? deriveFleetSignals(fleet) : []),
+      ...(explain !== undefined ? deriveExplainSignals(explain) : []),
     ]),
   ];
   return {
@@ -310,6 +337,7 @@ export function buildSupportTriage(inputs: SupportTriageInputs): SupportTriage {
     host,
     doctorSummary: buildDoctorSummary(doctor),
     ...(fleet !== undefined ? { fleetSummary: buildFleetSummary(fleet) } : {}),
+    ...(explain !== undefined ? { explainSummary: buildExplainSummary(explain) } : {}),
     reporterNextSteps: buildReporterNextSteps(doctor, activeSignals),
     maintainerNextSteps: [...MAINTAINER_NEXT_STEPS],
     evidenceFiles: EVIDENCE_FILES.map((file) => ({
