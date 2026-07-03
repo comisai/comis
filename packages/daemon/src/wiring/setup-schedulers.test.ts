@@ -1509,10 +1509,12 @@ describe("setupSchedulers", () => {
       return { ref: { runWakeGate } as unknown as WakeGateRunner };
     }
 
-    /** Wrap a bare verdict in the richer runWakeGate outcome. The hook reads only
-     *  `verdict`; the additive durationMs/toolCalls metrics are 0 in these cases. */
-    function wgOutcome(verdict: unknown) {
-      return { verdict, durationMs: 0, toolCalls: 0 };
+    /** Wrap a bare verdict in the richer runWakeGate outcome. The hook reads the
+     *  `verdict` for its branch AND the `durationMs`/`toolCalls` counts for the
+     *  emit + the skip-row enrichment; counts default to 0 but a case can pin them
+     *  to prove they flow from the runner's outcome into the event/row/record. */
+    function wgOutcome(verdict: unknown, counts: { durationMs?: number; toolCalls?: number } = {}) {
+      return { verdict, durationMs: counts.durationMs ?? 0, toolCalls: counts.toolCalls ?? 0 };
     }
 
     it("runs the gate and SKIPS the payload on wake:false — no scheduler:job_result dispatch, a status:skipped row, and status:ok re-arm", async () => {
@@ -1866,6 +1868,99 @@ describe("setupSchedulers", () => {
         (c) => (c[1] as string)?.includes("deliver dropped (no delivery target)"),
       );
       expect(dbg, "a distinct debug signals the discarded deliver").toBeDefined();
+    });
+
+    // -------------------------------------------------------------------------
+    // The savings/health emit: every GATED fire (skip AND wake) emits exactly
+    // ONE content-free scheduler:wake_gate carrying the verdict enum + the
+    // runner's counts + the derived estTurnsSaved (1 avoided model turn per skip,
+    // 0 on wake). NEVER the gathered finding / the script / a secret — the emit is
+    // the fleet fork's feed. A runAsToday degrade emits nothing (no gate ran).
+    // -------------------------------------------------------------------------
+
+    /** The content-free allowlist — the ONLY keys a scheduler:wake_gate may carry. */
+    const WAKE_GATE_KEYS = ["jobId", "agentId", "wake", "durationMs", "toolCalls", "estTurnsSaved", "timestamp"];
+
+    /** The scheduler:wake_gate emit calls captured on the eventBus spy. */
+    function wakeGateEmits(deps: ReturnType<typeof createMinimalDeps>) {
+      return (deps.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c) => c[0] === "scheduler:wake_gate",
+      );
+    }
+
+    it("emits ONE content-free scheduler:wake_gate with estTurnsSaved:1 on a skip, counts flowing from the outcome", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }, { durationMs: 42, toolCalls: 3 }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      const emits = wakeGateEmits(deps);
+      expect(emits).toHaveLength(1);
+      const payload = emits[0][1] as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        jobId: "job-wg-1", agentId: "agent-1", wake: false,
+        durationMs: 42, toolCalls: 3, estTurnsSaved: 1,
+      });
+      expect(typeof payload.timestamp).toBe("number");
+      // Content-free (I5): EXACTLY the allowlist keys — no gathered finding /
+      // script / deliver / payload crosses into the fleet fork's feed.
+      expect(Object.keys(payload).sort()).toEqual([...WAKE_GATE_KEYS].sort());
+    });
+
+    it("emits ONE scheduler:wake_gate with wake:true + estTurnsSaved:0 on a wake", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true }, { durationMs: 42, toolCalls: 3 }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      const emits = wakeGateEmits(deps);
+      expect(emits).toHaveLength(1);
+      const payload = emits[0][1] as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        jobId: "job-wg-1", agentId: "agent-1", wake: true,
+        durationMs: 42, toolCalls: 3, estTurnsSaved: 0,
+      });
+      expect(Object.keys(payload).sort()).toEqual([...WAKE_GATE_KEYS].sort());
+    });
+
+    it("enriches the skip's ExecutionTracker row with toolCalls + estTurnsSaved:1 (the cron.runs skip lens)", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }, { durationMs: 42, toolCalls: 3 }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
+      await setupSchedulers(deps);
+      const tracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      // The skip row now carries the counts so `cron.runs "<jobName>"` reconstructs
+      // the suppressed fire (the fixed summary string is unchanged — no residue).
+      expect(tracker.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobId: "job-wg-1", status: "skipped", summary: "wake-gate: skipped",
+          toolCalls: 3, estTurnsSaved: 1,
+        }),
+      );
+    });
+
+    it("emits NO scheduler:wake_gate on a runAsToday degrade (the job ran as today — nothing to measure)", async () => {
+      const runWakeGate = vi.fn(async () => ({ runAsToday: true }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()({
+        id: "job-degrade", name: "gated-cron", agentId: "agent-1",
+        payload: { kind: "system_event", text: "Hello from cron" },
+        schedule: { kind: "every", everyMs: 60_000 },
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+        wakeGate: GATE,
+      });
+
+      expect(wakeGateEmits(deps)).toHaveLength(0);
     });
   });
 });
