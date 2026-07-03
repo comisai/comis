@@ -343,13 +343,25 @@ describe("support bundle --deep — exports the trace bundle from the pointer ta
       expect(written.size).toBe(EXPECTED_TRACE_FILES.length);
 
       // The manifest names the pointer target as the runtime source — proving the
-      // exporter, too, resolved via the pointer and not the co-located decoy.
-      const manifest = JSON.parse(fs.readFileSync(safePath(traceDir, "manifest.json"), "utf-8")) as {
+      // exporter, too, resolved via the pointer and not the co-located decoy. The
+      // exporter path-substitutes its OWN manifest before writing, so the raw
+      // bundle path never lands in the shareable artifact and the source fields
+      // are matched by basename (pointer target, never the decoy).
+      const manifestRaw = fs.readFileSync(safePath(traceDir, "manifest.json"), "utf-8");
+      const manifest = JSON.parse(manifestRaw) as {
+        workspaceDir?: string;
         sourceFiles?: { session?: string; runtime?: string };
       };
-      expect(manifest.sourceFiles?.runtime).toBe(fx.realRuntimeFile);
-      expect(manifest.sourceFiles?.runtime).not.toBe(fx.decoyRuntimeFile);
-      expect(manifest.sourceFiles?.session).toBe(fx.sessionFile);
+      // The manifest's workspace field is the placeholder and the raw bundle path
+      // is absent — the host-path substitution the support bundle guarantees now
+      // reaches the embedded trace manifest (no OS-username disclosure).
+      expect(manifest.workspaceDir).toBe("$WORKSPACE_DIR");
+      expect(manifestRaw).not.toContain(bundleDir);
+      // Pointer precedence: the runtime source is the pointer-target file, not the
+      // co-located decoy (keyed on basename so the assertion survives substitution).
+      expect(manifest.sourceFiles?.runtime?.endsWith(path.basename(fx.realRuntimeFile))).toBe(true);
+      expect(manifest.sourceFiles?.runtime?.endsWith(path.basename(fx.decoyRuntimeFile))).toBe(false);
+      expect(manifest.sourceFiles?.session?.endsWith(path.basename(fx.sessionFile))).toBe(true);
 
       // The exported events reflect the REAL records (the exhausted budget marker)
       // and carry NONE of the decoy content.
