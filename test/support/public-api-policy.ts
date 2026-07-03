@@ -579,6 +579,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RichMenuInput",
       "createLineResolver",
       "LineResolverDeps",
+      // Microsoft Teams adapter building blocks — exported for API parity with
+      // the other channel adapters. Consumed within the package (the plugin
+      // wraps the adapter; the adapter drives the mapper, Connector-token
+      // provider and error classifier) with no cross-package importer; the
+      // daemon consumes the plugin factory, validators and handle/activity
+      // types instead.
+      "createMsTeamsAdapter",
+      "MsTeamsAdapterDeps",
+      "mapMsTeamsActivityToNormalized",
+      "createActivityJwtValidator",
+      "createConnectorTokenProvider",
+      "classifyMsTeamsError",
       "createIMessageAdapter",
       "IMessageAdapterDeps",
       "mapImsgToNormalized",
@@ -2498,6 +2510,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "validateCertificates",
       "extractClientCN",
       "CertPaths",
+      // Microsoft Teams inbound ingress. createMsTeamsIngress is consumed by the
+      // daemon composition root (setup-channels-adapters.ts builds the ingress);
+      // MsTeamsIngressDeps is the factory's deps shape, which the daemon
+      // constructs inline (like ApprovalTokenDeps) — tracked here for parity.
+      "MsTeamsIngressDeps",
     ])],
     // @comis/infra: baseline orphans + transient orphans.
     // createSystemClock/createSystemEnv/createSystemTimers are Node-backed
