@@ -339,13 +339,19 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       }
       // Wake-gate: accept the flat (chat tool) or nested (web) shape. The script
       // is CODE for the jail, so it is set raw and NEVER passed through
-      // sanitizeToolOutput. Absent -> the existing wakeGate is left untouched
-      // (no accidental clear); language falls back to the store schema value.
+      // sanitizeToolOutput. A non-empty script sets/replaces the gate; an
+      // explicit empty script CLEARS it; an absent script leaves the existing
+      // gate untouched. Language falls back to the store schema value.
       const wakeGateNested = rawParams.wakeGate as
         | { script?: string; language?: "js" | "ts"; timeoutSeconds?: number }
         | undefined;
       const updateWakeGateScript = (rawParams.wake_gate_script as string | undefined) ?? wakeGateNested?.script;
-      if (updateWakeGateScript !== undefined) {
+      if (updateWakeGateScript === "") {
+        // An explicit empty script clears the gate. Writing { script: "" } would
+        // fail the store schema (script.min(1)) and drop the whole job on the
+        // next reload -- clearing is the only safe reading of "".
+        job.wakeGate = undefined;
+      } else if (updateWakeGateScript !== undefined) {
         const updateWakeGateLanguage =
           (rawParams.wake_gate_language as "js" | "ts" | undefined) ?? wakeGateNested?.language;
         job.wakeGate = {

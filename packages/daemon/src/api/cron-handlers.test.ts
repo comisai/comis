@@ -738,6 +738,24 @@ describe("createCronHandlers", () => {
       expect(scheduler.getJobs()[0]!.wakeGate).toEqual(existing);
     });
 
+    it("clears the gate on an explicit empty script rather than persisting a schema-invalid { script: '' }", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+      (scheduler.getJobs()[0]! as Record<string, unknown>).wakeGate = {
+        script: "orig",
+        language: "js" as const,
+        timeoutSeconds: 30,
+      };
+
+      await handlers["cron.update"]!({ jobId: "job-1", wake_gate_script: "" });
+
+      // An empty script clears the gate. It must NEVER persist { script: "" } --
+      // that fails the store schema's script.min(1) on the next load, whose
+      // ZodError catch drops every cron job for the agent.
+      expect(scheduler.getJobs()[0]!.wakeGate).toBeUndefined();
+    });
+
     it("never runs sanitizeToolOutput on the update gate script: an injection trigger survives verbatim", async () => {
       const deps = makeDeps();
       const handlers = createCronHandlers(deps);
