@@ -21,11 +21,12 @@ const ChannelFeaturesSchema = z.strictObject({
     typing: z.boolean().default(false),
     /** Whether the channel supports threads/topics (activity strategy hint). */
     threads: z.boolean().default(false),
-    /** Interactive-button capability flavour for this channel. "none" when the
-     *  platform has no button surface. Defaults exist only as a safety net for
-     *  *new* plugins; the 10 in-tree plugins declare this explicitly. */
+    /** Interactive-button capability flavour for this channel: one of
+     *  "inline", "components", "blockkit", "quickreply", "adaptivecard", or
+     *  "none" when the platform has no button surface. The default exists only
+     *  as a safety net for *new* plugins; in-tree plugins declare it explicitly. */
     buttons: z
-      .enum(["inline", "components", "blockkit", "quickreply", "none"])
+      .enum(["inline", "components", "blockkit", "quickreply", "none", "adaptivecard"])
       .default("none"),
   });
 

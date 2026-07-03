@@ -6,10 +6,11 @@
  * The adapter implements inbound reactions, edit/delete, a typing keepalive and
  * threaded replies, so the plugin declares
  * `reactions/editMessages/deleteMessages/typing/threads: true`. `editMessages:true`
- * auto-routes the channel to the edit-in-place activity strategy. `buttons` stays
- * `"none"` — the channel paints no interactive buttons yet. The send-reaction port
- * methods (`reactToMessage`/`removeReaction`) are permanently omitted: Teams
- * exposes no bot-reaction send API, so `reactions:true` is an INBOUND capability.
+ * auto-routes the channel to the edit-in-place activity strategy. `buttons` is
+ * `"adaptivecard"` — the channel advertises an Adaptive Card button surface. The
+ * send-reaction port methods (`reactToMessage`/`removeReaction`) are permanently
+ * omitted: Teams exposes no bot-reaction send API, so `reactions:true` is an
+ * INBOUND capability.
  *
  * @module
  */
@@ -40,8 +41,8 @@ const CAPABILITIES: ChannelCapability = {
     typing: true,
     // Channel/group thread root via replyToId.
     threads: true,
-    // No interactive buttons yet — the rich card variant is a later capability.
-    buttons: "none",
+    // Advertises an Adaptive Card button surface.
+    buttons: "adaptivecard",
   },
   limits: {
     maxMessageChars: 28000,
@@ -53,7 +54,7 @@ const CAPABILITIES: ChannelCapability = {
  * Create a Microsoft Teams channel plugin wrapping the Teams adapter.
  *
  * activate() delegates to adapter.start() and deactivate() to adapter.stop(),
- * while the plugin declares the honest text-only capability matrix.
+ * while the plugin declares its honest capability matrix.
  */
 export function createMsTeamsPlugin(
   deps: MsTeamsAdapterDeps,
