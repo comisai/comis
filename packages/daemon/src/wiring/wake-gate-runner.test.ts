@@ -28,6 +28,8 @@ vi.mock("@comis/skills/tools", () => ({
   })),
 }));
 
+import { ok } from "@comis/shared";
+
 import {
   createWakeGateRunner,
   type WakeGateRunnerDeps,
@@ -296,5 +298,78 @@ describe("createWakeGateRunner — honest degrade (run as today)", () => {
     expect(result).toEqual({ runAsToday: true });
     expect(mintLease).not.toHaveBeenCalled();
     expect(runJailedScriptFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("createWakeGateRunner — deliver egress-scrub", () => {
+  // The delivered status text is untrusted (model-authored gate stdout) and the
+  // downstream cron-delivery listener ships it VERBATIM, so the gate must scrub
+  // it. A stand-in secret token proves the returned `deliver` is redacted, and
+  // the scan spy proves WHICH raw text the gate handed to OutputGuard.
+  const SECRET = "SEKRET-abcdefgh";
+  const REDACTED = "[REDACTED:known_secret]";
+
+  /**
+   * An OutputGuard whose `scan` REDACTS `SECRET` → `REDACTED`, exposing the scan
+   * spy so a test can assert the RAW deliver text it was handed. `registerSecret`
+   * is preserved (the per-fire lease mint calls it — a bare `{ scan }` would make
+   * the mint throw and fail open, masking the assertion).
+   */
+  function makeRedactingGuard() {
+    const scan = vi.fn((text: string) =>
+      ok({
+        safe: !text.includes(SECRET),
+        blocked: text.includes(SECRET),
+        findings: [],
+        sanitized: text.replaceAll(SECRET, REDACTED),
+      }),
+    );
+    const outputGuard = { scan, registerSecret: vi.fn() } as unknown as WakeGateRunnerDeps["outputGuard"];
+    return { outputGuard, scan };
+  }
+
+  it("redacts a registered-secret token in the deliver text before the verdict is returned", async () => {
+    const { outputGuard, scan } = makeRedactingGuard();
+    const { deps, runJailedScriptFn } = makeDeps({ outputGuard });
+    runJailedScriptFn.mockResolvedValue(`{"wake":false,"deliver":"backup OK ${SECRET}"}`);
+
+    const verdict = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(verdict).toEqual({ wake: false, deliver: `backup OK ${REDACTED}` });
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledWith(`backup OK ${SECRET}`);
+  });
+
+  it("routes a trailing [SILENT] <text> status through the scrub", async () => {
+    const { outputGuard, scan } = makeRedactingGuard();
+    const { deps, runJailedScriptFn } = makeDeps({ outputGuard });
+    runJailedScriptFn.mockResolvedValue("[SILENT] backup OK");
+
+    const verdict = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(verdict).toEqual({ wake: false, deliver: "backup OK" });
+    expect(scan).toHaveBeenCalledWith("backup OK");
+  });
+
+  it("leaves a context-only wake verdict untouched — only deliver is scrubbed", async () => {
+    const { outputGuard, scan } = makeRedactingGuard();
+    const { deps, runJailedScriptFn } = makeDeps({ outputGuard });
+    runJailedScriptFn.mockResolvedValue('{"wake":true,"context":"CI red"}');
+
+    const verdict = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(verdict).toEqual({ wake: true, context: "CI red" });
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it("does not scan a HEARTBEAT_OK skip — there is no deliver to egress", async () => {
+    const { outputGuard, scan } = makeRedactingGuard();
+    const { deps, runJailedScriptFn } = makeDeps({ outputGuard });
+    runJailedScriptFn.mockResolvedValue("HEARTBEAT_OK");
+
+    const verdict = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(verdict).toEqual({ wake: false });
+    expect(scan).not.toHaveBeenCalled();
   });
 });
