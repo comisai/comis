@@ -41,7 +41,7 @@ import {
 import { tmpdir } from "node:os";
 
 import { safePath } from "@comis/core";
-import type { FleetHealthReport } from "@comis/core";
+import type { FleetHealthReport, IncidentReport } from "@comis/core";
 
 import { generateSupportBundle, buildSupportDoctorContext } from "./generate.js";
 import { parseSupportTriage } from "./types.js";
@@ -421,5 +421,192 @@ describe("generateSupportBundle config-posture composition", () => {
     // The doctor run still emits config_corrupt from the config-health check.
     expect(result.value.activeSignals).toContain("config_corrupt");
     expect(result.value.status).toBe("misconfigured");
+  });
+});
+
+/**
+ * A minimal IncidentReport fixture — the content-free ids the embed stub returns.
+ * Only the fields the reducer/writer read matter (sessionKey/traceId/agentId,
+ * outcome, likelyRootCause); the rest are plausible defaults, cast to the type.
+ */
+function makeIncident(over: Partial<IncidentReport> = {}): IncidentReport {
+  return {
+    schemaVersion: 1,
+    sessionKey: "acme:alice:general",
+    traceId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+    agentId: "default",
+    channel: { type: "discord", id: "general" },
+    outcome: { endReason: "completed", degraded: true, severity: "degraded" },
+    cost: { costUsd: 0, totalTokens: 0, cacheReadRatio: 0 },
+    timing: { durationMs: 0, turnCount: 0 },
+    toolStats: {},
+    failures: [],
+    breakerTimeline: [],
+    offloads: [],
+    likelyRootCause: { code: "spend_exceeded", detail: "", suggestedNextSteps: [] },
+    ...over,
+  } as IncidentReport;
+}
+
+describe("generateSupportBundle --session / audit / --deep orchestration", () => {
+  it("embeds explain.json and populates triage.explainSummary + active signals on --session", async () => {
+    const deps = makeDeps();
+    const result = await generateSupportBundle({
+      ...deps,
+      session: "acme:alice:general",
+      embedSessionFn: async () => ({ explain: makeIncident(), warnings: [] }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // explain.json is the embedded report verbatim — the UUID traceId round-trips.
+    const explain = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "explain.json"), "utf8"),
+    ) as { traceId: string; sessionKey: string };
+    expect(explain.traceId).toBe("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+    expect(explain.sessionKey).toBe("acme:alice:general");
+
+    // The reducer surfaces the embedded root cause into the triage enrichment.
+    const triage = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "triage.json"), "utf8"),
+    ) as { explainSummary?: { degraded: boolean; likelyRootCause: string | null } };
+    expect(triage.explainSummary?.likelyRootCause).toBe("spend_exceeded");
+    expect(triage.explainSummary?.degraded).toBe(true);
+    expect(result.value.activeSignals).toContain("spend_exceeded");
+  });
+
+  it("writes audit-summary.json from an injected offline audit read", async () => {
+    const deps = makeDeps();
+    const result = await generateSupportBundle({
+      ...deps,
+      readAudit: () => ({ schemaVersion: 1, total: 5, byKind: { secret_access: 5 } }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const audit = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "audit-summary.json"), "utf8"),
+    ) as { total: number; byKind: Record<string, number> };
+    expect(audit.total).toBe(5);
+    expect(audit.byKind["secret_access"]).toBe(5);
+  });
+
+  it("folds an absent audit store into a source:audit warning without writing audit-summary.json", async () => {
+    const deps = makeDeps();
+    const result = await generateSupportBundle({ ...deps, readAudit: () => undefined });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(existsSync(safePath(result.value.bundleDir, "audit-summary.json"))).toBe(false);
+    expect(result.value.warnings.some((w) => w.source === "audit")).toBe(true);
+    const manifest = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "manifest.json"), "utf8"),
+    ) as { warnings?: Array<{ source: string }> };
+    expect(manifest.warnings?.some((w) => w.source === "audit")).toBe(true);
+  });
+
+  it("exports trace-exports/ INTO the bundle dir on --deep, stamping workspaceDir + clock (Pitfall 4)", async () => {
+    const deps = makeDeps();
+    let captured: { workspaceDir: string; clockVal: number; sessionFile: string } | undefined;
+    const result = await generateSupportBundle({
+      ...deps,
+      session: "acme:alice:general",
+      deep: true,
+      embedSessionFn: async () => ({
+        explain: makeIncident(),
+        deepSessionFile: "/tmp/resolved-session.jsonl",
+        warnings: [],
+      }),
+      exportTrace: async (params: {
+        workspaceDir: string;
+        clock?: () => number;
+        sessionFile: string;
+      }) => {
+        captured = {
+          workspaceDir: params.workspaceDir,
+          clockVal: params.clock?.() ?? -1,
+          sessionFile: params.sessionFile,
+        };
+        // Simulate the real exporter writing its 8-file dir INTO workspaceDir.
+        const traceDir = safePath(safePath(params.workspaceDir, "trace-exports"), "comis-trace-abc-1");
+        mkdirSync(traceDir, { recursive: true });
+        return { ok: true, value: { bundleDir: traceDir, manifest: {} } };
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // The exporter was pointed at the SAME bundle dir the writer used (no copy).
+    expect(captured?.workspaceDir).toBe(result.value.bundleDir);
+    expect(captured?.workspaceDir).toBe(expectedBundleDir(deps.dataDir));
+    // The clock was stamped from the caller's nowMs (determinism).
+    expect(captured?.clockVal).toBe(NOW_MS);
+    // The pointer-resolved deep session file flowed through.
+    expect(captured?.sessionFile).toBe("/tmp/resolved-session.jsonl");
+    // The trace dir landed inside the bundle (ordering: before the manifest write).
+    expect(
+      existsSync(safePath(safePath(result.value.bundleDir, "trace-exports"), "comis-trace-abc-1")),
+    ).toBe(true);
+  });
+
+  it("folds a failed trace export into a source:trace-export manifest warning without crashing", async () => {
+    const deps = makeDeps();
+    const result = await generateSupportBundle({
+      ...deps,
+      session: "acme:alice:general",
+      deep: true,
+      embedSessionFn: async () => ({
+        explain: makeIncident(),
+        deepSessionFile: "/tmp/resolved-session.jsonl",
+        warnings: [],
+      }),
+      exportTrace: async () => ({
+        ok: false,
+        error: { kind: "session-file-not-readable", reason: "gone" },
+      }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.warnings.some((w) => w.source === "trace-export")).toBe(true);
+    const manifest = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "manifest.json"), "utf8"),
+    ) as { warnings?: Array<{ source: string }> };
+    expect(manifest.warnings?.some((w) => w.source === "trace-export")).toBe(true);
+    // A failed section is partial, not fatal — the core files still land.
+    expect(existsSync(safePath(result.value.bundleDir, "triage.json"))).toBe(true);
+  });
+
+  it("surfaces the worst-session hint when no --session is given, writing no explain/trace files", async () => {
+    const deps = makeDeps();
+    const result = await generateSupportBundle({
+      ...deps,
+      suggestWorst: () => "acme:bob:incidents",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.worstSessionKey).toBe("acme:bob:incidents");
+    expect(existsSync(safePath(result.value.bundleDir, "explain.json"))).toBe(false);
+    expect(existsSync(safePath(result.value.bundleDir, "trace-exports"))).toBe(false);
+  });
+
+  it("folds an embed explain warning into the result and still writes the core files", async () => {
+    const deps = makeDeps();
+    const result = await generateSupportBundle({
+      ...deps,
+      session: "acme:alice:general",
+      embedSessionFn: async () => ({
+        warnings: [
+          { source: "explain", code: "explain_assembly_failed", count: 1, message: "boom" },
+        ],
+      }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.warnings.some((w) => w.source === "explain")).toBe(true);
+    expect(existsSync(safePath(result.value.bundleDir, "explain.json"))).toBe(false);
+    expect(existsSync(safePath(result.value.bundleDir, "triage.json"))).toBe(true);
   });
 });
