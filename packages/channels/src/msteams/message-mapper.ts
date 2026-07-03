@@ -21,6 +21,10 @@
 import type { NormalizedMessage } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { randomUUID } from "node:crypto";
+import { detectBotMention } from "./mentions.js";
+
+/** The reply-suffix marker that carries the parent-message id in a channel conversation id. */
+const MESSAGE_ID_MARKER = ";messageid=";
 
 /**
  * Minimal Bot Framework activity shape — only the fields the inbound path
@@ -53,8 +57,22 @@ export interface TeamsActivity {
  * the bare conversation id, so the suffix is removed.
  */
 function stripMessageIdSuffix(conversationId: string): string {
-  const idx = conversationId.indexOf(";messageid=");
+  const idx = conversationId.indexOf(MESSAGE_ID_MARKER);
   return idx >= 0 ? conversationId.slice(0, idx) : conversationId;
+}
+
+/**
+ * Extract the thread root of a channel/group activity: the parent-message id
+ * carried in the conversation id's ";messageid=…" suffix (preferred), else the
+ * replyToId. Returns undefined when neither is present. Surfaced under a
+ * Teams-specific metadata key so the session-key path can isolate one thread
+ * per session without affecting any other channel's mapping.
+ */
+function extractThreadRoot(activity: TeamsActivity): string | undefined {
+  const convId = activity.conversation.id;
+  const idx = convId.indexOf(MESSAGE_ID_MARKER);
+  if (idx >= 0) return convId.slice(idx + MESSAGE_ID_MARKER.length);
+  return activity.replyToId;
 }
 
 /**
@@ -101,12 +119,21 @@ export function mapMsTeamsActivityToNormalized(
 ): NormalizedMessage | null {
   if (activity.type !== "message") return null;
 
+  const chatType = toChatType(activity.conversation.conversationType);
+
   const metadata: Record<string, unknown> = {};
   if (activity.id !== undefined) metadata.teamsActivityId = activity.id;
   if (activity.serviceUrl !== undefined) metadata.serviceUrl = activity.serviceUrl;
   const tenantId = activity.channelData?.tenant?.id ?? activity.conversation.tenantId;
   if (tenantId !== undefined) metadata.tenantId = tenantId;
   if (activity.replyToId !== undefined) metadata.replyToId = activity.replyToId;
+
+  // Thread isolation is a channel/group concern; a 1:1 DM has no thread root.
+  if (chatType !== "dm") {
+    const threadRoot = extractThreadRoot(activity);
+    if (threadRoot !== undefined) metadata.msteamsThreadId = threadRoot;
+  }
+  metadata.mentionedBot = detectBotMention(activity.entities, activity.recipient?.id);
 
   return {
     id: randomUUID(),
@@ -116,7 +143,7 @@ export function mapMsTeamsActivityToNormalized(
     text: toPlainText(activity.text),
     timestamp: systemNowMs(),
     attachments: [],
-    chatType: toChatType(activity.conversation.conversationType),
+    chatType,
     metadata,
   };
 }
