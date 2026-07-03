@@ -201,7 +201,36 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
         });
         // A clean resolve means the child exited 0 without timing out/overflowing
         // (those paths REJECT). The parser fails open on empty/unparseable stdout.
-        return parseWakeGateVerdict({ stdout, exitCode: 0, timedOut: false, overflowed: false });
+        const verdict = parseWakeGateVerdict({ stdout, exitCode: 0, timedOut: false, overflowed: false });
+
+        // 5. Egress-scrub the delivered status HERE, in the gate, before the
+        //    verdict leaves. The cron-delivery listener ships `result` VERBATIM on
+        //    its raw/system_event branch (no filterResponse, OutputGuard not
+        //    applied there), so an untrusted, model-authored `deliver` string is
+        //    scrubbed at the gate or a registered secret/canary could reach the
+        //    channel. `context` is model-only (wrapped elsewhere) and `wake` is a
+        //    boolean — only `deliver` egresses verbatim, so only `deliver` is scanned.
+        if (verdict.deliver !== undefined) {
+          const scanned = deps.outputGuard.scan(verdict.deliver);
+          if (scanned.ok) {
+            return { ...verdict, deliver: scanned.value.sanitized };
+          }
+          // A scrub fault must never egress unscrubbed untrusted text: DROP the
+          // deliver, degrading to a plain skip (no delivery). The pure-skip path
+          // is always safe. `wake`/`context` are preserved as parsed.
+          log.warn(
+            {
+              err: scanned.error,
+              agentId: ctx.agentId,
+              jobId: ctx.jobId,
+              errorKind: "internal" satisfies ErrorKind,
+              hint: "output-guard scan failed on the gate deliver text — dropping the deliver (skip, no delivery) to avoid unscrubbed egress",
+            },
+            "Wake-gate deliver scrub failed — dropping deliver",
+          );
+          return { wake: verdict.wake, ...(verdict.context !== undefined ? { context: verdict.context } : {}) };
+        }
+        return verdict;
       } catch (err) {
         log.warn(
           {
