@@ -8,9 +8,11 @@
  *  1. collect the content-free host snapshot (best-effort daemon-version probe,
  *     short-circuited when the daemon is down),
  *  2. build a local doctor context and run the nine health checks daemon-down,
- *  3. fold the aggregate into the deterministic triage verdict,
- *  4. shape `doctor.json`, render the issue summary and the AI issue draft,
- *  5. write the five-file bundle through the symlink-safe writer.
+ *  3. read the cross-session fleet digest over the --since window through the
+ *     sanctioned offline seam, and build the config-posture membership digest,
+ *  4. fold the doctor aggregate + fleet into the deterministic triage verdict,
+ *  5. shape `doctor.json`, render the issue summary and the AI issue draft,
+ *  6. write the up-to-seven-file bundle through the symlink-safe writer.
  *
  * Everything is `Result`-chained: the orchestrator throws nothing (the command
  * that invokes it owns the throw boundary and surfaces the completion/failure
@@ -30,6 +32,7 @@
  */
 
 import { safePath } from "@comis/core";
+import type { FleetHealthReport } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 
 import { runDoctorChecks } from "../doctor/check-runner.js";
@@ -45,14 +48,16 @@ import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
 import { resolveDoctorConfig } from "../doctor/config-resolve.js";
 import { buildDoctorJson } from "../doctor/output.js";
 import { readCliVersion } from "../util/cli-version.js";
+import { assembleFleetHealthReportOffline } from "../util/offline-obs.js";
 import type { DoctorCheck, DoctorContext, DoctorResult } from "../doctor/types.js";
 
 import { buildSupportTriage } from "./triage.js";
+import { buildConfigPosture } from "./config-posture.js";
 import { collectHostSnapshot, type CollectHostSnapshotDeps } from "./host-snapshot.js";
 import { renderIssueSummary } from "./render-issue.js";
 import { renderAiIssueDraft } from "./render-ai-draft.js";
 import { writeSupportBundle } from "./writer.js";
-import type { SupportBundleWarning } from "./types.js";
+import type { SupportBundleWarning, ConfigPostureDigest } from "./types.js";
 
 /**
  * The nine health checks, composed in the same execution order the doctor
@@ -88,10 +93,7 @@ export interface GenerateSupportBundleDeps {
   readonly dataDir: string;
   /** Config file paths, resolved exactly as the doctor command resolves them. */
   readonly configPaths: string[];
-  /**
-   * Diagnostic window in hours. Accepted now so the command wiring stays stable;
-   * not yet consumed for a fleet read (fleet composition arrives later).
-   */
+  /** Diagnostic window in hours — the span the fleet digest is assembled over. */
   readonly sinceHours: number;
   /** Generation instant in epoch ms — stamps the manifest and the bundle dir name. */
   readonly nowMs: number;
@@ -101,6 +103,14 @@ export interface GenerateSupportBundleDeps {
   readonly isDaemonRunning?: (timeoutMs?: number) => Promise<boolean>;
   /** Forwarded to the host snapshot's best-effort daemon-version probe. */
   readonly withClient?: CollectHostSnapshotDeps["withClient"];
+  /**
+   * The fleet-report assembler, defaulting to the sanctioned offline seam
+   * (`assembleFleetHealthReportOffline`). Injected in tests with a hermetic
+   * fixture so a unit run never loads the @comis/daemon runtime graph the offline
+   * seam dynamic-imports. Matches the injected-seam style of `readFile`,
+   * `isDaemonRunning`, and `withClient`.
+   */
+  readonly assembleFleet?: (dataDir: string, sinceHours: number) => Promise<FleetHealthReport>;
 }
 
 /** Success payload consumed by the command wiring. */
@@ -207,15 +217,17 @@ export async function generateSupportBundle(
   };
   const host = await collectHostSnapshot(snapshotDeps);
 
-  // Doctor compose: build the local context and run the nine checks daemon-down.
-  // Assembling the evidence is a section — a failure here is a warning, not a
-  // crash, so the bundle still generates from whatever is available.
+  // Doctor compose: build the local context ONCE — the config resolution feeds
+  // both the checks and the config-posture digest, so the config is resolved a
+  // single time. `buildSupportDoctorContext` resolves through the never-throw
+  // resolver and is safe outside the try; only `runDoctorChecks` can throw, and a
+  // failure there is a warning, not a crash, so the bundle still generates.
+  const context = buildSupportDoctorContext(deps.configPaths, {
+    dataDir: deps.dataDir,
+    ...(deps.readFile !== undefined ? { readFile: deps.readFile } : {}),
+  });
   let doctor: DoctorResult = EMPTY_DOCTOR_RESULT;
   try {
-    const context = buildSupportDoctorContext(deps.configPaths, {
-      dataDir: deps.dataDir,
-      ...(deps.readFile !== undefined ? { readFile: deps.readFile } : {}),
-    });
     doctor = await runDoctorChecks([...SUPPORT_BUNDLE_CHECKS], context);
   } catch (thrown) {
     sectionWarnings.push({
@@ -226,15 +238,73 @@ export async function generateSupportBundle(
     });
   }
 
-  // Pure assembly: the reducer verdict, the doctor.json shape, and the render.
-  const triage = buildSupportTriage({ host, doctor });
+  // Fleet compose: assemble the cross-session digest over the --since window
+  // through the sanctioned offline seam (dead-daemon capable). A throw folds into
+  // a warning and omits fleet.json; a coverage-empty read keeps the valid empty
+  // report (still written) but records an honest warning. Never a crash.
+  const assembleFleet = deps.assembleFleet ?? assembleFleetHealthReportOffline;
+  let fleet: FleetHealthReport | undefined;
+  try {
+    fleet = await assembleFleet(deps.dataDir, deps.sinceHours);
+  } catch (thrown) {
+    sectionWarnings.push({
+      source: "fleet",
+      code: "fleet_read_failed",
+      count: 1,
+      message: `Fleet health report could not be assembled: ${describeError(thrown)}`,
+    });
+  }
+  if (
+    fleet !== undefined &&
+    fleet.coverage?.sessionSummary.found === false &&
+    fleet.sessions.total === 0
+  ) {
+    sectionWarnings.push({
+      source: "fleet",
+      code: "fleet_store_empty",
+      count: 1,
+      message:
+        "Fleet health store held no session summaries in the window; the report is " +
+        "empty and its coverage block reports the gap.",
+    });
+  }
+
+  // Config-posture compose: the membership digest from the RAW top-level config
+  // keys the resolver captured (never the fully-defaulted validated config, which
+  // reports every section present). A config that did not parse to an object has
+  // no raw keys — omit the file and warn; the parse failure already surfaces as
+  // config_corrupt from the doctor run. The fleet config_posture finding's closed
+  // labels + count ride along when present.
+  const resolution = context.configResolution;
+  let configPosture: ConfigPostureDigest | undefined;
+  if (resolution?.loadError !== undefined || resolution?.rawTopLevelKeys === undefined) {
+    sectionWarnings.push({
+      source: "config-posture",
+      code: "config_unreadable",
+      count: 1,
+      message: "Config-posture digest omitted: the config could not be read as a section map.",
+    });
+  } else {
+    configPosture = buildConfigPosture(resolution.rawTopLevelKeys, fleet?.findings ?? []);
+  }
+
+  // Pure assembly: the fleet-enriched reducer verdict, the doctor.json shape, and
+  // the render. Fleet is passed only when present so its summary is omitted on a
+  // thrown read.
+  const triage = buildSupportTriage({
+    host,
+    doctor,
+    ...(fleet !== undefined ? { fleet } : {}),
+  });
   const doctorJson = buildDoctorJson(doctor);
   const issueSummaryMd = renderIssueSummary(triage);
   const aiIssueDraftMd = renderAiIssueDraft(triage);
 
-  // Safe write: exactly the five allowlisted files through the symlink-safe
-  // primitives with the redaction backstop. Section-level write failures fold
-  // into warnings; only an unproducible bundle dir is a hard error.
+  // Safe write: the up-to-seven allowlisted files through the symlink-safe
+  // primitives with the redaction backstop. fleet.json + config-posture.json ride
+  // the writer's trusted-leaf path and are each written only when defined.
+  // Section-level write failures fold into warnings; only an unproducible bundle
+  // dir is a hard error.
   const writeResult = writeSupportBundle({
     dataDir: deps.dataDir,
     generatedAtMs: deps.nowMs,
@@ -242,6 +312,8 @@ export async function generateSupportBundle(
     issueSummaryMd,
     aiIssueDraftMd,
     doctorJson,
+    fleetJson: fleet,
+    configPostureJson: configPosture,
     warnings: sectionWarnings,
   });
   if (!writeResult.ok) {

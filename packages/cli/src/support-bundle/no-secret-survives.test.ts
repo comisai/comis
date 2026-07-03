@@ -17,6 +17,14 @@
  * survive. The redaction-sentinel assertion pins that the pass ran; a file
  * written outside the redacting writer would surface in the readdir grep.
  *
+ * The fleet assembler is injected with a hermetic empty-report fixture so the
+ * sweep never loads the @comis/daemon runtime graph the offline seam dynamic-
+ * imports. This does NOT narrow the contract: the seeds live in config VALUES,
+ * `fleet.json` reads the observability store and never the config (so no config
+ * seed could reach it, real or stubbed), and `config-posture.json` is built from
+ * the REAL config resolution regardless of the fleet stub — so both new files
+ * are still swept against every seed.
+ *
  * The gateway host resolves to loopback, so the connectivity probe stays local
  * (fast, no external network). Temp dirs ONLY — never the real ~/.comis. All
  * seed values are neutral fakes.
@@ -27,6 +35,7 @@ import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync } from "n
 import { tmpdir } from "node:os";
 
 import { safePath } from "@comis/core";
+import type { FleetHealthReport } from "@comis/core";
 
 import { generateSupportBundle } from "./generate.js";
 
@@ -51,6 +60,41 @@ const NOW_MS = Date.UTC(2026, 6, 3, 10, 15, 0);
 
 /** Report the daemon as down so the host snapshot opens no socket. */
 const daemonDown = { isDaemonRunning: async (): Promise<boolean> => false };
+
+/**
+ * A hermetic empty-window fleet report — the shape the offline assembler returns
+ * against a data dir with no `memory.db`. Injected so the sweep never loads the
+ * @comis/daemon graph; fleet.json is content-free by construction, so an empty
+ * report suffices to prove no config seed reaches it.
+ */
+function emptyFleet(): FleetHealthReport {
+  return {
+    schemaVersion: 1,
+    windowHours: 24,
+    sessions: { total: 0, degraded: 0, degradedRate: 0 },
+    topErrorKinds: [],
+    degradedByCause: {},
+    breakerTripTotal: 0,
+    toolStats: {},
+    cost: { costUsd: 0, totalTokens: 0 },
+    activity: {
+      activeAgents: [],
+      activeChannels: [],
+      exitReasons: {},
+      turnTotal: 0,
+      tokenTotal: 0,
+    },
+    findings: [],
+    likelyRootCause: null,
+    suggestedNextSteps: [],
+    truncations: [],
+    coverage: {
+      sessionSummary: { found: false, rows: 0 },
+      sessionIndex: { daysRead: 0, daysMissing: 0 },
+      billing: { present: false },
+    },
+  };
+}
 
 const tmpDirs: string[] = [];
 
@@ -101,6 +145,7 @@ describe("no seeded secret survives any support-bundle output file", () => {
       sinceHours: 24,
       nowMs: NOW_MS,
       isDaemonRunning: daemonDown.isDaemonRunning,
+      assembleFleet: async () => emptyFleet(),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -127,6 +172,7 @@ describe("no seeded secret survives any support-bundle output file", () => {
       sinceHours: 24,
       nowMs: NOW_MS,
       isDaemonRunning: daemonDown.isDaemonRunning,
+      assembleFleet: async () => emptyFleet(),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;

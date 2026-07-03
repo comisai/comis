@@ -6,20 +6,21 @@
  * confined to the data dir, symlinked-dir refusal); every file is written via
  * `writeRegularFile` (0o600, O_NOFOLLOW, unlink-before-open); every path is
  * composed with `safePath`. The raw path-join and unchecked file-write calls
- * are deliberately avoided. The write set is an explicit five-file allowlist,
- * never a data-dir glob.
+ * are deliberately avoided. The write set is an explicit allowlist of up to
+ * seven files, never a data-dir glob.
  *
  * Redaction is scoped per file. `doctor.json` echoes config-derived free text
  * (DoctorFinding messages — e.g. a configured gateway URL with `user:pass@`), so
  * every string leaf there is value-shape masked before it reaches disk. The
  * reducer's own outputs (`triage.json`, `issue-summary.md`, `ai-issue-draft.md`)
+ * and the content-free digests (`fleet.json`, `config-posture.json`)
  * are content-free by construction — counts, category labels, signal codes,
- * version facts, static placeholders, and
+ * section names, version facts, static placeholders, and
  * static remediation strings — so they get path-token normalization ONLY; the
- * value-shape pass is withheld there because it treats the reducer's own
- * field-name-like tokens ("key", "secret", "message") as payloads and would
- * corrupt the verdict (and desync triage.json's privacy block from the manifest's
- * verbatim copy). Section-failure and upstream warning strings folded into the
+ * value-shape pass is withheld there because it treats their own
+ * field-name-like tokens ("key", "secret", "message") and token-shaped ids as
+ * payloads and would corrupt the verdict/digest (and desync triage.json's
+ * privacy block from the manifest's verbatim copy). Section-failure and upstream warning strings folded into the
  * manifest keep the full masking pass (they can carry error text). A section that
  * cannot be produced folds into a manifest warning and the writer continues
  * (partial output); only a failure to create the bundle directory is a hard error.
@@ -58,6 +59,20 @@ export interface WriteSupportBundleInput {
   readonly aiIssueDraftMd: string;
   /** The doctor diagnostic object (written as doctor.json). */
   readonly doctorJson: unknown;
+  /**
+   * The fleet health report (written as fleet.json when present). A content-free
+   * trusted leaf: path substitution only, never the value-shape pass — which
+   * would mangle its ids/codes. Omitted from the write set when undefined (the
+   * fleet read threw).
+   */
+  readonly fleetJson?: unknown;
+  /**
+   * The config-posture membership digest (written as config-posture.json when
+   * present). A content-free trusted leaf: section names + the closed
+   * fleet-finding labels only. Omitted from the write set when undefined (the
+   * config did not parse).
+   */
+  readonly configPostureJson?: unknown;
   /** Upstream coverage/section warnings folded into the manifest. */
   readonly warnings?: readonly SupportBundleWarning[];
 }
@@ -175,11 +190,12 @@ function prepareBundleDir(
 }
 
 /**
- * Write the five-file support bundle under `<dataDir>/support-bundles/`.
+ * Write the support bundle (up to seven files) under `<dataDir>/support-bundles/`.
  *
  * Creates `comis-support-<tsIso>/` (a timestamp-only name — no host component)
  * and writes `issue-summary.md`, `ai-issue-draft.md`, `triage.json`,
- * `doctor.json`, and `manifest.json`, each through the symlink-safe primitives
+ * `doctor.json`, and `manifest.json`, plus `fleet.json` and `config-posture.json`
+ * when their inputs are present, each through the symlink-safe primitives
  * with the redaction backstop applied. The manifest is written last so it
  * records every section that failed. Returns `err` only when the directory
  * itself cannot be created.
@@ -191,7 +207,16 @@ function prepareBundleDir(
 export function writeSupportBundle(
   input: WriteSupportBundleInput,
 ): Result<WriteSupportBundleSuccess, WriteSupportBundleError> {
-  const { dataDir, generatedAtMs, triage, issueSummaryMd, aiIssueDraftMd, doctorJson } = input;
+  const {
+    dataDir,
+    generatedAtMs,
+    triage,
+    issueSummaryMd,
+    aiIssueDraftMd,
+    doctorJson,
+    fleetJson,
+    configPostureJson,
+  } = input;
 
   // The dir name carries a timestamp only, never a host component.
   const generatedAt = systemDateFrom(generatedAtMs).toISOString();
@@ -243,6 +268,10 @@ export function writeSupportBundle(
   // are content-free and get path normalization only. ai-issue-draft.md rides the
   // trusted leaf like issue-summary.md — the value-shape pass would treat its
   // `<REQUIRED: …>` idiom and field-name-like tokens as payloads and mangle it.
+  // fleet.json and config-posture.json ride the SAME trusted leaf (content-free
+  // by construction — codes, section names, closed labels + counts); each is
+  // appended ONLY when its input is defined, so a thrown fleet read omits
+  // fleet.json and an unparseable config omits config-posture.json.
   const FILE_PLAN: ReadonlyArray<{ name: string; body: () => string }> = [
     { name: "issue-summary.md", body: () => substitutePathsOnly(issueSummaryMd) },
     { name: "ai-issue-draft.md", body: () => substitutePathsOnly(aiIssueDraftMd) },
@@ -254,6 +283,24 @@ export function writeSupportBundle(
       name: "doctor.json",
       body: () => JSON.stringify(walkAndRedactStrings(doctorJson, redactionOpts), null, 2),
     },
+    ...(fleetJson !== undefined
+      ? [
+          {
+            name: "fleet.json",
+            body: (): string =>
+              JSON.stringify(walkAndSubstitutePaths(fleetJson, redactionOpts), null, 2),
+          },
+        ]
+      : []),
+    ...(configPostureJson !== undefined
+      ? [
+          {
+            name: "config-posture.json",
+            body: (): string =>
+              JSON.stringify(walkAndSubstitutePaths(configPostureJson, redactionOpts), null, 2),
+          },
+        ]
+      : []),
   ];
 
   for (const { name, body } of FILE_PLAN) {
