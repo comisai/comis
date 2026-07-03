@@ -795,6 +795,180 @@ describe("orchestrate-tool", () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // One-shot auto-repair (class-gated, bounded to exactly one attempt).
+  // On a non-zero exit whose bounded stderr tail matches a known-recoverable
+  // class (a bad import / comis_tools misuse / TypeError), the runner does ONE
+  // utility-model re-prompt (the injected repairSeam) to regenerate the script
+  // and re-runs it EXACTLY once. Class-gated: ON for weaker models (small/nano),
+  // OFF for stronger (frontier/mid). The repair resolves the FINAL outcome BEFORE
+  // the terminal run_summary emit, so a repaired-then-succeeded run emits exactly
+  // ONE (success) summary — never a failure+success pair. A repaired-then-failed
+  // run surfaces the ORIGINAL bounded error; there is no loop. The regenerated
+  // script re-runs in the identical jail/cap/lease envelope (same blast radius);
+  // the cap-socket endpoint stays the sole authoritative boundary.
+  // ---------------------------------------------------------------------------
+  describe("one-shot repair (class-gated auto-repair, bounded to one, single run_summary)", () => {
+    const importError = "ImportError: cannot import name 'foo' from 'comis_tools'";
+
+    /** The run_summary payloads captured by an event-bus spy. */
+    function runSummaries(
+      emitted: Array<{ event: string; payload: Record<string, unknown> }>,
+    ): Array<Record<string, unknown>> {
+      return emitted
+        .filter((e) => e.event === "orchestrate:run_summary")
+        .map((e) => e.payload);
+    }
+
+    it("repairs a recoverable non-zero exit once under a small-class profile then succeeds with the regenerated script's stdout", async () => {
+      // First spawn fails with a recoverable (bad-import) stderr; the second spawn
+      // — the single repaired re-run — succeeds. makeFakeChild is called LAZILY
+      // inside spawnFn so each child's emit is scheduled only once its listeners
+      // are attached (a pre-created child would emit "close" to zero listeners).
+      let spawnCount = 0;
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => {
+        spawnCount += 1;
+        return spawnCount === 1
+          ? makeFakeChild("", 1, importError)
+          : makeFakeChild("repaired-ok\n");
+      });
+      const repairSeam = vi.fn(
+        async (_input: {
+          script: string;
+          language: "ts" | "js" | "py";
+          stderrTail: string;
+          describeDigest: string;
+        }): Promise<string | undefined> => "const fixed = 1;\n",
+      );
+      const { eventBus, emitted } = makeEventBusSpy();
+      const script = "import { bad } from 'nope';\n";
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "small", repairSeam, eventBus });
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", { script, language: "ts" });
+
+      // The seam fired EXACTLY once and the child was spawned twice (initial run +
+      // the single repaired re-run).
+      expect(repairSeam).toHaveBeenCalledTimes(1);
+      expect(spawnFn).toHaveBeenCalledTimes(2);
+      // The tool RESULT is the repaired run's stdout.
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("repaired-ok");
+      // The seam received the STRUCTURED stderr tail (a field on the failure, not
+      // re-parsed from the "exited with code N" message), the ORIGINAL script, the
+      // language, and a non-empty describe digest.
+      const input = repairSeam.mock.calls[0]![0];
+      expect(input.stderrTail).toContain("ImportError");
+      expect(input.stderrTail).not.toContain("exited with code");
+      expect(input.script).toBe(script);
+      expect(input.language).toBe("ts");
+      expect(input.describeDigest).toContain("comis_tools");
+      // Exactly ONE run_summary — the final (success) outcome, never a failure+success pair.
+      const summaries = runSummaries(emitted);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]!.exitCode).toBe(0);
+      expect(summaries[0]!.failureClass).toBeUndefined();
+    });
+
+    it("does not repair under a frontier-class profile and surfaces the original bounded error with one failure run_summary", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("", 1, importError));
+      const repairSeam = vi.fn(async () => "const fixed = 1;\n");
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "frontier", repairSeam, eventBus });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "import x", language: "ts" })).rejects.toThrow(
+        /exited with code 1|ImportError/,
+      );
+
+      // A stronger model is not auto-repaired: the seam is never consulted, the
+      // child spawns exactly once, and a single failure run_summary is emitted.
+      expect(repairSeam).not.toHaveBeenCalled();
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+      const summaries = runSummaries(emitted);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]!.failureClass).toBe("nonzero_exit");
+    });
+
+    it("does not repair a non-recoverable stderr even under a small-class profile (no seam call, original error surfaced)", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() =>
+        makeFakeChild("", 1, "Segmentation fault (core dumped)"),
+      );
+      const repairSeam = vi.fn(async () => "const fixed = 1;\n");
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "small", repairSeam });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "boom", language: "ts" })).rejects.toThrow(
+        /exited with code 1/,
+      );
+
+      // classifyRecoverableStderr → undefined for a segfault → the repair branch is
+      // skipped even though the class is repair-eligible.
+      expect(repairSeam).not.toHaveBeenCalled();
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+    });
+
+    it("is bounded to exactly one attempt: a repaired-then-failed run surfaces the original bounded error and emits one run_summary", async () => {
+      // Both spawns fail with a recoverable stderr; the seam returns a (still-broken)
+      // script. The repair must NOT loop — exactly one re-run, then the ORIGINAL error.
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("", 1, importError));
+      const repairSeam = vi.fn(async () => "const still_broken = 1;\n");
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "small", repairSeam, eventBus });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "import x", language: "ts" })).rejects.toThrow(
+        /exited with code 1/,
+      );
+
+      // The seam fired ONCE (no loop), the child spawned exactly twice (initial +
+      // the single re-run), and exactly ONE (failure) run_summary was emitted.
+      expect(repairSeam).toHaveBeenCalledTimes(1);
+      expect(spawnFn).toHaveBeenCalledTimes(2);
+      const summaries = runSummaries(emitted);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]!.failureClass).toBe("nonzero_exit");
+    });
+
+    it("honest-degrades when the repair seam gives up (returns undefined) with no re-run and one run_summary", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("", 1, importError));
+      const repairSeam = vi.fn(async () => undefined);
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "small", repairSeam, eventBus });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "import x", language: "ts" })).rejects.toThrow(
+        /exited with code 1|ImportError/,
+      );
+
+      // The seam was consulted once; with no regenerated script there is NO re-run
+      // (spawned once) and a single failure run_summary.
+      expect(repairSeam).toHaveBeenCalledTimes(1);
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+      expect(runSummaries(emitted)).toHaveLength(1);
+    });
+
+    it("treats an absent capabilityClass as repair-eligible (fail-safe default on) then repairs once and succeeds", async () => {
+      // No capabilityClass threaded (older wiring / unresolved) must default to the
+      // repair-eligible class so a keyless small-target deployment still gets the fix.
+      let spawnCount = 0;
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => {
+        spawnCount += 1;
+        return spawnCount === 1 ? makeFakeChild("", 1, importError) : makeFakeChild("fixed\n");
+      });
+      const repairSeam = vi.fn(async () => "const fixed = 1;\n");
+      // capabilityClass intentionally omitted.
+      const { deps } = makeDeps({ spawnFn, repairSeam });
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", { script: "import x", language: "ts" });
+
+      expect(repairSeam).toHaveBeenCalledTimes(1);
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("fixed");
+    });
+  });
+
   // -- Bind the comis-agent binary + honest-degrade the CLI surface --
 
   describe("comis-agent CLI bind + honest-degrade", () => {
