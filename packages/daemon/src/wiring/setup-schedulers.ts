@@ -254,10 +254,28 @@ export async function setupSchedulers(deps: {
               sessionKey: resolveMainSessionKey(job.agentId),
             });
             if (!("runAsToday" in outcome)) {
-              // The verdict drives the existing skip/deliver/context branches
-              // unchanged; the additive per-fire metrics (durationMs, toolCalls)
-              // are consumed by the observability emit, not here.
-              const { verdict } = outcome;
+              // The verdict drives the existing skip/deliver/context branches; the
+              // per-fire counts (durationMs + toolCalls from the runner) plus the
+              // derived estTurnsSaved (1 avoided model turn per skip, 0 on wake)
+              // feed the content-free scheduler:wake_gate emitted ONCE below for
+              // BOTH branches. A runAsToday degrade never reaches here (the job ran
+              // as today — no gate to measure), so it emits nothing.
+              const { verdict, durationMs, toolCalls } = outcome;
+              const estTurnsSaved = verdict.wake ? 0 : 1;
+              // Content-free savings/health signal (I5): ids / verdict enum /
+              // counts ONLY — NEVER the gathered finding, the script source, or a
+              // secret. This is the fleet fork's feed (a cross-session skip-rate /
+              // turns-saved / net-cost rollup); it is wired independently of the
+              // woke case's direct trajectory record below.
+              container.eventBus.emit("scheduler:wake_gate", {
+                jobId: job.id,
+                agentId: job.agentId,
+                wake: verdict.wake,
+                durationMs,
+                toolCalls,
+                estTurnsSaved,
+                timestamp: systemNowMs(),
+              });
               if (!verdict.wake) {
                 // Deliver-on-skip: a routine ✓ status delivered directly with NO
                 // model turn. verdict.deliver is already OutputGuard-scrubbed by the
@@ -333,6 +351,9 @@ export async function setupSchedulers(deps: {
                 await agentExecTracker.record({
                   ts: systemNowMs(), jobId: job.id, status: "skipped",
                   durationMs: systemNowMs() - startTs, summary: "wake-gate: skipped",
+                  // The skip lens: the counts (never any finding text) let
+                  // `cron.runs "<jobName>"` reconstruct each suppressed fire.
+                  toolCalls, estTurnsSaved,
                 });
                 return { status: "ok" as const, summary: "wake-gate: skipped" };
               }
