@@ -402,7 +402,9 @@ describe("buildSupportTriage assembly", () => {
     const paths = triage.evidenceFiles.map((file) => file.path);
     // The evidence manifest must equal the exact set the writer emits (its
     // FILE_PLAN order), so a file the bundle writes cannot silently drop out of
-    // the index — ai-issue-draft.md is written on every run.
+    // the index — ai-issue-draft.md and audit-summary.json are attempted on
+    // every run (audit-summary.json is omitted only on an unreadable store,
+    // exactly like fleet.json).
     expect(paths).toEqual([
       "issue-summary.md",
       "ai-issue-draft.md",
@@ -410,6 +412,33 @@ describe("buildSupportTriage assembly", () => {
       "doctor.json",
       "fleet.json",
       "config-posture.json",
+      "audit-summary.json",
+      "manifest.json",
+    ]);
+    for (const entry of triage.evidenceFiles) {
+      expect(entry.description.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("appends explain.json to the evidence index only when a session was embedded", () => {
+    const triage = buildSupportTriage({
+      host: HOST,
+      doctor: makeDoctorResult([]),
+      explain: makeIncident(),
+    });
+
+    const paths = triage.evidenceFiles.map((file) => file.path);
+    // explain.json exists only under --session, and in writer order it lands
+    // before audit-summary.json (both before the manifest, which is last).
+    expect(paths).toEqual([
+      "issue-summary.md",
+      "ai-issue-draft.md",
+      "triage.json",
+      "doctor.json",
+      "fleet.json",
+      "config-posture.json",
+      "explain.json",
+      "audit-summary.json",
       "manifest.json",
     ]);
     for (const entry of triage.evidenceFiles) {
