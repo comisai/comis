@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import type { EventMap } from "./events.js";
 import { TypedEventBus } from "./bus.js";
@@ -559,5 +560,120 @@ describe("InfraEvents payload structure", () => {
       rssBytes: 0, heapUsedBytes: 0, heapTotalBytes: 0,
       externalBytes: 0, activeHandles: 0, uptimeSeconds: 0, timestamp: 1,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scheduler:wake_gate — the content-free pre-run wake-gate signal.
+//
+// The gate runs an untrusted, model-authored script off-turn; its gathered
+// payload / script source / secrets must NEVER cross into the event's fields.
+// The type is the enforcement point — a producer cannot emit a field the type
+// does not declare. This block pins the shape to counts/enums/ids ONLY and
+// goes RED if a payload-bearing field is ever added to the declaration.
+// ---------------------------------------------------------------------------
+describe("scheduler:wake_gate content-free event", () => {
+  const source = readFileSync(new URL("./events-infra.ts", import.meta.url), "utf8");
+
+  /** The counts/enums/ids allowlist — the ONLY keys the payload may carry
+   *  (kept in sorted order to compare directly against Object.keys().sort()). */
+  const ALLOWED_KEYS = [
+    "agentId",
+    "durationMs",
+    "estTurnsSaved",
+    "jobId",
+    "timestamp",
+    "toolCalls",
+    "wake",
+  ] as const;
+
+  /** Field-name substrings that would leak gathered content or a secret. */
+  const FORBIDDEN_SUBSTRINGS = [
+    "context",
+    "deliver",
+    "script",
+    "stdout",
+    "payload",
+    "result",
+    "secret",
+    "prompt",
+  ] as const;
+
+  /** The field declarations only (from the key line to its closing brace) —
+   *  mirrors the acceptance grep window, excluding the leading JSDoc. */
+  function fieldBlock(): string {
+    const start = source.indexOf('"scheduler:wake_gate":');
+    expect(start).toBeGreaterThan(-1);
+    const rest = source.slice(start);
+    const end = rest.indexOf("};");
+    expect(end).toBeGreaterThan(-1);
+    return rest.slice(0, end);
+  }
+
+  it("is declared in the scheduler family, beside scheduler:job_result", () => {
+    expect(source).toContain('"scheduler:wake_gate":');
+    const wakeIdx = source.indexOf('"scheduler:wake_gate":');
+    const jobResultIdx = source.indexOf('"scheduler:job_result":');
+    const heartbeatIdx = source.indexOf('"scheduler:heartbeat_check":');
+    expect(jobResultIdx).toBeGreaterThan(-1);
+    expect(heartbeatIdx).toBeGreaterThan(-1);
+    // Sits inside the scheduler block: after job_result, before heartbeat.
+    expect(wakeIdx).toBeGreaterThan(jobResultIdx);
+    expect(wakeIdx).toBeLessThan(heartbeatIdx);
+  });
+
+  it("declares ONLY counts/enums/ids — no payload-bearing field in the type block", () => {
+    const block = fieldBlock();
+    // Forbidden check is case-insensitive; the allowlist check keeps field case.
+    const lower = block.toLowerCase();
+    for (const forbidden of FORBIDDEN_SUBSTRINGS) {
+      expect(lower).not.toContain(forbidden);
+    }
+    for (const key of ALLOWED_KEYS) {
+      expect(block).toContain(key);
+    }
+  });
+
+  it("a constructed payload round-trips through the bus with EXACTLY the allowlist keys", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    // The type annotation is the compile-time contract: a payload-bearing field
+    // would be rejected by the closed shape (the broker:denied precedent above).
+    // At runtime the received keys are asserted against the allowlist.
+    const skip: EventMap["scheduler:wake_gate"] = {
+      jobId: "job-1",
+      agentId: "agent-1",
+      wake: false,
+      durationMs: 12,
+      toolCalls: 0,
+      estTurnsSaved: 1,
+      timestamp: Date.now(),
+    };
+    bus.on("scheduler:wake_gate", handler);
+    bus.emit("scheduler:wake_gate", skip);
+
+    expect(handler).toHaveBeenCalledWith(skip);
+    const received = handler.mock.calls[0]![0] as EventMap["scheduler:wake_gate"];
+    expect(Object.keys(received).sort()).toEqual([...ALLOWED_KEYS]);
+    for (const forbidden of FORBIDDEN_SUBSTRINGS) {
+      expect(received).not.toHaveProperty(forbidden);
+    }
+
+    // The woke case mirrors the same shape (no extra fields on wake).
+    const wake: EventMap["scheduler:wake_gate"] = {
+      jobId: "job-2",
+      agentId: "agent-1",
+      wake: true,
+      durationMs: 40,
+      toolCalls: 3,
+      estTurnsSaved: 0,
+      timestamp: Date.now(),
+    };
+    bus.emit("scheduler:wake_gate", wake);
+    const receivedWake = handler.mock.calls[1]![0] as EventMap["scheduler:wake_gate"];
+    expect(Object.keys(receivedWake).sort()).toEqual([...ALLOWED_KEYS]);
+    expect(receivedWake.wake).toBe(true);
+    expect(receivedWake.toolCalls).toBe(3);
+    expect(receivedWake.estTurnsSaved).toBe(0);
   });
 });
