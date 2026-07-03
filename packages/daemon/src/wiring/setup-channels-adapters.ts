@@ -51,6 +51,12 @@ export interface AdapterBootstrapResult {
   /** Full plugin objects keyed by channel type for capabilities RPC and
    *  per-channel capability lookups (features.reactions, replyToMetaKey). */
   channelPlugins: Map<string, ChannelPluginPort>;
+  /** Microsoft Teams inbound ingress sub-app — built here when the channel is
+   *  enabled with valid credentials, from the real adapter's inbound driver +
+   *  the bound activity-token validator. The composition root threads it to the
+   *  gateway so the `/channels/msteams` route mounts only when a caller-backed
+   *  ingress exists. Undefined when the channel is disabled. */
+  msTeamsIngress?: import("hono").Hono;
 }
 
 // ---------------------------------------------------------------------------

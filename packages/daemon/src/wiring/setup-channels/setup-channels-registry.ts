@@ -58,6 +58,11 @@ export interface ChannelsResult {
    *  UUID resolver to translate daemon UUIDs back to native ids before
    *  calling the channel adapter). */
   channelPlugins: Map<string, ChannelPluginPort>;
+  /** Microsoft Teams inbound ingress sub-app, built by the adapter bootstrap
+   *  when the channel is enabled with valid credentials. The composition root
+   *  threads it into the gateway deps so `/channels/msteams` mounts only when a
+   *  caller-backed ingress exists. Undefined when the channel is disabled. */
+  msTeamsIngress?: import("hono").Hono;
   /** The command queue instance for parent session TTL extension during graph execution. */
   commandQueue?: CommandQueue;
   /** DeliveryService constructed once at the daemon composition root. Threaded
@@ -353,7 +358,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   });
 
   // Bootstrap enabled channel adapters from config
-  const { adaptersByType, tgPlugin, linePlugin, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
+  const { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress } = await bootstrapAdapters({ container, channelsLogger });
 
   // Assemble media pipeline (resolvers, preprocessor, preflight)
   const {
@@ -473,6 +478,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     resolveAttachment: resolveAttachmentByUrl,
     lifecycleReactors,
     channelPlugins,
+    msTeamsIngress,
     commandQueue,
     deliveryService,
   };

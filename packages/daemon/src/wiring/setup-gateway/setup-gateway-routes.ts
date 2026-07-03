@@ -200,6 +200,11 @@ export interface GatewayDeps {
    *  + resolver mounted at `ALL /approve/:token`. Built in the agents phase;
    *  optional (absent when no channels / approvals path). */
   interactiveCallbackWiring?: import("../setup-interactive-callback.js").InteractiveCallbackWiring;
+  /** Microsoft Teams inbound ingress sub-app, built by the channel bootstrap
+   *  when the channel is enabled with valid credentials. Passed through to
+   *  `mountGatewayRoutes` so the `/channels/msteams` route mounts only when
+   *  present; absent ⇒ no route. */
+  msTeamsIngress?: import("hono").Hono;
 }
 
 /** All services produced by the gateway setup. */
@@ -416,6 +421,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     workspaceDirs,
     defaultWorkspaceDir: workspaceDirs.get(defaultAgentId),
     interactiveCallbackWiring: deps.interactiveCallbackWiring,
+    msTeamsIngress: deps.msTeamsIngress,
   });
 
   await gatewayHandle.start();
