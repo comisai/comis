@@ -152,6 +152,22 @@ export { createImapLifecycle } from "./email/imap-lifecycle.js";
 export type { ImapLifecycleOpts, ImapLifecycleHandle } from "./email/imap-lifecycle.js";
 export { buildThreadingHeaders, extractThreadId } from "./email/threading.js";
 
+// Microsoft Teams adapter (route-driven, text round-trip)
+export { createMsTeamsAdapter } from "./msteams/msteams-adapter.js";
+export type { MsTeamsAdapterDeps, MsTeamsAdapterHandle } from "./msteams/msteams-adapter.js";
+export { createMsTeamsPlugin } from "./msteams/msteams-plugin.js";
+
+// Microsoft Teams utilities
+export { mapMsTeamsActivityToNormalized } from "./msteams/message-mapper.js";
+export type { TeamsActivity } from "./msteams/message-mapper.js";
+export {
+  validateActivityJwt,
+  createActivityJwtValidator,
+  createConnectorTokenProvider,
+} from "./msteams/msteams-auth.js";
+export { validateMsTeamsCredentials } from "./msteams/credential-validator.js";
+export { classifyMsTeamsError } from "./msteams/errors.js";
+
 // Echo adapter (testing)
 export { EchoChannelAdapter } from "./echo/echo-adapter.js";
 export type { EchoAdapterOptions } from "./echo/echo-adapter.js";
