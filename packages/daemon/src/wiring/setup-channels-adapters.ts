@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Per-platform channel adapter bootstrap: credential validation and plugin
- * creation for 8 platforms (Telegram, Discord, Slack, WhatsApp, Signal, LINE,
- * iMessage, IRC).
+ * creation for 10 platforms (Telegram, Discord, Slack, WhatsApp, Signal, LINE,
+ * iMessage, IRC, Email, Microsoft Teams).
  * Extracted from setup-channels.ts to isolate the per-platform bootstrap block
- * (~170 lines) into a single-concern module.
+ * into a single-concern module.
  * @module
  */
 
