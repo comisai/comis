@@ -2525,6 +2525,19 @@
         },
         "max_history_turns": {
           "type": "number"
+        },
+        "wake_gate_script": {
+          "type": "string"
+        },
+        "wake_gate_language": {
+          "type": "string"
+        },
+        "wakeGate": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         }
       },
       "required": [
@@ -2800,6 +2813,19 @@
               "type": "null"
             }
           ]
+        },
+        "wake_gate_script": {
+          "type": "string"
+        },
+        "wake_gate_language": {
+          "type": "string"
+        },
+        "wakeGate": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         }
       },
       "additionalProperties": false

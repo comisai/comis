@@ -2647,6 +2647,19 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "max_history_turns": {
           "type": "number"
+        },
+        "wake_gate_script": {
+          "type": "string"
+        },
+        "wake_gate_language": {
+          "type": "string"
+        },
+        "wakeGate": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         }
       },
       "required": [
@@ -2922,6 +2935,19 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "type": "null"
             }
           ]
+        },
+        "wake_gate_script": {
+          "type": "string"
+        },
+        "wake_gate_language": {
+          "type": "string"
+        },
+        "wakeGate": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         }
       },
       "additionalProperties": false

@@ -1,6 +1,6 @@
 {
-  "totalMinified": 133231,
-  "totalGzipped": 13466,
+  "totalMinified": 133525,
+  "totalGzipped": 13498,
   "budget": {
     "minified": 138000,
     "gzipped": 38912
@@ -58,13 +58,13 @@
     "config.schema": 466,
     "context.conversations": 850,
     "context.tree": 945,
-    "cron.add": 1265,
+    "cron.add": 1430,
     "cron.list": 394,
     "cron.remove": 377,
     "cron.run": 469,
     "cron.runs": 471,
     "cron.status": 392,
-    "cron.update": 708,
+    "cron.update": 873,
     "daemon.setLogLevel": 611,
     "delivery.queue.status": 476,
     "discord.action": 268,
