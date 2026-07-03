@@ -93,82 +93,98 @@ DESCRIPTORS = [
   {
     "name": "extract_document",
     "capability": "orch:read",
-    "summary": "Extract readable text from a document (pdf/docx/…)."
+    "summary": "Extract readable text from a document (pdf/docx/…).",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "find",
     "capability": "orch:read",
-    "summary": "Find files in the jailed workspace by name/glob."
+    "summary": "Find files in the jailed workspace by name/glob.",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "grep",
     "capability": "orch:read",
-    "summary": "Search the jailed workspace for a pattern (recursive)."
+    "summary": "Search the jailed workspace for a pattern (recursive).",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "jq",
     "capability": "orch:read",
-    "summary": "Run a jq expression over JSON (a value or a ResultRef)."
+    "summary": "Run a jq expression over JSON (a value or a ResultRef).",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "jsonpath",
     "capability": "orch:read",
-    "summary": "Extract a precise value from a JSON ResultRef via JSONPath (no eval)."
+    "summary": "Extract a precise value from a JSON ResultRef via JSONPath (no eval).",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "ls",
     "capability": "orch:read",
-    "summary": "List a directory in the jailed workspace."
+    "summary": "List a directory in the jailed workspace.",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "memory_get",
     "capability": "orch:read",
-    "summary": "Fetch a specific memory file by id (self-tenant)."
+    "summary": "Fetch a specific memory file by id (self-tenant).",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "memory_search",
     "capability": "orch:read",
-    "summary": "Search the agent's long-term memory (self-tenant)."
+    "summary": "Search the agent's long-term memory (self-tenant).",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "read",
     "capability": "orch:read",
-    "summary": "Read a file from the jailed workspace (offset/limit)."
+    "summary": "Read a file from the jailed workspace (offset/limit).",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "session_search",
     "capability": "orch:read",
-    "summary": "Search across the agent's own session history."
+    "summary": "Search across the agent's own session history.",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "session_status",
     "capability": "orch:read",
-    "summary": "Read the status of one of the agent's sessions."
+    "summary": "Read the status of one of the agent's sessions.",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "sessions_history",
     "capability": "orch:read",
-    "summary": "Read the message history of the agent's own session."
+    "summary": "Read the message history of the agent's own session.",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "sessions_list",
     "capability": "orch:read",
-    "summary": "List the agent's own sessions."
+    "summary": "List the agent's own sessions.",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "sql",
     "capability": "orch:read",
-    "summary": "Run DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, read-only)."
+    "summary": "Run DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, read-only).",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
     "name": "web_fetch",
     "capability": "orch:web",
-    "summary": "Fetch a URL's readable content (daemon-side, DNS-pinned)."
+    "summary": "Fetch a URL's readable content (daemon-side, DNS-pinned).",
+    "example": "const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200);"
   },
   {
     "name": "web_search",
     "capability": "orch:web",
-    "summary": "Search the web (daemon-side, DNS-pinned)."
+    "summary": "Search the web (daemon-side, DNS-pinned).",
+    "example": "const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200);"
   }
 ]
 

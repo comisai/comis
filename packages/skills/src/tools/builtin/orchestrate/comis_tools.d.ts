@@ -44,6 +44,8 @@ export interface ToolDescriptor {
   readonly capability: string;
   /** A one-line human summary of what the tool does. */
   readonly summary: string;
+  /** A worked calling-pattern example for the tool's capability group. */
+  readonly example: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,37 +61,37 @@ export interface ComisTools {
    * a specific tool's full types.
    */
   describe(): ToolDescriptor[];
-  /** Extract readable text from a document (pdf/docx/…). (capability: orch:read) */
+  /** Extract readable text from a document (pdf/docx/…). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   extract_document(args?: Record<string, unknown>): Promise<ResultRef>;
-  /** Find files in the jailed workspace by name/glob. (capability: orch:read) */
+  /** Find files in the jailed workspace by name/glob. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   find(args?: Record<string, unknown>): Promise<unknown>;
-  /** Search the jailed workspace for a pattern (recursive). (capability: orch:read) */
+  /** Search the jailed workspace for a pattern (recursive). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   grep(args?: Record<string, unknown>): Promise<ResultRef>;
-  /** Run a jq expression over JSON (a value or a ResultRef). (capability: orch:read) */
+  /** Run a jq expression over JSON (a value or a ResultRef). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   jq(args?: Record<string, unknown>): Promise<unknown>;
-  /** Extract a precise value from a JSON ResultRef via JSONPath (no eval). (capability: orch:read) */
+  /** Extract a precise value from a JSON ResultRef via JSONPath (no eval). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   jsonpath(args?: Record<string, unknown>): Promise<unknown>;
-  /** List a directory in the jailed workspace. (capability: orch:read) */
+  /** List a directory in the jailed workspace. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   ls(args?: Record<string, unknown>): Promise<unknown>;
-  /** Fetch a specific memory file by id (self-tenant). (capability: orch:read) */
+  /** Fetch a specific memory file by id (self-tenant). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   memory_get(args?: Record<string, unknown>): Promise<unknown>;
-  /** Search the agent's long-term memory (self-tenant). (capability: orch:read) */
+  /** Search the agent's long-term memory (self-tenant). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   memory_search(args?: Record<string, unknown>): Promise<unknown>;
-  /** Read a file from the jailed workspace (offset/limit). (capability: orch:read) */
+  /** Read a file from the jailed workspace (offset/limit). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   read(args?: Record<string, unknown>): Promise<ResultRef>;
-  /** Search across the agent's own session history. (capability: orch:read) */
+  /** Search across the agent's own session history. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   session_search(args?: Record<string, unknown>): Promise<unknown>;
-  /** Read the status of one of the agent's sessions. (capability: orch:read) */
+  /** Read the status of one of the agent's sessions. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   session_status(args?: Record<string, unknown>): Promise<unknown>;
-  /** Read the message history of the agent's own session. (capability: orch:read) */
+  /** Read the message history of the agent's own session. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   sessions_history(args?: Record<string, unknown>): Promise<unknown>;
-  /** List the agent's own sessions. (capability: orch:read) */
+  /** List the agent's own sessions. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   sessions_list(args?: Record<string, unknown>): Promise<unknown>;
-  /** Run DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, read-only). (capability: orch:read) */
+  /** Run DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, read-only). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   sql(args?: Record<string, unknown>): Promise<unknown>;
-  /** Fetch a URL's readable content (daemon-side, DNS-pinned). (capability: orch:web) */
+  /** Fetch a URL's readable content (daemon-side, DNS-pinned). (capability: orch:web) Example: const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200); */
   web_fetch(args?: Record<string, unknown>): Promise<ResultRef>;
-  /** Search the web (daemon-side, DNS-pinned). (capability: orch:web) */
+  /** Search the web (daemon-side, DNS-pinned). (capability: orch:web) Example: const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200); */
   web_search(args?: Record<string, unknown>): Promise<ResultRef>;
 }
 
