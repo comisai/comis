@@ -10,7 +10,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseSupportTriage, parseSupportBundleManifest, parseConfigPosture } from "./types.js";
+import {
+  parseSupportTriage,
+  parseSupportBundleManifest,
+  parseConfigPosture,
+  parseAuditSummary,
+} from "./types.js";
 
 /**
  * Build a well-formed triage object, merging any overrides last so a test can
@@ -225,6 +230,46 @@ describe("parseSupportBundleManifest", () => {
     }
   });
 
+  it("accepts warnings sourced from the explain, audit, and trace-export sections", () => {
+    const result = parseSupportBundleManifest(
+      makeValidManifest({
+        warnings: [
+          {
+            source: "explain",
+            code: "explain_assemble_failed",
+            count: 1,
+            message: "the incident report could not be assembled",
+          },
+          {
+            source: "audit",
+            code: "audit_store_unreadable",
+            count: 1,
+            message: "the audit store could not be opened",
+          },
+          {
+            source: "trace-export",
+            code: "trace_export_failed",
+            count: 1,
+            message: "the trace bundle could not be written",
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.warnings?.map((w) => w.source)).toEqual(["explain", "audit", "trace-export"]);
+    }
+  });
+
+  it("rejects a warning carrying a source outside the closed set", () => {
+    const result = parseSupportBundleManifest(
+      makeValidManifest({
+        warnings: [{ source: "telemetry", code: "x", count: 1, message: "m" }],
+      }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects a redaction policy other than the pinned literal", () => {
     const result = parseSupportBundleManifest(makeValidManifest({ redaction: { policy: "some-other-policy" } }));
     expect(result.ok).toBe(false);
@@ -293,6 +338,56 @@ describe("parseConfigPosture", () => {
         configPosture: { detail: "d", count: 1, hint: "h", bogusNested: true },
       }),
     );
+    expect(result.ok).toBe(false);
+  });
+});
+
+/**
+ * Build a well-formed audit-summary digest, merging overrides last so a test
+ * can inject an unknown key, a drifted schema version, or a malformed byKind
+ * value over a valid baseline.
+ */
+function makeValidAuditSummary(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    total: 3,
+    byKind: { secret_access: 2, command_blocked: 1 },
+    ...overrides,
+  };
+}
+
+describe("parseAuditSummary", () => {
+  it("returns ok for a well-formed audit summary with the counts intact", () => {
+    const result = parseAuditSummary(makeValidAuditSummary());
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.schemaVersion).toBe(1);
+      expect(result.value.total).toBe(3);
+      expect(result.value.byKind.secret_access).toBe(2);
+      expect(result.value.capped).toBeUndefined();
+    }
+  });
+
+  it("returns ok when the optional capped flag marks a ceiling-hit window read", () => {
+    const result = parseAuditSummary(makeValidAuditSummary({ capped: true }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.capped).toBe(true);
+    }
+  });
+
+  it("rejects an audit summary carrying an unknown top-level key", () => {
+    const result = parseAuditSummary(makeValidAuditSummary({ bogusKey: 1 }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects an audit summary with a schemaVersion other than the literal one", () => {
+    const result = parseAuditSummary(makeValidAuditSummary({ schemaVersion: 2 }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a byKind entry whose value is not a number", () => {
+    const result = parseAuditSummary(makeValidAuditSummary({ byKind: { secret_access: "two" } }));
     expect(result.ok).toBe(false);
   });
 });
