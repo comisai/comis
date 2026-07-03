@@ -109,6 +109,18 @@ function toChatType(
 }
 
 /**
+ * The thread root to persist for a conversation-reference capture: the
+ * channel/group thread parent, or undefined for a 1:1 DM (which is always
+ * top-level). Shared by the inbound message capture (via the mapped
+ * `msteamsThreadId` metadata) and the inbound reaction capture so both key the
+ * same routing tuple and neither clobbers the other's stored thread root.
+ */
+export function resolveCaptureThreadId(activity: TeamsActivity): string | undefined {
+  if (toChatType(activity.conversation.conversationType) === "dm") return undefined;
+  return extractThreadRoot(activity);
+}
+
+/**
  * Map a Bot Framework activity to a NormalizedMessage.
  *
  * @param activity - A Bot Framework inbound activity
@@ -129,10 +141,8 @@ export function mapMsTeamsActivityToNormalized(
   if (activity.replyToId !== undefined) metadata.replyToId = activity.replyToId;
 
   // Thread isolation is a channel/group concern; a 1:1 DM has no thread root.
-  if (chatType !== "dm") {
-    const threadRoot = extractThreadRoot(activity);
-    if (threadRoot !== undefined) metadata.msteamsThreadId = threadRoot;
-  }
+  const threadRoot = resolveCaptureThreadId(activity);
+  if (threadRoot !== undefined) metadata.msteamsThreadId = threadRoot;
   metadata.mentionedBot = detectBotMention(activity.entities, activity.recipient?.id);
 
   return {

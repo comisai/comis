@@ -900,7 +900,7 @@ describe("createMsTeamsAdapter — typing keepalive over the injected TimerPort"
   });
 });
 
-describe("createMsTeamsAdapter — conversation-reference capture (PROACTIVE-01)", () => {
+describe("createMsTeamsAdapter — conversation-reference capture", () => {
   it("captures the reference keyed by the stripped channelId (tenant from channelData) on a successful inbound", async () => {
     const { store, capture } = makeFakeStore();
     const { deps } = makeAdapterDeps({ conversationStore: store });
@@ -933,7 +933,7 @@ describe("createMsTeamsAdapter — conversation-reference capture (PROACTIVE-01)
     expect(typeof ref.updatedAt).toBe("number");
   });
 
-  it("keys capture by the SAME stripped id a later proactive send targets, so the get() hits (PROACTIVE-02)", async () => {
+  it("keys capture by the SAME stripped id a later proactive send targets, so the get() hits", async () => {
     // End-to-end: an inbound channel reply carries a conversation.id WITH a
     // ;messageid= suffix, but the normalized channelId a session — and thus a
     // later proactive cron/heartbeat send — targets is the STRIPPED base id.
@@ -1022,9 +1022,43 @@ describe("createMsTeamsAdapter — conversation-reference capture (PROACTIVE-01)
     await flush();
     expect(handler).toHaveBeenCalledOnce();
   });
+
+  it("refreshes the reference on an inbound reaction (every inbound activity keeps it fresh)", async () => {
+    const { store, capture } = makeFakeStore();
+    const { deps } = makeAdapterDeps({ conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onReaction!(vi.fn());
+
+    adapter.handleWebhookEvents([reactionActivity()]);
+    await flush();
+
+    expect(capture).toHaveBeenCalledOnce();
+    const ref = capture.mock.calls[0]![0] as ConversationReference;
+    // Same stripped channelId a message capture / proactive send targets.
+    expect(ref.conversationId).toBe("19:channel-convo@thread.tacv2");
+    expect(ref.serviceUrl).toBe("https://smba.example.com/teams/");
+    expect(ref.tenantId).toBe(TENANT);
+    // Thread root resolved identically to the message path (extractThreadRoot →
+    // replyToId when the conversation id carries no ;messageid= suffix), so a
+    // reaction refresh never clobbers a message capture's stored thread root.
+    expect(ref.threadId).toBe("parent-msg-id");
+    expect(typeof ref.updatedAt).toBe("number");
+  });
+
+  it("does not capture on a reaction from a non-allowlisted reactor", async () => {
+    const { store, capture } = makeFakeStore();
+    const { deps } = makeAdapterDeps({ conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onReaction!(vi.fn());
+    adapter.handleWebhookEvents([
+      reactionActivity({ from: { id: "29:stranger", aadObjectId: "stranger-aad" } }),
+    ]);
+    await flush();
+    expect(capture).not.toHaveBeenCalled();
+  });
 });
 
-describe("createMsTeamsAdapter — proactive store-fallback send (PROACTIVE-02)", () => {
+describe("createMsTeamsAdapter — proactive store-fallback send", () => {
   const storedRef: ConversationReference = {
     conversationId: "19:dm-convo",
     serviceUrl: "https://smba.trafficmanager.net/emea/",

@@ -38,6 +38,7 @@ import { classifyMsTeamsError } from "./errors.js";
 import { buildMentionEntities } from "./mentions.js";
 import {
   mapMsTeamsActivityToNormalized,
+  resolveCaptureThreadId,
   type TeamsActivity,
 } from "./message-mapper.js";
 import {
@@ -255,6 +256,13 @@ export function createMsTeamsAdapter(
     }
 
     _lastMessageAt = now();
+
+    // An inbound reaction is an inbound activity too: refresh the routing tuple so
+    // a later proactive send recovers the freshest reference. Key by the same
+    // stripped channelId the message path and a proactive send target; the thread
+    // root is resolved identically so a reaction never clobbers a message capture.
+    captureReference(activity, reaction.channelId, resolveCaptureThreadId(activity));
+
     const traceId = randomUUID();
     deps.logger.debug(
       { step: "channels-inbound", channelType: "msteams" as const, traceId },
