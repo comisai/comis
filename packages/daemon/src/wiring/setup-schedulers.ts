@@ -265,7 +265,28 @@ export async function setupSchedulers(deps: {
                 // when quiet, suppress the delivery but STILL record the skip.
                 const nowMs = systemNowMs();
                 if (verdict.deliver && job.deliveryTarget) {
-                  if (isInQuietHours(schedulerConfig.quietHours, nowMs)) {
+                  // isInQuietHours throws on a malformed quietHours.start/end (the
+                  // schema does not validate HH:MM). Contain the throw here: it must
+                  // NOT reach executeJob's catch, where this DECIDED skip would degrade
+                  // to status:"error" → consecutiveErrors → auto-suspend, silently
+                  // killing the monitor. Fail toward not-pinging (treat as quiet) so a
+                  // routine status never fires at the wrong time; the skip is still recorded.
+                  let quiet: boolean;
+                  try {
+                    quiet = isInQuietHours(schedulerConfig.quietHours, nowMs);
+                  } catch (qhErr) {
+                    jobLogger.warn(
+                      {
+                        err: qhErr,
+                        step: "wake-gate",
+                        errorKind: "config" as const,
+                        hint: "scheduler.quietHours.start/end must be HH:MM — suppressing this routine deliver and recording the skip",
+                      },
+                      "Wake-gate quiet-hours check failed — suppressing deliver",
+                    );
+                    quiet = true;
+                  }
+                  if (quiet) {
                     jobLogger.debug(
                       { step: "wake-gate", wake: false, quietHours: true },
                       "Wake-gate deliver suppressed (quiet hours) — recording skip only",
