@@ -565,6 +565,45 @@ describe("orchestrate-tool", () => {
     expect(arg.runId.length).toBeGreaterThan(0);
   });
 
+  it("emits the operator-facing completion INFO carrying the runId and durationMs", async () => {
+    // Guards that the extraction did not drop the completion INFO (runId +
+    // durationMs) — the run stays observable, and the SAME runId that rides the
+    // INFO also rides the tool's `details` (correlatable end to end).
+    const infoCalls: Array<{ fields: Record<string, unknown>; msg: string }> = [];
+    const logger: ComisLogger = (() => {
+      const noop = (): void => {};
+      const base: ComisLogger = {
+        level: "silent",
+        trace: noop,
+        debug: noop,
+        info: (a?: unknown, b?: unknown) => {
+          infoCalls.push({
+            fields: (a ?? {}) as Record<string, unknown>,
+            msg: typeof b === "string" ? b : "",
+          });
+        },
+        warn: noop,
+        error: noop,
+        fatal: noop,
+        audit: noop,
+        child: () => base,
+      };
+      return base;
+    })();
+    const { deps } = makeDeps({ logger });
+    const tool = createOrchestrateTool(deps);
+
+    const result = await tool.execute("c", { script: "1", language: "ts" });
+
+    const completeInfo = infoCalls.find((i) => /orchestrate run complete/i.test(i.msg));
+    expect(completeInfo, "expected a completion INFO line").toBeDefined();
+    expect(typeof completeInfo!.fields.runId).toBe("string");
+    expect(String(completeInfo!.fields.runId).length).toBeGreaterThan(0);
+    expect(typeof completeInfo!.fields.durationMs).toBe("number");
+    const details = (result as { details?: { runId?: unknown } }).details;
+    expect(details?.runId).toBe(completeInfo!.fields.runId);
+  });
+
   it("calls cleanupRun even when the jailed child fails (runs in the finally)", async () => {
     const spawnFn: OrchestrateSpawnFn = () => makeFakeChild("partial", 1);
     const { deps, cleanupRun } = makeDeps({ spawnFn });
