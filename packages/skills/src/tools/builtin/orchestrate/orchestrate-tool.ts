@@ -464,8 +464,14 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           stdoutCharsReentered: outcome.stdoutCharsReentered,
           resultRefCount: agg.count,
           resultRefBytes: agg.bytes,
-          estSavedTokens: savings.estSavedTokens,
-          savedRatio: savings.savedRatio,
+          // Savings is carried ONLY when the run materialized ResultRefs — the
+          // documented contract (orchestrate.mdx / json-rpc.mdx), the fold's
+          // omit-branch, and the schema test. A run that materialized nothing
+          // OMITS both keys rather than carrying a phantom 0, mirroring the sibling
+          // optional leaseId / sessionKey / failureClass conditional spreads.
+          ...(agg.count > 0
+            ? { estSavedTokens: savings.estSavedTokens, savedRatio: savings.savedRatio }
+            : {}),
           timestamp: now(),
         });
       };

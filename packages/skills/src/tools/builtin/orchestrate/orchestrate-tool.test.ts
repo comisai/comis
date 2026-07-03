@@ -927,8 +927,9 @@ describe("orchestrate-tool", () => {
   // ---------------------------------------------------------------------------
 
   describe("orchestrate:run_summary emit (EXPLAIN-02 + SAVE-01)", () => {
-    // The EXACT content-free key set on a SUCCESS emit (leaseId + sessionKey
-    // present; failureClass ABSENT). NEVER a stderr tail / script / params (INV-5).
+    // The EXACT content-free key set on a MATERIALIZED-run SUCCESS emit (leaseId +
+    // sessionKey present; failureClass ABSENT; savings PRESENT because the run
+    // materialized ResultRefs). NEVER a stderr tail / script / params (INV-5).
     const SUCCESS_KEYS = [
       "durationMs",
       "estSavedTokens",
@@ -945,6 +946,12 @@ describe("orchestrate-tool", () => {
       "stdoutCharsReentered",
       "timestamp",
     ];
+    // The key set on a ZERO-materialization SUCCESS: savings (estSavedTokens /
+    // savedRatio) is carried ONLY when the run materialized ResultRefs (the
+    // documented contract + the fold's omit-branch), so both keys are ABSENT here.
+    const SUCCESS_KEYS_NO_SAVINGS = SUCCESS_KEYS.filter(
+      (k) => k !== "estSavedTokens" && k !== "savedRatio",
+    );
 
     it("a SUCCESSFUL run emits exactly one content-free run_summary with the child leaseId + SAVE-01 numbers, BEFORE cleanupRun", async () => {
       const { eventBus, emitted } = makeEventBusSpy();
@@ -987,8 +994,41 @@ describe("orchestrate-tool", () => {
       expect(payload.savedRatio).toBe(expected.savedRatio);
       // runAggregate was consulted (real counts, not 0) — proves capture-before-cleanup.
       expect(runAggregate).toHaveBeenCalledWith({ workspacePath });
-      // INV-5: the payload key set is EXACTLY the content-free declared fields.
+      // INV-5: the payload key set is EXACTLY the content-free declared fields —
+      // savings PRESENT because this run materialized 3 ResultRefs.
       expect(Object.keys(payload).sort()).toEqual(SUCCESS_KEYS);
+      expect("estSavedTokens" in payload).toBe(true);
+      expect("savedRatio" in payload).toBe(true);
+    });
+
+    it("a ZERO-materialization SUCCESS OMITS the savings keys (savings carried only when the run materialized ResultRefs)", async () => {
+      // No runAggregate → agg={count:0,bytes:0}: the run materialized nothing, so
+      // estimateSavings would return {estSavedTokens:0, savedRatio:0}. Per the
+      // documented contract (orchestrate.mdx / json-rpc.mdx), the fold's omit-branch,
+      // and the schema test, the emit must OMIT both savings keys rather than carry a
+      // phantom 0 — mirroring the sibling optional leaseId / sessionKey spreads.
+      const { eventBus, emitted } = makeEventBusSpy();
+      const mintRunLease = vi.fn(() => ({ leaseId: "child-lease-1", bearer: "bearer-1" }));
+      const { deps } = makeDeps({
+        eventBus,
+        mintRunLease,
+        rootRunId: "root-agent-1",
+        sessionKey: "tenant:user:channel",
+        spawnFn: () => makeFakeChild("ok-output\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      expect(emitted).toHaveLength(1);
+      const { payload } = emitted[0]!;
+      expect(payload.exitCode).toBe(0);
+      expect(payload.resultRefCount).toBe(0);
+      expect(payload.resultRefBytes).toBe(0);
+      // Savings keys ABSENT on a zero-materialization success (not carried as 0).
+      expect("estSavedTokens" in payload).toBe(false);
+      expect("savedRatio" in payload).toBe(false);
+      expect(Object.keys(payload).sort()).toEqual(SUCCESS_KEYS_NO_SAVINGS);
     });
 
     it("a NON-ZERO exit emits failureClass nonzero_exit + the real exit code (no stderr tail on the bus)", async () => {
