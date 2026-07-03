@@ -164,6 +164,22 @@ describe("createMsTeamsAdapter — route-driven lifecycle (start/stop/getStatus)
     expect(adapter.channelType).toBe("msteams");
     expect(typeof adapter.channelId).toBe("string");
   });
+
+  it("returns a validation err with a WARN for an unsupported platform action", async () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const result = await adapter.platformAction("pin", { messageId: "x" });
+    expect(result.ok).toBe(false);
+    const validationWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "validation",
+      );
+    expect(validationWarn).toBeDefined();
+  });
 });
 
 describe("createMsTeamsAdapter — inbound handleWebhookEvents → processEvent fanout", () => {
@@ -293,6 +309,50 @@ describe("createMsTeamsAdapter — inbound handleWebhookEvents → processEvent 
     adapter.handleWebhookEvents([messageActivity()]);
     expect(first).toHaveBeenCalledOnce();
     expect(second).toHaveBeenCalledOnce();
+  });
+
+  it("logs an internal error when a handler throws synchronously and still runs the next handler", () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const throwing: MessageHandler = () => {
+      throw new Error("sync handler boom");
+    };
+    const survivor = vi.fn<MessageHandler>();
+    adapter.onMessage(throwing);
+    adapter.onMessage(survivor);
+
+    adapter.handleWebhookEvents([messageActivity()]);
+
+    expect(survivor).toHaveBeenCalledOnce();
+    const internalError = loggerSpy.error.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "internal",
+      );
+    expect(internalError).toBeDefined();
+  });
+
+  it("logs an internal error when a handler rejects asynchronously", async () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onMessage(() => Promise.reject(new Error("async handler boom")));
+
+    adapter.handleWebhookEvents([messageActivity()]);
+    // Let the rejection microtask settle so the .catch handler runs.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const internalError = loggerSpy.error.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "internal",
+      );
+    expect(internalError).toBeDefined();
   });
 });
 
