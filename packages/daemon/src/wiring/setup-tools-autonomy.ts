@@ -31,6 +31,7 @@ import {
   type ComisLogger,
   type PerAgentConfig,
   type SessionKey,
+  type TypedEventBus,
 } from "@comis/core";
 import type { PlatformToolProvider } from "@comis/skills";
 import type { SandboxProvider } from "@comis/skills/tools";
@@ -87,6 +88,13 @@ export interface AutonomyToolInputs {
   readonly logger: ComisLogger;
   /** The filtered inherited env the runner scrubs; the lease vars ride placeholders. */
   readonly baseEnv: Record<string, string | undefined> | undefined;
+  /**
+   * The assembly event bus. Threaded into the orchestrate runner so each run
+   * emits a content-free `orchestrate:run_summary` from the TOOL (where this bus
+   * reaches the live per-session trajectory bridge — NOT a daemon graph handler).
+   * Absent ⇒ the runner does not emit (no regression to the older wiring).
+   */
+  readonly eventBus?: TypedEventBus;
 }
 
 /** The wiring {@link buildAutonomyToolWiring} returns: the minted env + the orchestrate tool. */
@@ -208,6 +216,12 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           mintRunLease, // per-run child bearer overrides the assembly bearer (D5)
           store: createResultRefStore({ logger: input.logger }),
           baseEnv: input.baseEnv ?? {},
+          // The run_summary emit channel + the self-attribution keys (the
+          // daemon-shared bus fans out to every session bridge — the payload
+          // carries rootRunId + sessionKey so it lands on the right report).
+          ...(input.eventBus !== undefined ? { eventBus: input.eventBus } : {}),
+          rootRunId,
+          sessionKey,
         }) as unknown as AgentTool)
       : undefined;
 

@@ -54,6 +54,7 @@ import {
   systemNowMs,
   systemSetTimeout,
   type ComisLogger,
+  type EventMap,
   type SystemTimeoutHandle,
 } from "@comis/core";
 import { createToolResultSizeGuard } from "@comis/agent";
@@ -66,7 +67,13 @@ import type {
 } from "../sandbox/types.js";
 import { loadSeccompProfileFd, closeSeccompProfileFd } from "../sandbox/seccomp-profile.js";
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
-import type { CleanupRunContext, GcRunContext, MaterializeContext } from "./result-ref-store.js";
+import type {
+  CleanupRunContext,
+  GcRunContext,
+  MaterializeContext,
+  RunAggregateContext,
+} from "./result-ref-store.js";
+import { estimateSavings } from "./savings-estimate.js";
 import type { ResultRef } from "@comis/core";
 
 // Activity label (channel render): the descriptor name equals the emitted tool
@@ -133,6 +140,15 @@ export interface OrchestrateResultStore {
   ): Promise<ResultRef | { error: string } | undefined>;
   gcRun(ctx: GcRunContext): Promise<void>;
   cleanupRun(ctx: CleanupRunContext): Promise<void>;
+  /**
+   * Read the run's materialized `{count,bytes}` aggregate — a READ-ONLY
+   * enumeration of `results/`. The runner captures it BEFORE the `finally`
+   * `cleanupRun` wipes the dir (the run_summary savings input). Optional so a
+   * minimal stub store compiles; the concrete `createResultRefStore` always
+   * provides it. Absent ⇒ the runner treats the run as having materialized
+   * nothing (`{count:0,bytes:0}`).
+   */
+  runAggregate?(ctx: RunAggregateContext): { count: number; bytes: number };
 }
 
 /** Dependencies for the orchestrate runner (AGENTS.md §2.4 — injected). */
@@ -196,6 +212,32 @@ export interface OrchestrateToolDeps {
    * never an unauthenticated run).
    */
   readonly mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+  /**
+   * The agent-side event bus, structurally typed to the ONE channel this runner
+   * emits (the emit-capability-audit.ts EmitCapabilityAuditDeps precedent). When
+   * present, every run — success AND each failure class — emits a content-free
+   * `orchestrate:run_summary` at completion (the `comis explain` / `comis fleet`
+   * signal). Emit from the TOOL (not a daemon graph handler) because this
+   * threaded bus reaches the live per-session trajectory bridge; the bridge
+   * attaches at execute() START, so the completion-time emit always lands.
+   * Absent (older wiring) ⇒ no emit (never an error — the run is unaffected).
+   */
+  readonly eventBus?: {
+    emit: (
+      event: "orchestrate:run_summary",
+      payload: EventMap["orchestrate:run_summary"],
+    ) => unknown;
+  };
+  /**
+   * The tree-stable root the run's lease inherits — an attribution key on the
+   * run_summary event (the daemon-shared bus fans out to every session bridge, so
+   * the payload self-attributes, never inferred from ambient state). Threaded
+   * from `buildAutonomyToolWiring`. Absent ⇒ the emit falls back to the run's own
+   * `runId` (never undefined on the wire).
+   */
+  readonly rootRunId?: string;
+  /** The owning session — the other run_summary attribution key. Threaded from the wiring; absent for a heartbeat/cron run. */
+  readonly sessionKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +292,48 @@ export const MAX_TIMEOUT_MS = 10 * 60_000;
 
 /** The per-run aggregate `results/` budget passed to the store's GC. */
 const PER_RUN_AGGREGATE_CAP_BYTES = 64 * 1024 * 1024;
+
+/** The closed run-degradation classes on `orchestrate:run_summary.failureClass`. */
+type OrchestrateFailureClass = NonNullable<EventMap["orchestrate:run_summary"]["failureClass"]>;
+
+/** Exit-code sentinels for the kill / spawn-fail paths where the child returns none. */
+const EXIT_CODE_TIMEOUT = 124; // GNU `timeout` convention.
+const EXIT_CODE_SIGKILL = 137; // 128 + SIGKILL(9) — the stdout hard-cap kill.
+const EXIT_CODE_SPAWN_FAIL = 127; // exec/spawn failure convention.
+
+/**
+ * A classified orchestrate-run failure: the closed {@link OrchestrateFailureClass}
+ * + the process exit code (a sentinel where the child produced none). The runner
+ * maps each throw site to a member BEFORE the run_summary emit (the
+ * `durable:orphaned` closed-enum discipline); the free-text message stays on the
+ * bounded tool-error surface, NEVER on the bus.
+ */
+class OrchestrateRunFailure extends Error {
+  readonly failureClass: OrchestrateFailureClass;
+  readonly exitCode: number;
+  constructor(message: string, failureClass: OrchestrateFailureClass, exitCode: number) {
+    super(message);
+    this.name = "OrchestrateRunFailure";
+    this.failureClass = failureClass;
+    this.exitCode = exitCode;
+  }
+}
+
+/**
+ * Map a thrown run error to its closed failure class + exit code. A carried
+ * {@link OrchestrateRunFailure} forwards its own class; any UNCLASSIFIED throw (a
+ * synchronous spawn throw, a child `error` event, a jail-unavailable refusal) is
+ * a spawn-class failure — the jail could not run.
+ */
+function classifyRunError(err: unknown): {
+  failureClass: OrchestrateFailureClass;
+  exitCode: number;
+} {
+  if (err instanceof OrchestrateRunFailure) {
+    return { failureClass: err.failureClass, exitCode: err.exitCode };
+  }
+  return { failureClass: "spawn_fail", exitCode: EXIT_CODE_SPAWN_FAIL };
+}
 
 // ---------------------------------------------------------------------------
 // Pure exported helper — the env-scrub (macOS-unit-testable).
@@ -347,10 +431,44 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // Bound the model-supplied timeout (fallback default, clamp ceiling)
       // so a jailed script cannot pin a child for an arbitrarily long window.
       const timeoutMs = clampTimeoutMs(params.timeoutMs);
-      // The per-run child leaseId (D5) — captured for downstream attribution
-      // (Plan 04 reads it for the run_summary emit). Undefined when no
-      // mintRunLease seam is wired (the assembly bearer authenticates instead).
+      // The per-run child leaseId (D5) — the per-run correlator carried on the
+      // run_summary emit. Undefined when no mintRunLease seam is wired (the
+      // assembly bearer authenticates instead).
       let childLeaseId: string | undefined;
+
+      // Emit the content-free run_summary (EXPLAIN-02) — success AND every failure
+      // class route through here. Captures the run's materialized {count,bytes}
+      // BEFORE the finally's cleanup wipes results/ (Pitfall 3), computes the
+      // SAVE-01 estimate, and self-attributes via rootRunId + sessionKey (the
+      // daemon-shared bus fans out to every session bridge). A no-op when no
+      // eventBus is wired — never the stderr tail / script body / params (INV-5).
+      const emitRunSummary = (outcome: {
+        readonly exitCode: number;
+        readonly failureClass?: OrchestrateFailureClass;
+        readonly stdoutBytesRaw: number;
+        readonly stdoutCharsReentered: number;
+      }): void => {
+        if (deps.eventBus === undefined) return;
+        const agg = deps.store.runAggregate?.({ workspacePath }) ?? { count: 0, bytes: 0 };
+        const savings = estimateSavings(agg.bytes, outcome.stdoutCharsReentered);
+        deps.eventBus.emit("orchestrate:run_summary", {
+          runId,
+          ...(childLeaseId !== undefined ? { leaseId: childLeaseId } : {}),
+          rootRunId: deps.rootRunId ?? runId,
+          ...(deps.sessionKey !== undefined ? { sessionKey: deps.sessionKey } : {}),
+          language: params.language,
+          durationMs: now() - startedMs,
+          exitCode: outcome.exitCode,
+          ...(outcome.failureClass !== undefined ? { failureClass: outcome.failureClass } : {}),
+          stdoutBytesRaw: outcome.stdoutBytesRaw,
+          stdoutCharsReentered: outcome.stdoutCharsReentered,
+          resultRefCount: agg.count,
+          resultRefBytes: agg.bytes,
+          estSavedTokens: savings.estSavedTokens,
+          savedRatio: savings.savedRatio,
+          timestamp: now(),
+        });
+      };
 
       log.debug({ runId, step: "start", language: params.language }, "orchestrate run starting");
 
@@ -481,6 +599,11 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           childEnv.COMIS_AGENT_BIN = jailAgentCli.binPath;
         }
 
+        // A run reaches the jail WITH a lease iff COMIS_CAP_LEASE was set (the
+        // assembly bearer via brokerSpawnEnv, or the per-run child bearer via
+        // mintRunLease). A run with none is degraded — flagged lease_absent below.
+        const leasePresent = childEnv.COMIS_CAP_LEASE !== undefined;
+
         // 6. Spawn the jailed child; capture stdout ONLY (stderr/intermediate
         //    never re-enter); size-bounce the stdout.
         const stdout = await runJailedChild(
@@ -493,11 +616,30 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         );
 
         const bounced = sizeBounceStdout(stdout);
+        // The POST-bounce char count — the tokens that actually re-entered
+        // context (the SAVE-01 "actual"; raw stdout.length would overstate).
+        const stdoutCharsReentered = bounced.reduce((sum, b) => sum + b.text.length, 0);
+        // A clean exit with NO lease is still a degraded run — name it
+        // lease_absent so `comis explain` can attribute the missing lease.
+        emitRunSummary({
+          exitCode: 0,
+          failureClass: leasePresent ? undefined : "lease_absent",
+          stdoutBytesRaw: stdout.length,
+          stdoutCharsReentered,
+        });
         log.info(
           { runId, step: "complete", durationMs: now() - startedMs, stdoutBytes: stdout.length },
           "orchestrate run complete",
         );
         return { content: bounced, details: { runId, stdoutBytes: stdout.length } };
+      } catch (err) {
+        // Every failure class emits a run_summary too — mapped to the closed
+        // enum, BEFORE the finally's cleanup wipes results/ — then re-throws so
+        // the AgentTool boundary still surfaces the original (bounded) tool error
+        // (the stderr tail stays on THAT surface, never on the bus).
+        const { failureClass, exitCode } = classifyRunError(err);
+        emitRunSummary({ exitCode, failureClass, stdoutBytesRaw: 0, stdoutCharsReentered: 0 });
+        throw err;
       } finally {
         // 7. Close the PARENT's copy of the seccomp fd. By the time the
         //    finally runs the child has already inherited it (spawn returned, or
@@ -565,7 +707,13 @@ function runJailedChild(
       } catch {
         /* already gone */
       }
-      reject(new Error(`orchestrate run exceeded its ${timeoutMs}ms timeout`));
+      reject(
+        new OrchestrateRunFailure(
+          `orchestrate run exceeded its ${timeoutMs}ms timeout`,
+          "timeout",
+          EXIT_CODE_TIMEOUT,
+        ),
+      );
     }, timeoutMs);
     timer.unref?.();
 
@@ -588,7 +736,13 @@ function runJailedChild(
           { runId: ctx.runId, errorKind: "resource" as const, stdoutBytes, hint: `Jailed stdout exceeded the ${STDOUT_HARD_CAP_BYTES}B hard cap — the script was killed. Have it write high-volume output to a ResultRef (materialize) and slice it in-jail instead of console.log-ing it.` },
           "orchestrate jailed child exceeded the stdout hard cap — killed",
         );
-        reject(new Error(`orchestrate stdout exceeded the ${STDOUT_HARD_CAP_BYTES}B hard cap`));
+        reject(
+          new OrchestrateRunFailure(
+            `orchestrate stdout exceeded the ${STDOUT_HARD_CAP_BYTES}B hard cap`,
+            "stdout_cap",
+            EXIT_CODE_SIGKILL,
+          ),
+        );
         return;
       }
       stdout += chunk.toString("utf8");
@@ -624,8 +778,10 @@ function runJailedChild(
           "orchestrate jailed child exited non-zero",
         );
         reject(
-          new Error(
+          new OrchestrateRunFailure(
             `orchestrate jailed child exited with code ${code}${tail ? `:\n${tail}` : ""}`,
+            "nonzero_exit",
+            code,
           ),
         );
         return;
