@@ -672,6 +672,146 @@ describe("orchestrate-tool", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // The per-run child lease TTL must cover the one-shot repair window.
+  // The child lease is minted ONCE, before the run engine. When auto-repair is
+  // enabled for a run (a repair-eligible class AND a wired repairSeam), the
+  // engine awaits ONE utility-model completion — bounded by the seam's ~120s
+  // abort ceiling — BETWEEN the initial run and the repaired re-run, all under
+  // that SAME lease. A lease sized to the tight `timeoutMs` therefore expires
+  // during a slow repair, so the repaired re-run's in-jail cap calls
+  // authenticate with a dead lease and are denied at the endpoint (fails closed,
+  // but the repair silently no-ops for exactly the slow/local small models the
+  // feature targets). The runner must SIZE the child-lease TTL to
+  // `timeoutMs + repairBudget` when repair is enabled, and keep the tight
+  // `timeoutMs` when it is not — minting the lease exactly ONCE (single-leaseId
+  // attribution preserved; INV-1/INV-7 intact), just sized to the real window.
+  // -------------------------------------------------------------------------
+  describe("child-lease TTL sizing for the one-shot repair window", () => {
+    const importError = "ImportError: cannot import name 'foo' from 'comis_tools'";
+
+    /**
+     * A fake lease store keyed by a test-local virtual clock: `mintRunLease`
+     * records the bearer's expiry as `clock + ttlMs`; `advance(ms)` moves the
+     * clock forward to simulate a slow utility-model repair completion between the
+     * two runs; `validAtNow(bearer)` reports whether the lease is unexpired at the
+     * current clock — sampled at the re-run's spawn, the exact moment its in-jail
+     * cap calls would authenticate. Independent of the runner's own `deps.now`
+     * (the real LeaseManager tracks expiry against its own clock; the runner only
+     * passes a TTL number).
+     */
+    function makeLeaseClock(): {
+      mintRunLease: ReturnType<typeof vi.fn>;
+      advance: (ms: number) => void;
+      validAtNow: (bearer: string | undefined) => boolean;
+    } {
+      let clockMs = 0;
+      const leases = new Map<string, { expiresAt: number }>();
+      let n = 0;
+      const mintRunLease = vi.fn((_runId: string, ttlMs: number) => {
+        n += 1;
+        const bearer = `child-bearer-${n}`;
+        leases.set(bearer, { expiresAt: clockMs + ttlMs });
+        return { leaseId: `child-lease-${n}`, bearer };
+      });
+      return {
+        mintRunLease,
+        advance: (ms) => {
+          clockMs += ms;
+        },
+        validAtNow: (bearer) => {
+          if (bearer === undefined) return false;
+          const lease = leases.get(bearer);
+          return lease !== undefined && lease.expiresAt > clockMs;
+        },
+      };
+    }
+
+    it("keeps the re-run's lease valid across a slow repair completion when auto-repair is enabled", async () => {
+      const timeoutMs = 60_000;
+      const clock = makeLeaseClock();
+
+      // The repair seam consumes 90s of wall-clock — PAST the tight `timeoutMs`
+      // (60s) lease, but well within a repair-sized `timeoutMs + ~120s` lease.
+      const repairSeam = vi.fn(async () => {
+        clock.advance(90_000);
+        return "const fixed = 1;\n";
+      });
+
+      // Sample the re-run's lease validity at the moment its child is spawned.
+      let reRunLeaseValidAtSpawn: boolean | undefined;
+      let spawnCount = 0;
+      const spawnFn = vi.fn<OrchestrateSpawnFn>((_bin, _args, opts) => {
+        spawnCount += 1;
+        if (spawnCount === 2) {
+          reRunLeaseValidAtSpawn = clock.validAtNow(opts?.env?.COMIS_CAP_LEASE);
+        }
+        return spawnCount === 1
+          ? makeFakeChild("", 1, importError)
+          : makeFakeChild("repaired-ok\n");
+      });
+
+      const { deps } = makeDeps({
+        spawnFn,
+        capabilityClass: "small",
+        repairSeam,
+        mintRunLease: clock.mintRunLease,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", { script: "import x", language: "ts", timeoutMs });
+
+      // The repaired re-run actually ran (its stdout came back) ...
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("repaired-ok");
+      // ... and its lease was STILL VALID when it spawned, so its in-jail cap
+      // calls would authenticate. Pre-fix: the tight 60s lease had
+      // already expired at t=90s → cap calls denied → silent repair no-op.
+      expect(reRunLeaseValidAtSpawn).toBe(true);
+      // The lease was minted exactly ONCE (sized, never re-minted — single-leaseId
+      // attribution preserved), with a TTL that EXCEEDS the tight run timeout.
+      expect(clock.mintRunLease).toHaveBeenCalledTimes(1);
+      expect(clock.mintRunLease.mock.calls[0]![1]).toBeGreaterThan(timeoutMs);
+    });
+
+    it("keeps the tight timeoutMs TTL when auto-repair is class-gated OFF (frontier)", async () => {
+      const timeoutMs = 60_000;
+      const clock = makeLeaseClock();
+      const repairSeam = vi.fn(async () => "const fixed = 1;\n");
+      const { deps } = makeDeps({
+        spawnFn: () => makeFakeChild("ok\n"),
+        capabilityClass: "frontier",
+        repairSeam,
+        mintRunLease: clock.mintRunLease,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts", timeoutMs });
+
+      // Repair is OFF for a frontier model — no repair window to cover — so the
+      // child lease stays sized to the tight run timeout (TTL unchanged).
+      expect(clock.mintRunLease).toHaveBeenCalledTimes(1);
+      expect(clock.mintRunLease.mock.calls[0]![1]).toBe(timeoutMs);
+    });
+
+    it("keeps the tight timeoutMs TTL when no repair seam is wired even under a small class", async () => {
+      const timeoutMs = 45_000;
+      const clock = makeLeaseClock();
+      const { deps } = makeDeps({
+        spawnFn: () => makeFakeChild("ok\n"),
+        capabilityClass: "small",
+        // No repairSeam → nothing to cover → tight TTL.
+        mintRunLease: clock.mintRunLease,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts", timeoutMs });
+
+      expect(clock.mintRunLease).toHaveBeenCalledTimes(1);
+      expect(clock.mintRunLease.mock.calls[0]![1]).toBe(timeoutMs);
+    });
+  });
+
   it("honest-degrades on an unavailable jail (no node/bwrap) — throws, NO spawn", async () => {
     const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild(""));
     const { deps } = makeDeps({
