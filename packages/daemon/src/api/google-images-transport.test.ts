@@ -2,7 +2,7 @@
 /**
  * Tests for the Google (Gemini) Images transport (google-images-transport.ts).
  *
- * The transport is a pi-ai `ImagesApiFunction` that constructs a `GoogleGenAI`
+ * The transport is a pi-ai `ImagesFunction` that constructs a `GoogleGenAI`
  * client from `options.apiKey` and calls `models.generateContent` with
  * `config.responseModalities:[Modality.IMAGE]`, extracting the inline image
  * from `candidates[0].content.parts[].inlineData.{data,mimeType}`.

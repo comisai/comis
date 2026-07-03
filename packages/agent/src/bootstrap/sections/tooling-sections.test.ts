@@ -423,7 +423,7 @@ describe("deferred parameter on section builders", () => {
 
 describe("buildPrivilegedToolsSection catalog interpolation", () => {
   it("rendered Built-in first bullet contains every name from getProviders()", async () => {
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const result = buildPrivilegedToolsSection(["providers_manage"], false);
     const joined = result.join("\n");
     for (const p of getProviders()) {

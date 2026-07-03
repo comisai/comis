@@ -13,8 +13,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 const { getProvidersMock } = vi.hoisted(() => ({
   getProvidersMock: vi.fn<() => string[]>(() => []),
 }));
-vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@earendil-works/pi-ai")>();
+vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-ai/compat")>();
   return { ...actual, getProviders: getProvidersMock };
 });
 

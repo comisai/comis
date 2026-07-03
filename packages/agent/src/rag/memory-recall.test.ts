@@ -62,11 +62,11 @@ import { initSchema, createLcdStore, buildProvenanceReadStore } from "@comis/mem
 // FULL recall and asserts neither spy was ever called. The mock is file-wide (vi.mock is
 // hoisted) but harmless to every other test here: memory-recall.ts does not import pi-ai,
 // so the spies simply stay at zero — which is exactly the property under assertion.
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn(() => ({ id: "mock-model" })),
   completeSimple: vi.fn(async () => ({ content: [{ type: "text", text: "{}" }] })),
 }));
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 
 const NOW = 1_700_000_000_000;
 const SESSION_KEY = "telegram:chat_1:user_a" as unknown as SessionKey;

@@ -67,7 +67,7 @@ const { getModelMock, isVisionCapableMock, visionState } = vi.hoisted(() => {
   return { getModelMock, isVisionCapableMock, visionState };
 });
 vi.mock("@comis/agent", () => ({ isVisionCapable: isVisionCapableMock }));
-vi.mock("@earendil-works/pi-ai", () => ({ getModel: getModelMock }));
+vi.mock("@earendil-works/pi-ai/compat", () => ({ getModel: getModelMock }));
 
 // Mock @comis/skills functions used by handlers
 vi.mock("@comis/skills", () => ({

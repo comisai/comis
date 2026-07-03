@@ -8,15 +8,8 @@
  * @module
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-  registerImagesApiProvider,
-  getImagesApiProvider,
-  getImageModel,
-  type AssistantImages,
-  type ImagesContext,
-  type ImagesModel,
-  type ImagesOptions,
-} from "@earendil-works/pi-ai";
+import { type AssistantImages, type ImagesContext, type ImagesModel, type ImagesOptions } from "@earendil-works/pi-ai";
+import { registerImagesApiProvider, getImagesApiProvider, getImageModel } from "@earendil-works/pi-ai/compat";
 import type { ImageErrorKind, ImageGenOutput } from "@comis/core";
 import { makeMockLogger } from "../../../../test/support/mock-logger.js";
 import {

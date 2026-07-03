@@ -19,12 +19,12 @@
  */
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn(() => ({ id: "mock-model", reasoning: false })),
   completeSimple: vi.fn(),
 }));
 
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 import { createLlmReflectionAdapter } from "./llm-reflection-adapter.js";
 
 /** Wrap any text as a completeSimple text-part response. */

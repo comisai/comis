@@ -27,7 +27,8 @@ import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
 import { sectionSeparator, info } from "../theme.js";
 import { validateApiKey, getKeyPrefix } from "../validators/api-key.js";
-import { getModels, type KnownProvider } from "@earendil-works/pi-ai";
+import { type KnownProvider } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 
 import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 import { handleCodexOAuth } from "./04-oauth-helpers.js";

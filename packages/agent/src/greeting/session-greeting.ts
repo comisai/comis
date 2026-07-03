@@ -14,7 +14,7 @@
  */
 
 import { ok, err, type Result } from "@comis/shared";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------

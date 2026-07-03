@@ -12,7 +12,8 @@
  */
 
 import { createHmac } from "node:crypto";
-import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
+import { type KnownProvider } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { resolveOperationDefaults } from "@comis/agent";
 import { TOOL_PROFILES } from "@comis/skills";
 

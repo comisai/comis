@@ -20,8 +20,8 @@ import { INITIAL_STATE } from "../types.js";
 vi.mock("@clack/prompts", () => ({}));
 
 // Mock pi-ai's getModels so we control the catalog baseUrl in tests
-vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@earendil-works/pi-ai")>();
+vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-ai/compat")>();
   return {
     ...actual,
     getModels: vi.fn(() => [{ baseUrl: "https://api.anthropic.com" }]),
@@ -107,7 +107,7 @@ vi.mock("../../util/offline-secrets-store.js", () => ({
 }));
 
 import { credentialsStep } from "./04-credentials.js";
-import { getModels } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { loginOpenAICodexOAuth, isRemoteEnvironment, loadConfigFile, validateConfig, selectOAuthCredentialStore } from "@comis/core";
 import { callTyped, withClient } from "../../client/rpc-client.js";
 import { requireDaemonOrExit } from "../../util/daemon-required.js";
@@ -117,11 +117,11 @@ import { offlineOAuthProfileSet } from "../../util/offline-secrets-store.js";
 // Capture the un-mocked `getModels` so the composed-URL regression tests
 // can compose URLs against the real pi-ai catalog (the module-level
 // `vi.mock` returns a sentinel baseUrl).
-let actualGetModels: typeof import("@earendil-works/pi-ai").getModels;
+let actualGetModels: typeof import("@earendil-works/pi-ai/compat").getModels;
 
 beforeAll(async () => {
-  const actual = await vi.importActual<typeof import("@earendil-works/pi-ai")>(
-    "@earendil-works/pi-ai",
+  const actual = await vi.importActual<typeof import("@earendil-works/pi-ai/compat")>(
+    "@earendil-works/pi-ai/compat",
   );
   actualGetModels = actual.getModels;
 });

@@ -17,11 +17,8 @@
  * @module
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-  registerImagesApiProvider,
-  type AssistantImages,
-  type ProviderImagesOptions,
-} from "@earendil-works/pi-ai";
+import { type AssistantImages, type ProviderImagesOptions } from "@earendil-works/pi-ai";
+import { registerImagesApiProvider } from "@earendil-works/pi-ai/compat";
 import type { OAuthError, OAuthTokenManager } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { makeMockLogger } from "../../../../test/support/mock-logger.js";

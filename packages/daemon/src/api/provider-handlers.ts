@@ -42,7 +42,8 @@ import type { ProviderEntry, PerAgentConfig } from "@comis/core";
  * the in-handler logic, not the contract parse.
  */
 const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
-import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
+import { type KnownProvider } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { checkBuiltInProviderRedundancy } from "./shared/builtin-provider-guard.js";
 import { persistToConfig } from "./shared/persist-to-config.js";
 import { probeProviderAuth } from "./shared/probe-provider-auth.js";

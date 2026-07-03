@@ -12,7 +12,7 @@
 
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { AuthStorage } from "@earendil-works/pi-coding-agent";
-import { getModels, getProviders } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import type { Api, Model, KnownProvider } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { SecretManager } from "@comis/core";

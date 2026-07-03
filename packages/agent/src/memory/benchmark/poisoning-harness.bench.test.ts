@@ -82,7 +82,7 @@ import {
 // BARE production orchestrator (the live recall pipeline this harness drives).
 import { createMemoryRecall, type MemoryRecallDeps } from "@comis/agent";
 // VALUE completion entry point (fine in a .test.ts) -- the answer + judge LLM calls.
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
 // VALUE core import -- the SHIPPED write-time validator (the defense under test).

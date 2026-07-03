@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { getModels } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import type { ModelOperationType, OperationModelEntry, OperationModels } from "@comis/core";
 import { resolveOperationModel, resolveProviderFamily } from "./operation-model-resolver.js";
 import type { OperationModelResolution } from "./operation-model-resolver.js";

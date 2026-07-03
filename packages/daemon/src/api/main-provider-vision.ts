@@ -48,7 +48,7 @@
 import { systemSetTimeout, systemClearTimeout, IMAGE_ERR_TO_LOG } from "@comis/core";
 import type { ClockPort, ComisLogger, ImageErrorKind, VisionResult } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 
 /** Hard abort ceiling per vision call (mirrors the memory-seam LLM timeout). */
 const LLM_TIMEOUT_MS = 120_000;

@@ -32,7 +32,7 @@ import type { MemoryEntityStore, MemoryCausalStore } from "@comis/core";
 import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/core";
 import type { SessionData, SessionKey } from "@comis/core";
 import { STRUCTURED_PROMPT, parseExtractionResult, resolveOccurredAt } from "./memory-extraction.js";
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";

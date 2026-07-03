@@ -20,7 +20,7 @@
  * against it (see `buildCodexImageHeaders`).
  *
  * Design boundaries:
- *   - `generateImagesCodex` is an `ImagesApiFunction` (pi-ai contract). It
+ *   - `generateImagesCodex` is an `ImagesFunction` (pi-ai contract). It
  *     reads the bearer from `options.apiKey` and the CF headers from
  *     `options.headers` (both supplied by the per-call adapter).
  *   - It NEVER throws out of the transport: any miss (no bearer, non-2xx, empty
@@ -50,7 +50,7 @@
  *
  * @module
  */
-import { type AssistantImages, type ImagesApiFunction } from "@earendil-works/pi-ai";
+import { type AssistantImages, type ImagesFunction } from "@earendil-works/pi-ai";
 import { decodeCodexJwtPayload, systemNowMs } from "@comis/core";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
@@ -281,13 +281,13 @@ async function parseCodexImageSse(
  * `AssistantImages` with `stopReason:"error"`/`"aborted"` the shipped
  * classifier maps).
  *
- * NOTE: pi-ai's `ImagesApiFunction` contract is `(model, context, options)` —
+ * NOTE: pi-ai's `ImagesFunction` contract is `(model, context, options)` —
  * `generateImages()` NEVER passes a 4th arg, so a `logger` param here would be
  * permanently `undefined` (dead). The redacted failure CAUSE is logged by the
  * ADAPTER (`codex-image-adapter.ts`, which holds the real logger and WARNs
  * `res.errorMessage` on a non-image result) — never from this transport.
  */
-export const generateImagesCodex: ImagesApiFunction = async (
+export const generateImagesCodex: ImagesFunction = async (
   model,
   context,
   options,

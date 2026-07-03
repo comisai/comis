@@ -58,7 +58,7 @@ import {
 // the SAME dance setup-channels-media.ts:135 runs. @comis/agent + pi-ai are
 // already daemon deps (graph-coordinator.ts:16, setup-channels-media.ts:35).
 import { isVisionCapable } from "@comis/agent";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension } from "../wiring/daemon-utils.js";
 // The vision-turn trajectory direct-emit helper (extracted to a
 // sibling to keep this file ≤800 — the emits would otherwise push it over).

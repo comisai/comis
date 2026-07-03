@@ -17,7 +17,7 @@
  */
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger, TypedEventBus } from "@comis/core";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 import {
   isCompletionClaim,
   wrapReviewedOutput,

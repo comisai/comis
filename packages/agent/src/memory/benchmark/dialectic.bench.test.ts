@@ -92,7 +92,7 @@ import { join, resolve } from "node:path";
 // pure stub (it never touches pi-ai), so a non-zero count would mean recall regressed.
 const completeSimpleSpy = vi.hoisted(() => vi.fn(async () => ({ content: "" })));
 const getModelSpy = vi.hoisted(() => vi.fn(() => ({})));
-vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
+vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, completeSimple: completeSimpleSpy, getModel: getModelSpy };
 });

@@ -14,11 +14,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  registerImagesApiProvider,
-  getImagesApiProvider,
-  type AssistantImages,
-} from "@earendil-works/pi-ai";
+import { type AssistantImages } from "@earendil-works/pi-ai";
+import { registerImagesApiProvider, getImagesApiProvider } from "@earendil-works/pi-ai/compat";
 import type {
   ImageGenerationConfig,
   ImageGenerationPort,

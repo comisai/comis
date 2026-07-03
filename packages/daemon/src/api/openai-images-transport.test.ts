@@ -2,7 +2,7 @@
 /**
  * Tests for the OpenAI Images transport (openai-images-transport.ts).
  *
- * The transport is a pi-ai `ImagesApiFunction` that constructs an `openai`
+ * The transport is a pi-ai `ImagesFunction` that constructs an `openai`
  * client from `options.apiKey` and calls `images.generate` (text->image) or
  * `images.edit` (when the context carries an `ImageContent` reference),
  * mapping `data[0].b64_json` -> `AssistantImages.output[0]`.

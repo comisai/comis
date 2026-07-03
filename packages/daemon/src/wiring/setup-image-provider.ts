@@ -26,7 +26,7 @@
  * @module
  */
 
-import { getImageModel, getImageModels } from "@earendil-works/pi-ai";
+import { getImageModel, getImageModels } from "@earendil-works/pi-ai/compat";
 import {
   resolveImageProvider,
   type ImageErrorKind,

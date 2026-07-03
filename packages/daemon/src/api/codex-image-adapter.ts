@@ -40,7 +40,8 @@
  *
  * @module
  */
-import { type ImagesModel, generateImages, type ProviderImagesOptions } from "@earendil-works/pi-ai";
+import { type ImagesModel, type ProviderImagesOptions } from "@earendil-works/pi-ai";
+import { generateImages } from "@earendil-works/pi-ai/compat";
 import {
   type OAuthTokenManager,
   type ImageGenInput,

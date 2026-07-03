@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn(() => ({ id: "mock-model" })),
   completeSimple: vi.fn(),
 }));
@@ -35,7 +35,7 @@ vi.mock("@comis/core", async (importOriginal) => {
 
 import { createDialecticSeam } from "./memory-dialectic-seam.js";
 import { buildDialecticPrompt } from "./memory-dialectic-prompt.js";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 /** Wrap canned text in the pi-ai completeSimple response envelope. */
