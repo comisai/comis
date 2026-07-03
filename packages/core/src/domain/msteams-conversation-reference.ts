@@ -13,8 +13,15 @@
  * and no message-content field. A persisted `serviceUrl` stays untrusted at read;
  * the send path re-validates it against the host allowlist before use.
  *
- * SECURITY: `z.strictObject` is load-bearing — it rejects a smuggled field (e.g. a
- * `trustLevel`/`source` promotion claim) at {@link parseConversationReference}.
+ * SECURITY: the tampering control that is actually ENGAGED on the store path is the
+ * ROW schema (`MsTeamsConversationRowSchema`, also a `z.strictObject`) that the
+ * memory store's row mapper applies when a reference is read back — it rejects a
+ * smuggled column and degrades a corrupt row to `err`. The `z.strictObject` here
+ * is the same shape guard for any caller that validates an untrusted reference
+ * through {@link parseConversationReference}, but it is interface-first: no
+ * production caller invokes it yet (the inbound capture builds a fixed-shape
+ * literal from typed extractions), so treat it as available validation rather than
+ * the live guard.
  */
 
 import { ok, err, type Result } from "@comis/shared";
@@ -39,10 +46,13 @@ export interface ConversationReference {
 }
 
 /**
- * The `z.strictObject` schema for {@link ConversationReference}. `strictObject` is
- * the tampering control — it REJECTS a smuggled field (e.g. a `trustLevel`/`source`
- * promotion claim). Ids are `z.string().min(1)` (an empty routing id is never
- * valid); `threadId` is optional; `updatedAt` is a number (ms).
+ * The `z.strictObject` schema for {@link ConversationReference}. `strictObject`
+ * REJECTS a smuggled field (e.g. a `trustLevel`/`source` promotion claim) for any
+ * caller that validates through it. Ids are `z.string().min(1)` (an empty routing
+ * id is never valid); `threadId` is optional; `updatedAt` is a number (ms). The
+ * live tampering control on the store path is the memory store's row schema
+ * (`MsTeamsConversationRowSchema`); this domain schema is interface-first — see the
+ * module note above.
  */
 export const ConversationReferenceSchema = z.strictObject({
   conversationId: z.string().min(1),
@@ -56,6 +66,9 @@ export const ConversationReferenceSchema = z.strictObject({
  * Parse unknown input into a {@link ConversationReference}, returning
  * `Result<T, ZodError>` (never throws). The `z.strictObject` rejects any smuggled
  * field, so a caller cannot promote trust or route through an unexpected column.
+ * Interface-first: exported for callers that need to validate an untrusted
+ * reference, but no production path invokes it yet (the store's read-side row
+ * mapper is the engaged guard).
  */
 export function parseConversationReference(
   raw: unknown,

@@ -944,12 +944,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "NormalizedReaction",
       "ReactionHandler",
       // ── conversation-reference contracts ──
-      // The ConversationReference domain schema + its parse ship AHEAD of their
-      // consumer: the store adapter round-trips the record and the inbound capture
-      // path builds it via parseConversationReference. The ConversationReference /
-      // MsTeamsConversationStorePort TYPES already have a cross-package consumer
-      // (the memory store), so only the schema value + parser orphan here. Shrink
-      // each entry as its real in-repo consumer lands.
+      // The ConversationReference domain schema value + its parser are exported
+      // ahead of a production consumer. The tampering control that is actually
+      // engaged is the memory store's read-side row mapper
+      // (MsTeamsConversationRowSchema, a z.strictObject): the inbound capture builds
+      // a fixed-shape object literal directly and the proactive read re-validates
+      // through that row schema, so neither invokes parseConversationReference. The
+      // ConversationReference / MsTeamsConversationStorePort TYPES already have a
+      // cross-package consumer (the memory store), so only the schema value + parser
+      // orphan here. Shrink each entry as its real in-repo consumer lands.
       "ConversationReferenceSchema",
       "parseConversationReference",
       "TrustLevelSchema",
