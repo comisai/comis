@@ -70,10 +70,15 @@ function parseJsonVerdict(line: string): WakeGateVerdict | undefined {
   }
   const record = parsed as Record<string, unknown>;
   if (typeof record.wake !== "boolean") return undefined;
+  // Bound the explicit-JSON context/deliver to the SAME content-light cap the
+  // fail-open tail applies. Without this an explicit {"wake":true,"context":...}
+  // bypasses the bound entirely, so up to the runner's 4 MiB stdout cap could
+  // enter the prompt — defeating the stated "content-light rather than an
+  // unbounded script dump" intent.
   return {
     wake: record.wake,
-    ...(typeof record.context === "string" ? { context: record.context } : {}),
-    ...(typeof record.deliver === "string" ? { deliver: record.deliver } : {}),
+    ...(typeof record.context === "string" ? { context: boundedTail(record.context) } : {}),
+    ...(typeof record.deliver === "string" ? { deliver: boundedTail(record.deliver) } : {}),
   };
 }
 
