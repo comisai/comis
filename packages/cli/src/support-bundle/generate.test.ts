@@ -202,8 +202,16 @@ describe("buildSupportDoctorContext gateway URL derivation", () => {
     expect(ctx.gatewayUrl).toBe("http://::1:4766");
   });
 
-  it("selects the https scheme when tls is enabled on the gateway", () => {
-    const ctx = contextFrom("gateway:\n  host: 127.0.0.1\n  port: 8443\n  tls: true\n");
+  it("selects the https scheme when a tls block is present on the gateway", () => {
+    const ctx = contextFrom(
+      "gateway:\n" +
+        "  host: 127.0.0.1\n" +
+        "  port: 8443\n" +
+        "  tls:\n" +
+        "    certPath: /etc/comis/cert.pem\n" +
+        "    keyPath: /etc/comis/key.pem\n" +
+        "    caPath: /etc/comis/ca.pem\n",
+    );
     expect(ctx.gatewayUrl).toBe("https://127.0.0.1:8443");
   });
 });
