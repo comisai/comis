@@ -17,9 +17,10 @@ describe("registerDoctorCommand", () => {
 
     const doctorCmd = program.commands.find((c) => c.name() === "doctor");
     expect(doctorCmd).toBeDefined();
-    // Description includes OAuth as the 6th subsystem.
+    // Description names all 9 diagnostic subsystems (including version-skew,
+    // secrets-audit, and LCD, which the earlier 6-subsystem string omitted).
     expect(doctorCmd!.description()).toBe(
-      "Diagnose configuration, daemon, gateway, channel, workspace, and OAuth health",
+      "Diagnose 9 subsystems: configuration, daemon, gateway, version-skew, channel, workspace, OAuth, secrets-audit, and LCD health",
     );
 
     const optionNames = doctorCmd!.options.map((o) => o.long);

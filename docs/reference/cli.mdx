@@ -1576,7 +1576,7 @@ Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`)
 
 ### `comis support-bundle`
 
-Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes up to seven content-free files under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, an AI-fillable issue draft, a cross-session fleet health digest, a config-posture digest (config section membership only), and a manifest carrying the redaction fingerprint. The fleet digest and config-posture digest are each omitted when their source cannot be read — a thrown fleet assembly or an unparseable config — and the manifest records the gap. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
+Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes up to nine content-free files (plus a `trace-export/` directory with `--deep`) under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, an AI-fillable issue draft, a cross-session fleet health digest, a config-posture digest (config section membership only), a window-scoped audit-summary digest, and a manifest carrying the redaction fingerprint. Focusing on one session with `--session` adds a per-session `explain.json` incident digest; `--deep` additionally embeds that session's redacted trace bundle under `trace-export/`. The fleet digest, config-posture digest, and audit-summary digest are each omitted when their source cannot be read — a thrown fleet assembly, an unparseable config, or an absent observability store — and the manifest records the gap. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
 
 The command runs **fully offline**: it composes the same checks as `comis doctor` against a stopped daemon, folds them into the triage verdict, and writes the bundle without contacting the gateway. A **degraded or partial** triage is still a written bundle — the degraded verdict is the content, not a failure — so the command exits `0` on any bundle it manages to write. It is safe to run the moment something looks wrong.
 
@@ -1600,6 +1600,9 @@ The bundle is content-free by construction: it excludes secrets, message bodies,
 | `doctor.json` | Full diagnostic findings from the health checks |
 | `fleet.json` | Cross-session fleet health digest — degraded rate, top error kinds, and findings — over the `--since` window |
 | `config-posture.json` | Which top-level config sections are present, plus any flagged-key labels — section names only, never config values |
+| `audit-summary.json` | Window-scoped security-audit digest — total and per-kind event counts over the `--since` window, read from the offline observability store; omitted when that store is absent |
+| `explain.json` | _With `--session`._ The per-session incident digest — the same content-free `IncidentReport` as [`comis explain`](#comis-explain), embedded verbatim |
+| `trace-export/` | _With `--deep`._ A directory holding the redacted per-session trace bundle (the [`comis trace export`](/operations/incident-bundle) output), embedded in place instead of written under the workspace |
 | `manifest.json` | Bundle index with the redaction fingerprint and any partial-section warnings |
 
 ```bash
