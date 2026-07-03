@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A contract test for the Telegram capability descriptor + the FOUND-03
- * caps↔adapter reconciliation (the A5 decision), Phase 204.
+ * Stage-A contract test for the Telegram capability descriptor + the
+ * caps↔adapter reconciliation.
  *
- * `tg-caps.ts` carries the FLAT emulator `ChannelCaps` (design §3A.4); the real
+ * `tg-caps.ts` carries the FLAT emulator `ChannelCaps`; the real
  * production adapter declares a NESTED `ChannelCapability`
  * (channel-capability.ts: `features{}`/`limits{}`/`replyToMetaKey`). This test
  * is the DRIFT TRIPWIRE: it imports the adapter's OWN declared capabilities
@@ -11,7 +11,7 @@
  * exported surface that returns the module-local `CAPABILITIES`) and asserts the
  * overlapping fields reconcile field-by-field. If the adapter ever changes
  * `maxMessageChars` or a feature flag, this test fails LOUDLY — the emulator's
- * caps can never silently drift from the real adapter (threat T-204-08).
+ * caps can never silently drift from the real adapter.
  *
  * `@comis/channels` resolves from `dist/` via the live vitest alias, so this
  * reads the REAL built adapter declaration (run `pnpm build` first if stale).
@@ -51,7 +51,7 @@ function adapterCapabilities(): ChannelCapability {
   return plugin.capabilities;
 }
 
-describe("tg-caps — Telegram ChannelCaps descriptor (FOUND-03)", () => {
+describe("tg-caps — Telegram ChannelCaps descriptor", () => {
   it("is a flat ChannelCaps for telegram over http with the reconciled message limit", () => {
     expect(tgCaps.channel).toBe("telegram");
     expect(tgCaps.protocol).toBe("http");
@@ -66,7 +66,7 @@ describe("tg-caps — Telegram ChannelCaps descriptor (FOUND-03)", () => {
   });
 });
 
-describe("tg-caps — FOUND-03 caps↔adapter reconciliation (the A5 drift tripwire)", () => {
+describe("tg-caps — caps↔adapter reconciliation (the drift tripwire)", () => {
   it("reconciles the emulator's flat outbound flags against the adapter's nested features field-by-field", () => {
     const caps = adapterCapabilities();
     const f = caps.features;

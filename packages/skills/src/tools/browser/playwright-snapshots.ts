@@ -10,9 +10,8 @@
  * Supports "role" format (ariaSnapshot + ref annotation) and
  * filtering options (interactive-only, compact, selector scoping).
  *
- * Ported from Comis browser/pw-role-snapshot.ts +
- * pw-tools-core.snapshot.ts, simplified without frame handling
- * or label/image overlay mode.
+ * Handles the top frame only — no cross-frame snapshots and no
+ * label/image overlay mode.
  *
  * @module
  */

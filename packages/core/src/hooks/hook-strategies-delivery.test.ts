@@ -2,9 +2,9 @@
 /**
  * Branch-gap coverage for hook-strategies.ts mergeBeforeDelivery.
  *
- * The existing hook-strategies.test.ts covers mergeBeforeAgentStart,
- * mergeBeforeToolCall, mergeToolResultPersist, and mergeBeforeCompaction
- * but does NOT touch mergeBeforeDelivery. Exercises both `next` and `acc`
+ * The sibling hook-strategies.test.ts covers mergeBeforeAgentStart and
+ * mergeBeforeCompaction but does NOT touch mergeBeforeDelivery.
+ * Exercises both `next` and `acc`
  * paths for the binary-expression branches.
  *
  * @module

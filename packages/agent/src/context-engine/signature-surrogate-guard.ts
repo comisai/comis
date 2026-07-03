@@ -11,9 +11,8 @@
  * Reference: pi-ai upstream behavior in
  * `node_modules/.pnpm/@mariozechner+pi-ai@0.67.68_HASH/node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js`
  * around line 661 calls `sanitizeSurrogates(block.thinking)` while preserving
- * the original `signature`. A separate upstream PR is recommended (out of
- * scope for this commit); Comis is protected by this guard regardless of
- * upstream.
+ * the original `signature`. An upstream fix would remove the root cause;
+ * Comis is protected by this guard regardless of upstream.
  *
  * Strategy: scan every type:"thinking" block on every assistant message
  * for unpaired UTF-16 surrogates in `block.thinking`. When found AND the
@@ -73,7 +72,7 @@ export interface SignatureSurrogateGuardDeps {
 /**
  * Create the signature-surrogate-guard pipeline layer.
  *
- * Layer ordering: runs AFTER `signature-replay-scrubber` (Fix #2) and
+ * Layer ordering: runs AFTER `signature-replay-scrubber` and
  * BEFORE `reasoning-tag-stripper`. Always added unconditionally — the cost
  * is one walk over thinking blocks with two regex tests per block, which
  * is negligible compared to a single 400-rejection round trip.

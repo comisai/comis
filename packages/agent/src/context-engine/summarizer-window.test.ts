@@ -1,30 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for {@link resolveSummarizerWindowTokens} — THE one resolved-summarizer
- * window read (SUMW-01, Phase 178). Moved verbatim from
- * `lcd-leaf-summarizer.test.ts` alongside the production extraction (the
- * source file sat at the 800-line file-size cap).
+ * window read.
  */
 import { describe, it, expect } from "vitest";
 import { resolveSummarizerWindowTokens } from "./summarizer-window.js";
 import type { LeafSummarizerDeps } from "./lcd-leaf-summarizer.js";
 
 // ===========================================================================
-// SUMW-01 (Phase 178): resolveSummarizerWindowTokens — THE one resolved-
+// resolveSummarizerWindowTokens — THE one resolved-
 // summarizer window read. It must mirror buildLeafSummarizeFn's model
 // resolution EXACTLY (`overrideModel?.model ?? getRealModel?.()`) so the span
 // clamp and the LLM call can never disagree about WHICH model summarizes.
-// Pitfall 2 (the override≠primary regression): `getModel()` is the session-
+// The override≠primary regression: `getModel()` is the session-
 // PRIMARY snapshot — with an `operationModels.compaction` override the
 // summarizer is a DIFFERENT model; a clamp keyed to the primary would pass a
 // 131K span to an 8K summarizer (a provider overflow). Consumed by the
-// pipeline clamp (llm-compaction) and the LCD leaf/condense clamps
-// (plan 178-03 — interface-first: this plan defines, 03 consumes).
+// pipeline clamp (llm-compaction) and the LCD leaf/condense clamps.
 // ===========================================================================
-describe("resolveSummarizerWindowTokens (SUMW-01)", () => {
+describe("resolveSummarizerWindowTokens — model resolution (no served window)", () => {
   const snapshot = { provider: "anthropic", contextWindow: 200_000, reasoning: true } as const;
 
-  it("override window WINS over the primary's window (the override≠primary regression — Pitfall 2)", () => {
+  it("override window WINS over the primary's window (the override≠primary regression)", () => {
     const win = resolveSummarizerWindowTokens({
       getModel: () => ({ ...snapshot }),
       getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
@@ -98,23 +95,25 @@ describe("resolveSummarizerWindowTokens (SUMW-01)", () => {
 });
 
 // ===========================================================================
-// INT-W1 (milestone integration WARNING 1): the Phase-176 SERVED-window truth
-// must reach the SUMW-01 resolution. The flagship gap: a provider serving
-// 8_192 against a configured 131_072 with the summarizer = the primary model —
+// The provider-SERVED window truth must reach this resolution. The flagship
+// gap: a provider serving 8_192 against a configured 131_072 with the
+// summarizer = the primary model —
 // resolveSummarizerWindowTokens returned the configured 131_072, the
 // leaf/condense clamps never bound, and a ~20K-token summarize input was
 // dispatched to a provider serving 8K (silent input truncation of the summary
 // source). The fix: each candidate model carries the served window that binds
 // IT (`overrideModel.servedWindow` / `primaryServedWindow`), provider-gated at
-// the wiring site against the 176 `{providerKey, window}` pair (WR-02 space),
+// the wiring site against the probed `{providerKey, window}` pair,
 // and the helper takes min(configured, served) for the candidate that
-// actually summarizes. The SUMW-01 describe above is the no-served parity pin:
-// every case there carries NO served field and must stay byte-identical.
+// actually summarizes. The model-resolution describe above is the no-served
+// parity pin: every case there carries NO served field and must stay
+// byte-identical.
 // ===========================================================================
-describe("resolveSummarizerWindowTokens — served-window truth (INT-W1)", () => {
+describe("resolveSummarizerWindowTokens — served-window truth", () => {
   const snapshot = { provider: "anthropic", contextWindow: 200_000, reasoning: true } as const;
-  /** Wider-than-the-helper's-Pick deps shape (a variable, not a fresh literal,
-   *  so it stays assignable to the helper's parameter across RED → GREEN). */
+  /** Wider-than-the-helper's-Pick deps shape (a typed variable, not a fresh
+   *  literal, so excess-property checking cannot reject fields wider than the
+   *  helper's parameter Pick). */
   type WindowDeps = Pick<
     LeafSummarizerDeps,
     "overrideModel" | "getRealModel" | "getModel" | "primaryServedWindow"
@@ -129,7 +128,7 @@ describe("resolveSummarizerWindowTokens — served-window truth (INT-W1)", () =>
     expect(resolveSummarizerWindowTokens(deps)).toBe(8_192);
   });
 
-  it("provider scoping (WR-02): an override on a DIFFERENT provider is NOT clamped by the primary provider's served window", () => {
+  it("provider scoping: an override on a DIFFERENT provider is NOT clamped by the primary provider's served window", () => {
     // operationModels.compaction → a cloud summarizer while the local primary
     // is served-bound at 8_192: the wiring site attaches NO servedWindow to the
     // override (provider mismatch), so the override's own window governs.
@@ -167,7 +166,7 @@ describe("resolveSummarizerWindowTokens — served-window truth (INT-W1)", () =>
     expect(resolveSummarizerWindowTokens(deps)).toBe(131_072);
   });
 
-  it("non-finite/non-positive served values are ignored (the WR-05 finite-guard parity) — configured governs", () => {
+  it("non-finite/non-positive served values are ignored (finite-positive guard) — configured governs", () => {
     for (const served of [0, -1, Number.NaN, Infinity]) {
       const deps: WindowDeps = {
         getModel: () => ({ ...snapshot }),

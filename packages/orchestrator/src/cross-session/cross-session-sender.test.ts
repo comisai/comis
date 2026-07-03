@@ -367,7 +367,7 @@ describe("createCrossSessionSender", () => {
 });
 
 // ---------------------------------------------------------------------------
-// HIGH-2 (ONCE-01/02): the completion-announcement / cross-session outward send
+// The completion-announcement / cross-session outward send
 // (announce → deps.sendToChannel) must go through the SAME three-state ONCE
 // ledger as message.send — NOT a second un-ledgered path. A stable allocated
 // (rootRunId, stepIndex) keys the announcement so a restart-driven re-announce
@@ -452,7 +452,7 @@ function makeStubDurableRuns(stepIndex = 7): { durableRuns: DurableRunPort; allo
   return { durableRuns, allocCalls };
 }
 
-describe("createCrossSessionSender announce is ledgered (HIGH-2, ONCE-01/02)", () => {
+describe("createCrossSessionSender announce is ledgered", () => {
   let deps: CrossSessionSenderDeps;
 
   beforeEach(() => {
@@ -489,7 +489,7 @@ describe("createCrossSessionSender announce is ledgered (HIGH-2, ONCE-01/02)", (
     expect(deps.sendToChannel).toHaveBeenCalledWith("discord", "guild-channel-42", "test response");
   });
 
-  it("ONCE-02 committed → no-op: an already-committed (rootRunId, stepIndex) does NOT call sendToChannel; still announced", async () => {
+  it("committed → no-op: an already-committed (rootRunId, stepIndex) does NOT call sendToChannel; still announced", async () => {
     const { ledger, calls } = makeStubLedger({
       lookupResult: ok(committedRow("root-user2", 7, "msg-prior")),
     });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Neighbor tests for the SURFACE-04/05 learned-skill promote/demote loop, extracted
+ * Neighbor tests for the learned-skill promote/demote loop, extracted
  * into its own leaf to keep setup-learning.ts under the 800-line cap. Behavior is
  * byte-identical to the pre-extraction code; these pin the success-promote +
  * no-skill-no-op branches.
@@ -20,7 +20,7 @@ function verdict(outcome: "success" | "failure" | "unknown", usedSkillIds: strin
   return { outcome, confidence: 0.9, sources: ["tool" as const], recalledIds: [], usedSkillIds };
 }
 
-describe("applySkillOutcomeTransitions — SURFACE-04/05 promote/demote", () => {
+describe("applySkillOutcomeTransitions — promote/demote", () => {
   it("promotes (promoteByName) + emits skill_promoted on a SUCCESS that used a skill", async () => {
     const emit = vi.fn();
     const promoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
@@ -35,7 +35,7 @@ describe("applySkillOutcomeTransitions — SURFACE-04/05 promote/demote", () => 
     expect(emit).toHaveBeenCalledWith("learning:skill_promoted", expect.objectContaining({ count: 1 }));
   });
 
-  it("REFLECT-03: VALUE-GATES a success-promotion when the skill is in a WEAKENING standing (earns back trust, no proof bump)", async () => {
+  it("VALUE-GATES a success-promotion when the skill is in a WEAKENING standing (earns back trust, no proof bump)", async () => {
     const emit = vi.fn();
     const promoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
     const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as never;
@@ -59,7 +59,7 @@ describe("applySkillOutcomeTransitions — SURFACE-04/05 promote/demote", () => 
     );
   });
 
-  it("REFLECT-03: a SINGLE prior failure is 'stable' (not weakening) → the success STILL promotes (the gate only blocks sustained failure)", async () => {
+  it("a SINGLE prior failure is 'stable' (not weakening) → the success STILL promotes (the gate only blocks sustained failure)", async () => {
     const emit = vi.fn();
     const promoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
     const skillTrend = createSkillTrendTracker();
@@ -87,7 +87,7 @@ describe("applySkillOutcomeTransitions — SURFACE-04/05 promote/demote", () => 
     expect(emit).not.toHaveBeenCalled();
   });
 
-  it("does not promote a 0-row transition (CR-01: only a real row move counts)", async () => {
+  it("does not promote a 0-row transition (only a real row move counts)", async () => {
     const emit = vi.fn();
     const promoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: false } }));
     await applySkillOutcomeTransitions(

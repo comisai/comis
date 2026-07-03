@@ -16,7 +16,7 @@ import "../components/feedback/ic-empty-state.js";
 type LoadState = "loading" | "loaded" | "error";
 
 /**
- * MD-01: a canonical UUID (8-4-4-4-12 hex). The context `traceId` is a `z.guid()`
+ * A canonical UUID (8-4-4-4-12 hex). The context `traceId` is a `z.guid()`
  * (`context.ts`), so a UUID-shaped ref is a traceId; a sessionKey is colon-segmented
  * and never a bare UUID. Used by {@link IcIncidentView._ref} to route the single
  * route `ref` to the right obs.explain shape.
@@ -89,11 +89,10 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * The native, in-product twin of the E7 metric→incident drill-down: an
- * Incident view surfacing the already-wired `obs.explain` RPC (the v2.14
- * deterministic, content-free `IncidentReport`). The FIRST SPA consumer of
- * `obs.explain` — reachable from every chart row + `session-detail.ts` keyed on
- * `sessionKey | traceId`.
+ * The in-product metric→incident drill-down: an Incident view surfacing the
+ * already-wired `obs.explain` RPC (the deterministic, content-free
+ * `IncidentReport`). Reachable from every chart row + `session-detail.ts` keyed
+ * on `sessionKey | traceId`.
  *
  * Renders the IncidentReport sections (outcome / cost / timing / failures /
  * breaker timeline / likelyRootCause) plus the optional, presence-conditional
@@ -102,7 +101,7 @@ function formatDuration(ms: number): string {
  * the source), and degrades honestly (no ref → an "select an incident" empty
  * state; a denied/failed call → the error path).
  *
- * Grafana relationship (locked §14: link, NEVER embed): when
+ * Grafana relationship (link, NEVER embed): when
  * `observability.prometheus.enabled`, an "Open in Grafana" `<a href
  * target=_blank rel=noopener>` to the matching dashboard is shown; otherwise
  * omitted (honest). NEVER an `<iframe>` — the SPA stays zero-dependency.
@@ -242,11 +241,11 @@ export class IcIncidentView extends LitElement {
   @property() sessionKey = "";
   @property() traceId = "";
   /**
-   * MD-01: the single `ref` the route (`#/observe/incident?ref=<ref>`) passes —
+   * The single `ref` the route (`#/observe/incident?ref=<ref>`) passes —
    * a sessionKey OR a traceId. The route can't know which, so the view classifies
    * it (see {@link _ref}): a UUID-shaped ref is a traceId (the context `traceId` is
-   * a `z.guid()`), everything else a colon-segmented sessionKey. Before this, the
-   * route forced every ref into the sessionKey slot, so a traceId ref never resolved.
+   * a `z.guid()`), everything else a colon-segmented sessionKey. Sending the right
+   * shape is what lets a traceId-shaped ref resolve.
    */
   @property() ref = "";
 
@@ -281,10 +280,10 @@ export class IcIncidentView extends LitElement {
     // Explicit props win (a direct caller that already knows the shape).
     if (this.sessionKey) return { sessionKey: this.sessionKey };
     if (this.traceId) return { traceId: this.traceId };
-    // MD-01: classify the route's single `ref` by shape. A UUID is a traceId (the
+    // Classify the route's single `ref` by shape. A UUID is a traceId (the
     // context `traceId` is a `z.guid()`); a sessionKey is colon-segmented and never
     // a bare UUID. obs.explain accepts EITHER — sending the right one is what lets a
-    // traceId-shaped ref resolve (the route used to force every ref into sessionKey).
+    // traceId-shaped ref resolve.
     if (this.ref) {
       return IS_UUID.test(this.ref) ? { traceId: this.ref } : { sessionKey: this.ref };
     }

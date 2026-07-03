@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Shared render-helper tests (§7.2 / §7.3 + subagent render side).
+ * Shared render-helper tests (event labels, frame text, closing lines + the
+ * subagent render side).
  *
  * Covers the channel-agnostic text helpers:
  *   - `eventLabel` / `renderFrameText`: best-effort short label + one line per
@@ -9,7 +10,7 @@
  *   - subagent parent line: a `kind:"subagent"` event's `defaultLabel` carries
  *     the `🤖` marker (set by the projection); `renderFrameText` paints it
  *     verbatim, and `subagentLine(event, { depthPrefix })` reproduces the IRC
- *     `↳ ` form (the depth prefix is applied by the renderer, §18.3 IRC row).
+ *     `↳ ` form (the depth prefix is applied by the IRC renderer).
  *
  * Plus a type-level assertion that the extended `ActivityRenderActions.send`
  * now accepts an optional approval-`buttons` argument so a renderer can paint
@@ -64,11 +65,10 @@ function event(partial: Partial<ActivityEvent> & Pick<ActivityEvent, "kind">): A
 
 describe("eventLabel", () => {
   it("prefers defaultLabel, then toolName, then kind (with running 🔧 marker on non-failed events)", () => {
-    // [Rule 1 — bug fix, quick-260528-nsv] Post-patch eventLabel prepends the
+    // eventLabel prepends the
     // themed running marker on non-failed non-subagent events; the precedence
     // contract (defaultLabel → toolName → kind) rides UNCHANGED inside the
-    // marker prefix. The bare-base assertions from pre-patch update to the
-    // marker-prepended form.
+    // marker prefix.
     expect(eventLabel(event({ kind: "tool", defaultLabel: "searching", toolName: "search" }))).toBe(
       "🔧 searching",
     );
@@ -79,9 +79,9 @@ describe("eventLabel", () => {
 
 describe("renderFrameText", () => {
   it("joins one label per event in display order", () => {
-    // [Rule 1 — bug fix, quick-260528-nsv] Each non-failed non-subagent event
-    // line now carries the running 🔧 marker (eventLabel re-derives it for
-    // events that arrive bare); ordering contract is unchanged.
+    // Each non-failed non-subagent event
+    // line carries the running 🔧 marker (eventLabel re-derives it for
+    // events that arrive bare); the ordering contract is what this pins.
     const out = renderFrameText(
       frame({
         visibleEvents: [
@@ -105,18 +105,16 @@ describe("renderFrameText", () => {
     expect(out).toBe("🤖 subagent: 3 steps");
   });
 
-  // SPEC §8.3 plan-state header + SPEC §8.5 (step N of M).
+  // Plan-state header + (step N of M) counter.
   //
-  // The atomic signature migration (events array -> ActivityRenderFrame) is a
-  // combined RED+GREEN per AGENTS.md §2.10 escape: pre-patch test code would
-  // not compile against the new signature. The `frame()` factory above keeps
+  // The `frame()` factory above keeps
   // every call-site uniform; the plan-aware render adds three above-the-event
   // lines (`renderPlan` output + bounded counter + `───` separator).
 
   it("with no plan snapshot returns only the joined event list (no header lines)", () => {
-    // [Rule 1 — bug fix, quick-260528-nsv] No SEP header → event lines only.
+    // No SEP header → event lines only.
     // Each non-failed event line carries the running 🔧 (per-step marker
-    // re-derived by eventLabel post-patch); the no-header contract is unchanged.
+    // re-derived by eventLabel); the no-header contract is the invariant.
     const out = renderFrameText(
       frame({
         planSnapshot: undefined,
@@ -133,7 +131,7 @@ describe("renderFrameText", () => {
   });
 
   it("with a plan snapshot prefixes renderPlan output + (step 2 of 3) + ─── separator above the events", () => {
-    // SPEC §8.3: checkbox header above events. SPEC §8.5 first half: a bounded
+    // Checkbox header above events, plus a bounded
     // `(step N of M)` line where N is the in_progress entry's 1-based index.
     const out = renderFrameText(
       frame({
@@ -151,9 +149,9 @@ describe("renderFrameText", () => {
       }),
     );
     expect(out).toBe(
-      // [Rule 1 — bug fix, quick-260528-nsv] Per-event lines carry the running
-      // 🔧 marker post-patch; SEP header + (step N of M) + ─── separator are
-      // unchanged.
+      // Per-event lines carry the running
+      // 🔧 marker; the SEP header + (step N of M) + ─── separator render
+      // above them.
       "[x] step a\n[~] step b\n[ ] step c\n(step 2 of 3)\n───\n🔧 ev1\n🔧 ev2",
     );
   });
@@ -203,15 +201,15 @@ describe("renderFrameText", () => {
     expect(allDone).toContain("───");
   });
 
-  // --- ×N / xN surrogate count (SPEC-§9) --------------------
+  // --- ×N / xN surrogate count ------------------------------
   //
   // When a visible event represents a coalesced surrogate
   // (`frame.groupedActivityIds[event.activityId].length > 1`), the rendered
   // line is `${eventLabel(event)} ×${count}` under default markers and
   // `${eventLabel(event)} x${count}` under ascii markers (the ascii theme
-  // strips ALL non-ASCII via `surrogateSeparator: "x"` — SPEC-§8.9).
+  // strips ALL non-ASCII via `surrogateSeparator: "x"`).
 
-  it("appends ×N for surrogate event with constituent count > 1 (default theme — SPEC-§9)", () => {
+  it("appends ×N for surrogate event with constituent count > 1 (default theme)", () => {
     const out = renderFrameText(
       frame({
         visibleEvents: [
@@ -223,11 +221,11 @@ describe("renderFrameText", () => {
     expect(out).toContain("reading config ×3");
   });
 
-  it("does NOT append ×N for non-surrogate event (Open Question 4 — subagent collapse uses parentActivityId, not groupedActivityIds)", () => {
-    // [Rule 1 — bug fix, quick-260528-nsv] Per-event running 🔧 prepended on
-    // the bare base label post-patch; the no-×N contract (the load-bearing
-    // invariant of this test) is unchanged — the `not.toContain("×")`
-    // assertions still hold.
+  it("does NOT append ×N for non-surrogate event (subagent collapse uses parentActivityId, not groupedActivityIds)", () => {
+    // The per-event running 🔧 is prepended on
+    // the bare base label; the no-×N contract is the load-bearing
+    // invariant of this test — the `not.toContain("×")`
+    // assertions pin it.
     // length === 0 (key absent) — single non-coalesced event.
     const outNoEntry = renderFrameText(
       frame({
@@ -253,7 +251,7 @@ describe("renderFrameText", () => {
     expect(outSingleton).not.toContain("×");
   });
 
-  it("uses ascii separator x under ascii markers (SPEC-§8.9 ASCII-strict)", () => {
+  it("uses ascii separator x under ascii markers (ASCII-strict theme)", () => {
     const out = renderFrameText(
       frame({
         visibleEvents: [
@@ -268,18 +266,18 @@ describe("renderFrameText", () => {
     expect(out).not.toContain("×");
   });
 
-  // --- Quick fix 260528-mch — Bug C (failure marker on kept failed end) ----
+  // --- Failure marker on kept failed end events ----------------------------
   //
-  // Live IBM-info turn surfaced: a yfinance tool call failed and the kept
-  // end event arrived with `status:"failed"` + a bare `defaultLabel` (the
+  // A failed tool call's kept
+  // end event arrives with `status:"failed"` + a bare `defaultLabel` (the
   // running 🔧 is baked into START events only at the activity-stream emit
-  // site, by design per Pitfall 7 — the marker conveys in-flight status).
-  // Pre-patch `eventLabel(event)` returns the bare label → the failure
-  // renders as "using yfinance · get stock price" with NO marker. The user
-  // can't tell the call failed. Fix: when `event.status === "failed"`,
-  // prefix the themed failure marker (default: ❌, ascii: [ERR]).
+  // site, by design — the marker conveys in-flight status).
+  // Rendering the bare label would paint the failure
+  // as "using yfinance · get stock price" with NO marker — the user
+  // couldn't tell the call failed. So when `event.status === "failed"`,
+  // the themed failure marker is prefixed (default: ❌, ascii: [ERR]).
 
-  it("prefixes ❌ on a kept failed end event (Bug C — failure marker on terminal failure state)", () => {
+  it("prefixes ❌ on a kept failed end event (failure marker on terminal failure state)", () => {
     const failedFrame = frame({
       visibleEvents: [
         event({
@@ -305,15 +303,15 @@ describe("renderFrameText", () => {
   });
 
   // Contract-pin: a kept COMPLETED end event does NOT carry the per-step ✓.
-  // §3.1 — the closing line carries the single ✓ done; per-step ✓ would
+  // The closing line carries the single ✓ done; per-step ✓ would
   // clutter the running flow.
   //
-  // [Rule 1 — bug fix, quick-260528-nsv] Post-patch the kept end event now
-  // carries the per-step running marker (🔧 / [..]) — Bug 2 fix restores
-  // §3.1/§3.11 symmetry between fast and slow tool calls. The original
-  // load-bearing invariant of this test was about ✓-absence on completed end
+  // The kept end event
+  // carries the per-step running marker (🔧 / [..]) — keeping
+  // symmetry between fast and slow tool calls. The
+  // load-bearing invariant of this test is ✓-absence on completed end
   // events (so the running flow stays calm and the closing ✓ done is the only
-  // success marker); the running-marker presence is the NEW correct contract.
+  // success marker); the running-marker presence is the companion contract.
   // The ✓-absence assertion is preserved below.
   it("does NOT prefix the success ✓ on a kept completed end event (no per-step ✓ during running phase)", () => {
     const completedFrame = frame({
@@ -337,24 +335,24 @@ describe("renderFrameText", () => {
     expect(renderFrameText(completedFrame, ASCII_MARKERS)).not.toContain("[OK]");
   });
 
-  // --- Quick fix 260528-nsv — Bug 2 (running marker symmetry on kept end events) ---
+  // --- Running marker symmetry on kept end events ---------------------------
   //
-  // Side effect of quick-260528-mch's coalesce.ts Step 1.5 prefer-end dedup:
+  // Via coalesce.ts Step 1.5's prefer-end dedup,
   // slow-completed events (>=1500ms, exempt from isDroppableFastSuccess)
   // survive Step 1 with BOTH start and end events kept; Step 1.5 then keeps
   // the END (whose defaultLabel has no 🔧 baked in — the running marker is
-  // baked on START events only). Result: the live IBM web_fetch
-  // (1676ms) rendered as "fetching <host>/<path>" with NO running glyph —
+  // baked on START events only). Without re-derivation a slow fetch
+  // (e.g. 1676ms) renders as "fetching <host>/<path>" with NO running glyph —
   // asymmetric with sub-1500ms calls whose marked START survives Step 1 and
-  // shows 🔧. SPEC §3.1 / §3.11: every in-flight tool step shows the running
+  // shows 🔧. The contract: every in-flight tool step shows the running
   // glyph regardless of duration.
   //
-  // Fix: eventLabel re-derives the running marker for non-failed events whose
+  // So eventLabel re-derives the running marker for non-failed events whose
   // defaultLabel arrives bare (idempotent on already-marked start events;
-  // failed events still take the ❌ branch — Bug C from mch unchanged;
+  // failed events still take the ❌ branch;
   // kind:"subagent" events keep their projection-baked 🤖 marker verbatim).
 
-  it("prefixes 🔧 on a kept slow-completed end event with bare defaultLabel (Bug 2 — quick-260528-nsv asymmetric running marker)", () => {
+  it("prefixes 🔧 on a kept slow-completed end event with bare defaultLabel (running-marker symmetry)", () => {
     const slowCompletedFrame = frame({
       visibleEvents: [
         event({
@@ -405,13 +403,13 @@ describe("renderFrameText", () => {
     );
   });
 
-  // --- elapsed-time fallback (SPEC-§8.5 second half) --------
+  // --- elapsed-time fallback when no plan is active --------
   //
   // When `frame.planSnapshot` is undefined AND the strategy supplies an
   // elapsedMs value, the rendered text appends a `(running N s)` line where
   // N is the elapsedMs floored to whole seconds.
 
-  it("emits elapsed-time fallback (running 12 s) when planSnapshot is undefined (SPEC-§8.5)", () => {
+  it("emits elapsed-time fallback (running 12 s) when planSnapshot is undefined", () => {
     const out = renderFrameText(
       frame({
         planSnapshot: undefined,
@@ -438,9 +436,9 @@ describe("renderFrameText", () => {
   });
 
   it("does NOT emit elapsed fallback when elapsedMs is undefined", () => {
-    // [Rule 1 — bug fix, quick-260528-nsv] Event line carries the running
-    // 🔧 marker post-patch; the no-elapsed-fallback contract (no `(running …)`
-    // suffix) is the load-bearing invariant and is preserved.
+    // The event line carries the running
+    // 🔧 marker; the no-elapsed-fallback contract (no `(running …)`
+    // suffix) is the load-bearing invariant.
     const out = renderFrameText(
       frame({
         planSnapshot: undefined,
@@ -451,11 +449,11 @@ describe("renderFrameText", () => {
     expect(out).not.toContain("(running");
   });
 
-  it("emits (running 0 s) when elapsedMs is 0 (first tick of a SEP-less turn — load-bearing for Task 3)", () => {
+  it("emits (running 0 s) when elapsedMs is 0 (first tick of a SEP-less turn)", () => {
     // A freshly-captured `startedAtMs === clock.now()` produces elapsedMs=0
     // on the first apply(); the renderer must treat 0 as a legitimate
-    // first-tick value, NOT as "no value". Task 3 strategy plumbing depends
-    // on this branch.
+    // first-tick value, NOT as "no value". The strategies that capture
+    // `startedAtMs` on first apply() depend on this branch.
     const out = renderFrameText(
       frame({
         planSnapshot: undefined,
@@ -470,10 +468,10 @@ describe("renderFrameText", () => {
 
 // --- successLabel(markers?, recoveredFailures?) ---------------
 //
-// SPEC-§8.6 — when a turn completes with `recoveredFailures > 0`, the closing
+// When a turn completes with `recoveredFailures > 0`, the closing
 // success line carries `(with N recovered failure[s])` after the base label.
 
-describe("successLabel recoveredFailures annotation (SPEC-§8.6)", () => {
+describe("successLabel recoveredFailures annotation", () => {
   it("without recoveredFailures arg returns the base check-done label", () => {
     expect(successLabel(DEFAULT_THEME_MARKERS)).toBe("✓ done");
   });
@@ -505,12 +503,12 @@ describe("subagentLine", () => {
 
 describe("failureLabel", () => {
   it("formats the closing ❌ {errorKind} by default (marker-less byte parity)", () => {
-    // No markers arg → today's hardcoded glyph, byte-identical to the historical output.
+    // No markers arg → the hardcoded glyph, byte-identical to the default theme's output.
     expect(failureLabel({ kind: "failure", errorKind: "timeout" })).toBe("❌ timeout");
   });
 
   it("is byte-identical to the cross glyph when the default theme markers are passed", () => {
-    // Passing the default bundle's markers must reproduce the legacy output exactly.
+    // Passing the default bundle's markers must reproduce the marker-less output exactly.
     expect(failureLabel({ kind: "failure", errorKind: "timeout" }, DEFAULT_THEME_MARKERS)).toBe(
       "❌ timeout",
     );

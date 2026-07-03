@@ -60,7 +60,7 @@ describe("media + image domain contracts", () => {
     expect(methods.has("media.providers")).toBe(true);
     // image-handlers.ts (1):
     expect(methods.has("image.generate")).toBe(true);
-    // video-handlers.ts (1) — handler lands Phase 188 Plan 04:
+    // video-handlers.ts (1):
     expect(methods.has("video.generate")).toBe(true);
   });
 
@@ -509,7 +509,7 @@ describe("media + image domain contracts", () => {
     ).not.toThrow();
   });
 
-  it("image.generate: request accepts optional model + reference_image, surviving typed (CFG-02, Pitfall 5)", () => {
+  it("image.generate: request accepts optional model + reference_image and keeps them typed after parse", () => {
     // The handler does `ImageGenerateContract.request.parse(userParams)`; without
     // growing the request, params.model/params.reference_image are typed
     // `undefined` to the handler even though Zod passes the keys at runtime. This

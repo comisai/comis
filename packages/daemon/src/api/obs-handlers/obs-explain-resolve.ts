@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * `obs.explain` ref → sessionKey canonicalization (the X1 identity seam).
+ * `obs.explain` ref → sessionKey canonicalization (the identity seam).
  *
- * `obs.explain` accepts ONE of a `sessionKey`, a `traceId`, OR a `rootRunId`
- * (FLEET-05). So a single assembler path runs for all inputs — identity is
+ * `obs.explain` accepts ONE of a `sessionKey`, a `traceId`, OR a `rootRunId`.
+ * So a single assembler path runs for all inputs — identity is
  * structural, not parallel code paths — the by-`traceId` and by-`rootRunId`
  * inputs are resolved to their canonical `sessionKey` FIRST, then the rest of
  * the handler operates on that one key.
@@ -15,11 +15,11 @@
  * session whose TWO traceIds both index the ONE sessionKey — either traceId
  * resolves to the same canonical key.
  *
- * The FLEET-05 sibling {@link resolveRootRunToSession} canonicalizes an
+ * The sibling {@link resolveRootRunToSession} canonicalizes an
  * autonomy run's `rootRunId` (the synthetic in-process root by a pure
  * prefix-strip; a real socket/spawned root by the same day-keyed scan, matching
  * a `capability.audited` record's `rootRunId` and returning its `runId`). Both
- * soft-fail to `""` — NEVER fabricate a sessionKey (the G1 anti-pattern).
+ * soft-fail to `""` — NEVER fabricate a sessionKey.
  *
  * @module
  */
@@ -57,7 +57,7 @@ function yesterdayKey(): string {
  *   Defaults to `~/.comis` when an empty string is passed.
  * @param traceId - the trace identifier to canonicalize.
  * @param includeSynthetic - when `false` (the default), rows stamped
- *   `synthetic === true` (D9 test/harness sessions) are skipped, so a synthetic
+ *   `synthetic === true` (test/harness sessions) are skipped, so a synthetic
  *   row never canonicalizes a traceId for `obs.explain`. Pass `true` to resolve
  *   them (the admin opt-in).
  * @returns the canonical sessionKey, or `""` when unresolvable.
@@ -86,7 +86,7 @@ export async function resolveTraceToSession(
       } catch {
         continue; // Skip malformed JSONL lines per standard convention.
       }
-      if (rec.synthetic === true && !includeSynthetic) continue; // D9 default-exclude
+      if (rec.synthetic === true && !includeSynthetic) continue; // test/harness rows excluded by default
       if (rec.traceId !== traceId) continue;
       // Canonical sessionKey is preferred; fall back to a sessionId-derived
       // key for rows that predate the sessionKey field.
@@ -102,7 +102,7 @@ export async function resolveTraceToSession(
 }
 
 /**
- * FLEET-05 — resolve an autonomy run's `rootRunId` to its canonical `sessionKey`,
+ * Resolve an autonomy run's `rootRunId` to its canonical `sessionKey`,
  * so the `fleet → explain` drill-down (paste the worst run's `rootRunId`) shares
  * the ONE assembler path with the by-sessionKey/by-traceId inputs. The sibling of
  * {@link resolveTraceToSession}. TWO honest sources, in order:
@@ -122,12 +122,12 @@ export async function resolveTraceToSession(
  *      first and tolerates a flat top-level shape as a fallback.
  *
  * Soft-fail to `""` when neither source resolves — NEVER fabricate a
- * sessionKey/leaseId (the G1 anti-pattern). An empty return drives the WR-04
+ * sessionKey/leaseId. An empty return drives the
  * not-found marker in obs-explain.ts, so a typo'd `rootRunId` surfaces an honest
- * not-found verdict rather than a clean-looking empty report (T-220-06). The
- * session-index read is dataDir-scoped via `safePath` (no arbitrary-file read,
- * T-153-17) and uses `systemDateFrom(systemNowMs())` for day keys (no direct
- * wall-clock read — deterministic, the globals gate, T-220-09).
+ * not-found verdict rather than a clean-looking empty report. The
+ * session-index read is dataDir-scoped via `safePath` (no arbitrary-file read)
+ * and uses `systemDateFrom(systemNowMs())` for day keys (no direct
+ * wall-clock read — deterministic, the globals gate).
  *
  * @param dataDir - data directory containing `logs/session-index.*.jsonl`.
  *   Defaults to `~/.comis` when an empty string is passed.
@@ -183,8 +183,8 @@ export async function resolveRootRunToSession(
       const runId = typeof data.runId === "string" ? data.runId : rec.runId;
       if (typeof runId === "string" && runId.length > 0) return runId;
       // A matching root with no usable runId is not a resolution — keep scanning;
-      // never fabricate a key (G1).
+      // never fabricate a key.
     }
   }
-  return ""; // unresolvable → WR-04 not-found marker fires in obs-explain.ts
+  return ""; // unresolvable → the not-found marker fires in obs-explain.ts
 }

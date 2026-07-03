@@ -523,7 +523,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     keyPrefix = "OAUTH_",
   } = deps;
 
-  // Hot-path read cache (Discretion item — invalidated on persisted writes).
+  // Hot-path read cache — invalidated on persisted writes.
   // Keyed by canonical profileId.
   const cache = new Map<string, OAuthProfile>();
 
@@ -540,8 +540,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   // Logger de-dup: fire the configured-profile-resolved INFO once per
   // (provider, configured-profile, process) when the configured profile is
   // first used. withDedup (@comis/core — NOT @comis/infra; agent↛infra)
-  // replaces the prior hand-rolled loggedConfiguredProviders Set with the
-  // shared decorator; same process-lifetime semantics (default TTL = unbounded).
+  // is the shared decorator; process-lifetime semantics (default TTL = unbounded).
   const dedupLogger = withDedup(logger);
 
   // -------------------------------------------------------------------------
@@ -1251,7 +1250,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
 
         // Once-per-(provider, configured-profile, process) INFO log when the
         // configured profile is first used. withDedup collapses repeats by the
-        // dedupKey field (process-lifetime), replacing the prior Set guard.
+        // dedupKey field (process-lifetime).
         dedupLogger.info(
           {
             dedupKey: `${providerId}::${configured}`,
@@ -1331,7 +1330,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         const firstProfile = tierCList.value[0];
         if (firstProfile) {
           // Conflict detection on the picked profile — env var may diverge
-          // from stored refresh (R7c silent vs WARN path).
+          // from stored refresh (maybeWarnEnvConflict decides silent vs WARN).
           const envRawForC = secretManager.get(toSecretKey(providerId, keyPrefix));
           const envSeedForC = parseEnvCredentials(envRawForC);
           maybeWarnEnvConflict(providerId, firstProfile, envSeedForC);
@@ -1392,7 +1391,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           },
           "Profile loaded from store",
         );
-        // Conflict detection (R7c) — env var diverges from stored refresh.
+        // Conflict detection — env var may diverge from stored refresh.
         maybeWarnEnvConflict(providerId, profile, envSeed);
       } else {
         // Store empty for this profileId. Try in-memory cache first — it
@@ -1443,7 +1442,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       // `comis auth login`, persisted in the store) reads as ABSENT through
       // hasCredentials — which froze a Codex agent's image generation
       // unavailable for the daemon's life even though the SAME OAuth credential
-      // answered its text completions (the CRED-01/CDX-01 follow-main regression).
+      // answered its text completions.
       if (Array.from(cache.values()).some((p) => p.provider === providerId)) return true;
       if (secretManager.has(toSecretKey(providerId, keyPrefix))) return true;
       const listResult = await credentialStore.list({ provider: providerId });

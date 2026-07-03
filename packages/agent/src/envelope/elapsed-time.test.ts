@@ -30,7 +30,7 @@ describe("formatElapsed", () => {
     expect(formatElapsed(0, 1_000)).toBe("");
   });
 
-  it("returns empty string for zero diff", () => {
+  it("returns +0s for zero diff (only negative diffs are suppressed)", () => {
     expect(formatElapsed(1_000, 1_000)).toBe("+0s");
   });
 

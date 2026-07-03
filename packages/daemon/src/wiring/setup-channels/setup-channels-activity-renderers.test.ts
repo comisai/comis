@@ -196,7 +196,7 @@ describe("buildActivityRenderers — non-EditPlace strategies (§18.3 matrix)", 
 
   it("constructs an AppendOnly factory for BOTH iMessage and LINE (one strategy, two channelTypes)", () => {
     // No edit/delete + attachments + mid-range cap → AppendOnly. The strategy
-    // serves TWO channelTypes (Pitfall 6): the dispatch map is keyed by both.
+    // serves TWO channelTypes: the dispatch map is keyed by both.
     const appendChannels = ["imessage", "line"] as const;
     const adapters = new Map<string, ChannelPort>(appendChannels.map((c) => [c, makeStubAdapter(c)]));
     const plugins = new Map<string, ChannelPluginPort>(

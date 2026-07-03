@@ -238,10 +238,10 @@ describe("createEmailAdapter sendMessage failure paths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unsupported operations are now omitted from the adapter.
-// The capability gate (features.{editMessages,reactions,deleteMessages,fetchHistory})
-// in daemon/api/message-handlers.ts blocks the call before it reaches the adapter,
-// so the previous `return err("not supported")` stubs have been deleted.
+// Unsupported operations are omitted from the adapter entirely — no
+// `return err("not supported")` stubs. The capability gate
+// (features.{editMessages,reactions,deleteMessages,fetchHistory}) in
+// daemon/api/message-handlers.ts blocks the call before it reaches the adapter.
 // ---------------------------------------------------------------------------
 
 describe("createEmailAdapter omits stub methods (capability-gated)", () => {

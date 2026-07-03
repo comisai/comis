@@ -53,7 +53,7 @@ function createMockSecretManager(secrets: Record<string, string> = {}): SecretMa
   } as unknown as SecretManager;
 }
 
-/** A dummy data-dir threaded into the factory's required `dataDir` param (Plan 02). */
+/** A dummy data-dir threaded into the factory's required `dataDir` param. */
 const DUMMY_DATA_DIR = "/tmp/comis-test-data";
 
 function createBaseConfig(provider: string): TranscriptionConfig {
@@ -150,8 +150,8 @@ describe("createSTTProvider", () => {
     }
   });
 
-  // LOCAL-01: the in-process keyless whisper branch (no baseUrl) — threads the
-  // scoped dataDir into createLocalWhisperAdapter (Plan 01).
+  // The in-process keyless whisper branch (no baseUrl) — threads the
+  // scoped dataDir into createLocalWhisperAdapter.
   it("creates the in-process local whisper adapter for 'local' provider with no baseUrl", () => {
     const sm = createMockSecretManager();
     const config: TranscriptionConfig = {
@@ -172,9 +172,9 @@ describe("createSTTProvider", () => {
     expect(createOpenAISttAdapter).not.toHaveBeenCalled();
   });
 
-  // LOCAL-03: the keyless OpenAI-compatible local-server branch. The bearer is
-  // the KEYLESS sentinel ("ollama-no-auth"), NEVER an empty string (Pitfall 5 →
-  // re-introduced 401), and the trailing slash on baseUrl is trimmed.
+  // The keyless OpenAI-compatible local-server branch. The bearer is
+  // the KEYLESS sentinel ("ollama-no-auth"), NEVER an empty string (an empty
+  // bearer re-introduces a 401), and the trailing slash on baseUrl is trimmed.
   it("creates an OpenAI-compatible adapter with the KEYLESS sentinel when local.baseUrl is set", () => {
     const sm = createMockSecretManager();
     const config: TranscriptionConfig = {
@@ -193,14 +193,14 @@ describe("createSTTProvider", () => {
     expect(callArg.apiKey).not.toBe("");
     // Trailing slash trimmed.
     expect(callArg.baseUrl).toBe("http://127.0.0.1:9000/v1");
-    // SEC-02 Surface B: the local-baseUrl branch opts the adapter into the
+    // Surface B: the local-baseUrl branch opts the adapter into the
     // validate-then-fetch SSRF guard. Mutation: dropping this flag fails here.
     expect(callArg.localServerGuard).toBe(true);
     // The baseUrl branch must NOT construct the in-process whisper adapter.
     expect(createLocalWhisperAdapter).not.toHaveBeenCalled();
   });
 
-  // SEC-02 Surface B no-regression: the cloud OpenAI branch SHARES
+  // Surface B no-regression: the cloud OpenAI branch SHARES
   // createOpenAISttAdapter but must NOT carry the local guard — it reaches
   // api.openai.com legitimately and the guard would wrongly block it.
   it("does NOT set localServerGuard on the cloud 'openai' branch (the guard is scoped to local.baseUrl only)", () => {

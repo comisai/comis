@@ -5,7 +5,7 @@
  * A process-lifetime GAUGE that accumulates lane usage, rerank
  * runs/fallbacks, consolidation throughput, and recall hit-rate inputs.
  *
- * RESET-ON-RESTART SEMANTIC (Assumption A2): the counters live in plain
+ * RESET-ON-RESTART SEMANTIC: the counters live in plain
  * closed-over numeric accumulators with NO persistence. A process restart
  * resets every counter to zero — this is intentional. These are
  * health/metrics gauges (mirroring the in-process side of `comis cache

@@ -886,9 +886,9 @@ describe("createRowMapper — generic factory", () => {
 
 });
 
-// ── CR-03: rowToEntry maps row.pinned=1 → entry.pinned=true ────────────
-describe("rowToEntry — CR-03: pinned field mapping", () => {
-  it("CR-03: rowToEntry maps row.pinned=1 to entry.pinned=true", () => {
+// ── rowToEntry maps row.pinned=1 → entry.pinned=true ────────────
+describe("rowToEntry — pinned field mapping", () => {
+  it("rowToEntry maps row.pinned=1 to entry.pinned=true", () => {
     // Pre-patch: rowToEntry never maps pinned → entry.pinned is undefined.
     // Post-patch: row.pinned===1 → entry.pinned===true.
     // Cast through unknown to accommodate the pinned field that MemoryRow does not yet declare.
@@ -922,7 +922,7 @@ describe("rowToEntry — CR-03: pinned field mapping", () => {
     expect(entry.pinned).toBe(true);
   });
 
-  it("CR-03: rowToEntry leaves entry.pinned absent when row.pinned=0", () => {
+  it("rowToEntry leaves entry.pinned absent when row.pinned=0", () => {
     // row.pinned=0 (unpinned) → entry.pinned should be absent/undefined (not false).
     const row = {
       id: "pin-row-2",

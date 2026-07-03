@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Boot-window honesty wiring proof (KNOB-01 + FLOOR-01, Phase 176) — drives the
+ * Boot-window honesty wiring proof — drives the
  * REAL `setupSingleAgent` boot path and asserts the served-window comparator +
  * boot-window-info collection run beside the per-agent pi ModelRegistry, the
  * ONLY seam with the registry-enriched "configured" window the executor itself
@@ -11,13 +11,14 @@
  * `compareServedWindowForProvider` / `collectAgentBootWindowInfo` /
  * `resetServedWindowWarnForTest` are the REAL implementations — the wiring proof
  * must exercise the real once-per-boot-per-provider WARN latch and the real
- * executor-mirrored window resolution, not a stub (the milestone's recurring
- * failure class is "built-but-not-wired"; a stubbed comparator could pass while
+ * executor-mirrored window resolution, not a stub (a recurring failure class
+ * is "built-but-not-wired"; a stubbed comparator could pass while
  * the daemon never feeds it real registry data).
  *
- * RED on pre-wiring code: SingleAgentDeps has no `servedWindowComparisons` /
- * `agentBootWindowInfo` collector fields and the runtime never invokes the
- * comparator, so the threaded maps stay empty and no comparator WARN fires.
+ * Guards against the built-but-not-wired regression: without this wiring
+ * SingleAgentDeps has no `servedWindowComparisons` / `agentBootWindowInfo`
+ * collector fields and the runtime never invokes the comparator, so the
+ * threaded maps stay empty and no comparator WARN fires.
  *
  * @module
  */
@@ -178,9 +179,9 @@ function makeDeps(container: AppContainer): ServedWindowHarness {
     timers: { setTimeout: vi.fn(), setInterval: vi.fn() } as any,
     pendingModeSwitches: new Map(),
     trajectoryRegistry: { closeAll: vi.fn() } as any,
-    // CWF-03 probe result: Ollama serves 8_192 for this provider.
+    // Probe result: Ollama serves 8_192 for this provider.
     servedWindowByProvider: new Map<string, number>([["qwen-local", 8_192]]),
-    // KNOB-01/03 + FLOOR-01: the daemon-owned collector maps under test.
+    // The daemon-owned collector maps under test.
     servedWindowComparisons,
     agentBootWindowInfo,
   } as unknown as SingleAgentDeps;
@@ -189,7 +190,7 @@ function makeDeps(container: AppContainer): ServedWindowHarness {
 
 // --- Tests -------------------------------------------------------------------
 
-describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () => {
+describe("setupSingleAgent boot-window honesty wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // The comparator's once-per-boot-per-provider latch is module-level — reset
@@ -203,7 +204,7 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
     }));
   });
 
-  it("KNOB-01-11: invokes the comparator beside the per-agent registry and collects the comparison into the threaded map, warning exactly once", async () => {
+  it("invokes the comparator beside the per-agent registry and collects the comparison into the threaded map, warning exactly once", async () => {
     const agentId = "default";
     const container = makeContainer([agentId]);
     const { deps, logger, servedWindowComparisons } = makeDeps(container);
@@ -217,12 +218,12 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
       configured: 131_072,
       belowConfigured: true,
     });
-    // Exactly ONE under-served comparator WARN (I7 shape lives in the
-    // comparator's own fixtures; the wiring proof pins invocation + latch).
+    // Exactly ONE under-served comparator WARN (the exact WARN shape lives in
+    // the comparator's own fixtures; the wiring proof pins invocation + latch).
     expect(warnsWithMsg(logger, COMPARATOR_WARN_MSG)).toHaveLength(1);
   });
 
-  it("KNOB-01-12: latches the WARN per provider across agents — two agents on one provider still warn once and collect one entry", async () => {
+  it("latches the WARN per provider across agents — two agents on one provider still warn once and collect one entry", async () => {
     const container = makeContainer(["default", "second"]);
     const { deps, logger, servedWindowComparisons } = makeDeps(container);
 
@@ -236,7 +237,7 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
     expect(servedWindowComparisons.get("qwen-local")).toMatchObject({ belowConfigured: true });
   });
 
-  it("FLOOR-01-15: collects per-agent boot window info (served-bound effective window, registry-mirrored configured, small/nano profile) into the threaded map", async () => {
+  it("collects per-agent boot window info (served-bound effective window, registry-mirrored configured, small/nano profile) into the threaded map", async () => {
     const agentId = "default";
     const container = makeContainer([agentId]);
     const { deps, agentBootWindowInfo } = makeDeps(container);
@@ -262,8 +263,8 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
     expect(["small", "nano"]).toContain(info?.modelProfile.capabilityClass);
   });
 
-  it("WR-02: binds servedContextWindow as the {providerKey, window} pair so the executor can gate the clamp on the per-execution provider", async () => {
-    // WR-02 (Phase 176 review): the bare number lost the provider identity —
+  it("binds servedContextWindow as the {providerKey, window} pair so the executor can gate the clamp on the per-execution provider", async () => {
+    // The bare number lost the provider identity —
     // pi-executor then applied the primary's served window to override models
     // on OTHER providers. The pairing is one field by design: a value without
     // its provider key cannot be bound.
@@ -283,8 +284,8 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
     });
   });
 
-  it("WR-03: the boot-window info carries the EXACT convertTools closure the executor receives (corpus-identity pin)", async () => {
-    // WR-03 (Phase 176 review): the FLOOR-01 boot toolSchemaTokens term must
+  it("the boot-window info carries the EXACT convertTools closure the executor receives (corpus-identity pin)", async () => {
+    // The boot toolSchemaTokens term must
     // measure the SAME converted ToolDefinition corpus the turn-time S
     // estimate measures. The pin is REFERENCE identity — one closure, two
     // consumers — so the two corpora cannot fork (a second closure built from
@@ -304,7 +305,7 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
     expect(info?.convertTools).toBe(executorDeps?.convertTools);
   });
 
-  it("WR-02: an unprobed provider binds servedContextWindow undefined (no pair fabricated)", async () => {
+  it("an unprobed provider binds servedContextWindow undefined (no pair fabricated)", async () => {
     const agentId = "default";
     const container = makeContainer([agentId]);
     const { deps } = makeDeps(container);
@@ -319,7 +320,7 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
     expect(executorDeps?.servedContextWindow).toBeUndefined();
   });
 
-  it("FLOOR-01-16: fails open — a throwing registry find does NOT reject agent setup; setup completes with an errorKind 'internal' WARN and no collected boot info", async () => {
+  it("fails open — a throwing registry find does NOT reject agent setup; setup completes with an errorKind 'internal' WARN and no collected boot info", async () => {
     const agentId = "default";
     const container = makeContainer([agentId]);
     const { deps, logger, agentBootWindowInfo } = makeDeps(container);
@@ -327,7 +328,7 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
       throw new Error("registry exploded");
     });
 
-    // The agent must still boot (Pitfall 7 / T-176-15): no rejection.
+    // The agent must still boot: no rejection.
     await expect(
       setupSingleAgent(agentId, container.config.agents[agentId] as PerAgentConfig, deps),
     ).resolves.toBeDefined();

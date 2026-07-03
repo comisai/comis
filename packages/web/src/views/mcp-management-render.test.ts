@@ -4,8 +4,7 @@
  *
  * Targets the render() decision tree + the helper render methods so the
  * LoadState/empty-state/server-card/config-only/confirm-dialog branches
- * all execute. mcp-management.ts had the lowest baseline coverage in the
- * web package; this file lifts it by exercising every render path.
+ * all execute, exercising every render path.
  *
  * @module
  */

@@ -6,7 +6,7 @@
  * (architecture.test.ts "agent -> memory cut"). Precedent for pure ranking math in
  * the agent package: executor/tool-deferral.ts (inline BM25).
  *
- * Boost shape (design §5.4 — each sub-signal is centered on 0.5 so a NEUTRAL signal
+ * Boost shape (each sub-signal is centered on 0.5 so a NEUTRAL signal
  * contributes a factor of exactly 1.0):
  *
  *   boosted = base
@@ -21,11 +21,11 @@
  *
  * The proof signal is now LIVE — it is the read-side payoff of memory
  * consolidation, so a corroborated observation out-ranks the raw memories it summarizes:
- *   - `proofNorm` maps the typed `proofCount` through a log curve (design §5.4:
- *     `clamp(0.5 + log(proofCount)/10, 0, 1)` — proofCount 1→0.5, ~150→1.0, monotone in
+ *   - `proofNorm` maps the typed `proofCount` through a log curve
+ *     (`clamp(0.5 + log(proofCount)/10, 0, 1)` — proofCount 1→0.5, ~150→1.0, monotone in
  *     corroboration). A raw memory (no `proofCount`) → 0.5 (neutral).
  *   - `confidenceFactor` applies an explicit HALF-LIFE decay over the observation's typed
- *     `confidence` and its EVENT age (design §16.6 / Open decision 6 — LOCKED to half-life):
+ *     `confidence` and its EVENT age:
  *     `confidence * 0.5^(ageDays / CONFIDENCE_HALF_LIFE_DAYS)`. A raw memory (no `confidence`)
  *     → 1.0 (neutral).
  *   - `decayedProof` multiplies the ABOVE-neutral portion of `proofNorm` by that decayed
@@ -58,7 +58,7 @@ const TIE_EPSILON = 1e-9;
  * Per-memory multiplicative score breakdown. The six factors are the
  * EXACT multiplicands score() folds into the boosted score, surfaced so the recall
  * trace can record WHY a memory ranked where it did. Pure numbers — no redaction
- * concern (RESEARCH: the breakdown is safe to persist). Invariant:
+ * concern (the breakdown is safe to persist). Invariant:
  *   final === base * recency * temporal * proof * trust * usefulness * forget
  * A neutral sub-signal contributes a factor of exactly 1.0 (recency/temporal/proof/
  * trust/usefulness are each centered on 0.5; forget is centered on its 1.0 neutral and is
@@ -80,7 +80,7 @@ export interface ScoreBreakdown {
   /** Usefulness factor `1 + usefulnessAlpha * (usefulnessNorm - 0.5)`; 1.0 when the signal is absent. */
   usefulness: number;
   /**
-   * OBS-02 (Verified Learning WS3): the OUTCOME-attributed usefulness CONTRIBUTION,
+   * The OUTCOME-attributed usefulness CONTRIBUTION,
    * surfaced as a DISTINCT annotation so `comis explain` can show how much of a memory's
    * rank came from the learned recall-utility / outcome feedback (the per-id reward the
    * daemon reward seam accrues into `memory_usefulness` on a `success`/`failure`/`corrected`
@@ -89,7 +89,7 @@ export interface ScoreBreakdown {
    * memory, `-` demotes a recalled-but-ignored one, and EXACTLY `0` when no usefulness signal
    * is present (the no-reorder-when-absent point). This is an ANNOTATION, **not** a multiplicand
    * — it is ABSENT from `final` (which stays the six-factor product), so adding it is byte-identical.
-   * A derived FACTOR share — never a raw tuned-alpha value (T-200-23: the breakdown is a per-memory
+   * A derived FACTOR share — never a raw tuned-alpha value (the breakdown is a per-memory
    * trace artifact carrying normalized shares, not the learner's alpha state).
    */
   usefulnessOutcomeShare: number;
@@ -117,14 +117,14 @@ export interface ScoringAlphas {
   trustAlpha: number;
   /**
    * Usefulness boost weight (bounded, same small magnitude as trust/proof so it
-   * CANNOT overturn trust-first — Pitfall 5). The single canonical knob: it traces to
+   * CANNOT overturn trust-first). The single canonical knob: it traces to
    * `rag.scoring.usefulnessAlpha` (no second knob on `rag.feedback`). Centered on a 0.5
    * used-rate, so an absent signal contributes a factor of exactly 1.0 at any alpha.
    */
   usefulnessAlpha: number;
   /**
    * FadeMem decay boost weight (bounded, same small magnitude as trust/proof/
-   * usefulness so the decay RANKS but CANNOT overturn trust-first — Pitfall 2). Blends the
+   * usefulness so the decay RANKS but CANNOT overturn trust-first). Blends the
    * forget factor between no-decay (alpha 0 → factor 1.0) and full-decay (alpha 1 → the raw
    * {@link fadeMemFactor}). The factor only ever demotes (∈ [0.5,1], neutral 1.0), gated by
    * `forget.enabled` at the fold site — OFF ⇒ forgetFactor forced to exactly 1.0 (byte-identity).
@@ -178,17 +178,18 @@ function temporalProx(entry: MemorySearchResult["entry"], nowMs: number): number
 
 /**
  * Confidence half-life: a stale observation's confidence contribution halves every
- * `CONFIDENCE_HALF_LIFE_DAYS` of EVENT age. Design §16.6 / Open decision 6 LOCKED the
- * decay shape to an explicit half-life but left the constant open; 30 days is the
+ * `CONFIDENCE_HALF_LIFE_DAYS` of EVENT age. The decay shape is deliberately an explicit
+ * half-life (not an arbitrary curve); the constant is tunable and 30 days is the
  * default (a month-old observation contributes half its confidence to the proof boost).
  *
  * NB: this is the PROOF-decay axis (decayedProof). The FadeMem factor uses its
  * OWN base rate {@link LAMBDA_BASE}, anchored to the SAME 30-day neutral half-life but as
- * a SEPARATE constant — do NOT repurpose this one (the RESEARCH anti-pattern).
+ * a SEPARATE constant — do NOT repurpose this one (the two decay channels must stay
+ * independently tunable).
  */
 const CONFIDENCE_HALF_LIFE_DAYS = 30;
 
-// ─── The per-type FadeMem decay factor (RESEARCH "## FadeMem Math") ───
+// ─── The per-type FadeMem decay factor ───
 // A 6th 0.5-centered bounded multiplicand `0.5 + 0.5·exp(−λ·Δt^β)` ∈ [0.5,1] (neutral → 1.0),
 // gated by `cfg.forget?.enabled` (which defaults ON; the only off-switch is the master cost
 // switch). λ = λ_base·exp(−μ·imp); imp is the Comis
@@ -201,8 +202,8 @@ const CONFIDENCE_HALF_LIFE_DAYS = 30;
 // independent of λ/β/imp — so a legacy/neutral fresh row scores byte-identical even when ON.
 
 /**
- * FadeMem base decay rate `λ_base = ln(2)/30 ≈ 0.0231 day⁻¹` — the PARITY anchor (RESEARCH
- * §FadeMem Math): with the parity β=1 (exponential) and neutral imp (μ·imp=0 → λ=λ_base),
+ * FadeMem base decay rate `λ_base = ln(2)/30 ≈ 0.0231 day⁻¹` — the PARITY
+ * anchor: with the parity β=1 (exponential) and neutral imp (μ·imp=0 → λ=λ_base),
  * `exp(−λ_base·Δt)` reproduces today's 30-day half-life `0.5^(Δt/30)`. A SEPARATE constant
  * from {@link CONFIDENCE_HALF_LIFE_DAYS} (the proof axis) — they share the 30-day anchor but
  * are distinct decay channels. The byte-identity gate is INDEPENDENT of this value (it rests
@@ -214,8 +215,8 @@ const LAMBDA_BASE = Math.LN2 / 30; // ≈ 0.0231 day⁻¹
  * Importance sensitivity μ (FadeMem Eq.5). Higher imp → smaller λ → slower decay (important
  * memories persist). [ASSUMED — FadeMem unreported, tuned for Comis]: 1.5 makes a max-imp
  * memory's λ ≈ λ_base·exp(−1.5) ≈ 0.22·λ_base (a ~4.5× longer half-life) — a meaningful
- * persistence gradient that, at the bounded `forgetAlpha`, never overturns trust-first
- * (Pitfall 2). The byte-identity gate is independent of μ.
+ * persistence gradient that, at the bounded `forgetAlpha`, never overturns trust-first.
+ * The byte-identity gate is independent of μ.
  */
 const MU = 1.5; // [ASSUMED — FadeMem unreported, tuned for Comis]
 
@@ -243,8 +244,8 @@ const W_TRUST = 0.2; // trust position
 const W_PROOF = 0.15; // corroboration
 
 /**
- * Proof-count normalization. Maps the typed `proofCount` through the design
- * §5.4 log curve `clamp(0.5 + log(proofCount)/10, 0, 1)`: proofCount 1 → 0.5 (neutral,
+ * Proof-count normalization. Maps the typed `proofCount` through the
+ * log curve `clamp(0.5 + log(proofCount)/10, 0, 1)`: proofCount 1 → 0.5 (neutral,
  * identical to a raw memory), ~150 → ~1.0, monotone-increasing and bounded in corroboration.
  * A raw memory (no `proofCount`) returns 0.5 → a neutral 1.0 factor (no reordering — the
  * seam's no-reorder-when-absent contract). `proofCount` is a typed optional MemoryEntry
@@ -290,7 +291,7 @@ function decayedProof(entry: MemorySearchResult["entry"], nowMs: number): number
  *   - ABSENT signal (no map, or the id is not a key) → 0.5 → neutral 1.0 factor (the
  *     byte-identity guarantee: a memory with no usefulness history is never reordered).
  *   - total resolved (used + ignored) of 0 → 0.5 → neutral (recalled-but-never-attributed).
- *   - else the used-RATE `usedCount / (usedCount + ignoredCount)` in [0,1] (Pitfall 5: a
+ *   - else the used-RATE `usedCount / (usedCount + ignoredCount)` in [0,1] (a
  *     RATE, NOT raw counts — a memory "used" 1000× cannot explode the factor; the bounded
  *     `usefulnessAlpha` then keeps the boost from overturning trust-first).
  */
@@ -330,8 +331,8 @@ export function betaForType(memoryType: MemorySearchResult["entry"]["memoryType"
 
 /**
  * Importance `imp` ∈ [0,1] — the Comis superset over the 5 EXISTING scoring signals
- * (RESEARCH §"The importance aggregation imp"; RQ4 — REUSE the helpers already in this file,
- * NO new store). Higher imp → smaller λ → slower decay (important memories persist). The
+ * (REUSES the helpers already in this file — NO new store).
+ * Higher imp → smaller λ → slower decay (important memories persist). The
  * relevance + used-rate terms are CALL-SITE values (the base relevance `result.score` and the
  * `usefulnessById` signal that `scoreWithBreakdown` already has), so they are threaded in as
  * parameters to keep this function pure over what the scorer holds.
@@ -358,12 +359,12 @@ function importance(
 }
 
 /**
- * FadeMem decay factor (RESEARCH §"The decay factor"). A 0.5-centered bounded
+ * FadeMem decay factor. A 0.5-centered bounded
  * multiplicand `0.5 + 0.5·exp(−λ·Δt^β)` ∈ [0.5,1] whose NEUTRAL value is 1.0 (so it already
  * has factor form — it is wrapped by `forgetAlpha` at the fold site to blend between no-decay
  * and full-decay). `λ = λ_base·exp(−μ·imp)` (importance shrinks the rate); `β` is the per-type
  * shape; `Δt` is EVENT age in days (`occurredAt ?? createdAt`, the SAME axis {@link confidenceFactor}
- * uses — score.ts:184-185 verbatim), future-dated clamped to 0 (no negative-age blow-up → factor
+ * uses), future-dated clamped to 0 (no negative-age blow-up → factor
  * 1.0). Lazy-at-read: pure over the INJECTED nowMs (never Date.now). The relevance + used-rate
  * imp signals are threaded in (`base` + `usefulnessSignal`) from the scorer's call site.
  *
@@ -389,8 +390,7 @@ export function fadeMemFactor(
  * a bounded, saturating strength boost applied on access (recall). The `(1−v)` factor caps it
  * at 1.0; the `exp(−n/N)` factor makes each successive access (larger prior-access count `n`)
  * boost LESS (diminishing returns); at v→1 the boost → ~0. Deterministic, pure, bounded ∈ [0,1]
- * and ≥ v. Lazy-at-read (RESEARCH A4 — no persistence, no FEED-loop write, avoids the 3-hop
- * hazard); the tested pure helper a later live step consumes.
+ * and ≥ v. Lazy-at-read: no persistence and no feedback-loop write on the recall path.
  */
 export function consolidationBoost(v: number, n: number): number {
   return Math.min(1, v + CONSOLIDATION_DV * (1 - v) * Math.exp(-n / CONSOLIDATION_N));
@@ -456,7 +456,7 @@ export function scoreWithBreakdown(
     // Absent signal → usefulnessNorm 0.5 → usefulnessFactor exactly 1.0 (byte-identity).
     const usefulnessSignal = usefulnessById?.get(result.entry.id);
     const usefulnessFactor = 1 + alphas.usefulnessAlpha * (usefulnessNorm(usefulnessSignal) - 0.5);
-    // OBS-02: the outcome-attributed usefulness CONTRIBUTION = the signed deviation of the
+    // The outcome-attributed usefulness CONTRIBUTION = the signed deviation of the
     // usefulness factor from its 1.0 neutral. An annotation for the trace (NOT a multiplicand):
     // exactly 0 when the signal is absent (factor 1.0 → no reorder), positive for a proven-useful
     // memory, negative for a recalled-but-ignored one. It is NOT folded into `final` below.

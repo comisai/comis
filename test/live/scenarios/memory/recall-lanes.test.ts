@@ -139,7 +139,7 @@ describe.skipIf(!isLive)("MEM-03 Stage-B — recall-lane all-pairs ($0, real dae
           expectedErrors: ["JSON-RPC method error"],
         });
         expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
-        // Content-anchored ground truth (260611 re-pin): the planted fact is
+        // Content-anchored ground truth: the planted fact is
         // stored; counts are BOUNDS (ingestion stores one row per distinct
         // user turn — 2 distinct turns here, recall turn included).
         expect(

@@ -238,29 +238,29 @@ describe("ResultCondenser", () => {
     expect(generateSummary).not.toHaveBeenCalled();
   });
 
-  it("Level 3: dense-script (Hebrew) truncation respects maxResultTokens under the module's own factored measure (WR-02)", async () => {
+  it("Level 3: dense-script (Hebrew) truncation respects maxResultTokens under the module's own factored measure", async () => {
     const maxResultTokens = 500;
     const deps = createTestDeps({ maxResultTokens });
     const condenser = createResultCondenser(deps);
 
-    // Pure Hebrew letters + neutral spaces -> scriptTokenFactor 0.5. Pre-fix
+    // Pure Hebrew letters + neutral spaces -> scriptTokenFactor 0.5. If
     // headTailTruncate's char budget stayed flat maxTokens*4 while its own
-    // estimateTokens became factored (TOK-01), so the truncated output
-    // measured ~2x maxResultTokens by the SAME measure that routed it to
-    // Level 3 -> RED. tokens->chars is the OUTPUT direction here: a flat
-    // budget over-emits, the inverse of the conservative reservation sites.
+    // estimateTokens is script-factored, the truncated output would measure
+    // ~2x maxResultTokens by the SAME measure that routed it to Level 3.
+    // tokens->chars is the OUTPUT direction here: a flat budget over-emits,
+    // the inverse of the conservative reservation sites.
     const he = "שלום עולם זה מבחן ארוך מאוד בעברית "; // 35 UTF-16 units
     const fullResult = he.repeat(120); // 4200 chars >> any budget
 
     const result = await condenser.condense(createTestParams({ fullResult })); // no model -> Level 3
 
     expect(result.level).toBe(3);
-    // Only the omission-marker overhead (~30 ASCII chars, pre-existing) may
-    // ride above the cap: 10% slack. Pre-fix: ~1013 condensed tokens -> RED.
+    // Only the omission-marker overhead (~30 ASCII chars) may ride above
+    // the cap: 10% slack.
     expect(result.condensedTokens).toBeLessThanOrEqual(Math.ceil(maxResultTokens * 1.1));
   });
 
-  it("Level 3: pure-ASCII truncation budget stays byte-identical to flat maxTokens*4 (I1 pin, WR-02)", async () => {
+  it("Level 3: pure-ASCII truncation budget stays byte-identical to flat maxTokens*4", async () => {
     const maxResultTokens = 100;
     const deps = createTestDeps({ maxResultTokens });
     const condenser = createResultCondenser(deps);

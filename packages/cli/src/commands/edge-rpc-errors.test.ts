@@ -216,8 +216,7 @@ describe("RPC failure exit code 1", () => {
 
   // -- Memory commands ------------------------------------------------------
 
-  // (live finding 2026-06-11): memory search/inspect are real RPC commands now
-  // (the Phase-126 stub-era exit-1 is gone), so they get the standard
+  // memory search/inspect are real RPC commands, so they get the standard
   // RPC-failure contract: exit 1 with an actionable error.
   it("memory search exits 1 with the failure message when the RPC rejects", async () => {
     const program = createTestProgram();
@@ -340,10 +339,10 @@ describe("null/empty RPC response handling", () => {
     expect(output).toContain("No agents configured");
   });
 
-  // NOTE: "agent list with null RPC response does not crash" deleted in 55-04 —
+  // NOTE: there is deliberately no "agent list with raw-null RPC response" test —
   // ConfigReadContract.response is `z.record(z.string(), z.unknown())`, which
   // rejects raw `null`. The CLI's always-on response.parse closes that path
-  // structurally; the test only ever covered the dev-skip dead path.
+  // structurally, so a raw-null response cannot reach the render code.
 
   it("agent list with { agents: null } does not crash", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
@@ -431,12 +430,11 @@ describe("null/empty RPC response handling", () => {
   //    surface as RPC errors (caught by the catch block) — see
   //    sessions-behavior.test.ts for the inspect tests.
 
-  // -- Memory search/inspect fail closed (v2.12) ----------------------------
+  // -- Memory search/inspect with no usable RPC ------------------------------
   //
-  // NOTE (v2.12, Phase 126): `memory search` / `memory inspect` borrowed the
-  // now-removed context.search / context.inspect RPCs. With the DAG context
-  // engine demolished they fail closed (non-zero exit) before any RPC, so the
-  // former RPC-edge cases ("empty results" / "empty response") no longer apply.
+  // NOTE: with no usable RPC response, `memory search` / `memory inspect`
+  // fail closed (non-zero exit) rather than rendering empty results, so the
+  // usual RPC-edge cases ("empty results" / "empty response") do not apply.
   // The fail-closed contract is asserted in memory-behavior.test.ts.
 
   it("memory search fails closed (exit 1) — no RPC edge to exercise", async () => {
@@ -483,11 +481,11 @@ describe("null/empty RPC response handling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// withClient VITEST guard (Fix A — log-review test isolation)
+// withClient VITEST guard (test isolation)
 //
 // Under VITEST=true, withClient() must refuse to open a real WebSocket
-// connection unless COMIS_CLI_E2E=true. The previous regression let CLI
-// tests silently open ws://localhost:4766 every 75s for the duration of
+// connection unless COMIS_CLI_E2E=true. Without the guard, CLI tests
+// silently open ws://localhost:4766 every 75s for the duration of
 // the `pnpm test` run, leaving connection-refused noise in the user's
 // ~/.comis/logs/. This test asserts the guard fires before createRpcClient
 // is reached.

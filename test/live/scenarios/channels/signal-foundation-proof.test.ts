@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CHAN2-02 — THE FOUNDATION-PROOF (Phase 209, Plan 07 — the milestone's
- * foundation capstone).
+ * CHAN2-02 — THE FOUNDATION-PROOF (the channel-generalization capstone).
  *
  * The load-bearing claim of this milestone is that the telegram-first
  * channel-emulation harness GENERALIZES: a SECOND channel (Signal, channel #2)
@@ -12,27 +11,27 @@
  * scenario IS that proof.
  *
  * It mirrors `telegram-delivery-roundtrip.test.ts`'s Stage-B / Stage-C split
- * VERBATIM (the 204/205 lineage):
+ * VERBATIM:
  *
  *   - Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): proves
  *     the wiring STRUCTURE deterministically —
- *       (a) the HARD dual-oracle cross-check (`assertChannelTrace`, 205-01)
+ *       (a) the HARD dual-oracle cross-check (`assertChannelTrace`)
  *           PASSES on wire==`delivery_mirror.text` and THROWS on a deliberate
  *           mismatch, using the REAL `createSignalEmulator()` as the channel
  *           oracle (it satisfies the structural `{ lastBotReply(chat): text? }`
  *           subset the dual oracle reads — the FOUNDATION-PROOF PASS: the
  *           highest-value HARD assertion is REUSED UNCHANGED, channel-agnostic);
- *       (b) the section-3A.4 caps contract — `signalCaps` reconciles against the
+ *       (b) the caps contract — `signalCaps` reconciles against the
  *           REAL Signal adapter `CAPABILITIES` (`buttons:false` / `reactions:true`);
  *       (c) the honest `tap`-degrade — `chan --channel signal tap` exits a
  *           DISTINCT non-zero (`unsupported_on_channel`) BEFORE any POST (the
- *           section-3A.4 / I5 leg, via the 209-06 caps gate), `react` is NOT
+ *           honest-degrade leg, via the caps gate), `react` is NOT
  *           gated (Signal supports reactions);
  *       (d) the `injectReaction` wire-effect — a `SignalEnvelope` reaction frame
  *           is emitted on the SSE stream (the react FLOW has a real wire effect).
  *
  *   - Stage-C (describe.skipIf(!isLive), COMIS_LIVE, a reachable keyless model)
- *     is the agent-authored round-trip (added in Task 2): `startRig({channel:
+ *     is the agent-authored round-trip: `startRig({channel:
  *     "signal"})` boots an isolated daemon pointed at the SignalEmulator (via
  *     `channels.signal.baseUrl`), `chan --channel signal send` round-trips, and
  *     `chan --channel signal explain` works. SKIPPED (skip != fail) without
@@ -194,7 +193,7 @@ async function recordSendOnEmulator(apiRoot: string, chat: string, text: string)
   }
 }
 
-/** A recording fake fetch for the caps-gate / react units (the 207 shape). */
+/** A recording fake fetch for the caps-gate / react units. */
 function recordingFetch(script: (url: string) => { status?: number; body?: unknown } = () => ({})): {
   fetch: typeof fetch;
   calls: Array<{ method: string; url: string; body: unknown }>;
@@ -376,7 +375,7 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
     }
   });
 
-  it("the section-3A.4 caps contract holds: signalCaps reconciles against the REAL Signal adapter CAPABILITIES (buttons:false / reactions:true)", async () => {
+  it("the caps contract holds: signalCaps reconciles against the REAL Signal adapter CAPABILITIES (buttons:false / reactions:true)", async () => {
     // Import the adapter's REAL declared capabilities (the reconciliation TARGET)
     // — the lazy factory reads the module-local CAPABILITIES with no network.
     const { createSignalPlugin } = await import("@comis/channels");
@@ -389,7 +388,7 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
     expect(signalCaps.outbound.buttons).toBe(false);
     expect(caps.features.buttons).toBe("none");
     expect(signalCaps.outbound.buttons).toBe(caps.features.buttons === "none" ? false : true);
-    // reactions:true is the WS1-relevant verb Signal DOES support (chan react works).
+    // reactions:true — Signal DOES support reactions (chan react works).
     expect(signalCaps.outbound.reactions).toBe(true);
     expect(signalCaps.outbound.reactions).toBe(caps.features.reactions);
     // edits:false — honest degradation (Signal can't edit), reconciled.
@@ -399,9 +398,9 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
     expect(SIGNAL_MAX_MESSAGE_CHARS).toBe(caps.limits.maxMessageChars);
   });
 
-  it("chan --channel signal tap honest-degrades: a DISTINCT non-zero exit + unsupported_on_channel BEFORE any POST (the section-3A.4 / I5 leg)", async () => {
+  it("chan --channel signal tap honest-degrades: a DISTINCT non-zero exit + unsupported_on_channel BEFORE any POST", async () => {
     const rec = recordingFetch();
-    // The threaded channel is signal (the 209-06 caps gate keys on ctx.channel).
+    // The threaded channel is signal (the caps gate keys on ctx.channel).
     const parsed = parseArgs(["--channel", "signal", "tap", "42", "page=2"]);
     const ctx: VerbContext = {
       ...contextFromParsed(parsed, fakeSignalHandle()),
@@ -547,7 +546,7 @@ function phaseDiffFiles(): string[] {
 /**
  * Whether the Phase-209 base is derivable from git history. These two proofs are
  * DEV-TIME guards: they assert the in-flight phase-209 diff touched only test
- * files. Once the phase is squash-merged (v2.28 / #234), the individual `(209-NN)`
+ * files. Once the phase is squash-merged (#234), the individual `(209-NN)`
  * commits no longer exist, so `phaseBase()` cannot anchor the diff — and the
  * "diff is test-only" premise is moot on a merged `main` carrying later phases'
  * production changes. Skip (don't fail) when the base is unresolvable; the proof
@@ -688,7 +687,7 @@ describe.skipIf(!PHASE_BASE_RESOLVABLE)("CHAN2-02 Stage-B — THE ZERO-CHANGE PR
 describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + explain (COMIS_LIVE)", () => {
   // RigHandle<SignalEmulator> — a {channel:"signal"} rig is generic over the
   // SignalEmulator (vs the TgEmulator default); the emulator field exposes the
-  // Signal oracle the cross-check reads (205-05 made RigHandle generic).
+  // Signal oracle the cross-check reads.
   let rig: RigHandle<SignalEmulator> | undefined;
   // buildRig exposes memoryDbPath (the RigHandle projection hides it); the
   // round-trip surface (send/waitForReply/emulator/chat) is identical.
@@ -697,8 +696,8 @@ describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + exp
   beforeAll(async () => {
     // PRECONDITION: `pnpm build` first — the live alias reads dist/; a stale
     // dist/ masks src/. buildRig({channel:"signal"}) boots an isolated daemon
-    // pointed at the SignalEmulator via channels.signal.baseUrl (the 209-05
-    // dispatch map + the verified config-only redirect seam).
+    // pointed at the SignalEmulator via channels.signal.baseUrl (the dispatch
+    // map + the verified config-only redirect seam).
     const { buildRig } = await import("../../harness/rig.js");
     const built = await buildRig({ channel: "signal", model: "keyless" });
     memoryDbPath = built.memoryDbPath;
@@ -788,7 +787,7 @@ describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + exp
         sessionKey,
       });
 
-      // explain works channel-agnostically over the FIXED rpc-over-WS (205-07):
+      // explain works channel-agnostically over the rpc-over-WS transport:
       // a known sessionKey returns an IncidentReport. (Driven via the chan CLI's
       // explain verb against the rig's gateway — channel-agnostic obs.)
       const { runVerb: liveRunVerb } = await import("../../bin/chan.js");

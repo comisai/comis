@@ -253,7 +253,7 @@ describe("runDbOracle — row delta: expected +1 but got 0 throws", () => {
 // Check 3c: memory_fts ↔ memories (ALL rows) sync
 // Check 3d: vec_memories ↔ memories(has_embedding=1) sync
 //
-// Corrected semantics (CR-01): memory_fts triggers fire on EVERY INSERT INTO
+// memory_fts triggers fire on EVERY INSERT INTO
 // memories with no has_embedding filter (schema.ts lines 553-565). The correct
 // invariant is COUNT(*) memory_fts == COUNT(*) memories (total), NOT has_embedding=1.
 // vec_memories is the has_embedding=1 invariant (check 3d).
@@ -518,7 +518,7 @@ describe("countRowsLike — content-anchored ground truth (260611 predicate re-p
   });
 });
 
-describe("countObservationRows — proof_count signature (260611 MEM-07 invariant)", () => {
+describe("countObservationRows — proof_count signature (MEM-07 invariant)", () => {
   it("counts only rows with proof_count NOT NULL (consolidation observations)", async () => {
     const dbPath = await writeMemoryDbToFile((db) => {
       db.exec(MEMORIES_DDL);

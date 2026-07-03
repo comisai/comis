@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure SEC harness for the Phase 145 (SEC) scenario tests.
+ * Pure SEC harness for the SEC scenario tests.
  *
  * Provides:
  *   - fault injectors (429 / timeout / 5xx / malformed) — the deterministic SEC-01 fault source

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Call-rate limiter (RATE-01): bounds the rate of cap-socket calls per root and
+ * Call-rate limiter: bounds the rate of cap-socket calls per root and
  * per socket, plus a connection-churn cap per root, using the sliding-window +
  * TTL-evict + maxEntries pattern from `core/src/security/injection-rate-limiter.ts`.
  *
@@ -15,7 +15,7 @@
  * `?? <wall-clock-global>` hazard the globals.test.ts arch-gate rejects) — the
  * clock is required. Returns discriminated unions, never throws (raw-throw.test.ts).
  *
- * The composite caller (Plan 07) constructs ONE limiter and calls
+ * The composite caller (`createBoundedAutonomy`) constructs ONE limiter and calls
  * `tryCall(\`root:${rootRunId}\`)` + `tryCall(\`socket:${socketId}\`)` per dispatch
  * and `tryChurn(rootRunId)` per new cap-socket connection.
  *

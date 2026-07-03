@@ -30,7 +30,7 @@ const memoryConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false,
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall-related config keys nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,
@@ -589,7 +589,7 @@ describe("createSqliteTripleStore", () => {
 
   // =====================================================================
   // AS-OF TIME-TRAVEL — valid-time vs txn-time variants +
-  // currentTruth default-filter (the Graphiti opt-in-leak fix).
+  // currentTruth default-filter (the stale-fact leak fix).
   //
   // - asOf(t, scope, "valid")  → "what was BELIEVED true at t":
   //     t_valid_start <= t AND (t_valid_end IS NULL OR t_valid_end > t)
@@ -714,7 +714,7 @@ describe("createSqliteTripleStore", () => {
     });
   });
 
-  describe("currentTruth default-filter — excludes expired/invalidated edges (the Graphiti leak fix)", () => {
+  describe("currentTruth default-filter — excludes expired/invalidated edges (the stale-fact leak fix)", () => {
     it("after a supersession, currentTruth returns ONLY the new current-truth object — the soft-closed loser is NOT returned", async () => {
       // external "acme" then a higher-trust "globex" → "acme" soft-closed.
       await store.upsertTriple(
@@ -911,11 +911,11 @@ describe("createSqliteTripleStore", () => {
       expect(bScore).toBeGreaterThan(cScore);
     });
 
-    // CR-01 (lane gap): the graph-spread lane hydrates a full memory row (m.* JOIN
-    // memory_triples) that flows straight into createMemoryRecall → the prompt with NO
-    // downstream evicted_at re-validation. A soft-evicted reached node's source memory
-    // MUST be excluded; the asOf raw read still resolves it (soft eviction is reversible).
-    it("CR-01: a soft-evicted reached-node source memory is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
+    // The graph-spread lane hydrates a full memory row (m.* JOIN memory_triples) that
+    // flows straight into createMemoryRecall → the prompt with NO downstream evicted_at
+    // re-validation. A soft-evicted reached node's source memory MUST be excluded; the
+    // asOf raw read still resolves it (soft eviction is reversible).
+    it("a soft-evicted reached-node source memory is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
       await seedMemory("memB"); // depth-1, stays live
       await seedMemory("memC"); // depth-2, will be soft-evicted
       await edge("A", "B", { sourceMemoryId: "memB" });
@@ -928,7 +928,7 @@ describe("createSqliteTripleStore", () => {
       expect(res.ok).toBe(true);
       if (!res.ok) return;
       const ids = res.value.map((r) => r.entry.id);
-      // memB still surfaces; memC (evicted) must NOT (was leaking on HEAD).
+      // memB still surfaces; memC (evicted) must NOT.
       expect(ids).toContain("memB");
       expect(ids).not.toContain("memC");
 

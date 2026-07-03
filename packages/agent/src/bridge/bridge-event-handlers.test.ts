@@ -2,11 +2,11 @@
 /**
  * Co-located tests for bridge-event-handlers helpers.
  *
- * Covers the bounded extractErrorText contract (D4): the raw tool result
+ * Covers the bounded extractErrorText contract: the raw tool result
  * (potentially a 53 KB body) is capped at MAX_ERROR_TEXT_CHARS and replaced
  * with a non-reversible 12-hex fingerprint() digest suffix, so neither the
  * tool-retry breaker's lastError nor the WARN log ever ingests an unbounded
- * body (threat T-150-06 / T-150-08).
+ * body (an information-disclosure and context-bloat DoS threat).
  *
  * @module
  */
@@ -15,7 +15,7 @@ import { extractErrorText } from "./bridge-event-handlers.js";
 
 const MAX_ERROR_TEXT_CHARS = 2000;
 
-describe("extractErrorText -- bounded output (D4)", () => {
+describe("extractErrorText -- bounded output", () => {
   it("caps a 53 KB input at MAX_ERROR_TEXT_CHARS + suffix overhead", () => {
     const big = "x".repeat(53_000);
     const result = extractErrorText(big);

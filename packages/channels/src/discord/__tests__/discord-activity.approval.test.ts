@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discord approval-UI tests (rich-channel half; §7.7 / §17.3).
+ * Discord approval-UI tests (rich-channel half).
  *
- * The Discord renderer turns its deferred "approval affordance" into real
+ * The Discord renderer paints the approval affordance as real
  * native components: a `kind:"approval"` event in a frame's `visibleEvents` is
- * painted as a Discord component row whose `callback_data` is the signed §6.4.2
+ * painted as a Discord component row whose `callback_data` is the signed
  * wire string `v1.<choice>.<shortId>.<hmac>` (from `buildApprovalButtons` over
  * the renderer-injected `SignCallbackData`). The frame stays redacted — the
  * button labels/styles come from the choice hints, never raw params.
@@ -30,7 +30,7 @@ const SECRET = "test-callback-signing-secret-0123456789";
 const sign = (choice: "approve" | "deny" | "details", shortId: string): string =>
   signCallbackData(SECRET, choice, shortId);
 
-/** The §6.4.2 wire shape: `v1.<choice>.<12 base62>.<16 base64url>`. */
+/** The signed-callback wire shape: `v1.<choice>.<12 base62>.<16 base64url>`. */
 const WIRE = /^v1\.(approve|deny)\.[0-9A-Za-z]{12}\.[A-Za-z0-9_-]{16}$/;
 
 function approval(overrides: Partial<ApprovalCorrelation> = {}): ApprovalCorrelation {
@@ -100,7 +100,7 @@ describe("Discord approval components (signed native callback_data)", () => {
   it("renders the approval prompt text alongside the buttons", async () => {
     const timer = createFakeTimers();
     const fake = createFakeDiscordAdapter();
-    // Drop clock so the §8.5 elapsed fallback
+    // Drop clock so the "(running N s)" elapsed fallback
     // is skipped — the test asserts the approval-prompt text byte-stably.
     const r = createDiscordActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 

@@ -5,7 +5,7 @@
  * Presents a single-select of all supported speech-to-text providers
  * (auto / local / openai / groq / deepgram, mirroring core's
  * `TranscriptionConfigSchema` enum) and collects a credential ONLY when the
- * choice needs a STATIC one the wizard doesn't already hold (CRED-01):
+ * choice needs a STATIC one the wizard doesn't already hold:
  *
  *   - `auto`     — keyless-first (the recommended default): a keyless local
  *                  engine, or reuse the agent's main audio key. No prompt.
@@ -63,7 +63,7 @@ export const transcriptionStep: WizardStep = {
       return updateState(state, { transcriptionProvider: { provider } });
     }
 
-    // CRED-01 reuse: main provider already supplies the matching key (e.g. an
+    // Key reuse: main provider already supplies the matching key (e.g. an
     // openai main + openai STT → both OPENAI_API_KEY).
     const mainProvidesKey =
       state.provider?.apiKey !== undefined &&

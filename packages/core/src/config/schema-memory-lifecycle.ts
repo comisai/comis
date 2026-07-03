@@ -10,29 +10,27 @@
  * `evicted_at`). So enabling it costs nothing in LLM spend; the gate exists for
  * behavior-opt-in + a bounded write, not cost.
  *
- * EVICTION IS LIVE (EVI-STRENGTH-FLOOR resolved; reflect-obs-20260627 + hindsight-
- * reflection-20260626 live-proven): the wire passes `evictionEnabled:true`
+ * EVICTION IS LIVE: the wire passes `evictionEnabled:true`
  * (`setup-channels-memory-crons-wire.ts`) and the sweep soft-evicts a NON-exempt
  * memory that is dormant past `learning.forget.maxDormantDays` OR corroborated-wrong
- * (`failure_count >= learning.forget.failureEvictionFloor`). Exemptions hold (INV-4):
- * pinned / `trust_level='system'` / `proof_count >= highProofFloor` NEVER evict. (The
- * old FadeMem strength disjunct — which floored above threshold and evicted nothing —
- * was DELETED in Phase 224; the two reachable disjuncts are dormancy + corroborated
- * failure.) Live: seed `failure_count >= failureEvictionFloor` → run the cron → a
+ * (`failure_count >= learning.forget.failureEvictionFloor`). Exemptions hold:
+ * pinned / `trust_level='system'` / `proof_count >= highProofFloor` NEVER evict.
+ * Dormancy + corroborated failure are the ONLY two eviction disjuncts — there is
+ * deliberately no strength-score disjunct (a strength floor sits above the scores
+ * real rows reach and would evict nothing). Live proof: seed
+ * `failure_count >= failureEvictionFloor` → run the cron → a
  * low-proof row gets `evicted_at` SET while a high-proof/pinned row under the SAME
  * failures survives.
  *
- * Phase 226 (SIMPLIFY-01) trimmed this schema to its two SURVIVING knobs —
- * `enabled` + `schedule` (the `__LIFECYCLE__` cron). The dead FadeMem policy
- * constants (θ_promote/θ_demote/durableCap/ephemeralCap/ε_prune) were DELETED (224
- * removed the unreachable strength disjunct; dormancy + corroborated-failure remain),
- * and the dormancy window `maxDormantDays` MOVED to `learning.forget.maxDormantDays` (the
- * collapsed learning schema). The forget BEHAVIOR now reads its knobs from
- * `learning.forget`; this schema is purely the cron-enable + schedule.
+ * This schema carries exactly two knobs — `enabled` + `schedule` (the
+ * `__LIFECYCLE__` cron). No eviction-policy constants live here: the forget
+ * BEHAVIOR reads its knobs (including the dormancy window `maxDormantDays`) from
+ * `learning.forget` (the collapsed learning schema); this schema is purely the
+ * cron-enable + schedule.
  *
- * It is a `z.strictObject`, so a stray field (e.g. a re-added FadeMem constant or a
+ * It is a `z.strictObject`, so a stray field (e.g. a strength-policy constant or a
  * smuggled `trustAlpha`/`trustLevel` knob — the sweep NEVER raises trust by
- * degradation, design C2) is REJECTED at parse — the surface stays minimal.
+ * degradation) is REJECTED at parse — the surface stays minimal.
  *
  * @module
  */
@@ -41,7 +39,7 @@ import { z } from "zod";
 
 /**
  * MemoryLifecycleConfigSchema: Zod schema for the per-agent memory-lifecycle
- * sweep cron — TRIMMED to enable + schedule (Phase 226).
+ * sweep cron — enable + schedule only.
  *
  * Fields:
  * - enabled: opt-out (default TRUE — on out of the box; when enabled the sweep

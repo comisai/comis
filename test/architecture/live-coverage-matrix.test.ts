@@ -9,9 +9,9 @@
  * - status="skipped" → reason is non-empty and not in the blocklist
  *   (blocklist regex /^(TODO|later|tbd)/i — case-insensitive prefix match)
  *
- * All cells are initially status="skipped" with phase-reference reasons,
- * so invariants 1 and 2 pass trivially at Phase 134 (no covered cells yet,
- * all skipped cells have valid reasons). As subsequent phases settle cells
+ * All cells are initially status="skipped" with descriptive reasons,
+ * so invariants 1 and 2 pass trivially at the outset (no covered cells yet,
+ * all skipped cells have valid reasons). As subsequent work settles cells
  * to "covered", invariant 1 will enforce that the referenced test files exist.
  *
  * Two-gate design: even if a contributor removes the runner's matrix check,

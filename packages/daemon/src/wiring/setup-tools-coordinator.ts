@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * COORD-01 (218-01): the lean-coordinator tool-surface selection.
+ * The lean-coordinator tool-surface selection.
  *
  * Split from `setup-tools.ts` (file-size cap discipline; mirrors the
  * `setup-tools-autonomy.ts` sibling precedent). A PURE selector that decides the
@@ -8,8 +8,8 @@
  * coordinator` lead with NO explicit `tool_groups` is narrowed to the
  * coordinator orchestration surface (`resolveAutonomy().coordinatorToolGroups`);
  * an explicit `tool_groups` (or "full") still wins (operator intent —
- * progressive disclosure, T-218-04); `role:worker` (the default) leaves the
- * surface untouched (byte-identical to today). This narrows the TOOL SURFACE
+ * progressive disclosure); `role:worker` (the default) leaves the
+ * surface untouched. This narrows the TOOL SURFACE
  * only — the resolved capability set is unchanged.
  *
  * @module

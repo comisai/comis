@@ -534,10 +534,9 @@ describe("createDeadContentEvictorLayer", () => {
   // ---------------------------------------------------------------------------
 
   describe("H. Skip already-processed", () => {
-    // The legacy `[Tool result cleared:` prefix is no longer recognized by
-    // `isAlreadyMasked` (cleanup-helpers.ts), so the evictor no longer treats
-    // such content as already-processed. The canonical-prefix tests below
-    // cover the current behavior.
+    // `isAlreadyMasked` (cleanup-helpers.ts) recognizes only the canonical
+    // prefixes; a `[Tool result cleared:` prefix is NOT treated as
+    // already-processed. The canonical-prefix tests below pin the behavior.
 
     it("tool result with [Tool result summarized: prefix: not double-evicted", async () => {
       const onEvicted = vi.fn();
@@ -930,7 +929,7 @@ describe("createDeadContentEvictorLayer", () => {
   // -------------------------------------------------------------------------
 
   describe("isAlreadyOffloaded format compatibility", () => {
-    it("skips evicting messages with OLD offloaded format", async () => {
+    it("skips evicting messages with the non-preview offloaded format", async () => {
       const onEvicted = vi.fn();
       const layer = createDeadContentEvictorLayer({ evictionMinAge: 2 }, onEvicted);
 
@@ -945,7 +944,7 @@ describe("createDeadContentEvictorLayer", () => {
         isError: false,
       } as unknown as AgentMessage;
 
-      // Old-format offloaded result is at the start (old enough), with a newer
+      // The non-preview offloaded result is at the start (old enough), with a newer
       // file_read for the same path. Even though it's superseded, isAlreadyOffloaded
       // should cause it to be skipped before supersession check.
       const messages = buildPaddedConversation([
@@ -959,14 +958,14 @@ describe("createDeadContentEvictorLayer", () => {
 
       const result = await layer.apply(messages, BUDGET);
 
-      // Old format should pass through unchanged (not evicted)
+      // The non-preview format should pass through unchanged (not evicted)
       const oldFmt = result.find((m) => (m as any).toolCallId === "tc-old-fmt") as any;
       expect(oldFmt.content[0].text).toContain("[Tool result offloaded to disk:");
       expect(oldFmt.content[0].text).toContain("The agent's analysis");
       expect(oldFmt.content[0].text).not.toContain("[Superseded:");
     });
 
-    it("skips evicting messages with NEW preview offloaded format", async () => {
+    it("skips evicting messages with the head/tail preview offloaded format", async () => {
       const onEvicted = vi.fn();
       const layer = createDeadContentEvictorLayer({ evictionMinAge: 2 }, onEvicted);
 
@@ -992,7 +991,7 @@ describe("createDeadContentEvictorLayer", () => {
 
       const result = await layer.apply(messages, BUDGET);
 
-      // New format should pass through unchanged (not evicted)
+      // The preview format should pass through unchanged (not evicted)
       const newFmt = result.find((m) => (m as any).toolCallId === "tc-new-fmt") as any;
       expect(newFmt.content[0].text).toContain("[Tool result offloaded to disk:");
       expect(newFmt.content[0].text).toContain("hasMore=true");

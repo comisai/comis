@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PROVE-04 / PROVE-05 — the honest READINESS generator (the §16 DoD headline artifact).
+ * The honest READINESS generator — the headline live-test readiness artifact.
  *
- * Assembles a per-category verdict map for ALL categories A..V (§8) + the per-story
- * (US-01..08) results, then writes READINESS.md via the FND-05 `writeReadiness`
- * (secret-swept). HONEST by construction:
+ * Assembles a per-category verdict map for ALL categories A..V + the per-story
+ * (US-01..08) results, then writes READINESS.md via the secret-swept
+ * `writeReadiness`. HONEST by construction:
  *
  *   - In the keyless sandbox build (`isLive:false`, no real provider keys), most
  *     categories are PARTIAL — "deterministic Stage-A/B certified green; real-provider
  *     Stage-C deferred to an operator live run (`pnpm test:live all` with COMIS_LIVE +
- *     keys on Linux, §20)". NO category is faked CERTIFIED — that would be green-by-
- *     omission. A PARTIAL-with-reason READINESS is an ACCEPTABLE §16 DoD outcome: the
+ *     keys on Linux)". NO category is faked CERTIFIED — that would be green-by-
+ *     omission. A PARTIAL-with-reason READINESS is an acceptable outcome: the
  *     framework being complete + the deterministic layers green + an HONEST readiness
- *     IS the milestone deliverable.
+ *     IS the deliverable.
  *   - Cat T (interactive terminal driver, Linux+bwrap) ⇒ SKIPPED(linux/bwrap) on macOS.
  *   - Cat A (core loop) + Cat J (sessions) stay PARTIAL with a reason noting the
- *     pi-event-bridge `COMIS_DATA_DIR` session-index product bug
- *     (`260606-pi-event-bridge-sessionindex-datadir`, a real packages/agent bug deferred
- *     to a dedicated post-milestone product phase). NO assertion is weakened to hide it.
+ *     known pi-event-bridge `COMIS_DATA_DIR` session-index product bug in
+ *     packages/agent. NO assertion is weakened to hide it.
  *
- * Reuses the Phase-147 per-story wiring (`journeyResultToVerdict` over the STORY_LIBRARY).
+ * Reuses the per-story wiring (`journeyResultToVerdict` over the STORY_LIBRARY).
  *
  * @module
  */
@@ -49,7 +48,7 @@ export interface ReadinessOptions {
 }
 
 // ---------------------------------------------------------------------------
-// The §8 component catalog A..V — the categories READINESS keys (design 331-352).
+// The component catalog A..V — the categories READINESS keys.
 // ---------------------------------------------------------------------------
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -78,13 +77,13 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const PARTIAL_REASON =
-  "deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux, §20)";
+  "deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux)";
 
 const SESSION_INDEX_REASON =
   PARTIAL_REASON +
-  "; NOTE: the pi-event-bridge writes session-index to ~/.comis ignoring COMIS_DATA_DIR (todo 260606-pi-event-bridge-sessionindex-datadir, a real packages/agent product bug deferred to a dedicated post-milestone product phase) — the deterministic obs-meta + soak assert what IS deterministic and skip/document the daemon-written-index parts; no assertion weakened";
+  "; NOTE: the pi-event-bridge writes session-index to ~/.comis ignoring COMIS_DATA_DIR (a known packages/agent product bug) — the deterministic obs-meta + soak assert what IS deterministic and skip/document the daemon-written-index parts; no assertion weakened";
 
-// Cat K (Channels) — the v2.28 channel-emulation milestone certifies the channel
+// Cat K (Channels) — the channel-emulation harness certifies the channel
 // surface STAGE-B (deterministic, offline, no model): the harness drives the REAL
 // adapter/product seams (group/forum mapping + the General-Topic id=1 asymmetry, the
 // four outbound fallbacks under fault injection, error classification, Tier-3
@@ -96,7 +95,7 @@ const SESSION_INDEX_REASON =
 // certification. Real-keyless Stage-C (a full-daemon group reply, the VL A→B loop,
 // the DAG, the injection gauntlet) stays operator-gated (COMIS_LIVE + ollama).
 const CHANNELS_STAGE_B_REASON =
-  "channel surface Stage-B certified: group/forum + addressing + the four outbound fallbacks + error classification + Tier-3 platformActions + slash-commands + the forum-service negative + reconfigure/trigger deterministic green (the harness drives the real adapter/product seams); real-keyless Stage-C (full-daemon group reply, the VL A→B loop, the DAG pipeline, the injection-gauntlet residency sweep) operator-gated (COMIS_LIVE + keyless ollama, §20). NOT a faked CERTIFIED — the keyless build is honest-by-construction (the !isLive gate)";
+  "channel surface Stage-B certified: group/forum + addressing + the four outbound fallbacks + error classification + Tier-3 platformActions + slash-commands + the forum-service negative + reconfigure/trigger deterministic green (the harness drives the real adapter/product seams); real-keyless Stage-C (full-daemon group reply, the VL A→B loop, the DAG pipeline, the injection-gauntlet residency sweep) operator-gated (COMIS_LIVE + keyless ollama). NOT a faked CERTIFIED — the keyless build is honest-by-construction (the !isLive gate)";
 
 // ---------------------------------------------------------------------------
 // buildReadinessRecord
@@ -129,7 +128,7 @@ export function buildReadinessRecord(opts: ReadinessOptions): {
     if (cat === "A" || cat === "J") {
       reasons[cat] = SESSION_INDEX_REASON;
     } else if (cat === "K") {
-      // Cat K (Channels) — the v2.28 milestone certifies it Stage-B (the HONEST
+      // Cat K (Channels) — the emulation harness certifies it Stage-B (the HONEST
       // middle reason); the verdict stays PARTIAL (never a faked CERTIFIED).
       reasons[cat] = CHANNELS_STAGE_B_REASON;
     } else {
@@ -156,24 +155,24 @@ export function buildReadinessRecord(opts: ReadinessOptions): {
 
 /**
  * Build the full record (categories A..V + per-story US-01..08 verdicts) and write
- * READINESS.md via the FND-05 writeReadiness (secret-swept), then append a per-
- * category Reasons section. Re-runs sweepSecrets over the output dir as a final
+ * READINESS.md via the secret-swept writeReadiness, then append a per-category
+ * Reasons section. Re-runs sweepSecrets over the output dir as a final
  * residency check.
  */
 export function writeReadinessReport(opts: ReadinessOptions, outPath: string): void {
   const { categories, reasons } = buildReadinessRecord(opts);
 
-  // Per-story verdicts (reuse the Phase-147 wiring). In the keyless build the
+  // Per-story verdicts (reuse the per-story wiring). In the keyless build the
   // journey EXECUTION is gated/skipped, so each active story maps to a SKIPPED verdict.
   const record: Record<string, CategoryVerdict> = { ...categories };
   for (const story of getStories()) {
     const result: JourneyResult = opts.isLive
       ? { storyId: story.id, status: "skipped", reason: "gated: component Stage-C cert deferred — operator run" }
-      : { storyId: story.id, status: "skipped", reason: "SKIPPED(no-live): real-LLM journey execution gated behind COMIS_LIVE + component Stage-C certs (136–146), §20" };
+      : { storyId: story.id, status: "skipped", reason: "SKIPPED(no-live): real-LLM journey execution gated behind COMIS_LIVE + component Stage-C certs" };
     record[`Story ${story.id}`] = journeyResultToVerdict(result);
   }
 
-  // FND-05 writer — runs assertNoSecrets before writing the category table.
+  // Secret-swept writer — runs assertNoSecrets before writing the category table.
   writeReadiness(record, outPath);
 
   // Append the per-category Reasons section (honest provenance for each verdict).
@@ -189,8 +188,8 @@ export function writeReadinessReport(opts: ReadinessOptions, outPath: string): v
     "",
     "> Honest sandbox reality: COMIS_LIVE is unset and no real provider keys are present, so most",
     "> categories are PARTIAL — the deterministic Stage-A/B layers are certified green; the",
-    "> real-provider Stage-C is deferred to an operator live run (§20). This PARTIAL-with-reason state",
-    "> is an ACCEPTABLE §16 Definition-of-Done outcome — NO category is faked CERTIFIED.",
+    "> real-provider Stage-C is deferred to an operator live run. This PARTIAL-with-reason state",
+    "> is the honest sandbox outcome — NO category is faked CERTIFIED.",
     "",
   ];
   appendFileSync(outPath, reasonLines.join("\n"), "utf-8");

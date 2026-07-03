@@ -3,7 +3,7 @@
  * Bundle-size measurement for `packages/web/src/api/contracts.generated.ts`.
  *
  * Budget:
- *   - 120 KB minified  (`BUDGET_MINIFIED_BYTES`)
+ *   - 133 KB minified  (`BUDGET_MINIFIED_BYTES`)
  *   - 38 KB  gzipped   (`BUDGET_GZIPPED_BYTES`)
  *
  * Measurement architecture:
@@ -24,65 +24,16 @@ import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
 /**
- * Budget: 122 KB minified. Raised from 121 KB for the Phase-164
- * `session.reset_conversation` admin contract (the complete cross-mode forget
- * that clears both the LCD history and the daemon sessionStore). The addition is
- * bounded (one request/response pair) and gzip-friendly — the gzipped total (the
- * real wire cost) stays well under the 38 KB gzipped budget, so this tracks the
- * legitimate contract growth rather than loosening the wire constraint.
+ * Budget: 133 KB minified.
+ *
+ * This cap tracks legitimate additive contract growth — new admin RPCs and
+ * bounded, content-free optional sections on the IncidentReport /
+ * FleetHealthReport (one request/response pair each) — rather than loosening the
+ * wire constraint. The real wire cost is the gzipped total, which stays far under
+ * the 38 KB gzipped budget; only the minified cap needs to move as contracts are
+ * added. Raise it only when a bounded, additive addition overflows it, after
+ * confirming the gzipped total still has ample headroom.
  */
-// 2026-06-11: +5 response fields across 3 contracts (memory.ask reason,
-// reset_conversation runtimeSessionDestroyed, recall_trace tracingEnabled +
-// hint) pushed minified to 122,032 — bumped with headroom; gzipped stays
-// far under its own budget.
-// 2026-06-19: ORCH-OBS nodeBudgetBreaches[] on the obs.explain IncidentReport
-// (+380 B → 126,225) overflowed the prior 126,000. Bumped to 127,000 with
-// headroom; the addition is bounded and gzip-friendly (gzipped total 12,575
-// stays far under the 38 KB gzipped wire budget).
-// 2026-06-20: AUDIT-05 (Phase 176 Plan 05) — the new obs.audit.query contract
-// (+664 B) + the IncidentReport `audit?`/`cacheBreaks?` optional sections
-// (obs.explain +~400 B → total 127,299) overflowed 127,000. Bumped to 128,000
-// with headroom; both are bounded, additive, content-free sections in the proven
-// optional-section family, and the gzipped total (12,703) stays far under the
-// 38 KB gzipped wire budget (the real wire cost).
-// 2026-06-21: WEBUI-02 (Phase 179 Plan 04) — the two new admin RPCs
-// obs.cacheBreaks.byReason (+498 B) + obs.spend.snapshot (+350 B), plus the
-// IncidentReport `spend?` optional section (obs.explain +~200 B → total 128,351)
-// overflowed 128,000. Bumped to 129,000 with headroom; all three are bounded,
-// additive, content-free (the loose ObsRecord/ObsRecordArray response shapes +
-// the proven optional-section family), and the gzipped total (12,779) stays far
-// under the 38 KB gzipped wire budget (the real wire cost).
-// 2026-06-23: REVOKE-01/03 (Phase 213 Plan 03) — the two new admin RPCs
-// lease.revoke (req { leaseId?, rootRunId? }, resp { revoked }) + run.kill
-// (req { rootRunId }, resp { killed }) added +864 B → total 129,215, overflowing
-// 129,000. Bumped to 130,000 with headroom; both are bounded one request/response
-// pairs and gzip-friendly — the gzipped total (12,864) stays far under the 38 KB
-// gzipped wire budget (the real wire cost).
-// 2026-06-23: v2.29 AUDIT/TREE/INTRO (Phase 215) — the obs.explain spawnTree
-// IncidentReport section (Plan 03 — the root→children authorization topology) +
-// the capabilities.introspect contract with its nested budget+outwardQuota
-// response (Plan 04 — the `comis whoami` read) added +1,182 B → total 130,397,
-// overflowing 130,000. Bumped to 131,000 with headroom; both are bounded,
-// additive, content-free (the proven optional-section family + one
-// request/response pair), and the gzipped total (13,045) stays far under the
-// 38 KB gzipped wire budget (12,864 → 13,045 — ample headroom; only the minified
-// cap needs the bump).
-// 2026-06-24: v2.30 FLEET (Phase 220-03) — the obs.fleet.health autonomy block
-// (FLEET-01/02/04: the additive-optional run-counts/orphaned/resumed/revoked/
-// killed/breakerTrips/budgetBreaches/costUsd/worstRootRunId slice on
-// FleetHealthReportSchema) added +377 B → total 131,377, overflowing 131,000.
-// Bumped to 132,000 with headroom; the addition is bounded, additive, content-free
-// (the proven optional-section family — one nested object), and the gzipped total
-// (13,173) stays far under the 38 KB gzipped wire budget — ample headroom; only the
-// minified cap needs the bump.
-// 2026-06-29: the obs.explain IncidentReport grew via several additive sections on
-// the learning/obs branch — the per-turn `contextBudget` cascade (596173fa), the
-// learning reuse/demote names (skillsSurfacedButUncredited, skillsDemotedNames), and
-// `failures[].matchedRule` (self-grade visibility) — pushing obs.explain 9,890→10,545 B
-// and minified 131,738→132,321, overflowing 132,000. Bumped to 133,000 with headroom;
-// all are bounded, additive, content-free (the proven optional-section family + closed-
-// enum string fields), and the gzipped total (13,327) stays far under the 38 KB
-// gzipped wire budget (the real wire cost) — only the minified cap needs the bump.
 export const BUDGET_MINIFIED_BYTES = 133_000;
 
 /** Budget: 38 KB gzipped. */

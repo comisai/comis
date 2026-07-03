@@ -4,7 +4,7 @@
  * (extraction, consolidation, dialectic, reasoning, relationship,
  * usefulness-judge, user-representation).
  *
- * Live finding 2026-06-11 (LIVEMEM run): despite every prompt ending with
+ * Live finding 2026-06-11: despite every prompt ending with
  * "Return ONLY valid JSON … no commentary", claude-sonnet-4-6 at
  * temperature 0 regularly narrates BEFORE the payload ("The memories
  * conflict on this date. … \n\n{ … }"). A whole-string `JSON.parse` then

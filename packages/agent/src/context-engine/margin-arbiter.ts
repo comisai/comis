@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RETR-02 — the pure tiered margin arbiter.
+ * The pure tiered margin arbiter.
  *
  * The relevance-first sibling of {@link evictHistoryUnderBudget}. Where the recency
  * allocator keeps the NEWEST whole steps that fit a flat history budget, the arbiter
  * spends the SAME discretionary pool (`budget.availableHistoryTokens`) across multiple
  * candidate TIERS by FUSED RANK, with the unconditional floors guaranteed:
  *
- *   - T0 fresh-tail + S4-pinned items ({@link ArbiterFloors}) are UNCONDITIONAL floors
+ *   - T0 fresh-tail + security-pinned items ({@link ArbiterFloors}) are UNCONDITIONAL floors
  *     — always kept, NEVER relevance candidates, regardless of fused rank or pool
  *     contention. They mirror the `lcd-preflight.ts:114-121` harder-eviction exclusion:
- *     a security-pinned item survives even when it dwarfs the pool (the Fix-3 pre-flight
- *     already reserved room for it; the arbiter must not drop it). WR-04 (Phase 173-05):
+ *     a security-pinned item survives even when it dwarfs the pool (the output-headroom
+ *     pre-flight already reserved room for it; the arbiter must not drop it). Additionally,
  *     floors are STEP-ATOMIC — a floor flagged on one message in a step (a pinned
  *     `tool_use` whose `toolResult` is not separately pinned, or vice-versa) promotes the
  *     WHOLE step to a floor, so the inseparable pair is never split and `poolTokensUsed`
  *     bills only the genuinely-discretionary (non-floor) middle band.
  *   - The middle history band (T1/T2) + the cross-session LTM (T3) + KG (T4) candidate
  *     lanes share the remaining DISCRETIONARY pool, allocated by FUSED RANK (RRF via the
- *     Plan-02 scorer — `scoreRelevance`/`fuse`, injected as the `scorer` dep; per-tier
+ *     shared scorer — `scoreRelevance`/`fuse`, injected as the `scorer` dep; per-tier
  *     weights default 1.0; NEVER a raw cross-corpus score comparison: `lcd_messages_fts`/
  *     `memory_fts` BM25 stats are incomparable).
  *   - Per-tier minimum slots: each represented tier gets at least one slot when the pool
@@ -26,23 +26,23 @@
  *     long history band, and vice versa.
  *
  * The arbiter WRAPS, never rewrites, `computeTokenBudgetForProfile`: it consumes the
- * pre-computed `poolTokens` (already post-outputHeadroom — the Fix-3 pre-flight at
+ * pre-computed `poolTokens` (already post-outputHeadroom — the pre-flight at
  * `lcd-preflight.ts` validated it) and NEVER over-allocates then reclaims. The
  * DISCRETIONARY allocation (non-floor) is bounded `≤ poolTokens` (`poolTokensUsed`);
- * the unconditional floors ride on top (they are a security/A1 guarantee, not a budget
- * line). Step-atomic fill reuses the {@link BudgetItem} token authority — it never splits
- * a `tool_use`/`tool_result` pair (history is kept whole-step, recency-ordered within its
- * slot BY DEFAULT; the within-history relevance eviction of the middle band — DEPTH-01's
- * now-live `rankMiddleBandByRelevance` — is supplied as the optional injected
+ * the unconditional floors ride on top (they are a security/fresh-tail guarantee, not a
+ * budget line). Step-atomic fill reuses the {@link BudgetItem} token authority — it never
+ * splits a `tool_use`/`tool_result` pair (history is kept whole-step, recency-ordered
+ * within its slot BY DEFAULT; the within-history relevance eviction of the middle band —
+ * `rankMiddleBandByRelevance` — is supplied as the optional injected
  * {@link MarginArbitrateInput.middleBandRanker}, which keeps this allocator pure while
- * re-ranking the evictable middle band cache-safely — see the C2 boundary note below).
+ * re-ranking the evictable middle band cache-safely — see the boundary note below).
  *
  * Purity (and the architecture cuts): no I/O, no clock, no estimator, no globals; the
  * input arrays (and their items) are NEVER mutated; a new array is returned; same input →
  * same output. This module lives in `context-engine/` and obeys TWO cuts:
  *   - agent↛memory: it imports only `@comis/core` types + in-package context-engine
  *     modules — never `@comis/memory` (forbidden by `test/architecture` "agent → memory").
- *   - I2 (context-engine ↮ rag): the LCD engine and the recall/RAG layer share ZERO code
+ *   - context-engine ↮ rag: the LCD engine and the recall/RAG layer share ZERO code
  *     (`lcd-recall-boundary.test.ts`). So the shared relevance scorer (`rag/relevance-scorer.ts`)
  *     is NOT imported — it is INJECTED as the `scorer` dep (DI at the budget boundary), and
  *     the `FusionLane`/`RelevanceQuery` shapes are declared LOCALLY here as the minimal
@@ -59,7 +59,7 @@ import { evictHistoryUnderBudget } from "./lcd-budget-eviction.js";
 
 /**
  * The minimal STRUCTURAL shape of a fusion lane the arbiter ranks — structurally
- * identical to `rag/fuse.ts`'s `FusionLane`, declared locally to honor the I2
+ * identical to `rag/fuse.ts`'s `FusionLane`, declared locally to honor the
  * context-engine ↮ rag cut (the engine must not import the rag layer). The injected
  * `scorer` (`scoreRelevance`) consumes/returns exactly this shape.
  */
@@ -73,7 +73,7 @@ export interface ArbiterFusionLane {
 /**
  * The minimal STRUCTURAL shape of the relevance query the scorer consumes —
  * structurally identical to `rag/relevance-scorer.ts`'s `RelevanceQuery`, declared
- * locally for the I2 cut. `degraded` (low-signal) → the scorer falls back to
+ * locally for the same cut. `degraded` (low-signal) → the scorer falls back to
  * recency-first fusion (a deterministic recency signal).
  */
 export interface ArbiterRelevanceQuery {
@@ -109,10 +109,10 @@ export type RelevanceScorerFn = (
 ) => MemorySearchResult[];
 
 /**
- * The UNCONDITIONAL arbiter floors (RETR-05). Both are guaranteed to survive
+ * The UNCONDITIONAL arbiter floors. Both are guaranteed to survive
  * arbitration and are NEVER relevance candidates:
- *  - `freshTailItems`: the T0 fresh-tail-protected history items (A1).
- *  - `pinnedItems`: the S4 security-pinned history items (canary / delimiter /
+ *  - `freshTailItems`: the T0 fresh-tail-protected history items.
+ *  - `pinnedItems`: the security-pinned history items (canary / delimiter /
  *    safety / sender-trust — detected fail-closed by `isSecurityRelevantMessage`).
  * Both are subsets of `historyItems` (the caller filters them out of the relevance
  * band and passes them here). Identity-compared against `historyItems` entries.
@@ -120,7 +120,7 @@ export type RelevanceScorerFn = (
 export interface ArbiterFloors {
   /** T0 fresh-tail-protected history items (unconditional). */
   freshTailItems: BudgetItem[];
-  /** S4 security-pinned history items (unconditional; never relevance candidates). */
+  /** Security-pinned history items (unconditional; never relevance candidates). */
   pinnedItems: BudgetItem[];
 }
 
@@ -132,7 +132,7 @@ export interface MarginArbitrateInput {
   ltmCandidates: ArbiterFusionLane[];
   /** Knowledge-graph candidate lanes (T4) — fused by rank. Empty on the assembly path. */
   kgCandidates: ArbiterFusionLane[];
-  /** The unconditional floors (T0 fresh-tail + S4 pins). */
+  /** The unconditional floors (T0 fresh-tail + security pins). */
   floors: ArbiterFloors;
   /** The discretionary pool (budget.availableHistoryTokens — already post-outputHeadroom). */
   poolTokens: number;
@@ -149,12 +149,12 @@ export interface MarginArbitrateInput {
   minTierSlots?: number;
   /** Optional content-free logger forwarded to the scorer's degraded log. */
   scorerOptions?: ArbiterScorerOptions;
-  /** DEPTH-01: the injected middle-band fill. Default = the pure recency
+  /** The injected middle-band fill. Default = the pure recency
    *  {@link evictHistoryUnderBudget}. On the relevance-first path the seam
    *  (`lcd-arbiter-seam.evictUnderArbiter`) injects
    *  `rankMiddleBandByRelevance` (cache-stable relevance ranking + chronological
    *  restore + step-atomic fill), keeping this allocator PURE — the ranker is a
-   *  dep, the relevance scorer lives behind the I2 cut. The signature mirrors the
+   *  dep, the relevance scorer lives behind the context-engine ↮ rag cut. The signature mirrors the
    *  recency fill `(band, pool) => AgentMessage[]` so the default is a drop-in. */
   middleBandRanker?: (band: BudgetItem[], pool: number) => AgentMessage[];
 }
@@ -167,8 +167,8 @@ export interface MarginArbitrateResult {
   perTierKept: { history: number; ltm: number; kg: number };
   /** Discretionary (non-floor) tokens allocated from the pool — always ≤ poolTokens. */
   poolTokensUsed: number;
-  /** WR-03 (Phase 173-05): the UNCONDITIONAL floor weight — the summed tokens of every
-   *  kept floor item (T0 fresh-tail + S4-pinned, STEP-atomic). These ride ON TOP of the
+  /** The UNCONDITIONAL floor weight — the summed tokens of every
+   *  kept floor item (T0 fresh-tail + security-pinned, STEP-atomic). These ride ON TOP of the
    *  pool (NOT counted in poolTokensUsed), so surfacing them lets an operator see when the
    *  pinned floors dwarf the discretionary pool (the small-model context-exhaustion signal). */
   floorTokensUsed: number;
@@ -191,7 +191,7 @@ function isMember(item: BudgetItem, set: readonly BudgetItem[]): boolean {
 
 /**
  * Allocate the discretionary history pool across tiers by fused rank, with the T0
- * fresh-tail + S4-pinned floors unconditional. See the module doc for the full contract.
+ * fresh-tail + security-pinned floors unconditional. See the module doc for the full contract.
  *
  * @param input - the tiered candidates + floors + pool + scorer (see {@link MarginArbitrateInput}).
  * @returns the kept messages + per-tier counts + the discretionary tokens used.
@@ -209,17 +209,17 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
     kgTokensPerCandidate = 0,
     minTierSlots = DEFAULT_MIN_TIER_SLOTS,
     scorerOptions,
-    // DEPTH-01: the middle-band fill — defaults to the pure recency allocator so
+    // The middle-band fill — defaults to the pure recency allocator so
     // every caller that does NOT inject a ranker (frontier/mid never reach here)
     // is byte-identical; the relevance-first seam injects rankMiddleBandByRelevance.
     middleBandRanker = evictHistoryUnderBudget,
   } = input;
 
   // -------------------------------------------------------------------------
-  // 1. Reserve the UNCONDITIONAL floors (T0 fresh-tail + S4 pins).
+  // 1. Reserve the UNCONDITIONAL floors (T0 fresh-tail + security pins).
   //
   // These survive regardless of the pool: a security-pinned / fresh-tail item is
-  // NEVER a relevance candidate and is kept even when it exceeds the pool (the Fix-3
+  // NEVER a relevance candidate and is kept even when it exceeds the pool (the
   // pre-flight already reserved room for it — mirrors lcd-preflight.ts:114-121). They
   // do NOT consume the DISCRETIONARY pool budget (poolTokensUsed), so the discretionary
   // fill below stays bounded ≤ poolTokens (no over-allocate-then-reclaim).
@@ -227,7 +227,7 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
   const isMessageFloor = (it: BudgetItem): boolean =>
     isMember(it, floors.freshTailItems) || isMember(it, floors.pinnedItems);
 
-  // WR-04 (Phase 173-05): expand floors to STEP granularity. A floor flagged on a single
+  // Expand floors to STEP granularity. A floor flagged on a single
   // message inside a step (e.g. a pinned assistant `tool_use` whose `toolResult` is NOT
   // separately pinned, or a pinned `toolResult` whose `tool_use` is not) would otherwise
   // leave the rest of that step in the relevance-evictable middle band, where the step
@@ -240,8 +240,8 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
   const isFloor = (it: BudgetItem): boolean => stepFloorIds.has(it);
 
   // The non-floor history band (the relevance-evictable middle, T1/T2) — fed to the
-  // injected middleBandRanker. NB (C2 boundary): the WITHIN-history relevance eviction of
-  // this middle band is DEPTH-01's now-live `rankMiddleBandByRelevance`, supplied as the
+  // injected middleBandRanker. NB (allocator/ranker boundary): the WITHIN-history
+  // relevance eviction of this middle band is `rankMiddleBandByRelevance`, supplied as the
   // `middleBandRanker` dep (default = the recency `evictHistoryUnderBudget`). The arbiter
   // ALLOCATES the discretionary pool across tiers by fused rank with the floors guaranteed;
   // the ranker re-orders the history slot cache-safely (recency on a caching profile,
@@ -304,18 +304,18 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
   }
 
   // --- Tier: history middle band (T1/T2) — step-atomic fill via the injected ranker. ---
-  // DEPTH-01: call the injected `middleBandRanker` (default = the recency
+  // Call the injected `middleBandRanker` (default = the recency
   // `evictHistoryUnderBudget`; the relevance-first seam injects `rankMiddleBandByRelevance`)
-  // over the REMAINING pool. BOTH the default and the DEPTH-01 ranker keep the kept history
+  // over the REMAINING pool. BOTH the default and the relevance ranker keep the kept history
   // step-atomic (a tool_use/tool_result pair is never split) AND in chronological order.
   // History is the FINAL tier — it consumes whatever pool the LTM/KG tiers left, so
   // `remainingPool` is not decremented again after this (it is the last reader).
   const keptMiddle = middleBandRanker(middleBand, remainingPool);
-  // WR-04 (Phase 173-05): bill the kept middle band from ACTUAL set membership, not the
+  // Bill the kept middle band from ACTUAL set membership, not the
   // positional `sumKeptTokens(band, count)` shortcut. With STEP-atomic floors (above) the
-  // two now agree, but membership is the honest accounting (it sums the tokens of the exact
+  // two agree, but membership is the honest accounting (it sums the tokens of the exact
   // BudgetItems whose msg is in keptMiddle) and cannot drift if step boundaries ever shift —
-  // so `poolTokensUsed` always equals the true discretionary consumption (the RETR-02 claim).
+  // so `poolTokensUsed` always equals the true discretionary consumption (the arbiter's claim).
   const keptMiddleSetForTokens = new Set<AgentMessage>(keptMiddle);
   const keptMiddleTokens = middleBand.reduce(
     (sum, it) => (keptMiddleSetForTokens.has(it.msg) ? sum + it.tokens : sum),
@@ -332,7 +332,7 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
   const keptMiddleSet = new Set<AgentMessage>(keptMiddle);
   const kept: AgentMessage[] = [];
   let historyKeptCount = 0;
-  // WR-03: accumulate the floor weight (the unconditional floor steps' tokens) so the
+  // Accumulate the floor weight (the unconditional floor steps' tokens) so the
   // event can report it alongside the discretionary poolTokensUsed. Floors are STEP-atomic
   // (stepFloorIds) and ride on top of the pool — never billed to poolTokensUsed.
   let floorTokensUsed = 0;
@@ -368,7 +368,7 @@ function roleOf(it: BudgetItem): string | undefined {
 }
 
 /**
- * WR-04 (Phase 173-05): expand a per-MESSAGE floor predicate to STEP granularity. Walks
+ * Expand a per-MESSAGE floor predicate to STEP granularity. Walks
  * `historyItems` into the SAME steps the eviction step grouper uses (a step starts at any
  * non-`toolResult` message and absorbs the immediately-following `toolResult`s — the
  * inseparable result tail of an assistant `tool_use`), and returns the identity set of EVERY

@@ -4,7 +4,7 @@
  * under benchmarks/live/<date>-<sha>/, and READINESS.md.
  *
  * All three write paths run assertNoSecrets before any writeFileSync —
- * T-134-19 (Information Disclosure): secret-sweep on the serialized JSON
+ * an Information Disclosure mitigation: the secret-sweep on the serialized JSON
  * prevents credential leakage into persisted artifacts.
  *
  * @module
@@ -71,7 +71,7 @@ function getGitSha(): string {
  * Runs assertNoSecrets before writing — throws if any secret-shaped
  * string is found in the serialized report.
  *
- * T-134-19: assertNoSecrets prevents credential leakage.
+ * assertNoSecrets prevents credential leakage.
  */
 export function writeReport(report: LiveTestReport, outputPath: string): void {
   const json = JSON.stringify(report, null, 2);
@@ -88,7 +88,7 @@ export function writeReport(report: LiveTestReport, outputPath: string): void {
  * @param benchmarksDir - Root directory for ledger entries (typically repo-root/benchmarks)
  * @returns The ledger directory path created
  *
- * T-134-19: assertNoSecrets prevents credential leakage into the ledger.
+ * assertNoSecrets prevents credential leakage into the ledger.
  */
 export function writeLedger(
   report: LiveTestReport,
@@ -109,7 +109,7 @@ export function writeLedger(
  * Write a READINESS.md file with per-category verdicts.
  * Runs assertNoSecrets before writing.
  *
- * T-134-19: assertNoSecrets on READINESS.md content before write.
+ * assertNoSecrets on READINESS.md content before write.
  */
 export function writeReadiness(
   categoryVerdicts: Record<string, CategoryVerdict>,

@@ -72,7 +72,7 @@ describe("mightContainSecret", () => {
     expect(mightContainSecret("Token abc123")).toBe(true);
   });
 
-  it("returns false for text with only partial prefix match", () => {
+  it("returns true for a non-token string that merely contains a known prefix (conservative pre-filter)", () => {
     // 'hf_model_config' — not a token-like value but contains prefix; pre-filter is
     // intentionally conservative (fast) so this returns true (see scrubSecretsFromText
     // for fine-grained regex with minBody gate)

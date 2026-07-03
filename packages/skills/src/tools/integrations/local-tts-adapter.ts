@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * In-process keyless local/Piper TTS adapter (TTS-02).
+ * In-process keyless local/Piper TTS adapter.
  *
  * The offline keyless rung of TTS `auto` (`edge → local/piper →
  * honest-unavailable`): it synthesizes speech with NO key and NO network at
@@ -40,8 +40,8 @@
  *    retry — never a silent partial-model success. The pinned `MODEL_ID` anchor
  *    (only a hardcoded single-speaker MMS-TTS id is loaded) + the TLS HF-Hub
  *    source are the integrity floor (transformers.js exposes NO caller-visible
- *    content-hash — same honest limit as STT SEC-03).
- *  - **Redaction (SEC-01 light floor):** every surfaced error string is passed
+ *    content-hash — same honest limit as STT).
+ *  - **Redaction (light floor):** every surfaced error string is passed
  *    through `sanitizeApiError`, which strips URLs (`[URL]`) and long tokens
  *    (`[REDACTED]`), so no credential-bearing `baseUrl`/token leaks.
  *
@@ -125,11 +125,11 @@ const OUTPUT_MIME = "audio/mpeg";
  * only this hardcoded id is ever loaded — no caller-supplied/arbitrary remote
  * id can be fetched). `Xenova/mms-tts-eng` is a VITS/MMS-TTS English voice that
  * needs NO speaker-embeddings tensor (unlike SpeechT5), so it synthesizes from
- * text alone. Confirmed at the Wave-0 SHIP smoke check (Task 1): the 4.2.0 dist
- * builds the `text-to-audio` pipeline against it and synthesizes a real f32
- * waveform. Fetched over TLS from the HF Hub (`allowRemoteModels`).
+ * text alone. The transformers.js `text-to-audio` pipeline builds against it and
+ * synthesizes a real f32 waveform. Fetched over TLS from the HF Hub
+ * (`allowRemoteModels`).
  *
- * Integrity scope (same honest limit as STT SEC-03): pinned id + TLS + the
+ * Integrity scope (same honest limit as STT): pinned id + TLS + the
  * fail-closed `model_load_failed` seam — NOT a pinned content-hash
  * (transformers.js etag-caches but exposes no caller-visible content-hash API).
  */
@@ -155,8 +155,8 @@ export function __resetLocalTtsPipelineForTests(): void {
 
 /**
  * A surfaced TTS failure that CARRIES its domain `SttErrorKind`. The same error
- * vocabulary serves STT and TTS (design §17 / Assumption A3 — the resolver and
- * the obs bridge read `error.kind` directly instead of re-deriving it). Kept
+ * vocabulary serves STT and TTS (the resolver and the obs bridge read
+ * `error.kind` directly instead of re-deriving it). Kept
  * adapter-local; the helper RETURNS the error to `Result.err` (no raw throw).
  */
 export interface TtsDegradeError extends Error {
@@ -272,7 +272,7 @@ export function createLocalTtsAdapter(cfg: LocalTtsConfig): TTSPort {
   const encodeWaveform = cfg.encodeWaveform ?? defaultEncodeWaveform;
 
   return {
-    // WR-01: `_options` (voice/format/speed) is intentionally ignored. The pinned
+    // `_options` (voice/format/speed) is intentionally ignored. The pinned
     // Xenova/mms-tts-eng model is single-speaker (so `voice` is meaningless) and
     // this offline rung ALWAYS emits `OUTPUT_MIME` ("audio/mpeg") — the requested
     // `format` is NOT honored here; the voice pipeline re-encodes downstream
@@ -280,14 +280,14 @@ export function createLocalTtsAdapter(cfg: LocalTtsConfig): TTSPort {
     // caller must not assume the returned MIME matches a requested format.
     async synthesize(text: string, _options?: TTSOptions): Promise<Result<TTSResult, Error>> {
       // 1. Empty-text guard — runs before any engine load (mirror edge-tts).
-      //    IN-02: a validation failure, but the closed SttErrorKind vocabulary
+      //    A validation failure, but the closed SttErrorKind vocabulary
       //    (voice-error.ts) has no `validation` member → `dependency` is the
       //    deliberate mapping, NOT a real missing-dependency failure.
       if (text.length === 0) {
         return err(withKind(new Error("Text is empty"), "dependency"));
       }
 
-      // 2. Max-length guard. IN-02: validation failure, `dependency` per the
+      // 2. Max-length guard. A validation failure, `dependency` per the
       //    vocabulary constraint above.
       if (text.length > maxTextLength) {
         return err(
@@ -360,12 +360,12 @@ export function createLocalTtsAdapter(cfg: LocalTtsConfig): TTSPort {
           ),
         );
       }
-      // IN-03 (known INFO, deferred): a missing/zero/NaN sampling_rate paired
-      // with a valid waveform falls back to 16000 rather than surfacing a
-      // degraded err. The pinned MMS-TTS model always returns a valid rate in
-      // practice, so this is not currently observed; tightening it to an honest
-      // err (consistent with the waveform-shape guard above) is a follow-up so as
-      // not to risk a behavior regression in this security-hardening pass.
+      // Known limitation: a missing/zero/NaN sampling_rate paired with a valid
+      // waveform falls back to 16000 rather than surfacing a degraded err. The
+      // pinned MMS-TTS model always returns a valid rate in practice, so this is
+      // not currently observed; tightening it to an honest err (consistent with
+      // the waveform-shape guard above) is a possible follow-up, kept as a
+      // fallback here to avoid a behavior regression.
       const samplingRate =
         typeof output.sampling_rate === "number" && output.sampling_rate > 0
           ? output.sampling_rate

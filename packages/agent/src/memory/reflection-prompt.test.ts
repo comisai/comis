@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED→GREEN coverage for {@link REFLECT_PROMPT} + {@link parseReflectionResult}
- * (v2.31 Reflection engine, Phase 223 Plan 04, REFLECT-04).
+ * Coverage for {@link REFLECT_PROMPT} + {@link parseReflectionResult}.
  *
  * The reflect LLM emits one of two shapes (the parser's contract — see the
  * JSDoc on `parseReflectionResult`):
@@ -9,12 +8,12 @@
  *  - an EXISTING-doc refresh → `{ "ops": DeltaOp[] }` (typed delta-ops over the
  *    prior `structuredBody`, untargeted sections byte-identical).
  *
- * The parser is TOTAL (the synthesis-prompt `parseSynthesisResult` shape): a
+ * The parser is TOTAL: a
  * malformed top-level payload returns an empty result and NEVER throws; a batch
  * with one malformed element salvages the valid ones (per-element salvage); an
  * op with an unknown `op` value is dropped, not thrown. The prompt constant
  * carries the UNTRUSTED-data + GENERALIZE instructions and emits the delta-op
- * schema (NOT the dropped scripts/requiredTools/paramsSchema envelope).
+ * schema (NOT a scripts/requiredTools/paramsSchema envelope).
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -24,7 +23,7 @@ import {
   parseReflectionResult,
 } from "./reflection-prompt.js";
 
-describe("parseReflectionResult (TOTAL delta-op / section parser, REFLECT-04)", () => {
+describe("parseReflectionResult (TOTAL delta-op / section parser)", () => {
   it("parses a well-formed { ops: DeltaOp[] } (existing-doc refresh) into typed ops", () => {
     const raw = JSON.stringify({
       ops: [
@@ -160,17 +159,17 @@ describe("REFLECT_PROMPT (the system prompt contract)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FOLD-01 (Phase 225 Plan 02): PROFILE_REFLECT_PROMPT — the lifted user-rep
-// prompt in the reflect {sections}/{ops} shape. The 4 user-rep PREFIX TYPES
+// PROFILE_REFLECT_PROMPT — the per-user-profile
+// prompt in the reflect {sections}/{ops} shape. The 4 PREFIX TYPES
 // (identity/preference/relationship/instruction) become the 4 section ids the
 // profile-block formatter maps to its fixed groups. The parser is REUSED
 // UNCHANGED — so the profile prompt must emit the SAME {sections}/{ops} shape
 // parseReflectionResult already consumes (asserted via a parse round-trip).
 // ---------------------------------------------------------------------------
-describe("PROFILE_REFLECT_PROMPT (FOLD-01: the lifted user-rep prompt in the reflect shape)", () => {
+describe("PROFILE_REFLECT_PROMPT (the per-user-profile prompt in the reflect shape)", () => {
   it("emits the {sections}/{ops} shape parseReflectionResult consumes — a 4-section profile parses round-trip", () => {
     // A fresh-doc profile reflection: one section per PREFIX TYPE. The section
-    // ids are the 4 prefix-types (so the formatter keeps GROUP_ORDER, A5).
+    // ids are the 4 prefix-types (so the formatter keeps its fixed GROUP_ORDER).
     const raw = JSON.stringify({
       sections: [
         { id: "identity", heading: "Identity", body: "- name is Sam" },
@@ -215,8 +214,8 @@ describe("PROFILE_REFLECT_PROMPT (FOLD-01: the lifted user-rep prompt in the ref
   });
 
   it("carries the load-bearing anti-laundering line verbatim ('Do NOT include a trust level')", () => {
-    // The user-rep prompt's keystone: the model has NO trust say (trust is the
-    // CODE-computed source ceiling). Carried verbatim from USER_REPRESENTATION_PROMPT.
+    // The profile prompt's keystone: the model has NO trust say (trust is the
+    // CODE-computed source ceiling).
     expect(PROFILE_REFLECT_PROMPT).toContain("Do NOT include a trust level");
   });
 
@@ -241,19 +240,19 @@ describe("PROFILE_REFLECT_PROMPT (FOLD-01: the lifted user-rep prompt in the ref
 });
 
 // ---------------------------------------------------------------------------
-// FOLD-02 (Phase 225 Plan 03): TOPIC_REFLECT_PROMPT — the lifted consolidation
-// MERGE + reasoning INDUCTIVE generalization instructions in the reflect
-// {sections}/{ops} shape. The kind:topic doc folds the OBSERVATION half of the
-// old consolidation (`generalization`) + reasoning (`inductive`) jobs into one
+// TOPIC_REFLECT_PROMPT — the consolidation
+// MERGE + INDUCTIVE generalization instructions in the reflect
+// {sections}/{ops} shape. The kind:topic doc carries the OBSERVATION content
+// (`generalization` + `inductive`/tendency statements) as one
 // surfaced Mental Model doc. The parser is REUSED UNCHANGED — so the topic prompt
 // must emit the SAME {sections}/{ops} shape parseReflectionResult already consumes
-// (asserted via a parse round-trip). The DEDUCTIVE triple half does NOT fold into a
-// markdown doc (it died with the reasoning job; the triple_store retirement is 226).
+// (asserted via a parse round-trip). Deductive S/P/O triples do NOT belong in a
+// markdown doc (nothing here writes triple_store rows).
 // ---------------------------------------------------------------------------
-describe("TOPIC_REFLECT_PROMPT (FOLD-02: the lifted consolidation+reasoning generalization in the reflect shape)", () => {
+describe("TOPIC_REFLECT_PROMPT (the consolidation+generalization instructions in the reflect shape)", () => {
   it("emits the {sections}/{ops} shape parseReflectionResult consumes — a topic {sections} body parses round-trip", () => {
-    // A fresh-doc topic reflection: a higher-order generalization the consolidation
-    // job would have written as a `generalization` observation, now a section body.
+    // A fresh-doc topic reflection: a higher-order `generalization` observation
+    // carried as a section body.
     const raw = JSON.stringify({
       sections: [
         { id: "generalization", heading: "General patterns", body: "- Alice prefers concise answers in general." },
@@ -288,7 +287,7 @@ describe("TOPIC_REFLECT_PROMPT (FOLD-02: the lifted consolidation+reasoning gene
   });
 
   it("carries the generalization instruction (synthesize a higher-order pattern, not a verbatim copy)", () => {
-    // The lifted consolidation MERGE + reasoning INDUCTIVE keystone: abstract the
+    // The MERGE + INDUCTIVE keystone: abstract the
     // GENERAL pattern across distinct contexts, not restate one input verbatim.
     expect(TOPIC_REFLECT_PROMPT.toLowerCase()).toMatch(/general|higher-order|pattern/);
   });
@@ -299,7 +298,7 @@ describe("TOPIC_REFLECT_PROMPT (FOLD-02: the lifted consolidation+reasoning gene
   });
 
   it("carries the load-bearing anti-laundering line verbatim ('Do NOT include a trust level')", () => {
-    // Lifted verbatim from the consolidation/reasoning prompts — the model has NO
+    // The model has NO
     // trust say (trust is the CODE-computed `learned` ceiling the store coerces).
     expect(TOPIC_REFLECT_PROMPT).toContain("Do NOT include a trust level");
   });
@@ -318,9 +317,9 @@ describe("TOPIC_REFLECT_PROMPT (FOLD-02: the lifted consolidation+reasoning gene
     expect(TOPIC_REFLECT_PROMPT).not.toContain("paramsSchema");
   });
 
-  it("does NOT request the deductive S/P/O triple OUTPUT shape (triples do NOT fold into a markdown doc)", () => {
-    // The reasoning job's DEDUCTIVE half wrote triple_store rows via a
-    // { "subject", "predicate", "object" } JSON output; the kind:topic fold covers
+  it("does NOT request the deductive S/P/O triple OUTPUT shape (triples do NOT belong in a markdown doc)", () => {
+    // A deductive { "subject", "predicate", "object" } JSON output is structured
+    // relational knowledge (a triple_store row shape); the kind:topic doc covers
     // ONLY the INDUCTIVE/generalization observations. The topic prompt must NOT ask
     // the model to emit that triple OUTPUT shape. (NB: the shared
     // MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION names "predicate" as a structural-key

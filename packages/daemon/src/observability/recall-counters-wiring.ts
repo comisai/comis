@@ -4,8 +4,8 @@
  *
  * The composition-root glue between the three `memory:*` bus events and the
  * in-process recall counter registry from `@comis/observability`. It stands up
- * ONE `createRecallCounters()` registry (daemon-lifetime — RESETS ON RESTART,
- * Assumption A2) and subscribes it to:
+ * ONE `createRecallCounters()` registry (daemon-lifetime — RESETS ON RESTART)
+ * and subscribes it to:
  *
  *   - `memory:recalled`    → onRecalled (per-lane candidate counts + hit tally)
  *   - `memory:reranked`    → onReranked (run + fallback when err OR timeout)

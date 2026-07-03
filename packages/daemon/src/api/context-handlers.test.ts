@@ -3,10 +3,9 @@
  * Tests for createContextHandlers — the context.* operator-browse RPC handlers
  * (context.conversations + context.tree) backing the web Context DAG browser.
  *
- * These methods were previously called by the view via untyped `.call()` but
- * were UNREGISTERED on the daemon (every call returned -32601, the view was
- * dead). The RED state here is "the handler factory does not exist"; GREEN wires
- * conversations + tree against the LCD store, AGENT+TENANT scoped (R4).
+ * Without this factory the view's untyped `.call()` requests hit UNREGISTERED
+ * methods (every call returns -32601 and the view is dead). The handlers wire
+ * conversations + tree against the LCD store, AGENT+TENANT scoped.
  */
 import { describe, it, expect, vi } from "vitest";
 import type {
@@ -138,7 +137,7 @@ describe("createContextHandlers", () => {
         _agentId: "agent_a",
       })) as { conversationId: string; nodes: Array<Record<string, unknown>>; messageCount: number };
 
-      // R4 scope passed to the store reads.
+      // Agent+tenant scope passed to the store reads.
       expect(getSummaries).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "conv-1", agentId: "agent_a", tenantId: "tenant_a" }));
       expect(result.conversationId).toBe("conv-1");
       // Two summary nodes.

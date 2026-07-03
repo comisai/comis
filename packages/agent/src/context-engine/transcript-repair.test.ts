@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the transcript-repair pairing invariant (A2).
+ * Unit tests for the transcript-repair pairing invariant.
  *
  * `sanitizeToolUseResultPairing(messages, now)` must return a provider-valid
  * pi-ai `Message[]` where every assistant `tool_use` block is immediately
@@ -10,7 +10,7 @@
  * never read a placeholder as a genuine tool output), and aborted/errored
  * turns leave no dangling unpaired `tool_use`.
  *
- * Eight behaviors (RESEARCH §"Transcript Repair" + PATTERNS §3):
+ * Eight behaviors:
  *  1. reorder out-of-order results            5. skip/strip aborted (and errored)
  *  2. synthesize a missing result             6. no-op on a well-formed array (idempotent)
  *  3. drop an orphan result                   7. reasoning blocks untouched
@@ -143,8 +143,8 @@ function assertEveryResultFollowsItsCall(out: AgentMessage[]): void {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
-  it("Test 1 — reorder: places each out-of-order tool_result immediately after its tool_use", () => {
+describe("sanitizeToolUseResultPairing (pairing invariant)", () => {
+  it("reorder: places each out-of-order tool_result immediately after its tool_use", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([toolCallBlock("tu_1")], "toolUse"),
@@ -165,14 +165,14 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     assertEveryResultFollowsItsCall(out);
   });
 
-  it("Test 2 — synthesize-missing: appends a marked error placeholder for an unmatched tool_use", () => {
+  it("synthesize-missing: appends a marked error placeholder for an unmatched tool_use", () => {
     const input = [userMsg("hi"), assistantMsg([toolCallBlock("tu_1")], "toolUse")];
 
     const out = sanitizeToolUseResultPairing(input, NOW);
 
     const synth = out.find((m) => role(m) === "toolResult" && resultCallId(m) === "tu_1");
     expect(synth).toBeDefined();
-    // T-128-01: marked isError + explicit literal marker so it cannot be read
+    // Marked isError + explicit literal marker so it cannot be read
     // as a genuine tool output.
     expect((synth as unknown as { isError: boolean }).isError).toBe(true);
     expect(resultText(synth!)).toContain(SYNTH_MARKER);
@@ -181,7 +181,7 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     assertEveryResultFollowsItsCall(out);
   });
 
-  it("Test 3 — drop-orphan: removes a tool_result whose toolCallId matches no tool_use", () => {
+  it("drop-orphan: removes a tool_result whose toolCallId matches no tool_use", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([textBlock("no tools here")], "stop"),
@@ -194,7 +194,7 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     expect(out.some((m) => role(m) === "toolResult")).toBe(false);
   });
 
-  it("Test 3b — alias call types (tool_use|tool_call|toolUse) are recognized, so their paired results are NOT dropped as orphans", () => {
+  it("alias call types (tool_use|tool_call|toolUse) are recognized, so their paired results are NOT dropped as orphans", () => {
     // The PIPELINE feeds raw, un-normalized messages whose call block may carry
     // any of these `type` aliases (the canonical pi-ai shape is `toolCall`, but
     // the Anthropic Messages shape is `tool_use`). The repair MUST recognize all
@@ -217,7 +217,7 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     }
   });
 
-  it("Test 4 — drop-duplicate: keeps exactly one tool_result per call, placed after its call", () => {
+  it("drop-duplicate: keeps exactly one tool_result per call, placed after its call", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([toolCallBlock("tu_1")], "toolUse"),
@@ -232,7 +232,7 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     assertEveryResultFollowsItsCall(out);
   });
 
-  it("Test 5 — strip aborted: removes dangling tool_use blocks from an aborted turn, keeping text", () => {
+  it("strip aborted: removes dangling tool_use blocks from an aborted turn, keeping text", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([textBlock("partial answer"), toolCallBlock("tu_1")], "aborted"),
@@ -250,7 +250,7 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     assertEveryResultFollowsItsCall(out);
   });
 
-  it("Test 5b — strip errored: same treatment for stopReason 'error'", () => {
+  it("strip errored: dangling tool_use blocks get the same treatment for stopReason 'error'", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([toolCallBlock("tu_1")], "error"),
@@ -263,7 +263,7 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     expect(out.some((m) => role(m) === "toolResult")).toBe(false);
   });
 
-  it("Test 6 — no-op happy path: a well-formed array round-trips with pairing intact (idempotent)", () => {
+  it("no-op: a well-formed array round-trips with pairing intact (idempotent)", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([toolCallBlock("tu_1")], "toolUse"),
@@ -282,7 +282,7 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     expect(out2.map(role)).toEqual(out.map(role));
   });
 
-  it("Test 7 — reasoning untouched: thinking blocks keep their order alongside a tool_use", () => {
+  it("reasoning untouched: thinking blocks keep their order alongside a tool_use", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([thinkingBlock("let me think"), toolCallBlock("tu_1")], "toolUse"),
@@ -303,7 +303,7 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     assertEveryResultFollowsItsCall(out);
   });
 
-  it("Test 9 — non-array input passes through unchanged (WR-02): never nuke the whole context", () => {
+  it("non-array input passes through unchanged: never nuke the whole context", () => {
     // The SDK contract for the transformContext pipeline is "must not throw …
     // return the original messages or another safe fallback" — NOT discard the
     // context. A malformed non-array input must degrade to a PASS-THROUGH, never
@@ -316,12 +316,12 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     expect(out).toBe(notAnArray);
   });
 
-  it("Test 10 — empty array still returns an empty array (the well-formed empty case is unchanged)", () => {
+  it("empty array still returns an empty array (the well-formed empty case is unchanged)", () => {
     const out = sanitizeToolUseResultPairing([], NOW);
     expect(out).toEqual([]);
   });
 
-  it("Test 8 — multi-call turn: results follow the turn in tool_use block order", () => {
+  it("multi-call turn: results follow the turn in tool_use block order", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([toolCallBlock("tu_a"), toolCallBlock("tu_b")], "toolUse"),

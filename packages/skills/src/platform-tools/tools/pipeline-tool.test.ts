@@ -43,10 +43,10 @@ describe("createPipelineTool", () => {
     expect(tool.description).toContain("execution graph");
   });
 
-  // v2.19: the description must be INTENT-led so a weak model maps a natural
+  // The description must be INTENT-led so a weak model maps a natural
   // orchestration request ("four analysts in parallel, then a debate…") to this
-  // tool instead of researching everything itself in one context. Live, the
-  // mechanics-led description ("DAG pipelines") failed to steer qwen3.6.
+  // tool instead of researching everything itself in one context. In a live
+  // run, the mechanics-led description ("DAG pipelines") failed to steer qwen3.6.
   it("description: steers multi-agent / parallel / debate intent and delegation", () => {
     const tool = createPipelineTool(rpcCall);
     const d = tool.description.toLowerCase();
@@ -987,8 +987,8 @@ describe("createPipelineTool", () => {
     // stamped the value schema `type:"string"`, so the wire schema said
     // "every type_config value is a string" while the daemon drivers demand
     // `agents: array` / `rounds: number` — the model oscillated between the
-    // two validators' errors and complex graphs never converged (small-model
-    // e2e 2026-06-12, UC-1/UC-6). The wire schema must declare the concrete
+    // two validators' errors and complex graphs never converged on small
+    // models. The wire schema must declare the concrete
     // per-field types the drivers actually validate.
     describe("type_config wire schema accuracy (GBNF-survivable concrete types)", () => {
       function typeConfigSchema(): Record<string, Record<string, unknown>> {
@@ -1201,7 +1201,7 @@ describe("createPipelineTool", () => {
       expect(tool.description).toContain("execute");
       expect(tool.description).toContain("DAG");
       expect(tool.description).toContain("pipeline");
-      // Intent-led steering (v2.19) needs a little more room than the old mechanics-
+      // Intent-led steering needs a little more room than a mechanics-
       // only line, but must stay lean — it rides in every turn's tool manifest.
       expect(tool.description.length).toBeLessThanOrEqual(450);
     });
@@ -1209,25 +1209,25 @@ describe("createPipelineTool", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AUTHOR-02 (Phase 174-04): the from_intent action.
+// The from_intent action.
 //
 // from_intent synthesizes a graph from a one-line intent (a canonical pattern +
 // a few names) via @comis/agent's synthesizeFromIntent, then dispatches it
 // through the EXISTING graph.execute path with the _synthesizedFromIntent
 // marker (the daemon-side gate + audit chokepoint — read-before-strip +
 // delete-after-strip). The synthesizer returns a graph; the tool never executes
-// one. The gate is daemon-side (Task 3), so the tool surface here is uniform —
+// one. The gate is daemon-side, so the tool surface here is uniform —
 // no flag read in the tool.
 // ---------------------------------------------------------------------------
 
-describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
+describe("createPipelineTool — from_intent action", () => {
   let rpcCall: ReturnType<typeof mockRpcCall>;
 
   beforeEach(() => {
     rpcCall = mockRpcCall();
   });
 
-  it("Test 1 (bull-vs-bear from one line): from_intent debate → graph.execute with the 3 debate nodes + the _synthesizedFromIntent marker", async () => {
+  it("from_intent debate (bull vs bear from one line) → graph.execute with the 3 debate nodes + the _synthesizedFromIntent marker", async () => {
     const tool = createPipelineTool(rpcCall);
     await tool.execute("tc-fi-1", {
       action: "from_intent",
@@ -1242,14 +1242,14 @@ describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
     // The synthesized graph is dispatched through the normal execute path.
     expect(Array.isArray(a.nodes)).toBe(true);
     expect((a.nodes as unknown[]).length).toBe(3);
-    // The marker rides in-band for the daemon-side gate + audit (Task 3).
+    // The marker rides in-band for the daemon-side gate + audit.
     expect(a._synthesizedFromIntent).toBe("debate");
     // The advocate agents were filled into the synthesized nodes.
     expect(JSON.stringify(a.nodes)).toContain("bull");
     expect(JSON.stringify(a.nodes)).toContain("bear");
   });
 
-  it("Test 1b: from_intent returns the rpc result of graph.execute", async () => {
+  it("from_intent returns the rpc result of graph.execute", async () => {
     rpcCall.mockResolvedValueOnce({ graphId: "g-77", async: true });
     const tool = createPipelineTool(rpcCall);
     const res = await tool.execute("tc-fi-1b", {
@@ -1261,7 +1261,7 @@ describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
     expect(JSON.stringify(res)).toContain("g-77");
   });
 
-  it("Test 2 (invalid intent throws pre-dispatch): debate with one agent → tool error, NO graph dispatched", async () => {
+  it("invalid intent throws pre-dispatch: debate with one agent → tool error, NO graph dispatched", async () => {
     const tool = createPipelineTool(rpcCall);
     await expect(
       tool.execute("tc-fi-2", {
@@ -1275,15 +1275,15 @@ describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-02 (174-REVIEW): the top-level `rounds` param was INERT on from_intent —
+  // The top-level `rounds` param would be INERT on from_intent —
   // synthesizeFromIntent expands the canonical TEMPLATE (plain agent nodes, no
-  // typed driver) and NEVER expanded `rounds`, so the param was accepted but
-  // did nothing (a misleading no-op param — AGENTS.md §2.3). Decision: REMOVE
-  // it from the from_intent surface (wiring it to drive typed-driver synthesis
-  // is the larger typed-driver follow-up). The NESTED type_config.rounds (the
+  // typed driver) and NEVER expands `rounds`, so the param would be accepted but
+  // do nothing (a misleading no-op param — AGENTS.md §2.3). It is therefore NOT
+  // exposed on the from_intent surface (wiring it to drive typed-driver synthesis
+  // is a larger follow-up). The NESTED type_config.rounds (the
   // real debate-driver knob on define/execute) is a SEPARATE field and stays.
   // -------------------------------------------------------------------------
-  it("WR-02: the top-level from_intent param surface does NOT expose the inert `rounds` param", () => {
+  it("the top-level from_intent param surface does NOT expose the inert `rounds` param", () => {
     const tool = createPipelineTool(rpcCall);
     const params = tool.parameters as unknown as { properties: Record<string, unknown> };
     // pattern/agents/tasks remain (the real from_intent slots).
@@ -1294,7 +1294,7 @@ describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
     expect(params.properties.rounds).toBeUndefined();
   });
 
-  it("WR-02: the NESTED type_config.rounds (the typed debate driver) is preserved", () => {
+  it("the NESTED type_config.rounds (the typed debate driver) is preserved", () => {
     const tool = createPipelineTool(rpcCall);
     const params = tool.parameters as unknown as {
       properties: { nodes: { items: { properties: { type_config: { properties: Record<string, Record<string, unknown>> } } } } };
@@ -1303,7 +1303,7 @@ describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
     expect(tcProps.rounds.type).toBe("integer");
   });
 
-  it("Test 2b (unknown pattern throws pre-dispatch): from_intent with a bogus pattern → tool error, no rpcCall", async () => {
+  it("unknown pattern throws pre-dispatch: from_intent with a bogus pattern → tool error, no rpcCall", async () => {
     const tool = createPipelineTool(rpcCall);
     await expect(
       tool.execute("tc-fi-2b", {
@@ -1315,7 +1315,7 @@ describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  it("Test 3 (FLAGS-OFF surface unchanged — define byte-identical): a normal define still calls graph.define with the same shape, no _synthesizedFromIntent", async () => {
+  it("a normal define is byte-identical and still calls graph.define with the same shape, no _synthesizedFromIntent marker", async () => {
     const tool = createPipelineTool(rpcCall);
     await tool.execute("tc-fi-3", {
       action: "define",
@@ -1329,7 +1329,7 @@ describe("createPipelineTool — from_intent action (AUTHOR-02)", () => {
     expect((args as Record<string, unknown>)._synthesizedFromIntent).toBeUndefined();
   });
 
-  it("Test 3b (execute byte-identical): a normal execute does NOT carry the _synthesizedFromIntent marker", async () => {
+  it("a normal execute is byte-identical and does NOT carry the _synthesizedFromIntent marker", async () => {
     const tool = createPipelineTool(rpcCall);
     await tool.execute("tc-fi-3b", {
       action: "execute",

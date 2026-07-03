@@ -331,7 +331,7 @@ export function buildBootstrapContextFiles(
     result.push({ path: file.name, content: truncated.content });
   }
 
-  // F2: total bootstrap budget — proportional re-truncation if sum exceeds budget.
+  // Total bootstrap budget — proportional re-truncation if sum exceeds budget.
   // Only fires when totalMaxChars is set (small/nano). Frontier/mid: undefined → skip.
   // Uses a direct slice (not truncateFileContent) so the total budget is strictly honored;
   // truncateFileContent adds a marker (~80 chars) that would exceed the budget.

@@ -3,13 +3,12 @@
  * Unit tests for `createSqliteMemoryConsolidationStore` — the @comis/memory
  * adapter for the segregated `MemoryConsolidationStore` port.
  *
- * Phase 226 (SIMPLIFY-02): the port is TRIMMED to its LIVE read +
- * deletion-reconciliation surface (the consolidation CRON writer was retired in
- * phase 225). These tests cover the three surviving methods, each with a live,
- * non-cron consumer:
+ * The port is TRIMMED to its LIVE read + deletion-reconciliation surface (the
+ * consolidation CRON writer was retired). These tests cover the three surviving
+ * methods, each with a live, non-cron consumer:
  *   - `listObservations`             — the scoped observation listing behind the
  *                                      `comis memory` observation view.
- *   - `unlinkDeletedSources`         — DIST-05 deletion reconciliation
+ *   - `unlinkDeletedSources`         — deletion reconciliation
  *   - `purgeConsolidatedDerivedFrom`   (`session.reset_conversation --memory`).
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB so
@@ -17,7 +16,7 @@
  * `PRAGMA foreign_keys = ON` is set, and `adapter.getDb()` shares that handle.
  * Observations are seeded directly via `adapter.store(...)` with `proofCount`
  * /`sourceIds` set (an observation is identified by `proof_count IS NOT NULL`,
- * the column-flag model §4.1) — no writer-cron path is exercised.
+ * the column-flag model) — no writer-cron path is exercised.
  *
  * @module
  */
@@ -36,7 +35,7 @@ const memoryConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false,
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall settings nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,
@@ -72,7 +71,7 @@ function makeEntry(overrides: Partial<MemoryEntry>): MemoryEntry {
   };
 }
 
-describe("createSqliteMemoryConsolidationStore (trimmed live surface — SIMPLIFY-02)", () => {
+describe("createSqliteMemoryConsolidationStore (trimmed live surface)", () => {
   let adapter: SqliteMemoryAdapter;
   let db: Database.Database;
   let store: ReturnType<typeof createSqliteMemoryConsolidationStore>;
@@ -171,10 +170,10 @@ describe("createSqliteMemoryConsolidationStore (trimmed live surface — SIMPLIF
   });
 
   // =====================================================================
-  // DIST-05 — unlinkDeletedSources (deletion reconciliation, LIVE consumer)
+  // unlinkDeletedSources (deletion reconciliation, LIVE consumer)
   // =====================================================================
 
-  describe("unlinkDeletedSources (DIST-05)", () => {
+  describe("unlinkDeletedSources", () => {
     it("orphan observation (all sources deleted) is DELETED", async () => {
       // Two raw sources, one observation built from both. Delete both raws, then
       // unlink: the observation has no surviving sources → orphan → deleted.
@@ -234,13 +233,13 @@ describe("createSqliteMemoryConsolidationStore (trimmed live surface — SIMPLIF
       expect(JSON.parse(row!.source_ids)).toEqual([s1]);
     });
 
-    // WR-05 (scope asymmetry): deleteBySessionKey is (tenant, agent)-scoped, so
+    // Scope asymmetry: deleteBySessionKey is (tenant, agent)-scoped, so
     // the cleanup MUST be too. An observation owned by a DIFFERENT agent in the
     // SAME tenant — even one that references the deleted agent-A source id — must
     // NOT be deleted or unlinked by an agent-A reset. The cleanup scans liveIds +
     // observations scoped on (tenant_id, agent_id); the cross-agent observation is
     // out of scope.
-    it("WR-05: agent isolation — an observation owned by a DIFFERENT agent (same tenant) is never touched", async () => {
+    it("agent isolation — an observation owned by a DIFFERENT agent (same tenant) is never touched", async () => {
       // agent-A source deleted by an agent-A reset.
       const sA = await seedMemory({
         content: "raw A",
@@ -303,10 +302,10 @@ describe("createSqliteMemoryConsolidationStore (trimmed live surface — SIMPLIF
   });
 
   // =====================================================================
-  // DIST-05 — purgeConsolidatedDerivedFrom (nuclear purge, LIVE consumer)
+  // purgeConsolidatedDerivedFrom (nuclear purge, LIVE consumer)
   // =====================================================================
 
-  describe("purgeConsolidatedDerivedFrom (DIST-05)", () => {
+  describe("purgeConsolidatedDerivedFrom", () => {
     it("deletes EVERY observation derived from THIS session's ids — even multi-source corroborated", async () => {
       const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-wipe" } });
       const s2 = await seedMemory({ content: "raw 2", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
@@ -316,7 +315,7 @@ describe("createSqliteMemoryConsolidationStore (trimmed live surface — SIMPLIF
       // obsSolo derived only from the wiped session.
       const obsSolo = await seedObservation([s1], { content: "solo" });
 
-      // Capture THIS session's ids BEFORE the delete (WR-02 contract).
+      // Capture THIS session's ids BEFORE the delete (the session-scoped contract).
       const thisSessionIds = [s1];
       await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
 
@@ -342,11 +341,11 @@ describe("createSqliteMemoryConsolidationStore (trimmed live surface — SIMPLIF
       expect(rowExists(obs)).toBe(true);
     });
 
-    // WR-02 (purge over-delete vs "derived from THIS session" contract): a PRIOR
+    // Purge over-delete vs "derived from THIS session" contract: a PRIOR
     // unrelated dangling source id in an UNRELATED observation must NOT be purged
     // by this session's --purge-derived. The session-scoped oracle (source_ids ∩
     // thisSessionIds) leaves it.
-    it("WR-02: an UNRELATED observation with a pre-existing dangling source id is NOT purged by this session", async () => {
+    it("an UNRELATED observation with a pre-existing dangling source id is NOT purged by this session", async () => {
       // An unrelated observation whose source was deleted by a PRIOR, unrelated
       // operation (admin delete / TTL / another session's purge). Its dangling id
       // belongs to NO live row and is NOT part of this session's ids.
@@ -368,9 +367,9 @@ describe("createSqliteMemoryConsolidationStore (trimmed live surface — SIMPLIF
       expect(rowExists(obsUnrelated)).toBe(true); // KEPT — its dangling id is not ours
     });
 
-    // WR-05 agent isolation on the purge path: an agent-B observation referencing
+    // Agent isolation on the purge path: an agent-B observation referencing
     // an agent-A this-session id must NOT be purged by an agent-A reset.
-    it("WR-05: purge does not cross agents — agent-B observation is never purged by an agent-A reset", async () => {
+    it("purge does not cross agents — agent-B observation is never purged by an agent-A reset", async () => {
       const sA = await seedMemory({
         content: "raw A",
         agentId: AGENT_A,

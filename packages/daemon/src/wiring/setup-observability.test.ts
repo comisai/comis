@@ -399,7 +399,7 @@ describe("setupObservability", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 11. Spend kill-switch (Phase 177-03): CONSTRUCT the daemon-wide accumulator
+  // 11. Spend kill-switch: CONSTRUCT the daemon-wide accumulator
   //     + the live recordSpend subscriber inside setupObservability. REHYDRATE
   //     lives at the boot root (daemon.ts) — covered by rehydrateSpendFromStore.
   // -------------------------------------------------------------------------
@@ -570,13 +570,13 @@ describe("setupObservability", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 13. MD-01: a non-loopback prometheus.host bind is a deliberate-but-risky
+  // 13. A non-loopback prometheus.host bind is a deliberate-but-risky
   //     posture — emit a startup WARN-with-hint naming the exposure (the
   //     /metrics surface serves operational shape unauthenticated). Do NOT
   //     reject 0.0.0.0 (a valid choice behind a reverse proxy) — just warn.
   // -------------------------------------------------------------------------
 
-  it("MD-01: WARNs with a hint when prometheus.enabled + a NON-loopback host (0.0.0.0) — names the unauthenticated exposure", async () => {
+  it("WARNs with a hint when prometheus.enabled + a NON-loopback host (0.0.0.0) — names the unauthenticated exposure", async () => {
     otelMockState.shouldThrow = false;
     const eventBus = createMockEventBus();
     const mockLogger = { info: vi.fn(), warn: vi.fn() };
@@ -608,7 +608,7 @@ describe("setupObservability", () => {
     expect(mockRegisterOtelExporter).toHaveBeenCalledTimes(1);
   });
 
-  it("MD-01: does NOT WARN for a loopback host (127.0.0.1 / ::1 / localhost) — the safe default is silent", async () => {
+  it("does NOT WARN for a loopback host (127.0.0.1 / ::1 / localhost) — the safe default is silent", async () => {
     otelMockState.shouldThrow = false;
     const setupObservability = await getSetupObservability();
 
@@ -635,7 +635,7 @@ describe("setupObservability", () => {
     }
   });
 
-  it("MD-01: does NOT WARN about the bind when prometheus is DISABLED (even with a non-loopback host configured)", async () => {
+  it("does NOT WARN about the bind when prometheus is DISABLED (even with a non-loopback host configured)", async () => {
     otelMockState.shouldThrow = false;
     const eventBus = createMockEventBus();
     const mockLogger = { info: vi.fn(), warn: vi.fn() };
@@ -657,18 +657,18 @@ describe("setupObservability", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 14. LOW-1: the clock is forwarded to the extension ONLY when present —
-  //     never `clock: undefined` cast to ClockPort (the legacy/test call shape
+  // 14. The clock is forwarded to the extension ONLY when present —
+  //     never `clock: undefined` cast to ClockPort (a test call shape
   //     passes no clock). The extension never calls clock, but an unsound
   //     `undefined as ClockPort` is still a latent contract lie.
   // -------------------------------------------------------------------------
 
-  it("LOW-1: forwards clock to the extension ONLY when present — no `clock: undefined` when clock is absent", async () => {
+  it("forwards clock to the extension ONLY when present — no `clock: undefined` when clock is absent", async () => {
     otelMockState.shouldThrow = false;
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
-    // Enable prometheus so the seam runs, but pass NO clock (the legacy shape).
+    // Enable prometheus so the seam runs, but pass NO clock.
     await setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
@@ -681,7 +681,7 @@ describe("setupObservability", () => {
     expect("clock" in deps, "clock must not be forwarded as `undefined` (the unsound cast)").toBe(false);
   });
 
-  it("LOW-1: forwards the real clock when one IS provided", async () => {
+  it("forwards the real clock when one IS provided", async () => {
     otelMockState.shouldThrow = false;
     const eventBus = createMockEventBus();
     const clock = createFakeClock(1_000_000) as any;

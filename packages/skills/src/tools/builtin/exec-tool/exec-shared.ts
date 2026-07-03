@@ -554,7 +554,7 @@ export function buildExecEnv(deps: {
   sandboxConfig?: ExecSandboxConfig;
   logger?: ToolLogger;
   // Broker proxy env + daemon placeholders — merged LAST; driven-CLI spawn only.
-  // HTTPS_PROXY/NODE_EXTRA_CA_CERTS OPTIONAL (Phase 211 cap-lease path: placeholders only).
+  // HTTPS_PROXY/NODE_EXTRA_CA_CERTS OPTIONAL (cap-lease path: placeholders only).
   brokerSpawnEnv?: {
     HTTPS_PROXY?: string;
     /** HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS). */
@@ -590,7 +590,7 @@ export function buildExecEnv(deps: {
     ...(resolvedSecretEnv ?? {}),
   };
   const finalEnv = sandboxConfig?.sandbox.wrapEnv?.(env as Record<string, string>, workspacePath) ?? env;
-  // Broker + cap-lease env LAST; proxy vars filtered to the defined ones (a Phase 211 cap-lease-only spawn has none).
+  // Broker + cap-lease env LAST; proxy vars filtered to the defined ones (a cap-lease-only spawn has none).
   if (deps.brokerSpawnEnv) {
     const { HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, placeholders } = deps.brokerSpawnEnv;
     Object.assign(finalEnv, placeholders, Object.fromEntries(Object.entries({ HTTPS_PROXY, NODE_EXTRA_CA_CERTS, HTTP_PROXY }).filter(([, v]) => v != null)));

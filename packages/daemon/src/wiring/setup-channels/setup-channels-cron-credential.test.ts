@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for background-job credential resolution (LEARN-01, live VPS 2026-06-19).
+ * Tests for background-job credential resolution.
  *
  * The bug: an OAuth provider (openai-codex) resolved no API key and no keyless
  * sentinel → the job skipped, disabling the whole learning/memory layer. These
@@ -36,7 +36,7 @@ function makeContainer(opts: {
 }
 
 describe("resolveCronJobCredential", () => {
-  it("LEARN-01: resolves the OAuth access token for an openai-codex agent (was skipped)", async () => {
+  it("resolves the OAuth access token for an openai-codex agent (was skipped)", async () => {
     const container = makeContainer({
       secrets: {}, // no static API key (OAuth provider)
       oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
@@ -51,7 +51,7 @@ describe("resolveCronJobCredential", () => {
     expect(resolver).toHaveBeenCalledWith("default", "openai-codex");
   });
 
-  it("PRE-FIX shape: no resolver → openai-codex yields no credential (the skip)", async () => {
+  it("no resolver wired → openai-codex yields no credential (the skip path)", async () => {
     const container = makeContainer({
       secrets: {},
       oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
@@ -78,18 +78,18 @@ describe("resolveCronJobCredential", () => {
     expect(cred.apiKey).toBeTruthy();
   });
 
-  it("KEYLESS-CUSTOM-NAME: a custom-NAMED keyless entry (type: ollama) gets the sentinel by TYPE, not name", async () => {
-    // package-delivery-20260628 (local qwen3.6:35b): the keyless check keyed off the provider NAME,
-    // but KEYLESS_PROVIDER_TYPES holds TYPEs ("ollama"). A user-named ollama entry
-    // (providers.entries["local-ollama"] = { type: "ollama" }) failed the check, so the
-    // reflection/memory-review crons SKIPPED ("Skipping reflection -- no API key") on a local keyless
+  it("a custom-NAMED keyless entry (type: ollama) gets the sentinel by TYPE, not name", async () => {
+    // The keyless check must key off the provider TYPE, not the config NAME:
+    // KEYLESS_PROVIDER_TYPES holds TYPEs ("ollama"). A user-named ollama entry
+    // (providers.entries["local-ollama"] = { type: "ollama" }) that failed the check would make the
+    // reflection/memory-review crons SKIP ("Skipping reflection -- no API key") on a local keyless
     // daemon — blocking the learning loop. The completion path keys off entry.type, so this gate must too.
     const container = makeContainer({
       secrets: {},
       entries: { "local-ollama": { type: "ollama", baseUrl: "http://localhost:11434" } },
     });
     const cred = await resolveCronJobCredential(container, "default", "local-ollama");
-    expect(cred.source).toBe("keyless"); // PRE-FIX: "none" (apiKey "") → the silent skip
+    expect(cred.source).toBe("keyless"); // A name-keyed check would resolve "none" (apiKey "") → the silent skip
     expect(cred.apiKey).toBeTruthy();
   });
 

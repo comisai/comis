@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Behavior tests for the `comis whoami` CLI command (Phase 215-04, INTRO-01/02).
+ * Behavior tests for the `comis whoami` CLI command.
  *
  * `whoami` is the LIVE-only read of the run's resolved caps + remaining
  * budget/quota (the consumer of `capabilities.introspect`). Unlike `comis
  * explain` it has NO `--offline` fallback — remaining budget lives ONLY in the
  * running daemon's BoundedAutonomy maps, never on disk, so an unreachable daemon
- * must FAIL clearly rather than fabricate an empty/zero snapshot (Pitfall 4 / G5
- * / T-215-13).
+ * must FAIL clearly rather than fabricate an empty/zero snapshot.
  *
  * Mirrors explain.test.ts: `withClient` is mocked via importOriginal so the REAL
  * `callTyped` runs (it parses request `{}` and the response against
@@ -216,7 +215,7 @@ describe("comis whoami is LIVE-only — an unreachable daemon fails clearly (no 
     exitSpy.restore();
   });
 
-  it("prints an error and exits 1 when the daemon is unreachable — never a fabricated zero snapshot (T-215-13)", async () => {
+  it("prints an error and exits 1 when the daemon is unreachable — never a fabricated zero snapshot", async () => {
     vi.mocked(withClient).mockRejectedValue(
       new Error("Cannot connect to daemon at ws://localhost:4766/ws."),
     );

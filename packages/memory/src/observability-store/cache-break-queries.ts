@@ -2,13 +2,13 @@
 /**
  * Cache-break analytics queries over `obs_diagnostics` (category:'cache_break').
  *
- * PERSIST-01 (Phase 176 Plan 04): "rate by reason over time" for detected
+ * "rate by reason over time" for detected
  * prompt-cache breaks — a clean `GROUP BY json_extract(details,'$.reason')` over the
  * EXISTING `obs_diagnostics` table + `idx_obs_diag_category` (NO new table, NO new
- * index — §14). Standalone (not on the `ObservabilityStore` interface) — a focused
+ * index). Standalone (not on the `ObservabilityStore` interface) — a focused
  * analytics read consumed by the fleet/explain surfaces; the `cache-stats-queries.ts`
  * sibling-module precedent. Parameterized bind args (the reason value is read out of
- * the JSON `details`, never interpolated into SQL — T-176-14).
+ * the JSON `details`, never interpolated into SQL).
  *
  * @module cache-break-queries
  */
@@ -18,7 +18,7 @@ import { z } from "zod";
 import { createRowMapper } from "../row-mapper.js";
 import type { CacheBreakReasonRate } from "./cache-break-types.js";
 
-// WEBUI-02 (179-04): CacheBreakReasonRate moved to the cache-break-types.ts leaf
+// CacheBreakReasonRate lives in the cache-break-types.ts leaf
 // (the cache-stats-types.ts precedent) so the store interface + this impl can both
 // reference it without a barrel cycle. Re-export for the barrel's existing line.
 export type { CacheBreakReasonRate } from "./cache-break-types.js";
@@ -29,7 +29,7 @@ export type { CacheBreakReasonRate } from "./cache-break-types.js";
  * `$.estCostUsd`); `$.reason` is coalesced to "" in SQL, and the SUM of a column
  * with no non-null rows is NULL — both kept nullable here for defense-in-depth (a
  * malformed row degrades to an empty result via the untyped-sqlite-gate-mandated
- * mapper, never an `as` cast). WEBUI-02 widened this from `{reason,count}`.
+ * mapper, never an `as` cast).
  */
 const cacheBreakRateMapper = createRowMapper(
   z.strictObject({

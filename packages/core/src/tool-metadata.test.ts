@@ -294,11 +294,11 @@ describe("truncateContentBlocks", () => {
 // ---------------------------------------------------------------------------
 // Agent Transparency — ComisToolMetadata activity fields
 //
-// §16.11: ComisToolMetadata gains `suppressActivity?: boolean` and
+// ComisToolMetadata carries `suppressActivity?: boolean` and
 // `failureDetector?: (result, isError) => boolean | { errorKind: ErrorKind }`.
-// These are type-contract additions; the literals below fail to compile on the
-// pre-patch interface (fields absent) — RED proof. Additive + optional, so
-// every existing metadata object still validates.
+// The literals below compile only because the interface declares these fields
+// (a type-contract pin). Both are optional, so every metadata object that
+// omits them still validates.
 // ---------------------------------------------------------------------------
 
 describe("ComisToolMetadata activity fields", () => {
@@ -335,11 +335,11 @@ describe("ComisToolMetadata activity fields", () => {
   });
 
   it("an unrelated existing metadata object still validates (additive/optional)", () => {
-    registerToolMetadata("evt09_additive", {
+    registerToolMetadata("activity_fields_additive", {
       maxResultSizeChars: 4000,
       isReadOnly: true,
     });
-    const m = getToolMetadata("evt09_additive");
+    const m = getToolMetadata("activity_fields_additive");
     expect(m?.maxResultSizeChars).toBe(4000);
     expect(m?.suppressActivity).toBeUndefined();
     expect(m?.failureDetector).toBeUndefined();
@@ -347,11 +347,11 @@ describe("ComisToolMetadata activity fields", () => {
 
   it("registers and round-trips the activity fields through the registry", () => {
     const detector = (_r: unknown, isError: boolean): boolean => isError;
-    registerToolMetadata("evt09_roundtrip", {
+    registerToolMetadata("activity_fields_roundtrip", {
       suppressActivity: true,
       failureDetector: detector,
     });
-    const m = getToolMetadata("evt09_roundtrip");
+    const m = getToolMetadata("activity_fields_roundtrip");
     expect(m?.suppressActivity).toBe(true);
     expect(m?.failureDetector).toBe(detector);
   });

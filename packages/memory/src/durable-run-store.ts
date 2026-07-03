@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * createSqliteDurableRunStore — SQLite persistence for the Phase-216 durable run
- * checkpoint (DUR-01/DUR-02/DUR-03/HB-01), implementing the `@comis/core`
- * {@link DurableRunPort}.
+ * createSqliteDurableRunStore — SQLite persistence for the durable run
+ * checkpoint, implementing the `@comis/core` {@link DurableRunPort}.
  *
  * Factory-function pattern (modeled wholesale on `createVideoJobStore`): prepares
  * fixed SQL statements once in the closure, returns a frozen `DurableRunPort`.
  * Reads go through `createRowMapper(DurableRunDbRowSchema)` so a corrupt row
- * degrades to a `Result.err`, never a throw (T-216-08); the JSON array columns
+ * degrades to a `Result.err`, never a throw; the JSON array columns
  * (`spawn_tree`/`caps`/`lease_ids`) are parsed inside a guard so a hand-edited /
  * truncated JSON column ALSO degrades to `err` rather than crashing the boot scan.
  *
@@ -15,21 +14,21 @@
  * `BoundedAutonomy`/`LeaseManager` FROM across a daemon restart: a row survives
  * the agent turn AND a restart because it lives on disk in the shared `memory.db`
  * (never an own .db). The `caps` column persists the ATTENUATED set (the result
- * of `attenuateCaps`) so a resume rehydrates it verbatim (DUR-03); the Plan-01
- * `parseDurableRunRecord` Zod union is the gate before any re-mint (T-216-06).
+ * of `attenuateCaps`) so a resume rehydrates it verbatim; the
+ * `parseDurableRunRecord` Zod union is the gate before any re-mint.
  *
- * NEW-1 (CRITICAL): the dedicated `outward_step` column is the SOLE monotonic
- * outward-send counter and is owned ENTIRELY by `allocateOutwardStep`.
- * `upsertCheckpoint` NEVER writes it, so a checkpoint between two outward sends
- * cannot reset it and re-introduce HIGH-1. `DurableRunRecord.stepIndex` maps onto
+ * The dedicated `outward_step` column is the SOLE monotonic outward-send counter
+ * and is owned ENTIRELY by `allocateOutwardStep`. `upsertCheckpoint` NEVER writes
+ * it, so a checkpoint between two outward sends cannot reset it and break the
+ * exactly-once send guarantee. `DurableRunRecord.stepIndex` maps onto
  * `outward_step` in `rowToRecord`; the column seeds at the -1 'never-sent'
  * sentinel, so a never-allocated run surfaces stepIndex -1 — which the domain
- * schema permits (`.min(-1)`, NEW-5), so it is NOT falsely orphaned. (LOW-1:
- * there is no coarse per-step index column — only `outward_step`.)
+ * schema permits (`.min(-1)`), so it is NOT falsely orphaned. There is no coarse
+ * per-step index column — only `outward_step`.
  *
- * SECURITY (T-216-05): the persisted columns carry NO secret — the lease
- * credential is held by the boot-bound adapter and is re-minted FRESH on resume;
- * only the attenuated caps + leaseId correlation are written here.
+ * SECURITY: the persisted columns carry NO secret — the lease credential is held
+ * by the boot-bound adapter and is re-minted FRESH on resume; only the attenuated
+ * caps + leaseId correlation are written here.
  *
  * @module
  */
@@ -54,7 +53,7 @@ export interface DurableRunStoreOptions {
 
 const durableRunMapper = createRowMapper(DurableRunDbRowSchema);
 
-// FLEET-03: the GROUP BY status COUNT(*) projection for countByStatus. No raw
+// The GROUP BY status COUNT(*) projection for countByStatus. No raw
 // `as Foo[]` cast (AGENTS §6.8) — a malformed aggregate row degrades to err.
 const statusCountRowSchema = z.strictObject({ status: z.string(), c: z.number() });
 const statusCountMapper = createRowMapper(statusCountRowSchema);
@@ -62,10 +61,10 @@ const statusCountMapper = createRowMapper(statusCountRowSchema);
 /**
  * Map a validated DB row to the domain `DurableRunRecord`. Returns a `Result`
  * because the JSON array columns may be corrupt: a non-parseable
- * `spawn_tree`/`caps`/`lease_ids` degrades to `err` (T-216-08), never a throw.
+ * `spawn_tree`/`caps`/`lease_ids` degrades to `err`, never a throw.
  *
- * NEW-1/NEW-5/LOW-1: `record.stepIndex` maps from the `outward_step` column (the
- * sole counter; -1 seed surfaces as stepIndex -1 for a never-sent run).
+ * `record.stepIndex` maps from the `outward_step` column (the sole counter; -1
+ * seed surfaces as stepIndex -1 for a never-sent run).
  */
 function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
   let spawnTree: DurableRunRecord["spawnTree"];
@@ -74,9 +73,9 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
   try {
     // The JSON columns are TEXT on disk; parse them as-is. `spawn_tree` is EITHER
     // a flat string[] OR a DAG {nodeId,status,runId?}[] — JSON.parse preserves the
-    // shape; the Plan-01 spawnTree union validates both (do not coerce one into
-    // the other). Casts are to the domain field types; the Zod `parseDurableRunRecord`
-    // at the resume boundary (Plan 04/07) is the membership gate (T-216-06).
+    // shape; the spawnTree union validates both (do not coerce one into the
+    // other). Casts are to the domain field types; the Zod `parseDurableRunRecord`
+    // at the resume boundary is the membership gate.
     spawnTree = JSON.parse(row.spawn_tree) as DurableRunRecord["spawnTree"];
     caps = JSON.parse(row.caps) as DurableRunRecord["caps"];
     leaseIds = JSON.parse(row.lease_ids) as DurableRunRecord["leaseIds"];
@@ -96,7 +95,7 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     leaseIds,
     budgetConsumed: row.budget_consumed,
     cronOrigin: row.cron_origin,
-    // NEW-1/NEW-5: the idempotency-key field maps from the dedicated counter column.
+    // The idempotency-key field maps from the dedicated counter column.
     stepIndex: row.outward_step,
     status: row.status as DurableRunRecord["status"],
     lastHeartbeatAt: row.last_heartbeat_at,
@@ -125,12 +124,12 @@ export function createSqliteDurableRunStore(
 
   // --- Prepared statements ---
 
-  // DUR-01 idempotent upsert. NEW-1 (CRITICAL): the column list and the
-  // DO UPDATE SET clause DELIBERATELY OMIT `outward_step` — the counter is owned
-  // solely by allocateOutwardStep. On a fresh INSERT, outward_step takes the DDL
-  // default (-1, the NEW-5 sentinel); on CONFLICT, the SET clause leaves it
-  // untouched so a concurrent allocate's value survives. (LOW-1: there is no
-  // coarse per-step index column to write — the DDL has only outward_step.)
+  // Idempotent upsert. The column list and the DO UPDATE SET clause DELIBERATELY
+  // OMIT `outward_step` — the counter is owned solely by allocateOutwardStep. On
+  // a fresh INSERT, outward_step takes the DDL default (-1, the never-sent
+  // sentinel); on CONFLICT, the SET clause leaves it untouched so a concurrent
+  // allocate's value survives. There is no coarse per-step index column to
+  // write — the DDL has only outward_step.
   const upsertStmt = db.prepare(`
     INSERT INTO durable_runs (
       root_run_id, spawn_tree, caps, lease_ids, budget_consumed, cron_origin,
@@ -149,7 +148,7 @@ export function createSqliteDurableRunStore(
 
   const getStmt = db.prepare(`SELECT * FROM durable_runs WHERE root_run_id = ?`);
 
-  // DUR-02 boot-resume scan — only status='running' (the partial index serves it).
+  // Boot-resume scan — only status='running' (the partial index serves it).
   const listResumableStmt = db.prepare(`
     SELECT * FROM durable_runs WHERE status = 'running' ORDER BY last_heartbeat_at ASC
   `);
@@ -167,17 +166,17 @@ export function createSqliteDurableRunStore(
     UPDATE durable_runs SET last_heartbeat_at = ?, updated_at_ms = ? WHERE root_run_id = ?
   `);
 
-  // DUR-03 — a revoke flips the record to the terminal 'revoked' state so
+  // A revoke flips the record to the terminal 'revoked' state so
   // listResumable filters it out and resume can never re-mint pre-revoke caps.
   const invalidateForRevokeStmt = db.prepare(`
     UPDATE durable_runs SET status = 'revoked', orphan_reason = 'revoked', updated_at_ms = ?
     WHERE root_run_id = ?
   `);
 
-  // HIGH-1 / ONCE-02 — the ATOMIC monotonic outward-send counter. A single
-  // synchronous UPDATE ... RETURNING (better-sqlite3 supports RETURNING) so two
-  // sequential calls can never observe the same index. outward_step seeds at -1,
-  // so the first allocate yields 0. This is the SOLE writer of outward_step (NEW-1).
+  // The ATOMIC monotonic outward-send counter. A single synchronous
+  // UPDATE ... RETURNING (better-sqlite3 supports RETURNING) so two sequential
+  // calls can never observe the same index. outward_step seeds at -1, so the
+  // first allocate yields 0. This is the SOLE writer of outward_step.
   const allocateStmt = db.prepare(`
     UPDATE durable_runs SET outward_step = outward_step + 1, updated_at_ms = ?
     WHERE root_run_id = ? RETURNING outward_step
@@ -194,7 +193,7 @@ export function createSqliteDurableRunStore(
   const allocCounterSchema = DurableRunDbRowSchema.pick({ outward_step: true });
   const allocCounterMapper = createRowMapper(allocCounterSchema);
 
-  // FLEET-03 — windowed status counts. Mirrors getRollingSpendUsd's `WHERE … >= ?`
+  // Windowed status counts. Mirrors getRollingSpendUsd's `WHERE … >= ?`
   // windowed aggregate: only rows updated within the fleet window are counted,
   // grouped by status. Prepared once; folded into the 4-key object (default 0).
   const countByStatusStmt = db.prepare(`

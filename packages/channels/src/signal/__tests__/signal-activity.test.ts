@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Signal DeleteAndRepost renderer tests (§18.3 Signal column).
+ * Signal DeleteAndRepost renderer tests.
  *
  * Signal is the ONLY one of the 5 non-EditPlace channels with a real
  * `deleteMessage` — it is the canonical DeleteAndRepost wiring. The single
@@ -8,7 +8,7 @@
  * structured numeric code for send/delete failures (the live adapter returns
  * `err(result.error)`, a raw signal-cli RPC Error), so the classifier defaults
  * to `internal` and reads the error structurally ONLY (never renders the
- * `.message` as activity text — §19.3). `makeSignalRenderActions` maps
+ * `.message` as activity text). `makeSignalRenderActions` maps
  * each ChannelPort call through it and guards the absent `editMessage`;
  * `createSignalActivityRenderer` wires the `createDeleteAndRepostRenderer`
  * (no duplicated state machine).
@@ -16,7 +16,7 @@
  * Time discipline: every fixture test drives the injected FakeTimers/FakeClock —
  * no raw wall-time call (globals.test.ts fails the build otherwise). Golden
  * fixtures assert via readFixture + toEqual (NEVER an auto-writing inline/file
- * snapshot, which self-heals a wrong fixture — Pitfall 3).
+ * snapshot, which self-heals a wrong fixture).
  */
 import { describe, it, expect } from "vitest";
 import type {
@@ -70,7 +70,7 @@ function receiptAt(deliveredAtMs: number): FinalDeliveryReceipt {
   return { ok: true, deliveredChunks: 1, lastChunkMessageId: "msg-final", deliveredAtMs };
 }
 
-// --- Task 1: classifySignalError + makeSignalRenderActions -----------------
+// --- classifySignalError + makeSignalRenderActions -------------------------
 
 describe("classifySignalError (structural only, never the message string)", () => {
   it("maps an unknown bare Error to internal carrying the cause (Signal has no numeric code)", () => {
@@ -231,7 +231,7 @@ describe("createSignalActivityRenderer (DeleteAndRepost wiring)", () => {
   });
 });
 
-// --- Task 2: 11 golden fixtures (S1-S7, S9-S12; no S8) ---------------------
+// --- 11 golden fixtures (S1-S7, S9-S12; no S8) ------------------------------
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeSignalAdapter>): unknown {
@@ -253,7 +253,7 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeSignalAdapter();
-  // Omit `clock` so the §8.5 "(running N s)" elapsed fallback is skipped and
+  // Omit `clock` so the "(running N s)" elapsed fallback is skipped and
   // committed fixtures stay byte-stable. Strategy-level tests in
   // delete-and-repost.test.ts inject a clock and assert the elapsed text — that
   // is the live-production contract.
@@ -280,7 +280,7 @@ function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
 
 const okReceipt = (deliveredAtMs: number): FinalDeliveryReceipt => receiptAt(deliveredAtMs);
 
-describe("Signal golden fixtures (§18.3 DeleteAndRepost rows — readFixture + toEqual)", () => {
+describe("Signal golden fixtures (DeleteAndRepost — readFixture + toEqual)", () => {
   it("S1 trivial chat — zero renderer messages (kind:success trivial, no message ever posted)", async () => {
     const log = await runScenario([], { kind: "success", trivial: true, delivery: okReceipt(0) }, 0);
     expect(log).toEqual(readFixture("signal", "S1"));
@@ -312,8 +312,8 @@ describe("Signal golden fixtures (§18.3 DeleteAndRepost rows — readFixture + 
 
   // NOTE: the shipped createDeleteAndRepostRenderer treats
   // success_with_recovered_failures identically to success (delete the last
-  // activity after deliveredAt). §18.2-S5 aspires to "0 delete" for the recovered
-  // case; that keep-policy lives in delete-and-repost.ts and is out of
+  // activity after deliveredAt). A "0 delete" keep-policy for the recovered
+  // case would live in delete-and-repost.ts and is out of
   // scope for this wiring. The fixture pins the ACTUAL renderer output (the
   // delete is present) — mirroring the Telegram/Discord/Slack/WhatsApp S5 decision.
   it("S5 recovered failure — repost-per-transition then a final delete, kind:success_with_recovered_failures (renderer deletes)", async () => {

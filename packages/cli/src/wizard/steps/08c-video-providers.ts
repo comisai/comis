@@ -12,7 +12,7 @@
  *   - `fal`    — the explicit FAL queue backend: always prompts for a `FAL_KEY`
  *                (no LLM provider ever supplies it).
  *   - `google` — Veo: reuses `GOOGLE_API_KEY`. Prompts ONLY when the agent's main
- *                provider isn't already `google` (CRED-01 — no video-specific key).
+ *                provider isn't already `google` (key reuse — no video-specific key).
  *   - `xai`    — Grok Imagine: reuses `XAI_API_KEY`. Prompts ONLY when the main
  *                provider isn't already `xai`.
  *
@@ -62,7 +62,7 @@ export const videoProvidersStep: WizardStep = {
       return updateState(state, { videoProvider: { provider } });
     }
 
-    // 3. CRED-01 reuse: if the agent's MAIN provider already supplies the exact
+    // 3. Key reuse: if the agent's MAIN provider already supplies the exact
     //    env key this backend needs (e.g. a google main + google video → both
     //    GOOGLE_API_KEY), reuse it — no extra prompt, no video-specific secret.
     const mainProvidesKey =

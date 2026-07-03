@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Trajectory bridge payload translators for the image-generation (`image:*`)
- * lifecycle (OBS-04, Phase 186).
+ * lifecycle.
  *
  * Extracted from `translate-payload.ts` (which is at the file-size cap) — the
  * main `translatePayload` switch delegates its four `image:*` cases here.
- * BEHAVIOR-NEUTRAL move (ORCH-OBS file-size split): the returned shapes are
+ * BEHAVIOR-NEUTRAL move (file-size split): the returned shapes are
  * byte-identical to the previously-inline arms, pinned by the existing `image:*`
  * arm tests in `translate-payload.test.ts` + the `never` exhaustiveness check
  * below. This is the EXACT precedent that produced `translate-vision-payload.ts`
  * / `translate-video-payload.ts` / `translate-voice-payload.ts` — image was the
  * last media lifecycle still inline.
  *
- * CONTENT-FREE (T-186-08): ids/labels/numbers/booleans ONLY — never the prompt,
+ * CONTENT-FREE: ids/labels/numbers/booleans ONLY — never the prompt,
  * image bytes, a credential, or a raw provider message. `costUsd` rides
- * `image:generated` so `comis explain` reconstructs the cost (OBS-03 Route a).
+ * `image:generated` so `comis explain` reconstructs the cost.
  * agentId/sessionKey/timestamp are envelope-only + stripped; optional fields
  * spread presence-conditionally.
  *

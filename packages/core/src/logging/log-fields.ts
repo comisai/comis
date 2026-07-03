@@ -9,7 +9,7 @@
  * The Pino-backed runtime implementation lives in @comis/infra and is
  * assignable to ComisLogger (proven by
  * `expectTypeOf<PinoComisLogger>().toExtend<ComisLogger>()` in
- * `packages/infra/src/logging/__tests__/logger-contract.type-check.ts`).
+ * `packages/infra/src/logging/__tests__/logger-contract.test.ts`).
  * Pino's runtime auto-redaction (apiKey, token, password, etc., 3 levels
  * deep) is a runtime feature of the Pino impl; this structural contract
  * does not (and cannot) enforce redaction.
@@ -51,8 +51,8 @@ export function isValidLogLevel(level: string): boolean {
  * - `internal`     -- Unexpected internal errors (assertion failures, logic bugs)
  * - `platform`     -- Chat platform API errors (Discord, Telegram, Slack rate limits)
  * - `sandbox_unavailable` -- No materializable OS sandbox jail (Linux bwrap) for a
- *                     fail-closed dynamic step (v2.26 Verified Learning skill
- *                     validation, SKILL-07). HONEST DEGRADATION, NOT a fault: the
+ *                     fail-closed dynamic step (verified-learning skill
+ *                     validation). HONEST DEGRADATION, NOT a fault: the
  *                     work degrades to a reduced-coverage path (`static-only`)
  *                     rather than running unsandboxed — `Defer ≠ Retry`, so this
  *                     must NOT inflate failure metrics or trip a breaker.

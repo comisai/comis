@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: the supervised worker PROCESS entry (spec §1.1/§2.1). A fatal wiring error MUST crash this child so the daemon's registry observes the `close` (sessions → lost → respawn) — never a silently half-spawned worker. The per-frame error boundary lives in createTerminalWorker.handle + the stdio pump.
+// @allow-throw: the supervised worker PROCESS entry. A fatal wiring error MUST crash this child so the daemon's registry observes the `close` (sessions → lost → respawn) — never a silently half-spawned worker. The per-frame error boundary lives in createTerminalWorker.handle + the stdio pump.
 /**
  * terminal-worker-main — the standalone, daemon-supervised Terminal Worker
- * **process** (spec §1.1/§2.1: the crash-isolated child). The daemon forks this
+ * **process** (the crash-isolated child). The daemon forks this
  * under the proven `--permission` posture via `buildProductionSpawnWorker`
- * (terminal-worker-launch.ts). It is the SERVER half of the §2.3 IPC the registry
+ * (terminal-worker-launch.ts). It is the SERVER half of the IPC the registry
  * (client) talks to:
  *
  *   - request frames IN  on stdin  (fd0)  → decoded → `worker.handle`
  *   - reply frames   OUT on stdout (fd1)  ← `fs.writeSync(1, …)`
- *   - terminal:* event frames OUT on fd3  ← `fs.writeSync(3, …)` (no-poll attention, TR-11)
+ *   - terminal:* event frames OUT on fd3  ← `fs.writeSync(3, …)` (no-poll attention)
  *
  * It wires the production-default deps into `createTerminalWorker` (node-pty via
  * the guarded loader + pipe fallback, the @xterm emulator, the scope-jail
@@ -67,7 +67,7 @@ export function durableDir(): string {
 }
 
 /**
- * The explicit tmux `-S` socket path: `<durableDir>/tmux.sock`. DUR-01 survival key —
+ * The explicit tmux `-S` socket path: `<durableDir>/tmux.sock`. The durability survival key —
  * the socket lives on the PERSISTENT, shared data dir, NOT tmux's default
  * `/tmp/tmux-<uid>/default`. systemd `PrivateTmp=yes` gives every daemon START a fresh
  * private /tmp, so a /tmp socket is unreachable from the restarted daemon and re-attach
@@ -128,14 +128,14 @@ interface DurableWarnLogger {
 }
 
 /**
- * DUR-01 §7.1.5 — the durable-vs-fallback WARN. tmux availability is a RUNTIME property, NOT
- * a config-validation hard-require (the LOCKED decision): `drive.durable:true` parses fine and
+ * The durable-vs-fallback WARN. tmux availability is a RUNTIME property, NOT
+ * a config-validation hard-require: `drive.durable:true` parses fine and
  * DEGRADES gracefully when tmux is absent. When the worker boots on a host with no tmux
  * (`tmuxPath === undefined`), a later `backend:"tmux"` durable drive falls back to pty/pipe —
  * and a daemon restart then ends that session `lost` (with the journal preserved; the
- * user-facing `failed` OUTCOME is Phase-166 NOTIFY-01's). Log ONE content-free WARN at boot so
+ * user-facing `failed` outcome is derived downstream). Log ONE content-free WARN at boot so
  * an operator sees WHY a durable drive will not survive a restart on this host. Best-effort
- * (never throws out of the worker boot — a logging fault must not crash the process). §2.7:
+ * (never throws out of the worker boot — a logging fault must not crash the process). Logs
  * `errorKind:"precondition"` + `step:"tmux_resolve"` + a `hint` naming the degradation.
  *
  * @param tmuxPath - The resolved tmux binary path, or `undefined` when tmux is unavailable.
@@ -148,7 +148,7 @@ export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logge
       {
         errorKind: "precondition" as const,
         step: "tmux_resolve",
-        hint: "durable requested but tmux unavailable; falling back non-durable; a restart then ends the session `lost` with the journal preserved (the user-facing `failed` outcome is derived in Phase 166)",
+        hint: "durable requested but tmux unavailable; falling back non-durable; a restart then ends the session `lost` with the journal preserved (the user-facing `failed` outcome is derived from the journal)",
       },
       "terminal durable drive will degrade — tmux not found",
     );
@@ -158,27 +158,27 @@ export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logge
 }
 
 /**
- * The tmux long-run backend (OPS-05): a named tmux session outlives the worker, so a
- * milestone survives a worker crash + is re-attachable. `createTmuxBackend` makes the
+ * The tmux long-run backend: a named tmux session outlives the worker, so a
+ * long-running job survives a worker crash + is re-attachable. `createTmuxBackend` makes the
  * survival decision via `has-session`, runs the one-shot tmux commands (new-session /
  * set-option / kill-session) via `runOneShot` (`execFileSync`), and DRIVES the session via
  * a node-pty `tmux attach` (`spawnAttachPty` = `loadPty().spawn`) — which streams the pane,
  * forwards keystrokes, and exits on session death (the streaming model the worker's ring/
  * emulator needs; NOT the prior one-shot capture-pane that mis-flagged sessions exited).
- * Used for `backend:"tmux"` create AND the BL-01 recover-on-boot `reattach` (`forceAttachOnly`
+ * Used for `backend:"tmux"` create AND the recover-on-boot `reattach` (`forceAttachOnly`
  * — attach-or-gone, never a fresh `new-session`). `loadPty` is the SAME node-pty loader the
  * pty backend uses (the attach client is an ordinary pty).
  */
 export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): TmuxBackendLike {
-  // DUR-01: the STABLE data-dir socket every tmux command targets via `-S` — so the server
+  // The STABLE data-dir socket every tmux command targets via `-S` — so the server
   // binds it and a restarted daemon re-attaches to the SAME socket (NOT the PrivateTmp-private
   // /tmp default, which the new daemon generation cannot reach).
-  // RECUR-03 (option A): NEW sessions are created on this daemon generation's PER-BOOT socket
+  // NEW sessions are created on this daemon generation's PER-BOOT socket
   // (the daemon injects COMIS_TERMINAL_TMUX_SOCKET = `<durableDir>/tmux-<gen>.sock`), so a restart's
   // new sessions get a fresh tmux server in the LIVE mount namespace — a stranded prior-generation
-  // ns never breaks new bwrap sessions (RECUR-02). A RE-ATTACH instead targets the SURVIVING
+  // ns never breaks new bwrap sessions. A RE-ATTACH instead targets the SURVIVING
   // session's OWN (prior-boot) socket, threaded per-frame from its descriptor (`a.tmuxSocket`). The
-  // legacy single socket is the fallback for both (no env / a pre-RECUR-03 descriptor).
+  // legacy single socket is the fallback for both (no env / an older descriptor without it).
   const legacySocket = resolveTmuxSocketPath(durableDir());
   // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) per-boot tmux socket via env when forking; not a SecretManager value.
   const bootSocket = process.env.COMIS_TERMINAL_TMUX_SOCKET ?? legacySocket;
@@ -228,10 +228,10 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         runOneShot: runOneShot(a.env),
         spawnAttachPty: spawnAttachPtyOn(bootSocket, a),
       })!,
-    // BL-01 (165-REVIEW): recover-on-boot re-attach — attach to an EXISTING session ONLY
+    // Recover-on-boot re-attach — attach to an EXISTING session ONLY
     // (forceAttachOnly). The driven command is NOT re-spawned (the surviving pane is attached),
     // so bin/argv are empty; a gone session returns undefined → the worker replies ok:false.
-    // RECUR-03: target the SURVIVOR's own per-boot socket (`a.tmuxSocket`), NOT this boot's.
+    // Target the SURVIVOR's own per-boot socket (`a.tmuxSocket`), NOT this boot's.
     reattach: (a) => {
       const socket = a.tmuxSocket ?? legacySocket;
       return createTmuxBackend({
@@ -268,13 +268,14 @@ function main(): void {
   // Untouched for network none/full.
   const egressControl = createTerminalEgressProxy({ logger });
 
-  // Long-run tmux backend (OPS-05) — present only if tmux is installed; absent ⇒
+  // Long-run tmux backend — present only if tmux is installed; absent ⇒
   // a backend:"tmux" request degrades to pty/pipe (never an error).
   const tmuxPath = resolveTmuxPath();
   // The attach client is an ordinary pty → reuse the SAME node-pty loader the pty backend uses.
   const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath, defaultLoadPty) : undefined;
-  // DUR-01 §7.1.5: WARN at boot if tmux is unavailable — a durable drive will degrade to
-  // non-durable here, so a restart ends it `lost` (journal preserved; `failed` is Phase-166's).
+  // WARN at boot if tmux is unavailable — a durable drive will degrade to
+  // non-durable here, so a restart ends it `lost` (journal preserved; the `failed`
+  // outcome is derived downstream).
   warnIfDurableTmuxUnavailable(tmuxPath, logger);
 
   const worker = createTerminalWorker({

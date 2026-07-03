@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `sleep` primitive (STREAM-03).
+ * The `sleep` primitive.
  *
  * A builtin AgentTool the model calls to PAUSE between turns. Its whole reason
  * to exist is cost: instead of polling in a token-burning loop ("is the child
@@ -35,7 +35,7 @@ import { jsonResult } from "../../platform-tools/tool-helpers.js";
  * Upper bound on a single sleep, in milliseconds. Chosen to match the ~5-minute
  * Anthropic prompt-cache TTL the verify-only cache stack tracks: a sleep longer
  * than the cache window would let the cached prefix expire, defeating the point.
- * A request above this is clamped down to it (T-221-SLEEP-01 mitigation).
+ * A request above this is clamped down to it.
  */
 export const MAX_SLEEP_MS = 300_000; // ~5 minutes
 
@@ -84,7 +84,7 @@ const defaultTimer: SleepTimer = {
 };
 
 /**
- * Read a duration param tolerantly (WR-02): a finite number is taken as-is, a
+ * Read a duration param tolerantly: a finite number is taken as-is, a
  * NUMERIC STRING (LLMs commonly emit `{ ms: "1500" }`) is coerced, and anything
  * else — absent, null, non-finite, or an unparseable string (`"abc"`) — returns
  * `undefined` so the caller falls back to the clamped default. NEVER throws (the
@@ -110,7 +110,7 @@ function readMaybeNumber(params: Record<string, unknown>, key: string): number |
  * `seconds`. A non-finite / missing / unparseable request defaults to
  * {@link MAX_SLEEP_MS} (the cache-window pace) rather than throwing — a sleep
  * with no usable argument means "defer for the cache TTL". The result is always
- * within `[0, MAX_SLEEP_MS]`. Tolerant of stringly-typed args (WR-02): it reads
+ * within `[0, MAX_SLEEP_MS]`. Tolerant of stringly-typed args: it reads
  * via {@link readMaybeNumber}, NOT the throwing shared helper, so a bad value
  * can never escape `execute()`.
  */
@@ -135,7 +135,7 @@ function resolveClampedMs(params: Record<string, unknown>): number {
  *
  * @param deps - Optional dependencies. `timer` defaults to the sanctioned
  *   systemSetTimeout/systemClearTimeout helpers.
- * @returns AgentTool implementing the sleep primitive (STREAM-03).
+ * @returns AgentTool implementing the sleep primitive.
  */
 export function createSleepTool(deps: SleepToolDeps = {}): AgentTool<typeof SleepParams> {
   const timer = deps.timer ?? defaultTimer;
@@ -174,7 +174,7 @@ export function createSleepTool(deps: SleepToolDeps = {}): AgentTool<typeof Slee
         const onAbort = () => {
           if (settled) return;
           settled = true;
-          timer.clearTimeout(handle); // clear the pending timer → no handle leak (T-221-SLEEP-04)
+          timer.clearTimeout(handle); // clear the pending timer → no handle leak
           resolve(true);
         };
         const handle = timer.setTimeout(() => {
@@ -183,7 +183,7 @@ export function createSleepTool(deps: SleepToolDeps = {}): AgentTool<typeof Slee
           signal?.removeEventListener("abort", onAbort);
           resolve(false);
         }, clampedMs);
-        // Never let a pending sleep block graceful daemon shutdown (T-221-SLEEP-01).
+        // Never let a pending sleep block graceful daemon shutdown.
         handle.unref();
         signal?.addEventListener("abort", onAbort, { once: true });
       });

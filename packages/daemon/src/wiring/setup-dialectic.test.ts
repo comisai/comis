@@ -27,9 +27,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-// CR-01: keep the WHOLE @comis/agent module real (resolveModelProfile,
+// Keep the WHOLE @comis/agent module real (resolveModelProfile,
 // createMemoryRecall, resolveOperationModel, …) but wrap createDialecticSeam so
-// the test can capture the R6 deps the wiring threads into it. The wrapper
+// the test can capture the deps the wiring threads into it. The wrapper
 // delegates to the real factory so behavior is unchanged.
 const capturedSeamDeps: Array<Record<string, unknown>> = [];
 vi.mock("@comis/agent", async (importOriginal) => {
@@ -302,13 +302,13 @@ describe("buildDialecticWiring (the dialectic seam + recall builder)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CR-01: the dialectic seam is built with the R6 capabilityClass +
-  // hasCapableModelOverride derived from the cron/memory model. Before the fix
-  // neither was passed → createDialecticSeam defaulted to "frontier"/false →
-  // "capable", so a small/nano model still ran the query-time synthesis call.
-  // The seam is built lazily on first dialecticSeam(...) invocation.
+  // The dialectic seam is built with the capabilityClass +
+  // hasCapableModelOverride derived from the cron/memory model. When neither is
+  // passed, createDialecticSeam defaults to "frontier"/false → "capable", so a
+  // small/nano model would still run the query-time synthesis call. The seam is
+  // built lazily on first dialecticSeam(...) invocation.
   // -------------------------------------------------------------------------
-  it("CR-01: a SMALL cron/memory model builds the seam with capabilityClass='small' + no override (abstain reachable)", async () => {
+  it("a SMALL cron/memory model builds the seam with capabilityClass='small' + no override (abstain reachable)", async () => {
     capturedSeamDeps.length = 0;
     const deps = makeDeps({
       // An ollama agent → cron model resolves to ollama → small.
@@ -325,11 +325,11 @@ describe("buildDialecticWiring (the dialectic seam + recall builder)", () => {
     expect(capturedSeamDeps).toHaveLength(1);
     expect(capturedSeamDeps[0].capabilityClass).toBe("small");
     expect(capturedSeamDeps[0].hasCapableModelOverride).toBe(false);
-    // Behavioral consequence: the seam abstains (R6) — no synthesis is produced.
+    // Behavioral consequence: the seam abstains — no synthesis is produced.
     expect(result).toEqual({ abstain: true });
   });
 
-  it("CR-01: an operator capable override on the cron provider builds the seam with hasCapableModelOverride=true", async () => {
+  it("an operator capable override on the cron provider builds the seam with hasCapableModelOverride=true", async () => {
     capturedSeamDeps.length = 0;
     const deps = makeDeps({
       agentConfig: makeAgentConfig({

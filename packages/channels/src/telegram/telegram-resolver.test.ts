@@ -90,9 +90,9 @@ describe("telegram-resolver / createTelegramResolver", () => {
   });
 
   it("constructs the download URL from apiRoot when set (local Bot API server / emulator)", async () => {
-    // RED (30uc-20260624 UC-05): the resolver hardcoded `https://api.telegram.org/file/...` and
-    // IGNORED apiRoot, so `getFile` honored the custom apiRoot (grammy client) but the file DOWNLOAD
-    // 404'd against real Telegram. Media-INPUT (photo/voice/doc/video) was dead through ANY custom
+    // A resolver that hardcodes `https://api.telegram.org/file/...` and
+    // IGNORES apiRoot means `getFile` honors the custom apiRoot (grammy client) but the file DOWNLOAD
+    // 404s against real Telegram. Media-INPUT (photo/voice/doc/video) would be dead through ANY custom
     // apiRoot — the emulator AND a self-hosted local Bot API server (Telegram's documented large-file
     // / privacy deployment). The download base must follow apiRoot, exactly as getFile does.
     const deps = mockDeps({ apiRoot: "http://127.0.0.1:38411" });
@@ -243,8 +243,8 @@ describe("telegram-resolver / createTelegramResolver", () => {
     }
   });
 
-  it("returns the VERIFIED (sniffed) MIME type — overrides a mislabeled declared type (MEDIA-TYPE)", async () => {
-    // 30uc-20260624 UC-05: Telegram's `.jpg` file_path / image/jpeg header can mislabel PNG bytes,
+  it("returns the VERIFIED (sniffed) MIME type — overrides a mislabeled declared type", async () => {
+    // Telegram's `.jpg` file_path / image/jpeg header can mislabel PNG bytes,
     // and the model vision API 400s on a declared type that mismatches the bytes. The port contract
     // specifies a sniffed type — the resolver must report image/png for PNG bytes regardless of the
     // declared image/jpeg.

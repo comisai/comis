@@ -3,8 +3,8 @@
  * iMessage JSON-RPC Client: Spawns `imsg rpc` as a child process and
  * communicates via JSON-RPC 2.0 over stdin/stdout.
  *
- * Adapted from Comis's IMessageRpcClient for Comis's hexagonal
- * architecture with Result-based error handling.
+ * Fits Comis's hexagonal architecture: all fallible operations return
+ * Result values instead of throwing across the port boundary.
  *
  * Lifecycle:
  * 1. `start()` spawns `imsg rpc` child process

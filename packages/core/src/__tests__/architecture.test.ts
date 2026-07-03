@@ -93,21 +93,16 @@ describe("@comis/core -- architecture invariants", () => {
     ).toEqual([]);
   });
 
-  // NOTE (v2.12, Phase 126): the "exports ContextStorePort + ContextEngineStore
-  // + ContextAdminStore from core/src/ports/" assertion was removed — those DAG
-  // store ports (and the context-store{,-engine,-admin,-types}.ts files) were
-  // deleted with the DAG context engine. The LCD store port is reintroduced
-  // fresh in a later phase.
-
   it("OAuth rewritten errors expose code (OAuthErrorCode) and logErrorKind (closed Pino ErrorKind), with no string-typed errorKind field", () => {
     // The RewrittenOAuthError interface in core/src/security/oauth-helpers.ts
     // must expose:
     //   - `code: OAuthErrorCode` (domain discriminator)
     //   - `logErrorKind: ErrorKind` (closed-Pino-union mirror)
-    // and MUST NOT declare an `errorKind:` field (string-typed mirror was the
-    // historical shape; renamed to logErrorKind). The architecture rule
-    // structurally gates future regressions — any reintroduction of an
-    // `errorKind` field on this interface fails the build.
+    // and MUST NOT declare an `errorKind:` field (a string-typed mirror
+    // would bypass the closed union; the closed-union field is named
+    // logErrorKind). The architecture rule structurally gates regressions —
+    // any introduction of an `errorKind` field on this interface fails the
+    // build.
     const oauthFile = resolve(SRC_ROOT, "security/oauth-helpers.ts");
     const source = readFileSync(oauthFile, "utf8");
     const ifaceMatch = /export\s+interface\s+RewrittenOAuthError\b[\s\S]*?\n\}/.exec(source);
@@ -129,7 +124,7 @@ describe("@comis/core -- architecture invariants", () => {
       }
     }
     // ErrorKind must be imported from core/logging/log-fields.js so the
-    // closed-union type is bound to the canonical 9-member ErrorKind.
+    // closed-union type is bound to the canonical ErrorKind union.
     if (!/import\s+type\s+\{\s*ErrorKind\s*\}\s+from\s+"\.\.\/logging\/log-fields\.js"/.test(source)) {
       missing.push("`import type { ErrorKind } from \"../logging/log-fields.js\"`");
     }
@@ -206,16 +201,16 @@ describe("@comis/core -- architecture invariants", () => {
  * Sub-allowlist — files in packages/core/src/ports/ that legitimately
  * contain runtime imports / value declarations.
  *
- * Runtime helpers that previously lived under core/src/ports/
- * (ChannelCapabilitySchema, createNoOpDeliveryQueue, createNoOpDeliveryMirror,
- * createNoOpCapabilityPort, validateProfileId, PROFILE_ID_RE) moved to
- * non-ports/ home modules (../domain/channel-capability.ts,
+ * Runtime helpers (ChannelCapabilitySchema, createNoOpDeliveryQueue,
+ * createNoOpDeliveryMirror, createNoOpCapabilityPort, validateProfileId,
+ * PROFILE_ID_RE) live in non-ports/ home modules
+ * (../domain/channel-capability.ts,
  * ../delivery/no-op-delivery-{queue,mirror}.ts,
- * ../tool-capability/no-op-tool-capability.ts, ../security/profile-id.ts),
- * and the curated re-exports at ../exports/ports.ts retarget consumers to
- * those new homes so the @comis/core public surface stayed byte-identical.
+ * ../tool-capability/no-op-tool-capability.ts, ../security/profile-id.ts);
+ * the curated re-exports at ../exports/ports.ts expose them on the
+ * @comis/core public surface.
  *
- * After the move, every file under core/src/ports/*.ts is type-only:
+ * Every file under core/src/ports/*.ts is type-only:
  *   - all imports are `import type`
  *   - no top-level runtime value declarations (no `export const/let/var`,
  *     no `export function`, no `export class`)
@@ -358,12 +353,6 @@ describe("@comis/core -- port-shape", () => {
 describe("port-DTO residency text-level checks", () => {
   const PORTS_DIR_P31 = resolve(SRC_ROOT, "ports");
   const DOMAIN_DIR_P31 = resolve(SRC_ROOT, "domain");
-
-  // NOTE (v2.12, Phase 126): the "every Ctx*Row name ... exported from
-  // context-store-types.ts" residency check was removed — the context-store
-  // port files (context-store{,-engine,-admin,-types}.ts) and the 9 Ctx*Row
-  // DTOs were deleted with the DAG context engine. The negative-residency
-  // guard below (no Ctx*Row in core/src/domain/) is retained.
 
   it("session-store.ts declares SessionStorePort with exactly 7 methods", () => {
     const portFile = readFileSync(resolve(PORTS_DIR_P31, "session-store.ts"), "utf8");
@@ -560,9 +549,8 @@ describe("clock / env / timer ports", () => {
     expect(source, "EnvPort must declare get(key: string)").toMatch(
       /\bget\s*\(\s*key\s*:\s*string\s*\)/,
     );
-    // NOTE: EnvPort.snapshot was removed previously (zero production
-    // callers; JSDoc admitted "useful for config-bootstrap paths" but the
-    // method was never wired). Only get() survives.
+    // NOTE: EnvPort deliberately declares only get() — a snapshot() member
+    // has zero production callers and is excluded per YAGNI.
     expect(source, "EnvPort.snapshot must NOT appear in env.ts").not.toMatch(
       /\bsnapshot\s*\(/,
     );

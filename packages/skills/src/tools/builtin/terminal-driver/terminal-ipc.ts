@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Length-prefixed JSON IPC framing for the Terminal Worker boundary (spec §2.3).
+ * Length-prefixed JSON IPC framing for the Terminal Worker boundary.
  *
  * The worker and the daemon-side registry exchange JSON frames over a pipe.
  * Each frame is `[uint32-BE body-length][utf8 JSON body]`. Requests correlate

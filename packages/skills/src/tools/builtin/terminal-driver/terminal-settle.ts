@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The settle engine (spec §5 wait, §4.3 attention model).
+ * The settle engine (the wait tool + the attention model).
  *
  * The bounded, injected-clock debounce that powers every mutating tool's "act
  * then return the SETTLED snapshot" contract and the explicit `wait` tool.
@@ -51,11 +51,11 @@ export const SETTLE_DEFAULT_IDLE_MS = 120;
 export const SETTLE_DEFAULT_TIMEOUT_MS = 15_000;
 
 /**
- * The hard upper bound on the overall settle (spec §5 cap). `runSettle` clamps any
- * requested `timeoutMs` to this. Sized for INTERACTIVE AI-CLI DRIVING (the v2.11 use
- * case): a driven `claude`/`codex` task routinely runs 60-90s+ (model latency +
- * multi-file writes), so the prior 15s cap made the headline use case impossible —
- * `wait` always timed out before the CLI finished, stranding the agent with a
+ * The hard upper bound on the overall settle. `runSettle` clamps any
+ * requested `timeoutMs` to this. Sized for INTERACTIVE AI-CLI DRIVING: a driven
+ * `claude`/`codex` task routinely runs 60-90s+ (model latency + multi-file writes),
+ * so a tight cap would make the headline use case impossible —
+ * `wait` would time out before the CLI finished, stranding the agent with a
  * not-complete result. The idle debounce (`forIdleMs`) still returns the instant the
  * CLI goes quiet, so this is only the worst-case ceiling for a never-idle stream, not
  * the common wait length. (The settle is timer-driven and does NOT block the worker's
@@ -116,7 +116,7 @@ export interface SettleDeps {
   isSettleable?: () => boolean;
 }
 
-/** The settle parameters (the `wait` tool's body, spec §5). All conditions are opt-in. */
+/** The settle parameters (the `wait` tool's body). All conditions are opt-in. */
 export interface SettleParams {
   /**
    * The idle debounce window in ms. When set, the idle condition is ARMED at this
@@ -128,8 +128,8 @@ export interface SettleParams {
   forIdleMs?: number;
   /**
    * The number of CONSECUTIVE quiet idle windows the ring must stay unchanged for
-   * before the idle condition resolves (spec §4.3). Defaults to `1` — the
-   * single-window 120-02 behavior. A value `> 1` is the adaptive debounce for an
+   * before the idle condition resolves. Defaults to `1` — the
+   * single-window behavior. A value `> 1` is the adaptive debounce for an
    * AI CLI that emits in bursts with sub-`idleMs` gaps mid-generation: a ring
    * change part-way through the sequence RE-ARMS and RESETS the count, so idle
    * resolves only after N windows of UNINTERRUPTED quiet. SAFE-direction only —
@@ -156,7 +156,7 @@ export interface SettleResult {
    * program was actively producing output (it has NOT finished — keep waiting); `false`
    * ⇒ the screen was idle with no match (maybe done, awaiting input, or stuck). Absent
    * for the complete reasons (idle/text/exit), whose `isComplete:true` is unambiguous.
-   * (T1.1: the live friction was a wait returning not-complete with no "why".)
+   * (The live friction was a wait returning not-complete with no "why".)
    */
   producing?: boolean;
 }
@@ -193,13 +193,13 @@ export function settleHint(result: SettleResult): string | undefined {
 export function runSettle(deps: SettleDeps, params: SettleParams): Promise<SettleResult> {
   const cap = Math.min(params.timeoutMs ?? SETTLE_DEFAULT_TIMEOUT_MS, SETTLE_MAX_TIMEOUT_MS);
   const idleMs = params.forIdleMs ?? SETTLE_DEFAULT_IDLE_MS;
-  // N CONSECUTIVE quiet idle windows before idle resolves (spec §4.3). Floored at
-  // 1 (the single-window 120-02 default); a non-finite/<1 request collapses to 1.
+  // N CONSECUTIVE quiet idle windows before idle resolves. Floored at
+  // 1 (the single-window default); a non-finite/<1 request collapses to 1.
   // Only the idle path consults it — exit/text/timeout are UNCHANGED.
   const stableWindows = Math.max(1, Math.floor(params.stableWindows ?? 1) || 1);
   const { forText } = params;
 
-  // The wait conditions are OPT-IN (spec §5). The idle debounce is armed IFF the
+  // The wait conditions are OPT-IN. The idle debounce is armed IFF the
   // caller explicitly asked for it (`forIdleMs`) OR asked for NOTHING specific
   // (idle is the sensible DEFAULT only when no forText/forExit is requested). When
   // the caller asked for forExit (or forText), a quiet output window must NOT fire
@@ -219,7 +219,7 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
     // on any ring change (the windows must be CONSECUTIVE). Idle resolves only when
     // it reaches `stableWindows`.
     let stableCount = 0;
-    // T1.1 diagnostic: did the ring change within the last (unfinished) idle window?
+    // Diagnostic: did the ring change within the last (unfinished) idle window?
     // Set on every ring change, CLEARED when a full quiet window elapses — so at the
     // overall-timeout it tells whether the program was still producing output.
     let sawChange = false;
@@ -253,7 +253,7 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
      * idle-settle (bounded by the overall timeout), never force one — exit/text
      * /timeout are unaffected.
      *
-     * Adaptive N-stable-window (spec §4.3): a settleable idle window does not
+     * Adaptive N-stable-window: a settleable idle window does not
      * resolve immediately — it INCREMENTS the consecutive-quiet count and re-arms
      * until the count reaches `stableWindows` (default 1 ⇒ the unchanged
      * single-window behavior). The count is RESET to 0 by any ring change (see the
@@ -269,7 +269,7 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
           restartIdle(); // content below the fold ⇒ keep waiting, don't settle idle
           return;
         }
-        sawChange = false; // a full quiet idle window elapsed with no ring change (T1.1)
+        sawChange = false; // a full quiet idle window elapsed with no ring change
         stableCount += 1;
         if (stableCount >= stableWindows) {
           settle({ matched: true, isComplete: true, reason: "idle" });
@@ -296,11 +296,11 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
     }, cap);
 
     // Ring-change: a forText hit resolves text immediately; otherwise RESET the
-    // consecutive-quiet count (the windows must be uninterrupted, spec §4.3) and
+    // consecutive-quiet count (the windows must be uninterrupted) and
     // (re)start the idle debounce so quiet for idleMs resolves idle.
     unsubs.push(
       deps.onRingChange(() => {
-        sawChange = true; // output is arriving — the program is producing (T1.1 diagnostic)
+        sawChange = true; // output is arriving — the program is producing (diagnostic)
         if (forText !== undefined && deps.getRing().includes(forText)) {
           settle({ matched: true, isComplete: true, reason: "text" });
           return;

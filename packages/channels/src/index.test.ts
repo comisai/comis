@@ -35,7 +35,7 @@ import {
   // Telegram thread-context builders — the General-Topic id=1 asymmetry
   // (the asymmetric SEND-omits / TYPING-includes routing) is load-bearing
   // info-disclosure-relevant product logic that must be assertable from the
-  // public surface (the v2.28 channel-emulation harness's GROUP-03 HARD
+  // public surface (the live channel-emulation harness's group-topic
   // assertion drives the REAL builders, not a re-implementation).
   buildSendThreadParams,
   buildTypingThreadParams,
@@ -43,18 +43,19 @@ import {
   // Telegram error classifier — the structural GrammyError → ActivityRenderError
   // mapping (429→rate_limited / 400-not-editable→not_supported{edit} /
   // 403→permission / default→internal). Surfaced on the public barrel so the
-  // v2.28 channel-emulation harness's FAULT-02 assertion drives the REAL
+  // live channel-emulation harness's fault-injection assertion drives the REAL
   // classifier (not a re-implementation), mirroring the thread-context precedent.
   classifyTelegramError,
 } from "./index.js";
 import type { TelegramThreadScope } from "./index.js";
 // Signal wire types — the adapter's OWN exported SignalEnvelope/SignalAttachment
 // (defined in ./signal/signal-client.ts) surfaced TYPE-ONLY on the public barrel
-// so the v2.28 channel-emulation harness's CHAN2-01 I4 discipline can import them
+// so the live channel-emulation harness's payload builders can import them
 // from the dist-aliased @comis/channels (the test/live alias maps the bare package
 // to dist/index.js — the barrel only — so signal-payloads.ts cannot import the
 // wire interface until it is re-exported here). `export type` is ERASED at build:
-// it adds NO runtime export (SEC-02-safe), mirroring the thread-context precedent.
+// it adds NO runtime export (the no-`@comis/*`-runtime-edge rule holds),
+// mirroring the thread-context precedent.
 import type { SignalEnvelope, SignalAttachment } from "./index.js";
 
 describe("@comis/channels barrel exports", () => {
@@ -119,7 +120,7 @@ describe("@comis/channels barrel exports", () => {
     expect(buildTypingThreadParams(1)).toEqual({ message_thread_id: 1 });
   });
 
-  it("re-exports the Signal wire types (SignalEnvelope/SignalAttachment) type-only for the CHAN2-01 I4 discipline", () => {
+  it("re-exports the Signal wire types (SignalEnvelope/SignalAttachment) type-only for the emulator payload builders", () => {
     // `export type { SignalEnvelope, SignalAttachment }` is erased at build, so
     // there is no runtime value to assert on — the proof is that these type
     // imports resolve to the adapter's OWN wire interface. A representative
@@ -146,9 +147,9 @@ describe("@comis/channels barrel exports", () => {
     expect(envelope.dataMessage?.attachments?.[0]?.id).toBe("att-1");
   });
 
-  it("exports the Telegram error classifier (the FAULT-02 classification surface)", () => {
-    // Surfaced on the public barrel so the v2.28 harness's FAULT-02 leg drives
-    // the REAL structural classifier (429/400-edit/403/default) rather than
+  it("exports the Telegram error classifier (the fault-injection classification surface)", () => {
+    // Surfaced on the public barrel so the live harness's fault-injection leg
+    // drives the REAL structural classifier (429/400-edit/403/default) rather than
     // re-implementing it — the thread-context precedent applied to classification.
     expect(typeof classifyTelegramError).toBe("function");
   });

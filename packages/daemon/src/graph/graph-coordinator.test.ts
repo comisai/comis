@@ -11,7 +11,7 @@ import {
 } from "@comis/core";
 import { ok, type Result } from "@comis/shared";
 import { createNodeTypeRegistry } from "./node-type-registry.js";
-// v2.19: the graph-timeout makespan floor raises a too-low requested timeout to at
+// The graph-timeout makespan floor raises a too-low requested timeout to at
 // least the DAG's critical-path makespan (graph-timeout-floor.ts). Graphs whose
 // nodes carry no explicit timeout floor at DEFAULT_NODE_TIMEOUT_MS per wave, so the
 // timeout-mechanism tests below advance PAST that floor to trip the graph timer.
@@ -1386,7 +1386,7 @@ describe("createGraphCoordinator", () => {
       eventBus.on("graph:completed", (p) => completedEvents.push(p as unknown as Record<string, unknown>));
 
       // A -> B -> C with token budget of 100. Explicit per-node tokenBudget:1000
-      // on each node so the D3 inherit-share (floor(100/3)=33) does NOT pre-empt
+      // on each node so the graph-budget inherit-share (floor(100/3)=33) does NOT pre-empt
       // the cumulative path — A's 60 and B's 50 each stay within their own cap, but
       // together (110 > 100) trip the CUMULATIVE graph abort this test exercises.
       const graph = buildGraph(
@@ -3756,10 +3756,10 @@ describe("createGraphCoordinator", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 3.3: Graph-level cache aggregation in completion log
+  // Graph-level cache aggregation in completion log
   // -------------------------------------------------------------------------
 
-  describe("graph-level cache aggregation (3.3)", () => {
+  describe("graph-level cache aggregation in the completion log", () => {
     it("includes graphCacheReadTokens, graphCacheWriteTokens, graphCacheEffectiveness when nodeCacheData has entries", async () => {
       const { deps, runner, eventBus } = createTestDeps();
       const loggerInfo = vi.fn();
@@ -4020,8 +4020,7 @@ describe("createGraphCoordinator", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 216 DUR-01/DUR-02 (Plan 11): DAG durability — node-boundary checkpoint
-// + resume-incomplete-nodes
+// DAG durability — node-boundary checkpoint + resume-incomplete-nodes
 // ---------------------------------------------------------------------------
 
 /** In-memory DurableRunPort recording checkpoints (the only methods exercised). */
@@ -4052,7 +4051,7 @@ function createRecordingDurableRuns(): DurableRunPort & {
   };
 }
 
-describe("createGraphCoordinator — DAG durability (Phase 216, Plan 11)", () => {
+describe("createGraphCoordinator — DAG durability across daemon restarts", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     fsMockFiles.clear();
@@ -4101,7 +4100,7 @@ describe("createGraphCoordinator — DAG durability (Phase 216, Plan 11)", () =>
       await coordinator.shutdown();
     });
 
-    it("does NOT checkpoint when no durableRuns store is wired (pre-216 behavior preserved)", async () => {
+    it("does NOT checkpoint when no durableRuns store is wired (graph runs normally without durability)", async () => {
       const { deps, runner } = createTestDeps({ resolveRootRunId: () => "root-x" });
       const coordinator = createGraphCoordinator(deps);
       const graph = buildGraph([{ nodeId: "A" }]);
@@ -4244,7 +4243,7 @@ describe("createGraphCoordinator — DAG durability (Phase 216, Plan 11)", () =>
       const { deps, runner } = createTestDeps({ durableRuns });
       const coordinator = createGraphCoordinator(deps);
 
-      // A foreign capability string fails parseDurableRunRecord (T-216-01).
+      // A foreign capability string fails parseDurableRunRecord.
       const tampered = {
         rootRunId: "root-evil",
         spawnTree: [{ nodeId: "B", status: "running" }],

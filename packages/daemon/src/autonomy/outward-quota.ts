@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Outward quota (QUOTA-01/02): the irreversible-action gate for agent-initiated
+ * Outward quota: the irreversible-action gate for agent-initiated
  * outward sends. An outward message is the visible/irreversible action an injected
  * agent could abuse (mass-DMing strangers, posting to a new public channel), so a
  * send is gated three ways:
  *
- *   1. channel allowance (QUOTA-01) — the origin channel is always allowed; a NEW
+ *   1. channel allowance — the origin channel is always allowed; a NEW
  *      target needs an explicit `perTargetGrants[]` entry, else deny `no_grant`.
- *   2. volume gate (QUOTA-02) — a high-volume / mass-recipient send over `volumeCap`
+ *   2. volume gate — a high-volume / mass-recipient send over `volumeCap`
  *      is denied even to origin, even when "reversible": a mass-DM blast stays gated.
  *   3. per-hour quota — a rolling-hour window keyed on `${agentId}:${channelId}`
  *      (the `notification/rate-limiter.ts` rolling-hour limb), deny `per_hour` over cap.
  *
  * `orch:browse` needs NO code here — it is the always-escalate capability with no
- * mapped tool in M1; it is simply not granted.
+ * mapped tool; it is simply not granted.
  *
  * Time is INJECTED via ClockPort — there is deliberately no wall-clock-global
  * fallback (the `notification/rate-limiter.ts:19` `?? <wall-clock-global>` hazard the
  * globals.test.ts arch-gate rejects). Returns Result<void, QuotaError>, never throws
- * (raw-throw.test.ts); the message-handler chokepoint (Plan 07) maps the err to a deny.
+ * (raw-throw.test.ts); the message-handler chokepoint maps the err to a deny.
  *
  * @module
  */
@@ -44,10 +44,10 @@ export interface OutwardQuota {
   ): Result<void, QuotaError>;
   /**
    * The remaining per-hour send allowance for `${agentId}:${channelId}` in the
-   * LIVE rolling-hour window — a PURE read (INTRO-01, the headroom the
+   * LIVE rolling-hour window — a PURE read (the headroom the
    * `capabilities.introspect`/`whoami` RPC reports). LOAD-BEARING: it must NOT
    * `counters.set(...)` — the {@link OutwardQuota.tryOutward} path resets/advances
-   * the window, this accessor must NOT (T-215-05). It reads `clock.now()` ONLY to
+   * the window, this accessor must NOT. It reads `clock.now()` ONLY to
    * decide whether the stored window has expired. An unseen key OR an expired
    * window reports the FULL `maxPerHour` (the same fresh-window semantics
    * `tryOutward` would apply), without writing a window.
@@ -56,11 +56,11 @@ export interface OutwardQuota {
 }
 
 export interface OutwardQuotaConfig {
-  /** Whether sends default to the origin channel only (QUOTA-01). */
+  /** Whether sends default to the origin channel only. */
   readonly originOnly: boolean;
   /** Explicit per-target grants — channels a new (non-origin) send may reach. */
   readonly perTargetGrants: readonly string[];
-  /** Max recipient count / size for a single send (QUOTA-02). */
+  /** Max recipient count / size for a single send. */
   readonly volumeCap: number;
   /** Max sends per `${agentId}:${channelId}` per rolling hour. */
   readonly maxPerHour: number;
@@ -92,7 +92,7 @@ export function createOutwardQuota(deps: OutwardQuotaDeps): OutwardQuota {
       isOrigin: boolean,
       volume: number,
     ): Result<void, QuotaError> {
-      // 1. Channel allowance (QUOTA-01): origin always allowed; a new target needs
+      // 1. Channel allowance: origin always allowed; a new target needs
       //    an explicit grant. `originOnly` is the default posture; a grant is the
       //    only escape for a non-origin channel.
       if (!isOrigin && !config.perTargetGrants.includes(channelId)) {
@@ -108,7 +108,7 @@ export function createOutwardQuota(deps: OutwardQuotaDeps): OutwardQuota {
         return err({ reason: "no_grant" });
       }
 
-      // 2. Volume gate (QUOTA-02): a high-volume / mass-recipient send is gated even
+      // 2. Volume gate: a high-volume / mass-recipient send is gated even
       //    to the origin channel — a reversible mass-DM blast is still bounded.
       if (volume > config.volumeCap) {
         logger.warn(
@@ -151,7 +151,7 @@ export function createOutwardQuota(deps: OutwardQuotaDeps): OutwardQuota {
     },
 
     remaining(agentId, channelId): { perHourRemaining: number } {
-      // PURE read (INTRO-01 / T-215-05): NO counters.set. `deps.clock.now()` is
+      // PURE read: NO counters.set. `deps.clock.now()` is
       // read ONLY to decide if the stored window has expired (the same window-roll
       // boundary `tryOutward` uses), never to WRITE a window.
       const now = deps.clock.now();

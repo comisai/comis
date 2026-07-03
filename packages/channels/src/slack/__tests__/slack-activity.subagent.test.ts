@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slack subagent parent-line + thread-expand tests (§18.2-S7 / §17.3).
+ * Slack subagent parent-line + thread-expand tests.
  *
  * A `kind:"subagent"` event's `defaultLabel` carries the `🤖` marker the
  * projection set; `renderFrameText` paints it verbatim, so the sent text shows
@@ -50,8 +50,8 @@ describe("Slack subagent parent line + thread-expand affordance", () => {
   it("renders the subagent parent line (text carries the agentId) and opens a thread", async () => {
     const timer = createFakeTimers();
     const fake = createFakeSlackAdapter();
-    // Drop clock so the §8.5 elapsed fallback is skipped — the test asserts
-    // send.text byte-stably.
+    // Drop clock so the "(running N s)" elapsed fallback is skipped — the test
+    // asserts send.text byte-stably.
     const r = createSlackActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 
     await r.apply(subagentFrame("🤖 researcher: 3 steps"));

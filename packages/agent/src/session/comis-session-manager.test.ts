@@ -216,7 +216,7 @@ describe("destroySession — session:ended emit + trajectoryRegistry close", () 
   });
 
   it("destroy_session_works_without_optional_deps_eventBus_and_trajectoryRegistry_omitted", async () => {
-    // Legacy callers (tests, cross-session-graph ephemeral path) construct
+    // Some callers (tests, cross-session-graph ephemeral path) construct
     // ComisSessionManager without eventBus / trajectoryRegistry. The unlink
     // must still happen; the emit + registry-close steps are silent no-ops.
     const baseDir = makeTmpDir();
@@ -295,10 +295,10 @@ describe("comis-session-manager mode invariants on substrate-routed writes", () 
 });
 
 // ---------------------------------------------------------------------------
-// F1: sessionEnd flight-recorder rollup fields round-trip
+// sessionEnd flight-recorder rollup fields round-trip
 // ---------------------------------------------------------------------------
 
-describe("write_session_metadata round-trips the F1 health-rollup fields on sessionEnd", () => {
+describe("write_session_metadata round-trips the health-rollup fields on sessionEnd", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs) {
@@ -347,10 +347,10 @@ describe("write_session_metadata round-trips the F1 health-rollup fields on sess
     expect(persisted.sessionEnd.topErrorKinds).toEqual({ dependency: 8 });
   });
 
-  it("still round-trips the four required fields when the five rollup fields are omitted (additive, no-BC)", () => {
+  it("still round-trips the four required fields when the five optional rollup fields are omitted", () => {
     const { mgr, key, metadataPath } = setupMgr();
 
-    // Old-shape sessionEnd: no degraded/costUsd/toolStats/breakerTripCount/topErrorKinds.
+    // Required-fields-only sessionEnd: no degraded/costUsd/toolStats/breakerTripCount/topErrorKinds.
     mgr.writeSessionMetadata(key, {
       sessionEnd: {
         type: "session_end",
@@ -369,7 +369,7 @@ describe("write_session_metadata round-trips the F1 health-rollup fields on sess
     expect(persisted.sessionEnd.endReason).toBe("success");
     expect(persisted.sessionEnd.durationMs).toBe(250);
     expect(persisted.sessionEnd.totalTokens).toBe(42);
-    // Omitted optional fields stay absent (readers ignore missing optional, §2.9).
+    // Omitted optional fields stay absent (readers ignore missing optional fields).
     expect(persisted.sessionEnd.degraded).toBeUndefined();
     expect(persisted.sessionEnd.costUsd).toBeUndefined();
   });

@@ -23,12 +23,12 @@ describe("TRAJECTORY_EVENT_TYPES contains lifecycle envelope types", () => {
   });
 });
 
-// OBS-04 (Phase 186): the four image-generation lifecycle types are appended
+// The four image-generation lifecycle types are appended
 // to the closed tuple so the daemon image RPC handler can `recordEvent(...)`
 // them via the per-session recorder (recordEvent REJECTS a type absent from
-// TRAJECTORY_EVENT_TYPES — Pitfall 4). Direct-emitted (no bus bridge in the
+// TRAJECTORY_EVENT_TYPES). Direct-emitted (no bus bridge in the
 // daemon RPC context), but still declared here for type closure.
-describe("TRAJECTORY_EVENT_TYPES contains the image-generation lifecycle (OBS-04)", () => {
+describe("TRAJECTORY_EVENT_TYPES contains the image-generation lifecycle", () => {
   it.each(["image.requested", "image.generated", "image.delivered", "image.failed"])(
     "includes %s",
     (literal) => {
@@ -37,12 +37,12 @@ describe("TRAJECTORY_EVENT_TYPES contains the image-generation lifecycle (OBS-04
   );
 });
 
-// VIS-04 (Phase 187): the three vision lifecycle types are APPENDED to the
+// The three vision lifecycle types are APPENDED to the
 // closed tuple so the daemon vision RPC handler can `recordEvent(...)` them via
 // the per-session recorder (recordEvent REJECTS a type absent from
 // TRAJECTORY_EVENT_TYPES). Append-only — the image.* tuple is SemVer-frozen and
-// must stay intact (Pitfall 5 — a rename trips the bridge-count guard + codegen).
-describe("TRAJECTORY_EVENT_TYPES contains the vision lifecycle (VIS-04, append-only)", () => {
+// must stay intact (a rename trips the bridge-count guard + codegen).
+describe("TRAJECTORY_EVENT_TYPES contains the vision lifecycle (append-only)", () => {
   it.each(["media.vision.requested", "media.vision.completed", "media.vision.failed"])(
     "includes %s",
     (literal) => {

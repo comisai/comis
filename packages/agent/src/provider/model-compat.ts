@@ -12,8 +12,8 @@
  * - **Ollama** -- gated on declared config `type: "ollama"`. The
  *   llama.cpp-family GBNF grammar compiler rejects common MCP schema shapes
  *   (`pattern`/`format`, nullable unions, type arrays, free-form objects);
- *   the "gbnf" profile conservatively rewrites them before dispatch
- *   (GBNF-01). Without auto-detection, local-model operators hit opaque
+ *   the "gbnf" profile conservatively rewrites them before dispatch.
+ *   Without auto-detection, local-model operators hit opaque
  *   grammar-compile 400s on third-party MCP toolsets.
  *
  * **Override precedence (deliberately INVERTED between the two branches):**
@@ -25,7 +25,7 @@
  * In both branches, user fields that auto-detection does NOT touch (e.g.,
  * `supportsTools`) are preserved via spread.
  *
- * **D-08:** `baseUrl` is part of the signature but must NEVER be consulted
+ * **Detection inputs:** `baseUrl` is part of the signature but must NEVER be consulted
  * for detection. Detection keys ONLY on provider name / declared config
  * `type` / explicit profile -- a provider cannot self-elect into a different
  * profile via its endpoint.

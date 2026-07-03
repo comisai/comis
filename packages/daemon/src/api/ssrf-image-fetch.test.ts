@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the shared DNS-pinned SSRF-safe image fetch helper
- * (ssrf-image-fetch.ts, CR-01).
+ * (ssrf-image-fetch.ts).
  *
  * The helper closes the DNS-rebinding TOCTOU SSRF vector shared by the
  * `reference_image` URL branch (image-handlers) and the `image.analyze` url
@@ -74,7 +74,7 @@ function mockResponse(opts: {
 
 const MAX = 20 * 1024 * 1024;
 
-describe("fetchImageBytesSsrfSafe (CR-01 — DNS-pinned SSRF-safe fetch)", () => {
+describe("fetchImageBytesSsrfSafe (DNS-pinned SSRF-safe fetch)", () => {
   let originalFetch: typeof globalThis.fetch;
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -100,7 +100,7 @@ describe("fetchImageBytesSsrfSafe (CR-01 — DNS-pinned SSRF-safe fetch)", () =>
   it("pins DNS to the VALIDATED IP — even when DNS would rebind to an internal IP at fetch time", async () => {
     // validateUrl resolved a PUBLIC ip; the helper MUST pin to it. A bare fetch
     // (no dispatcher) would re-resolve DNS and could hit an internal IP — the
-    // rebinding gap CR-01 closes. Assert the pinned Agent is passed as dispatcher
+    // rebinding gap this helper closes. Assert the pinned Agent is passed as dispatcher
     // AND constructed with a lookup that returns the validated IP.
     mockValidateUrl.mockResolvedValue({ ok: true, value: makeValidatedUrl({ ip: "93.184.216.34" }) } as never);
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(

@@ -15,11 +15,10 @@
  *     The `COMIS_DISABLE_RECALL_TRACE` env escape hatch (read by the recorder)
  *     hard-disables it regardless of config.
  *
- * The unused fourth subschema (a placeholder slot for future redact
- * knobs) was deleted. Runtime redaction lives in
+ * There is deliberately no redaction subschema here. Runtime redaction lives in
  * `packages/infra/src/logging/logger.ts` (Pino auto-redact) and the
  * `daemon.logging` edge-keeping censor schema in schema-daemon.ts —
- * neither read this subschema.
+ * neither reads this section.
  *
  * Defaults are sticky: `.default({})` on each empty subschema so a
  * minimal AppConfig parse populates the whole tree without explicit

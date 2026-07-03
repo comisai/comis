@@ -156,7 +156,7 @@ describe.skipIf(!isLinux())("Linux — live PTY create→read→kill round-trip 
       await new Promise((r) => setTimeout(r, 25));
     }
     // On a live PTY the marker renders onto the grid. This read goes through the
-    // TOOL layer, so the §3.6 untrusted-content rule applies: the screen is REDACTED
+    // TOOL layer, so the untrusted-content rule applies: the screen is REDACTED
     // then wrapped as untrusted external content. Assert BOTH halves — the wrap IS
     // present (the injection-defense framing is not bypassed) AND the marker survives
     // INSIDE it (the live PTY genuinely rendered it). We do NOT weaken that rule.

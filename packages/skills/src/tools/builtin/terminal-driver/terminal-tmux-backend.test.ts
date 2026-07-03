@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the tmux worker backend (124-08 / OPS-05, drivability-corrected 2026-06-16)
- * — the pure command builders + the `FakePtyLike`-shaped factory.
+ * Unit tests for the tmux worker backend — the pure command builders + the
+ * `FakePtyLike`-shaped factory.
  *
  * Pure-JS / fully-injected → runs green on macOS WITHOUT a live tmux server (the one-shot tmux
  * runner + the attach-pty spawner are injected fakes; the LIVE drive/survival across a worker
  * re-spawn is the Linux-gated sibling `terminal-tmux-backend.linux.test.ts`). Proves:
  *   - the session name is DETERMINISTIC from the sessionId (`comis-<id>`) — a restart re-attaches
- *     by name, never re-creates under a random name (RESEARCH Pitfall 6);
- *   - every command targets the STABLE `-S` data-dir socket (DUR-01 PrivateTmp survival);
+ *     by name, never re-creates under a random name;
+ *   - every command targets the STABLE `-S` data-dir socket (PrivateTmp survival);
  *   - the backend CREATES (`new-session -d`) when `hasSession` is false and RE-ATTACHES (no
  *     `new-session`) when true — never an unconditional create;
  *   - it DRIVES via a node-pty `tmux attach` (the injected `spawnAttachPty`) — onData/onExit/
@@ -99,7 +99,7 @@ function makeFake(over: { hasSession?: boolean } = {}) {
   };
 }
 
-describe("terminal-tmux-backend — deterministic session name (OPS-05 survival)", () => {
+describe("terminal-tmux-backend — deterministic session name (restart survival)", () => {
   it("derives a STABLE, recoverable session name comis-<sessionId> (never a random/UUID name)", () => {
     expect(tmuxSessionName("abc")).toBe("comis-abc");
     expect(tmuxSessionName("s-42")).toBe("comis-s-42");
@@ -171,7 +171,7 @@ describe("terminal-tmux-backend — pure command builders (every command -S the 
   });
 });
 
-describe("terminal-tmux-backend — createTmuxBackend create-vs-re-attach decision (RESEARCH Pitfall 6)", () => {
+describe("terminal-tmux-backend — createTmuxBackend create-vs-re-attach decision", () => {
   it("CREATES (new-session -d) + configures driving + attaches a pty when hasSession is false", () => {
     const f = makeFake({ hasSession: false });
     const handle = createTmuxBackend(f.deps());
@@ -199,7 +199,7 @@ describe("terminal-tmux-backend — createTmuxBackend create-vs-re-attach decisi
     expect(f.attachName).toBe("comis-abc");
   });
 
-  it("forceAttachOnly + gone session ⇒ undefined (recover-on-boot honest death, I10) — NEVER a fresh new-session", () => {
+  it("forceAttachOnly + gone session ⇒ undefined (recover-on-boot honest death) — NEVER a fresh new-session", () => {
     const f = makeFake({ hasSession: false });
     const handle = createTmuxBackend(f.deps({ forceAttachOnly: true }));
     expect(handle).toBeUndefined();

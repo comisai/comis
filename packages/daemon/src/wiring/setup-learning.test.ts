@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for wireLearningOutcome() — the deterministic tool/pipeline outcome
- * observe/resolve subscriber (Verified Learning WS1, OUTCOME-03/07/08).
+ * observe/resolve subscriber.
  *
  * The daemon is the ONLY place holding BOTH the bus AND the @comis/memory
  * OutcomeSignalPort adapter (the agent↛memory cut). This wiring subscribes to the
@@ -13,7 +13,7 @@
  * - tool:executed { success:false } → observe outcome "failure", source "tool",
  *   trajectoryId === traceId; { success:true } → "success"
  * - graph:completed { status:"completed" } → observe "success" + emit; { status:"failed" }
- *   → observe "failure" (SC#1: success ONLY on a clean DAG completion)
+ *   → observe "failure" (success ONLY on a clean DAG completion)
  * - the WRONG field (is_error) is NOT used; the REAL fields (success / status) are
  * - a resolve returning unknown does NOT increment the coverage `resolved` tally
  * - a failing observe (err) WARNs and does NOT throw out of the handler
@@ -39,13 +39,13 @@ import {
 } from "./setup-learning.js";
 
 /**
- * A controllable MemoryUsefulnessStore stub. The daemon reward seam (RANK-01 /
- * FORGET-02) is the agent↛memory cut enforcement point: the daemon holds BOTH
+ * A controllable MemoryUsefulnessStore stub. The daemon reward seam is the
+ * agent↛memory cut enforcement point: the daemon holds BOTH
  * the bus/`OutcomeSignalPort.resolve()` AND this injected `@comis/memory`
  * usefulness adapter. Exposes ONLY the three port methods (recordUsage /
  * readUsefulness / recordFailure) — there is NO proof/trust/pinned lookup, which
  * is the point (the resolve seam reads no per-memory proof_count/trust_level/
- * pinned; the eviction exemption is store-side, Plan 05).
+ * pinned; the eviction exemption is store-side).
  */
 function mockUsefulnessStore() {
   const recordUsage = vi.fn(
@@ -89,13 +89,13 @@ function baseVerdict(over?: Partial<ResolvedOutcome>): ResolvedOutcome {
 }
 
 /**
- * A controllable MentalModelStorePort stub for the SURFACE-04/05 promote/demote
+ * A controllable MentalModelStorePort stub for the promote/demote
  * loop. Exposes ONLY the promote/demote write methods the resolve seam calls (the
- * loop reads NO per-skill proof/trust — the threshold gate is store-side, Plan 02);
+ * loop reads NO per-skill proof/trust — the threshold gate is store-side);
  * the read/admit/evict methods are present (the port shape) but unused by the seam.
  */
 function mockLearnedSkillStore(opts?: { promoteChanged?: boolean; demoteChanged?: boolean }) {
-  // CR-01: the resolve seam calls the NAME-keyed promoteByName/demoteByName (the
+  // The resolve seam calls the NAME-keyed promoteByName/demoteByName (the
   // carrier holds skill NAMES, not the hash id). Default `changed: true` (a real row
   // moved) so the existing promote/demote assertions hold; a test can force
   // `changed: false` to assert the 0-row path does NOT count/emit.
@@ -284,7 +284,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     );
   });
 
-  it("graph:completed { status:'failed' } records a 'failure' pipeline outcome (SC#1 clean-completion gate)", async () => {
+  it("graph:completed { status:'failed' } records a 'failure' pipeline outcome (clean-completion gate)", async () => {
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore(baseVerdict({ outcome: "failure" }));
     wireLearningOutcome({
@@ -425,10 +425,10 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     expect(observe).toHaveBeenCalledTimes(1);
   });
 
-  it("graph:driver_lifecycle does NOT observe — graph:completed is the single pipeline signal (WR-02)", async () => {
-    // In P0 the per-node driver lifecycle is NOT a trajectory-level signal: a
+  it("graph:driver_lifecycle does NOT observe — graph:completed is the single pipeline signal", async () => {
+    // The per-node driver lifecycle is NOT a trajectory-level signal: a
     // multi-node DAG emits graph:driver_lifecycle per node, which would flood the
-    // ledger with O(nodes) same-tier `pipeline` rows and amplify the WR-01 fusion
+    // ledger with O(nodes) same-tier `pipeline` rows and amplify the fusion
     // non-determinism. Only graph:completed (gated on status==="completed") writes
     // the single trajectory-level pipeline outcome. A terminal driver phase must
     // therefore trigger ZERO observe calls.
@@ -482,8 +482,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
 });
 
 /**
- * RANK-01 / FORGET-02 / FORGET-03 — the outcome→reward/failure write seam at
- * resolve() time, corroboration-gated.
+ * The outcome→reward/failure write seam at resolve() time, corroboration-gated.
  *
  * A memory in `verdict.recalledIds` of a SUCCESS trajectory accrues per-intent
  * positive reward (`recordUsage`); of a FAILURE/CORRECTED trajectory accrues
@@ -493,10 +492,10 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
  * failure accrues NOTHING (Defer ≠ Retry — benign). Once the gate is met the
  * accrual is UNCONDITIONAL: the daemon reads NO per-memory proof/trust/pinned
  * (ResolvedOutcome carries none); the high-proof/system/pinned EVICTION exemption
- * lives store-side (Plan 05). All writes are fire-and-forget / non-fatal and gated
+ * lives store-side. All writes are fire-and-forget / non-fatal and gated
  * default-OFF on learningTuning/learningForgetting (byte-identical when disabled).
  */
-describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FORGET-02/FORGET-03)", () => {
+describe("wireLearningOutcome — reward/failure write at resolve()", () => {
   /** Build a wiring whose graph:completed resolve yields the given verdict, with the reward gates on. */
   function wireRewardSeam(
     verdict: ResolvedOutcome,
@@ -536,13 +535,13 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     await flushMicrotasks();
   }
 
-  it("SUCCESS verdict → recordUsage ONCE for all recalled ids (IN-01: batched into a single transaction)", async () => {
+  it("SUCCESS verdict → recordUsage ONCE for all recalled ids (batched into a single transaction)", async () => {
     const { bus, us } = wireRewardSeam(
       baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["m1", "m2"] }),
     );
     await driveTrajectory(bus, SESSION_KEY, TRACE);
 
-    // IN-01: the success reward is now ONE batched recordUsage(recalledIds, [], scope)
+    // The success reward is ONE batched recordUsage(recalledIds, [], scope)
     // call (the store loops internally in one transaction) instead of O(recalledIds)
     // separate calls — the failure branch stays per-id (corroboration-gated).
     expect(us.recordUsage).toHaveBeenCalledTimes(1);
@@ -557,22 +556,22 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     expect(us.recordFailure).not.toHaveBeenCalled();
   });
 
-  it("HIGH-2 no-regression: the RANK-01 recordUsage/recordFailure reward write SURVIVES the Phase-224 bandit deletion (the FORGET-02 failure_count source)", async () => {
-    // Phase 224 deleted the UCB recall bandit (the learner/perIntent/exploration sub-fields,
-    // the per-intent apply, and the __ONLINE_TUNING__ cron) but KEPT learningTuning.enabled +
-    // the reward write it gates. This pins that contract: with learningTuning.enabled ON, a
+  it("the recordUsage/recordFailure reward write fires independently of the recall bandit", async () => {
+    // There is no UCB recall bandit (no learner/perIntent/exploration sub-fields,
+    // no per-intent apply, no __ONLINE_TUNING__ cron), but learningTuning.enabled +
+    // the reward write it gates DO exist. This pins that contract: with learningTuning.enabled ON, a
     // SUCCESS still rewards (recordUsage) and a FAILURE still accrues failure_count (recordFailure).
     const success = wireRewardSeam(
       baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["k1"] }),
     );
     await driveTrajectory(success.bus, SESSION_KEY, TRACE);
-    expect(success.us.recordUsage, "RANK-01 success reward still fires post-bandit-deletion").toHaveBeenCalledTimes(1);
+    expect(success.us.recordUsage, "success reward still fires without the recall bandit").toHaveBeenCalledTimes(1);
 
     const failure = wireRewardSeam(
       baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["k1"] }),
     );
     await driveTrajectory(failure.bus, SESSION_KEY, TRACE);
-    expect(failure.us.recordFailure, "FORGET-02 failure_count accrual still fires post-bandit-deletion").toHaveBeenCalled();
+    expect(failure.us.recordFailure, "failure_count accrual still fires without the recall bandit").toHaveBeenCalled();
   });
 
   it("FAILURE verdict with a DETERMINISTIC source (pipeline) → recordFailure once (1 deterministic satisfies the gate)", async () => {
@@ -596,9 +595,9 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     expect(us.recordFailure.mock.calls[0]![0]).toBe("m9");
   });
 
-  // ---- FORGET-03 anti-induced-eviction corroboration gate (the SECURITY first-RED) ----
+  // ---- anti-induced-eviction corroboration gate ----
 
-  it("FORGET-03: a single NON-deterministic (reaction-only) failure does NOT accrue failure_count (gate blocks)", async () => {
+  it("a single NON-deterministic (reaction-only) failure does NOT accrue failure_count (gate blocks)", async () => {
     // sources has NO 'tool'/'pipeline' → not deterministic; only ONE occurrence →
     // < 2 independent. The corroboration gate blocks any accrual (anti-cache-poisoning).
     const { bus, us } = wireRewardSeam(
@@ -609,7 +608,7 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     expect(us.recordFailure).not.toHaveBeenCalled();
   });
 
-  it("FORGET-03: a single low-confidence correction-only failure does NOT penalize (benign — Defer ≠ Retry)", async () => {
+  it("a single low-confidence correction-only failure does NOT penalize (benign — Defer ≠ Retry)", async () => {
     const { bus, us } = wireRewardSeam(
       baseVerdict({ outcome: "corrected", sources: ["correction"], recalledIds: ["m1"], confidence: 0.3 }),
     );
@@ -618,7 +617,7 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     expect(us.recordFailure).not.toHaveBeenCalled();
   });
 
-  it("FORGET-03: ≥2 INDEPENDENT failures (distinct sessions) for the same memory → recordFailure fires on the 2nd", async () => {
+  it("≥2 INDEPENDENT failures (distinct sessions) for the same memory → recordFailure fires on the 2nd", async () => {
     const us = mockUsefulnessStore();
     // Both verdicts are NON-deterministic (reaction-only) so ONLY the distinct-session
     // corroboration can satisfy the gate (not a deterministic shortcut).
@@ -637,7 +636,7 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     expect(us.recordFailure.mock.calls[0]![0]).toBe("m1");
   });
 
-  it("FORGET-03: two failures from the SAME session do NOT corroborate (distinct-session count stays 1)", async () => {
+  it("two failures from the SAME session do NOT corroborate (distinct-session count stays 1)", async () => {
     const us = mockUsefulnessStore();
     const { bus } = wireRewardSeam(
       baseVerdict({ outcome: "failure", sources: ["reaction"], recalledIds: ["m1"], confidence: 0.5 }),
@@ -655,7 +654,7 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     // recalled id regardless of any proof/trust/pinned attribute. The mock store
     // exposes ONLY recordUsage/readUsefulness/recordFailure — there is NO proof-lookup
     // method to call, which is the point (ResolvedOutcome carries no proof/trust/pinned;
-    // the eviction exemption is store-side, Plan 05). Assert recordFailure fires AND
+    // the eviction exemption is store-side). Assert recordFailure fires AND
     // the read path (readUsefulness) is NOT consulted at the resolve seam.
     const { bus, us } = wireRewardSeam(
       baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["m1"], confidence: 0.9 }),
@@ -698,7 +697,7 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     expect(usFail.recordFailure).not.toHaveBeenCalled();
   });
 
-  it("an 'unknown' verdict writes NOTHING (no reward, no failure — fail-closed, OUTCOME-05)", async () => {
+  it("an 'unknown' verdict writes NOTHING (no reward, no failure — fail-closed)", async () => {
     const { bus, us } = wireRewardSeam(
       baseVerdict({ outcome: "unknown", sources: [], recalledIds: ["m1"], confidence: 0 }),
     );
@@ -741,17 +740,16 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
   });
 });
 
-// ── WR-01: the FORGET-03 corroboration tally must be BOUNDED ──
+// ── the corroboration tally must be BOUNDED ──
 //
-// failureCorroborationTally is a Map<memoryId, Set<sessionId>> with no cap/TTL on
-// HEAD — a long-running daemon with learningForgetting on and a steady stream of
+// failureCorroborationTally is a Map<memoryId, Set<sessionId>>; without a cap/TTL
+// a long-running daemon with learningForgetting on and a steady stream of
 // failing trajectories across many memories/sessions grows it without bound (a
 // genuine leak; an adversary on rotating session keys can inflate it). Once the gate
 // can be met (≥ CORROBORATION_MIN_INDEPENDENT distinct sessions) the exact count past
 // that floor is irrelevant, so the inner Set must STOP growing there, and the outer
-// Map must cap the number of tracked memoryIds (evict-oldest). RED on HEAD: the inner
-// Set grows past the floor and the outer Map is unbounded.
-describe("WR-01: failureCorroborated tally is bounded (no daemon-lifetime growth)", () => {
+// Map must cap the number of tracked memoryIds (evict-oldest).
+describe("failureCorroborated tally is bounded (no daemon-lifetime growth)", () => {
   it("stops growing the per-memory session Set once the corroboration floor is reachable", () => {
     const tally = new Map<string, Set<string>>();
     // Feed FAR more distinct sessions than the floor for one memory (non-deterministic
@@ -782,11 +780,11 @@ describe("WR-01: failureCorroborated tally is bounded (no daemon-lifetime growth
 });
 
 // ---------------------------------------------------------------------------
-// ATTR-02 (Plan 07): memory:skill_used → observe(usedSkillIds) DAEMON-SIDE.
-// The agent EMITS the per-turn used-skill ids on memory:skill_used (Plan 03,
-// mirroring memory:recall_used); the daemon SUBSCRIBES + threads usedSkillIds
-// into an observe() call so the used_skill_ids COLUMN is written (the loop is no
-// longer write-only). The agent never touches the store — closed graph.
+// memory:skill_used → observe(usedSkillIds) DAEMON-SIDE.
+// The agent EMITS the per-turn used-skill ids on memory:skill_used
+// (mirroring memory:recall_used); the daemon SUBSCRIBES + threads usedSkillIds
+// into an observe() call so the used_skill_ids COLUMN is written. The agent
+// never touches the store — closed graph.
 // ---------------------------------------------------------------------------
 
 function skillUsedPayload(over?: Partial<EventMap["memory:skill_used"]>): EventMap["memory:skill_used"] {
@@ -801,7 +799,7 @@ function skillUsedPayload(over?: Partial<EventMap["memory:skill_used"]>): EventM
   };
 }
 
-describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds) (ATTR-02 loop close)", () => {
+describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds)", () => {
   it("threads usedSkillIds into an observe() call so the used_skill_ids column is written", async () => {
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
@@ -868,12 +866,12 @@ describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds) (A
   });
 });
 
-// Live VPS finding 2026-06-18: the OUTCOME-gated recall reward (RANK-01) was DORMANT —
-// the executor emits memory:recall_used with the recalled+used ids, but the daemon never
-// observed them onto the outcome ledger, so verdict.recalledIds was ALWAYS empty and the
-// resolve's recordUsage/recordFailure (failure_count) never fired. Mirror the ATTR-02
-// skill carrier: a neutral carrier row writes the recalled_ids column.
-describe("wireLearningOutcome — memory:recall_used → observe(recalledIds) (OUTCOME-06/RANK-01 loop close)", () => {
+// The outcome-gated recall reward depends on the recalled+used ids reaching the
+// outcome ledger: the executor emits memory:recall_used with them, but unless the
+// daemon observes them onto the ledger, verdict.recalledIds stays empty and the
+// resolve's recordUsage/recordFailure (failure_count) never fire. Mirror the skill
+// carrier: a neutral carrier row writes the recalled_ids column.
+describe("wireLearningOutcome — memory:recall_used → observe(recalledIds)", () => {
   function recallUsedPayload(over?: { usedIds?: string[]; agentId?: string }) {
     return {
       agentId: over?.agentId ?? AGENT,
@@ -953,14 +951,14 @@ describe("wireLearningOutcome — memory:recall_used → observe(recalledIds) (O
   });
 });
 
-// ── SURFACE-04/05/06 + OBS-01: the promote/demote loop at the resolve seam ──
+// ── the promote/demote loop at the resolve seam ──
 //
-// On a graph:completed → resolve() carrying the ATTR-02 `usedSkillIds`, a `success`
-// verdict PROMOTES each used skill (Plan 02's threshold-gated store call) and a
+// On a graph:completed → resolve() carrying the `usedSkillIds`, a `success`
+// verdict PROMOTES each used skill (a threshold-gated store call) and a
 // corroborated `failure`/`corrected` verdict DEMOTES it ONLY when the decay-aware
 // trend transitions to WEAKENING — so a single induced failure on a well-reused
 // procedure does NOT archive it. The 2 emits are plain counts-only.
-describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SURFACE-04/05/06, OBS-01)", () => {
+describe("wireLearningOutcome — learned-skill promote/demote at resolve()", () => {
   /** Wire the seam with the learned-skill loop enabled and a controllable verdict. */
   function wireSkillSeam(
     verdict: ResolvedOutcome,
@@ -1002,28 +1000,28 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     await flushMicrotasks();
   }
 
-  it("SURFACE-04: a success verdict promotes EACH attributed usedSkillId (by NAME) with the configured threshold", async () => {
+  it("a success verdict promotes EACH attributed usedSkillId (by NAME) with the configured threshold", async () => {
     const { bus, ls } = wireSkillSeam(
       baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1", "s2"] }),
       { promoteAt: 3 },
     );
     await drive(bus, SESSION_KEY, TRACE);
 
-    // CR-01: the seam calls the NAME-keyed promoteByName (the carrier holds NAMES).
+    // The seam calls the NAME-keyed promoteByName (the carrier holds NAMES).
     expect(ls.promoteByName).toHaveBeenCalledTimes(2);
     const calls = ls.promoteByName.mock.calls.map((c) => [c[0], c[2]]);
     expect(calls).toEqual([
       ["s1", 3],
       ["s2", 3],
     ]);
-    // Scoped to the resolved (tenant, agent) — the SEC-01 isolation boundary.
+    // Scoped to the resolved (tenant, agent) — the isolation boundary.
     const scope = ls.promoteByName.mock.calls[0]![1];
     expect(scope.tenantId).toBe("tenant-x");
     expect(scope.agentId).toBe(AGENT);
     expect(ls.demoteByName).not.toHaveBeenCalled();
   });
 
-  it("CR-01: a promote that changes NO row (changed=false) does NOT count or emit learning:skill_promoted", async () => {
+  it("a promote that changes NO row (changed=false) does NOT count or emit learning:skill_promoted", async () => {
     const ls = mockLearnedSkillStore({ promoteChanged: false });
     const bus = new TypedEventBus();
     const emitSpy = vi.spyOn(bus, "emit");
@@ -1037,7 +1035,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(emitSpy.mock.calls.some((c) => c[0] === "learning:skill_promoted")).toBe(false);
   });
 
-  it("SURFACE-05: a DETERMINISTIC (tool) failure whose SUSTAINED trend reaches weakening demotes the skill", async () => {
+  it("a DETERMINISTIC (tool) failure whose SUSTAINED trend reaches weakening demotes the skill", async () => {
     // A deterministic source satisfies the corroboration gate on the FIRST failure;
     // sustained failures drive the trend to weakening → demote fires.
     const ls = mockLearnedSkillStore();
@@ -1057,7 +1055,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(ls.promoteByName).not.toHaveBeenCalled();
   });
 
-  it("SURFACE-05 anti-induced-demotion (§12 first-RED): a SINGLE non-deterministic (reaction-only) failure does NOT demote (corroboration gate blocks)", async () => {
+  it("anti-induced-demotion: a SINGLE non-deterministic (reaction-only) failure does NOT demote (corroboration gate blocks)", async () => {
     const { bus, ls } = wireSkillSeam(
       baseVerdict({ outcome: "failure", sources: ["reaction"], usedSkillIds: ["s1"], confidence: 0.4 }),
     );
@@ -1067,7 +1065,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(ls.demoteByName).not.toHaveBeenCalled();
   });
 
-  it("SURFACE-05 anti-induced-demotion: a corroborated failure whose trend is STILL STABLE does NOT demote (well-reused skill, one failure)", async () => {
+  it("anti-induced-demotion: a corroborated failure whose trend is STILL STABLE does NOT demote (well-reused skill, one failure)", async () => {
     // A deterministic (corroborated) failure but only ONCE → the trend stays
     // stable/strengthening (a single failure against a neutral/strong standing) →
     // NO demote. Only SUSTAINED corroborated failure reaches weakening.
@@ -1078,12 +1076,12 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(ls.demoteByName).not.toHaveBeenCalled();
   });
 
-  it("WR-05 (cross-tenant isolation): tenant A's sustained failures for a skill NAME do NOT drive tenant B's same-named skill toward demotion", async () => {
+  it("cross-tenant isolation: tenant A's sustained failures for a skill NAME do NOT drive tenant B's same-named skill toward demotion", async () => {
     // The corroboration tally + trend tracker are in-process daemon-lifetime maps;
     // keying them on the BARE skill name aliases two (tenant, agent) scopes that each
     // surface a skill literally named "deploy" — so A's failures could weaken B's
     // standing and demote B's skill. With scope-qualified keys (tenant+agent+name)
-    // the two are independent. RED on a bare-name key: B demotes on its FIRST failure
+    // the two are independent. With a bare-name key, B would demote on its FIRST failure
     // (inheriting A's weakening trend).
     const ls = mockLearnedSkillStore();
     const bus = new TypedEventBus();
@@ -1128,7 +1126,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(demotesUnderB).toBe(0); // B's skill is NOT demoted by A's history (independent state)
   });
 
-  it("SURFACE-06: a promote emits learning:skill_promoted with plain emit, COUNTS ONLY (no body/id-list)", async () => {
+  it("a promote emits learning:skill_promoted with plain emit, COUNTS ONLY (no body/id-list)", async () => {
     const bus = new TypedEventBus();
     const emitSpy = vi.spyOn(bus, "emit");
     const { ls } = wireSkillSeam(
@@ -1147,7 +1145,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(Object.keys(payload).sort()).toEqual(["agentId", "count", "timestamp"]);
   });
 
-  it("SURFACE-06 + finding C: a demote emits learning:skill_demoted with the NAME + trigger trajectory (content-free ids, no body)", async () => {
+  it("a demote emits learning:skill_demoted with the NAME + trigger trajectory (content-free ids, no body)", async () => {
     const ls = mockLearnedSkillStore();
     const bus = new TypedEventBus();
     const emitSpy = vi.spyOn(bus, "emit");
@@ -1161,10 +1159,10 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(demoted, "a demote must emit learning:skill_demoted").toBeDefined();
     const payload = demoted![1] as { agentId: string; count: number; demotedSkillNames?: string[]; triggerTrajectoryId?: string; timestamp: number };
     expect(payload.count).toBeGreaterThanOrEqual(1);
-    // Finding C: the demoted skill NAME + the trigger trajectory id now ride alongside the count.
+    // The demoted skill NAME + the trigger trajectory id ride alongside the count.
     expect(payload.demotedSkillNames).toContain("s1");
     expect(typeof payload.triggerTrajectoryId).toBe("string");
-    // Still content-free: ONLY ids/counts/trajectory-id cross — never a body/script/description (SEC-01).
+    // Still content-free: ONLY ids/counts/trajectory-id cross — never a body/script/description.
     expect(Object.keys(payload).sort()).toEqual(["agentId", "count", "demotedSkillNames", "timestamp", "triggerTrajectoryId"]);
   });
 
@@ -1205,7 +1203,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(emitSpy.mock.calls.some((c) => c[0] === "learning:skill_promoted")).toBe(false);
   });
 
-  it("OBS-01: a promote/demote logs one INFO completion line with durationMs (counts/ids only)", async () => {
+  it("a promote/demote logs one INFO completion line with durationMs (counts/ids only)", async () => {
     const logger = createMockLogger();
     const { bus, ls } = wireSkillSeam(
       baseVerdict({ outcome: "success", sources: ["pipeline"], usedSkillIds: ["s1"] }),
@@ -1244,21 +1242,18 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
   });
 });
 
-// ── CR (milestone-close BLOCKER): a SINGLE-AGENT turn must resolve too ──
+// ── a SINGLE-AGENT turn must resolve too ──
 //
-// The resolve loop (resolve → reward → forget-accrual → skill promote/demote) fired
-// ONLY inside the `graph:completed` handler — which the graph coordinator emits ONLY
-// for named-graph/DAG runs, NEVER the common single-agent conversational turn. So with
-// learning enabled a single-agent turn WROTE `outcome_events` rows (tool:executed +
-// memory:skill_used, keyed on traceId) but they were NEVER resolved → never rewarded,
-// never accrued failure_count, never promote/demote'd. This mirrors the SAME fix
-// Phase 199 (CR-02) already applied to the correction writer: key the resolve off the
-// per-turn `diagnostic:message_processed` PAYLOAD (which carries agentId/sessionKey/
-// traceId and fires for single-agent turns too — execution-pipeline.ts), NOT the ALS.
-//
-// RED on pre-fix HEAD: only graph:completed resolves, so a single-agent turn (no
-// graph:completed) never calls resolve() / recordUsage / promoteByName.
-describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:message_processed (CR)", () => {
+// The resolve loop (resolve → reward → forget-accrual → skill promote/demote) must NOT
+// fire ONLY inside the `graph:completed` handler — which the graph coordinator emits ONLY
+// for named-graph/DAG runs, NEVER the common single-agent conversational turn. If it did,
+// a single-agent turn would WRITE `outcome_events` rows (tool:executed +
+// memory:skill_used, keyed on traceId) that are NEVER resolved → never rewarded,
+// never accrued failure_count, never promote/demote'd. Like the correction writer, key
+// the resolve off the per-turn `diagnostic:message_processed` PAYLOAD (which carries
+// agentId/sessionKey/traceId and fires for single-agent turns too — execution-pipeline.ts),
+// NOT the ALS.
+describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:message_processed", () => {
   function diagnosticPayload(
     over?: Partial<EventMap["diagnostic:message_processed"]>,
   ): EventMap["diagnostic:message_processed"] {
@@ -1313,7 +1308,7 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     expect(observe).toHaveBeenCalled(); // the rows were written
 
     // …then the per-turn completion event fires (NO graph:completed for a single-agent
-    // turn). On pre-fix HEAD nothing resolves; with the fix it resolves off the PAYLOAD.
+    // turn). The resolve keys off this PAYLOAD, so a single-agent turn resolves too.
     bus.emit("diagnostic:message_processed", diagnosticPayload());
     await flushMicrotasks();
 
@@ -1470,21 +1465,21 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
   });
 });
 
-// ── SURFACE-07 / SEC-01: 202 adds NO new mutating-execution path ──
+// ── the learned-skill surface adds NO new mutating-execution path ──
 //
-// The safety the read-only learned-skill surface buys (T-202-16): a surfaced
+// The safety the read-only learned-skill surface buys: a surfaced
 // (possibly poisoned) procedure is untrusted INSTRUCTION TEXT — the agent READS it
 // and performs each step via the EXISTING per-tool governance (applyToolPolicy + the
-// tool-call ApprovalGate at run time, §I9). 202 is policy + wiring, NOT a new
+// tool-call ApprovalGate at run time). This layer is policy + wiring, NOT a new
 // execution engine: the promote/demote loop only calls store transitions + emits; the
 // surface only reads list()/materializes a read-only SKILL.md/renders XML. This guard
-// asserts the 202 daemon files contain NO tool-execution / spawn / approval-bypass
+// asserts the learned-skill daemon files contain NO tool-execution / spawn / approval-bypass
 // primitive (so a poisoned procedure cannot execute an action the agent is not already
 // authorized for) AND write NO trust level other than the store-owned 'learned'
-// (T-202-18 — promotion touches state/proof_count only; trust is structurally capped).
-describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no trust escalation", () => {
+// (promotion touches state/proof_count only; trust is structurally capped).
+describe("the learned-skill daemon files add no execution path + no trust escalation", () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
-  /** The 202 daemon source files (the promote/demote loop + the trend + the read-only surface).
+  /** The learned-skill daemon source files (the promote/demote loop + the trend + the read-only surface).
    *  The promote/demote loop body lives in setup-learning-skill-transitions.ts (extracted from
    *  setup-learning.ts to stay under the 800-line cap); both are guarded. */
   const FILES_202 = [
@@ -1523,14 +1518,14 @@ describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no t
       for (const pat of forbidden) {
         expect(
           pat.test(src),
-          `${file} must not reference ${pat} — 202 adds no execution path (the agent performs steps via the existing applyToolPolicy + ApprovalGate at run time)`,
+          `${file} must not reference ${pat} — this layer adds no execution path (the agent performs steps via the existing applyToolPolicy + ApprovalGate at run time)`,
         ).toBe(false);
       }
     }
   });
 
-  it("writes NO trust level other than the store-owned 'learned' (promotion never raises trust — T-202-18)", () => {
-    // No 202 daemon file touches trust_level/trustLevel at all (that is the store's
+  it("writes NO trust level other than the store-owned 'learned' (promotion never raises trust)", () => {
+    // No learned-skill daemon file touches trust_level/trustLevel at all (that is the store's
     // job, and the DB CHECK pins it to 'learned'). Assert there is no trust write of
     // any other literal here.
     for (const file of FILES_202) {
@@ -1543,7 +1538,7 @@ describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no t
   });
 
   it("the promote/demote loop calls ONLY the store transition methods (promoteByName/demoteByName) — no other store mutation", () => {
-    // CR-01: the loop's only learnedSkillStore calls are the NAME-keyed
+    // The loop's only learnedSkillStore calls are the NAME-keyed
     // promoteByName()/demoteByName() (the carrier holds skill NAMES; the store
     // resolves name→id internally). The surface calls list() for the read. The loop body
     // lives in setup-learning-skill-transitions.ts (extracted from setup-learning.ts);
@@ -1562,9 +1557,9 @@ describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no t
   });
 });
 
-// ── CR-01: the promote/demote loop must drive the REAL store end-to-end ──
+// ── the promote/demote loop must drive the REAL store end-to-end ──
 //
-// The loop iterates verdict.usedSkillIds — which carries skill NAMES (ATTR-01),
+// The loop iterates verdict.usedSkillIds — which carries skill NAMES,
 // not the store's hash `id`. The store keys lifecycle transitions on
 // `learnedSkillId() = sha256(tenant+agent+name)` via `WHERE id = ?`. Passing a
 // NAME as the `id` matches 0 rows, so promote/demote are silent no-ops AND the
@@ -1572,10 +1567,7 @@ describe("SURFACE-07 / SEC-01: the 202 daemon files add no execution path + no t
 // tests drive the FULL loop against a REAL @comis/memory store (not the vi.fn()
 // stub that only records the string arg) and assert the actual row transitioned
 // AND the emitted count matches the REAL number of transitions.
-//
-// RED on pre-patch HEAD: the loop calls store.promote("<name>", …) → 0 rows →
-// the row stays `candidate` and learning:skill_promoted still emits count>0.
-describe("CR-01: promote/demote drive the REAL learned-skill store via name→id (not name-as-id)", () => {
+describe("promote/demote drive the REAL learned-skill store via name→id (not name-as-id)", () => {
   const SKILL_TENANT = "tenant-x"; // must match the ALS tenant resolved from SESSION_KEY
   const SKILL_AGENT = AGENT;
 
@@ -1663,8 +1655,8 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     );
     expect(admitted.ok).toBe(true);
 
-    // The verdict carries the skill NAME (as ATTR-01 produces). Threshold 1 so a single
-    // success from proofCount=0 CROSSES the D2 proof bar (0 + 1 >= 1) → candidate→active,
+    // The verdict carries the skill NAME. Threshold 1 so a single
+    // success from proofCount=0 CROSSES the proof bar (0 + 1 >= 1) → candidate→active,
     // isolating the name→id resolution from a multi-call proof ladder.
     const { bus, store } = wireRealSkillSeam(
       db,
@@ -1678,12 +1670,12 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     // The REAL row transitioned: a name-as-id promote would leave it candidate at proof 0.
     const after = await store.get("deploy-the-thing", scope);
     expect(after.ok).toBe(true);
-    expect(after.ok ? after.value?.state : undefined).toBe("active"); // RED on name-as-id (stays candidate)
+    expect(after.ok ? after.value?.state : undefined).toBe("active"); // a name-as-id promote would leave it candidate
     // proof_count actually incremented → the row was FOUND by name→id (not a 0-row no-op).
     expect(after.ok ? after.value?.proofCount : undefined).toBe(1);
   });
 
-  it("a SUCCESS verdict below the proof bar bumps proof_count but the REAL row stays candidate (name→id found the row; D2 gate holds)", async () => {
+  it("a SUCCESS verdict below the proof bar bumps proof_count but the REAL row stays candidate (name→id found the row; proof gate holds)", async () => {
     // A second positive case that proves name→id resolution found the row WITHOUT
     // crossing the threshold: admit at proofCount 0, threshold 3 → one success bumps
     // proof_count to 1 (the row WAS found + reinforced) but 0+1 >= 3 is false → still
@@ -1704,7 +1696,7 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
 
     const after = await store.get("below-bar", scope);
     expect(after.ok ? after.value?.proofCount : undefined).toBe(1); // reinforced (found by name→id)
-    expect(after.ok ? after.value?.state : undefined).toBe("candidate"); // but D2 bar (3) not crossed
+    expect(after.ok ? after.value?.state : undefined).toBe("candidate"); // but proof bar (3) not crossed
   });
 
   it("a success verdict naming a SKILL THAT DOES NOT EXIST emits count 0 and no learning:skill_promoted (telemetry stops lying)", async () => {
@@ -1726,12 +1718,12 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     await flushMicrotasks();
 
     expect(emitted("learning:outcome_observed"), "the resolve must have completed").toBe(true);
-    // A 0-row promoteByName must NOT emit a non-zero count (RED on name-as-id: emits count 1).
+    // A 0-row promoteByName must NOT emit a non-zero count.
     expect(emitted("learning:skill_promoted"), "an unmatched name must not emit learning:skill_promoted").toBe(false);
   });
 });
 
-// ── OUTCOME-04: the LLM outcome-judge fallback for a CONVERSATIONAL turn ──
+// ── the LLM outcome-judge fallback for a CONVERSATIONAL turn ──
 //
 // A conversational turn (no tool/pipeline signal) resolves to `unknown` and would
 // otherwise derive NO learning. When the judge is enabled (default-on, opt-out) the
@@ -1739,10 +1731,7 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
 // row (reward CODE-capped ≤ 0.7), RE-RESOLVES, and uses the upgraded verdict for the
 // consume chain. The deterministic tool/pipeline tier ALWAYS out-ranks the judge at
 // fusion, so the judge runs ONLY on `unknown` (resolved turns skip it — bounds cost).
-//
-// RED on pre-patch HEAD: there is no judge upgrade — a single-agent turn whose resolve
-// is `unknown` stays unknown, observes no judge row, and rewards nothing.
-describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conversational turn (OUTCOME-04)", () => {
+describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conversational turn", () => {
   function diagnosticPayload(
     over?: Partial<EventMap["diagnostic:message_processed"]>,
   ): EventMap["diagnostic:message_processed"] {
@@ -1989,19 +1978,18 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
 });
 
 /** Flush enough microtask turns to settle the observe→resolve→emit chain. The skill
- *  promote/demote loop (applySkillOutcomeTransitions) now AWAITS each name-keyed store
- *  transition to read rows-changed (CR-01), so a multi-skill verdict adds several extra
+ *  promote/demote loop (applySkillOutcomeTransitions) AWAITS each name-keyed store
+ *  transition to read rows-changed, so a multi-skill verdict adds several extra
  *  microtask hops before the emit/log — flush generously so the settle is deterministic. */
 async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 }
 
-describe("wireLearningOutcome — surface refresh on doc ADMISSION (SURFACE-ADMIT, live-2026-06-18)", () => {
+describe("wireLearningOutcome — surface refresh on doc ADMISSION", () => {
   // A reflection run that admits a candidate must refresh the per-agent surface NOW.
   // Otherwise the candidate stays invisible until the next boot, and promotion is
   // USE-gated (needs it surfaced first) — a second-order deadlock the post-promote
-  // refresh can never break. `reflect:admitted.count` IS the admitted count (renamed
-  // from learning:skill_synthesized in Phase 226).
+  // refresh can never break. `reflect:admitted.count` IS the admitted count.
   function wire(refresh: (agentId: string) => void): TypedEventBus {
     const bus = new TypedEventBus();
     const { store } = makeStubStore();
@@ -2132,7 +2120,7 @@ describe("wireLearningOutcome — learning:correction_observed → demote the co
     expect(fields.creditedSkillCount).toBe(1);
     expect(fields.trajectoryId).toBe(TRACE);
     expect(fields.agentId).toBe(AGENT);
-    // Counts/ids only — never a procedure body or the skill content (the §2.7 / SEC-01 firewall).
+    // Counts/ids only — never a procedure body or the skill content (the §2.7 logging firewall).
     expect(JSON.stringify(driftLine)).not.toContain("skill-ttp"); // the id is not logged as content; count is
   });
 

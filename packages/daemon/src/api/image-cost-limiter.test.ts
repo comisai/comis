@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SEC-02: unit tests for the per-agent/hour image-generation USD cost
+ * Unit tests for the per-agent/hour image-generation USD cost
  * accumulator. Clones the fixed-window structure of the count rate limiter
  * (`skills/.../image-gen/rate-limiter.ts` + `notification/rate-limiter.test.ts`)
  * — same `windowMs = 3_600_000`, same per-agent `Map`, deterministic clock via
@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { createImageCostLimiter } from "./image-cost-limiter.js";
 
-describe("createImageCostLimiter (SEC-02)", () => {
+describe("createImageCostLimiter (per-agent hourly cost ceiling)", () => {
   it("canSpend is true for a fresh agent (no spend recorded yet)", () => {
     const limiter = createImageCostLimiter({ maxCostPerHourUsd: 5, nowMs: () => 0 });
     expect(limiter.canSpend("agent-1")).toBe(true);

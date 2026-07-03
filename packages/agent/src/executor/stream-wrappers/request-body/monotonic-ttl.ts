@@ -15,12 +15,12 @@
  * any marker, it emits a WARN log with `errorKind: "internal"` —
  * indicating an upstream placement bug to investigate.
  *
- * Background: commit 7d12f26b ("Fix E") added a 1h cache anchor for
- * user messages carrying `<<<UNTRUSTED_…>>>` blocks (large stable RAG
- * memory recall). When the UNTRUSTED block lands on the LAST user
- * message in a long conversation, `placeCacheBreakpoints` still places
- * a 5m marker on an earlier user message — violating monotonicity and
- * producing the production 400 at daemon.1.log:439:
+ * Background: the UNTRUSTED_ anchor (breakpoint-orchestration.ts) places
+ * a 1h cache marker on user messages carrying `<<<UNTRUSTED_…>>>` blocks
+ * (large stable RAG memory recall). When the UNTRUSTED block lands on the
+ * LAST user message in a long conversation, `placeCacheBreakpoints` can
+ * still place a 5m marker on an earlier user message — violating
+ * monotonicity and producing a live-observed production 400:
  *
  *   messages.10.content.0.cache_control.ttl:
  *     a ttl='1h' cache_control block must not come after a ttl='5m'

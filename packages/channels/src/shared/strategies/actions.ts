@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * ActivityRenderActions — the minimal send/edit/delete port the channel-agnostic
- * rendering strategies (§7.2) call to paint activity to a surface.
+ * rendering strategies call to paint activity to a surface.
  *
  * The strategy bodies in this directory are pure rendering state machines: they
  * decide WHAT to send and WHEN to delete, but never touch a platform SDK. The
@@ -14,9 +14,9 @@
  * a strategy can later edit or delete it.
  *
  * `send` accepts an optional `SendOptions.buttons` so a renderer can paint
- * native approval choices alongside the text (§7.7). The buttons are
+ * native approval choices alongside the text. The buttons are
  * the signed `RichButton[][]` produced by `buildApprovalButtons` (the
- * `callback_data` is the §6.4.2 wire string). The param is OPTIONAL: a
+ * `callback_data` is the signed `v1.<choice>.<shortId>.<hmac>` wire string). The param is OPTIONAL: a
  * text-only `send(text)` call — and a renderer/adapter that ignores buttons —
  * remains valid (IRC / Email have no button surface and pass nothing).
  *
@@ -29,8 +29,8 @@ import type { ActivityRenderError, RichButton } from "@comis/core";
 /** Optional rendering affordances a renderer may attach to a `send`. */
 export interface SendOptions {
   /**
-   * Signed native approval choices to paint with the message (§7.7). Each
-   * button's `callback_data` is the §6.4.2 `v1.<choice>.<shortId>.<hmac>` wire
+   * Signed native approval choices to paint with the message. Each
+   * button's `callback_data` is the signed `v1.<choice>.<shortId>.<hmac>` wire
    * string from `buildApprovalButtons`. Platforms without a button affordance
    * (IRC, Email, plain-text) ignore this and render the text-only prompt.
    */

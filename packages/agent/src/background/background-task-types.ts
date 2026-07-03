@@ -22,7 +22,7 @@ export type BackgroundTaskStatus = "running" | "completed" | "failed" | "cancell
  *                 when re-entry fails (session expired, hop cap hit).
  * - "immediate" — Skip the dispatcher; fire user-visible notification
  *                 immediately. Reserved for tasks that explicitly want
- *                 the legacy literal-text notification.
+ *                 the literal-text notification.
  * - "silent"    — Skip both dispatcher and user-visible notification.
  *                 Reserved for fully-internal tasks.
  *

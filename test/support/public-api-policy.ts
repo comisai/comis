@@ -178,20 +178,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryTripleExtractionConfig",
       "MemoryTripleExtractionStats",
       "TripleCandidate",
-      // (Phase 225-05 DELETED the standalone reasoning + user-representation jobs/seams/prompts +
-      //  their @comis/agent exports — runMemoryReasoning / MemoryReasoning* / ReasoningOutput /
-      //  ReasoningSeamDeps and runUserRepresentationBuild / createUserRepresentationSeam /
-      //  build|parseUserRepresentationOutput|Prompt / MemoryUserRepresentation* /
-      //  UserRepresentationSourceMemory|Candidate|BuildOutput|SeamDeps — so their allowlist entries
-      //  were REMOVED here, not just shrunk. createReasoningSeam was likewise deleted [the
-      //  __MEMORY_TRIPLE_EXTRACTION__ scaffold that reused it was de-wired]. The work folded into the
-      //  ONE __REFLECT__ cron [Plan 04].)
-      // (Phase 226-04 DELETED the offline directional relationship builder + its prompt/parser +
-      //  seam-factory (runRelationshipBuild / createRelationshipSeam / buildRelationshipPrompt /
-      //  parseRelationshipOutput + the MemoryRelationship* Deps/Config/Stats/Result SHAPE types +
-      //  the Candidate/BuildOutput/SourceMemory/SeamDeps types) — the ENTIRE social-modeling
-      //  subsystem is gone, so they are no longer re-exported from @comis/agent and their allowlist
-      //  entries were removed, not just shrunk.)
+      // The standalone reasoning + user-representation jobs/seams/prompts and their
+      // @comis/agent exports (runMemoryReasoning / MemoryReasoning* / ReasoningOutput /
+      // ReasoningSeamDeps and runUserRepresentationBuild / createUserRepresentationSeam /
+      // build|parseUserRepresentationOutput|Prompt / MemoryUserRepresentation* /
+      // UserRepresentationSourceMemory|Candidate|BuildOutput|SeamDeps) no longer exist —
+      // that work folded into the ONE __REFLECT__ cron, and createReasoningSeam went with
+      // the de-wired __MEMORY_TRIPLE_EXTRACTION__ scaffold. They carry no allowlist entry.
+      // The offline directional relationship builder + its prompt/parser + seam-factory
+      // (runRelationshipBuild / createRelationshipSeam / buildRelationshipPrompt /
+      // parseRelationshipOutput + the MemoryRelationship* Deps/Config/Stats/Result SHAPE types +
+      // the Candidate/BuildOutput/SourceMemory/SeamDeps types) no longer exist — the ENTIRE
+      // social-modeling subsystem is gone, so they are not re-exported from @comis/agent and
+      // carry no allowlist entry.
       // Offline tuned-alpha bandit. SHRUNK:
       // runOnlineTuning is now CONSUMED by the daemon __ONLINE_TUNING__ cron-sentinel dispatch
       // (setup-channels-memory-crons.ts), so it was REMOVED from this list (the interface-first
@@ -451,10 +450,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Keep the barrel export — the integration test needs it via
       // the bare `@comis/agent` import.
       "buildRecallTrace",
-      // Served-window comparator (KNOB-01, phase 176). 176-05 wired the daemon
-      // consumers: compareServedWindowForProvider is named-imported by
+      // Served-window comparator. The daemon consumers are wired:
+      // compareServedWindowForProvider is named-imported by
       // setup-agents-runtime.ts and ServedWindowComparison by daemon.ts, so
-      // their transient 176-02 entries are REMOVED. The two that remain:
+      // their transient entries were removed. The two that remain:
       //   - resetServedWindowWarnForTest: test-only latch reset, consumed by
       //     setup-agents-served-window-wiring.test.ts via the @comis/agent
       //     barrel — the AST walker scans packages/*/src/** but skips .test.ts,
@@ -464,32 +463,26 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       //     consumer posture); the type stays for external/test callers.
       "resetServedWindowWarnForTest",
       "ServedWindowComparisonInput",
-      // Viable floor (FLOOR-01, phase 176 plan 176-05). The two value exports +
+      // Viable floor. The two value exports +
       // AgentBootWindowInfo have daemon consumers (setup-agents-runtime.ts /
       // daemon.ts named imports). MinViableEquation is the structured equation
       // result type — part of the documented floor API; the production wiring
-      // discards the return (WARN-only, I1/D-02) and the intra-package tests
+      // discards the return (WARN-only) and the intra-package tests
       // consume it via the local module path, which the walker skips as a
       // self-import.
       "MinViableEquation",
-      // Verified Learning WS2 (P2 Skills, Phase 201) — DELETED in Phase 223 Plan 06.
-      // The synthesis adapter / JOB / prompt / source / approval-gate subset were
-      // the dead embedding-clustering pipeline the reflection engine REPLACED
-      // (Plan 05 swapped the cron; Plan 06 deleted skill-synthesis-job.ts +
-      // llm-skill-synthesis-adapter.ts + skill-synthesis-prompt.ts). Their barrel
-      // re-exports are gone, so they need no allowlist entry — removed (the
-      // shrink-only ratchet runs BOTH ways).
-      // v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06) — the
-      // reflection JOB (runReflection) + classifier + the cheap-model reflect
-      // adapter (createLlmReflectionAdapter) + prompt/parser, surfaced on the
-      // @comis/agent barrel. Plan 05 (the daemon __REFLECT__ wiring) now name-imports
+      // The synthesis adapter / JOB / prompt / source / approval-gate subset — the dead
+      // embedding-clustering pipeline the reflection engine replaced — no longer exist.
+      // Their barrel re-exports are gone, so they need no allowlist entry.
+      // Reflection engine: the reflection JOB (runReflection) + classifier + the
+      // cheap-model reflect adapter (createLlmReflectionAdapter) + prompt/parser,
+      // surfaced on the @comis/agent barrel. The daemon __REFLECT__ wiring name-imports
       // `runReflection` + `createLlmReflectionAdapter` (value) in
       // setup-channels-memory-crons-wire.ts and `ReflectionSourceTrajectory` (type) in
       // setup-channels-skill-synthesis-deps.ts / setup-channels-memory-crons-types.ts —
-      // so those THREE SHRANK out of this allowlist (the shrink-only ratchet,
-      // AGENTS.md §2.8). The rest stay ahead-of-consumer (the LLM-mock A→B harness in
-      // Plan 08 consumes ReflectionResult/the deps types). They ship ALONGSIDE the
-      // synthesis entries; Plan 06 deletes the synthesis half.
+      // so those THREE shrank out of this allowlist (the shrink-only ratchet,
+      // AGENTS.md §2.8). The rest stay ahead-of-consumer (the LLM-mock A→B harness
+      // consumes ReflectionResult/the deps types).
       "classifyReflectOutcome",
       "REFLECT_PROMPT",
       "parseReflectionResult",
@@ -501,11 +494,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RunReflectionResult",
       "RunReflectionConfig",
       "ReflectAdmissionOutcome",
-      // Sandbox-posture primitive (SANDBOX-01/02, phase 172). resolvePostureFromSkills
-      // SHRANK out of this baseline — Plan 02's daemon wiring
-      // (setup-cross-session-runtime.ts) now name-imports it cross-package to build
+      // Sandbox-posture primitive. resolvePostureFromSkills
+      // shrank out of this baseline — the daemon wiring
+      // (setup-cross-session-runtime.ts) name-imports it cross-package to build
       // the injected resolvePosture closure, so the walker finds a real consumer.
-      // The comparator + types below stay ahead-of-consumer: the Plan 02 spawn gate
+      // The comparator + types below stay ahead-of-consumer: the spawn gate
       // consumes comparePosture + SandboxPosture INTRA-package (sub-agent-runner.ts via
       // the relative ./sandbox-posture.js import), which the cross-package walker skips
       // as a self-import (the buildRecallTrace / resetServedWindowWarnForTest precedent).
@@ -693,8 +686,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PacerConfig",
       "TELEGRAM_THREAD_META_KEYS",
       // Telegram thread-context builders (the General-Topic id=1 asymmetry).
-      // Surfaced on the public barrel for the v2.28 channel-emulation harness's
-      // GROUP-03 HARD assertion (it drives the REAL SEND-omits / TYPING-includes
+      // Surfaced on the public barrel for the channel-emulation harness's
+      // group-thread assertion (it drives the REAL SEND-omits / TYPING-includes
       // routing through the dist-aliased @comis/channels, not a re-implementation).
       // The only consumers are test/live/** scenarios + the channels index.test.ts
       // barrel check — both of which the public-export-consumers AST walker
@@ -709,7 +702,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Telegram error classifier (the structural GrammyError →
       // ActivityRenderError mapping: 429→rate_limited / 400-edit→
       // not_supported{edit} / 403→permission / default→internal). Surfaced on
-      // the public barrel for the v2.28 channel-emulation harness's FAULT-02
+      // the public barrel for the channel-emulation harness's fault-injection
       // assertion (it drives the REAL classifier through the dist-aliased
       // @comis/channels, not a re-implementation). The only consumers are
       // test/live/** scenarios + the channels index.test.ts barrel check — both
@@ -720,13 +713,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "classifyTelegramError",
       // Signal wire types (the adapter's OWN signal-cli envelope/attachment
       // interface, defined in signal/signal-client.ts). Surfaced TYPE-ONLY on the
-      // public barrel for the v2.28 channel-emulation harness's CHAN2-01 I4
+      // public barrel for the channel-emulation harness's wire-shape
       // discipline — the Signal emulator's payload builders
       // (test/live/emulators/signal/signal-payloads.ts) return-annotate against
       // them so an envelope wire-shape drift is a compile error, and the
       // dist-aliased @comis/channels barrel is the only import path the test/live
       // vitest alias exposes. `export type` is erased at build (no runtime export
-      // added → SEC-02-safe). The only consumers are test/live/** scenarios + the
+      // added → no new runtime attack surface). The only consumers are test/live/** scenarios + the
       // channels index.test.ts barrel check — both excluded by the
       // public-export-consumers AST walker (it scans packages/*/src/** and skips
       // *.test.ts). Mirrors the thread-context builders / classifyTelegramError
@@ -777,17 +770,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
-      // ── tool.invoke surface + ResultRef (Phase 212, interface-first) ──
+      // ── tool.invoke surface + ResultRef (interface-first) ──
       // TOOL_CAPABILITY_MAP/TOOL_ROUTE_MAP are the single source of truth for
       // the tool.invoke surface; ResultRef + its pure threshold/GC math are the
-      // minimal result-handle. They land FIRST (Plan 01) so the four downstream
+      // minimal result-handle. They land FIRST so the four downstream
       // consumers draw from one table without drift — the daemon gate + the
-      // lease audience (Plan 02) and the comis_tools SDK codegen (Plan 03). Until
-      // those plans land, the only callers are the two cap-map arch-tests + the
+      // lease audience and the comis_tools SDK codegen. Until
+      // those consumers land, the only callers are the two cap-map arch-tests + the
       // pure unit tests (intra-core / test-scope, excluded from the consumer
       // scan). Shrink each entry as the real cross-package production caller
-      // (Plan 02 dispatch / lease-manager, Plan 03 codegen + result-ref-store)
-      // lands. Mirrors the validateBindMount (211-03 interface-first) precedent
+      // (dispatch / lease-manager, codegen + result-ref-store)
+      // lands. Mirrors the validateBindMount interface-first precedent
       // below.
       "TOOL_CAPABILITY_MAP",
       "TOOL_ROUTE_MAP",
@@ -804,32 +797,32 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "checkPerFileCap",
       "computeExpiresAt",
       "ResultRef",
-      // ── JAIL-03 bind-mount validator (Phase 211) ──
+      // ── bind-mount validator ──
       // validateBindMount is the pure denylist backstop the bwrap-provider calls
-      // before emitting any bind. It lands in @comis/core (211-03) so the jail
-      // wiring (211-05) consumes it; until that plan lands, the only callers are
+      // before emitting any bind. It lands in @comis/core so the jail
+      // wiring consumes it; until that wiring lands, the only callers are
       // its own deny-branch tests (intra-core, excluded from the consumer scan).
-      // Shrink this entry once 211-05 wires it into the bwrap provider.
+      // Shrink this entry once the bwrap provider wires it in.
       "validateBindMount",
-      // ── learned-doc static scan (v2.31 Reflection, 223-02, interface-first) ──
+      // ── learned-doc static scan (interface-first) ──
       // validateLearnedDocBody is the STATIC poison/secret scan an advisory Mental
-      // Model doc receives (SKILL-02 / INV-3) — the renamed `scanFields` extracted to
+      // Model doc receives — the renamed `scanFields` extracted to
       // @comis/core (where validateMemoryWrite already lives). It lands FIRST so the
-      // agent reflection job (223-04) + the daemon reflect path (223-05) consume it
-      // without a @comis/skills dependency. Until those plans land, the only callers
+      // agent reflection job + the daemon reflect path consume it
+      // without a @comis/skills dependency. Until those consumers land, the only callers
       // are its own static-scan tests (intra-core, excluded from the consumer scan).
       // Mirrors the validateBindMount interface-first precedent above. Shrink each
-      // entry once 223-04/05 wire it into the reflection path.
+      // entry once the reflection path wires it in.
       "validateLearnedDocBody",
       "MAX_DOC_NAME_LENGTH",
       "LearnedDocValidation",
       "LearnedDocFinding",
-      // ── orchestration authoring gate (Phase 174 / v2.27 P2) ──
+      // ── orchestration authoring gate ──
       // The orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}
-      // gate ships GATED-OFF (every flag .default(false); the 173 gate returned
-      // DEFER). The schema lands FIRST so downstream plans receive the exact
-      // gate shape; the production consumers are Plans 02-05 (events / repair
-      // producer / from_intent synthesizer / GBNF constrain), which read the
+      // gate ships GATED-OFF (every flag .default(false)). The schema lands FIRST
+      // so downstream consumers receive the exact
+      // gate shape; the production consumers are the events / repair
+      // producer / from_intent synthesizer / GBNF constrain sites, which read the
       // flags from @comis/core. Until those land, the only callers are this
       // schema's own tests + the section-registry/serializer derivations
       // (intra-core, excluded from the consumer scan). Shrink each entry as a
@@ -925,14 +918,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // getMessageTraceId: typed accessor for NormalizedMessage.metadata.traceId.
       // Consumers: orchestrator channel-manager.ts will read msg.metadata.traceId via this helper.
       "getMessageTraceId",
-      // ── Verified Learning WS1: inbound-reaction contracts (Phase 199, REACT-01) ──
-      // The interface-first wave (Plan 01) ships the NormalizedReaction domain
+      // ── inbound-reaction contracts ──
+      // The interface-first wave ships the NormalizedReaction domain
       // shape + parse + the ReactionHandler port type AHEAD of their consumers so
-      // later plans receive the contract rather than scavenge for it. Consumers
-      // land later: the reaction-capable adapters (Discord/Slack/Telegram, Plan 02)
+      // later work receives the contract rather than scavenge for it. Consumers
+      // land later: the reaction-capable adapters (Discord/Slack/Telegram)
       // produce a NormalizedReaction via parseReaction and register a
       // ReactionHandler through ChannelPort.onReaction?; the orchestrator
-      // channel-manager fans out to it (Plan 04); the daemon resolves trust +
+      // channel-manager fans out to it; the daemon resolves trust +
       // observes the outcome. Shrink each entry as its real in-repo consumer lands.
       "NormalizedReactionSchema",
       "parseReaction",
@@ -983,7 +976,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SecretRefOrStringSchema",
       "DeliveryOriginSchema",
       // IncidentReportSchema is the Zod schema for the obs.explain response
-      // (the §6.3 IncidentReport wire shape, Phase 153). The handler + the
+      // (the IncidentReport wire shape). The handler + the
       // contract consume the inferred *type* `IncidentReport` (which has
       // cross-package consumers), and the contract's `response` field
       // references the schema VALUE internally within observability.ts — but no
@@ -993,7 +986,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // baseline orphan-export policy; remove if an in-repo value consumer lands.
       "IncidentReportSchema",
       // FleetHealthReportSchema is the Zod schema VALUE for the obs.fleet.health
-      // response (the v2.15 cross-session fleet digest). The Phase-161 handler +
+      // response (the cross-session fleet digest). The obs.fleet.health handler +
       // the ObsFleetHealthContract consume the inferred TYPE `FleetHealthReport`
       // (now removed from this allowlist — it has a real consumer), and the
       // contract's `response` field references the schema VALUE internally within
@@ -1003,18 +996,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Same rationale + precedent as IncidentReportSchema above; remove if an
       // in-repo value consumer lands.
       "FleetHealthReportSchema",
-      // ── Audit schema reshape (AUDIT-03 / E4, Phase 176 Plan 02) ──
+      // ── Audit schema reshape ──
       // AUDIT_KINDS (the closed kind value-list) + kindIsSecuritySignal (the
       // exhaustiveness-guarded severity helper) + AuditKind (the inferred union
       // type) are the reshaped audit contract surface. AuditKind has an
       // INTRA-core consumer — events-agent.ts annotates the audit:event
       // payload's `kind?: AuditKind` via the relative ../security/audit.js
       // import, which the cross-package walker skips as a self-import
-      // (buildRecallTrace precedent). The cross-package value consumers land in
-      // Plan 03 (the daemon audit sink reads payload.kind, derives via
+      // (buildRecallTrace precedent). The cross-package value consumers land
+      // later (the daemon audit sink reads payload.kind, derives via
       // kindIsSecuritySignal/AUDIT_KINDS). Surfaced here AHEAD of that consumer
       // (the orchestration-authoring schema-first precedent). Shrink each entry
-      // as Plan 03's sink name-imports it.
+      // as the daemon sink name-imports it.
       "AUDIT_KINDS",
       "kindIsSecuritySignal",
       "AuditKind",
@@ -1061,12 +1054,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TranscriptToolCallIdMode",
       "createNoOpCapabilityPort",
       "PROFILE_ID_RE",
-      // NOTE (v2.12, Phase 126 Plan 04): the DAG context-store planned-orphan
+      // NOTE: the DAG context-store planned-orphan
       // cluster — ContextStorePort / ContextEngineStore / ContextAdminStore, the
       // 5 remaining Context*Contract definitions (ContextRecall/Expand/
       // Conversations/Tree/SearchByConversation), and the 9 Ctx*Row DTOs — was
       // removed here. The core ports + the contract definitions were deleted
-      // outright in this plan (the last consumers went in Plans 02/03 + the CLI
+      // outright (the last consumers went with the CLI
       // rewire), so they are no longer orphaned exports to track.
       // SessionStorePort + its 3 row DTOs are declared in
       // core/src/ports/{session-store,session-store-types}.ts but not yet
@@ -1076,13 +1069,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SessionData",
       "SessionListEntry",
       "SessionDetailedEntry",
-      // LCD lossless store (v2.12, Phase 127): the ContextStorePort + DTOs +
+      // LCD lossless store: the ContextStorePort + DTOs +
       // codec are surfaced on @comis/core but only memory's createLcdStore
-      // (port + DTO typed-import) and Phase 128 ingest consume some of them —
+      // (port + DTO typed-import) and the ingest path consume some of them —
       // tracked as planned-orphan policy entries (same pattern as
-      // SessionStorePort). The memory adapter (Plan 04) value-consumes the
-      // codec + types; listed here so the gate is green at THIS plan's commit
-      // before Plan 04 lands (over-listing a soon-consumed symbol is the
+      // SessionStorePort). The memory adapter value-consumes the
+      // codec + types; listed here so the gate is green before that consumer
+      // lands (over-listing a soon-consumed symbol is the
       // documented pattern, never under-listing).
       "ContextStorePort",
       "LcdMessage",
@@ -1116,29 +1109,29 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
-      // Video generation (v2.24 Phase 188) — the greenfield @comis/core video
-      // foundation surfaced on the public barrel so the LATER-wave Plan 04
-      // (@comis/daemon video handler + boot selector) can import them. These are
+      // Video generation — the greenfield @comis/core video
+      // foundation surfaced on the public barrel so the LATER-wave
+      // @comis/daemon video handler + boot selector can import them. These are
       // the REMAINING ahead-of-consumer planned-orphans (the
       // SessionStorePort / ContextStorePort "listed so the gate is green before
       // the consumer lands" precedent — over-listing a soon-consumed symbol is
       // the documented pattern, never under-listing). Each entry SHRINKS out of
       // this baseline when its real in-repo consumer lands.
       //
-      // SHRUNK at Plan 03 (this plan): the port + 4 value types
+      // SHRUNK: the port + 4 value types
       // (VideoGenerationPort / VideoGenInput / VideoGenJob / VideoJobStatus /
       // VideoGenOutput), VideoErrorKind, and VideoGenError now have real
       // cross-package consumers in @comis/skills/.../video-gen (the FAL adapter
       // implements the port + throws VideoGenError; the classifier name-imports
       // VideoErrorKind) — so they are removed from this list.
       //
-      // STILL ORPHAN (kept — Plan 04 / @comis/daemon consumes them):
+      // STILL ORPHAN (kept — @comis/daemon consumes them):
       //   - resolveVideoProvider / isBlockedObjectKey / VIDEO_ERR_TO_LOG:
-      //     Plan 04's boot selector + handler.
-      //   - estimateVideoCostUsd / VIDEO_PRICING: Plan 04's pre-submit cost gate.
-      //   - VideoGenerateContract (api-contracts/media.ts, Plan 02): the RPC
-      //     contract is declared in Wave 1; its `[VideoGenerateContract.method]`
-      //     handler lands in Plan 04 (Wave 3) — a documented cross-wave seam.
+      //     the daemon boot selector + handler.
+      //   - estimateVideoCostUsd / VIDEO_PRICING: the daemon pre-submit cost gate.
+      //   - VideoGenerateContract (api-contracts/media.ts): the RPC
+      //     contract is declared ahead of its `[VideoGenerateContract.method]`
+      //     handler — a documented cross-wave seam.
       // VIDEO_CAPABILITY + VideoProviderSelection + VideoGenSelectionConfig are
       // NOT listed — they stay intra-`@comis/core/media` (the IMAGE_CAPABILITY /
       // ImageProviderSelection policy), so they never reach the public barrel.
@@ -1148,37 +1141,37 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "estimateVideoCostUsd",
       "VIDEO_PRICING",
       "VideoGenerateContract",
-      // CAP-02 per-model capability-matrix TYPES (v2.24 Phase 191 Plan 01).
-      // Surfaced on the @comis/core barrel (exports/media.ts) in Wave 1. The
+      // Per-model capability-matrix TYPES.
+      // Surfaced on the @comis/core barrel (exports/media.ts). The
       // ACCESSORS listVideoModelCaps / supportedModes / snapDuration were tracked
-      // here as ahead-of-consumer planned-orphans; REMOVED in Plan 02 (Wave 2):
-      // the @comis/daemon video-handlers now name-imports all three from
-      // @comis/core for the IN-02 validator (a real cross-package consumer), so
-      // they are no longer orphans (Plan 03's video-generate-tool adds a second
-      // consumer of listVideoModelCaps for the IN-03 dynamic description). The
+      // here as ahead-of-consumer planned-orphans; REMOVED once
+      // the @comis/daemon video-handlers name-imported all three from
+      // @comis/core for the input validator (a real cross-package consumer), so
+      // they are no longer orphans (the video-generate-tool adds a second
+      // consumer of listVideoModelCaps for the dynamic description). The
       // VideoModelCaps / VideoDurations TYPES STAY listed — they are surfaced on
       // the barrel but have no NAME-import consumer yet (the handler reads them
       // via inference off listVideoModelCaps's return type, not a named import),
-      // so they remain ahead-of-consumer planned-orphans until a future phase
+      // so they remain ahead-of-consumer planned-orphans until a consumer
       // name-imports the type. The raw VIDEO_MODELS const is NOT listed — it
       // stays intra-`@comis/core/media` (the VIDEO_CAPABILITY /
       // IMAGE_MODELS_BY_PROVIDER policy), never on the public barrel.
       "VideoModelCaps",
       "VideoDurations",
-      // Shared bounded-poll helper (Plan 03, DIVERGENCE 5). createPollDeadline /
+      // Shared bounded-poll helper. createPollDeadline /
       // pollUntilDone already have a real consumer (the @comis/skills FAL
       // adapter's execute()), so they are NOT listed. The PollDeadline /
-      // PollOutcome TYPES are ahead-of-consumer planned-orphans: Phase 189's
+      // PollOutcome TYPES are ahead-of-consumer planned-orphans: the
       // daemon background poller name-imports them when it drives the loop
       // externally. They shrink out when that poller lands.
       "PollDeadline",
       "PollOutcome",
-      // Keyless voice (v2.25 Phase 193) — the STT/TTS capability-map + error
-      // surface on the public @comis/core barrel (exports/media.ts). Plan 01
-      // listed SIX symbols as ahead-of-consumer planned-orphans; Plan 03 (Wave 2)
-      // landed the real cross-package consumer (@comis/daemon
-      // setup-audio-provider.ts / setup-media.ts), so the THREE now-consumed
-      // symbols are SHRUNK OUT of this baseline (shrink-only ratchet, AGENTS.md
+      // Keyless voice — the STT/TTS capability-map + error
+      // surface on the public @comis/core barrel (exports/media.ts). SIX symbols
+      // were listed as ahead-of-consumer planned-orphans; once
+      // the real cross-package consumer landed (@comis/daemon
+      // setup-audio-provider.ts / setup-media.ts), the THREE now-consumed
+      // symbols were SHRUNK OUT of this baseline (shrink-only ratchet, AGENTS.md
       // §2.8 — closing an entry by deleting it, never adding): resolveTranscription
       // Provider + resolveTtsProvider (name-imported by setup-audio-provider.ts) +
       // STT_ERR_TO_LOG (name-imported by setup-media.ts for the honest-unavailable
@@ -1187,59 +1180,59 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MAIN_PROVIDER_AUDIO are consumed INSIDE the pure resolvers (intra-
       // `@comis/core/media`), and SttErrorKind is consumed structurally (the
       // daemon reads sel.errorKind off the result, not a named type import). They
-      // SHRINK out only if a future phase name-imports them cross-package. The
+      // SHRINK out only if a later consumer name-imports them cross-package. The
       // SttSelection / TtsSelection / *SelectionConfig TYPES are NOT listed — they
       // stay intra-`@comis/core/media` (the ImageProviderSelection /
       // VideoProviderSelection policy), consumed structurally by the daemon.
       "VOICE_KEYLESS",
       "MAIN_PROVIDER_AUDIO",
       "SttErrorKind",
-      // Verified Learning outcome signal (v2.26 Phase 198 Plan 01, Wave 1) — the
+      // Outcome signal — the
       // greenfield OutcomeSignalPort + its DTOs surfaced on the public @comis/core
-      // barrel (exports/ports.ts) so the LATER-wave plans can import them BY TYPE:
-      // Plan 02's @comis/memory `createSqliteOutcomeStore` implements the port,
-      // Plan 03's judge seam + Plan 04's @comis/daemon `setup-learning` wiring
+      // barrel (exports/ports.ts) so the LATER-wave consumers can import them BY TYPE:
+      // the @comis/memory `createSqliteOutcomeStore` implements the port,
+      // the judge seam + the @comis/daemon `setup-learning` wiring
       // construct/observe/resolve against it. These are interface-first ahead-of-
       // consumer planned-orphans (the TunedAlphaStore / MemoryLifecyclePort
       // precedent directly above — listed so the gate is green before the consumer
       // lands, never under-listed). Each SHRINKS out of this baseline when its real
       // cross-package consumer lands (the shrink-only ratchet, AGENTS.md §2.8):
-      // OutcomeSignalPort + the 4 DTOs go when Plan 02's adapter name-imports them.
+      // OutcomeSignalPort + the 4 DTOs go when the memory adapter name-imports them.
       "OutcomeSignalPort",
       "LearningScope",
       "OutcomeObservation",
       "ResolvedOutcome",
       "OutcomePruneResult",
-      // Mental Model doc store port (v2.31 Phase 223) — the type-only
+      // Mental Model doc store port — the type-only
       // MentalModelStorePort + its DTOs (MentalModel, AdmitMentalModelInput),
       // surfaced on the public @comis/core barrel (exports/ports.ts) so @comis/memory
       // (the sqlite-mental-model-store adapter) + @comis/daemon (the reflection
-      // wiring) import them BY TYPE — the closed-graph SEC-01 cut (agent↛memory).
-      // The v2.26 SkillSynthesisPort / SynthesisInput / CandidateSkill +
+      // wiring) import them BY TYPE — the closed-graph cut (agent↛memory).
+      // The SkillSynthesisPort / SynthesisInput / CandidateSkill +
       // SkillValidationPort / SkillValidationResult / SkillValidationFinding /
-      // ReplayContext entries were DELETED in Phase 223 Plan 07 with the orphaned
+      // ReplayContext entries were deleted with the orphaned
       // skill-synthesis-port.ts / skill-validation-port.ts files — the embedding-
-      // clustering synthesis pipeline + the dynamic sandbox they typed are gone
-      // (Plans 04-06), leaving zero consumers (the reflection engine replaced them).
+      // clustering synthesis pipeline + the dynamic sandbox they typed are gone,
+      // leaving zero consumers (the reflection engine replaced them).
       // Each entry below SHRINKS out of this baseline when its real cross-package
       // NAME-import consumer lands (the shrink-only ratchet, AGENTS.md §2.8 — never
       // under-listed, closed by deletion).
       "MentalModelStorePort",
       "MentalModel",
       "AdmitMentalModelInput",
-      // Reflection delta-ops (v2.31 Phase 223 Plan 03, Wave 2) — the @comis/core
+      // Reflection delta-ops — the @comis/core
       // reflection-port: the DocSection/StructuredBody/DeltaOp types + the pure
-      // applyDeltaOps (byte-stable section refresh, REFLECT-04 — untargeted
+      // applyDeltaOps (byte-stable section refresh — untargeted
       // sections survive by reference) + renderStructuredBody (AST → markdown).
       // Surfaced on the public barrel (exports/ports.ts) so the LATER-wave consumer
-      // can import them: Plan 04 (@comis/agent reflection-job + reflection-prompt
-      // parser) applies the LLM's delta-ops against the prior doc's AST. Until that
-      // plan lands, the only callers are this port's own pure tests (intra-core,
+      // can import them: the @comis/agent reflection-job + reflection-prompt
+      // parser applies the LLM's delta-ops against the prior doc's AST. Until that
+      // consumer lands, the only callers are this port's own pure tests (intra-core,
       // excluded from the consumer scan) — interface-first, the MentalModelStorePort
-      // precedent directly above. Each SHRINKS out when Plan 04's name-import lands
+      // precedent directly above. Each SHRINKS out when that name-import lands
       // (the shrink-only ratchet, AGENTS.md §2.8). StructuredBody is ALSO consumed
       // intra-core by learned-skill-store.ts (MentalModel.structuredBody), so it
-      // stays listed only until the cross-package consumer (Plan 04) lands.
+      // stays listed only until the cross-package consumer lands.
       "DocSection",
       "StructuredBody",
       "DeltaOp",
@@ -1497,7 +1490,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DocumentationConfigSchema",
       "DocumentationLinkSchema",
       "ImageGenerationConfigSchema",
-      // Video-generation config schema (v2.24). Documented config-API surface,
+      // Video-generation config schema. Documented config-API surface,
       // parity sibling of ImageGenerationConfigSchema: out-of-package consumers
       // (daemon, CLI wizard) use the inferred VideoGenerationConfig TYPE, so the
       // schema VALUE is a baseline orphan here. The CLI init-wizard drift-guard
@@ -1509,9 +1502,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VerbosityOverrideSchema",
       "OutputRetentionConfigSchema",
       "MemoryReviewConfigSchema",
-      // (Phase 225-05 DELETED the consolidation + reasoning config schemas —
-      //  MemoryConsolidationConfigSchema / MemoryReasoningConfigSchema / MemoryReasoningConfig
-      //  are no longer exported from @comis/core, so their allowlist entries were removed.)
+      // The consolidation + reasoning config schemas
+      // (MemoryConsolidationConfigSchema / MemoryReasoningConfigSchema / MemoryReasoningConfig)
+      // are no longer exported from @comis/core, so they carry no allowlist entry.
       "ProvidersConfigSchema",
       "UserModelSchema",
       "ModelCostSchema",
@@ -1677,10 +1670,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "defineContract",
       "INTERNAL_FIELD_NAMES",
       "stripInternalFields",
-      // Autonomy-domain admin contracts (213-03, REVOKE-01/03). LeaseRevokeContract
-      // + RunKillContract are scopes:["admin"] RPC contracts declared in Wave 1
-      // (this plan); their `[LeaseRevokeContract.method]` / `[RunKillContract.method]`
-      // daemon handlers land in Plan 06 (Wave 3) — a documented cross-wave seam
+      // Autonomy-domain admin contracts. LeaseRevokeContract
+      // + RunKillContract are scopes:["admin"] RPC contracts declared ahead of
+      // their `[LeaseRevokeContract.method]` / `[RunKillContract.method]`
+      // daemon handlers — a documented cross-wave seam
       // (the same VideoGenerateContract pattern in @comis/core/media). Until the
       // handler lands they have no in-repo consumer; the bidirectional 1:1 +
       // codegen-drift arch tests exercise them at test-time. AUTONOMY_HANDLERS_CONTRACTS
@@ -1689,7 +1682,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LeaseRevokeContract",
       "RunKillContract",
       "AUTONOMY_HANDLERS_CONTRACTS",
-      // Capabilities-domain aggregator (215, INTRO-01/02). Same pattern as
+      // Capabilities-domain aggregator. Same pattern as
       // DAEMON_CONTRACTS / AUTH_CONTRACTS: the per-method
       // `CapabilitiesIntrospectContract` HAS in-repo consumers (its
       // `[CapabilitiesIntrospectContract.method]` daemon handler in
@@ -2076,16 +2069,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // construct a TripleInput by naming the trust literal) — tracked here.
       // Shrinks when the offline writer / lane reference it directly.
       "TripleTrust",
-      // (Phase 225-05 DELETED the type-only UserRepresentationStore port + its
-      //  Scope/Trust/Entry/Input DTOs + the UserRepresentationType(Schema) prefix-type enum —
-      //  no longer exported from @comis/core [the <user_profile> read folded onto the
-      //  MentalModelStorePort kind:"profile" path], so their allowlist entries were removed.)
-      // (Phase 226-04 DELETED the type-only RelationshipStore port + its
-      //  Scope/Trust/Entry/Input DTOs — the ENTIRE social-modeling subsystem (the
-      //  __SOCIAL_MODELING__ cron, the sqlite adapter, the `relationship` table, the
-      //  offline directional builder, the relationship-block prompt injection) is gone,
-      //  so they are no longer exported from @comis/core and their allowlist entries
-      //  were removed, not just shrunk.)
+      // The type-only UserRepresentationStore port + its
+      // Scope/Trust/Entry/Input DTOs + the UserRepresentationType(Schema) prefix-type enum
+      // no longer exist (the <user_profile> read folded onto the
+      // MentalModelStorePort kind:"profile" path), so they carry no allowlist entry.
+      // The type-only RelationshipStore port + its
+      // Scope/Trust/Entry/Input DTOs no longer exist — the ENTIRE social-modeling subsystem (the
+      // __SOCIAL_MODELING__ cron, the sqlite adapter, the `relationship` table, the
+      // offline directional builder, the relationship-block prompt injection) is gone,
+      // so they are not exported from @comis/core and carry no allowlist entry.
       // StorageModePreRead is the return type of preReadStorageMode (daemon-boot
       // pre-read); the daemon imports preReadStorageMode (which has an in-repo
       // consumer) but does not import the return type name directly, so it is an
@@ -2114,11 +2106,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Shrinks when the daemon wiring or a cross-package consumer imports them by name.
       "LcdProvenanceReadStore",
       "AppendProvenanceInput",
-      // ── script classification (Phase 179) ───────────────────────────
-      // SCRIPT_CLASSES + the classifier functions ship dark in 179. Phase 180's
-      // consumers landed (FTS routing + the OBS-01 event sites + the LcdSearchResult
+      // ── script classification ───────────────────────────
+      // SCRIPT_CLASSES + the classifier functions ship dark. Their cross-package
+      // consumers landed (FTS routing + the observability event sites + the LcdSearchResult
       // widening), so the symbols that gained a real cross-package consumer were
-      // SHRUNK from this list in plan 180-08:
+      // SHRUNK from this list:
       //   - dominantScript → value-consumed by @comis/memory (lcd-fts.ts) AND
       //     @comis/agent (compaction-zone-helpers.ts, the summary_language_mismatch
       //     detector) — REMOVED.
@@ -2127,21 +2119,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // The following SURVIVE — their only consumers are core-internal (relative
       // imports inside packages/core/src/text), which the cross-package AST walker
       // does not count, so removing them would fail public-export-consumers:
-      //   - scriptShares: the expected Phase 181 DET-02 (reply-language resolver)
+      //   - scriptShares: the expected reply-language-resolver
       //     consumer; today used only inside dominantScript (script-classes.ts).
       //   - classifyCodepoint: consumed only by core-internal token-factor.ts +
       //     trigram-query.ts (relative imports) — no cross-package caller yet.
       //   - SCRIPT_CLASSES / ScriptClassRow: the data table + its row type; consumed
-      //     only inside core (script-classes.ts / token-factor.ts) — Phase 181/182.
+      //     only inside core (script-classes.ts / token-factor.ts).
       // Shrink each remaining entry as a real cross-package production caller lands.
       "SCRIPT_CLASSES",
       "ScriptClassRow",
       "classifyCodepoint",
       "scriptShares",
-      // ── search primitives (Phase 180) ───────────────────────────────
-      // normalizeForSearch (FTS-02) + routeSearchQuery/TrigramRoute/SearchLane
-      // (FTS-01) shipped dark in plan 180-01. Plan 180-08 swept these now that the
-      // memory/cli consumers (plans 180-04..180-07) exist:
+      // ── search primitives ───────────────────────────────
+      // normalizeForSearch + routeSearchQuery/TrigramRoute/SearchLane
+      // shipped dark. They were swept once the
+      // memory/cli consumers landed:
       //   - normalizeForSearch → value-consumed by @comis/memory (lcd-store-fts-populate,
       //     row-mapper, sqlite-memory-consolidation-store, lcd-fts) AND @comis/cli
       //     (doctor/repairs/repair-lcd) — REMOVED.
@@ -2152,11 +2144,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // imports the type NAME (callers use it inline via the returned value), so the
       // walker still counts it an orphan. Shrink when a consumer imports it by name.
       "TrigramRoute",
-      // ── agent autonomy named-profile resolver (Phase 210 / v8 §3.8) ──
-      // The §3.8 named-profile layer (AutonomyConfigSchema -> resolveAutonomy)
-      // lands FIRST so the cap injection (Plan 04: createAgentRpcCall computes
+      // ── agent autonomy named-profile resolver ──
+      // The named-profile layer (AutonomyConfigSchema -> resolveAutonomy)
+      // lands FIRST so the cap injection (createAgentRpcCall computes
       // _capabilities from resolveAutonomy(agent.autonomy)) and the legible
-      // boot log (Plan 06) receive the exact resolved cap/guard shape. Until
+      // boot log receive the exact resolved cap/guard shape. Until
       // those land, the only callers are this leaf's own tests + the
       // section-registry/serializer derivations (intra-core, excluded from the
       // consumer scan). Shrink each entry as a real cross-package production
@@ -2174,64 +2166,64 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "AgentCapability",
       "ResolvedAutonomy",
       "ResolvedCapability",
-      // Honest legible degrade (Phase 210 / PROFILE-03). Consumed by the daemon
-      // boot log + the preflight doctor (Plan 06, same wave). Listed here so the
+      // Honest legible degrade. Consumed by the daemon
+      // boot log + the preflight doctor. Listed here so the
       // type-only `AutonomyDownshift`/`AutonomyPreflightResult` (erased at runtime,
       // never named cross-package) don't read as orphans; shrink as those callers
       // import them by name.
       "degradeAutonomy",
       "AutonomyDownshift",
       "AutonomyPreflightResult",
-      // The security-layer capability primitives (Phase 210 / security/capability.ts).
+      // The security-layer capability primitives (security/capability.ts).
       // AGENT_CAPABILITIES + AgentCapability above are imported from this same
       // canonical module (single source of truth — the config leaf no longer keeps
-      // its own copy). The cross-package consumer lands with Plan 04 (daemon handler
-      // gating: requireCapability on each gated handler reads injected _capabilities).
+      // its own copy). The cross-package consumer lands with the daemon handler
+      // gating: requireCapability on each gated handler reads injected _capabilities.
       "checkCapability",
       "requireCapability",
       "CapabilityDeniedError",
       // HANDLER_CAPABILITY_MAP — the single auditable method→capability
-      // source-of-truth (CAP-04, security/capability.ts). It is consumed TODAY
+      // source-of-truth (security/capability.ts). It is consumed TODAY
       // inside @comis/core (the capability layer's own invariant tests assert
       // map↔gate parity) and by the daemon's per-handler gate, but the daemon's
-      // _capabilities injection (Plan 04) reads it via the resolveAutonomy →
+      // _capabilities injection reads it via the resolveAutonomy →
       // _capabilities flow rather than name-importing the map, so the
       // cross-package name-consumer scan sees no importer yet. The full
       // cross-package consumers (an operator-facing capability-audit surface that
-      // enumerates the map, and the gateway-side gate enumeration) land in Phase
-      // 211/212. HandlerCapabilityClassification + GatedMethodName are the map's
+      // enumerates the map, and the gateway-side gate enumeration) land
+      // later. HandlerCapabilityClassification + GatedMethodName are the map's
       // value/key shape types (erased at runtime, never named cross-package).
       // Shrink each entry as a real cross-package name-importer lands.
       "HANDLER_CAPABILITY_MAP",
       "HandlerCapabilityClassification",
       "GatedMethodName",
-      // SELF_SCOPED_AGENT_READS (Phase 219, CLI-01/02): the tight cap-socket
+      // SELF_SCOPED_AGENT_READS: the tight cap-socket
       // audience exception. The VALUE const is consumed cross-package by the
       // @comis/infra lease audience (lease-manager.ts), so it has a real
       // name-importer and is NOT tracked here. SelfScopedAgentRead is the const's
       // erased member type (runtime-free, never named cross-package yet) — tracked
       // here beside GatedMethodName until a real type-importer lands.
       "SelfScopedAgentRead",
-      // CliSubcommand (Phase 219, CLI-01): the comis-agent subcommand→{tool|method}
+      // CliSubcommand: the comis-agent subcommand→{tool|method}
       // table's `keyof typeof` key type, erased at runtime and never named
       // cross-package yet — tracked here beside GatedMethodName until a real
       // cross-package type-importer lands. The VALUE const CLI_SUBCOMMAND_MAP and
       // the CliCallTarget shape type are NOT tracked here: the @comis/skills
       // comis-agent-cli.ts name-imports both from @comis/core (real consumers).
       "CliSubcommand",
-      // ── Durability-resume engine (Phase 216, interface-first Wave 1) ──
+      // ── Durability-resume engine (interface-first) ──
       // The DurableRunPort (run checkpoint store) + OutwardSendLedgerPort
       // (three-state outward-send ledger) + the DurableRunRecord domain type +
-      // the ChannelPort.reconcileSend? query/outcome types land FIRST (Plan
-      // 216-01) so every downstream plan implements against one contract: the
-      // SQLite stores (Wave 2), the resume engine + adapters (Wave 3), the boot
-      // wiring (Wave 4). Until those land, the only callers are this plan's own
+      // the ChannelPort.reconcileSend? query/outcome types land FIRST
+      // so every downstream consumer implements against one contract: the
+      // SQLite stores, the resume engine + adapters, the boot
+      // wiring. Until those land, the only callers are this port's own
       // domain test (intra-core, excluded from the consumer scan). Shrink each
       // entry as a real cross-package production consumer lands — the SQLite
-      // adapter (@comis/memory, Wave 2) consumes the port + record types, the
-      // daemon resume wiring (Wave 4) consumes the ports, and the channel
+      // adapter (@comis/memory) consumes the port + record types, the
+      // daemon resume wiring consumes the ports, and the channel
       // adapters consume ReconcileSendQuery/ReconcileSendOutcome. Mirrors the
-      // Phase 212 tool.invoke + Phase 211 validateBindMount + Phase 199 REACT-01
+      // tool.invoke + validateBindMount + inbound-reaction
       // interface-first precedents above. parseDurableRunRecord/the *Schema
       // values are part of the documented durability API surface.
       "DurableRunPort",
@@ -2256,11 +2248,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // the public-export-consumers AST walker excludes `test/**` and
     // ignores dynamic `require("@comis/daemon")` patterns (it walks
     // only static `import`/`export from` declarations outside the
-    // package). Per the Path B disposition: each surviving re-export has a
+    // package). The disposition: each surviving re-export has a
     // documented test caller; no further deletion is safe without
     // retargeting those consumers.
     //
-    // Consumer audit (2026-05-21):
+    // Consumer audit:
     //   - createAnnouncementDeadLetterQueue / AnnouncementDeadLetterQueue / DeadLetterEntry
     //     → test/integration/resilience-e2e-dead-letter.test.ts:22 (static import)
     //   - createAgentHandlers / AgentHandlerDeps
@@ -2356,7 +2348,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SetupSkillBundlesDeps",
       // Resolve-seam learned-skill promote/demote loop body + the in-process
       // decay-aware trend tracker, surfaced through the daemon barrel so the
-      // Phase-222 MODEL-04 source-agnostic characterization
+      // source-agnostic characterization test
       // (test/integration/mental-model-readonly-lifecycle.test.ts) drives the
       // REAL transition path (a hand-authored no-synthesis mental_models doc
       // promotes via promoteByName exactly as a synthesized skill) rather than a
@@ -2389,9 +2381,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // list is the canonical place to record the planned test consumer.
       "createAuthHandlers",
       "AuthHandlerDeps",
-      // Obs-explain assembler + reader DI seam (Phase 156 G1) — re-exported so
+      // Obs-explain assembler + reader DI seam — re-exported so
       // the RE-PROVE scenario + its self-test (test/live/support +
-      // test/live/scenarios/prove) can call the FROZEN Phase-153 assembler over
+      // test/live/scenarios/prove) can call the FROZEN assembler over
       // a fixture reader via the clean @comis/daemon alias. Same rationale as
       // createMcpHandlers / emitStartupInvariants: the consumer imports these
       // statically from @comis/daemon under test/**, which the
@@ -2401,11 +2393,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // admin gate stays on bindObsExplainHandlers (obs-explain.ts:188), which
       // is NOT re-exported.
       // Consumer: test/live/support/diagnosis-reprove.test.ts +
-      //           test/live/scenarios/prove/diagnosis-reprove.test.ts (Plan 156-02)
+      //           test/live/scenarios/prove/diagnosis-reprove.test.ts
       "assembleIncidentReportFromSources",
       "makeRealReader",
       "IncidentSourceReader",
-      // Fleet-health assembler (Phase 162-01 RE-PROVE seam) — re-exported from
+      // Fleet-health assembler (RE-PROVE seam) — re-exported from
       // the TOP-LEVEL daemon barrel so the keyless deterministic fleet RE-PROVE
       // scenario can call it over a seeded tmp store via the clean @comis/daemon
       // alias (the live config aliases only the top-level @comis/daemon →
@@ -2418,9 +2410,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // bindObsFleetHealthHandlers RPC (NOT re-exported), and the assembler
       // itself excludes synthetic sessions (excludeSynthetic: true) and reads
       // only sqlite + the session-index JSONL (never daemon.log).
-      // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts (Plan 162-01)
+      // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
       "assembleFleetHealthReport",
-      // Outward-send crash-injection seam (Phase 216 Plan 08, MED-6) — re-exported
+      // Outward-send crash-injection seam — re-exported
       // from the daemon barrel so the exactly-once chaos test can arm/disarm a
       // REAL mid-send crash (BETWEEN markUnknown and commit) and assert the
       // sentinel propagates. INERT in production (__crashHook is never armed; the
@@ -2436,7 +2428,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "__setOutwardSendCrashHookForTest",
       "OUTWARD_SEND_CRASH_SENTINEL",
       "OutwardSendCrashHookMode",
-      // Cap-socket denylist RE-PROVE seam (Phase 219-05, CLI-02/03) — re-exported
+      // Cap-socket denylist RE-PROVE seam — re-exported
       // from the TOP-LEVEL daemon barrel so the comis-agent-same-gate /
       // comis-agent-no-admin arch-tests DERIVE the denylisted-method set from the
       // SAME source the cap endpoint's pre-check uses (not a hand-copied literal
@@ -2451,7 +2443,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // unchanged); exporting it grants no new authority and the cap-socket
       // denylist pre-check is untouched.
       // Consumer: test/architecture/comis-agent-same-gate.test.ts +
-      //           test/architecture/comis-agent-no-admin.test.ts (Plan 219-05)
+      //           test/architecture/comis-agent-no-admin.test.ts
       "DENYLISTED_RPC_METHODS",
     ])],
     // @comis/gateway: baseline orphans tracked here.
@@ -2551,46 +2543,46 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // barrel anymore. The 5 entries below document this transient state.
     ["@comis/memory", new Set<string>([
       "initSchema",
-      // Durable run checkpoint store (v2.30, Phase 216 Plan 02, DUR-01). The
+      // Durable run checkpoint store. The
       // SQLite DurableRunPort adapter `createSqliteDurableRunStore`, its options
       // type `DurableRunStoreOptions`, and the idempotent DDL `ensureDurableRunTable`
       // are surfaced ahead of their consumer: the daemon composition root wires the
-      // store (and the chaos test calls ensureDurableRunTable) in Plan 07. These are
+      // store (and the chaos test calls ensureDurableRunTable). These are
       // interface-first planned orphans that SHRINK OUT once that wiring lands
       // (mirror the createSqliteOutcomeStore / lifecycle / tuned-alpha factory-orphan
-      // dance below + the Phase 216 Plan 01 @comis/core interface-first entries;
+      // dance below + the @comis/core interface-first entries;
       // allowlist-shrink.test.ts enforces shrink-only).
       "createSqliteDurableRunStore",
       "DurableRunStoreOptions",
       "ensureDurableRunTable",
-      // Outward-send exactly-once ledger (v2.30, Phase 216 Plan 03, ONCE-01..04).
+      // Outward-send exactly-once ledger.
       // The SQLite OutwardSendLedgerPort adapter `createSqliteOutwardSendLedger`
       // and the idempotent DDL `ensureOutwardLedgerTable` are surfaced ahead of
-      // their consumer: the send-wrap site (Plan 05) + the resume reconcile loop
-      // (Plan 04) + the daemon composition root (Plan 07) wire them in later waves.
+      // their consumer: the send-wrap site + the resume reconcile loop
+      // + the daemon composition root wire them in later waves.
       // Interface-first planned orphans that SHRINK OUT once that wiring lands
-      // (mirror the Plan-02 durable-run entries above; allowlist-shrink enforces
+      // (mirror the durable-run entries above; allowlist-shrink enforces
       // shrink-only).
       "createSqliteOutwardSendLedger",
       "ensureOutwardLedgerTable",
-      // NOTE (v2.12, Phase 126 Plan 04): createContextStore (the DAG
+      // NOTE: createContextStore (the DAG
       // context-store factory) was deleted here along with context-store.ts +
       // its barrel re-export — no longer an orphaned export to track.
-      // LCD lossless store (v2.12, Phase 127 Plan 04). createLcdStore (the
+      // LCD lossless store. createLcdStore (the
       // ContextStorePort SQLite adapter) has a production consumer — the daemon
       // composition root constructs it on the shared memory db (setup-memory) — so
       // the factory is NOT listed here (the factory-orphan dance shrank on
       // schedule; allowlist-shrink enforces shrink-only). reconstructLcdMessage is
       // the named pi-ai reconstruction seam (delegates to the @comis/core
-      // parts-codec); its consumer is Phase-128 assembly, so it is a planned
+      // parts-codec); its consumer is the assembly path, so it is a planned
       // orphan until that wiring lands (mirrors the SessionStorePort pattern).
       "reconstructLcdMessage",
-      // LCD provenance READ adapter (v2.20, Phase 173, DIST-03 read side). The sole
+      // LCD provenance READ adapter (read side). The sole
       // LcdProvenanceReadStore adapter `buildProvenanceReadStore` now has a
       // production consumer — the daemon composition root name-imports it in
       // setup-memory.ts and injects it into createMemoryRecall's provenance pass —
-      // so it is NOT listed here (the Task-1 temporary planned orphan was REMOVED
-      // once the Task-2 wiring landed; the factory-orphan dance, shrink-only).
+      // so it is NOT listed here (the temporary planned orphan was REMOVED
+      // once the wiring landed; the factory-orphan dance, shrink-only).
       "SessionData",
       "SessionListEntry",
       "InspectFilters",
@@ -2649,15 +2641,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // *RowSchema entries).
       "MemoryTripleStoreDeps",
       "MemoryTripleRowSchema",
-      // (Phase 225-05 DELETED the per-user-representation store —
-      //  createSqliteUserRepresentationStore + MemoryUserRepresentationStoreDeps +
-      //  UserRepresentationRowSchema are no longer exported from @comis/memory [the
-      //  user_representation table was dropped; the profile folded onto mental_models], so
-      //  their allowlist entries were removed.)
-      // (Phase 226-04 DELETED the directional relationship sqlite adapter
-      //  (createSqliteRelationshipStore + MemoryRelationshipStoreDeps) + its RelationshipRowSchema
-      //  row schema — the ENTIRE social-modeling subsystem is gone, so they are no longer exported
-      //  from @comis/memory and their allowlist entries were removed.)
+      // The per-user-representation store
+      // (createSqliteUserRepresentationStore + MemoryUserRepresentationStoreDeps +
+      // UserRepresentationRowSchema) is no longer exported from @comis/memory (the
+      // user_representation table was dropped; the profile folded onto mental_models), so
+      // it carries no allowlist entry.
+      // The directional relationship sqlite adapter
+      // (createSqliteRelationshipStore + MemoryRelationshipStoreDeps) + its RelationshipRowSchema
+      // row schema no longer exist — the ENTIRE social-modeling subsystem is gone, so they are not
+      // exported from @comis/memory and carry no allowlist entry.
       // Tuned-alpha store. createSqliteTunedAlphaStore
       // is the SOLE TunedAlphaStore adapter (the per-(tenant, agent) tuned-4-alpha-vector
       // upsert + scoped read; undefined-on-absent). SHRUNK: the daemon
@@ -2688,12 +2680,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryLifecycleStoreDeps",
       "MemoryLifecyclePolicy",
       "MemoryLifecycleRowSchema",
-      // Outcome-signal store (v2.26 Verified Learning WS1, Phase 198 Plan 02).
+      // Outcome-signal store.
       // createSqliteOutcomeStore is the SOLE OutcomeSignalPort adapter (the
       // (tenant, agent)-scoped outcome_events ledger — idempotent observe(),
       // precedence-first-then-confidence resolve() with fail-closed unknown, and
       // age-based prune()). It is an AHEAD-OF-CONSUMER factory-orphan: the daemon
-      // composition-root consumer LANDS in Plan 04 (Wave 4 — setup-learning.ts
+      // composition-root consumer LANDS later (setup-learning.ts
       // constructs it on the shared db handle in setup-memory + the default-OFF
       // learningOutcome wiring subscribes/prunes), at which point this factory
       // entry SHRINKS OUT (mirror createSqliteTunedAlphaStore / the lifecycle
@@ -2704,14 +2696,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryLifecycleStoreDeps above).
       "createSqliteOutcomeStore",
       "OutcomeStoreDeps",
-      // Mental Model doc store (v2.31; generalized from the v2.26 Verified Learning
-      // WS2 learned-skill store, Phase 201 Plan 02 / Phase 222 Plan 01).
+      // Mental Model doc store (generalized from the earlier learned-skill store).
       // createSqliteMentalModelStore is the SOLE MentalModelStorePort adapter (the
       // (tenant, agent)-scoped mental_models doc store — idempotent
       // deterministic-id admit(), scoped get()/list(scope, kind?), and the
       // promote()/demote()/evict() lifecycle, evict being a soft evicted_at set,
-      // never a hard DELETE). The daemon composition-root consumer LANDED (Plan 07:
-      // setup-memory.ts builds it on the shared db handle, threaded into the
+      // never a hard DELETE). The daemon composition-root consumer LANDED
+      // (setup-memory.ts builds it on the shared db handle, threaded into the
       // __SKILL_SYNTHESIS__ cron), so the FACTORY orphan createSqliteMentalModelStore
       // was REMOVED here (the shrink-only ratchet fired on schedule; mirror
       // createSqliteMemoryEmbeddingStore below). MentalModelStoreDeps is the
@@ -2753,7 +2744,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ObsTableName",
       "ResetResult",
       "PruneResult",
-      // NOTE (v2.12, Phase 126 Plan 04): initContextSchema + the 9 Ctx*Row DTOs
+      // NOTE: initContextSchema + the 9 Ctx*Row DTOs
       // (CtxConversationRow … CtxExpansionGrantRow) were removed here — the ctx_*
       // schema/store + the @comis/core context-store-types port were deleted, so
       // memory's barrel no longer re-exports them.
@@ -2801,7 +2792,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EntityListRowSchema",
       "SessionRowSchema",
       "SessionRowFromSchema",
-      // LCD lossless-store row schemas (v2.12, Phase 127). Consumed
+      // LCD lossless-store row schemas. Consumed
       // intra-package by lcd-store.ts via createRowMapper (and paired 1:1 with the
       // LcdMessageRow/LcdMessagePartRow interfaces in types.ts via the
       // row-schemas.test.ts drift guard); barrel-surfaced through `export *` so
@@ -2810,7 +2801,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // the row interfaces live in types.ts.
       "LcdMessageRowSchema",
       "LcdMessagePartRowSchema",
-      // LCD compaction row schemas (v2.12, Phase 129). LcdSummaryRowSchema +
+      // LCD compaction row schemas. LcdSummaryRowSchema +
       // LcdContextItemRowSchema are consumed intra-package by lcd-store.ts via
       // createRowMapper (the getSummaries / getContextItems graceful-degrade reads);
       // LcdSummaryMessageRowSchema is the leaf→message link schema paired 1:1 with
@@ -2821,7 +2812,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LcdSummaryRowSchema",
       "LcdSummaryMessageRowSchema",
       "LcdContextItemRowSchema",
-      // LCD multi-tier condensed→child link schema (v2.12, Phase 130-01). The exact
+      // LCD multi-tier condensed→child link schema. The exact
       // analog of LcdSummaryMessageRowSchema: paired 1:1 with its
       // LcdSummaryParentRow interface via the row-schemas.test.ts drift guard, and
       // barrel-surfaced through `export *`. appendCondensedSummary writes the
@@ -2831,7 +2822,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // a later phase), so its only current consumer is the drift-guard test —
       // tracked here as a baseline orphan like the sibling link schema above.
       "LcdSummaryParentRowSchema",
-      // LCD FTS search-hit row schema (v2.12, Phase 131-02, E1 ctx_search). Consumed
+      // LCD FTS search-hit row schema (ctx_search). Consumed
       // intra-package by lcd-fts.ts via createRowMapper(LcdSearchHitRowSchema) — the
       // searchLcd FTS5-MATCH-with-LIKE-fallback hit-row mapper (an intra-file value
       // reference, NOT a cross-file import). Barrel-surfaced through `export *` so the
@@ -2841,7 +2832,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // importing this schema). No *RowFromSchema inferred type is exported — the
       // LcdSearchHit DTO lives in @comis/core's context-store-types.ts.
       "LcdSearchHitRowSchema",
-      // LCD LIKE-fallback hit row schema (v2.12, Phase 132 WR-02). The exact sibling
+      // LCD LIKE-fallback hit row schema. The exact sibling
       // of LcdSearchHitRowSchema MINUS the `rank` column — the LIKE scan has no
       // ranking. Consumed intra-package by lcd-fts.ts via
       // createRowMapper(LcdLikeHitRowSchema) so the LIKE-fallback rows degrade
@@ -2858,7 +2849,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "FtsSearchRowFromSchema",
       "NamedGraphRowSchema",
       "NamedGraphRowFromSchema",
-      // NOTE (v2.12, Phase 126 Plan 04): the 9 Ctx*RowSchema + their inferred
+      // NOTE: the 9 Ctx*RowSchema + their inferred
       // Ctx*RowFromSchema types were removed here — the section-2 ctx_* row
       // schemas were deleted from packages/memory/src/row-schemas.ts with the
       // ctx_* schema/store.
@@ -2876,7 +2867,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DeliveryDbRowFromSchema",
       "DiagnosticDbRowSchema",
       "DiagnosticDbRowFromSchema",
-      // Per-session GROUP-BY rollup row schema (v2.15 A1, Phase 159-01).
+      // Per-session GROUP-BY rollup row schema.
       // Declared and exported from observability-store-types.ts (co-located with
       // its sole consumer, sessionSummaryRollupMapper) — a same-file value
       // reference, so it has no cross-file importer and is barrel-surfaced
@@ -2902,11 +2893,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // system_prompt_reports table row schema.
       "SystemPromptReportDbRowSchema",
       "SystemPromptReportDbRowFromSchema",
-      // Audit-query filter shape (176-03 AUDIT-01) — the obs_query {action:"audit"}
-      // filter surface. AHEAD-OF-CONSUMER: Plan 05 (the obs.audit.query RPC + the
-      // obs_query audit action) is its cross-package consumer; until then it is
+      // Audit-query filter shape — the obs_query {action:"audit"}
+      // filter surface. AHEAD-OF-CONSUMER: the obs.audit.query RPC + the
+      // obs_query audit action is its cross-package consumer; until then it is
       // consumed only intra-package (queryAuditEvents) + the audit-mutations test.
-      // Shrinks out when Plan 05's daemon handler name-imports it.
+      // Shrinks out when the daemon handler name-imports it.
       // (AuditEventDbRowSchema is NOT here — it is co-located in audit-mutations.ts
       // and not surfaced on the barrel.)
       "AuditQueryParams",
@@ -2949,10 +2940,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // daemon's existing selectSecretStore call is the sole production consumer of the factory.
       "createSqliteSecretStore",
       "SqliteSecretStoreHandle",
-      // Fleet window-rollup reducer (v2.15 R2/A2, Phase 159-02). reduceFleetWindow
-      // is the PURE cross-session reduce over the A1 SessionSummaryRollup[] (the
+      // Fleet window-rollup reducer. reduceFleetWindow
+      // is the PURE cross-session reduce over the SessionSummaryRollup[] (the
       // synthetic-excluded fleet aggregate); FleetWindowRollup is its output type.
-      // Barrel-exported from packages/memory/src/index.ts so the Phase-161
+      // Barrel-exported from packages/memory/src/index.ts so the
       // obs.fleet.health handler can import it — but no in-repo module consumes the
       // reducer/type until that handler lands. The public-export-consumers walker
       // excludes *.test.ts (the reducer's only current consumer is its own test) and
@@ -2961,7 +2952,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // non-test value consumer of each lands.
       "reduceFleetWindow",
       "FleetWindowRollup",
-      // Cache-break rate-by-reason analytics query (PERSIST-01, Phase 176 Plan 04).
+      // Cache-break rate-by-reason analytics query.
       // queryCacheBreakRateByReason is the GROUP BY json_extract(details,'$.reason')
       // over obs_diagnostics category:'cache_break'; CacheBreakReasonRate is its
       // output row type. Barrel-exported from packages/memory/src/index.ts so a fleet/
@@ -2973,16 +2964,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // its real production consumer.) Remove when the fleet/explain consumer lands.
       "queryCacheBreakRateByReason",
       "CacheBreakReasonRate",
-      // Video job store (v2.24 Phase 189, JOB-01). SHRUNK at Plan 02 (the async
+      // Video job store. SHRUNK (the async
       // poller wave): `createVideoJobStore` (constructed in main-helpers
       // buildVideoGenBundle), `VideoJobStore` + `VideoJobRecord` (the poller +
       // handler-deps name-import them) now have real in-repo consumers — removed.
-      // STILL ORPHAN (kept — Plan 03 video_status handler / offline path):
+      // STILL ORPHAN (kept — the video_status handler / offline path):
       //   - VideoJobInsert / VideoJobDoneInput / VideoJobState: domain types the
       //     store API uses internally; no separate cross-package name-import yet.
       //   - ensureVideoJobTable: wired into initSchema (intra-@comis/memory) +
       //     used only by tests + the offline path; no other-package consumer.
-      // Remove each remaining entry when its Plan-03 in-repo value consumer lands.
+      // Remove each remaining entry when its in-repo value consumer lands.
       "VideoJobState",
       "VideoJobInsert",
       "VideoJobDoneInput",
@@ -3177,12 +3168,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // not a baseline orphan.
       "SkillManifestSchema",
       "SkillManifestParsed",
-      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201) — DELETED in Phase 223 Plan 06.
       // The SkillValidationPort sandbox adapter (the bwrap dynamic-replay half + the
-      // now-redundant static scan, which moved to @comis/core validateLearnedDocBody in
-      // Plan 02) was the learned-code execution surface. An advisory doc has NO executable
-      // surface, so Plan 05 dropped the adapter from the reflect path and Plan 06 deleted
-      // sandbox-skill-validation-adapter.ts (the static guard validateLearnedDocBody is ALL
-      // that remains, INV-3). Its barrel re-exports are gone — no allowlist entry needed.
+      // now-redundant static scan, which moved to @comis/core validateLearnedDocBody)
+      // was the learned-code execution surface. An advisory doc has NO executable
+      // surface, so the adapter was dropped from the reflect path and
+      // sandbox-skill-validation-adapter.ts was deleted (the static guard validateLearnedDocBody is ALL
+      // that remains). Its barrel re-exports are gone — no allowlist entry needed.
     ])],
   ]);

@@ -4,7 +4,7 @@
 // browser-oracle.mjs — the CHEAP, zero-dep half of the browser "it actually runs" oracle for a
 // webhook→claude drive that built a static web app (the Snake game, any HTML5/canvas/JS artifact).
 //
-// The webhook-claude-gsd-snake-20260702 run proved the game via the chrome-devtools MCP (real render +
+// A prior run proved such a game via the chrome-devtools MCP (real render +
 // arrow-key interaction) — but nearly logged a FALSE DEFECT twice because the render check is subtle
 // (a game that auto-runs into a wall in ~1.25s reads as a "static" canvas if you screenshot too late).
 // The lesson: gate the EXPENSIVE, timing-sensitive browser check behind a CHEAP, deterministic one that
@@ -29,7 +29,7 @@ import http from "node:http";
 const args = process.argv.slice(2);
 const dir = resolve(args.find((a) => !a.startsWith("--")) || ".");
 // Guard the flag lookups with `>= 0` — a bare `indexOf(flag) + 1` reads args[0] (the DIR) when the
-// flag is absent, so `Number(dir)` → NaN → ERR_SOCKET_BAD_PORT (caught live, webhook-claude-gsd-snake).
+// flag is absent, so `Number(dir)` → NaN → ERR_SOCKET_BAD_PORT (caught live).
 const portIdx = args.indexOf("--port");
 const port = portIdx >= 0 ? Number(args[portIdx + 1]) : 8137;
 const entryIdx = args.indexOf("--entry");

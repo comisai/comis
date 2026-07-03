@@ -130,7 +130,7 @@ describe("telegram-inbound -- handleInboundMessage runWithContext wrap", () => {
 });
 
 // ---------------------------------------------------------------------------
-// message_reaction binder (REACT-01)
+// message_reaction binder
 // ---------------------------------------------------------------------------
 
 describe("bindInboundHandlers -- message_reaction fanout", () => {

@@ -195,15 +195,14 @@ describe("MessagingEvents payload structure", () => {
   it("execution:aborted delivers reason union type", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
-    // SPEND-02 (Phase 177-01): "spend_exceeded" is an ADDITIVE member of the
-    // closed execution:aborted.reason union (the dollars kill-switch abort). RED
-    // on pre-patch: the union at events-messaging.ts lacks it, so the typed
-    // payload below fails to COMPILE for that literal (per AGENTS §2.10 a
-    // compile-RED is the failing state for a closed-type widen).
-    // BREAK-02 (Phase 217-02): "denial_breaker" is the SAME additive pattern —
+    // "spend_exceeded" is a member of the
+    // closed execution:aborted.reason union (the dollars kill-switch abort) —
+    // if the union at events-messaging.ts loses it, the typed
+    // payload below fails to COMPILE for that literal.
+    // "denial_breaker" follows the same pattern —
     // the denial-limit breaker abort (distinct from circuit_breaker, the
-    // tool-failure breaker). RED on pre-patch: the union lacks it, so the typed
-    // payload for that literal fails to COMPILE.
+    // tool-failure breaker); dropping it from the union makes the typed
+    // payload for that literal fail to COMPILE.
     const reasons = [
       "user_stop",
       "budget_exceeded",
@@ -233,10 +232,10 @@ describe("MessagingEvents payload structure", () => {
     expect(handler.mock.calls[4]![0].reason).toBe("context_exhausted");
     expect(handler.mock.calls[5]![0].reason).toBe("pipeline_timeout");
     expect(handler.mock.calls[6]![0].reason).toBe("loop_detected");
-    // SPEND-02: the new dollars-kill-switch abort reason (distinct from the
+    // The dollars-kill-switch abort reason (distinct from the
     // token-budget "budget_exceeded" so the dollars-vs-tokens cause stays clear).
     expect(handler.mock.calls[7]![0].reason).toBe("spend_exceeded");
-    // BREAK-02: the denial-limit breaker abort (N consecutive floor-blocks tripped
+    // The denial-limit breaker abort (N consecutive floor-blocks tripped
     // the breaker; distinct from circuit_breaker, which is the tool-failure breaker).
     expect(handler.mock.calls[8]![0].reason).toBe("denial_breaker");
   });
@@ -246,7 +245,7 @@ describe("MessagingEvents payload structure", () => {
     bus.emit("execution:aborted", {
       sessionKey: testSessionKey,
       // @ts-expect-error - "spend_unpriceable" is NOT an abort-reason member; the
-      // distinct observability:spend_unpriceable EVENT carries that nuance (A3).
+      // distinct observability:spend_unpriceable EVENT carries that nuance.
       reason: "spend_unpriceable",
       agentId: "agent-1",
       timestamp: Date.now(),
@@ -341,7 +340,7 @@ describe("MessagingEvents payload structure", () => {
   });
 
   it("context:dag_expanded delivers in-session expansion-hit metrics (ids/counts/durationMs only)", () => {
-    // O1: a dedicated content-free expansion-hit event emitted by the three
+    // A dedicated content-free expansion-hit event emitted by the three
     // ctx_* tools on a hit. Closed `tool` union; recovered/hit count; durationMs.
     // NEVER message or summary content (the lossless store; AGENTS.md §2.2/§2.7).
     const bus = new TypedEventBus();
@@ -440,17 +439,17 @@ describe("MessagingEvents payload structure", () => {
     bus.emit("message:sent", { channelId: "c1", messageId: "m1" });
   });
 
-  // RETR-02 (Phase 173-03): the new content-free margin-arbiter Glass-Box event.
-  // RED on pre-patch: `context:arbitrated` is not in EventMap, so the typed payload
-  // below fails to COMPILE (per AGENTS §2.10 a compile-RED is the failing state for
-  // a new closed event contract). Payload is per-tier kept COUNTS + discretionary
+  // The content-free margin-arbiter observability event.
+  // If `context:arbitrated` leaves EventMap, the typed payload
+  // below fails to COMPILE (a compile failure is the guard for
+  // a closed event contract). Payload is per-tier kept COUNTS + discretionary
   // pool TOKENS + a relevanceFirst BOOLEAN + ids/timestamp ONLY — NEVER message,
-  // memory, or query content (the lossless store; AGENTS.md §2.2/§2.7; T-173-03-04).
+  // memory, or query content (the lossless store; AGENTS.md §2.2/§2.7).
   it("context:arbitrated delivers per-tier kept counts + pool tokens (offered+consumed) + floor + ids + relevanceFirst (content-free)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const now = Date.now();
-    // WR-03/WR-02 (Phase 173-05): the payload distinguishes the pool OFFERED from CONSUMED,
+    // The payload distinguishes the pool OFFERED from CONSUMED,
     // carries the floor-token weight, and the kept LTM/KG ids — all content-free.
     const payload: EventMap["context:arbitrated"] = {
       agentId: "agent-1",
@@ -474,11 +473,11 @@ describe("MessagingEvents payload structure", () => {
     expect(received.perTierKept.history).toBe(4);
     expect(received.perTierKept.ltm).toBe(1);
     expect(received.discretionaryPoolTokens).toBe(12_000);
-    // WR-03: consumed is reported distinctly from offered, plus the floor weight.
+    // Consumed is reported distinctly from offered, plus the floor weight.
     expect(received.poolTokensUsed).toBe(9_500);
     expect(received.floorTokens).toBe(800);
     expect(received.poolTokensUsed).toBeLessThanOrEqual(received.discretionaryPoolTokens);
-    // WR-02: the kept cross-tier ids (content-free memory keys).
+    // The kept cross-tier ids (content-free memory keys).
     expect(received.keptLtmIds).toEqual(["mem-ltm-1"]);
     expect(received.keptKgIds).toEqual([]);
     expect(received.relevanceFirst).toBe(true);
@@ -712,18 +711,18 @@ describe("Subagent context lifecycle events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// session:sub_agent_progress (COORD-03 — the 30s read-only progress fork)
+// session:sub_agent_progress (the 30s read-only progress fork)
 // ---------------------------------------------------------------------------
 //
 // The content-free advance signal a long-running child surfaces every ~30s via
-// the read-only progress fork (coordinator-progress-fork.ts). RED on pre-patch:
-// the `session:sub_agent_progress` member is not in the MessagingEvents map, so
-// the typed payload below fails to COMPILE (per AGENTS §2.10 a compile-RED is the
-// failing state for a closed type addition). §2.7 content-free: the shape carries
+// the read-only progress fork (coordinator-progress-fork.ts). If the
+// `session:sub_agent_progress` member leaves the MessagingEvents map,
+// the typed payload below fails to COMPILE (a compile failure is the guard
+// for a closed type contract). §2.7 content-free: the shape carries
 // ONLY runId/agentId/a short progressLine/counts/timestamp — NO field is allowed
 // to carry the child's output, message body, or tool result.
 
-describe("session:sub_agent_progress payload structure (COORD-03 content-free)", () => {
+describe("session:sub_agent_progress payload structure (content-free)", () => {
   it("delivers runId, agentId, progressLine, elapsedMs, stepsExecuted, timestamp", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -750,7 +749,7 @@ describe("session:sub_agent_progress payload structure (COORD-03 content-free)",
   });
 
   it("is content-free: the payload exposes ONLY the bounded status keys (no child output/body)", () => {
-    // §2.7 / T-218-14: the only keys the event may carry are the 6 bounded
+    // §2.7: the only keys the event may carry are the 6 bounded
     // status fields. A `response`/`output`/`message`/`body`/`toolResult` key
     // would leak the child's content into the lead's window — assert the key set
     // is exactly the allow-list so a future widening that adds a payload field is
@@ -817,17 +816,17 @@ describe("Config nesting integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// context:dag_degraded reason union (Phase 160 I1 — LCD-divergence widening)
+// context:dag_degraded reason union — the LCD-divergence literals
 // ---------------------------------------------------------------------------
 //
-// The closed `reason` union gains the 3 LCD-divergence literals so the
-// lcd-ingest WR-01 shrink skip + the leaf/condense ordinal-window skips can
-// emit `context:dag_degraded` (persisted as a `health_signal` row). RED on
-// pre-patch: the literals are not in the union, so these payload values fail to
-// COMPILE (per AGENTS §2.10 a compile-RED is the failing state for a closed
-// type widen). The union stays CLOSED (string literals only) — §2.8-compliant.
+// The closed `reason` union carries the 3 LCD-divergence literals so the
+// lcd-ingest shrink skip + the leaf/condense ordinal-window skips can
+// emit `context:dag_degraded` (persisted as a `health_signal` row). If a
+// literal leaves the union, the corresponding payload value fails to
+// COMPILE (a compile failure is the guard for a closed
+// type contract). The union stays CLOSED (string literals only) — §2.8-compliant.
 
-describe("context:dag_degraded reason union (I1 divergence literals)", () => {
+describe("context:dag_degraded reason union (divergence literals)", () => {
   function emitWithReason(reason: EventMap["context:dag_degraded"]["reason"]): EventMap["context:dag_degraded"]["reason"] {
     const bus = new TypedEventBus();
     const handler = vi.fn();

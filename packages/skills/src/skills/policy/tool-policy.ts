@@ -63,15 +63,15 @@ export const TOOL_PROFILES: Record<string, string[]> = {
     "heartbeat_manage",
   ],
   /**
-   * COORD-01 lean-coordinator surface (§23.10). The tool set a long-running lead
-   * with `autonomy.role: coordinator` is narrowed to (resolveAutonomy expands the
+   * Lean-coordinator surface. The tool set a long-running lead with
+   * `autonomy.role: coordinator` is narrowed to (resolveAutonomy expands the
    * role into `coordinatorToolGroups: ["coordinator"]`, applied by setup-tools).
-   * NARROWS only: this is the orchestration set + the orch:read drill-in tools
-   * (so the lead can read a child ResultRef — SUMREF-03) + `obs_query` (the obs
-   * surface as a tool NAME, not a capability — AGENT_CAPABILITIES is unchanged).
-   * Deliberately EXCLUDES the heavy-work tools (no exec/edit/write/browser):
-   * heavy/long/high-volume work always routes to a fresh-window child, never
-   * inline (COORD-02).
+   * NARROWS only: this is the orchestration set + the read-only drill-in tools
+   * (so the lead can read a child ResultRef without ingesting it) + `obs_query`
+   * (the observability surface exposed as a tool NAME, not a new capability —
+   * AGENT_CAPABILITIES is unchanged). Deliberately EXCLUDES the heavy-work tools
+   * (no exec/edit/write/browser): heavy, long, or high-volume work always routes
+   * to a fresh-window child, never inline.
    */
   coordinator: [
     // orchestration (the group:sessions members + scheduling + messaging)
@@ -83,7 +83,7 @@ export const TOOL_PROFILES: Record<string, string[]> = {
     "session_search",
     "cron",
     "message",
-    // orch:read drill-in — read a child ResultRef without ingesting it (SUMREF-03)
+    // read-only drill-in — read a child ResultRef without ingesting it
     "read",
     "grep",
     "find",

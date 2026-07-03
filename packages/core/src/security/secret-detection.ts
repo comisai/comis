@@ -2,24 +2,22 @@
 /**
  * Secret-detection keystone — the single authoritative secret firewall.
  *
- * Replaces two fragmented predecessors:
- *   - `daemon/api/mcp-plaintext-secret.ts` (`looksLikePlaintextSecret`) —
- *     applied only to `mcp.connect`/`mcp.test` env, and `looksLikePlaintextSecret`
- *     returned `false` for `Bearer <token>` (the space tripped the delimiter
- *     gate; the bug that leaked the Higgsfield token).
- *   - `core/security/config-redaction.ts` (`redactConfigSecrets` /
- *     `SECRET_FIELD_PATTERN`) — applied only to `config.read` and the pattern
- *     missed `authorization`/`cookie`/header field names.
+ * One shared implementation, deliberately NOT split per call-site: fragmented
+ * per-surface detectors diverge, and each divergence is a leak class — a value
+ * heuristic where a space defeats the delimiter gate misses `Bearer <token>`
+ * (that exact miss once leaked a live provider token), and a field-name
+ * pattern alone misses `authorization`/`cookie`/header field names. Both
+ * classes are covered here.
  *
  * The keystone ships path-independent primitives only — consumers (the
  * write/persist path, last-good snapshot, mcp.connect firewall) are wired
  * separately.
  *
- * Hardening of `looksLikeSecretValue` over `looksLikePlaintextSecret`: strip
- * surrounding quotes + a leading auth scheme (Bearer/Basic/Token/Digest,
- * case-insensitive) BEFORE the curated-prefix scan / delimiter gate / entropy
- * backstop. The curated prefix list, length>=44 && entropy>3.5 backstop, and
- * the full false-positive negative-control set are preserved.
+ * `looksLikeSecretValue` strips surrounding quotes + a leading auth scheme
+ * (Bearer/Basic/Token/Digest, case-insensitive) BEFORE the curated-prefix
+ * scan / delimiter gate / entropy backstop, so a quoted or schemed credential
+ * cannot slip past the gates. The entropy backstop is length>=44 &&
+ * entropy>3.5, pinned by a full false-positive negative-control test set.
  *
  * @module
  */
@@ -41,7 +39,7 @@ export interface SecretFinding {
   readonly reason: "secret-field" | "secret-value";
 }
 
-// ── Value heuristic (relocated + hardened from mcp-plaintext-secret.ts) ──
+// ── Value heuristic (quote/scheme-stripped prefix scan + entropy backstop) ──
 
 /**
  * Real-world credential prefixes that almost-certainly indicate a raw secret.
@@ -65,7 +63,7 @@ export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
   "glpat-", // GitLab personal access token
   "sk_live_", // Stripe live secret key
   "sk_test_", // Stripe test secret key
-  // additions: complete the parity gap vs @comis/observability patterns.ts.
+  // Prefixes required for parity with @comis/observability patterns.ts:
   "hf_", // HuggingFace access token (Higgsfield + HuggingFace Hub)
   "hfr_", // HuggingFace OAuth refresh token
   "r8_", // Replicate token (gap vs patterns.ts:143)
@@ -168,7 +166,7 @@ function stripSurroundingQuotes(value: string): string {
 /**
  * True if a value looks like a raw credential.
  *
- * Hardened pre-step (vs the old `looksLikePlaintextSecret`):
+ * Pre-steps applied before any gate (so a quoted/schemed credential still flags):
  *   1. strip surrounding quotes
  *   2. strip a leading case-insensitive auth scheme (Bearer/Basic/Token/Digest)
  *   3. skip unresolved env-ref placeholders on the remainder
@@ -210,18 +208,17 @@ export function looksLikeSecretValue(value: string): boolean {
   );
 }
 
-// ── Field-name superset (relocated from config-redaction.ts + extended) ──
+// ── Field-name superset (pattern + exact header-name set) ──
 
 /**
- * Pattern matching field names that contain secrets. Relocated verbatim from
- * the deleted `config-redaction.ts` `SECRET_FIELD_PATTERN`.
+ * Pattern matching field names that contain secrets.
  */
 const SECRET_FIELD_PATTERN =
   /^(.*token|.*secret|.*password|.*apiKey|.*api_key|.*credential|.*private_key|botToken|appSecret|hmacSecret|webhookSecret)$/i;
 
 /**
  * Exact (lowercased) field names that imply a secret but are NOT matched by
- * `SECRET_FIELD_PATTERN` — the header superset closing the config-redaction gap.
+ * `SECRET_FIELD_PATTERN` — header-style names the pattern alone misses.
  */
 const SECRET_FIELD_NAMES: ReadonlySet<string> = new Set([
   "authorization",
@@ -234,7 +231,7 @@ const SECRET_FIELD_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * True if a FIELD NAME implies a secret. Superset of the old
+ * True if a FIELD NAME implies a secret:
  * `SECRET_FIELD_PATTERN` ∪ the header set above, case-insensitive.
  */
 export function isSecretFieldName(name: string): boolean {
@@ -322,12 +319,12 @@ function walkScan(
   }
 }
 
-// ── Redaction (replaces redactConfigSecrets) ────────────────────────
+// ── Redaction for display ───────────────────────────────────────────
 
 /**
  * Deep-clone an object and replace every string field whose NAME is a secret
- * field name with `[REDACTED]`. Replaces `redactConfigSecrets`, using the
- * superset `isSecretFieldName`. The input is never mutated.
+ * field name with `[REDACTED]`, using the superset `isSecretFieldName`.
+ * The input is never mutated.
  */
 export function redactForDisplay<T>(obj: T): T {
   const cloned = structuredClone(obj);

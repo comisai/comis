@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit coverage for `wait.ts` — the AUTO-03 `tg wait` trajectory-tail mechanic
- * (Phase 205, Plan 02).
+ * Unit coverage for `wait.ts` — the AUTO-03 `tg wait` trajectory-tail mechanic.
  *
  * Two suites:
  *   1. `resolveTrajectoryFile` — the canonical pointer resolution chain
  *      (mirror of obs-explain-readers.ts): runtimeFile › co-located fallback ›
- *      no-pointer fallback. NEVER the §2.10 hand-built `<dataDir>/sessions/<id>`
+ *      no-pointer fallback. NEVER the hand-built `<dataDir>/sessions/<id>`
  *      base path that never existed on disk.
  *   2. `waitForTrajectorySignal` — block-until-signal with an enum-validated
- *      `--event` (Pitfall 5), a `--tool` `tool.result` match, an honest
+ *      `--event`, a `--tool` `tool.result` match, an honest
  *      unknown-event reject BEFORE tailing, and the settle-timeout/hard-timeout
- *      fallback (§13-Q4) — never a hang, never a false match.
+ *      fallback — never a hang, never a false match.
  *
  * Pure file-I/O against temp dirs + the committed real-shape fixture — no
  * daemon, no key, no network. The trajectory JSONL line shape is the
@@ -75,7 +74,7 @@ function buildLayout(): Layout {
 }
 
 // ---------------------------------------------------------------------------
-// Suite 1 — resolveTrajectoryFile (Task 1).
+// Suite 1 — resolveTrajectoryFile.
 // ---------------------------------------------------------------------------
 
 describe("resolveTrajectoryFile — canonical pointer resolution chain", () => {
@@ -119,7 +118,7 @@ describe("resolveTrajectoryFile — canonical pointer resolution chain", () => {
   });
 
   it("falls back to the co-located trajectory file when no pointer file exists at all", () => {
-    // No pointer written — must NOT throw the §2.10 wrong-base-path; resolve the
+    // No pointer written — must NOT throw the wrong-base-path error; resolve the
     // co-located convention instead.
     expect(resolveTrajectoryFile(layout.sessionFile)).toBe(layout.colocatedTrajectory);
   });
@@ -136,7 +135,7 @@ describe("resolveTrajectoryFile — canonical pointer resolution chain", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 2 — waitForTrajectorySignal (Task 2).
+// Suite 2 — waitForTrajectorySignal.
 // ---------------------------------------------------------------------------
 
 describe("waitForTrajectorySignal — enum-validated block-until-signal with a settle-timeout fallback", () => {

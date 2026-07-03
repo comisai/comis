@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LCD afterTurn CONDENSE pass (Phase 130, C2 — Plan 02 Task 2).
+ * Tests for the LCD afterTurn CONDENSE pass.
  *
- * RED-first. Drives `maybeRunCondensePass` — the mirror of `maybeRunLeafPass`
+ * Drives `maybeRunCondensePass` — the mirror of `maybeRunLeafPass`
  * that folds a contiguous run of ≥`condensedMinFanout` same-depth summary-refs
  * into one depth+1 condensed summary (select the shallowest contiguous run →
  * summarize the child content via the INJECTED stub → `appendCondensedSummary`
@@ -220,7 +220,7 @@ describe("maybeRunCondensePass — no-op below fanout", () => {
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(summarize, logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -260,7 +260,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -295,7 +295,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
   });
 
   it("emits a REAL durationMs (clock-at-emit minus clock-at-entry), not the hardcoded 0 stub; maxDepthReached stays depth", async () => {
-    // O1: identical fix to the leaf trigger — time the condense pass from the
+    // Identical to the leaf trigger — time the condense pass from the
     // injected clock CALLABLE. A fake clock returns 2000 then 2090 → durationMs
     // MUST be 90, never 0. RED on pre-patch (no nowFn param + durationMs is 0).
     seedHistory(store, 40, 100);
@@ -323,7 +323,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
     expect(compacted[0]!.payload.durationMs).toBe(90);
     // `timestamp` stays the injected scalar `now`.
     expect(compacted[0]!.payload.timestamp).toBe(FIXED_NOW);
-    // Per-pass counts UNCHANGED; maxDepthReached is the REAL depth (1), not 0 (Pitfall 3).
+    // Per-pass counts UNCHANGED; maxDepthReached is the REAL depth (1), not a hardcoded 0.
     expect(compacted[0]!.payload.condensedSummariesCreated).toBe(1);
     expect(compacted[0]!.payload.leafSummariesCreated).toBe(0);
     expect(compacted[0]!.payload.maxDepthReached).toBe(1);
@@ -341,7 +341,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -360,10 +360,10 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
 });
 
 // ===========================================================================
-// Pitfall 3 — non-contiguous fanout is NEVER condensed across a message-ref
+// Non-contiguous fanout is NEVER condensed across a message-ref
 // ===========================================================================
 
-describe("maybeRunCondensePass — contiguity (Pitfall 3)", () => {
+describe("maybeRunCondensePass — contiguity across surviving message-refs", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -409,7 +409,7 @@ describe("maybeRunCondensePass — contiguity (Pitfall 3)", () => {
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -545,14 +545,14 @@ describe("maybeRunCondensePass — non-fatal degrade", () => {
 });
 
 // ===========================================================================
-// WR-01 — "one resolved view is source of truth": taint + previousSummary must
+// "One resolved view is source of truth": taint + previousSummary must
 // come from the SAME single snapshot the children were selected from, NOT from
-// later independent getSummaries re-reads. (The pass is documented to become
-// deferred/async in Phase 132, so a store mutation between reads must not let a
+// later independent getSummaries re-reads. (The pass may become
+// deferred/async, so a store mutation between reads must not let a
 // diverged snapshot silently mis-propagate taint or break continuity.)
 // ===========================================================================
 
-describe("maybeRunCondensePass — single resolved snapshot is the source of truth (WR-01)", () => {
+describe("maybeRunCondensePass — single resolved snapshot is the source of truth", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -603,7 +603,7 @@ describe("maybeRunCondensePass — single resolved snapshot is the source of tru
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -629,7 +629,7 @@ describe("maybeRunCondensePass — single resolved snapshot is the source of tru
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -641,10 +641,10 @@ describe("maybeRunCondensePass — single resolved snapshot is the source of tru
 });
 
 // ===========================================================================
-// FIX 5 — deep tiering (depth-1 → depth-2) + condensedMinFanoutHard under pressure
+// Deep tiering (depth-1 → depth-2) + condensedMinFanoutHard under pressure
 // ===========================================================================
 
-describe("maybeRunCondensePass — deep tiering and hard-fanout (FIX 5)", () => {
+describe("maybeRunCondensePass — deep tiering and the hard fanout under pressure", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -773,7 +773,7 @@ describe("maybeRunCondensePass — deep tiering and hard-fanout (FIX 5)", () => 
 });
 
 // ===========================================================================
-// I1 (Phase 160): the inverted-window divergence skip emits context:dag_degraded
+// The inverted-window divergence skip emits context:dag_degraded
 // ===========================================================================
 //
 // The condense divergence branch (`run.endOrdinal < run.startOrdinal`) is a
@@ -821,7 +821,7 @@ function withInvertedSummaryOrdinals(real: ContextStorePort): ContextStorePort {
   };
 }
 
-describe("maybeRunCondensePass — inverted-window divergence emits context:dag_degraded (I1)", () => {
+describe("maybeRunCondensePass — inverted-window divergence emits context:dag_degraded", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -875,27 +875,27 @@ describe("maybeRunCondensePass — inverted-window divergence emits context:dag_
 });
 
 // ===========================================================================
-// SUMW-02 (Phase 178): condense trigger denominator = budget window
+// Condense trigger denominator = budget window
 // ===========================================================================
 //
-// Mirror of the leaf-side SUMW-02 block (see lcd-compaction-trigger.test.ts for
-// the full DIST-01 incident narrative). The condense-specific consequence: the
+// Mirror of the leaf-side denominator block (see lcd-compaction-trigger.test.ts
+// for the full incident narrative). The condense-specific consequence: the
 // pressureHigh gate (resolvedTokens / windowTokens > contextThreshold) decides
 // whether the HARD fanout (condensedMinFanoutHard, 2) may force a condense the
 // soft fanout (condensedMinFanout, 4) would skip. With the legacy denominator
-// (the session model's CONFIGURED window, 131_072 in DIST-01) a capability-
+// (the session model's CONFIGURED window, 131_072 in the incident) a capability-
 // capped small model under REAL pressure (26K stored vs a 32_000 budget window)
 // computed utilization 0.198 → pressure LOW → a contiguous run of 3 summaries
 // sat un-condensed forever — condensation looked "intermittent" live.
 //
 // These tests drive the afterTurn wrapper (runCondensePassAfterTurn) — the seam
-// where the denominator lives. C1 is RED on pre-patch code; C2 (frontier parity
-// pin) passes pre+post BY DESIGN (no cap binds → budgetWindowTokens ==
-// getModel().contextWindow — I3 byte-identical). C1 also asserts the 172-02
-// onCondensed distillation seam fires with the NEW summaryId, so the threading
-// change can never silently drop the hook (T-178-04).
+// where the denominator lives. The pressure test is RED on pre-patch code; the
+// frontier parity pin passes pre+post BY DESIGN (no cap binds →
+// budgetWindowTokens == getModel().contextWindow — byte-identical). The
+// pressure test also asserts the onCondensed distillation seam fires with the
+// NEW summaryId, so the threading change can never silently drop the hook.
 
-describe("SUMW-02: condense trigger denominator = budget window", () => {
+describe("condense trigger denominator is the turn's budget window", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -921,7 +921,7 @@ describe("SUMW-02: condense trigger denominator = budget window", () => {
   /**
    * Collapse the FIRST `width` surviving depth-0 leaf summary-refs (ordinal >
    * `fromOrdinalAfter`) into ONE depth-1 condensed summary-ref (mirrors the
-   * FIX 5 helper) so successive calls produce ADJACENT depth-1 refs.
+   * collapseLeaf helper) so successive calls produce ADJACENT depth-1 refs.
    */
   function collapseCondensed(fromOrdinalAfter: number, width: number): string {
     const items = store.getContextItems(SCOPE);
@@ -952,7 +952,7 @@ describe("SUMW-02: condense trigger denominator = budget window", () => {
   }
 
   /**
-   * The DIST-01 condense layout: EXACTLY 3 contiguous depth-1 summary-refs
+   * The capped-small-model condense layout: EXACTLY 3 contiguous depth-1 summary-refs
    * (≥ hard fanout 2, < soft fanout 4) followed by 26 raw messages totalling
    * ~26K resolved tokens. Construction: 38 msgs × 1_000; collapse the oldest
    * 12 into 6 contiguous depth-0 leaves (tokenCount 5 each); fold pairs of
@@ -971,13 +971,13 @@ describe("SUMW-02: condense trigger denominator = budget window", () => {
     expect(d1Run.map((it) => it.ordinal)).toEqual([0, 1, 2]);
   }
 
-  it("SUMW-02-C1 (DIST-01): pressureHigh ratios against the BUDGET window — the hard fanout (2) forces a condense the soft fanout (4) would skip", async () => {
+  it("pressureHigh ratios against the BUDGET window — the hard fanout (2) forces a condense the soft fanout (4) would skip", async () => {
     // Pre-patch: pressure = 26_015 / getModel().contextWindow (131_072) = 0.198
     //   ≤ 0.75 → pressure LOW → soft fanout 4 governs → the run of 3 is skipped
     //   → NO depth-2 condensed summary → FAILS (RED).
     // Post-patch: pressure = 26_015 / budgetWindowTokens (32_000) = 0.813
     //   > 0.75 → pressure HIGH → hard fanout 2 → the run of 3 condenses into ONE
-    //   depth-2 summary AND the 172-02 onCondensed distillation hook fires with
+    //   depth-2 summary AND the onCondensed distillation hook fires with
     //   its summaryId.
     seedDist01CondenseLayout();
     const logger = createMockLogger();
@@ -1003,14 +1003,14 @@ describe("SUMW-02: condense trigger denominator = budget window", () => {
     // ONE depth-2 condensed summary persisted (the 3 depth-1 children folded).
     const depth2 = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed" && s.depth === 2);
     expect(depth2.length).toBe(1);
-    // The 172-02 distillation seam fired with the NEW summary's id (T-178-04).
+    // The distillation seam fired with the NEW summary's id.
     expect(onCondensedCalls.length).toBe(1);
     expect(onCondensedCalls[0]!.summaryId).toBe(depth2[0]!.summaryId);
     expect(onCondensedCalls[0]!.depth).toBe(2);
   });
 
-  it("SUMW-02-C2 (frontier parity pin): equal budget and configured window (no cap binds) — pressure LOW, soft fanout governs, the 3-run is skipped", async () => {
-    // I3: window == budgetWindowTokens == 200_000 → pressure = 26_015 / 200_000
+  it("frontier parity pin: equal budget and configured window (no cap binds) — pressure LOW, soft fanout governs, the 3-run is skipped", async () => {
+    // Window == budgetWindowTokens == 200_000 → pressure = 26_015 / 200_000
     // = 0.13 ≤ 0.75 → pressure LOW → soft fanout 4 → the run of 3 is skipped —
     // byte-identical to the legacy read (passes pre+post BY DESIGN).
     seedDist01CondenseLayout();
@@ -1041,7 +1041,7 @@ describe("SUMW-02: condense trigger denominator = budget window", () => {
 });
 
 // ===========================================================================
-// SUMW-01 (Phase 178): condense prefix clamp — run input ≤ resolved summarizer window
+// Condense prefix clamp — run input ≤ resolved summarizer window
 // ===========================================================================
 //
 // The condense half of the span invariant ("for all compaction calls, inputTokens
@@ -1051,21 +1051,21 @@ describe("SUMW-02: condense trigger denominator = budget window", () => {
 // (inside maybeRunCondensePass, after run selection + the inverted-ordinal guard)
 // prefix-trims the selected run to the LONGEST child prefix whose Σ tokenCount
 // fits summarizerWindow − condensedTargetTokens − SUMMARIZER_PROMPT_OVERHEAD_TOKENS,
-// keyed to the RESOLVED summarizer (resolveSummarizerWindowTokens — the 178-02
-// contract). Ordinal integrity (T-178-10): a prefix of a contiguous run stays
+// keyed to the RESOLVED summarizer (resolveSummarizerWindowTokens).
+// Ordinal integrity: a prefix of a contiguous run stays
 // contiguous, so [startOrdinal, children[keep-1].ordinal] remains a valid
 // range-replace window and the trimmed children survive UN-CONDENSED in
 // context_items for a later pass. keep < 2 → honest DEBUG skip (a 1-child
-// condense is meaningless re-summarization; T-178-12 — observable, never silent).
+// condense is meaningless re-summarization — observable, never silent).
 //
 // Arithmetic (overhead 2_048, target 2_000): child budget = W − 2_000 − 2_048.
-//   - C1 (RED): W=8_000 → budget 3_952; 4 children × 1_200 → keep 3
-//     (3_600 ≤ 3_952 < 4_800). Pre-patch: all 4 condensed.
-//   - C2 (skip-honesty): W=4_500 → budget 452 < first child 1_200 → keep 0 < 2
-//     → NO condense, store unchanged, no throw. RED pre-patch.
-//   - C3 (no-op pin, I3): W=200_000 → all 4 condensed — legacy behavior.
+//   - The prefix-trim case (RED): W=8_000 → budget 3_952; 4 children × 1_200 →
+//     keep 3 (3_600 ≤ 3_952 < 4_800). Pre-patch: all 4 condensed.
+//   - The skip-honesty case: W=4_500 → budget 452 < first child 1_200 → keep
+//     0 < 2 → NO condense, store unchanged, no throw. RED pre-patch.
+//   - The no-op pin: W=200_000 → all 4 condensed — legacy behavior.
 
-describe("SUMW-01: condense prefix clamp", () => {
+describe("condense prefix clamp fits the resolved summarizer window", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -1078,8 +1078,8 @@ describe("SUMW-01: condense prefix clamp", () => {
   /**
    * Collapse the FIRST `width` surviving depth-0 leaf summary-refs (ordinal >
    * `fromOrdinalAfter`) into ONE depth-1 condensed ref with an EXPLICIT
-   * tokenCount (mirrors the FIX-5/SUMW-02 helpers, parameterized tokenCount —
-   * the clamp's prefix walk sums these stored counts).
+   * tokenCount (mirrors the collapseCondensed helper in the denominator block,
+   * parameterized tokenCount — the clamp's prefix walk sums these stored counts).
    */
   function collapseCondensedWithTokens(
     fromOrdinalAfter: number,
@@ -1144,12 +1144,12 @@ describe("SUMW-01: condense prefix clamp", () => {
       ...makeSummarizerDeps(summarize, logger),
       overrideModel: { model: { contextWindow: overrideWindow }, getApiKey: async () => "k" },
       // The PRIMARY real model — a clamp wrongly keyed here (131_072) or to
-      // getModel()'s 200_000 would keep all 4 children (Pitfall 2 regression).
+      // getModel()'s 200_000 would keep all 4 children (the override-keying regression).
       getRealModel: () => ({ contextWindow: 131_072 }),
     };
   }
 
-  it("SUMW-01-C1 (prefix-trim): an 8K summarizer condenses ONLY the 3-child prefix; the 4th child survives un-condensed for a later pass", async () => {
+  it("prefix-trim: an 8K summarizer condenses ONLY the 3-child prefix; the 4th child survives un-condensed for a later pass", async () => {
     // Child budget = 8_000 − 2_000 − 2_048 = 3_952 → keep 3 (3_600 ≤ 3_952 <
     // 4_800). Pre-patch: all 4 children condensed (childSummaryIds length 4, the
     // 4th ref absorbed by the range-replace) → FAILS (RED).
@@ -1184,7 +1184,7 @@ describe("SUMW-01: condense prefix clamp", () => {
     // endOrdinal == the 3rd child's ordinal (2): the range-replace consumed
     // ordinals 0..2 ONLY → the depth-2 ref sits at ordinal 0 with the 4th depth-1
     // ref IMMEDIATELY after it — alive in context_items, available for a later
-    // pass (T-178-10 ordinal integrity).
+    // pass (ordinal integrity).
     const items = store.getContextItems(SCOPE);
     expect(items[0]!.refKind).toBe("summary");
     expect(items[0]!.refId).toBe(parentId);
@@ -1196,16 +1196,16 @@ describe("SUMW-01: condense prefix clamp", () => {
     expect(fourth!.depth).toBe(1);
   });
 
-  it("INT-W1 (flagship): a served-bound PRIMARY summarizer (configured 131_072 / served 8_000, NO override) prefix-trims the condense run to the SERVED window", async () => {
-    // The milestone integration WARNING 1 scenario on the condense half:
+  it("a served-bound PRIMARY summarizer (configured 131_072 / served 8_000, NO override) prefix-trims the condense run to the SERVED window", async () => {
+    // The served-below-configured scenario on the condense half:
     // summarizer = the primary model on a provider serving 8_000 against a
     // configured 131_072. Resolved window must be min(131_072, 8_000) = 8_000
     // → child budget = 8_000 − 2_000 − 2_048 = 3_952 → keep 3 of the 4 ×
-    // 1_200-token children (the SUMW-01-C1 arithmetic, now bound by SERVED).
-    // Pre-INT-W1 the helper returned the configured 131_072 → all 4 children
+    // 1_200-token children (the prefix-trim arithmetic, now bound by SERVED).
+    // Pre-fix the helper returned the configured 131_072 → all 4 children
     // (4_800 tokens) were concatenated for a provider serving 8K (RED: 4
     // children condensed). primaryServedWindow is the executor-reconcile-gated
-    // windowProvenance.served (WR-02: it binds exactly the getRealModel model).
+    // windowProvenance.served (it binds exactly the getRealModel model).
     const childIds = seedFourDepth1Children();
     const logger = createMockLogger();
     const { bus } = makeEventBus();
@@ -1236,9 +1236,9 @@ describe("SUMW-01: condense prefix clamp", () => {
     expect(rows.map((r) => r.child_summary_id).sort()).toEqual([...childIds.slice(0, 3)].sort());
   });
 
-  it("SUMW-01-C2 (skip-honesty): a summarizer too small for even a 2-child prefix skips the condense cleanly — store unchanged, no throw", async () => {
+  it("skip-honesty: a summarizer too small for even a 2-child prefix skips the condense cleanly — store unchanged, no throw", async () => {
     // W=4_500 → child budget 4_500 − 2_000 − 2_048 = 452 < the first child's
-    // 1_200 → keep 0 < 2 → honest skip (DEBUG only — T-178-12). Pre-patch: all 4
+    // 1_200 → keep 0 < 2 → honest skip (DEBUG only). Pre-patch: all 4
     // condensed → a depth-2 summary appears → FAILS (RED).
     seedFourDepth1Children();
     const itemsBefore = store.getContextItems(SCOPE);
@@ -1268,7 +1268,7 @@ describe("SUMW-01: condense prefix clamp", () => {
     expect(store.getContextItems(SCOPE)).toEqual(itemsBefore);
   });
 
-  it("SUMW-01-C3 (no-op pin, I3): a large-window summarizer condenses ALL 4 children — legacy behavior byte-identical", async () => {
+  it("no-op pin: a large-window summarizer condenses ALL 4 children — legacy behavior byte-identical", async () => {
     // W=200_000 → child budget 195_952 ≥ Σ 4_800 → no trim (effectiveRun === run):
     // all 4 children condense; endOrdinal = the 4th child's ordinal (the whole
     // [0..3] window range-replaced). Passes pre- AND post-patch BY DESIGN.
@@ -1303,10 +1303,10 @@ describe("SUMW-01: condense prefix clamp", () => {
     expect(items.filter((it) => it.refKind === "summary" && depthById.get(it.refId) === 1).length).toBe(0);
   });
 
-  it("IN-01: a bad windowTokens gate-skip leaves a DEBUG breadcrumb — the condense pass never silently disarms", async () => {
+  it("a bad windowTokens gate-skip leaves a DEBUG breadcrumb — the condense pass never silently disarms", async () => {
     // The leaf gate logs `reason: "bad-window"` on the same condition; the
     // condense gate returned with NO trace — the exact "silently disarm" class
-    // the phase invariant forbids. Identifiers + numbers only (I7).
+    // the no-silent-disarm invariant forbids. Identifiers + numbers only.
     const logger = createMockLogger();
     const deps = makeSummarizerDeps(shortSummarizer(), logger);
 
@@ -1326,7 +1326,7 @@ describe("SUMW-01: condense prefix clamp", () => {
     );
   });
 
-  it("WR-03: a target-depth previousSummary shrinks the child budget — the trim accounts the ACTUAL threaded prompt contents", async () => {
+  it("a target-depth previousSummary shrinks the child budget — the trim accounts the ACTUAL threaded prompt contents", async () => {
     // The flat 2_048 overhead covers only the instruction TEMPLATE; the
     // threaded previousSummary at the target depth is ~condensedTargetTokens-
     // sized — feeding both against the flat reserve overflowed near-exactly-
@@ -1378,7 +1378,7 @@ describe("SUMW-01: condense prefix clamp", () => {
     // (previousSummary) = 2_952 → keep 2 (2_400 ≤ 2_952 < 3_600). Pre-fix the
     // budget ignored the previousSummary (4_952 → all 4 kept): children +
     // target + template + prev = 4_800 + 2_000 + 2_048 + 2_000 = 10_848 >
-    // 9_000 — the provider-overflow class SUMW-01 exists to eliminate.
+    // 9_000 — the provider-overflow class the clamp exists to eliminate.
     const newDepth2 = store
       .getSummaries(SCOPE)
       .filter((s) => s.kind === "condensed" && s.depth === 2 && s.summaryId !== prevId);
@@ -1391,15 +1391,16 @@ describe("SUMW-01: condense prefix clamp", () => {
 });
 
 // ===========================================================================
-// OBS-01 (Phase 180-08): summary_language_mismatch at the dag CONDENSE site
+// summary_language_mismatch at the dag CONDENSE site
 // ===========================================================================
 //
-// The requirement's four-row matrix at the condense site (depth = run.depth + 1).
+// The four-row source/summary script matrix at the condense site (depth = run.depth + 1).
 // The condense SOURCE is the children summaries' concatenated CONTENT (the
 // summarizer INPUT); the SUMMARY is the injected condense summarizer's output.
 // RED on pre-patch: maybeRunCondensePass emits NO summary_language_mismatch. All
-// Hebrew glyphs are built from String.fromCodePoint (WR-01).
-describe("maybeRunCondensePass — summary_language_mismatch (OBS-01, condense depth)", () => {
+// Hebrew glyphs are built from String.fromCodePoint so a shell/editor mojibake
+// can never desync the fixture.
+describe("maybeRunCondensePass — summary_language_mismatch (condense depth)", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 

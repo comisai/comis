@@ -824,9 +824,9 @@ describe("surfaceDiscardedPreToolUrl", () => {
 
 describe("recoverEmptyFinalResponse — synthesis branch URL/code preservation", () => {
   it("recoverEmptyFinalResponse preserves URL from pre-tool assistant text in synthesis branch", () => {
-    // RED test: synthesis branch currently discards pre-tool URLs.
-    // This test asserts the URL is preserved in the synthesized recovery string.
-    // FAILS on HEAD because extractActionableArtifacts does not yet exist.
+    // The synthesis branch must not discard pre-tool URLs: the URL is
+    // preserved in the synthesized recovery string (the actionable-artifact
+    // extraction appends it as a "User actions:" suffix).
     const result = recoverEmptyFinalResponse({
       extractedResponse: "",
       textEmitted: true,
@@ -856,9 +856,8 @@ describe("recoverEmptyFinalResponse — synthesis branch URL/code preservation",
   });
 
   it("recoverEmptyFinalResponse does NOT include framing prose URL in synthesis branch", () => {
-    // Negative control: framing prose guard must fire before URL extraction.
-    // This test PASSES on HEAD (no URL extraction means no framing URLs either).
-    // After GREEN it must still pass — FRAMING_PROSE_RE blocks the leak.
+    // Negative control: the framing-prose guard must fire before URL
+    // extraction — FRAMING_PROSE_RE blocks the leak.
     const result = recoverEmptyFinalResponse({
       extractedResponse: "",
       textEmitted: true,

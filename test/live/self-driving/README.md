@@ -1,8 +1,7 @@
 # Comis Self-Driving Live-Test Framework
 
 > **Home:** `test/live/self-driving/` — the agent-driven orchestration kit, a sibling to the deterministic
-> emulator/journeys suite under `test/live/` (it drives `test/live/bin/vps-emu.ts`). Relocated from
-> `.planning/live-tests/live-tests-v2/` on 2026-06-25.
+> emulator/journeys suite under `test/live/` (it drives `test/live/bin/vps-emu.ts`).
 >
 > **What this is.** Point an agent at this folder **with a target** and it drives a comprehensive,
 > deep-and-broad live test of Comis on the VPS through the Telegram emulator — end to end — fixing every
@@ -10,17 +9,15 @@
 >
 > **The three target shapes** (any one):
 > 1. **A use case** — "test the NVDA DAG pipeline", "test memory recall across sessions", "test STT/TTS round-trip".
-> 2. **A milestone** — "test v2.29 M1", "test v2.28 channel-emulation" → it reads the roadmap/plan and tests every requirement.
-> 3. **A design document** — a path like `.planning/design/SECURE-AGENT-AUTONOMY-M1-platform-foundation.md` → it reads the doc and tests every implementation/success-criterion.
+> 2. **A milestone** — "test a named milestone" → it reads the roadmap/plan and tests every requirement.
+> 3. **A design document** — a path to a design/spec document → it reads the doc and tests every implementation/success-criterion.
 >
 > **How to invoke it (the user):** *"Live-test `<target>` using `test/live/self-driving/` — drive it end to end."*
 > The agent then follows **`00-MISSION.md`**.
 
-This kit **compiles** the historical `.planning/live-tests/` archive (the 1876-line protocol, the
-comprehensive Tracks A–L, the 30-UC catalog, the emulator-harness design, the FINDINGS lessons, the
-config-map, the milestone-coverage and verify audits, the VPS runbook + scripts) into one followable kit.
-It is the **canonical go-forward** entry; that archive is **local / gitignored** historical deep-reference —
-the few `…` refs to it below point at `.planning/live-tests/…` (present on the dev box, not committed).
+This kit **compiles** the full live-test protocol — the comprehensive Tracks A–L, the 30-UC catalog, the
+emulator-harness design, the FINDINGS lessons, the config-map, and the milestone-coverage and verify audits,
+plus the VPS runbook + scripts — into one followable kit. It is the **canonical** entry point.
 
 ## The kit (read in order; the mission tells you which when)
 
@@ -37,7 +34,7 @@ the few `…` refs to it below point at `.planning/live-tests/…` (present on t
 | **`templates/`** | `TEST-PLAN.template.md`, `RESULTS-LOG.template.md`, `FIX-VERIFY-LOG.template.md` — copy per run into `runs/<target>-<date>/`. |
 | **`targets/`** | How to specify a target + worked examples: `EXAMPLE-nvda-dag.md` (channel/orchestrate) and `EXAMPLE-verified-learning.md` (offline/DB/event-resident). Also `MEMORY-LEARNING-STRESS-CATALOG.md` (12 complex memory/learning workloads) + `adaptive-threat-hunting.md` (a pinned spec). |
 | **`sim/`** | **Real-world tool simulators + skills** for the memory/learning workloads — each gives the agent a zero-dep MCP toolset over a stateful, seeded world + a mechanics-teaching `SKILL.md`, so a drive produces rich transcripts the reflection engine learns from. `sim/README.md` = how to use + how to copy/install onto a running daemon while driving a memory/learning test. |
-| **`runs/`** | Per-run output (TEST-PLAN/RESULTS-LOG/FIX-VERIFY-LOG). Worked runs: `runs/verified-learning-20260624/` (offline target; found+fixed the MD-02 `memory_store` bug) · `runs/orchestration-excellence-20260624/` (channel/DAG target; verified P0-A/B/C+P1 shipped, found the per-root wall-clock long-session degrade). |
+| **`runs/`** | Per-run output (TEST-PLAN/RESULTS-LOG/FIX-VERIFY-LOG), one directory per run under `runs/<target>-<date>/`. |
 
 ## The one-paragraph contract (memorize this)
 

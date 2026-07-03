@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * AUTO-05 — the (optional) Telegram webhook path: the HARNESS-SIDE secret-token
- * gate + the testable PRODUCT surface today + the HONEST product gap (Phase 208,
- * Plan 04).
+ * gate + the testable PRODUCT surface today + the HONEST product gap.
  *
- * ⚠ THE AUTO-05 FINDING (HIGH confidence, re-verified at HEAD this session): there
+ * ⚠ THE AUTO-05 FINDING (HIGH confidence, re-verified at HEAD): there
  * is NO Telegram webhook INGESTION route in Comis. 'shouldUseRunner'
  * (packages/channels/src/telegram/telegram-adapter/telegram-webhook.ts:116)
  * returns '!webhookUrl' and merely SKIPS the @grammyjs/runner polling loop when a
@@ -27,14 +26,14 @@
  * asserted against the product SOURCE ground truth since it is not barrel-
  * exported) — and DOCUMENTS the product gap honestly. It NEVER asserts "a webhook
  * update reached the agent" against a route that does not exist. The honest gap
- * is also the DOC-01 (Plan 06) input.
+ * is also captured for the docs.
  *
  * (OPTION 1 — a test-first product webhook ingestion route mounting grammy's
  * 'webhookCallback(bot, { secretToken })' — is the deferred alternative; it is a
  * security-sensitive NEW inbound boundary and net-new product scope, NOT taken in
- * this capstone run. See the Plan-04 decision gate + the SUMMARY.)
+ * this capstone run.)
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204-207 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): the
  *     deterministic surface. The harness-side secret-token gate (the emulator's
@@ -284,7 +283,7 @@ describe("SEC-02 Stage-B — the never-published guard re-verifies + the phase d
     // validators with ZERO product change. If this fails, a packages source-tree file
     // was touched — i.e. someone took Option 1 (a product ingestion route). That
     // is a SECURITY-SENSITIVE inbound boundary that must land test-first with the
-    // secret-token gate + the §2.7 logging matrix + full 'pnpm validate' — STOP
+    // secret-token gate + the logging matrix + full 'pnpm validate' — STOP
     // and route it through Option 1's gates, not this guard.
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CR-01 / CR-02 (213-REVIEW) RED-first integration contract for the tree-wide
- * spawn ceiling (CEIL-01) driven through the REAL production spawn path.
+ * Integration contract for the tree-wide
+ * spawn ceiling driven through the REAL production spawn path.
  *
  * The unit suites (root-run-semaphore.test.ts, sub-agent-runner.test.ts) prove
  * the semaphore + the runner's ceiling consult in ISOLATION by passing an
@@ -13,13 +13,13 @@
  * caller-supplied `rootRunId` (the in-process agent loop / a leased sub-agent
  * calling `sessions_spawn`).
  *
- * It asserts the four CEIL-01 guarantees the headline brief requires:
+ * It asserts the four ceiling guarantees:
  *   (a) children SHARE the parent's rootRunId (ONE tree, not N size-1 trees),
  *   (b) the concurrency cap actually TRIPS after `maxConcurrentSelfAgents`
  *       (the `for(;;) spawn()` fork-bomb is bounded),
- *   (c) `killByRootRun(parentRoot)` reaches the children (REVOKE-03 cascade),
+ *   (c) `killByRootRun(parentRoot)` reaches the children (the revoke cascade),
  *   (d) a COMPLETED run RELEASES its slot (a later spawn on the same root is
- *       re-admitted — CR-02).
+ *       re-admitted).
  *
  * On the pre-fix code (the daemon callers mint a fresh root per spawn + no
  * releaseSpawn wiring) every one of these fails.
@@ -62,7 +62,7 @@ function fakeLeaseManager(): LeaseManager {
  * real sub-agent runner wired to its ceiling acquire+release, a real
  * `resolveRootRunId` resolver, and the real `session.spawn` RPC handler over
  * them. `executeAgent` is a deferred-controlled fn so spawned runs stay
- * "running" until the test resolves them (driving the CR-02 release path).
+ * "running" until the test resolves them (driving the slot-release path).
  */
 function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) {
   const clock = createFakeClock(1_000);
@@ -113,10 +113,10 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
     tenantId: "default",
     clock,
     timers,
-    // CEIL-01: the runner consults the real composite at the spawn chokepoint…
+    // The runner consults the real composite at the spawn chokepoint…
     checkSpawnCeiling: (rootRunId, depth, fanout) =>
       boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout),
-    // …and releases the reserved slot on every run completion (CR-02).
+    // …and releases the reserved slot on every run completion.
     releaseSpawnCeiling: (rootRunId) => boundedAutonomy.releaseSpawn(rootRunId),
   };
   const subAgentRunner = createSubAgentRunner(runnerDeps);
@@ -138,7 +138,7 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
     securityConfig: { agentToAgent: { enabled: true, waitTimeoutMs: 5000 } },
     tenantId: "default",
     logger: createMockLogger(),
-    // Phase 213 CR-01: the session→rootRunId resolver the handler threads so a
+    // The session→rootRunId resolver the handler threads so a
     // top-level (operator) spawn shares the session's stable root.
     resolveRootRunId,
   };
@@ -153,8 +153,8 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
     // Advance the clock between spawns so the runner's last-resort
     // `root-<agentId>-<now>` mint produces a DISTINCT id each call. Without
     // this, two same-ms spawns collide to the SAME minted root and (a)/(b)/(c)
-    // pass spuriously on the broken (no-propagation) code — the exact masking
-    // artifact 213-REVIEW CR-01 calls out. A correct fix propagates the tree
+    // pass spuriously on the broken (no-propagation) code — a masking
+    // artifact. A correct fix propagates the tree
     // root EXPLICITLY, so it must hold even when every mint would differ.
     clock.advance(1_000);
     const res = (await handlers["session.spawn"]!({
@@ -190,7 +190,7 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
 
 const OPERATOR_SESSION = formatSessionKey({ tenantId: "default", userId: "user1", channelId: "ch1" } as SessionKey);
 
-describe("CEIL-01 tree-wide spawn ceiling — driven through the REAL session.spawn path", () => {
+describe("tree-wide spawn ceiling — driven through the REAL session.spawn path", () => {
   it("(a) children that re-enter session.spawn WITHOUT a rootRunId inherit the parent's tree root", async () => {
     const h = makeHarness();
 
@@ -208,7 +208,7 @@ describe("CEIL-01 tree-wide spawn ceiling — driven through the REAL session.sp
     const child = await h.spawnViaHandler({ task: "child", callerSessionKey: parentChildSession });
     const childRun = h.subAgentRunner.getRunStatus(child.runId);
 
-    // ONE tree → ONE id. A fresh-root-per-spawn (the CR-01 defect) fails here.
+    // ONE tree → ONE id. A fresh-root-per-spawn defect fails here.
     expect(childRun?.rootRunId).toBe(parentRoot);
   });
 

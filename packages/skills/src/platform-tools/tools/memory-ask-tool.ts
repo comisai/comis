@@ -12,9 +12,9 @@
  * This tool is a THIN rpcCall dispatcher: it holds NO model and NO DB handle
  * (the `@comis/skills` tier discipline). It MUST NOT import the LLM-call package
  * (`@earendil-works/pi`-agent's ai module) or resolve a model — the synthesis
- * seam lives in the daemon. Registration + the opt-in
- * `dialectic.enabled` gate land later (this file only defines the
- * factory).
+ * seam lives in the daemon. Registration and the opt-in
+ * `dialectic.enabled` gate live in the registry/setup-tools layer (this file
+ * only defines the factory).
  *
  * @module
  */
@@ -25,7 +25,7 @@ import { registerActivityLabelSpec } from "@comis/core";
 import { jsonResult, readStringParam, readNumberParam } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name.
+// Activity label spec. Descriptor name == emitted name.
 registerActivityLabelSpec("memory_ask", {
   semanticPhase: "memory",
   label: "asking memory",

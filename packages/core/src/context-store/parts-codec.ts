@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure parts <-> pi-ai canonical Message round-trip (F2/F3).
+ * Pure parts <-> pi-ai canonical Message round-trip (lossless fidelity +
+ * reasoning exclusion).
  *
  * Lives in core — the only non-agent package that depends on pi-ai. No
  * embedded database, no wall-clock reads — pure + unit-testable. Provider-
@@ -12,7 +13,7 @@
  * the OpenAI Responses function-output blocks, etc.) here — pi-ai owns that
  * and is version-pinned.
  *
- * Fidelity model (F1/F2): every content block is emitted as one part whose
+ * Fidelity model: every content block is emitted as one part whose
  * `metadata.raw` is the verbatim canonical block; the message-level envelope
  * (every top-level field except `content`) rides verbatim on the FIRST part's
  * `metadata.messageEnvelope`. A top-level `ToolResultMessage` is its own
@@ -21,7 +22,7 @@
  * round-trip drops no field; the typed tool columns are the queryable
  * projection, not the source of truth.
  *
- * F3: a `thinking` block becomes a `reasoning` part marked
+ * Reasoning exclusion: a `thinking` block becomes a `reasoning` part marked
  * `topLevelReasoningOnly` and is NOT re-emitted as a visible content block on
  * reconstruction (excluded from visible content + summarizer input); its tokens
  * were already counted agent-side at write time (`estimateMessageTokens` counts
@@ -54,10 +55,10 @@ function envelopeOf(msg: UserMessageLike | AssistantMessage): Record<string, unk
 type UserMessageLike = Extract<Message, { role: "user" }>;
 
 /**
- * Decompose a canonical pi-ai `Message` into structured LCD parts (write path,
- * F1): one part per content block, plus a single `tool_result` part for a
+ * Decompose a canonical pi-ai `Message` into structured LCD parts (write
+ * path): one part per content block, plus a single `tool_result` part for a
  * top-level `ToolResultMessage`. Captures `metadata.raw` = the verbatim block
- * (or whole tool-result message), the F3 top-level reasoning marker, and the
+ * (or whole tool-result message), the top-level reasoning marker, and the
  * message-level envelope on the first part.
  */
 export function messageToParts(msg: Message): LcdMessagePart[] {
@@ -80,11 +81,11 @@ export function messageToParts(msg: Message): LcdMessagePart[] {
     return part;
   });
 
-  // WR-01: an empty-content message (e.g. an aborted/errored assistant turn,
+  // An empty-content message (e.g. an aborted/errored assistant turn,
   // `content: []`) would otherwise emit zero parts, so the `index === 0`
   // envelope-attachment above never runs and the whole envelope
   // (api/provider/model/usage/stopReason/errorMessage/timestamp) is lost on
-  // round-trip — a direct F2 violation. Emit a single envelope-carrier part
+  // round-trip — a direct fidelity violation. Emit a single envelope-carrier part
   // (no `raw` block) so the envelope always has a carrier; `partsToMessage`
   // restores the envelope from it and excludes it from the reconstructed
   // visible content, faithfully rebuilding an empty-content message.
@@ -99,10 +100,10 @@ export function messageToParts(msg: Message): LcdMessagePart[] {
 
 /**
  * Reconstruct a canonical pi-ai `Message` from a persisted `LcdMessage` (read
- * path, F2): rebuild blocks with STABLE ids (so tool_use<->tool_result pair),
+ * path): rebuild blocks with STABLE ids (so tool_use<->tool_result pair),
  * preferring `metadata.raw` for exactness, restore the message envelope from
  * the first part, and exclude `topLevelReasoningOnly` reasoning from the
- * reconstructed VISIBLE content (F3).
+ * reconstructed VISIBLE content.
  */
 export function partsToMessage(row: LcdMessage): Message {
   if (row.role === "toolResult") {
@@ -110,8 +111,8 @@ export function partsToMessage(row: LcdMessage): Message {
   }
 
   // user | assistant: restore the envelope from the first part, then rebuild
-  // the visible content blocks (F3: skip topLevelReasoningOnly reasoning;
-  // WR-01: skip an envelope-carrier placeholder — it holds the envelope of an
+  // the visible content blocks (skip topLevelReasoningOnly reasoning;
+  // skip an envelope-carrier placeholder — it holds the envelope of an
   // empty-content message, not a real block, so it must not become content).
   const envelope = (row.parts[0]?.metadata.messageEnvelope ?? {}) as Record<string, unknown>;
   const content = row.parts
@@ -132,12 +133,12 @@ function blockToPart(block: unknown): LcdMessagePart {
       return { kind: "text", metadata: { raw: block, rawType: "text" } };
 
     case "image":
-      // F1: the verbatim ImageContent (data + mimeType) is kept in metadata.raw;
-      // no externalization in Phase 127.
+      // The verbatim ImageContent (data + mimeType) is kept in metadata.raw;
+      // the codec never externalizes image bytes.
       return { kind: "file", metadata: { raw: block, rawType: "image" } };
 
     case "thinking":
-      // F3: reasoning is captured as a marked part, excluded from visible
+      // Reasoning is captured as a marked part, excluded from visible
       // content on reconstruction, but its tokens are counted at write time.
       return {
         kind: "reasoning",
@@ -173,8 +174,7 @@ function blockFromPart(part: LcdMessagePart): unknown {
   // NEVER become a content block: a sparse block crashes every downstream
   // `.type` consumer (token estimator, transcript-repair) inside the LCD
   // assembler's transformContext — BEFORE the LLM call — aborting the whole turn
-  // and surfacing to the user as a silent "AI didn't produce a response"
-  // (LCD-codec regression 2026-06-14: openai-codex on a fresh install).
+  // and surfacing to the user as a silent "AI didn't produce a response".
   const raw = part.metadata.raw;
   if (raw != null && typeof raw === "object" && typeof (raw as { type?: unknown }).type === "string") {
     return raw;

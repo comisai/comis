@@ -601,7 +601,7 @@ describe("CacheBreakEvent structure", () => {
     detector.reset();
   });
 
-  it("returned event includes all required fields per", () => {
+  it("returned event includes all required CacheBreakEvent fields", () => {
     detector.recordPromptState(makeBaseInput());
     detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
     detector.recordPromptState(makeBaseInput({
@@ -634,10 +634,10 @@ describe("CacheBreakEvent structure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// notifyContentModification (G-09)
+// notifyContentModification
 // ---------------------------------------------------------------------------
 
-describe("notifyContentModification (G-09)", () => {
+describe("notifyContentModification", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
@@ -839,7 +839,7 @@ describe("attributeReason priority for headers/extra-body", () => {
   });
 });
 
-describe("detector integration for new reasons", () => {
+describe("detector integration for headers/extra-body reasons", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
@@ -1157,7 +1157,7 @@ describe("lookback-aware cache break attribution", () => {
     expect(event!.conversationBlockCount).toBe(30);
   });
 
-  it("defaults to 0 block count when messageBlockCount not provided (backward compat)", () => {
+  it("defaults to 0 block count when messageBlockCount not provided", () => {
     // No messageBlockCount provided, should fall through to likely_server_eviction
     detector.recordPromptState(makeBaseInput());
     detector.checkResponseForCacheBreak({
@@ -1579,7 +1579,7 @@ describe("API error suppression", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Design 3.4: LRU eviction warning + configurable MAX_TRACKING_ENTRIES
+// LRU eviction warning + configurable MAX_TRACKING_ENTRIES
 // ---------------------------------------------------------------------------
 
 describe("cache break detector LRU eviction warning", () => {
@@ -1629,8 +1629,8 @@ describe("cache break detector LRU eviction warning", () => {
 });
 
 // Sentinel: ensure the imported fixtureParams and extractAnthropicPromptState
-// reference is consumed (one of the integration tests indirectly verified
-// extractor + detector compose correctly before split).
+// reference is consumed — pins that the Anthropic extractor's output shape
+// composes with the detector's RecordPromptStateInput.
 const _crossCheck = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _ensureUsed: unknown = _crossCheck;

@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the PURE recurrence/gate scorer — the TDD CORE of
- * Phase 158 (PROVE & gate: fleet-triage baseline, requirement M2).
+ * RED-first unit tests for the PURE recurrence/gate scorer — the TDD core of
+ * the fleet-triage baseline gate.
  *
- * This is the metric-bearing analysis that GATES Phase 160 (the I-track reorder/trim
- * signal): which currently-log-only signals recur enough in the real `~/.comis` to be
- * worth instrumenting. Because the Plan-03 measurement is only as trustworthy as this
- * scorer, the verdict logic is proven RED→GREEN here BEFORE the script consumes it —
- * the `--selftest` discipline, mirroring the Phase-149 diagnosis-gating-report.test.ts
- * (the EXACT analog), MINUS the LLM-judge apparatus (158 spends zero tokens — no
+ * This is the metric-bearing analysis that GATES the downstream instrumentation (the
+ * reorder/trim signal): which currently-log-only signals recur enough in the real
+ * `~/.comis` to be worth instrumenting. Because the measurement is only as trustworthy
+ * as this scorer, the verdict logic is proven RED→GREEN here BEFORE the script consumes
+ * it — the `--selftest` discipline, mirroring diagnosis-gating-report.test.ts
+ * (the EXACT analog), MINUS the LLM-judge apparatus (this gate spends zero tokens — no
  * CostGovernor, no judgeAnswer, no COMIS_LIVE gate).
  *
- * THE LOAD-BEARING CASE (RESEARCH Pitfall 4): a realCount of 0 is NOT automatically a
+ * THE LOAD-BEARING CASE: a realCount of 0 is NOT automatically a
  * confident SKIP. The scorer MUST distinguish a CONFIDENT SKIP (the emitting code path
  * was exercised but the WARN never fired → SKIP-NEVER-RECURS) from INCONCLUSIVE (0
  * observed because the path was never hit on this light dev machine). A false
- * confident-SKIP on the milestone's flagship signal (LCD ×7) would silently gut
- * Phase 160 — so the two cases MUST produce DIFFERENT verdicts.
+ * confident-SKIP on the flagship signal (LCD ×7) would silently gut the downstream
+ * instrumentation — so the two cases MUST produce DIFFERENT verdicts.
  *
- * NOTE on the run command (RESEARCH Pitfall 6): these `support/*.test.ts` files are
+ * NOTE on the run command: these `support/*.test.ts` files are
  * NOT in the ROOT vitest workspace, so a bare `pnpm vitest run` resolves the root
  * config and runs NOTHING (a false-RED). Verify under the LIVE config:
  *   pnpm vitest run --config test/live/vitest.config.ts test/live/support/fleet-recurrence-gate.test.ts
@@ -56,7 +56,7 @@ function gapRow(overrides: Partial<GapGateRow>): GapGateRow {
   };
 }
 
-describe("buildGapGateTable — per-signal recurrence verdict (the gate for Phase 160)", () => {
+describe("buildGapGateTable — per-signal recurrence verdict", () => {
   it("buildGapGateTable returns INSTRUMENT-160 for a recurring log-only signal", () => {
     // realCount >= RECURRENCE_THRESHOLD (3), not already-structured, in-scope.
     const table = buildGapGateTable([
@@ -85,10 +85,10 @@ describe("buildGapGateTable — per-signal recurrence verdict (the gate for Phas
     expect(table[0]!.verdict).toBe("OUT-OF-SCOPE");
   });
 
-  it("buildGapGateTable distinguishes a CONFIDENT SKIP from INCONCLUSIVE on realCount=0 (LOAD-BEARING, Pitfall 4)", () => {
+  it("buildGapGateTable distinguishes a CONFIDENT SKIP from INCONCLUSIVE on realCount=0", () => {
     // The flagship distinction: 0 observed is only a confident SKIP when the emitting
     // path was exercised. 0 + un-exercised is INCONCLUSIVE — NOT evidence it never
-    // recurs (a false SKIP here would gut Phase 160). These MUST differ.
+    // recurs (a false SKIP here would gut the downstream instrumentation). These MUST differ.
     const exercised = buildGapGateTable([
       gapRow({ signal: "budget-exceeded", realCount: 0, pathExercised: true }),
     ]);
@@ -131,7 +131,7 @@ describe("recordSignalRecurrence — maps a corpus + measured counts into GapGat
     expect(lcd.verdict).toBe("INSTRUMENT-160");
   });
 
-  it("recordSignalRecurrence treats a MISSING measured entry as INCONCLUSIVE, never a crash (tolerant-counter, Security V5)", () => {
+  it("recordSignalRecurrence treats a MISSING measured entry as INCONCLUSIVE, never a crash (tolerant-counter)", () => {
     // The measured map is untrusted — a corpus signal with no measured entry defaults
     // to realCount 0 / pathExercised false → INCONCLUSIVE (NOT a confident SKIP, NOT a
     // throw). mcp-reconnect is absent from `measured` here.
@@ -182,7 +182,7 @@ describe("renderGapGateMarkdown — the gate artifact (markdown table + caveat +
     // each signal appears as a row
     expect(md).toContain("lcd-ingest-skipped");
     expect(md).toContain("budget-exceeded");
-    // the data-scoped CAVEAT carries host + date + window (Pitfall 4 honesty)
+    // the data-scoped CAVEAT carries host + date + window (data-dependence honesty)
     expect(md).toMatch(/CAVEAT/);
     expect(md).toContain("test-host");
     expect(md).toContain("2026-06-08");
@@ -198,7 +198,7 @@ describe("renderGapGateMarkdown — the gate artifact (markdown table + caveat +
     expect(md.match(/INSTRUMENT-160/g) ?? []).toHaveLength(2);
   });
 
-  it("renderGapGateMarkdown output passes the secret sweep (defense-in-depth, T-158-01-01)", () => {
+  it("renderGapGateMarkdown output passes the secret sweep (defense-in-depth)", () => {
     const md = renderGapGateMarkdown(sampleRows(), {
       host: "test-host",
       date: "2026-06-08",
@@ -206,7 +206,7 @@ describe("renderGapGateMarkdown — the gate artifact (markdown table + caveat +
     });
     // The render runs assertNoSecrets internally before returning — re-asserting here
     // proves the table carries only counts/signal-names/typed-verdicts, never bodies.
-    // (import dynamically to mirror the 149 secret-sweep test idiom.)
+    // (import dynamically to mirror the secret-sweep test idiom.)
     return import("../cost.js").then(({ assertNoSecrets }) => {
       expect(() => assertNoSecrets(md, "gap-gate table")).not.toThrow();
     });

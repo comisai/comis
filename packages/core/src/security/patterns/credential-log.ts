@@ -4,7 +4,7 @@
  *
  * Detects API keys, tokens, and secrets in log output to prevent
  * accidental credential exposure through structured logging.
- * Originally from log-sanitizer.ts.
+ * Consumed by log-sanitizer.ts.
  *
  * @module credential-log
  */
@@ -30,7 +30,7 @@ export const STRIPE_KEY = /\bsk_(?:live|test)_[A-Za-z0-9]{24,}\b/g;
 /** Google API key */
 export const GOOGLE_API_KEY = /\bAIzaSy[A-Za-z0-9_-]{33}\b/g;
 
-/** Slack app-level token (bounded {1,200} for ReDoS safety -- was + in original) */
+/** Slack app-level token (bounded {1,200} instead of an unbounded + for ReDoS safety) */
 export const SLACK_APP_TOKEN = /\bxapp-[A-Za-z0-9-]{1,200}\b/g;
 
 /** SendGrid API key */
@@ -46,7 +46,7 @@ export const URL_PASSWORD = /:\/\/([^:]+):([^@]{3,})@/g;
 export const HEX_SECRET_LONG = /\b[0-9a-f]{40,}\b/gi;
 
 /**
- * FAL API key: `<uuid-or-token>:<24+ hex>` (CR-01, Phase 192). A FAL `FAL_KEY`
+ * FAL API key: `<uuid-or-token>:<24+ hex>`. A FAL `FAL_KEY`
  * is a uuid-shaped id joined by `:` to a long hex secret half — caught by NEITHER
  * `HEX_SECRET_LONG` (the uuid half has hyphens; the hex half is ~32 < 40 chars)
  * NOR the digit-prefixed `TELEGRAM_BOT_TOKEN`. The 24-char-hex floor on the tail

@@ -68,7 +68,7 @@ export function setupLogging(deps: {
         maxFiles: container.config.observability.logRotation.maxFiles,
       }
     : undefined;
-  // B (obs-sweep): the structured-log filePath must track the RESOLVED data dir. The schema
+  // The structured-log filePath must track the RESOLVED data dir. The schema
   // default (`~/.comis/logs/daemon.log`, schema-daemon.ts) is hardcoded to the DEFAULT home and
   // does NOT honor a custom COMIS_DATA_DIR / config.dataDir — and the root `daemon` field is
   // ALWAYS schema-defaulted (schema.ts), so `daemon.logging` is never undefined and that default

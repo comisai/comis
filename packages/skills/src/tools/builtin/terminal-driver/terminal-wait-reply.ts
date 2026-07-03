@@ -6,8 +6,8 @@
  * so the mapping is a TESTED unit. The worker's reply rides an IPC frame and is therefore
  * bug-/attacker-influenceable, so {@link mapWaitReply} validates every field and DEFAULTS
  * oddities to the safe not-complete shape — it NEVER coerces `isComplete` to `true` (a
- * false `true` would convince the P5 attention model the work is done and strand a live
- * session). T1.1: it passes the `producing` diagnostic + the branched `hint` THROUGH so a
+ * false `true` would convince the attention model the work is done and strand a live
+ * session). It passes the `producing` diagnostic + the branched `hint` THROUGH so a
  * not-complete timeout explains itself to the caller instead of reading as a failure.
  *
  * @module
@@ -16,29 +16,29 @@
 import type { SettleResult } from "./terminal-settle.js";
 
 /**
- * The settle snapshot returned by `wait` (spec §5) — the `{matched,isComplete,reason}`
- * core + the post-settle `{screen,cursor}` view + the T1.1 diagnostics.
+ * The settle snapshot returned by `wait` — the `{matched,isComplete,reason}`
+ * core + the post-settle `{screen,cursor}` view + the not-complete-timeout diagnostics.
  */
 export interface WaitResult {
   matched: boolean;
   isComplete: boolean;
   reason: SettleResult["reason"];
   /**
-   * T1.1: on a not-complete `reason:"timeout"`, whether the program was STILL producing
+   * On a not-complete `reason:"timeout"`, whether the program was STILL producing
    * output when the budget elapsed (`true` ⇒ keep waiting; `false` ⇒ idle — inspect
    * screen/status). Absent for the complete reasons (idle/text/exit).
    */
   producing?: boolean;
-  /** T1.1: the branched, actionable hint for a not-complete timeout (see `settleHint`). */
+  /** The branched, actionable hint for a not-complete timeout (see `settleHint`). */
   hint?: string;
   screen: string;
   cursor: { x: number; y: number };
 }
 
 /**
- * FINDING-3 (live VPS 2026-06-17): the driving model OVER-READS a settle-complete wait result's
- * `isComplete:true` as "my whole task is done" and ENDS the turn — dropping later requested steps
- * after a build settles (reproduced: "build X then run /status" → built, then stopped; clean
+ * The driving model can OVER-READ a settle-complete wait result's
+ * `isComplete:true` as "my whole task is done" and END the turn — dropping later requested steps
+ * after a build settles (observed: "build X then run /status" → built, then stopped; clean
  * `finishReason:"stop"`, no cap/abort). `isComplete` is SETTLE-scoped (the driven CLI's output
  * settled), NOT task-scoped. {@link withCompleteNote} attaches this model-facing note on the
  * COMPLETE path so the driver finishes only when the whole request is handled. The registry
@@ -49,17 +49,18 @@ export const WAIT_COMPLETE_NOTE =
   "isComplete here means the terminal SETTLED (the driven CLI finished its current output) — it does NOT mean your overall task is done. If the user's request has remaining steps (more commands, edits, or a follow-up like a slash command), continue with them now; finish only when the whole request is handled.";
 
 /**
- * LOOP-CLOSURE recovery (webhook-claude-cli-tdd-20260701, `WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY`):
- * the dominant flub is the agent WAITING on a drive it NEVER tasked — it creates the session, clears
- * the trust gate with `send_key`, then `wait`s BEFORE ever `send_text`-ing the task (the SKILL.md §3
- * order violation). The wait resolves idle and the agent reads "nothing to do" → ends the turn or,
- * on an unattended (webhook/cron) origin with no human to prompt it, hallucinates "I don't have a
- * task from you yet". `cb57b96d` stops that never-tasked drive from BACKGROUNDING (no stranded
- * resurrec-able wake-state); this note closes the other half — a JIT, deterministic tool-result
- * directive delivered at the exact mistake site (stronger than the static SKILL.md nudge, which the
- * flub survives) that steers the agent to deliver the task now OR fail honestly. Origin-independent:
- * waiting on an un-tasked drive is always premature. Supersedes {@link WAIT_COMPLETE_NOTE} — a
- * "your task isn't finished" note is moot when no task was ever delivered.
+ * Never-tasked-drive recovery: the dominant flub is the agent WAITING on a drive it
+ * NEVER tasked — it creates the session, clears the trust gate with `send_key`, then
+ * `wait`s BEFORE ever `send_text`-ing the task (the SKILL.md order violation). The wait
+ * resolves idle and the agent reads "nothing to do" → ends the turn or, on an unattended
+ * (webhook/cron) origin with no human to prompt it, hallucinates "I don't have a task
+ * from you yet". A separate guard stops that never-tasked drive from BACKGROUNDING (no
+ * stranded resurrec-able wake-state); this note closes the other half — a JIT,
+ * deterministic tool-result directive delivered at the exact mistake site (stronger than
+ * the static SKILL.md nudge, which the flub survives) that steers the agent to deliver
+ * the task now OR fail honestly. Origin-independent: waiting on an un-tasked drive is
+ * always premature. Supersedes {@link WAIT_COMPLETE_NOTE} — a "your task isn't finished"
+ * note is moot when no task was ever delivered.
  */
 export const WAIT_TASK_NOT_DELIVERED_NOTE =
   "You have NOT delivered a task to this session yet (no send_text since it launched), so waiting will not make progress — the terminal is idle because it has nothing to do, NOT because your work is finished. Your task is in THIS conversation; do NOT report that you have no task or that the message came through empty. Send the full task now with send_text + Enter, THEN wait/poll to completion. If you genuinely cannot proceed (e.g. the CLI needs re-authentication), report the failure honestly — never claim a success you did not verify.";
@@ -67,11 +68,11 @@ export const WAIT_TASK_NOT_DELIVERED_NOTE =
 /**
  * Attach the model-facing wait note. Two guards, in priority order (model-facing JSON only; the
  * registry {@link WaitResult} / daemon contract is UNCHANGED):
- *   1. `neverTaskedLiveDrive` (LOOP-CLOSURE recovery) → {@link WAIT_TASK_NOT_DELIVERED_NOTE}: the
+ *   1. `neverTaskedLiveDrive` → {@link WAIT_TASK_NOT_DELIVERED_NOTE}: the
  *      agent is waiting on a LIVE drive it never tasked — steer it to deliver the task or fail
  *      honestly (supersedes the complete-note). Set only for a drive whose handle exists AND has
  *      `everSentText===false` (a gone/absent handle is NOT this case — see the wait tool).
- *   2. else `isComplete` (FINDING-3 scope guard) → {@link WAIT_COMPLETE_NOTE}: don't over-read a
+ *   2. else `isComplete` (the settle-scope guard) → {@link WAIT_COMPLETE_NOTE}: don't over-read a
  *      SETTLE-complete wait as "task done".
  * A not-complete, tasked result is returned unchanged (the driver keeps waiting). `neverTaskedLiveDrive`
  * defaults `false` so every existing caller is byte-identical to today (only the wait tool passes it).
@@ -83,7 +84,7 @@ export function withCompleteNote(out: WaitResult, neverTaskedLiveDrive = false):
 
 /**
  * The honest not-complete shape for a wedged/absent worker — NEVER `isComplete:true`.
- * Carries a T1.1 hint so the caller reads it as "the worker did not reply" (the session
+ * Carries a hint so the caller reads it as "the worker did not reply" (the session
  * may still be running) rather than "the program produced nothing".
  */
 export function degradedWaitResult(): WaitResult {

@@ -1,35 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * createSqliteOutwardSendLedger — SQLite persistence for the Phase-216 three-state
- * exactly-once outward-send ledger (ONCE-01..ONCE-04), implementing the
+ * createSqliteOutwardSendLedger — SQLite persistence for the three-state
+ * exactly-once outward-send ledger, implementing the
  * `@comis/core` {@link OutwardSendLedgerPort}.
  *
  * Factory-function pattern (modeled wholesale on `createSqliteDurableRunStore` /
  * `createVideoJobStore`): prepares fixed SQL statements once in the closure,
  * returns a frozen `OutwardSendLedgerPort`. Reads go through
  * `createRowMapper(OutwardLedgerDbRowSchema)` so a corrupt row degrades to a
- * `Result.err`, never a throw (T-216-12) — one bad row cannot abort the whole boot
+ * `Result.err`, never a throw — one bad row cannot abort the whole boot
  * recovery scan.
  *
- * WHY THREE STATES (the §9 invariant #12 this store pins): a send-intent is
+ * WHY THREE STATES (the exactly-once send invariant this store pins): a send-intent is
  * persisted as `send_attempt_started` BEFORE the irreversible platform call, then
  * flipped to `unknown_after_send` immediately BEFORE control returns from that
  * call, and only `committed` once the local ack persists. So on a crash mid-send,
  * the recovery scan finds a durable row whose state DISTINGUISHES "definitely
  * sent" from "crashed, must ask the platform" — and reconciles it PER-ROW
- * (`listUnreconciled` → the engine's `reconcileSend?`, Plan 04). This store has NO
+ * (`listUnreconciled` → the engine's `reconcileSend?`). This store has NO
  * blind `in_flight → pending` bulk reset (the `delivery-queue-adapter.ts:141-145`
- * anti-pattern §9 forbids, T-216-09) — that blanket UPDATE is the double-send a
+ * bulk-reset anti-pattern) — that blanket UPDATE is the double-send a
  * restart must never do.
  *
- * THE IDEMPOTENCY KEY (ONCE-02, T-216-10): the UNIQUE `(root_run_id, step_index)`
+ * THE IDEMPOTENCY KEY: the UNIQUE `(root_run_id, step_index)`
  * index (`ensureOutwardLedgerTable`) is the dedup. `begin` is the SOLE INSERT, so
  * a REPLAYED step collides — a `better-sqlite3` UNIQUE-constraint SqliteError the
- * boundary-catch turns into `err`, which the wrap site (Plan 05) reads as "already
+ * boundary-catch turns into `err`, which the wrap site reads as "already
  * in flight → do NOT issue a second platform call". `id` is the deterministic
  * `${rootRunId}:${stepIndex}` so the PK and the UNIQUE pair agree.
  *
- * SECURITY (T-216-11): the persisted columns carry the `content_digest` (sha256)
+ * SECURITY: the persisted columns carry the `content_digest` (sha256)
  * ONLY — there is no body/text column on the table or the record, and no secret /
  * token / bearer column. The reconcile matches on the digest, never the body.
  *
@@ -103,7 +103,7 @@ export function createSqliteOutwardSendLedger(
 ): OutwardSendLedgerPort {
   // --- Prepared statements ---
 
-  // ONCE-01 — begin is the SOLE INSERT, so the UNIQUE (root_run_id, step_index)
+  // begin is the SOLE INSERT, so the UNIQUE (root_run_id, step_index)
   // index makes a duplicate begin throw a SqliteError (caught below → err). id is
   // the deterministic ${rootRunId}:${stepIndex} so the PK and the UNIQUE pair agree.
   const beginStmt = db.prepare(`
@@ -133,10 +133,10 @@ export function createSqliteOutwardSendLedger(
     WHERE root_run_id = ? AND step_index = ?
   `);
 
-  // ONCE-03 — record the reconcile verdict. 'sent' commits the row; 'unresolved'
+  // Record the reconcile verdict. 'sent' commits the row; 'unresolved'
   // parks it in the unresolved terminal (escalate, never blind-replay); 'not_sent'
-  // records the verdict but KEEPS the prior state so the engine can replay (Pitfall
-  // 2 — a default-to-sent would be a double-send dressed as a reconcile). The CASE
+  // records the verdict but KEEPS the prior state so the engine can replay (a
+  // default-to-sent would be a double-send dressed as a reconcile). The CASE
   // computes the next state from the outcome in a single UPDATE.
   const resolveReconcileStmt = db.prepare(`
     UPDATE outward_send_ledger
@@ -150,9 +150,9 @@ export function createSqliteOutwardSendLedger(
     WHERE root_run_id = ? AND step_index = ?
   `);
 
-  // ONCE-03 — the per-row recovery scan. ONLY the still-in-flight rows; the partial
+  // The per-row recovery scan. ONLY the still-in-flight rows; the partial
   // idx_osl_unknown index serves it. This is NOT a blind bulk reset — it RETURNS
-  // the rows so the engine reconciles each against its channel (T-216-09).
+  // the rows so the engine reconciles each against its channel.
   const listUnreconciledStmt = db.prepare(`
     SELECT * FROM outward_send_ledger
     WHERE state IN ('unknown_after_send','send_attempt_started')
@@ -166,8 +166,8 @@ export function createSqliteOutwardSendLedger(
       try {
         const t = nowMs();
         // The UNIQUE (root_run_id, step_index) index throws here on a replayed
-        // step — the boundary-catch turns it into err, which the wrap site (Plan
-        // 05) treats as "already in flight, do NOT double-send" (ONCE-02).
+        // step — the boundary-catch turns it into err, which the wrap site
+        // treats as "already in flight, do NOT double-send".
         beginStmt.run(
           `${input.rootRunId}:${input.stepIndex}`,
           input.rootRunId,

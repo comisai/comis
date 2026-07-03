@@ -92,7 +92,7 @@ describe.skipIf(!isLive)(
             expectedErrors: ["JSON-RPC method error"],
           });
           expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
-          // Ground truth (260611 re-pin): the planted fact is durably stored —
+          // Ground truth: the planted fact is durably stored —
           // content-anchored, not an exact row count (ingestion stores combined
           // user+agent turns AND agent-extracted memories, so the count is
           // nondeterministic; the planted fact's presence is the real invariant).
@@ -142,7 +142,7 @@ describe.skipIf(!isLive)(
           await driver.sendTurn("Please remember: the Eiffel Tower is 330 meters tall.");
           const answer = await driver.sendTurn("How tall is the Eiffel Tower?");
           await flushDaemonLogs(driver);
-          // Two-outcome predicate (260611): an honest non-answer (model
+          // Two-outcome predicate: an honest non-answer (model
           // thinking-only stall → daemon fallback) is acceptable degradation,
           // never a false success; a real answer must mention 330 meters.
           if (!isHonestNonAnswer(answer)) {

@@ -319,9 +319,9 @@ describe("loginOpenAICodexOAuth — method: 'device-code' dispatch", () => {
   });
 
   it("when method is 'browser' (or omitted) it preserves the existing browser-path behavior", async () => {
-    // Backward-compatibility: method default is "browser". Existing browser
-    // tests above already exhaust that path with method omitted; this test
-    // is a pin asserting that explicit method:"browser" goes the browser way.
+    // The method default is "browser". The browser tests above already
+    // exhaust that path with method omitted; this test is a pin asserting
+    // that explicit method:"browser" goes the browser way.
     vi.mocked(loginOpenAICodex).mockResolvedValue({
       access: makeFixtureJwt(),
       refresh: "rt_test",

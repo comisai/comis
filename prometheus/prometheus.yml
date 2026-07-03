@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Sample Prometheus configuration for scraping a Comis daemon's opt-in `/metrics`
-# pull surface (PROM-01/02/03; design §6 WS7).
+# pull surface.
 #
 # Comis exposes `/metrics` ONLY when `observability.prometheus.enabled: true`
 # (loopback-bound `127.0.0.1:9464` by default — see docs/operations/prometheus-grafana.mdx).

@@ -20,7 +20,7 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: true,
     fetchHistory: false,
     attachments: true,
-    // §17.2: Signal DeleteAndRepost — typing, no threads, no buttons.
+    // Signal renders activity via DeleteAndRepost — typing, no threads, no buttons.
     typing: true,
     threads: false,
     buttons: "none",

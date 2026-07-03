@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure classifier for xAI Grok Imagine video-generation failures (GROK-02).
+ * Pure classifier for xAI Grok Imagine video-generation failures.
  *
- * Grok signals failure THREE ways (190-RESEARCH §Pattern 2 + Pitfall 3) — a
+ * Grok signals failure FOUR ways — a
  * RICHER union than FAL (which has NO terminal failed status — a failure is a
  * THROW) and slightly richer than Veo (which has only `operation.error`):
  *   1. a thrown SDK/HTTP error from the REST `fetch` (a non-2xx submit/poll), or
@@ -103,7 +103,7 @@ export function classifyGrokVideoError(
     };
   }
 
-  // GROK-02 expired branch — a terminal `status:"expired"` with no auth/quota/
+  // Expired branch — a terminal `status:"expired"` with no auth/quota/
   // content substring match: the render expired before it could be downloaded.
   // (An expired-with-an-auth/quota/content error classifies above and never
   // reaches here; this is the bare-expired default.)

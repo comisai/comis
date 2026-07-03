@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Prometheus/Grafana STACK artifact validity (PROM-03; design §6 WS7).
+ * Prometheus/Grafana STACK artifact validity.
  *
  * The one-command stand-up's non-dashboard artifacts must be syntactically valid
  * AND structurally consistent (the mounts line up with what the provider/scrape
@@ -48,7 +48,7 @@ function parseYamlFile(file: string): unknown {
   return parseYaml(readFileSync(file, "utf-8"));
 }
 
-describe("prometheus-stack — PROM-03 stand-up artifact validity (live up deferred)", () => {
+describe("prometheus-stack — stand-up artifact validity (live up deferred)", () => {
   it("sanity: all four stack artifacts exist", () => {
     for (const f of [PROMETHEUS_YML, DS_YAML, DASH_PROVIDER_YAML, COMPOSE_YML]) {
       expect(existsSync(f), `missing stack artifact: ${f}`).toBe(true);

@@ -70,9 +70,9 @@ describe("resolveToolMaskingTier", () => {
     expect(resolveToolMaskingTier("read")).toBe("protected");
   });
 
-  it("returns 'standard' for file_read (legacy SDK alias removed)", () => {
-    // @anthropic-ai/sdk 0.91+ emits 'read' (not 'file_read'); the alias has
-    // been removed.
+  it("returns 'standard' for file_read (no protected alias — the SDK emits 'read')", () => {
+    // @anthropic-ai/sdk 0.91+ emits 'read' (not 'file_read'); only 'read' is
+    // in the protected tier map, so 'file_read' falls to the standard default.
     expect(resolveToolMaskingTier("file_read")).toBe("standard");
   });
 

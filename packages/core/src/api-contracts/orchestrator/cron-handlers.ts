@@ -25,8 +25,8 @@ import { defineContract } from "../types.js";
  *
  * The contract describes the WEB on-wire shape (nested `schedule.{kind,expr,
  * tz,everyMs,at}` + `message`); the handler body accepts BOTH the web shape
- * (nested) AND the legacy chat-tool shape (flat `schedule_kind` /
- * `schedule_every_ms` / etc.) to preserve existing handler-test invocations.
+ * (nested) AND the chat-tool shape (flat `schedule_kind` /
+ * `schedule_every_ms` / etc.) — the chat-tool path sends the flat fields.
  *
  * Bespoke pre-Zod validation: duplicate job-name guard reads name on
  * rawParams.name BEFORE the schedule normalization (preserves the
@@ -35,7 +35,7 @@ import { defineContract } from "../types.js";
  * Request: `{ name, agentId?, schedule, message }` (web shape) — the
  * handler also accepts `{ name, schedule_kind, schedule_every_ms?,
  * schedule_expr?, timezone?, schedule_at?, payload_kind?, payload_text }`
- * (legacy flat shape). Loose-record on `schedule` (variant inner shape per
+ * (flat chat-tool shape). Loose-record on `schedule` (variant inner shape per
  * schedule.kind).
  *
  * Response: `{ jobId, name, schedule, model? }`. `schedule` is the normalized
@@ -53,7 +53,7 @@ export const CronAddContract = defineContract({
     sessionTarget: z.string().optional(),
     deliveryTarget: z.record(z.string(), z.unknown()).optional(),
     enabled: z.boolean().optional(),
-    // Legacy flat shape (chat-tool path — exercised by 14+ existing tests).
+    // Flat chat-tool shape (the chat-tool path sends these top-level fields).
     schedule_kind: z.string().optional(),
     payload_kind: z.string().optional(),
     payload_text: z.string().optional(),
@@ -97,9 +97,9 @@ export const CronAddContract = defineContract({
  */
 export const CronListContract = defineContract({
   method: "cron.list",
-  // TARGET-01: optional explicit `agentId` selects one agent's jobs; `agentId: "*"`
-  // returns EVERY agent's jobs (each tagged by `agentId`) — the admin inventory view
-  // I lacked when a non-default agent's crons were invisible. Absent → connection
+  // Optional explicit `agentId` selects one agent's jobs; `agentId: "*"` returns
+  // EVERY agent's jobs (each tagged by `agentId`) — the admin inventory view;
+  // without it a non-default agent's crons are invisible. Absent → connection
   // `_agentId` ?? default (unchanged per-connection scoping).
   request: z.object({ agentId: z.string().optional() }),
   response: z.object({
@@ -189,11 +189,11 @@ export const CronRemoveContract = defineContract({
  */
 export const CronStatusContract = defineContract({
   method: "cron.status",
-  request: z.object({ agentId: z.string().optional() }), // TARGET-01
+  request: z.object({ agentId: z.string().optional() }), // explicit per-agent targeting
   response: z.object({
     running: z.boolean(),
     jobCount: z.number(),
-    resolvedAgentId: z.string().optional(), // TARGET-01: the agent this status is for
+    resolvedAgentId: z.string().optional(), // the agent this status is for
   }),
   scopes: ["rpc"] as const,
 });
@@ -218,7 +218,7 @@ export const CronRunsContract = defineContract({
   request: z.object({
     jobName: z.string(),
     limit: z.number().optional(),
-    agentId: z.string().optional(), // TARGET-01: which agent's run-history
+    agentId: z.string().optional(), // which agent's run-history to read
   }),
   response: z.object({
     runs: z.array(z.record(z.string(), z.unknown())),
@@ -246,16 +246,16 @@ export const CronRunContract = defineContract({
   request: z.object({
     jobName: z.string().optional(),
     mode: z.string().optional(),
-    // TARGET-01: explicit per-agent targeting. When present it selects that agent's
+    // Explicit per-agent targeting. When present it selects that agent's
     // per-agent scheduler; absent, the handler falls back to the connection `_agentId`
-    // then the default — but the response ALWAYS states the resolved agent (I5).
+    // then the default — but the response ALWAYS states the resolved agent.
     agentId: z.string().optional(),
   }),
   response: z.object({
     triggered: z.boolean(),
     mode: z.string(),
     jobName: z.string().optional(),
-    // TARGET-01: the agent the trigger actually acted on (never a silent default).
+    // The agent the trigger actually acted on (never a silent default).
     resolvedAgentId: z.string().optional(),
   }),
   scopes: ["rpc"] as const,

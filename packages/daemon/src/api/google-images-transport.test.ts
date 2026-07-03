@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the Google (Gemini) Images transport (google-images-transport.ts,
- * PRV-02).
+ * Tests for the Google (Gemini) Images transport (google-images-transport.ts).
  *
  * The transport is a pi-ai `ImagesApiFunction` that constructs a `GoogleGenAI`
  * client from `options.apiKey` and calls `models.generateContent` with
@@ -83,10 +82,10 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 1 — generate (text->image), PRV-02
+// Generate (text->image)
 // ---------------------------------------------------------------------------
 
-describe("generateImagesGoogle — generate (PRV-02)", () => {
+describe("generateImagesGoogle — generate", () => {
   it("calls generateContent with responseModalities:[IMAGE] and maps inlineData -> output[0]", async () => {
     gen.mockResolvedValue(imageResponse(PNG_B64));
 
@@ -106,10 +105,10 @@ describe("generateImagesGoogle — generate (PRV-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 2 — edit (reference->image, IN-01 branch): both parts, in order
+// Edit (reference->image): both parts, in order
 // ---------------------------------------------------------------------------
 
-describe("generateImagesGoogle — edit branch (IN-01)", () => {
+describe("generateImagesGoogle — edit branch", () => {
   it("includes both the text and the inlineData reference parts (in order)", async () => {
     gen.mockResolvedValue(imageResponse(PNG_B64));
 
@@ -125,10 +124,10 @@ describe("generateImagesGoogle — edit branch (IN-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 3 — A2: scan ALL parts (image not at index 0)
+// Scan ALL parts (image not at index 0)
 // ---------------------------------------------------------------------------
 
-describe("generateImagesGoogle — scan all parts (A2)", () => {
+describe("generateImagesGoogle — scan all parts", () => {
   it("extracts the image even when a text part precedes the inlineData", async () => {
     gen.mockResolvedValue(imageResponse(PNG_B64, "image/png", "here is your image:"));
 
@@ -148,7 +147,7 @@ describe("generateImagesGoogle — scan all parts (A2)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 4 — no key (no SDK call attempted)
+// No key (no SDK call attempted)
 // ---------------------------------------------------------------------------
 
 describe("generateImagesGoogle — no key", () => {
@@ -163,7 +162,7 @@ describe("generateImagesGoogle — no key", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 5 — content blocked / no image
+// Content blocked / no image
 // ---------------------------------------------------------------------------
 
 describe("generateImagesGoogle — blocked / no image", () => {
@@ -187,7 +186,7 @@ describe("generateImagesGoogle — blocked / no image", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 6 — SDK throw -> never throw out
+// SDK throw -> never throw out
 // ---------------------------------------------------------------------------
 
 describe("generateImagesGoogle — never-throw (SDK reject)", () => {
@@ -202,7 +201,7 @@ describe("generateImagesGoogle — never-throw (SDK reject)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 7 — the hand-built ImagesModel literal (8 fields)
+// The hand-built ImagesModel literal (8 fields)
 // ---------------------------------------------------------------------------
 
 describe("GOOGLE_IMAGE_MODEL literal", () => {

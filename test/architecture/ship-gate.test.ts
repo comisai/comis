@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §17.8 GLOBAL SHIP GATE — transparency-suite-green checklist as an
+ * GLOBAL SHIP GATE — transparency-suite-green checklist as an
  * executable assertion.
  *
- * This is the milestone's terminal lightweight gate. It does NOT re-run the
+ * This is the terminal lightweight gate. It does NOT re-run the
  * whole suite — that is `pnpm validate`'s job (build && test && lint:security
- * && cycles). Instead it asserts the §17.8 transparency ANCHORS are still in
+ * && cycles). Instead it asserts the transparency ANCHORS are still in
  * place, so a future PR that silently removes the transparency-label coverage
  * gate script, the core/observability ⊀ channels boundary lock, the 47-tool
- * registry-parity lock, one of the 10 channel plugins, or the §18.3 golden
+ * registry-parity lock, one of the 10 channel plugins, or the golden
  * fixtures fails THIS test loudly (deterministic, cheap — fs/JSON reads only,
  * no runtime path).
  *
- * Why a checklist-as-test (not a full-suite shell-out): the §17.8 ship gate is
+ * Why a checklist-as-test (not a full-suite shell-out): the ship gate is
  * the UNION of existing automated gates + a written security sign-off; no
- * single executable "ship-gate test" is mandated by the spec. The
+ * single executable "ship-gate test" is mandated. The
  * transparency-label-coverage gate (`pnpm test:transparency`) already runs
  * under the normal `pnpm test` (it is a `.test.ts` under `packages/skills/`),
  * so this file deliberately omits a fragile shell-out and instead pins that the
@@ -40,7 +40,7 @@ function readRootPackageJson(): { scripts?: Record<string, string> } {
   ) as { scripts?: Record<string, string> };
 }
 
-describe("§17.8 global ship gate — transparency anchors are present", () => {
+describe("global ship gate — transparency anchors are present", () => {
   it("wires the pnpm test:transparency coverage gate script pointing at the registry walk", () => {
     const { scripts } = readRootPackageJson();
     const script = scripts?.["test:transparency"];
@@ -75,7 +75,7 @@ describe("§17.8 global ship gate — transparency anchors are present", () => {
       "the core/observability ⊀ channels boundary lock (observability-package-isolation.test.ts) must exist",
     ).toBe(true);
     // It must still contain the renderer-port-in-core lock that mechanically
-    // enforces the §17.8 'no core/ or observability/ → channels/' line.
+    // enforces the 'no core/ or observability/ → channels/' rule.
     const src = readFileSync(boundaryGate, "utf8");
     expect(
       src,
@@ -120,7 +120,7 @@ describe("§17.8 global ship gate — transparency anchors are present", () => {
     ).toEqual([]);
   });
 
-  it("confirms each of the 10 channels has at least one §18.3 golden fixture (S*.expected.json)", () => {
+  it("confirms each of the 10 channels has at least one golden fixture (S*.expected.json)", () => {
     const CHANNELS = [
       "discord",
       "echo",
@@ -151,7 +151,7 @@ describe("§17.8 global ship gate — transparency anchors are present", () => {
     });
     expect(
       channelsWithoutAnyFixture,
-      `every channel must keep its §18.3 golden fixtures (at least one S*.expected.json); channels missing all golden fixtures: ${channelsWithoutAnyFixture.join(", ")}`,
+      `every channel must keep its golden fixtures (at least one S*.expected.json); channels missing all golden fixtures: ${channelsWithoutAnyFixture.join(", ")}`,
     ).toEqual([]);
   });
 });

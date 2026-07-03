@@ -266,7 +266,7 @@ comis config show
 ## Context engine
 
 The context engine manages what your agent sees each turn. The default mode is
-pipeline. Most users do not need to change any context engine settings -- the
+DAG. Most users do not need to change any context engine settings -- the
 defaults work well.
 
 ```yaml title="~/.comis/config.yaml"
@@ -284,8 +284,8 @@ agents:
 ```
 
 <Note>
-  The DAG mode (the `dag` engine version) — the v2.12 "Lossless Context DAG"
-  lossless engine — is the **default**: `version` defaults to `"dag"` (set
+  The DAG mode (the `dag` engine version) — the Lossless Context DAG
+  engine — is the **default**: `version` defaults to `"dag"` (set
   `"pipeline"` to opt into the simpler engine). DAG keeps the full faithful
   history losslessly (a verbatim fresh tail + transcript repair), zoomably
   compresses the oldest history under a token budget, and exposes the in-session

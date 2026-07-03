@@ -156,10 +156,10 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain("ANTHROPIC_API_KEY=sk-test-key-123");
   });
 
-  it("a keyless-default install (keyless main, omitted audio providers) writes no OPENAI_API_KEY to the env file (WIZ-03 never-strand)", async () => {
-    // The motivating I2 bug, headless variant: an OAuth-only / keyless main with
-    // the keyless STT/TTS schema defaults (transcription/tts omitted) must NOT
-    // strand a phantom OPENAI_API_KEY. collectManagedSecrets writes an audio key
+  it("a keyless-default install (keyless main, omitted audio providers) writes no OPENAI_API_KEY to the env file", async () => {
+    // An OAuth-only / keyless main with the keyless STT/TTS schema defaults
+    // (transcription/tts omitted) must NOT strand a phantom OPENAI_API_KEY
+    // in the .env. collectManagedSecrets writes an audio key
     // ONLY when state carries an apiKey (10-write-config.ts:291-300); a keyless
     // main has no PROVIDER_ENV_KEYS entry either, so nothing reaches the .env.
     const prompter = createMockPrompter();
@@ -227,10 +227,10 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain("COMIS_GATEWAY_TOKEN=test-token-value");
   });
 
-  it("never prompts for a storage choice (the storage prompt moved to step 02b)", async () => {
-    // The secrets.db-gated "Your secrets store is active…" select was removed:
-    // storage mode is now driven by state.storageMode (set by step 02b), so
-    // step 10 never prompts — even when secrets.db exists on disk.
+  it("never prompts for a storage choice (the storage prompt belongs to step 02b)", async () => {
+    // Storage mode is driven entirely by state.storageMode (set by step 02b),
+    // so step 10 never shows its own secrets.db-gated select — even when
+    // secrets.db exists on disk.
     vi.mocked(existsSync).mockReturnValue(true); // secrets.db + everything "exists"
     const prompter = createMockPrompter();
 
@@ -244,7 +244,7 @@ describe("writeConfigStep", () => {
 
   it("uses the encrypted secrets-store path regardless of whether secrets.db already exists", async () => {
     // storageMode="encrypted" drives the store path even when existsSync is
-    // false for secrets.db (the old code gated this on the file existing).
+    // false for secrets.db — the file's on-disk presence must not gate it.
     vi.mocked(existsSync).mockReturnValue(false);
     const prompter = createMockPrompter();
 
@@ -660,10 +660,11 @@ describe("writeConfigStep", () => {
   // ---------- Regression: secrets-store mode must not clobber the master key ----------
 
   it("secrets store mode PRESERVES an existing SECRETS_MASTER_KEY (no encrypted-store clobber)", async () => {
-    // Regression: the secrets-store branch used to overwrite .env with a
-    // comment-only placeholder, dropping the daemon-generated SECRETS_MASTER_KEY.
-    // The next boot regenerated a new key that no longer matched the already-
-    // sealed secrets.db -> DECRYPTION_FAILED, and every stored secret was lost.
+    // Guards the clobber failure mode: if the secrets-store branch overwrote
+    // .env with a comment-only placeholder, the daemon-generated
+    // SECRETS_MASTER_KEY would be dropped; the next boot would regenerate a key
+    // that no longer matches the already-sealed secrets.db -> DECRYPTION_FAILED,
+    // and every stored secret would be lost.
     vi.mocked(existsSync)
       .mockReturnValueOnce(true) // .env exists -> load existing keys
       .mockReturnValue(false); // dataDir, etc.
@@ -690,7 +691,7 @@ describe("writeConfigStep", () => {
     expect(envContent).not.toContain("sk-test-key-123");
   });
 
-  // ---------- Root-cause fix: secrets-store mode must PERSIST collected secrets ----------
+  // ---------- Secrets-store mode must PERSIST collected secrets ----------
 
   describe("secrets-store mode persists collected secrets", () => {
     // storageMode="encrypted" drives the store path; nothing exists on disk.
@@ -700,10 +701,10 @@ describe("writeConfigStep", () => {
     }
 
     it("writes the collected gateway + channel secrets into the encrypted store", async () => {
-      // Regression: the wizard used to emit ${COMIS_GATEWAY_TOKEN}/${TELEGRAM_BOT_TOKEN}
-      // references but DISCARD the values it already had, then merely print
-      // `comis secrets set …`. If the user never ran those, the daemon boots
-      // against unresolvable ${VAR}s and FATAL-crash-loops.
+      // Guards the strand failure mode: emitting ${COMIS_GATEWAY_TOKEN}/
+      // ${TELEGRAM_BOT_TOKEN} references while DISCARDING the collected values
+      // (leaving the user to run `comis secrets set …` by hand) leaves the
+      // daemon booting against unresolvable ${VAR}s and FATAL-crash-looping.
       const prompter = createMockPrompter();
 
       await writeConfigStep.execute(encryptedState(), prompter);

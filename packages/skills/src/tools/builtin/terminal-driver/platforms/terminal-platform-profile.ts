@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `TerminalPlatformProfile` interface — Layer 2 of the 3-layer model (design §2/§4):
+ * The `TerminalPlatformProfile` interface — Layer 2 of the 3-layer model:
  * the read-side perception/render tuning for a first-class TUI (Claude Code, Codex, …),
  * selected by the operator-declared `allowId`.
  *
- * READ-SIDE ONLY (§5/INV-2): a profile transforms what we *perceive* (the post-jail emulator
+ * READ-SIDE ONLY: a profile transforms what we *perceive* (the post-jail emulator
  * snapshot) and how we *classify* it. It NEVER widens the bwrap jail, the env, or the launch —
  * those stay operator-controlled Layer 3. Selection is by `allowId` (operator-declared in the
- * allowlist), so the driven program cannot choose its own profile (no content-sniffing — D3/INV-3).
+ * allowlist), so the driven program cannot choose its own profile (no content-sniffing).
  *
- * Declarative-first (D1): perception + dialogs are DATA (pattern lists), reviewable and testable
+ * Declarative-first: perception + dialogs are DATA (pattern lists), reviewable and testable
  * as data. `transformSnapshot` is the SINGLE code escape hatch — render needs cell-level access
- * (the FINDING-3 ghost-strip reads `RenderCell.dim`). The agnostic default (no profile) keeps
- * today's generic behavior byte-identical (§3/INV-1).
+ * (the ghost-strip reads `RenderCell.dim`). The agnostic default (no profile) keeps
+ * the generic behavior byte-identical.
  *
  * LEAF + type-only deps: this module type-imports the render snapshot/cell shapes from the
  * sibling engine leaf (`terminal-render.ts`) and value-imports NOTHING — the registry composes it.
@@ -26,16 +26,17 @@ import type { EmulatorSnapshot } from "../terminal-render.js";
  * A safe auto-answer keystroke — RAW text fragments that the auto-answer path joins
  * (`keys.join("")`) and sends via `send_text`, EXACTLY like the canned `["\r"]` Enter the
  * operator-hintPattern path already sends (the woken turn does not name-key-encode these).
- * E.g. `["\r"]` to accept a default (Enter), `["2", "\r"]` for choice-2-then-Enter. Consumed in
- * Phase 169. (NOT the named-key `send_key` vocabulary — that path is not used by the auto-answer.)
+ * E.g. `["\r"]` to accept a default (Enter), `["2", "\r"]` for choice-2-then-Enter. Consumed by
+ * the auto-answer path. (NOT the named-key `send_key` vocabulary — that path is not used by the
+ * auto-answer.)
  */
 export type KeySpec = readonly string[];
 
 /**
  * Perception patterns the classifier consumes INSTEAD of hardcoding platform special-cases.
  * Each is additive: present ⇒ refine/override the generic heuristics; absent ⇒ generic only.
- * Populated in Phase 168 (empty for the scaffold). All patterns are hot-path (run per
- * read/settle frame) ⇒ ReDoS-guarded at registry load (`assertSafeProfilePatterns`).
+ * All patterns are hot-path (run per read/settle frame) ⇒ ReDoS-guarded at registry load
+ * (`assertSafeProfilePatterns`).
  */
 export interface PlatformPerception {
   /** The "input is awaited" affordance — Claude's `❯`-box composer ; Codex composer. */
@@ -51,7 +52,7 @@ export interface PlatformPerception {
 /**
  * A known dialog + its SAFE auto-answer keystroke. The operator's safe-only auto-answer policy
  * still gates these (a profile proposes; the operator policy disposes). `destructive` entries are
- * NEVER auto-answered — they escalate (§4/§5). Populated in Phase 169 (empty for the scaffold).
+ * NEVER auto-answered — they escalate to a human.
  */
 export interface PlatformDialog {
   /** A stable label — `"trust-gate" | "permission-prompt" | "approval-overlay"`. */
@@ -66,8 +67,8 @@ export interface PlatformDialog {
 
 /**
  * A read-side per-platform perception/render profile. `undefined` from the registry ⇒ the agnostic
- * default (§3). Selected by `allowId` exact-match (D3); paired with the bundled SKILL.md by a shared
- * `id` + a shared `platformVersion` (drift-guarded at build time — D2).
+ * default. Selected by `allowId` exact-match; paired with the bundled SKILL.md by a shared
+ * `id` + a shared `platformVersion` (drift-guarded at build time).
  */
 export interface TerminalPlatformProfile {
   /** Conceptual pairing id (matches the bundled SKILL.md name): `"claude-code" | "codex" | …`. */
@@ -82,21 +83,21 @@ export interface TerminalPlatformProfile {
 
   /**
    * The version this profile is paired with — MUST equal the bundled SKILL.md frontmatter
-   * `version` (enforced by a build-time architecture test, D2; never a runtime gate).
+   * `version` (enforced by a build-time architecture test; never a runtime gate).
    */
   readonly platformVersion: string;
 
   /**
    * READ-SIDE render transform on the agnostic emulator snapshot (post-jail; pure; total).
    * Default (no profile) = identity. The Claude ghost-strip is the `claude-code` profile's
-   * transform (Phase 167). The transform reads `snap.grid` (the viewport cell grid, present for
+   * transform. The transform reads `snap.grid` (the viewport cell grid, present for
    * text-format snapshots) when it needs cell-level attributes; it must no-op when `grid` is absent.
    */
   readonly transformSnapshot?: (snap: EmulatorSnapshot) => EmulatorSnapshot;
 
-  /** Perception patterns the classifier consumes (Phase 168). */
+  /** Perception patterns the classifier consumes. */
   readonly perception?: PlatformPerception;
 
-  /** Known dialogs + safe answers the dialog-detector/auto-answer consume (Phase 169). */
+  /** Known dialogs + safe answers the dialog-detector/auto-answer consume. */
   readonly dialogs?: readonly PlatformDialog[];
 }

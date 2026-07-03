@@ -526,7 +526,7 @@ describe("obs_query tool", () => {
   });
 
   // -----------------------------------------------------------------------
-  // fleet_health action (R3) — dispatches to obs.fleet.health (admin-guarded)
+  // fleet_health action — dispatches to obs.fleet.health (admin-guarded)
   // -----------------------------------------------------------------------
 
   describe("fleet_health action", () => {
@@ -608,7 +608,7 @@ describe("obs_query tool", () => {
   });
 
   // -----------------------------------------------------------------------
-  // audit action (AUDIT-05, the 9th action) — dispatches to obs.audit.query
+  // audit action (the 9th action) — dispatches to obs.audit.query
   // (admin-guarded; content-free rows)
   // -----------------------------------------------------------------------
 

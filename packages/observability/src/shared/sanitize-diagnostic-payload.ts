@@ -2,8 +2,7 @@
 /**
  * Diagnostic-payload sanitizer.
  *
- * Walks an arbitrary value and applies four sanitization rules (design
- * §4.3 + Comis improvements):
+ * Walks an arbitrary value and applies four sanitization rules:
  *
  *   1. **Credential field-name drop** — drop any object field whose key
  *      matches a credential-name pattern (apiKey, token, password,
@@ -19,13 +18,12 @@
  *      whole pair (the pair shape is common in field-metadata listings
  *      where the surrounding context wants to surface the name).
  *
- *   3. **Image base-64 → sha256+bytes+format (Comis improvement)** —
- *      when an object has the shape `{ mimeType: "image/*", data: <b64>,
- *      ... }` (or `media_type`/`mime_type` aliases), replace `data` with
- *      `{ placeholder: "<redacted>", bytes, sha256, format }`. The
- *      Comis improvement over OpenClaw is preserving `format` from the
- *      mime-type — diagnostics needs to know the image type even though
- *      it must not log the bytes.
+ *   3. **Image base-64 → sha256+bytes+format** — when an object has the
+ *      shape `{ mimeType: "image/*", data: <b64>, ... }` (or
+ *      `media_type`/`mime_type` aliases), replace `data` with
+ *      `{ placeholder: "<redacted>", bytes, sha256, format }`. `format` is
+ *      preserved from the mime-type — diagnostics needs to know the image
+ *      type even though it must not log the bytes.
  *
  *   4. **In-string credential pass** — for free-text fields (no
  *      special shape), regex-replace embedded credentials:

@@ -181,7 +181,7 @@ export interface ScopedSecretManagerOptions {
   /** The agent this scoped manager belongs to. Included in all audit events. */
   agentId: string;
 
-  /** Glob patterns that grant access. Empty array = unrestricted (backward compat). */
+  /** Glob patterns that grant access. Empty array = unrestricted (an omitted allow list must not deny). */
   allowPatterns: string[];
 
   /** Optional event bus for audit event emission. No-op if omitted. */

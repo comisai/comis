@@ -10,7 +10,7 @@ import type { RichButton, RichCard, RichEffect } from "../domain/rich-message.js
 export type MessageHandler = (message: NormalizedMessage) => void | Promise<void>;
 
 /**
- * Callback signature for incoming reactions from a channel (REACT-01, WS1).
+ * Callback signature for incoming reactions from a channel.
  */
 export type ReactionHandler = (reaction: NormalizedReaction) => void | Promise<void>;
 
@@ -95,8 +95,8 @@ export interface ChannelPort {
    *
    * The optional `options` arg lets activity renderers update rich approval /
    * status frames in place — inline keyboards, components, or Block Kit — not
-   * just the message text (§16.11). In-tree adapters are updated separately to
-   * honour it; this is the port-shape widening only.
+   * just the message text. Adapters that ignore `options` still satisfy the
+   * port; the rich fields are best-effort per platform.
    *
    * @param channelId - Target channel/chat/room identifier
    * @param messageId - The platform-specific ID of the message to edit
@@ -118,7 +118,7 @@ export interface ChannelPort {
   onMessage(handler: MessageHandler): void;
 
   /**
-   * Register a handler for incoming reactions (REACT-01, Verified Learning WS1).
+   * Register a handler for incoming reactions.
    *
    * OPTIONAL capability. Adapters whose platform exposes an inbound reaction-add
    * event WITH the reactor's id implement it (Discord/Slack/Telegram); the rest
@@ -263,14 +263,14 @@ export interface ChannelPort {
   ): Promise<Result<unknown, Error>>;
 
   /**
-   * Reconcile a crash-interrupted outward send (Phase 216, ONCE-03): query the
-   * platform for "did this send actually land?" so recovery can decide commit vs
-   * replay for an `unknown_after_send` ledger row.
+   * Reconcile a crash-interrupted outward send: query the platform for "did
+   * this send actually land?" so recovery can decide commit vs replay for an
+   * `unknown_after_send` ledger row.
    *
    * OPTIONAL — adapters that cannot query the platform for "did this send?" OMIT
-   * it; recovery treats absence as `unresolved` → park+escalate (ONCE-03).
-   * NEVER return not_sent for a channel that cannot actually tell (Pitfall 2 —
-   * that is a double-send dressed as a reconcile).
+   * it; recovery treats absence as `unresolved` → park+escalate.
+   * NEVER return not_sent for a channel that cannot actually tell —
+   * that is a double-send dressed as a reconcile.
    *
    * @param query - The content digest + time window to match against platform history
    * @returns The closed sent/not_sent/unresolved outcome, or an error
@@ -295,7 +295,7 @@ export interface ReconcileSendQuery {
 }
 
 /**
- * The closed-union verdict of a {@link ChannelPort.reconcileSend} (ONCE-03):
+ * The closed-union verdict of a {@link ChannelPort.reconcileSend}:
  *   - `sent`       — the message is present on the platform; `platformMessageId` is the id.
  *   - `not_sent`   — the platform was queried and the message is definitively absent.
  *   - `unresolved` — the platform could not tell (the honest "cannot determine").

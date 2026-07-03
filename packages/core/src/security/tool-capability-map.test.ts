@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Coverage tests for TOOL_CAPABILITY_MAP + TOOL_ROUTE_MAP (Phase 212, the
- * single source-of-truth for the `tool.invoke` surface).
+ * Coverage tests for TOOL_CAPABILITY_MAP + TOOL_ROUTE_MAP (the single
+ * source-of-truth for the `tool.invoke` surface).
  *
  * Pins the anchor tool→cap classifications, the default-deny-by-absence
  * invariant (an unmapped tool is `undefined`), the cap-map↔route-map
@@ -44,14 +44,14 @@ describe("TOOL_CAPABILITY_MAP", () => {
     expect(TOOL_CAPABILITY_MAP.jq).toBe("orch:read");
   });
 
-  it("maps the sql + jsonpath ResultRef query cores to orch:read (QRY-01/02, never write/admin/web)", () => {
-    // QRY-01 (DuckDB-over-CSV/JSONL) + QRY-02 (json_extract, no-eval) are
+  it("maps the sql + jsonpath ResultRef query cores to orch:read (never write/admin/web)", () => {
+    // sql (DuckDB-over-CSV/JSONL) + jsonpath (json_extract, no-eval) are
     // read-only slicers over a materialized results/ file — mirror jq.
     expect(TOOL_CAPABILITY_MAP.sql).toBe("orch:read");
     expect(TOOL_CAPABILITY_MAP.jsonpath).toBe("orch:read");
     // A query engine must NEVER carry a write/admin/web cap — confine it to the
-    // read surface so the default-deny gate authorizes only an in-jail read
-    // (T-221-QRY-05). orch:read / orch:web are the only two caps on this surface,
+    // read surface so the default-deny gate authorizes only an in-jail read.
+    // orch:read / orch:web are the only two caps on this surface,
     // so "not orch:web" pins both off the write/web side.
     expect(TOOL_CAPABILITY_MAP.sql).not.toBe("orch:web");
     expect(TOOL_CAPABILITY_MAP.jsonpath).not.toBe("orch:web");
@@ -123,7 +123,7 @@ describe("TOOL_ROUTE_MAP", () => {
     expect(TOOL_ROUTE_MAP.web_search).toEqual({ kind: "executor" });
   });
 
-  it("routes the sql + jsonpath query cores to the executor kind (QRY-01/02, daemon-side like jq)", () => {
+  it("routes the sql + jsonpath query cores to the executor kind (daemon-side like jq)", () => {
     // The cores run DAEMON-side (DuckDB via execFile), not as an RPC handler —
     // so they MUST route {kind:"executor"}; a {kind:"rpc"} route would 404 at
     // the sink (no registered sql/jsonpath method).
@@ -158,7 +158,7 @@ describe("assertToolMapSoundness", () => {
     ).not.toThrow();
   });
 
-  it("throws when a cap-mapped tool is in the denylist (DISPATCH-03)", () => {
+  it("throws when a cap-mapped tool is in the denylist (disjointness fail-loud)", () => {
     // poison: a denylisted admin tool sneaks onto the curated surface.
     const poisonedCap = { ...TOOL_CAPABILITY_MAP, gateway: "orch:read" };
     const poisonedRoute = { ...TOOL_ROUTE_MAP, gateway: { kind: "executor" } };

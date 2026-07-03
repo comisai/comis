@@ -17,9 +17,9 @@ export function generateStrongToken(): string {
 /**
  * Generate a rotation identifier by appending a random suffix to the base ID.
  *
- * Replaces the predictable `Date.now()` pattern used previously for token
- * rotation. The suffix is 11 characters of base64url randomness
- * (64 bits of entropy).
+ * The suffix is 11 characters of base64url randomness (64 bits of entropy),
+ * so rotation identifiers are unpredictable — a timestamp-derived suffix
+ * would be guessable.
  *
  * @param baseId - The original token identifier to rotate
  * @returns `${baseId}-${11-char-random-suffix}`

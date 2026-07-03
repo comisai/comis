@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The LLM-backed reflection adapter (v2.31 Reflection engine, Phase 223 Plan 04,
- * INV-5) — the cheap-model call seam the reflection job uses to distil a doc.
- * The reflect-engine replacement for the deleted `llm-skill-synthesis-adapter.ts`
- * (the cron deletes follow in Plans 05/06); it mirrors that adapter's two
- * load-bearing security properties:
+ * The LLM-backed reflection adapter — the cheap-model call seam the reflection
+ * job uses to distil a doc.
+ * It carries two load-bearing security properties:
  *
  *  1. The UNTRUSTED `trajectoryText` is `wrapExternalContent`-wrapped (the
  *     `learned_skill_reflection` source) BEFORE it reaches the LLM — the
- *     injection-defense keystone (INV-5). An injection embedded in the trajectory
+ *     injection-defense keystone. An injection embedded in the trajectory
  *     is delimited + labeled, never bare in the prompt. The doc's CURRENT
  *     sections (system-derived, trusted) are passed as a trusted preamble OUTSIDE
  *     the wrapped block so the model can emit a minimal delta against them.
@@ -16,15 +14,15 @@
  *     malformed / adversarial payload yields `ok({})` (never a throw, never a
  *     half-formed op/section). Any LLM transport fault surfaces as `err(...)`,
  *     and a pi-ai `{stopReason:"error"}` ALSO surfaces as `err(...)` with a WARN
- *     naming the model (NOT a silent empty parse — the live-2026-06-18 judge
- *     precedent).
+ *     naming the model (NOT a silent empty parse — the same diagnosability rule
+ *     the outcome judge follows).
  *
  * Closed graph: this adapter consumes the `@comis/core` security keystone
  * (`wrapExternalContent`) + the `@comis/core` reflection types (`DocSection`) +
  * the `@earendil-works/pi-ai` model SDK — it imports NO `@comis/memory` /
  * `@comis/skills` value (the agent↛memory / agent↛skills closed-graph cut). The
- * cheap model is resolved via {@link resolveJudgeModel} (the keyless/custom seam
- * that survives the synthesis delete — 11 other consumers).
+ * cheap model is resolved via {@link resolveJudgeModel} (the shared keyless/custom
+ * resolution seam).
  *
  * @module
  */
@@ -75,15 +73,15 @@ export interface LlmReflectionAdapterDeps {
   /** Wall-clock reads for message timestamps — NEVER a wall-clock global. */
   clock: { now: () => number };
   /**
-   * The per-kind reflect system prompt (Phase 225 FOLD). Omitted ⇒ the skill
-   * `REFLECT_PROMPT` (a skill adapter stays byte-identical). Plans 02/03 pass
-   * `PROFILE_REFLECT_PROMPT` / `TOPIC_REFLECT_PROMPT`.
+   * The per-kind reflect system prompt. Omitted ⇒ the skill
+   * `REFLECT_PROMPT` (a skill adapter stays byte-identical). Profile/topic
+   * adapters pass `PROFILE_REFLECT_PROMPT` / `TOPIC_REFLECT_PROMPT`.
    */
   systemPrompt?: string;
   /**
-   * The per-kind `wrapExternalContent` source label (Phase 225 FOLD) — the
+   * The per-kind `wrapExternalContent` source label — the
    * UNTRUSTED-input boundary the LLM sees. Omitted ⇒ `"learned_skill_reflection"`.
-   * Plans 02/03 pass `"learned_profile_reflection"` / `"learned_topic_reflection"`.
+   * Profile/topic adapters pass `"learned_profile_reflection"` / `"learned_topic_reflection"`.
    */
   source?: ExternalContentSource;
   /** Structural logger (counts/ids/step only — never doc bodies). */
@@ -146,7 +144,7 @@ function renderCurrentDoc(sections: DocSection[]): string {
  */
 export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): ReflectionAdapter {
   const { provider, modelId, apiKey, customModel, clock, logger } = deps;
-  // Per-kind prompt + source label (Phase 225 FOLD) — default to the skill values
+  // Per-kind prompt + source label — default to the skill values
   // so an existing skill adapter construction is byte-identical.
   const systemPrompt = deps.systemPrompt ?? REFLECT_PROMPT;
   const source: ExternalContentSource = deps.source ?? "learned_skill_reflection";
@@ -155,10 +153,10 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
     const { trajectoryText, currentSections } = input;
 
     // SECURITY: wrap the UNTRUSTED trajectory BEFORE the LLM — the
-    // injection-defense keystone (INV-5). The delimited + labeled block is the
+    // injection-defense keystone. The delimited + labeled block is the
     // boundary an embedded injection cannot cross. The doc's CURRENT sections are
     // a TRUSTED preamble OUTSIDE the wrapped block. The per-kind source label only
-    // varies the boundary's label (the 223 `learned_skill_reflection` precedent).
+    // varies the boundary's LABEL, never the boundary itself.
     const wrapped = wrapExternalContent(trajectoryText, { source });
     const userContent = `${renderCurrentDoc(currentSections)}\n\nSUCCESSFUL trajectories to distil:\n${wrapped}`;
 
@@ -218,8 +216,8 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
     // A pi-ai API error does NOT throw — it RETURNS `{stopReason:"error", content:[],
     // errorMessage}` (e.g. a retired/invalid model id 404). Treat it like the thrown
     // branch above: WARN naming the model + skip the topic (err), NOT a silent empty
-    // parse (the live-2026-06-18 judge precedent). The deterministic !ok branch only
-    // catches a THROWN/transport fault.
+    // parse (the same diagnosability rule the outcome judge follows). The
+    // deterministic !ok branch only catches a THROWN/transport fault.
     const resp = responseResult.value as { content?: unknown[]; stopReason?: string; errorMessage?: string };
     if (resp.stopReason === "error" || (Array.isArray(resp.content) && resp.content.length === 0)) {
       logger.warn(
@@ -236,7 +234,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
     }
 
     // TOTAL parse — never throws; a malformed payload yields {} (the job's
-    // empty-content guard then skips admit, REFLECT-05).
+    // empty-content guard then skips the admit).
     const result = parseReflectionResult(extractResponseText(responseResult.value as { content?: unknown[] }));
 
     logger.debug(

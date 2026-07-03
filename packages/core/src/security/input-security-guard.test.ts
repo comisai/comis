@@ -268,7 +268,7 @@ describe("InputSecurityGuard", () => {
   });
 
   // -----------------------------------------------------------------------
-  // GIANT-INPUT-WEDGE (30uc-20260624 UC-09): the scan must be bounded so a multi-MB input
+  // The scan must be bounded so a multi-MB input
   // cannot drive the O(words) typoglycemia split+loop (millions of sync string ops) that
   // blocks the Node event loop. The scan covers only the first MAX_SCAN_CHARS (64 KB).
   // -----------------------------------------------------------------------

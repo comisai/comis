@@ -241,12 +241,12 @@ export async function setupSingleAgent(
   // Resolved BEFORE the boot-window block so convertTools can ride into it.
   const resolvedDescriptions = resolveLeanDescriptionsForAgent(agentConfig, perAgentLogger);
 
-  // WR-03 (176 review): the ONE tool-conversion closure for BOTH consumers — PiExecutorDeps.convertTools
-  // (turn-time S corpus) AND AgentBootWindowInfo's (FLOOR-01 boot corpus). Single reference below = corpus-identity pin.
+  // The ONE tool-conversion closure for BOTH consumers — PiExecutorDeps.convertTools
+  // (turn-time S corpus) AND AgentBootWindowInfo's (boot corpus). Single reference below = corpus-identity pin.
   const convertTools = buildSharedConvertTools(resolvedDescriptions);
 
-  // KNOB-01 + FLOOR-01 (v2.21): extracted to setup-agents-boot-window.ts (600-line cap split, 177 wave 1).
-  // Fail-open inside; convertTools reference identity preserved (WR-03).
+  // Extracted to setup-agents-boot-window.ts (600-line file cap split).
+  // Fail-open inside; convertTools reference identity preserved.
   runBootWindowHonestyChecks({
     agentId,
     providerId: resolved.provider,
@@ -267,7 +267,7 @@ export async function setupSingleAgent(
     lockDir,
     cwd: dir,
     // Resolved daemon data dir: without it the session-index writer falls back
-    // to the REAL ~/.comis, diverging from COMIS_DATA_DIR installs (260611 live-fire).
+    // to the REAL ~/.comis, diverging from COMIS_DATA_DIR installs.
     dataDir: dataDirAbs,
     // Same FileLockPort instance the OAuth path uses — single proper-lockfile
     // adapter per daemon process.
@@ -308,7 +308,7 @@ export async function setupSingleAgent(
   // Resolve discovery paths + force-include the two daemon-controlled dirs (workspace skills,
   // prepended; the bundled-skill install target <dataDir>/skills, appended). The latter keeps the
   // daemon's bundled prompt skills (claude-code, codex, …) discoverable even when a CUSTOM
-  // `discoveryPaths` replaces the default `./skills` (webhook-claude-cli-tdd-20260630-rerun).
+  // `discoveryPaths` replaces the default `./skills`.
   const resolvedPaths = resolveSkillDiscoveryPaths(skillsConfig.discoveryPaths, dataDir, agentSkillsDir);
 
   const resolvedSkillsConfig = {
@@ -324,7 +324,7 @@ export async function setupSingleAgent(
     eligibilityContext,  // Runtime eligibility context
   );
   skillRegistry.init();
-  // SURFACE-01/03 (v2.26): per-agent cache of promoted read-only learned procedures, refreshed out-of-band (the sync seam reads `.current`). WR-03: gated on learning.enabled × the master cost switch (memory.enabled, renamed in Phase 226) so default-OFF does ZERO surface work (no list()/rmSync) and stays byte-identical; WR-01: registers its refresh so the promote/demote loop re-refreshes it (next-session pickup).
+  // Per-agent cache of promoted read-only learned procedures, refreshed out-of-band (the sync seam reads `.current`). Gated on learning.enabled × the master cost switch (memory.enabled) so default-OFF does ZERO surface work (no list()/rmSync) and stays byte-identical; registers its refresh so the promote/demote loop re-refreshes it (next-session pickup).
   const learnedSurface = wireAgentLearnedSkillSurface({ enabled: container.config.memory?.enabled !== false && effectiveConfig.learning?.enabled === true, agentId, learnedSkillStore: deps.learnedSkillStore, scope: { tenantId: container.config.tenantId, agentId }, workspaceDir: dir, logger: perAgentLogger, registry: deps.learnedSkillSurfaceRegistry });
 
   // Per-agent ToolCapabilityPort adapter. Construction sits here so the adapter can close
@@ -383,7 +383,7 @@ export async function setupSingleAgent(
   // Operator can override via agent config in the future
 
   // (resolvedDescriptions + the shared convertTools closure are created above,
-  // before the boot-window honesty block — WR-03.)
+  // before the boot-window honesty block.)
 
   // Tool pipeline for PiExecutor. Platform tools (memory, cron, messaging, sessions) come
   // per-request via executor.execute(msg, sessionKey, tools) -- assembled by setupTools (runs
@@ -420,8 +420,8 @@ export async function setupSingleAgent(
     executionPlanHolder,
     lastKnownModel: deps.lastKnownModel,
     budgetGuard,
-    costTracker, spendAccumulator: deps.spendAccumulator, spendConfig: container.config.observability.spend, // Phase 177 kill-switch: daemon-wide accumulator REF (Pitfall 4 — same instance every bridge) + config; absent ⇒ no-op.
-    // Phase 213-08 (BUDGET-01/02): per-root budget holder + rootRunId resolver (same daemon-wide-REF pattern as spendAccumulator; absent ⇒ no-op).
+    costTracker, spendAccumulator: deps.spendAccumulator, spendConfig: container.config.observability.spend, // the spend kill-switch: daemon-wide accumulator REF (Pitfall 4 — same instance every bridge) + config; absent ⇒ no-op.
+    // Per-root budget holder + rootRunId resolver (same daemon-wide-REF pattern as spendAccumulator; absent ⇒ no-op).
     ...(deps.boundedAutonomyBudget && deps.resolveRootRunId
       ? { boundedAutonomyBudget: deps.boundedAutonomyBudget, resolveRootRunId: deps.resolveRootRunId }
       : {}),
@@ -441,21 +441,21 @@ export async function setupSingleAgent(
     sessionAdapter,
     workspaceDir: dir,
     // Resolved daemon data dir → PiExecutorDeps.dataDir → the pi-event-bridge
-    // session-index writer (else it falls back to the REAL ~/.comis — 260611
-    // live-fire) + prompt-assembly's recall-trace containment base.
+    // session-index writer (else it falls back to the REAL ~/.comis) +
+    // prompt-assembly's recall-trace containment base.
     dataDir: dataDirAbs,
     agentDir: resolvedAgentDir,
     customTools: [],
-    // WR-03: the SAME closure bound into AgentBootWindowInfo.convertTools above
+    // The SAME closure bound into AgentBootWindowInfo.convertTools above
     // (corpus-identity pin — see the shared const's comment).
     convertTools,
     subAgentToolNames: deps.subAgentToolNames,
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
     reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
-    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, pinnedStore: deps.pinnedStore, provenanceStore: deps.provenanceStore, mentalModelStore: deps.learnedSkillStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + rag.pinned (R6 — the pinned-first lane; pinnedStore is the same memoryAdapter cast as MemoryPinnedStore) + DIST-03 provenance down-weighting (Phase 173; provenanceStore is the LcdProvenanceReadStore from buildProvenanceReadStore — the built-but-not-wired carry-in activation) + mentalModelStore is the v2.31 kind:"profile" read source for the rewired <user_profile> block (FOLD-01, Phase 225 — the standalone userRepresentationStore was deleted in Plan 05; the SAME MentalModelStorePort already wired for the learned-skill surface). (The socialModeling standing-block + its relationshipStore read were DELETED in Phase 226-04 with the rest of that subsystem; rag.onlineTuning's tuned-vector read was deleted in Phase 224.)
-    contextStore: deps.lcdStore,  // Phase 128 LCD store (ContextStorePort) -> PiExecutorDeps.contextStore -> setupContextEngine -> the `dag` branch (context-engine.ts). The daemon-injected CONCRETE createLcdStore; the agent sees only the core port TYPE (agent↛memory cut). Opt-in (version: "dag"); default stays pipeline. Absent ⇒ pipeline fallback.
-    summarizerSpendBreaker: deps.summarizerSpendBreaker,  // R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker -> PiExecutorDeps.summarizerSpendBreaker -> setupContextEngine (getSummarizerDeps wraps the leaf seam with gate(tenantId, inner) → truncation-only degrade on open-breaker/over-cap). ONE daemon instance, partitions by tenantId.
+    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, pinnedStore: deps.pinnedStore, provenanceStore: deps.provenanceStore, mentalModelStore: deps.learnedSkillStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + rag.pinned (the pinned-first lane; pinnedStore is the same memoryAdapter cast as MemoryPinnedStore) + provenance down-weighting (provenanceStore is the LcdProvenanceReadStore from buildProvenanceReadStore) + mentalModelStore is the kind:"profile" read source for the <user_profile> block (the SAME MentalModelStorePort already wired for the learned-skill surface).
+    contextStore: deps.lcdStore,  // LCD store (ContextStorePort) -> PiExecutorDeps.contextStore -> setupContextEngine -> the `dag` branch (context-engine.ts). The daemon-injected CONCRETE createLcdStore; the agent sees only the core port TYPE (agent↛memory cut). Opt-in (version: "dag"); default stays pipeline. Absent ⇒ pipeline fallback.
+    summarizerSpendBreaker: deps.summarizerSpendBreaker,  // the daemon-owned per-tenant summarizer spend+breaker -> PiExecutorDeps.summarizerSpendBreaker -> setupContextEngine (getSummarizerDeps wraps the leaf seam with gate(tenantId, inner) → truncation-only degrade on open-breaker/over-cap). ONE daemon instance, partitions by tenantId.
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
     senderTrustDisplayConfig: container.config.senderTrustDisplay,
@@ -547,7 +547,7 @@ export async function setupSingleAgent(
     fastMode: effectiveConfig.fastMode,
     storeCompletions: effectiveConfig.storeCompletions,
     providerCapabilities: container.config.providers?.entries?.[resolved.provider]?.capabilities,
-    // CWF-03 + WR-02: the probed Ollama served window, PAIRED with the provider
+    // The probed Ollama served window, PAIRED with the provider
     // key it was probed from so the executor's reconcile can gate the clamp
     // per-execution (override models on other providers keep their full window
     // and never get "Ollama serves only N" attribution).
@@ -556,7 +556,7 @@ export async function setupSingleAgent(
       return probed !== undefined ? { providerKey: resolved.provider, window: probed } : undefined;
     })(),
     // Resolver form (config is runtime-mutable / per-exec variable): providers
-    // switch mid-agent (GBNF-01, WR-04) + authoring flips via config.write. getGbnfConstrain off-default ⇒ FLAGS-OFF identical (CR-01).
+    // switch mid-agent + authoring flips via config.write. getGbnfConstrain off-default ⇒ FLAGS-OFF identical.
     getProviderType: (p: string) => container.config.providers?.entries?.[p]?.type,
     getModelCompat: (p: string, id: string) =>
       container.config.providers?.entries?.[p]?.models?.find((m) => m.id === id)?.comisCompat,
@@ -591,7 +591,7 @@ export async function setupSingleAgent(
     skillRegistry,
     toolCapabilityPort,
     executionPlanPort: executionPlanHolder, // SAME ref as PiExecutorDeps + AcpServerDeps (Pitfall 1).
-    oauth: authProvider.oauth, // 184: SAME manager consumed at :439 — surfaced for the Codex image path (no 2nd instance)
-    authStorage: piAuthStorage, // FLAG-3: the runtime-override target for the memory.ask dialectic OAuth credential resolver
+    oauth: authProvider.oauth, // SAME manager consumed at :439 — surfaced for the Codex image path (no 2nd instance)
+    authStorage: piAuthStorage, // the runtime-override target for the memory.ask dialectic OAuth credential resolver
   };
 }

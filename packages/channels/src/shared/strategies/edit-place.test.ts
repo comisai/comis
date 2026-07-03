@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * EditPlace strategy tests (§7.3 row "EditPlace" + §17.1 row "edit-place").
+ * EditPlace strategy tests.
  *
  * EditPlace is the debounce/edit/delete sequencer used by edit-capable channels
  * (Telegram, Discord, Slack, WhatsApp). The hard contract:
@@ -11,7 +11,7 @@
  *   - on a trivial turn: the placeholder is deleted with no edit history.
  *
  * All timing goes through the injected TimerPort / ClockPort — NEVER raw
- * setTimeout / Date.now (Pitfall 7; globals.test.ts fails the build otherwise).
+ * setTimeout / Date.now (globals.test.ts fails the build otherwise).
  */
 import { describe, it, expect } from "vitest";
 import type { Result } from "@comis/shared";
@@ -301,11 +301,11 @@ describe("createEditPlaceRenderer", () => {
     expect(calls.some((c) => c.op === "edit")).toBe(false);
   });
 
-  // --- SPEC-§8.5 production wiring (elapsedMs threading) ---
+  // --- elapsed-time fallback wiring (elapsedMs threading) ---
   //
   // EditPlace captures `startedAtMs` on the first apply() (via clock.now() if
   // a clock is injected) and passes `elapsedMs = clock.now() - startedAtMs`
-  // as the 3rd arg to renderFrameText. The §8.5 fallback "(running N s)"
+  // as the 3rd arg to renderFrameText. The fallback "(running N s)"
   // appears in the sent/edited text whenever the frame has no plan snapshot
   // AND a clock is injected. These tests regression-lock the live production
   // path so the fallback is not silently inert.
@@ -323,7 +323,7 @@ describe("createEditPlaceRenderer", () => {
     expect(sends[0].text).toContain("(running 0 s)");
   });
 
-  it("EditPlace captures startedAtMs on first apply and the next debounced edit text contains (running 12 s) after 12 000 ms advancement (SPEC-§8.5 production wiring)", async () => {
+  it("EditPlace captures startedAtMs on first apply and the next debounced edit text contains (running 12 s) after 12 000 ms advancement", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(1000);
     const { actions, calls } = makeRecordingActions();

@@ -115,7 +115,7 @@ export function createGeminiCacheInjector(
           const toolConfig = configObj.toolConfig;
 
           // Estimate tokens from cacheable content
-          // flat-by-design: JSON envelope size heuristic for implicit-cache decisions, not budget/fit math (TOK-01)
+          // flat-by-design: JSON envelope size heuristic for implicit-cache decisions, not budget/fit math (no script factor)
           const estimatedTokens = Math.ceil(
             JSON.stringify({ systemInstruction, tools, toolConfig }).length / CHARS_PER_TOKEN_RATIO_STRUCTURED,
           );

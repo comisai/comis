@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Learned-skill surface helper (v2.26 Verified Learning, SURFACE-01/03 + D1).
+ * Learned-skill surface helper.
  *
  * Joins the platform `@comis/skills` registry snapshot with the `@comis/memory`
  * `mental_models` store (the `kind='skill'` rows) into ONE `<available_skills>`
@@ -9,11 +9,11 @@
  * keystone: the cached byte-prefix never shifts, so a newly-promoted skill is
  * picked up on the NEXT session via the per-session prompt-skills freeze, never
  * mid-session). Each surfaced procedure is MATERIALIZED to a read-tool-openable
- * `<workspace>/.learned-skills/<name>/SKILL.md` (D1) — a SIBLING dot-dir the skill
+ * `<workspace>/.learned-skills/<name>/SKILL.md` — a SIBLING dot-dir the skill
  * registry never discovers (no double-listing), derived WHOLESALE from `list()` on
  * every refresh so a demoted procedure's file is gone (derive-on-refresh, never a
- * stale file). Its `<location>` is emitted ABSOLUTE (WR-02) — the same shape
- * platform skills use and the `read` tool reports — so ATTR-01 skill-use
+ * stale file). Its `<location>` is emitted ABSOLUTE — the same shape
+ * platform skills use and the `read` tool reports — so skill-use
  * attribution (exact `<location>`-string match) fires on a `read` of that path.
  *
  * Only the daemon may touch BOTH the skills registry AND the learned-skills store
@@ -43,7 +43,7 @@ const LEARNED_SKILLS_DIRNAME = ".learned-skills";
  *
  * WHY candidates surface (live-2026-06-18 deadlock fix): promotion `candidate→active`
  * is USE-BASED (`promoteByName` bumps `proof_count` only when the skill appears in a
- * resolved-success turn's `memory:skill_used` attribution — design §SKILL-04, the
+ * resolved-success turn's `memory:skill_used` attribution; the
  * `LOW_PROOF_COUNT` admission cap is the deliberate anti-gaming belt so synthesis can
  * NEVER directly mint an `active` skill). But a turn can only attribute a skill it was
  * SHOWN — so a never-surfaced candidate is never used, never promoted, never surfaced:
@@ -59,10 +59,10 @@ function isSurfaceable(skill: MentalModel): boolean {
 }
 
 /**
- * The ABSOLUTE `<location>` of a surfaced skill's materialized SKILL.md (WR-02).
+ * The ABSOLUTE `<location>` of a surfaced skill's materialized SKILL.md.
  * Derived through `safePath` so a path-traversal `name` is rejected (never escapes
  * the workspace). Emitted ABSOLUTE — the SAME shape platform skills use
- * (`metadata.path`) and the `read` tool reports — so the ATTR-01 attribution index
+ * (`metadata.path`) and the `read` tool reports — so the skill-use attribution index
  * (keyed on the exact `<location>` string the model reads with) matches a `read` of
  * this path. A workspace-RELATIVE location here would (a) never match an absolute
  * read path and (b) be an inconsistent mixed-format block within one
@@ -105,7 +105,7 @@ export function mergeLearnedSkillsXml(
  * dynamic path segment goes through `safePath` (no `path.join`); a `..`/absolute
  * `name` is rejected before any write.
  *
- * WR-04: each skill is materialized under its OWN try/catch, so a single poison
+ * Each skill is materialized under its OWN try/catch, so a single poison
  * `name` (a traversal that makes `safePath` throw) or a single write failure
  * (EACCES / ENOSPC / a name colliding with a file already created this loop) is
  * SKIPPED + WARNed rather than aborting the whole batch after the wholesale
@@ -154,7 +154,7 @@ export function materializeLearnedSkills(
 
 /**
  * Minimal SKILL.md: a frontmatter the discovery parser would accept + the body.
- * Exported so the MODEL-03 byte-identity golden can pin the exact rendered bytes
+ * Exported so the byte-identity golden test can pin the exact rendered bytes
  * for a `kind='skill'` MentalModel (the no-behavior-change guarantee).
  */
 export function renderSkillFile(skill: MentalModel): string {
@@ -212,14 +212,13 @@ export async function refreshLearnedSkillSurface(args: {
   const { learnedSkillStore, scope, workspaceDir, logger } = args;
   if (!learnedSkillStore) return [];
 
-  // GAP-2 half-2 (Phase 225 Plan 02, Pitfall 1) + FOLD-02 (Plan 03): KIND-FILTER the
-  // wholesale surface to admit kind:"skill" AND kind:"topic" while EXCLUDING
-  // kind:"profile". The surface materializes into <available_skills>; a
-  // kind:"profile" doc must NOT surface here — it surfaces ONCE, in the rewired
-  // <user_profile> block (prompt-assembly), so its facts are not double-surfaced into
-  // the skills channel. kind:"topic" DOES surface (Plan 03): the design's one-store
-  // unification makes a surfaced topic doc the OBSERVATION recall medium (ranked
-  // top-K is the documented future mitigation, not this phase). The port's single-
+  // KIND-FILTER the wholesale surface to admit kind:"skill" AND kind:"topic"
+  // while EXCLUDING kind:"profile". The surface materializes into
+  // <available_skills>; a kind:"profile" doc must NOT surface here — it surfaces
+  // ONCE, in the <user_profile> block (prompt-assembly), so its facts are not
+  // double-surfaced into the skills channel. kind:"topic" DOES surface: the
+  // one-store unification makes a surfaced topic doc the OBSERVATION recall
+  // medium (ranked top-K is a documented future mitigation). The port's single-
   // kind `list(scope, kind)` filter cannot express "skill OR topic" in one call, so
   // we list UNFILTERED (one DB round-trip) and AND a code-side kind predicate over
   // the load-bearing (tenant, agent) scope — never a replacement for it.
@@ -242,10 +241,10 @@ export async function refreshLearnedSkillSurface(args: {
   const visible = result.value.filter((d) => d.kind === "skill" || d.kind === "topic");
   materializeLearnedSkills(workspaceDir, visible, logger);
   const surfaced = visible.filter(isSurfaceable);
-  // OBS-3 (hindsight-reflection-20260626): INFO, not DEBUG — a once-per-refresh summary so an operator
-  // can see how many learned skills currently surface to the agent WITHOUT setting logLevel:debug
-  // before the incident. Diagnosing SURFACE-RACE ("the learned skill doesn't appear in
-  // <available_skills>") previously needed a DEBUG-level surfacedCount grep + asking the agent.
+  // INFO, not DEBUG — a once-per-refresh summary so an operator can see how many
+  // learned skills currently surface to the agent WITHOUT setting logLevel:debug
+  // before the incident. Diagnosing "the learned skill doesn't appear in
+  // <available_skills>" previously needed a DEBUG-level surfacedCount grep + asking the agent.
   logger.info(
     {
       agentId: scope.agentId,
@@ -268,7 +267,7 @@ export async function refreshLearnedSkillSurface(args: {
  * (materialize + cache) fire-and-forget; until it resolves (and when it fails-closed)
  * `.current` is `[]`, so the listing is platform-only (byte-identical). A
  * newly-promoted skill is picked up on the NEXT session (the per-session freeze) once
- * a later refresh updates `.current` (Plan 05 re-refreshes on promote/demote).
+ * a later refresh updates `.current` (the registry re-refreshes on promote/demote).
  */
 export function createLearnedSkillSurfaceCache(args: {
   learnedSkillStore: MentalModelStorePort | undefined;
@@ -280,11 +279,11 @@ export function createLearnedSkillSurfaceCache(args: {
 }
 
 /**
- * WR-01: the cache PLUS a reusable `refresh()` that re-runs the async
+ * The cache PLUS a reusable `refresh()` that re-runs the async
  * list→materialize→cache and updates `cache.current` in place. The boot refresh
  * fires once here (fire-and-forget); the resolve-seam loop calls `refresh()` again
  * after a promote/demote moved a row, so the NEXT session's freeze captures the new
- * active set (SURFACE-03: it mutates `cache.current`, NOT an already-frozen
+ * active set (it mutates `cache.current`, NOT an already-frozen
  * snapshot). Default-off / no store ⇒ each refresh resolves to `[]` and writes
  * nothing (byte-identical). Both the boot refresh and `refresh()` are non-fatal.
  */

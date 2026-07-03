@@ -241,11 +241,11 @@ describe("env.set handler", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Env-mode adapter rejection (guard removed, adapter err surfaces)
+  // Env-mode adapter rejection (the adapter err surfaces as a throw)
   // -----------------------------------------------------------------------
   //
   // secretStore is always wired. The env-mode adapter returns err
-  // from set() with an actionable message. The existing !setResult.ok handler
+  // from set() with an actionable message. The !setResult.ok handler
   // throws that message. Test with a mock adapter returning err("read-only").
 
   it("rejects env.set when adapter returns err (env-mode read-only adapter)", async () => {
@@ -386,7 +386,7 @@ describe("env.set handler", () => {
     const deps = makeDeps({ secretStore });
     const handlers = createEnvHandlers(deps);
 
-    // Guard removed, adapter err surfaces via existing throw block
+    // The adapter's err result surfaces via the !setResult.ok throw block.
     await expect(
       handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" }),
     ).rejects.toThrow("read-only");
@@ -719,7 +719,7 @@ describe("env.list handler", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Additive restart rule (RED: handler doesn't implement this yet)
+// Additive restart rule (a new key never schedules a restart)
 // ---------------------------------------------------------------------------
 
 describe("additive restart rule (env.set)", () => {
@@ -798,7 +798,7 @@ describe("additive restart rule (env.set)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Rotation must live-apply (restarting:false, no SIGUSR2) — RED phase
+// Rotation must live-apply (restarting:false, no SIGUSR2)
 // ---------------------------------------------------------------------------
 
 describe("env.set rotation: restarting:false, upsert called, no SIGUSR2", () => {

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IRC LinePerEvent activity renderer (§7.2 / §18.3 row "LinePerEvent").
- * IRC is text-only — no in-place edit, no delete, a hard per-line character cap
- * (§7.1). Three parts, copying the non-EditPlace
+ * IRC LinePerEvent activity renderer.
+ * IRC is text-only — no in-place edit, no delete, a hard per-line character
+ * cap. Three parts, copying the non-EditPlace
  * `make<Ch>RenderActions` / `classify<Ch>Error` / `create<Ch>ActivityRenderer`
  * shape (signal-activity.ts / whatsapp-activity.ts are the structural analogs —
  * `buttons:"none"`, no rich effect, thin wiring):
@@ -11,8 +11,8 @@
  *      adapter wraps send failures in `new Error("Failed to send IRC message: …")`
  *      with NO structured numeric code, so there is no reliable structural signal
  *      to disambiguate a richer variant; the classifier DEFAULTS to
- *      `{kind:"internal", cause:e}` (KISS — Pitfall 4; no invented rich
- *      classifier). Per §19.3, the wrapped error is read for NOTHING
+ *      `{kind:"internal", cause:e}` (KISS — no invented rich
+ *      classifier). The wrapped error is read for NOTHING
  *      user-facing — it selects the variant only and is NEVER rendered or logged
  *      as activity text. The S4 fixture proves the failure line is
  *      `[ERR] {errorKind}` (from the strategy), not the platform error body.
@@ -38,7 +38,7 @@
  *      painted verbatim by `eventLabel` — the renderer adds no prefix.
  *
  * NOTE the factory signature is `(adapter, channelId, { clock })` — clock ONLY,
- * NO timer (Pitfall 5). LinePerEvent needs the clock for the elapsed-time suffix
+ * NO timer. LinePerEvent needs the clock for the elapsed-time suffix
  * but schedules nothing, so it takes `{ actions, clock? }`. The channels package
  * depends on core + shared only (no diagnostics substrate is reachable here).
  */
@@ -65,7 +65,7 @@ import {
  * `new Error("Failed to send IRC message: …")` with no structured numeric code to
  * read, so this DEFAULTS to `internal` carrying the cause. The error is consulted
  * for NOTHING that reaches the user — it selects the variant only and is never
- * rendered or logged as activity text (§19.3).
+ * rendered or logged as activity text.
  */
 export function classifyIrcError(e: unknown): ActivityRenderError {
   // IRC offers no structured code for send failures; there is no reliable
@@ -108,7 +108,7 @@ export function makeIrcRenderActions(
 }
 
 /**
- * The IRC subagent depth prefix (§18.3). IRC has no thread primitive, so a
+ * The IRC subagent depth prefix. IRC has no thread primitive, so a
  * `kind:"subagent"` event renders INLINE with this prefix; the `🤖`/agentId portion
  * rides on the projection's `defaultLabel` and is painted verbatim after it.
  */
@@ -116,14 +116,14 @@ const SUBAGENT_DEPTH_PREFIX = "↳ ";
 
 /**
  * Build one IRC line for an event, the {@link createLinePerEventRenderer} `lineFor`
- * override (§6.4.6 / §18.3). IRC has no button surface, so a
+ * override. IRC has no button surface, so a
  * `kind:"approval"` event renders the plain-text prompt
  * `buildApprovalText(event, { includeShortId })` — the shortId form only when MORE
  * THAN ONE approval is pending in the same frame (so the user's reply, parsed by
  * the router's plain-text branch, is unambiguous). A
  * `kind:"subagent"` event renders with a `↳ ` depth prefix via `subagentLine`.
  * Everything else keeps the redacted `eventLabel`. No signing — HMAC is skipped for
- * plaintext (§6.4.6); the router scopes replies to `pendingForSession`.
+ * plaintext prompts; the router scopes replies to `pendingForSession`.
  */
 export function ircLineFor(
   event: ActivityEvent,

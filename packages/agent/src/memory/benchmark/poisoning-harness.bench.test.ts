@@ -110,7 +110,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // ENV GATES -- read process.env ONLY at the test boundary (allowed in a .test.ts;
-// the globals rule scopes to src/**). Names pinned by the QA harness's env plan.
+// the globals rule scopes to src/**). Names shared with the sibling QA harness.
 const COMIS_BENCH = process.env.COMIS_BENCH; // enables the full ingest+recall+answer+judge run
 const LLAMA_MODEL_PATH = process.env.LLAMA_MODEL_PATH; // optional vector lane (embeddings)
 const LLAMA_RERANKER_MODEL_PATH = process.env.LLAMA_RERANKER_MODEL_PATH; // optional rerank lift
@@ -222,7 +222,7 @@ describe.skipIf(!COMIS_BENCH)("poisoning resistance (gated)", () => {
   let reportDir = "";
   let reportJson = "";
 
-  // Provider-backed run nests on the answer/judge model env (the QA harness's plan).
+  // Provider-backed run nests on the answer/judge model env (the same lanes the QA harness reads).
   const haveAnswer = !!ANSWER_PROVIDER && !!ANSWER_MODEL && !!ANSWER_API_KEY;
   const haveJudge = !!JUDGE_PROVIDER && !!JUDGE_MODEL && !!JUDGE_API_KEY;
 

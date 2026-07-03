@@ -46,7 +46,7 @@ import {
 } from "./regression-gate.js";
 import type { CategoryAccuracy } from "./qa-accuracy.js";
 
-/** Build a `CategoryAccuracy` from raw counts (accuracy derived as Hindsight does). */
+/** Build a `CategoryAccuracy` from raw counts (accuracy = correct/validTotal — the qa-accuracy rule). */
 function cat(correct: number, total: number, invalid = 0): CategoryAccuracy {
   const validTotal = total - invalid;
   return {

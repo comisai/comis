@@ -275,7 +275,7 @@ export function buildCapabilityIndexContext(
 
   return Object.freeze({
     text,
-    // flat-by-design: machine-rendered Latin capability index — factor would be 1.0 by construction (TOK-01)
+    // flat-by-design: machine-rendered Latin capability index — factor would be 1.0 by construction
     capabilityIndexTokens: Math.ceil(text.length / CHARS_PER_TOKEN_RATIO),
     clusterCount,
     activeToolCount,

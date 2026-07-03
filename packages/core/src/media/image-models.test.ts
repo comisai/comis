@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for IMAGE_MODELS_BY_PROVIDER + isValidImageModel + listImageModels
- * (IN-02 — the Comis-side per-provider image-model enumeration source of
- * truth). pi-ai's `getImageModels("openai")` returns `[]` (RESEARCH Pitfall 4),
+ * (the Comis-side per-provider image-model enumeration source of
+ * truth). pi-ai's `getImageModels("openai")` returns `[]`,
  * so the openai/google validation list lives here, mirroring the sibling
  * `image-capability.ts` const-map shape (closed-map lookup → `undefined` on a
  * miss, never a crash).
@@ -40,7 +40,7 @@ describe("isValidImageModel", () => {
 });
 
 describe("listImageModels", () => {
-  it("returns the provider's list (for the IN-02 reject hint)", () => {
+  it("returns the provider's list (for the invalid-model reject hint)", () => {
     expect(listImageModels("openai")).toContain("gpt-image-1");
     expect(listImageModels("google")).toContain("gemini-2.5-flash-image");
   });

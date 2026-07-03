@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for {@link namespacePreflight} (JAIL-03) — the boot probe that
- * PRODUCES the `namespacePreflightOk` boolean the SHIPPED `degradeAutonomy`
- * (PROFILE-03, Phase 210) consumes to downshift an autonomy-bearing posture to
+ * Unit tests for {@link namespacePreflight} — the boot probe that
+ * PRODUCES the `namespacePreflightOk` boolean the shipped `degradeAutonomy`
+ * consumes to downshift an autonomy-bearing posture to
  * `assistant` when the host cannot build the jail.
  *
  * These tests are PURE-LOGIC + CROSS-PLATFORM (they run green on macOS, where
@@ -14,12 +14,12 @@
  *   3. the DEGRADE WIRING: the result is structurally assignable to
  *      `AutonomyPreflightResult`, so feeding it into the shipped
  *      `degradeAutonomy` makes the downshift fire on `false` and is a no-op on
- *      `true`. This proves Phase 211 only PRODUCES the boolean — the downshift
- *      itself is PROFILE-03, untouched.
+ *      `true`. This proves the preflight only PRODUCES the boolean — the
+ *      downshift itself lives in `degradeAutonomy`, untouched.
  *
- * The REAL `bwrap --unshare-net` + userns probe assertion is a 211-05
+ * The REAL `bwrap --unshare-net` + userns probe assertion is a
  * `.linux.test.ts` (real-`bwrap` gated, skips on macOS). Here we test the shape
- * + the degrade seam only. RED until `namespacePreflight` is exported.
+ * + the degrade seam only.
  *
  * @module
  */
@@ -29,7 +29,7 @@ import { resolveAutonomy, degradeAutonomy, type AutonomyDownshift } from "@comis
 
 import { namespacePreflight } from "./detect-provider.js";
 
-describe("namespacePreflight (JAIL-03) — result shape", () => {
+describe("namespacePreflight — result shape", () => {
   it("returns a { namespacePreflightOk, stderr, signal } object", () => {
     const result = namespacePreflight();
     expect(result).toHaveProperty("namespacePreflightOk");
@@ -40,13 +40,14 @@ describe("namespacePreflight (JAIL-03) — result shape", () => {
   });
 });
 
-describe("namespacePreflight (JAIL-03) — honest non-Linux path", () => {
+describe("namespacePreflight — honest non-Linux path", () => {
   it("on a non-Linux host the preflight fails with a non-empty boot-signal stderr", () => {
     // On macOS (where this runs) the jail cannot be built — the probe must be
     // honest (false) and carry a stderr so the operator sees why at boot.
     if (process.platform === "linux") {
-      // On a real Linux host this case is the 211-05 .linux probe — skip the
-      // platform-specific assertion here (the shape test above still covers it).
+      // On a real Linux host this case is covered by the .linux probe suite —
+      // skip the platform-specific assertion here (the shape test above still
+      // covers it).
       return;
     }
     const result = namespacePreflight();
@@ -55,7 +56,7 @@ describe("namespacePreflight (JAIL-03) — honest non-Linux path", () => {
   });
 });
 
-describe("namespacePreflight (JAIL-03) — feeds the shipped degradeAutonomy (PROFILE-03)", () => {
+describe("namespacePreflight — feeds the shipped degradeAutonomy", () => {
   it("a failed (false) preflight result downshifts a standard posture to assistant + surfaces the signal", () => {
     // Structural assignability: the probe result IS an AutonomyPreflightResult.
     // Use a hand-constructed false so the assertion is platform-independent
@@ -86,7 +87,8 @@ describe("namespacePreflight (JAIL-03) — feeds the shipped degradeAutonomy (PR
 
   it("the REAL probe result is assignable to AutonomyPreflightResult (compiles + degrades)", () => {
     // The actual probe output must flow into degradeAutonomy with no adapter —
-    // this is the JAIL-03 → PROFILE-03 seam (211 PRODUCES, 210 CONSUMES).
+    // this is the preflight → degrade seam (the probe PRODUCES the boolean,
+    // degradeAutonomy CONSUMES it).
     const probe = namespacePreflight();
     const std = resolveAutonomy({ profile: "standard" });
     const { resolved } = degradeAutonomy(std, probe);

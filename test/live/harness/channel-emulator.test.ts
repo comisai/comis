@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Stage-A unit tests for the shared `ChannelEmulator` port + `ChannelCaps`
- * descriptor (FOUND-01, Phase 204).
+ * descriptor.
  *
  * Pure type/structural tests — no daemon, no key, no network, fast. The port
  * is the channel-agnostic contract every per-channel emulator implements
- * (`TgEmulator extends ChannelEmulator`, Wave 2). These tests assert:
- *   - `ChannelCaps` carries the FLAT design §3A.4 shape
+ * (`TgEmulator extends ChannelEmulator`). These tests assert:
+ *   - `ChannelCaps` carries the FLAT shape
  *     (channel / inbound{} / outbound{} / protocol).
  *   - `ChannelEmulator` declares `start()`/`stop()` + `readonly caps` — a
  *     minimal in-test class that `implements ChannelEmulator` compiles (the
  *     type IS the contract).
  *   - the port is channel-agnostic — `channel-emulator.ts` imports neither
  *     grammy nor any `@comis/*` channel package (Telegram specifics live in
- *     `tg-emulator.ts`, Wave 2).
+ *     `tg-emulator.ts`).
  *
  * @module
  */
@@ -28,7 +28,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT_SOURCE = resolve(HERE, "channel-emulator.ts");
 
 // ---------------------------------------------------------------------------
-// ChannelCaps — the flat descriptor (design §3A.4)
+// ChannelCaps — the flat descriptor
 // ---------------------------------------------------------------------------
 
 describe("ChannelCaps flat descriptor shape", () => {

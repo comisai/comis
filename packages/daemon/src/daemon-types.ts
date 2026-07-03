@@ -350,7 +350,7 @@ export interface BootContext {
   skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
   memoryLogger: ReturnType<typeof setupLogging>["memoryLogger"];
   daemonVersion: string;
-  // Observability (10). setupObservability is ASYNC (Phase 178 OTel seam) → Awaited.
+  // Observability (10). setupObservability is ASYNC (the OTel exporter seam) → Awaited.
   tokenTracker: Awaited<ReturnType<typeof setupObservability>>["tokenTracker"];
   sharedCostTracker: Awaited<ReturnType<typeof setupObservability>>["sharedCostTracker"];
   diagnosticCollector: Awaited<ReturnType<typeof setupObservability>>["diagnosticCollector"];
@@ -360,7 +360,7 @@ export interface BootContext {
   // The canonical ActivityStream (orchestrator-facing ActivityStreamPort)
   // + its drain hook, threaded from bootFoundation to bootShutdown.
   activityStream: Awaited<ReturnType<typeof setupObservability>>["activityStream"];
-  disposeActivityStream: Awaited<ReturnType<typeof setupObservability>>["disposeActivityStream"]; spendAccumulator: Awaited<ReturnType<typeof setupObservability>>["spendAccumulator"]; otelHandle: Awaited<ReturnType<typeof setupObservability>>["otelHandle"]; // spendAccumulator = Phase 177 dollars kill-switch (daemon-wide ref → bridge); otelHandle = Phase 178 OTLP/Prometheus exporter handle → setupShutdown.
+  disposeActivityStream: Awaited<ReturnType<typeof setupObservability>>["disposeActivityStream"]; spendAccumulator: Awaited<ReturnType<typeof setupObservability>>["spendAccumulator"]; otelHandle: Awaited<ReturnType<typeof setupObservability>>["otelHandle"]; // spendAccumulator = the dollars kill-switch (daemon-wide ref → bridge); otelHandle = the OTLP/Prometheus exporter handle → setupShutdown.
   contextPipelineCollector: ReturnType<typeof createContextPipelineCollector>;
   // Process (1 field)
   processMonitor: ReturnType<typeof setupHealth>["processMonitor"];
@@ -375,7 +375,7 @@ export interface BootContext {
   backgroundIndexingPromise: Awaited<ReturnType<typeof setupMemory>>["backgroundIndexingPromise"];
   embeddingCacheStats: Awaited<ReturnType<typeof setupMemory>>["embeddingCacheStats"];
   embeddingCircuitBreakerState: Awaited<ReturnType<typeof setupMemory>>["embeddingCircuitBreakerState"];
-  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker — threaded
+  /** The daemon-owned per-tenant summarizer spend+breaker — threaded
    *  into setupAgents -> createPiExecutor -> setupContextEngine (the getSummarizerDeps
    *  leaf-seam gate). Built in setup-memory; ONE instance partitions by tenantId. */
   summarizerSpendBreaker: Awaited<ReturnType<typeof setupMemory>>["summarizerSpendBreaker"];
@@ -388,14 +388,14 @@ export interface BootContext {
   /** Entity-associative store — threaded into setupAgents (executor recall
    *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
   entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
-  /** LCD lossless context store (Phase 128) — threaded into setupAgents (the
+  /** LCD lossless context store — threaded into setupAgents (the
    *  executor `contextStore` -> the `dag` branch in context-engine.ts). Built in
    *  setup-memory on the shared db (`createLcdStore(db)`); injected as the CORE
    *  `ContextStorePort` TYPE on SingleAgentDeps (agent↛memory cut). The `dag`
    *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline,
    *  so absent/unselected this is dormant. */
   lcdStore: Awaited<ReturnType<typeof setupMemory>>["lcdStore"];
-  /** LCD provenance READ store (Phase 173, DIST-03 read side) — threaded into
+  /** LCD provenance READ store — threaded into
    *  setupAgents → createPiExecutor → prompt-assembly → createMemoryRecall's
    *  post-fusion provenance down-weighting pass. Built in setup-memory on the
    *  shared db (`buildProvenanceReadStore(db)`); the agent receives the core
@@ -432,23 +432,21 @@ export interface BootContext {
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory
    *  cut). Dormant until an operator enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore: Awaited<ReturnType<typeof setupMemory>>["usefulnessStore"];
-  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
-  //  social-modeling subsystem — setupMemory no longer returns it; the cron + injection it fed are gone.)
   /** Memory-lifecycle sweep store — cron path ONLY (KEYLESS __MEMORY_LIFECYCLE__ → DORMANT
    *  runLifecycleSweep; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut).
    *  Dormant — even with `memoryLifecycle.enabled` (default OFF) the sweep evicts/demotes 0 rows. */
   memoryLifecycleStore: Awaited<ReturnType<typeof setupMemory>>["memoryLifecycleStore"];
-  /** Consolidation store — ORPHANED in Phase 225-05 (the runMemoryConsolidation job + its cron were deleted); port retired in Phase 226. Shared db; port TYPE only (agent↛memory cut). */
+  /** Consolidation store — no live writer or cron consumer. Shared db; port TYPE only (agent↛memory cut). */
   consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
-  outcomeStore: Awaited<ReturnType<typeof setupMemory>>["outcomeStore"]; // WS1 — the __REFLECT__ cron success gate (agent↛memory cut)
-  learnedSkillStore: Awaited<ReturnType<typeof setupMemory>>["learnedSkillStore"]; // WS2/skills — the __REFLECT__ get/admit target
-  learnedSkillSurfaceRegistry: import("./wiring/setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // WR-01 — shared per-agent surface registry created in bootFoundation; bootAgents registers each agent + the promote/demote loop re-refreshes
+  outcomeStore: Awaited<ReturnType<typeof setupMemory>>["outcomeStore"]; // the __REFLECT__ cron success gate (agent↛memory cut)
+  learnedSkillStore: Awaited<ReturnType<typeof setupMemory>>["learnedSkillStore"]; // the __REFLECT__ get/admit target
+  learnedSkillSurfaceRegistry: import("./wiring/setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // shared per-agent surface registry created in bootFoundation; bootAgents registers each agent + the promote/demote loop re-refreshes
   /** Live recall-counter wiring — the single `wireRecallCounters(eventBus)` subscriber (setup-memory holds the bus); threaded into MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
   recallCounters: Awaited<ReturnType<typeof setupMemory>>["recallCounters"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
-  /** REACT-02 (Phase 199): outbound-message → trajectory capture (built in setup-memory behind the byte-identity gate); threaded into setupDeliveryQueue. `undefined` when learning-outcome is off for all agents. */
+  /** Outbound-message → trajectory capture (built in setup-memory behind the byte-identity gate); threaded into setupDeliveryQueue. `undefined` when learning-outcome is off for all agents. */
   recordOutboundMessage?: Awaited<ReturnType<typeof setupMemory>>["recordOutboundMessage"];
-  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + dedicated reaction rate limiter on shutdown (cancels their unref'd TTL timers). Threaded into setupShutdown. */
+  /** Tear down the reaction/session trajectory maps + dedicated reaction rate limiter on shutdown (cancels their unref'd TTL timers). Threaded into setupShutdown. */
   destroyReactionWiring?: Awaited<ReturnType<typeof setupMemory>>["destroyReactionWiring"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
@@ -498,11 +496,11 @@ export interface BootContext {
    * per-agent holder so the daemon can thread the DEFAULT agent's reference into
    * ChannelsDeps.executionPlanPort — the SAME object createAcpWiring shares (single-shared-holder). */
   executionPlanPorts?: Awaited<ReturnType<typeof setupAgents>>["executionPlanPorts"];
-  /** Per-agent OAuthTokenManager map (184). The DEFAULT agent's manager is threaded into
-   * buildImageGenBundle → the Codex image adapter so the image path resolves its OAuth bearer
-   * (CDX-01/CRED-01). Populated by bootAgents' setupAgents Object.assign; read by bootChannels. */
+  /** Per-agent OAuthTokenManager map. The DEFAULT agent's manager is threaded into
+   * buildImageGenBundle → the Codex image adapter so the image path resolves its OAuth
+   * bearer. Populated by bootAgents' setupAgents Object.assign; read by bootChannels. */
   oauthManagers?: Awaited<ReturnType<typeof setupAgents>>["oauthManagers"];
-  /** FLAG-3: per-agent pi AuthStorage map — assigned alongside oauthManagers (above); the
+  /** Per-agent pi AuthStorage map — assigned alongside oauthManagers (above); the
    * memory.ask dialectic OAuth resolver's runtime-override target. */
   authStorages?: Awaited<ReturnType<typeof setupAgents>>["authStorages"];
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
@@ -512,11 +510,11 @@ export interface BootContext {
    * (buildRpcDispatchDeps reads it for createTokenStore). Undefined in env mode (no writable
    * MCP OAuth persistence); kills the encrypted-mode split-brain. */
   mcpTokenStore?: Awaited<ReturnType<typeof selectMcpTokenStore>>;
-  /** KNOB-01/03 (Phase 176): daemon-owned collector — one served-vs-configured comparison
+  /** Daemon-owned collector — one served-vs-configured comparison
    *  per provider, populated in setup-agents (bootAgents), read at the bootShutdown posture
    *  write (servedBelowConfiguredCount — one comparison, two surfaces, no drift). */
   servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
-  /** FLOOR-01 (Phase 176): daemon-owned collector of per-agent boot window info (configured
+  /** Daemon-owned collector of per-agent boot window info (configured
    *  + reconciled effective window + profile), populated in setup-agents (bootAgents),
    *  consumed by the bootChannels viable-floor loop between setupTools and setupChannels. */
   agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
@@ -525,7 +523,7 @@ export interface BootContext {
   // Subprocess envs
   subprocessEnv?: Record<string, string>;
   execToolEnv?: Record<string, string>;
-  // Phase 213-08: the LATE-BOUND bounded-autonomy seam (bootAgents → boot → cap layer populates/shares it).
+  // The LATE-BOUND bounded-autonomy seam (bootAgents → boot → cap layer populates/shares it).
   boundedAutonomyBudgetHolder?: BoundedAutonomyBudgetHolder;
   resolveRootRunId?: (sessionKey: SessionKey) => string;
   sharedLeaseManager?: LeaseManager;
@@ -553,7 +551,7 @@ export interface BootContext {
   transcriber?: Awaited<ReturnType<typeof setupMedia>>["transcriber"];
   ssrfFetcher?: Awaited<ReturnType<typeof setupMedia>>["ssrfFetcher"];
   fileExtractor?: Awaited<ReturnType<typeof setupMedia>>["fileExtractor"];
-  /** OBS-03 (196): boot-resolved STT/TTS selections for the media RPC trajectory emit. */
+  /** Boot-resolved STT/TTS selections for the media RPC trajectory emit. */
   voiceSelection?: Awaited<ReturnType<typeof setupMedia>>["voiceSelection"];
   // RPC bridge (deferred-dispatch)
   rpcCall?: ReturnType<typeof setupRpcBridge>["rpcCall"];
@@ -568,7 +566,7 @@ export interface BootContext {
   deliveryQueue?: Awaited<ReturnType<typeof setupDeliveryQueue>>["deliveryQueue"];
   drainAndStartDeliveryPrune?: Awaited<ReturnType<typeof setupDeliveryQueue>>["drainAndStart"];
   shutdownDeliveryQueue?: Awaited<ReturnType<typeof setupDeliveryQueue>>["shutdown"];
-  // Phase 216: durable-run + resume engine outputs (undefined when off); shutdown cancels the watchdog.
+  // Durable-run + resume engine outputs (undefined when off); shutdown cancels the watchdog.
   durableRunStore?: import("@comis/core").DurableRunPort;
   outwardLedger?: import("@comis/core").OutwardSendLedgerPort;
   durableResumeShutdown?: () => void;
@@ -591,7 +589,7 @@ export interface BootContext {
   // Notifications + background completion
   notificationContext?: ReturnType<typeof setupNotifications>;
   bgCompletionRunnerContext?: ReturnType<typeof setupBackgroundCompletionRunner>;
-  // Terminal-driver wake-FSM (v2.11 / 124-09) — drained on shutdown.
+  // Terminal-driver wake-FSM — drained on shutdown.
   terminalWakeContext?: ReturnType<typeof setupTerminalWake>;
   // Cross-session + sub-agent runtime
   crossSessionSender?: ReturnType<typeof setupCrossSession>["crossSessionSender"];
@@ -600,14 +598,14 @@ export interface BootContext {
   announceToParent?: ReturnType<typeof setupCrossSession>["announceToParent"];
   deadLetterQueue?: ReturnType<typeof setupCrossSession>["deadLetterQueue"];
   announcementBatcher?: ReturnType<typeof setupCrossSession>["announcementBatcher"];
-  // Sandbox + image generation. Phase 211/212 cap layer (built in bootChannels, read in bootShutdown).
+  // Sandbox + image generation capability layer (built in bootChannels, read in bootShutdown).
   sandboxProvider?: SandboxProvider;
   capEndpointHandle?: import("./wiring/setup-capability-endpoint-boot.js").CapabilityLayerHandle;
   namespacePreflightOk?: boolean;
   imageGenProvider?: ReturnType<typeof createImageGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
   imageGenRateLimiter?: ImageGenRateLimiter;
   imageGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];
-  /** DEL-01 (186): per-agent persist getter from buildImageGenBundle — persists
+  /** Per-agent persist getter from buildImageGenBundle — persists
    *  the generated image to the agent's confined workspace (`~/.comis/workspace/
    *  media/photos/`) via MediaPersistenceService. Folded onto imageHandlerDeps
    *  (daemon.ts:932) as the `persist` dep; the handler hands the returned
@@ -617,17 +615,17 @@ export interface BootContext {
     buffer: Buffer,
     opts: { mediaKind: "image"; mimeType: string },
   ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
-  /** SEC-02 (186): per-agent/hour USD cost ceiling from buildImageGenBundle.
+  /** Per-agent/hour USD cost ceiling from buildImageGenBundle.
    *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only).
    *  Folded onto imageHandlerDeps (daemon.ts:932) as the `costLimiter` dep. */
   imageGenCostLimiter?: import("./api/image-cost-limiter.js").ImageCostLimiter;
-  // Video generation (Phase 188 / Plan 04) — the buildVideoGenBundle outputs,
+  // Video generation — the buildVideoGenBundle outputs,
   // mirroring the image-gen fields. Folded onto videoHandlerDeps in
   // buildVideoHandlerDeps; daemon.ts threads them through the boot context.
   videoGenProvider?: ReturnType<typeof createVideoGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
   videoGenRateLimiter?: VideoGenRateLimiter;
   videoGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["videoGeneration"];
-  /** DEL-01 (188): per-agent persist getter from buildVideoGenBundle — persists
+  /** Per-agent persist getter from buildVideoGenBundle — persists
    *  the generated video to `~/.comis/workspace/media/videos/` (raised maxBytes).
    *  Folded onto videoHandlerDeps as the `persist` dep. */
   persistVideo?: (
@@ -635,17 +633,17 @@ export interface BootContext {
     buffer: Buffer,
     opts: { mediaKind: "video"; mimeType: string },
   ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
-  /** SEC-02 (188 / DIVERGENCE 3): per-agent/hour video USD cost ceiling, gated
+  /** Per-agent/hour video USD cost ceiling, gated
    *  PRE-submit. Undefined when `maxCostPerHourUsd` is unset (count-only). Folded
    *  onto videoHandlerDeps as the `costLimiter` dep. */
   videoGenCostLimiter?: import("./api/video-cost-limiter.js").VideoCostLimiter;
-  /** JOB-01 (189): the durable async video-job store (shared memory.db), built in
+  /** The durable async video-job store (shared memory.db), built in
    *  buildVideoGenBundle; folded onto videoHandlerDeps (insert-on-submit). */
   videoJobStore?: import("@comis/memory").VideoJobStore;
-  /** JOB-02 (189): the two-phase background poller, built in buildVideoGenBundle;
+  /** The two-phase background poller, built in buildVideoGenBundle;
    *  started post-setupChannels + shut down via setupShutdown; on videoHandlerDeps. */
   videoPoller?: import("./wiring/setup-video-poller.js").VideoPoller;
-  /** VIS-01 (187): the provider-following vision bundle from buildMediaVisionBundle
+  /** The provider-following vision bundle from buildMediaVisionBundle
    *  — `capability` is the main-provider vision bridge (folded onto
    *  MediaApiDeps.mainProviderVision) and `resolveMainModelId` is the single-source
    *  main model-id resolver (folded onto MediaApiDeps.mainModelIdFor for the
@@ -661,7 +659,7 @@ export interface BootContext {
   // Tools (assembler + preprocessor)
   assembleToolsForAgent?: ReturnType<typeof setupTools>["assembleToolsForAgent"];
   preprocessMessageText?: ReturnType<typeof setupTools>["preprocessMessageText"];
-  /** Per-agent terminal session registries (webhook-claude-cli-tdd-20260701): threaded to bootGateway
+  /** Per-agent terminal session registries: threaded to bootGateway
    *  so the webhook route can reap a turn's LIVE never-tasked drives (the unattended honest-fail backstop). */
   terminalRegistries?: ReturnType<typeof setupTools>["terminalRegistries"];
   getCapabilityPortForAgent?: (agentId: string) => ToolCapabilityPort;

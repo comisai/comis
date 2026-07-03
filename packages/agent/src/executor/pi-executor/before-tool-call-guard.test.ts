@@ -105,7 +105,7 @@ describe("createBeforeToolCallGuard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // FIX #2c — the turn-loop detector short-circuits a repeat idempotent read.
+  // The turn-loop detector short-circuits a repeat idempotent read.
   // The SDK's beforeToolCall can only block-with-reason (BeforeToolCallResult
   // is {block?, reason?} — no content channel), so a short-circuit blocks the
   // re-execution and surfaces the one-line steer as the tool-result reason text
@@ -144,7 +144,7 @@ describe("createBeforeToolCallGuard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // BUDGET-01: the mid-run hard stop fires off the per-execution EFFECTIVE cap
+  // The mid-run hard stop fires off the per-execution EFFECTIVE cap
   // set via resetExecution(cap), not just config.perExecution. Built with a
   // REAL createBudgetGuard so the resetExecution(cap?) seam is exercised
   // end-to-end (not a stub) — proving a runaway child is blocked at the next

@@ -97,8 +97,8 @@ export const handlers = {
     // REFUSE to commit a GROUND resource into a blow-up / danger zone — a real ops chief
     // would never send crews there, so the assignment is REJECTED (not silently recorded).
     // This lets the agent learn the safety posture WITHOUT an irreversible bad commit.
-    // (Live-run D3 fix: probing an unsafe zone with a ground crew used to record it
-    // permanently and sink the grade even after reassigning to a safe zone.)
+    // Without this refusal, probing an unsafe zone with a ground crew would record it
+    // permanently and sink the grade even after reassigning to a safe zone.
     if (inDanger && GROUND_TYPES.has(type)) {
       return {
         assigned: false,
@@ -219,7 +219,7 @@ export function selftest({ call, ctx }) {
   call("assign_crew", { incident: inc2, resource: "C1", zone: headZone, task: "hit the head directly" });
   const bad = call("declare_contained", { incident: inc2, note: "going direct" });
 
-  // --- D3 regression guard: an UNSAFE ground probe is refused (not recorded), so an
+  // --- Regression guard: an UNSAFE ground probe is refused (not recorded), so an
   //     otherwise-correct plan still SUCCEEDS after probing the danger zone. ---
   const inc3 = call("open_incident", { summary: "probe then commit safely" }).incident;
   call("set_tactic", { incident: inc3, tactic: T.correctTactic, containment_line: T.containmentAnchor });

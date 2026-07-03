@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the core master-key helpers extracted from CLI's
- * `secrets init` body.
+ * Unit tests for the core master-key helpers behind the CLI's
+ * `secrets init` subcommand.
  *
  * @module
  */

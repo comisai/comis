@@ -65,16 +65,14 @@ const RECALL_STATS_DATA = {
   recallHitRate: 0.75,
 };
 
-// ── memory search/inspect fail closed (DAG context engine demolished, v2.12) ──
+// ── memory search/inspect via the contracted RPCs ─────────────────────────────
 //
-// The `memory search` / `memory inspect` subcommands previously borrowed the
-// daemon's context.search / context.inspect RPCs. Those handlers were removed
-// in v2.12 (Phase 126) with the DAG context engine; per no-backward-compat the
-// commands fail closed (explicit message + non-zero exit) BEFORE any RPC — they
-// no longer call withClient/callTyped at all. The RPC-payload + table/json
-// rendering behavior tests were deleted; these assert the fail-closed contract.
+// `memory search` rides memory.search_files (hybrid FTS + vector search) and
+// `memory inspect` rides memory.browse (the page is scanned client-side for the
+// id, since no dedicated by-id read RPC exists). These assert the happy-path
+// rendering through those contracted RPCs.
 
-describe("memory search/inspect fail closed", () => {
+describe("memory search/inspect render via the contracted RPCs", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -89,7 +87,7 @@ describe("memory search/inspect fail closed", () => {
     exitSpy.restore();
   });
 
-  it("memory search renders the matched entries via the contracted RPC (stub-era exit-1 removed, live finding 2026-06-11)", async () => {
+  it("memory search renders the matched entries via the contracted RPC", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
     vi.mocked(withClient).mockImplementation(async (fn) =>
@@ -532,7 +530,7 @@ describe("memory clear with filter containing = in value", () => {
   it("correctly parses filter value containing = signs (but --filter is dropped from RPC)", async () => {
     // The CLI still parses --filter for the input-validation guard at the
     // top of the action handler (at least one flag is required), but the
-    // resulting filter object no longer flows into the RPC call
+    // resulting filter object does not flow into the RPC call
     // (MemoryFlushContract doesn't model arbitrary filters).
     const program = createTestProgram();
     registerMemoryCommand(program);
@@ -566,9 +564,9 @@ describe("memory commands handle daemon offline", () => {
     exitSpy.restore();
   });
 
-  // NOTE (v2.12, Phase 126): memory search/inspect no longer reach the daemon
-  // (they fail closed before any RPC), so the daemon-offline cases for them were
-  // removed — see the "memory search/inspect fail closed" describe above.
+  // NOTE: the daemon-offline cases for memory search/inspect live in
+  // edge-rpc-errors.test.ts (exit 1 with an actionable message when the RPC
+  // rejects).
 
   it("memory stats exits 1 with descriptive error when daemon is offline", async () => {
     const program = createTestProgram();
@@ -841,7 +839,7 @@ describe("memory stats recall-counter overlay", () => {
     expect(exitSpy.spy).not.toHaveBeenCalled();
   });
 
-  // WR-02: the recall overlay must NOT swallow the error silently — it leaves a
+  // The recall overlay must NOT swallow the error silently — it leaves a
   // breadcrumb so an operator debugging "blank recall counters" can see the
   // call was attempted and why it was skipped (the failure is otherwise
   // indistinguishable from "counters not wired"). Still fail-open (no exit).

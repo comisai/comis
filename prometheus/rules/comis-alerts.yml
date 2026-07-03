@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Comis Prometheus ALERTING rules (PROM-02; design §6 WS7).
+# Comis Prometheus ALERTING rules.
 #
 # Five alerts mirroring the in-process signals Comis already emits. Every `expr`
 # references ONLY a metric the OTel PrometheusExporter emits (the single
@@ -8,7 +8,7 @@
 # (`test/architecture/grafana-dashboard-metrics.test.ts`) fails CI on drift.
 #
 # SINGLE SOURCE OF TRUTH — the ComisSpendApproachingCeiling threshold (0.8) EQUALS
-# WS3's `observability.spend.warnAtFraction` default (the in-process kill-switch
+# the `observability.spend.warnAtFraction` default (the in-process kill-switch
 # `spend_warning` line). `test/architecture/prometheus-rules.test.ts` asserts the
 # literal in this file equals `ObservabilityConfigSchema.parse({}).spend.warnAtFraction`,
 # so the dashboard alert and the kill-switch fire off the SAME number. If you
@@ -64,7 +64,7 @@ groups:
             tool or provider is failing repeatedly.
           runbook: "`comis explain <sessionKey>` shows the breaker timeline + the failing tool."
 
-      # Pricing-gap — unknown-priced turns rising (we are flying blind on cost, E1).
+      # Pricing-gap — unknown-priced turns rising (we are flying blind on cost).
       - alert: ComisPricingGap
         expr: sum(rate(comis_pricing_turns_total{state="unknown"}[15m])) > 0
         for: 15m

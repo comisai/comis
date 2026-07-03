@@ -3,16 +3,15 @@
  * RED-first co-located unit tests for the ablation-sweep registry
  * (each new factor has an ablation toggle).
  *
- * THE SAFETY-NET TEST (Test 3): off=byte-identity. The corrected finding
- * (recall-types.ts:142-182) is that the verified knob leaves are
+ * THE SAFETY-NET TEST (Test 3): off=byte-identity. The verified knob leaves
+ * (recall-types.ts:142-182) are
  * `lanes.graphSpread.enabled`, `mmr.enabled` (NOT `rag.mmr.enabled`),
  * `queryUnderstanding.intentReweight` (NOT `.intent`), `queryUnderstanding.temporalParse`,
  * and the write-side `memoryReasoning.enabled`. A MISTYPED leaf is a silent no-op
  * toggle -- a false "no contribution" reading. Test 3 proves each leaf is REAL by
  * asserting `applyFactor(baseline, factor, false)` is byte-identical (JSON) to a
  * baseline with that leaf explicitly off: a wrong leaf would set a phantom key and
- * diverge from the explicit-off baseline, failing loudly. Authored to FAIL on
- * pre-patch code (no module exists), per CLAUDE.md Tests-First.
+ * diverge from the explicit-off baseline, failing loudly.
  *
  * @module
  */
@@ -63,10 +62,10 @@ describe("ablation-sweep -- V28_ABLATION_FACTORS registry (the verified leaves)"
     }
   });
 
-  it("Test 2: NO factor carries a stale `rag.`-prefixed leaf (the corrected leaves, not RESEARCH's draft)", () => {
+  it("Test 2: NO factor carries a `rag.`-prefixed leaf (only the verified leaf paths, never a plausible-but-wrong spelling)", () => {
     for (const f of V28_ABLATION_FACTORS) {
       expect(f.knobPath).not.toMatch(/^rag\./);
-      // And specifically not the three corrected-away draft paths.
+      // And specifically not the three plausible-but-wrong spellings.
       expect(f.knobPath).not.toBe("rag.mmr.enabled");
       expect(f.knobPath).not.toBe("queryUnderstanding.intent");
       expect(f.knobPath).not.toBe("rag.queryUnderstanding.intent");

@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `comis-agent` entrypoint — the `#!/usr/bin/env node` binary bound read-only
- * into the orchestrate jail (Plan 06 sha256-pins + binds this dist file beside
+ * into the orchestrate jail (sha256-pins + binds this dist file beside
  * the daemon `node` binary). It wires the REAL {@link callCapSocket} (the lease
  * cap socket wire) into {@link runComisAgent} and exits with the returned code.
  *
  * This file holds NO logic beyond the wiring — the parse/dispatch lives in
  * `comis-agent-cli.ts` (so it is unit-testable over a fake callCapSocket). The
  * only egress is {@link callCapSocket}; there is deliberately no WebSocket /
- * gateway client (CLI-04) and no argv-parsing dependency (§2.3).
+ * gateway client and no argv-parsing dependency (AGENTS.md §2.3).
  *
  * @module
  */

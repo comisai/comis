@@ -49,8 +49,8 @@ function makeMockCredentialStore(): OAuthCredentialStorePort {
 
 /**
  * Mock FileLockPort. The mock `withLock` invokes the supplied callback inline
- * so refresh-path tests behave identically to the pre-injection
- * (proper-lockfile-direct) path.
+ * so locking is a pass-through and refresh-path tests exercise the same
+ * behavior as an uncontended lock.
  */
 function makeMockFileLock(): FileLockPort {
   return {

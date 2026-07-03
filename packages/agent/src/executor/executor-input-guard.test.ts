@@ -112,7 +112,7 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
     expect(events.length).toBe(0);
   });
 
-  // GIANT-INPUT-WEDGE (30uc-20260624 UC-09): a multi-MB message must be rejected BEFORE the
+  // GIANT-INPUT-WEDGE: a multi-MB message must be rejected BEFORE the
   // jailbreak scan + the downstream tokenize/LCD-ingest path (which otherwise block the event
   // loop for minutes — the whole daemon freezes). The reject is honest + reason-coded, and the
   // scan never runs on the giant input.
@@ -340,8 +340,8 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
       clock: createFakeClock(1_700_000_000_000),
     });
 
-    // AUDIT-03 / E4: the bogus classification:"security" was reshaped to the
-    // closed kind union (kind:"injection_rate_exceeded"); no classification.
+    // The audit payload uses the closed kind union (kind:"injection_rate_exceeded");
+    // a free-form classification:"security" field must never appear.
     const auditPayload = events.find((e) => e.name === "audit:event")?.payload as
       | Record<string, unknown>
       | undefined;

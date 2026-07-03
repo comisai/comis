@@ -15,7 +15,7 @@ import { registerActivityLabelSpec } from "@comis/core";
 import { jsonResult, readStringParam } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (§17.6). Keyed on the EMITTED tool name
+// Activity label spec. Keyed on the EMITTED tool name
 // `image_analyze` (NOT the `image` descriptor name).
 registerActivityLabelSpec("image_analyze", {
   semanticPhase: "media",

@@ -359,7 +359,7 @@ export function createSecretsHandlers(
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "secrets.set",
-          // AUDIT-04 / M1: a secret MUTATION is a security signal — set `kind`
+          // A secret MUTATION is a security signal — set `kind`
           // explicitly (mirror secrets.get) so it persists as a security-signal
           // kind, not the generic `audit`/info family.
           kind: "secret_access",
@@ -387,7 +387,7 @@ export function createSecretsHandlers(
         agentId: "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "secrets.set",
-        // AUDIT-04 / M1: security-signal kind for the secret mutation.
+        // Security-signal kind for the secret mutation.
         kind: "secret_access",
         classification: "destructive",
         outcome: "success",
@@ -544,7 +544,7 @@ export function createSecretsHandlers(
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "secrets.delete",
-          // AUDIT-04 / M1: security-signal kind for the secret mutation.
+          // Security-signal kind for the secret mutation.
           kind: "secret_access",
           classification: "destructive",
           outcome: "failure",
@@ -570,7 +570,7 @@ export function createSecretsHandlers(
         agentId: "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "secrets.delete",
-        // AUDIT-04 / M1: security-signal kind for the secret mutation.
+        // Security-signal kind for the secret mutation.
         kind: "secret_access",
         classification: "destructive",
         outcome: "success",

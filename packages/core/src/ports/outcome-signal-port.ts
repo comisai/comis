@@ -2,19 +2,19 @@
 import type { Result } from "@comis/shared";
 
 /**
- * OutcomeSignalPort: the SEGREGATED hexagonal boundary for the v2.26 Verified
- * Learning outcome signal (WS1) — the durable record of a finished trajectory's
+ * OutcomeSignalPort: the SEGREGATED hexagonal boundary for the verified-learning
+ * outcome signal — the durable record of a finished trajectory's
  * net task-outcome (success / failure / corrected / unknown) so that ALL
  * learning can gate on a real task-outcome signal instead of a text-overlap
- * proxy (design §WS1). It captures raw observations (`observe`), fuses them
+ * proxy. It captures raw observations (`observe`), fuses them
  * precedence-first into one resolved verdict (`resolve`), and bounds the
  * append-only ledger by age (`prune`).
  *
- * This is a NEW port — like {@link MemoryUsefulnessStore} it deliberately does
+ * This is a deliberately separate port — like {@link MemoryUsefulnessStore} it does
  * NOT widen the security-reviewed `MemoryPort` (store/search/delete). The sole
  * adapter lives in @comis/memory (it owns the `db` handle and runs all SQL);
  * the outcome capture is invoked DAEMON-SIDE (the daemon depends on everything
- * and injects the adapter). Any future agent-side consumer (Phase 201 synthesis)
+ * and injects the adapter). Any agent-side consumer (skill synthesis)
  * imports this port TYPE only — it cannot import @comis/memory (the agent↛memory
  * build cut). No new authority is granted beyond a scoped read/write within the
  * caller's own (tenant, agent).
@@ -31,7 +31,7 @@ import type { Result } from "@comis/shared";
  * scope in a multi-agent DB (an observation under one (tenant, agent) must NEVER
  * be visible to a read under another), not a nicety. Unresolved `(tenant, agent)`
  * MUST fail-closed (raise/err) at the adapter — never default to a shared/global
- * pool (SEC-01, design §9). Mirrors {@link UsefulnessScope}'s shape with `now`
+ * pool. Mirrors {@link UsefulnessScope}'s shape with `now`
  * OPTIONAL (the resolve read path does not bookkeep a clock).
  */
 export interface LearningScope {
@@ -50,10 +50,10 @@ export interface LearningScope {
 /**
  * A single raw outcome observation captured from one signal source for one
  * trajectory. Idempotent at the row level on `(tenantId, agentId, trajectoryId,
- * source, observedAt)`: re-observing the same tuple is a no-op (the design's
- * UNIQUE backstop). Counts/ids/closed-enums only — NO message bodies or
+ * source, observedAt)`: re-observing the same tuple is a no-op (a UNIQUE-
+ * constraint backstop). Counts/ids/closed-enums only — NO message bodies or
  * model-asserted trust ever enter this layer (content-free, like the `memory:*`
- * bus events). `usedSkillIds` is an EMPTY sink in P0 (populated Phase 201).
+ * bus events).
  */
 export interface OutcomeObservation {
   /** Tenant partition (isolation boundary). */
@@ -74,7 +74,7 @@ export interface OutcomeObservation {
   senderTrust?: string;
   /** Opaque recalled-memory ids attributed to this trajectory — ids only, never bodies. */
   recalledIds?: string[];
-  /** Opaque used-skill ids — EMPTY in P0 (the WS2 attribution that populates it lands Phase 201). */
+  /** Opaque used-skill ids attributed to this trajectory — ids only, never bodies; absent when no skill use was attributed. */
   usedSkillIds?: string[];
   /** Injected epoch ms the observation was made (part of the idempotency tuple). */
   observedAt: number;
@@ -85,7 +85,7 @@ export interface OutcomeObservation {
  * precedence-first fusion (tool/pipeline > judge > reaction; max-confidence
  * within a tier) across every persisted observation. A finished trajectory with
  * no resolvable signal fuses to `outcome: "unknown"` and derives NO learning /
- * NO reward (fail-closed, OUTCOME-05); coverage telemetry must NOT count
+ * NO reward (fail-closed); coverage telemetry must NOT count
  * `unknown` as resolved.
  */
 export interface ResolvedOutcome {
@@ -97,7 +97,7 @@ export interface ResolvedOutcome {
   sources: Array<"tool" | "pipeline" | "correction" | "judge" | "reaction" | "explicit">;
   /** Opaque recalled-memory ids attributed to this trajectory — ids only. */
   recalledIds: string[];
-  /** Opaque used-skill ids — EMPTY sink in P0 (populated Phase 201). */
+  /** Opaque used-skill ids attributed to this trajectory — ids only; empty when no skill use was attributed. */
   usedSkillIds: string[];
 }
 
@@ -111,7 +111,7 @@ export interface OutcomeSignalPort {
   /**
    * WRITE (idempotent). Persist one raw outcome observation, upserting the
    * `(tenantId, agentId, trajectoryId, source, observedAt)` row via
-   * `ON CONFLICT … DO NOTHING` (the design's UNIQUE backstop) plus a
+   * `ON CONFLICT … DO NOTHING` (the UNIQUE-constraint backstop) plus a
    * deterministic-hash id so a replay upserts even if the row was deleted.
    * Returns `ok(undefined)` on success; never throws.
    */
@@ -121,7 +121,7 @@ export interface OutcomeSignalPort {
    * READ. Fuse every persisted observation for `trajectoryId` (scoped to
    * `(tenant, agent)`) into one {@link ResolvedOutcome}, precedence-first then
    * by confidence. When no tier resolves, returns `ok({ outcome: "unknown", … })`
-   * and derives no learning (fail-closed, OUTCOME-05). Unresolved scope
+   * and derives no learning (fail-closed). Unresolved scope
    * fails-closed with `err(...)` at the adapter — never a shared/global pool.
    */
   resolve(trajectoryId: string, scope: LearningScope): Promise<Result<ResolvedOutcome, Error>>;
@@ -129,8 +129,8 @@ export interface OutcomeSignalPort {
   /**
    * Age-based housekeeping. Delete every observation older than
    * `systemNowMs() - retentionDays * 86_400_000` (mirrors
-   * `observability-store.prune`). Mandatory anti-DoS on the append-only ledger
-   * (OUTCOME-07 / §V12); runs at daemon startup regardless of the per-agent
+   * `observability-store.prune`). Mandatory anti-DoS on the append-only ledger;
+   * runs at daemon startup regardless of the per-agent
    * enable flag. Synchronous (a single SQLite transaction).
    */
   prune(retentionDays: number): OutcomePruneResult;
@@ -139,12 +139,12 @@ export interface OutcomeSignalPort {
    * READ. Enumerate the DISTINCT per-turn `(trajectoryId, sessionId)` pairs the
    * ledger holds for this `(tenant, agent)` scope, most-recent-first (bounded).
    *
-   * Exists so a consumer (skill synthesis, WS2) can discover the REAL per-turn
+   * Exists so a consumer (skill synthesis) can discover the REAL per-turn
    * trajectory identities the outcome signal is keyed on and `resolve()` each —
-   * instead of guessing an id from a session view. This closes the live-2026-06-18
-   * defect where the synthesis source emitted the `sessionKey` while outcomes are
-   * keyed by the per-turn `traceId`, so `resolve(sessionKey)` always fused to
-   * `unknown` and NO skill could ever be selected on the single-agent path.
+   * instead of guessing an id from a session view. This matters because outcomes
+   * are keyed by the per-turn `traceId`, NOT the `sessionKey`: a consumer that
+   * calls `resolve(sessionKey)` always fuses to `unknown`, and no skill could
+   * ever be selected on the single-agent path.
    *
    * OPTIONAL: only the sqlite adapter implements it; a consumer MUST fail-closed
    * (treat absent / `err` as "no source trajectories") rather than fall back to a

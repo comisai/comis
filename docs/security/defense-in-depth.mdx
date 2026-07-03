@@ -516,7 +516,8 @@ someone gains access to your server's file system.
     filters which secret names it can read. Successful reads, denied reads,
     and missing-key reads all emit `secret:accessed` audit events tagged with
     the agent ID. An empty allowlist falls back to unrestricted access (with
-    a one-time warning) for backward compatibility.
+    a one-time warning), so an agent with no `secrets.allow` config is never
+    locked out of every credential.
 
     **Why it matters:** Implements least-privilege at the credential layer. A
     customer-support agent never needs your AWS keys; this layer makes that
@@ -590,7 +591,7 @@ running `comis doctor`, which checks your installation against recommended
 security practices. See [Hardening](/security/hardening) for the full
 walkthrough.
 
-## Local Model Security Posture (v2.14)
+## Local Model Security Posture
 
 ### The Model-Independent Guarantee
 
@@ -606,7 +607,7 @@ walkthrough.
 | Canary token | Per-session canary | Exfiltration detection (canary in output → blocked) |
 | Input security guard | `InputSecurityGuard` | Prompt injection patterns in inbound messages |
 
-The v2.14 matrix baseline (Phase 149) confirmed this empirically: **injection-resisted=100%, secret-leaked=0%, over-refused=0%** across all 8 qwen3.6 batches (fair and bare prompts, 27b through 35b, GGUF and MLX). A platform-level control held by `OutputGuard`, `FROZEN_TRUST_PATHS`, and the exec sandbox does not depend on the model's instruction-following quality.
+A live security matrix confirmed this empirically: **injection-resisted=100%, secret-leaked=0%, over-refused=0%** across all 8 qwen3.6 batches (fair and bare prompts, 27b through 35b, GGUF and MLX). A platform-level control held by `OutputGuard`, `FROZEN_TRUST_PATHS`, and the exec sandbox does not depend on the model's instruction-following quality.
 
 ### `securityLevel` Scales Inversely with `capabilityClass`
 
@@ -626,7 +627,7 @@ A weaker model receives **more** platform scaffolding, not less. The compact-sec
 
 **Local-only egress is the default.** When running Comis with a local model (Ollama), no model inference data leaves the device. This is the documented and recommended posture for privacy-sensitive deployments.
 
-Off-device escalation to a cloud model (Phase 156 / E1+S5) is **deferred** and not currently built. When implemented, it will require:
+Off-device escalation to a cloud model is **not built**. If it is ever implemented, it will require:
 - Explicit operator opt-in
 - `OutputGuard` redaction of all payloads before off-device transmission
 - Payload scope-limit (no full context exfiltration)

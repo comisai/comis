@@ -113,7 +113,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
         job.consecutiveErrors = 0;
         job.lastRunAtMs = endTime;
         job.nextRunAtMs = computeNextRunAtMs(job.schedule, endTime);
-        // OBS-8 (reflect-obs-20260627): a system_event payload is FIRE-AND-FORGET — executeJob
+        // A system_event payload is FIRE-AND-FORGET — executeJob
         // dispatches the event and returns in ms while the real work (e.g. the ~20s __REFLECT__
         // run) proceeds async. Logging "Job completed durationMs:15" reads as "finished in 15ms"
         // and a completion-grep false-matches the dispatch. So distinguish the dispatch: the work's

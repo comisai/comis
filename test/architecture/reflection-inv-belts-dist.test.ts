@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ARCHITECTURE — Phase 227 / D-02 (ACCEPT-01): the six reflection-engine security
- * invariants (INV-1..6) re-verified on the DEPLOYED DIST — the compiled
+ * ARCHITECTURE — the six reflection-engine security invariants (INV-1..6)
+ * re-verified on the DEPLOYED DIST — the compiled
  * `packages/<pkg>/dist/<file>.js` (and the `.d.ts` for the type-only event
- * contract), NOT src. The source-level belts are reflection-no-exec-guard.test.ts
- * (INV-3) + the per-phase verifiers; this pins them on the built output the operator
- * ships (the milestone belt-and-suspenders over the per-phase source belts).
+ * contract), NOT src. The source-level belt is reflection-no-exec-guard.test.ts
+ * (INV-3); this pins the invariants on the built output the operator
+ * ships (belt-and-suspenders over the source-level belt).
  *
  * ## Why dist, not src
  *
- * The per-phase verifiers asserted these invariants on the SOURCE. A build step can
+ * Source-level checks assert these invariants on the SOURCE. A build step can
  * (in principle) drop, inline, or transform a guard. This belt reads the COMPILED
  * artifacts — the exact bytes `npm install -g comisai` ships — so a guard that
  * survives in src but is lost in the build trips here.
@@ -62,7 +62,7 @@ const DIST = {
   reflectionPrompt: "packages/agent/dist/memory/reflection-prompt.js",
   // INV-3 / INV-6: the static admission body guard (the only admission scan).
   validateLearnedDocBody: "packages/core/dist/security/validate-learned-doc-body.js",
-  // INV-4: the eviction-candidacy predicate + the FORGET-03 exemption disjunction.
+  // INV-4: the eviction-candidacy predicate + the exemption disjunction.
   lifecycleStore: "packages/memory/dist/sqlite-memory-lifecycle-store.js",
   // INV-6: the content-free reflect:* funnel contract — the compiled .js is type-only
   // (`export {}`), so the funnel SHAPE lives in the emitted .d.ts; we scan that.
@@ -115,18 +115,18 @@ const validateLearnedDocBody = stripCommentsOnly(readDist(DIST.validateLearnedDo
 const lifecycleStore = stripCommentsOnly(readDist(DIST.lifecycleStore));
 const eventsLearningDts = stripCommentsOnly(readDist(DIST.eventsLearningDts));
 
-describe("INV-1..6 re-verified on the DEPLOYED DIST (Phase 227 / D-02, ACCEPT-01)", () => {
+describe("INV-1..6 re-verified on the DEPLOYED DIST", () => {
   it("INV-1 (trust ceiling): mental_models DDL restricts trust_level to ('learned') on the BUILT artifact", () => {
     // Non-vacuity anchor: the CREATE TABLE for mental_models is present (a moved DDL fails).
     expect(
       /CREATE TABLE IF NOT EXISTS mental_models/.test(schemaMentalModels),
       "non-vacuity anchor: the mental_models CREATE TABLE moved out of the built schema-mental-models.js",
     ).toBe(true);
-    // The SEC-01 keystone: trust_level is CHECK-constrained to the single 'learned'
+    // The keystone: trust_level is CHECK-constrained to the single 'learned'
     // value — a learned doc can NEVER be inserted as 'system' (no EoP via the table).
     expect(
       /trust_level\s+TEXT[^,]*CHECK\s*\(\s*trust_level\s+IN\s*\(\s*'learned'\s*\)\s*\)/i.test(schemaMentalModels),
-      "the built mental_models DDL must CHECK trust_level IN ('learned') (INV-1 / SEC-01 trust ceiling)",
+      "the built mental_models DDL must CHECK trust_level IN ('learned') (INV-1 trust ceiling)",
     ).toBe(true);
     // The kind closed enum survives too (the kind:skill|profile|topic domain).
     expect(
@@ -202,10 +202,10 @@ describe("INV-1..6 re-verified on the DEPLOYED DIST (Phase 227 / D-02, ACCEPT-01
     ).toBe(true);
     // The exemption disjunction — pinned + a system trust check + the high-proof floor.
     // Compiled form: `const exempt = row.pinned === 1 || … 'system' … >= highProofFloor`.
-    expect(/\bpinned\b/.test(lifecycleStore), "the built lifecycle store must reference `pinned` (FORGET-03 exemption)").toBe(true);
+    expect(/\bpinned\b/.test(lifecycleStore), "the built lifecycle store must reference `pinned` (the eviction exemption)").toBe(true);
     expect(
       /'system'|"system"/.test(lifecycleStore),
-      "the built lifecycle store must reference the 'system' trust exemption (FORGET-03)",
+      "the built lifecycle store must reference the 'system' trust exemption",
     ).toBe(true);
     expect(
       /\bhighProofFloor\b/.test(lifecycleStore),
@@ -224,7 +224,7 @@ describe("INV-1..6 re-verified on the DEPLOYED DIST (Phase 227 / D-02, ACCEPT-01
       /\btrustedOrigin\b/.test(reflectionJob),
       "non-vacuity anchor: trustedOrigin missing from the built reflection-job.js (the SELECT trust filter)",
     ).toBe(true);
-    // The D5-salvage acute reason: all-untrusted-origin successes dropped at SELECT
+    // The acute reason: all-untrusted-origin successes dropped at SELECT
     // resolve to 'untrusted_origin' (an untrusted-origin trajectory seeds no doc).
     expect(
       /'untrusted_origin'|"untrusted_origin"/.test(reflectionJob),

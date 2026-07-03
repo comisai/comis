@@ -74,10 +74,10 @@ describe("SSRF Guard", () => {
       }
     });
 
-    // SSRF-AUDIT (hermes-usecases obs-loop 2026-06-25): an SSRF block must be
-    // auditable — validateUrl fires the registered hook with a closed-enum reason on
-    // the security-relevant blocks (protocol / cloud_metadata / range), but NOT on a
-    // pass or a malformed/unresolvable URL, and the hook NEVER affects the return.
+    // An SSRF block must be auditable — validateUrl fires the registered hook
+    // with a closed-enum reason on the security-relevant blocks (protocol /
+    // cloud_metadata / range), but NOT on a pass or a malformed/unresolvable
+    // URL, and the hook NEVER affects the return.
     describe("setSsrfBlockHook audit side-channel", () => {
       afterEach(() => setSsrfBlockHook(undefined));
 
@@ -202,14 +202,14 @@ describe("SSRF Guard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // validateLocalServerUrl (SEC-02) — the INVERSE verdict of validateUrl.
+  // validateLocalServerUrl — the INVERSE verdict of validateUrl.
   //
   // validateUrl BLOCKS loopback (it guards untrusted public fetches like
   // reference_image). validateLocalServerUrl is for an operator-configured
   // LOCAL server (`transcription.local.baseUrl`): it ALLOWS loopback + an
   // explicit allowlist, and DENIES public/arbitrary egress (keeping the
   // cloud-metadata deny as defense-in-depth). A test that asserts a loopback
-  // url is *rejected* would be WRONG — that is the v2.23 public-fetch policy,
+  // url is *rejected* would be WRONG — that is the public-fetch policy,
   // not the local-server policy.
   // -------------------------------------------------------------------------
   describe("validateLocalServerUrl", () => {
@@ -254,7 +254,7 @@ describe("SSRF Guard", () => {
       }
     });
 
-    it("DENIES a private host (10.0.0.5) — the SEC-02 core inversion (private+public both denied unless explicitly allowed)", async () => {
+    it("DENIES a private host (10.0.0.5) — the core inversion (private+public both denied unless explicitly allowed)", async () => {
       mockLookup.mockResolvedValue({ address: "10.0.0.5", family: 4 });
 
       const result = await validateLocalServerUrl("http://10.0.0.5:8000");

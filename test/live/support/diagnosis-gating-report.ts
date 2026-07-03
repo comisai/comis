@@ -1,25 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-failure-class gating report (Phase 149 — PROVE: LLM-diagnosis baseline,
- * success criterion #3).
+ * Per-failure-class gating report.
  *
- * THE deliverable that gates phases 150-155. The Stage-C baseline RUN
- * (diagnosis-baseline.test.ts) hands each fixture to a fresh scripted agent on
- * today's obs surface and records a DiagnosisVerdictRow per failure class; this
- * module turns those rows into a per-class trim/build recommendation table:
+ * The deliverable that gates the downstream obs-surface build-out. The Stage-C
+ * baseline RUN (diagnosis-baseline.test.ts) hands each fixture to a fresh scripted
+ * agent on today's obs surface and records a DiagnosisVerdictRow per failure class;
+ * this module turns those rows into a per-class trim/build recommendation table:
  *
  *   - A class root-caused in <=1 obs call with 0 source reads is a TRIM-CANDIDATE
  *     (an existing RPC already suffices — a downstream phase may be trimmed, e.g.
- *     "exec ModuleNotFound is already 1-call diagnosable via obs.diagnostics" →
- *     reorder 150-153, RESEARCH.md Pitfall 5 / Open Question 3).
+ *     "exec ModuleNotFound is already 1-call diagnosable via obs.diagnostics").
  *   - A class that needs source reads (or multi-call) today is BUILD-needed — the
- *     measured cost (reads + calls) is exactly what Phase 156/G1 must drive to zero.
+ *     measured cost (reads + calls) is exactly what a new obs surface must drive to zero.
  *   - A judge-skipped class is INCONCLUSIVE (re-run with a key).
  *
  * This is metric-bearing logic (not scaffolding), so it is RED→GREEN unit-tested
  * in diagnosis-gating-report.test.ts (TDD mode) BEFORE the run consumes it.
  *
- * SECURITY (T-149-03-01): renderGatingMarkdown runs `assertNoSecrets` over its
+ * SECURITY: renderGatingMarkdown runs `assertNoSecrets` over its
  * output before returning — defense-in-depth. The table carries only counts /
  * class names / typed verdicts (never answer text or bodies), but the
  * residency rule is applied uniformly to every persisted-bound string. The
@@ -40,11 +38,11 @@ export interface GatingRow {
   failureClass: DiagnosisFailureClass;
   /** obs.* RPC / trajectory / read_source paths the agent touched (from the verdict row). */
   surfacesUsed: string[];
-  /** M2c — distinct source files the agent had to read to reach root cause. */
+  /** Distinct source files the agent had to read to reach root cause. */
   distinctSourceReads: number;
-  /** M2b — distinct tool/RPC names the agent invoked. */
+  /** Distinct tool/RPC names the agent invoked. */
   distinctToolCalls: number;
-  /** M2a — total tokens the diagnosis cost. */
+  /** Total tokens the diagnosis cost. */
   totalTokens: number;
   /** Whether the agent reached the causal mechanism ("skip" when the judge was absent). */
   rootCauseReached: boolean | "skip";
@@ -56,8 +54,8 @@ export interface GatingRow {
    */
   existingRpcSuffices: boolean;
   /**
-   * TRUE when the class was NEVER MEASURED because the cost budget cut it off
-   * (WR-04). A reader must be able to tell this apart from a measured-but-judge-
+   * TRUE when the class was NEVER MEASURED because the cost budget cut it off.
+   * A reader must be able to tell this apart from a measured-but-judge-
    * skipped class — the gate is incomplete for this class, not inconclusive.
    */
   notMeasured: boolean;
@@ -67,7 +65,7 @@ export interface GatingRow {
 
 /**
  * Marker placed in a {@link DiagnosisVerdictRow}'s `surfacesUsed` by the Stage-C RUN
- * when a fixture was NEVER MEASURED because the cost budget cut it off (WR-04). A
+ * when a fixture was NEVER MEASURED because the cost budget cut it off. A
  * budget-skip is categorically different from a judge-skip (measured, no key): the
  * class produced no data at all, so it must be rendered distinctly and must never be
  * read as a measured-but-inconclusive result.
@@ -94,7 +92,7 @@ function isBudgetSkipped(row: DiagnosisVerdictRow): boolean {
  *   - otherwise                        → "BUILD: <class> needs N source reads + M calls today"
  *
  * A budget-skipped row is NEVER a TRIM-CANDIDATE (an unmeasured class cannot trim a
- * downstream phase) — WR-04.
+ * downstream phase).
  */
 export function buildGatingTable(rows: DiagnosisVerdictRow[]): GatingRow[] {
   return rows.map((row) => {
@@ -138,11 +136,10 @@ function reachedCell(reached: boolean | "skip"): string {
 
 /**
  * Render the gating table as markdown: one row per failure class plus a summary
- * line counting TRIM-CANDIDATEs (the reorder/trim signal the milestone reads
- * before building 150-155).
+ * line counting TRIM-CANDIDATEs (the reorder/trim signal read before the
+ * downstream obs-surface build-out).
  *
- * Runs `assertNoSecrets` over the output before returning (T-149-03-01,
- * defense-in-depth).
+ * Runs `assertNoSecrets` over the output before returning (defense-in-depth).
  */
 export function renderGatingMarkdown(table: GatingRow[]): string {
   const trimCandidates = table.filter((r) => r.existingRpcSuffices).length;
@@ -178,7 +175,7 @@ export function renderGatingMarkdown(table: GatingRow[]): string {
       "downstream phase (150-155) an existing RPC may already cover.",
   );
   if (notMeasured > 0) {
-    // WR-04: a partial corpus must NOT be presented as the full gate. Surface the
+    // A partial corpus must NOT be presented as the full gate. Surface the
     // not-measured count loudly so the reorder/trim decision is not made on it.
     lines.push("");
     lines.push(
@@ -190,7 +187,7 @@ export function renderGatingMarkdown(table: GatingRow[]): string {
   lines.push("");
 
   const output = lines.join("\n");
-  // T-149-03-01: never persist/return a string that carries a credential shape.
+  // Never persist/return a string that carries a credential shape.
   assertNoSecrets(output, "gating table");
   return output;
 }

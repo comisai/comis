@@ -8,10 +8,10 @@ import { TypedEventBus } from "./bus.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// Reproducible-RED guards (the 201-01 precedent): expectTypeOf / @ts-expect-error
-// assertions compile away under vitest's esbuild transform, so they pass GREEN on
-// pre-patch HEAD. Filesystem + source-grep guards genuinely fail when the new
-// sibling event-decl file is absent / the key is missing.
+// Reproducible-RED guards: expectTypeOf / @ts-expect-error
+// assertions compile away under vitest's esbuild transform, so they pass GREEN
+// even when the declaration is missing. Filesystem + source-grep guards genuinely
+// fail when the sibling event-decl file is absent / the key is missing.
 describe("events-learning.ts source (reproducible RED guards)", () => {
   it("packages/core/src/event-bus/events-learning.ts exists", () => {
     expect(existsSync(resolve(here, "events-learning.ts"))).toBe(true);
@@ -105,21 +105,19 @@ describe("memory:skill_used skill-use attribution event (counts/ids only)", () =
 });
 
 // ---------------------------------------------------------------------------
-// REFLECT (Phase 226 SIMPLIFY-04): the reflection funnel TELEMETRY events,
-// RENAMED from learning:skill_synthesized / learning:skill_synthesis_funnel to
+// The reflection funnel TELEMETRY events:
 // reflect:admitted / reflect:funnel. Emitted DAEMON-SIDE (plain eventBus.emit)
 // after runReflection returns. Counts / closed-enums (admissionOutcome) ONLY — a
-// body/script/finding field is a compile error (the §2.7 / SEC-01 firewall). The
-// vestigial learning:skill_validated (0-emit, sandbox deleted in 223) was removed
-// in this same lockstep. Live in THIS same LearningEvents sibling.
+// body/script/finding field is a compile error (the §2.7 counts-only firewall).
+// Live in THIS same LearningEvents sibling.
 // ---------------------------------------------------------------------------
 
-describe("reflect:admitted / reflect:funnel telemetry (counts-only, renamed Phase 226)", () => {
-  it("declares BOTH renamed keys on the LearningEvents interface (source grep — reproducible RED)", () => {
+describe("reflect:admitted / reflect:funnel telemetry (counts-only)", () => {
+  it("declares BOTH reflect keys on the LearningEvents interface (source grep — reproducible RED)", () => {
     const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
     expect(src).toContain('"reflect:admitted"');
     expect(src).toContain('"reflect:funnel"');
-    // The old synthesis-funnel names + the deleted vestigial are GONE (no compat alias, I1).
+    // Rejected alternative key names must never (re)appear — there is no compat alias.
     expect(src).not.toContain('"learning:skill_synthesized"');
     expect(src).not.toContain('"learning:skill_synthesis_funnel"');
     expect(src).not.toContain('"learning:skill_validated"');
@@ -150,7 +148,7 @@ describe("reflect:admitted / reflect:funnel telemetry (counts-only, renamed Phas
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
-      // OBS-1: the funnel MAGNITUDES (counts only) — answer "how many untrusted dropped / was the
+      // The funnel MAGNITUDES (counts only) — answer "how many untrusted dropped / was the
       // source empty" via the bridged event instead of a daemon.log grep.
       untrustedDrops: 0,
       nameLengthRejections: 0,
@@ -166,13 +164,13 @@ describe("reflect:admitted / reflect:funnel telemetry (counts-only, renamed Phas
     const r = handler.mock.calls[0]![0] as EventMap["reflect:funnel"];
     expect(r.maxClusterCardinality).toBe(2);
     expect(r.admissionOutcome).toBe("admitted");
-    // OBS-1: the magnitude counts ride the content-free payload.
+    // The magnitude counts ride the content-free payload.
     expect(r.untrustedDrops).toBe(0);
     expect(r.sourceTrajectoryCount).toBe(2);
     expect(r.totalSourceChars).toBe(480);
   });
 
-  it("OBS-1: reflect:funnel SOURCE declares the content-free magnitude counts (reproducible RED)", () => {
+  it("reflect:funnel SOURCE declares the content-free magnitude counts (reproducible RED)", () => {
     const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
     // Counts only — the empty-source-vs-LLM-yield discriminator + the untrusted-drop magnitude.
     expect(src).toContain("untrustedDrops");
@@ -204,7 +202,7 @@ describe("reflect:admitted / reflect:funnel telemetry (counts-only, renamed Phas
     });
   });
 
-  it("type contract: both renamed keys are members of EventMap (counts/closed-enums only)", () => {
+  it("type contract: both reflect keys are members of EventMap (counts/closed-enums only)", () => {
     expectTypeOf<EventMap>().toHaveProperty("reflect:admitted");
     expectTypeOf<EventMap>().toHaveProperty("reflect:funnel");
     expectTypeOf<EventMap["reflect:admitted"]["count"]>().toEqualTypeOf<number>();
@@ -213,15 +211,15 @@ describe("reflect:admitted / reflect:funnel telemetry (counts-only, renamed Phas
 });
 
 // ---------------------------------------------------------------------------
-// SURFACE-06 (Phase 202 Plan 03): the two promote/demote TELEMETRY events.
+// The two promote/demote TELEMETRY events.
 // Emitted DAEMON-SIDE (plain eventBus.emit — never `?.`) by the promote/demote
-// loop (Plan 05) — counts / ids ONLY. A body / script / description / id-list
-// field is a compile error (the §2.7 / SEC-01 firewall). Mirror the 201-07
-// skill_synthesized counts-only + @ts-expect-error precedent exactly. Live in
+// loop — counts / ids ONLY. A body / script / description / id-list
+// field is a compile error (the §2.7 counts-only firewall). Mirrors the
+// reflect-telemetry counts-only + @ts-expect-error pattern above exactly. Live in
 // THIS same LearningEvents sibling.
 // ---------------------------------------------------------------------------
 
-describe("learning:skill_promoted / learning:skill_demoted telemetry (counts-only — SURFACE-06)", () => {
+describe("learning:skill_promoted / learning:skill_demoted telemetry (counts-only)", () => {
   it("declares BOTH keys on the LearningEvents interface (source grep — reproducible RED)", () => {
     const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
     expect(src).toContain('"learning:skill_promoted"');
@@ -244,7 +242,7 @@ describe("learning:skill_promoted / learning:skill_demoted telemetry (counts-onl
     expect(r.agentId).toBe("agent-1");
   });
 
-  it("learning:skill_demoted carries count + the demoted NAMES + trigger trajectory (finding C — ids only)", () => {
+  it("learning:skill_demoted carries count + the demoted NAMES + trigger trajectory (ids only)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["learning:skill_demoted"] = {
@@ -311,17 +309,16 @@ describe("learning:skill_promoted / learning:skill_demoted telemetry (counts-onl
 });
 
 // ---------------------------------------------------------------------------
-// Phase 226 SIMPLIFY-04: the REVISE-01 (learning:user_model_revised) +
-// GENERAL-01 (learning:memory_generalized) telemetry events were DELETED — both
-// grep-confirmed 0-emit at HEAD (the user-rep revision + consolidation
-// generalization paths were folded into the reflection engine in Phase 225). Their
-// trajectory-bridge entries, translator cases, type members, and obs folds/verdicts
-// were removed in the same lockstep change. A guard asserts they are GONE from the
-// interface source (no compat alias, I1).
+// There is deliberately NO learning:user_model_revised, learning:memory_generalized,
+// or learning:skill_validated telemetry event — the user-rep revision + consolidation
+// generalization paths are handled by the reflection engine, and there is no dynamic
+// sandbox validation, so such keys would have zero emitters. The guard below pins that
+// they stay out of the interface source (no compat alias); their trajectory-bridge
+// entries, translator cases, type members, and obs folds/verdicts are absent in lockstep.
 // ---------------------------------------------------------------------------
 
-describe("deleted vestigial learning telemetry (Phase 226 SIMPLIFY-04)", () => {
-  it("the 3 vestigial 0-emit keys are GONE from the LearningEvents interface source", () => {
+describe("vestigial learning telemetry keys stay out of the interface", () => {
+  it("the 3 vestigial zero-emit keys are absent from the LearningEvents interface source", () => {
     const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
     expect(src).not.toContain('"learning:skill_validated"');
     expect(src).not.toContain('"learning:user_model_revised"');

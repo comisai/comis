@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the Phase-189 background video poller (JOB-02 / JOB-03 — the
- * milestone's durability keystone).
+ * Tests for the background video poller — the durability keystone for long renders.
  *
  * The poller is the two-phase crash-safe delivery queue (setup-delivery.ts)
  * retyped for an EXTERNAL-provider poll: it drives a tracked job
@@ -63,7 +62,7 @@ function makeConfig(overrides: Partial<VideoGenerationConfig> = {}): VideoGenera
   } as unknown as VideoGenerationConfig;
 }
 
-/** The in-memory VideoJobRecord the handler hands to `track()` (WR-02/WR-06: the
+/** The in-memory VideoJobRecord the handler hands to `track()` (the
  *  poller no longer re-reads it from listPending — the handler already has the
  *  routing in scope at submit). Defaults match the seeded `fal-req-abc123` row. */
 function makeRecord(overrides: Partial<VideoJobRecord> = {}): VideoJobRecord {
@@ -140,19 +139,19 @@ interface MockPollerDeps {
   persist: ReturnType<typeof vi.fn>;
   costLimiter: { record: ReturnType<typeof vi.fn> };
   sendAttachment: ReturnType<typeof vi.fn>;
-  /** DEL-03 (Phase 192): the link/notice degrade path sends via sendMessage. */
+  /** The link/notice degrade path sends via sendMessage. */
   sendMessage: ReturnType<typeof vi.fn>;
   getChannelAdapter: ReturnType<typeof vi.fn>;
   logger: ReturnType<typeof createMockLogger>;
   timers: ReturnType<typeof createFakeTimers>;
   sleep: ReturnType<typeof vi.fn>;
   nowMs: () => number;
-  /** OBS-03 (Phase 192): the event bus the off-turn synthetic
+  /** The event bus the off-turn synthetic
    *  `observability:token_usage` cost route emits on. */
   eventBus: { emit: ReturnType<typeof vi.fn> };
 }
 
-/** The OBS-03 synthetic cost event shape (the loose `observability:token_usage`
+/** The synthetic cost event shape (the loose `observability:token_usage`
  *  payload the poller emits + token-tracker SUMs). */
 interface TokenUsageEvent {
   traceId: string;
@@ -165,7 +164,7 @@ interface TokenUsageEvent {
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
 }
 
-/** Find the OBS-03 synthetic cost emits the poller fired on the bus. */
+/** Collect the synthetic cost emits the poller fired on the bus. */
 function tokenUsageEmits(deps: MockPollerDeps): TokenUsageEvent[] {
   return deps.eventBus.emit.mock.calls
     .filter((c) => c[0] === "observability:token_usage")
@@ -180,19 +179,19 @@ function tokenUsageEmits(deps: MockPollerDeps): TokenUsageEvent[] {
 function makePoller(opts: {
   provider?: MockProvider;
   sendAttachment?: ReturnType<typeof vi.fn>;
-  /** DEL-03 (Phase 192): the link/notice degrade send spy (defaults to ok). */
+  /** The link/notice degrade send spy (defaults to ok). */
   sendMessage?: ReturnType<typeof vi.fn>;
   adapterHasSend?: boolean; // false → IRC-style adapter without sendAttachment
   persist?: ReturnType<typeof vi.fn>;
   config?: VideoGenerationConfig;
   seedRows?: Array<Record<string, unknown>>;
-  // OBS-04 (Phase 192): an optional trajectory registry — when provided the
+  // An optional trajectory registry — when provided the
   // poller best-effort live-emits video.* off-turn via getRecorder(sessionKey).
   trajectoryRegistry?: { getRecorder: ReturnType<typeof vi.fn> };
-  // DEL-03 (Phase 192): an optional video-size override (the media-compressor
+  // An optional video-size override (the media-compressor
   // maxVideoBytes knob). A small value forces the default fixture oversized.
   maxVideoBytes?: number;
-  // CR-01 (Phase 192): the resolved video secrets bound for exact-match scrub.
+  // The resolved video secrets bound for exact-match scrub.
   videoSecrets?: readonly string[];
 } = {}): { poller: VideoPoller; deps: MockPollerDeps; db: Database.Database } {
   const db = new Database(":memory:");
@@ -226,7 +225,7 @@ function makePoller(opts: {
   const provider = opts.provider ?? makeProvider();
   const sendAttachment = opts.sendAttachment ?? vi.fn().mockResolvedValue(ok("msg-1"));
   const sendMessage = opts.sendMessage ?? vi.fn().mockResolvedValue(ok("notice-1"));
-  // DEL-03: the link/notice degrade calls sendMessage (a REQUIRED ChannelPort
+  // The link/notice degrade calls sendMessage (a REQUIRED ChannelPort
   // method, present on every adapter). An IRC-style adapter (adapterHasSend:false)
   // still exposes sendMessage — it just lacks sendAttachment (the capability gate).
   const adapter = opts.adapterHasSend === false ? { sendMessage } : { sendAttachment, sendMessage };
@@ -264,7 +263,7 @@ function makePoller(opts: {
   return { poller, deps, db };
 }
 
-/** A capture recorder + a registry resolving it by sessionKey (OBS-04). */
+/** A capture recorder + a registry resolving it by sessionKey. */
 function captureRegistry(): { calls: Array<{ type: string; data: Record<string, unknown> }>; getRecorder: ReturnType<typeof vi.fn> } {
   const calls: Array<{ type: string; data: Record<string, unknown> }> = [];
   const recorder = {
@@ -287,7 +286,7 @@ describe("createVideoPoller", () => {
     vi.clearAllMocks();
   });
 
-  // ─── JOB-02 happy path: poll→done→fetch→persist→deliver→record→markDone ───
+  // ─── Happy path: poll→done→fetch→persist→deliver→record→markDone ───
   it("drives a tracked job to completion: persist once, deliver via sendAttachment, record actual cost, markDone", async () => {
     const { poller, deps } = makePoller();
     const markDoneSpy = deps.store.markDoneSpy;
@@ -313,7 +312,7 @@ describe("createVideoPoller", () => {
   });
 
   // The record the handler tracks carries the routing for the announce directly
-  // (WR-02/WR-06: the poller no longer re-reads it from listPending — the handler
+  // (the poller no longer re-reads it from listPending — the handler
   // already has agentId/channelType/channelId/traceId in scope at submit).
   it("delivers to the RECORDED channel/agent carried on the tracked record", async () => {
     // Seed a row whose channel differs from any default, then track its record.
@@ -327,7 +326,7 @@ describe("createVideoPoller", () => {
     expect(deps.costLimiter.record).toHaveBeenCalledWith("beta", 0.8);
   });
 
-  // ─── JOB-02 failed branch ───
+  // ─── Failed branch ───
   it("markFailed + WARN(errorKind+hint+jobId+traceId) on a failed poll; NO sendAttachment, NO markDone", async () => {
     const provider = makeProvider({
       poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "failed" })),
@@ -349,11 +348,11 @@ describe("createVideoPoller", () => {
     expect((w![0] as { errorKind?: string }).errorKind).toBeTruthy();
     expect((w![0] as { hint?: string }).hint).toBeTruthy();
     expect((w![0] as { jobId?: string }).jobId).toBe("fal-req-abc123");
-    // MUST-DIFFER 3: traceId is on the object explicitly (read from the row).
+    // traceId is on the object explicitly (read from the row).
     expect((w![0] as { traceId?: string }).traceId).toBe("trace-seed");
   });
 
-  // ─── JOB-02 timeout branch (job_timeout) ───
+  // ─── Timeout branch (job_timeout) ───
   it("markFailed('job_timeout') + WARN when the deadline is exceeded (poll stays pending)", async () => {
     // poll always pending; the deadline is hit because nowMs jumps past timeoutMs.
     let clock = 0;
@@ -392,7 +391,7 @@ describe("createVideoPoller", () => {
     expect((w![0] as { jobId?: string }).jobId).toBe("fal-req-abc123");
   });
 
-  // ─── I8 obs floor: done branch INFO line carries traceId from the row ───
+  // ─── Obs floor: done branch INFO line carries traceId from the row ───
   it("emits an INFO completion line with jobId + traceId (from the row) + costUsd + durationMs", async () => {
     const { poller, deps } = makePoller({ seedRows: [{ jobId: "fal-req-abc123", traceId: "trace-seed" }] });
     poller.track(makeRecord({ traceId: "trace-seed" }));
@@ -402,13 +401,13 @@ describe("createVideoPoller", () => {
     );
     expect(info).toBeTruthy();
     expect((info![0] as { jobId?: string }).jobId).toBe("fal-req-abc123");
-    // MUST-DIFFER 3: traceId is explicit (the bg ctx has no ALS frame).
+    // traceId is explicit (the bg ctx has no ALS frame).
     expect((info![0] as { traceId?: string }).traceId).toBe("trace-seed");
     expect((info![0] as { costUsd?: number }).costUsd).toBe(0.8);
     expect(typeof (info![0] as { durationMs?: number }).durationMs).toBe("number");
   });
 
-  // ─── OBS-04 (Phase 192): off-turn best-effort live trajectory emits ───
+  // ─── Off-turn best-effort live trajectory emits ───
   it("done branch best-effort live-emits video.generated THEN video.delivered from the ROW's sessionKey (off-turn, not ALS)", async () => {
     const reg = captureRegistry();
     const { poller } = makePoller({ trajectoryRegistry: reg });
@@ -433,7 +432,7 @@ describe("createVideoPoller", () => {
   it("off-turn safety: getRecorder→undefined (recorder gone) → NO throw, NO record, the INFO floor STILL fires", async () => {
     // The common off-turn case: the session closed / the daemon restarted, so the
     // in-memory registry has no recorder. The live emit must no-op (the OFFLINE
-    // assembler in Plan 02 is the binding oracle); the §2.7 INFO line survives.
+    // assembler is the binding oracle); the §2.7 INFO line survives.
     const reg = { getRecorder: vi.fn(() => undefined) };
     const { poller, deps } = makePoller({ trajectoryRegistry: reg });
     poller.track(makeRecord({ sessionKey: "gone-session" }));
@@ -449,7 +448,7 @@ describe("createVideoPoller", () => {
   it("a job with NO sessionKey (old row) does not resolve a recorder; the INFO floor still fires (graceful)", async () => {
     const reg = captureRegistry();
     const { poller, deps } = makePoller({ trajectoryRegistry: reg });
-    // makeRecord() with sessionKey explicitly cleared (a pre-192 / in-flight row).
+    // makeRecord() with sessionKey explicitly cleared (a row lacking one / in-flight).
     poller.track(makeRecord({ sessionKey: undefined }));
     await flush();
     expect(reg.getRecorder).not.toHaveBeenCalled();
@@ -472,7 +471,7 @@ describe("createVideoPoller", () => {
     const failed = reg.calls.find((c) => c.type === "video.failed");
     expect(failed).toBeDefined();
     expect(failed!.data).toEqual({ errorKind: "empty_response", provider: "fal" });
-    // SEC-03 / non-regression: the §2.7 WARN with the pinned step still fires.
+    // Non-regression: the §2.7 WARN with the pinned step still fires.
     const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
       (c) => (c[0] as { step?: string }).step === "video_poll_failed",
     );
@@ -489,7 +488,7 @@ describe("createVideoPoller", () => {
     expect(deps.store.markDoneSpy).toHaveBeenCalledTimes(1);
   });
 
-  // ─── OBS-03 (Phase 192): the off-turn synthetic observability:token_usage cost route ───
+  // ─── The off-turn synthetic observability:token_usage cost route ───
   it("done branch emits observability:token_usage EXACTLY ONCE: cost.total === actual, tokens 0, fields from the ROW (not ALS)", async () => {
     const { poller, deps } = makePoller({
       seedRows: [{ jobId: "fal-req-abc123", agentId: "alpha", channelType: "telegram", channelId: "ch-recorded", traceId: "trace-seed" }],
@@ -499,14 +498,14 @@ describe("createVideoPoller", () => {
 
     const emits = tokenUsageEmits(deps);
     // EXACTLY ONCE per render (markDone already flipped the row out of pending,
-    // so the done branch cannot repeat for one render — Pitfall 3).
+    // so the done branch cannot repeat for one render).
     expect(emits).toHaveLength(1);
     const ev = emits[0]!;
     // The actual cost from the FAL fetch (0.8) rides cost.total; tokens all 0
-    // (A3: subscribers SUM cost.total, never divide — a 0-token event is safe).
+    // (subscribers SUM cost.total, never divide — a 0-token event is safe).
     expect(ev.cost.total).toBeCloseTo(0.8, 4);
     expect(ev.tokens).toEqual({ prompt: 0, completion: 0, total: 0 });
-    // MUST-DIFFER 3: the routing comes from the persisted ROW (no ALS frame off-turn).
+    // The routing comes from the persisted ROW (no ALS frame off-turn).
     expect(ev.traceId).toBe("trace-seed");
     expect(ev.agentId).toBe("alpha");
     expect(ev.channelId).toBe("ch-recorded");
@@ -514,7 +513,7 @@ describe("createVideoPoller", () => {
     expect(ev.provider).toBe("fal");
   });
 
-  it("FAL has no per-call actual → the synthetic cost.total falls back to the row's estimatedCostUsd (Pitfall 4)", async () => {
+  it("FAL has no per-call actual → the synthetic cost.total falls back to the row's estimatedCostUsd", async () => {
     // A FAL-style fetch result with NO costUsd (the queue API reports no per-call
     // cost). The cost route bills the estimate (the same `?? estimate` fallback
     // costLimiter.record uses) so the rollup + the reconstruct agree.
@@ -575,8 +574,8 @@ describe("createVideoPoller", () => {
     expect(store.markDoneSpy).toHaveBeenCalledTimes(1);
   });
 
-  // ─── OBS-01 (Phase 192): the completion INFO line carries the full field set ───
-  it("OBS-01: the video_poll_complete INFO line carries videoProvider/model/costUsd/sizeBytes/durationMs/durationSecs/mimeType/traceId/jobId/agentId", async () => {
+  // ─── The completion INFO line carries the full field set ───
+  it("the video_poll_complete INFO line carries videoProvider/model/costUsd/sizeBytes/durationMs/durationSecs/mimeType/traceId/jobId/agentId", async () => {
     const { poller, deps } = makePoller({ seedRows: [{ jobId: "fal-req-abc123", agentId: "alpha", traceId: "trace-seed" }] });
     poller.track(makeRecord({ agentId: "alpha", traceId: "trace-seed" }));
     await flush();
@@ -590,7 +589,7 @@ describe("createVideoPoller", () => {
     expect(line.costUsd).toBe(0.8);
     expect(line.sizeBytes).toBe(PERSISTED_OK.sizeBytes);
     expect(typeof line.durationMs).toBe("number");
-    // OBS-01 completeness (192): mimeType + durationSecs ride the completion line
+    // Completeness: mimeType + durationSecs ride the completion line
     // where derivable (from the fetched `out`).
     expect(line.durationSecs).toBe(8);
     expect(line.mimeType).toBe("video/mp4");
@@ -599,8 +598,8 @@ describe("createVideoPoller", () => {
     expect(line.agentId).toBe("alpha");
   });
 
-  // ─── OBS-02 (Phase 192): every failure branch WARNs the closed errorKind + hint ───
-  it("OBS-02: every poller failure branch WARNs with the closed errorKind (∈ log union), videoErrorKind (domain), and hint", async () => {
+  // ─── Every failure branch WARNs the closed errorKind + hint ───
+  it("every poller failure branch WARNs with the closed errorKind (∈ log union), videoErrorKind (domain), and hint", async () => {
     // Drive the markFailed branch (a thrown poll → empty_response) and assert the
     // WARN carries the CLOSED log errorKind (VIDEO_ERR_TO_LOG[kind]) + the domain
     // videoErrorKind + an actionable hint — no failure branch emits unclassified.
@@ -623,7 +622,7 @@ describe("createVideoPoller", () => {
     expect(tokenUsageEmits(deps)).toHaveLength(0);
   });
 
-  // ─── JOB-03 restart resume: seed pending + done provider → ONE delivery ───
+  // ─── Restart resume: seed pending + done provider → ONE delivery ───
   it("startAndResume(): a seeded pending job delivers EXACTLY ONE attachment to the recorded channel (turn gone)", async () => {
     const { poller, deps } = makePoller({
       seedRows: [{ jobId: "seed-job", agentId: "alpha", channelType: "telegram", channelId: "ch-recorded" }],
@@ -701,8 +700,8 @@ describe("createVideoPoller", () => {
     expect(deps.sendAttachment).not.toHaveBeenCalled();
   });
 
-  // ─── DEL-02 IRC degrade: adapter without sendAttachment ───
-  it("DEL-02: an adapter without sendAttachment does not throw, logs a notice, and still markDone", async () => {
+  // ─── IRC degrade: adapter without sendAttachment ───
+  it("an adapter without sendAttachment does not throw, logs a notice, and still markDone", async () => {
     const { poller, deps } = makePoller({
       adapterHasSend: false,
       seedRows: [{ jobId: "fal-req-abc123" }],
@@ -716,16 +715,16 @@ describe("createVideoPoller", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // DEL-03 (BLOCKER): oversized-video graceful degrade at the DELIVERY site.
+  // Oversized-video graceful degrade at the DELIVERY site.
   // A clip over the channel's video-size limit is NEVER silently dropped: a
   // link (where the channel renders URLs) or a notice (+ the persisted path) is
-  // sent via sendMessage, NEVER routed through compressAttachments (the v2.23
-  // silent-drop). markDone holds in every branch (the clip IS persisted).
+  // sent via sendMessage, NEVER routed through compressAttachments (which would
+  // silently drop it). markDone holds in every branch (the clip IS persisted).
   // ─────────────────────────────────────────────────────────────────────────
 
-  // DEL-03 Test 1 (under-limit, non-regression): a clip BELOW the limit delivers
+  // Test 1 (under-limit, non-regression): a clip BELOW the limit delivers
   // via sendAttachment exactly as today — NO sendMessage, NO degrade.
-  it("DEL-03: a clip UNDER the channel limit delivers via sendAttachment unchanged (no degrade, no sendMessage)", async () => {
+  it("a clip UNDER the channel limit delivers via sendAttachment unchanged (no degrade, no sendMessage)", async () => {
     // PERSISTED_OK.sizeBytes = 42_424 (~41 KB) is far under Telegram's ~50MB limit.
     const { poller, deps } = makePoller({ seedRows: [{ jobId: "fal-req-abc123" }] });
     const markDoneSpy = deps.store.markDoneSpy;
@@ -737,11 +736,11 @@ describe("createVideoPoller", () => {
     expect(markDoneSpy).toHaveBeenCalledTimes(1);
   });
 
-  // DEL-03 Test 2 (over-limit, link-capable channel): an over-limit clip on a
+  // Test 2 (over-limit, link-capable channel): an over-limit clip on a
   // link-rendering channel (telegram) does NOT call sendAttachment; it calls
   // sendMessage with a link/notice whose text does NOT contain the silent-drop
   // marker. markDone still holds (at-least-once: the clip IS persisted).
-  it("DEL-03: an OVER-limit clip on a link channel degrades to sendMessage (NOT sendAttachment, NOT '[Attachment too large]'); markDone holds", async () => {
+  it("an OVER-limit clip on a link channel degrades to sendMessage (NOT sendAttachment, NOT '[Attachment too large]'); markDone holds", async () => {
     // Force oversized: a tiny maxVideoBytes override makes the 42 KB fixture
     // exceed the limit on telegram (a link-rendering channel).
     const { poller, deps } = makePoller({
@@ -755,10 +754,10 @@ describe("createVideoPoller", () => {
     // The attachment send is SKIPPED; the degrade goes out via sendMessage.
     expect(deps.sendAttachment).not.toHaveBeenCalled();
     expect(deps.sendMessage).toHaveBeenCalledTimes(1);
-    // Targets the RECORDED channel only (T-192-09 — never a default/broadcast).
+    // Targets the RECORDED channel only (never a default/broadcast).
     expect(deps.sendMessage.mock.calls[0]![0]).toBe("ch-recorded");
     const text = deps.sendMessage.mock.calls[0]![1] as string;
-    // NEVER the v2.23 silent-drop marker (the RED crux — P5).
+    // NEVER the silent-drop marker.
     expect(text).not.toContain("[Attachment too large");
     // The persisted workspace path rides the degrade message (recoverable).
     expect(text).toContain(PERSISTED_OK.filePath);
@@ -775,10 +774,10 @@ describe("createVideoPoller", () => {
     expect(typeof (info![0] as { hint?: string }).hint).toBe("string");
   });
 
-  // DEL-03 Test 3 (over-limit, notice-only channel): an over-limit clip on a
+  // Test 3 (over-limit, notice-only channel): an over-limit clip on a
   // non-link channel sends a NOTICE ("video too large for <channel>; saved to
   // <path>") via sendMessage + markDone; never throws, never silently drops.
-  it("DEL-03: an OVER-limit clip on a notice-only channel sends a notice (+ persisted path) via sendMessage; markDone holds", async () => {
+  it("an OVER-limit clip on a notice-only channel sends a notice (+ persisted path) via sendMessage; markDone holds", async () => {
     // A channel that has sendAttachment but does NOT render links (an unknown
     // channelType → channelRendersVideoLink === false → the notice policy).
     const { poller, deps } = makePoller({
@@ -799,10 +798,10 @@ describe("createVideoPoller", () => {
     expect(markDoneSpy).toHaveBeenCalledTimes(1);
   });
 
-  // DEL-03 Test 4 (IRC over-limit): IRC has NO sendAttachment, so an over-limit
-  // clip falls through the existing DEL-02 capability gate (a persisted-only
+  // Test 4 (IRC over-limit): IRC has NO sendAttachment, so an over-limit
+  // clip falls through the existing capability gate (a persisted-only
   // notice), never an undefined-method call; markDone still holds.
-  it("DEL-03: an OVER-limit clip on IRC (no sendAttachment) takes the DEL-02 persisted-only notice path; no undefined-method, markDone holds", async () => {
+  it("an OVER-limit clip on IRC (no sendAttachment) takes the persisted-only notice path; no undefined-method, markDone holds", async () => {
     const { poller, deps } = makePoller({
       adapterHasSend: false, // IRC-style: no sendAttachment
       seedRows: [{ jobId: "fal-req-abc123", channelType: "irc", channelId: "#room" }],
@@ -814,7 +813,7 @@ describe("createVideoPoller", () => {
 
     // No throw, no sendAttachment (it does not exist on the adapter).
     expect(deps.sendAttachment).not.toHaveBeenCalled();
-    // The DEL-02 persisted-only notice INFO fired (not the oversized-degrade
+    // The persisted-only notice INFO fired (not the oversized-degrade
     // branch — the capability gate handles IRC before the size check matters).
     const skipped = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
       (c) => (c[0] as { step?: string }).step === "video_poll_deliver_skipped",
@@ -826,13 +825,13 @@ describe("createVideoPoller", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // CR-01 (BLOCKER): bounded redelivery + dead-letter + cost-exactly-once.
+  // Bounded redelivery + dead-letter + cost-exactly-once.
   // ─────────────────────────────────────────────────────────────────────────
 
-  // CR-01 #1: a persistent delivery failure must converge to markFailed after
+  // A persistent delivery failure must converge to markFailed after
   // maxDeliveryAttempts and STOP re-downloading — not re-poll + re-fetchResult +
   // re-persist + re-sendAttachment every sweep forever.
-  it("CR-01: a delivery that always fails dead-letters to markFailed after maxDeliveryAttempts and stops re-downloading", async () => {
+  it("a delivery that always fails dead-letters to markFailed after maxDeliveryAttempts and stops re-downloading", async () => {
     const sendAttachment = vi.fn().mockResolvedValue(err(new Error("channel down")));
     const { poller, deps } = makePoller({
       sendAttachment,
@@ -872,11 +871,11 @@ describe("createVideoPoller", () => {
     expect((w![0] as { jobId?: string }).jobId).toBe("fal-req-abc123");
   });
 
-  // WR-02 (Phase 192): a delivery dead-letter must NOT mislabel its trajectory
+  // A delivery dead-letter must NOT mislabel its trajectory
   // errorKind as `empty_response` (a RENDER failure kind). The render SUCCEEDED;
   // delivery exhausted retries. `comis explain` must point at the channel, not the
   // provider/prompt. The persisted last_error + the trajectory kind must say delivery.
-  it("WR-02: a delivery dead-letter records a delivery-specific errorKind on the trajectory, NOT empty_response", async () => {
+  it("a delivery dead-letter records a delivery-specific errorKind on the trajectory, NOT empty_response", async () => {
     const sendAttachment = vi.fn().mockResolvedValue(err(new Error("channel down")));
     const reg = captureRegistry();
     const { poller, deps } = makePoller({
@@ -915,9 +914,9 @@ describe("createVideoPoller", () => {
     expect((markFailedSpy.mock.calls[0]![2] as string).toLowerCase()).toContain("delivery");
   });
 
-  // CR-01 #2: cost is recorded EXACTLY ONCE — a delivery that fails once then
+  // Cost is recorded EXACTLY ONCE — a delivery that fails once then
   // succeeds on the next sweep must not double-charge the limiter.
-  it("CR-01: a job that fails delivery once then succeeds records cost EXACTLY ONCE (no double-count)", async () => {
+  it("a job that fails delivery once then succeeds records cost EXACTLY ONCE (no double-count)", async () => {
     const sendAttachment = vi
       .fn()
       .mockResolvedValueOnce(err(new Error("transient channel error")))
@@ -945,9 +944,9 @@ describe("createVideoPoller", () => {
     expect(deps.costLimiter.record).toHaveBeenCalledWith("alpha", 0.8);
   });
 
-  // CR-01 / WR-03: a persist failure marks the job failed but must NOT record
+  // A persist failure marks the job failed but must NOT record
   // cost (it never reached the terminal markDone — the cost record rides markDone).
-  it("CR-01/WR-03: a persist failure marks failed and does NOT record cost (cost rides the terminal markDone)", async () => {
+  it("a persist failure marks failed and does NOT record cost (cost rides the terminal markDone)", async () => {
     const persist = vi.fn().mockResolvedValue(err(new Error("disk full")));
     const { poller, deps } = makePoller({ persist, seedRows: [{ jobId: "fal-req-abc123" }] });
     const markFailedSpy = deps.store.markFailedSpy;
@@ -962,9 +961,9 @@ describe("createVideoPoller", () => {
     expect(deps.costLimiter.record).not.toHaveBeenCalled();
   });
 
-  // CR-01 #3: the poller's markFailed must CHECK the store Result; a failing
+  // The poller's markFailed must CHECK the store Result; a failing
   // terminal write is logged at ERROR (not silently discarded).
-  it("CR-01: a failing markFailed store write is logged at ERROR (Result not discarded)", async () => {
+  it("a failing markFailed store write is logged at ERROR (Result not discarded)", async () => {
     const provider = makeProvider({
       poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "failed" })),
     });
@@ -985,9 +984,9 @@ describe("createVideoPoller", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // WR-01: off-turn suppressed errors route to the Pino logger, not console.*
+  // Off-turn suppressed errors route to the Pino logger, not console.*
   // ─────────────────────────────────────────────────────────────────────────
-  it("WR-01: a throw escaping the per-job loop is routed to the Pino logger (no console.debug)", async () => {
+  it("a throw escaping the per-job loop is routed to the Pino logger (no console.debug)", async () => {
     // Make pollUntilDone's poll throw synchronously so runJob rejects and the
     // suppressError wrapper fires. On pre-fix code suppressError gets no logger
     // and writes to console.debug (invisible to daemon.log).
@@ -1010,12 +1009,12 @@ describe("createVideoPoller", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // WR-02: the handler's insert-failure path tracks an in-memory record; the
+  // The handler's insert-failure path tracks an in-memory record; the
   // poller must drive it from that record WITHOUT a listPending read (so it is
   // genuinely delivered, not orphaned). Modeled by tracking a record whose row
   // is NOT in the store (insert failed) — delivery still happens.
   // ─────────────────────────────────────────────────────────────────────────
-  it("WR-02/WR-06: track() drives delivery from the in-memory record even when the row is not in listPending", async () => {
+  it("track() drives delivery from the in-memory record even when the row is not in listPending", async () => {
     // No seeded rows at all → listPending() returns []. On pre-fix code, track→
     // loadRecord→listPending().find() is undefined → the job is NEVER delivered
     // (the orphan bug). With the record passed directly, it IS delivered.
@@ -1030,20 +1029,21 @@ describe("createVideoPoller", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // WR-01/WR-02 (Phase 190): the off-turn poller must NOT collapse a classified
+  // The off-turn poller must NOT collapse a classified
   // terminal failure to the generic `empty_response`. The adapters classify a
   // Veo `operation.error` / Grok `status:"failed"|"expired"` into the right
   // `VideoErrorKind` + actionable hint on the `poll()` snapshot; the poller must
   // thread that SPECIFIC kind onto the WARN line + persist the HINT (not the bare
   // enum token) as `last_error` so `video.status` returns an actionable string.
   //
-  // RED on pre-fix code: `runJob` mapped poll() → `{ state }` only and ran the
-  // failed branch through `classifyOutcome`, which returns ONLY job_timeout /
-  // empty_response — so a content-policy block surfaced as `empty_response` with a
-  // generic "retry or adjust the prompt" hint, and `last_error` held the bare enum
-  // token. After the fix the poller reads the classified kind+hint off the snapshot.
+  // The failure mode this guards against: mapping poll() → `{ state }` only and
+  // running the failed branch through `classifyOutcome` (which returns ONLY
+  // job_timeout / empty_response) makes a content-policy block surface as
+  // `empty_response` with a generic "retry or adjust the prompt" hint, and
+  // `last_error` holds the bare enum token. The poller reads the classified
+  // kind+hint off the snapshot instead.
   // ─────────────────────────────────────────────────────────────────────────
-  it("WR-01: a classified Veo terminal failure (content_blocked) on the poll snapshot is preserved — NOT collapsed to empty_response", async () => {
+  it("a classified Veo terminal failure (content_blocked) on the poll snapshot is preserved — NOT collapsed to empty_response", async () => {
     // The Veo adapter's poll() now carries the classified kind+hint on a failed
     // operation.error (e.g. a responsible-AI/content-policy block).
     const provider = makeProvider({
@@ -1071,7 +1071,7 @@ describe("createVideoPoller", () => {
     // §2.7: the off-turn line still sets traceId explicitly + an actionable hint.
     expect((w![0] as { traceId?: string }).traceId).toBe("trace-seed");
     expect((w![0] as { hint?: string }).hint).toContain("safety");
-    // WR-02: last_error persists the ACTIONABLE HINT, not the bare enum token.
+    // last_error persists the ACTIONABLE HINT, not the bare enum token.
     expect(markFailedSpy).toHaveBeenCalledTimes(1);
     const persistedLastError = markFailedSpy.mock.calls[0]![2] as string;
     expect(persistedLastError).toContain("safety");
@@ -1079,7 +1079,7 @@ describe("createVideoPoller", () => {
     expect(persistedLastError).not.toBe("empty_response");
   });
 
-  it("WR-01: a classified Grok terminal failure (quota_exceeded) on the poll snapshot is preserved — NOT collapsed to empty_response", async () => {
+  it("a classified Grok terminal failure (quota_exceeded) on the poll snapshot is preserved — NOT collapsed to empty_response", async () => {
     const provider = makeProvider({
       poll: vi.fn().mockResolvedValue(
         ok({
@@ -1101,13 +1101,13 @@ describe("createVideoPoller", () => {
     expect(w).toBeTruthy();
     expect((w![0] as { videoErrorKind?: string }).videoErrorKind).toBe("quota_exceeded");
     expect((w![0] as { errorKind?: string }).errorKind).toBe("resource"); // VIDEO_ERR_TO_LOG mapping
-    // WR-02: the persisted last_error is the actionable hint.
+    // The persisted last_error is the actionable hint.
     const persistedLastError = markFailedSpy.mock.calls[0]![2] as string;
     expect(persistedLastError).toContain("quota");
     expect(persistedLastError).not.toBe("quota_exceeded");
   });
 
-  it("WR-01/WR-02: an unclassified failed poll (no errorKind on the snapshot) still falls back to empty_response (FAL parity)", async () => {
+  it("an unclassified failed poll (no errorKind on the snapshot) still falls back to empty_response (FAL parity)", async () => {
     // The FAL adapter's poll() carries no errorKind on a failed status — the
     // poller's existing classifyOutcome fallback (empty_response) must still apply.
     const provider = makeProvider({
@@ -1129,13 +1129,13 @@ describe("createVideoPoller", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // WR-04: lost-update window. The sweeper re-discovers a row that was `pending`
+  // Lost-update window. The sweeper re-discovers a row that was `pending`
   // in the listPending snapshot, but a concurrent path already transitioned it to
   // terminal. startJob must re-read the row state and short-circuit (no re-fetch /
   // re-deliver) when it is no longer pending. Modeled by a store whose
   // listPending() returns the row but whose get() reports `done` (the divergence).
   // ─────────────────────────────────────────────────────────────────────────
-  it("WR-04: a row pending in the listPending snapshot but already done on re-read short-circuits (no re-fetch)", async () => {
+  it("a row pending in the listPending snapshot but already done on re-read short-circuits (no re-fetch)", async () => {
     const { poller, deps } = makePoller({ seedRows: [{ jobId: "fal-req-abc123" }] });
     // The row is still pending in listPending() (the snapshot), but get() — the
     // authoritative re-read in startJob — reports it already done.
@@ -1153,11 +1153,11 @@ describe("createVideoPoller", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SEC-03 redaction (Phase 192-04) — the OFF-TURN poller log surface.
+  // Redaction — the OFF-TURN poller log surface.
   //
-  // The handler SEC-03 test (video-handlers.test.ts) covers the in-turn lines;
+  // The handler's redaction test (video-handlers.test.ts) covers the in-turn lines;
   // the off-turn poller WARN/INFO lines are a SEPARATE surface the image-only
-  // SEC-03 test never reached. A poll/fetch failure rides `err: cause` on the
+  // test never reached. A poll/fetch failure rides `err: cause` on the
   // `video_poll_failed` WARN, and the oversized-degrade INFO must never echo the
   // retained `sourceUrl` (which for Veo IS the keyed-download-URL). Assert no
   // secret (the full set incl. the Veo `…&key=AIza…` URL) appears in ANY poller
@@ -1169,9 +1169,9 @@ describe("createVideoPoller", () => {
   const GOOGLE_SECRET = "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456";
   const BEARER_SECRET = "Bearer sk-grok-9f8e7d6c5b4a32100123456789ab";
   const SK_SECRET = "sk-proj-DEADBEEFcafef00dDEADBEEFcafef00dXY";
-  // CR-01 de-mask: a FAL FAL_KEY is shaped `<uuid>:<32hex>` — caught by NEITHER
-  // sanitizeLogString's prior patterns NOR the transport backstop. The robust fix
-  // (exact-match bound secrets) + the new uuid:hex pattern must scrub it.
+  // De-mask: a FAL FAL_KEY is shaped `<uuid>:<32hex>` — caught by NEITHER
+  // sanitizeLogString's other patterns NOR the transport backstop. The exact-match
+  // bound secrets + the uuid:hex pattern must scrub it.
   const FAL_SECRET = "b1946ac9-2c7f-4d3e-8a1b-9f8e7d6c5b4a:9f8e7d6c5b4a32109f8e7d6c5b4a3210";
   const VEO_KEYED_URL =
     `https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media&key=${GOOGLE_SECRET}`;
@@ -1188,8 +1188,8 @@ describe("createVideoPoller", () => {
   /** Every poller log call (all 4 levels) + nested `err.message`/stack/CAUSE (a raw
    *  provider Error rides `err: cause`; Error.message is non-enumerable so a
    *  plain JSON.stringify drops it — the production Pino serializer emits it).
-   *  CR-01 de-mask: ALSO walk `err.cause` — undici "fetch failed" carries the
-   *  keyed-URL detail there, the exact field the prior helper never inspected. */
+   *  De-mask: ALSO walk `err.cause` — undici "fetch failed" carries the
+   *  keyed-URL detail there. */
   function allPollerLogText(logger: ReturnType<typeof createMockLogger>): string[] {
     const levels = ["debug", "info", "warn", "error"] as const;
     const blobs: string[] = [];
@@ -1317,13 +1317,12 @@ describe("createVideoPoller", () => {
     assertNoPollerSecretLeak(deps.logger);
   });
 
-  // ─── CR-01 de-mask: the THREE real leaks the prior poller-SEC tests missed ───
+  // ─── De-mask: three real leak surfaces (keyed-URL in err.cause, uuid:hex FAL key, opaque bound secret) ───
 
-  it("CR-01: a fetchResult error whose KEYED URL lives in err.cause (undici 'fetch failed') does not leak + keeps the failure class", async () => {
+  it("a fetchResult error whose KEYED URL lives in err.cause (undici 'fetch failed') does not leak + keeps the failure class", async () => {
     // The realistic undici shape: TypeError("fetch failed") with the keyed-URL +
-    // network detail in `.cause`. The prior redactErr read only the top message →
-    // the cause (and any secret in it) was dropped (a §2.7 regression) and, where a
-    // secret rode the cause, the de-masked helper now SURFACES it as a leak.
+    // network detail in `.cause`. redactErr must walk `err.cause` so a secret
+    // riding the cause is scrubbed while the failure class still survives.
     const cause = new Error(`getaddrinfo ENOTFOUND fetch ${VEO_KEYED_URL}`);
     const provider = makeProvider({
       poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "done" })),
@@ -1334,7 +1333,7 @@ describe("createVideoPoller", () => {
     await flush();
 
     assertNoPollerSecretLeak(deps.logger);
-    // WR-01 / §2.7: the cause's failure CLASS must survive redaction on the WARN.
+    // §2.7: the cause's failure CLASS must survive redaction on the WARN.
     const w = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
       (c) => (c[0] as { step?: string }).step === "video_poll_failed",
     );
@@ -1342,9 +1341,9 @@ describe("createVideoPoller", () => {
     expect((w![0] as { errMessage?: string }).errMessage).toContain("ENOTFOUND");
   });
 
-  it("CR-01: a FAL key (uuid:hex shape) echoed in a fetchResult error is scrubbed (pattern + bound)", async () => {
-    // FAL's uuid:hex key is caught by NO prior pattern. With the secret BOUND
-    // (exact-match) AND the new uuid:hex pattern, it must never reach the log.
+  it("a FAL key (uuid:hex shape) echoed in a fetchResult error is scrubbed (pattern + bound)", async () => {
+    // FAL's uuid:hex key is caught by NO other pattern. With the secret BOUND
+    // (exact-match) AND the uuid:hex pattern, it must never reach the log.
     const provider = makeProvider({
       poll: vi.fn().mockResolvedValue(ok({ jobId: "fal-req-abc123", state: "done" })),
       fetchResult: vi
@@ -1361,8 +1360,8 @@ describe("createVideoPoller", () => {
     assertNoPollerSecretLeak(deps.logger);
   });
 
-  it("CR-01: a BOUND video secret echoed verbatim by the provider is exact-match scrubbed from the WARN", async () => {
-    // The robust shape-independent guard (the v2.20 knownSecrets precedent): the
+  it("a BOUND video secret echoed verbatim by the provider is exact-match scrubbed from the WARN", async () => {
+    // The shape-independent guard (the knownSecrets precedent): the
     // resolved secret bound at the wiring site is scrubbed by exact match even
     // when it has no recognizable prefix/shape.
     const opaque = "zZ9-opaque-provider-token-no-recognizable-prefix-123456";

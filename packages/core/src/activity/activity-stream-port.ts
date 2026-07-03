@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ActivityStreamPort — keeps the orchestrator independent of observability
- * (spec §4.7).
+ * ActivityStreamPort — keeps the orchestrator independent of observability.
  *
  * The port is declared in `core/activity`; the concrete implementation lives in
  * `@comis/observability` and is wired into the composition root by the daemon.
@@ -15,7 +14,7 @@ import type { TurnActivityContext } from "./turn-activity-context.js";
 /**
  * Subscription handle returned to the coordinator. The coordinator
  * unsubscribes at turn end (or aborted-turn cleanup) to release the bounded
- * queue slot (§5.1).
+ * queue slot.
  */
 export interface ActivitySubscription {
   unsubscribe(): void;
@@ -28,7 +27,7 @@ export interface ActivitySubscription {
 export interface ActivityStreamPort {
   /**
    * Subscribe a coordinator to the canonical activity events scoped to a single
-   * turn. The implementation owns the bounded queue (§5.1) and produces events
+   * turn. The implementation owns the bounded queue and produces events
    * filtered to {ctx.agentId, ctx.sessionKey, ctx.traceId}.
    */
   subscribeForTurn(

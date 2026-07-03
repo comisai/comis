@@ -36,7 +36,7 @@ describe("computeTokenBudget", () => {
     expect(budget.availableHistoryTokens).toBe(10_760);
   });
 
-  it("reports an uncapped window as its own raw window with cap source none (W1 provenance)", () => {
+  it("reports an uncapped window as its own raw window with cap source none (cap provenance)", () => {
     // The profile-unaware base function never applies a class cap, so the
     // provenance fields must say so: raw == W and source "none".
     const budget = computeTokenBudget(200_000, 5_000);
@@ -140,7 +140,7 @@ describe("computeTokenBudget", () => {
   });
 
   // -------------------------------------------------------------------------
-  // I1 / WR-01: fresh-tail preamble subtrahend (H = W - S - O - M - R - P)
+  // Fresh-tail preamble subtrahend (H = W - S - O - M - R - P)
   // -------------------------------------------------------------------------
 
   it("reduces available history by exactly the fresh-tail preamble token estimate (separate subtrahend, never folded into S)", () => {
@@ -162,7 +162,7 @@ describe("computeTokenBudget", () => {
     const explicitZero = computeTokenBudget(200_000, 5_000, -1, 0);
 
     expect(omitted.availableHistoryTokens).toBe(explicitZero.availableHistoryTokens);
-    // H matches the pre-I1 formula exactly: 200000 - 5000 - 8192 - 10000 - 50000.
+    // H matches the no-preamble formula exactly: 200000 - 5000 - 8192 - 10000 - 50000.
     expect(omitted.availableHistoryTokens).toBe(126_808);
     expect(omitted.freshTailPreambleTokens).toBe(0);
   });

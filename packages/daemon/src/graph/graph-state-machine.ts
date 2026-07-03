@@ -69,7 +69,7 @@ export interface GraphStateMachine {
    *  letting Anthropic cache amortize across retries.
    *  `options.terminal: true` forces a NON-RETRYABLE failure: the retry branch is
    *  skipped even when retries remain. Used for per-node token-budget breaches —
-   *  a retry would only re-burn the budget (BUDGET-02, D2). */
+   *  a retry would only re-burn the budget. */
   markNodeFailed(
     nodeId: string,
     error: string,

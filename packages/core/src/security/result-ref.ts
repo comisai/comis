@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `ResultRef` — the minimal structured result-handle (REF-01) + its pure
- * threshold/GC math (REF-03), for the autonomous `orchestrate` tool surface.
+ * `ResultRef` — the minimal structured result-handle + its pure threshold/GC
+ * math, for the autonomous `orchestrate` tool surface.
  *
- * ResultRef is NET-NEW and DISTINCT from `microcompaction-guard.ts` (the Gap-2
- * distinction — do NOT conflate):
+ * ResultRef is DISTINCT from `microcompaction-guard.ts` — do NOT conflate the
+ * two mechanisms:
  *   - proactive: a handle BY DEFAULT above a per-tool threshold (the guard is
  *     reactive — it offloads AFTER a result is already too big).
  *   - workspace-relative `results/<id>.<kind>` (the guard writes
@@ -15,14 +15,15 @@
  *     session-lifetime).
  *   - extraction is in-jail (`jq`/`grep`/`read --offset/--limit`) the SAME turn,
  *     so only the slice re-enters context (the guard re-enters via a next-turn
- *     read HINT). The v8 §23.9 "materialize-then-extract" framing is the spec.
+ *     read HINT). Materialize-then-extract is the contract: the full result
+ *     lands on disk, and only queried slices ever enter the model context.
  *
  * This module is the TYPE + the PURE math only — every function takes an
  * injected `nowMs`/byte-count and reads no ambient clock and no fs (AGENTS.md
  * §2.8 globals rule), so it is fully macOS-unit-testable. The actual disk I/O
- * (write/read/GC-sweep) lives in Plan 03's `result-ref-store.ts` (@comis/skills),
- * which consumes these pure deciders. Pure @comis/core data: NO imports from
- * @comis/skills / @comis/agent / @comis/daemon (S5 — keeps the package cycle-free).
+ * (write/read/GC-sweep) lives in `result-ref-store.ts` (@comis/skills), which
+ * consumes these pure deciders. Pure @comis/core data: NO imports from
+ * @comis/skills / @comis/agent / @comis/daemon (keeps the package cycle-free).
  *
  * @module
  */
@@ -30,9 +31,9 @@ import { err, ok, type Result } from "@comis/shared";
 import { systemDateFrom } from "../runtime/system-time.js";
 
 /**
- * A structured handle to a materialized tool result on the jailed workspace
- * (v8 §23.9). Only the handle re-enters context; the bytes stay on disk until
- * an in-jail `jq`/`grep`/`read` slices them.
+ * A structured handle to a materialized tool result on the jailed workspace.
+ * Only the handle re-enters context; the bytes stay on disk until an in-jail
+ * `jq`/`grep`/`read` slices them.
  */
 export interface ResultRef {
   /** WORKSPACE-relative path, e.g. `"results/ws-7af3.jsonl"` (NOT sessionDir). */
@@ -47,12 +48,12 @@ export interface ResultRef {
   schema?: string[];
   /** A tiny bounded head of the content (re-enters context with the handle). */
   preview: string;
-  /** ISO-8601 expiry — the TTL after which the run-GC evicts the file (REF-03). */
+  /** ISO-8601 expiry — the TTL after which the run-GC evicts the file. */
   expiresAt: string;
 }
 
 // ---------------------------------------------------------------------------
-// Per-tool inline → handle thresholds (REF-01).
+// Per-tool inline → handle thresholds.
 // ---------------------------------------------------------------------------
 
 /**
@@ -60,7 +61,7 @@ export interface ResultRef {
  *
  * `POSITIVE_INFINITY` means "never materialize by default" — the 95% case
  * (small/non-high-volume returns like `memory_get`/`session_status`) stays
- * inline with zero friction (REF-01). Only the explicitly-listed high-volume
+ * inline with zero friction. Only the explicitly-listed high-volume
  * tools get a finite, exceedable threshold.
  */
 export const DEFAULT_INLINE_THRESHOLD_BYTES = Number.POSITIVE_INFINITY;
@@ -72,11 +73,11 @@ export const DEFAULT_INLINE_THRESHOLD_BYTES = Number.POSITIVE_INFINITY;
  *
  * The 15_000-byte default mirrors the microcompaction high-value-read inline cap
  * (`MAX_INLINE_FILE_READ_RESULT_CHARS` / `MAX_INLINE_MCP_TOOL_RESULT_CHARS`,
- * `context-engine/constants.ts`) as a sane M1 REFERENCE — it is a fresh constant,
- * not a reuse. Only the high-volume tools (web fetch/search, document
+ * `context-engine/constants.ts`) as a sane reference point — it is a fresh
+ * constant, not a reuse. Only the high-volume tools (web fetch/search, document
  * extraction, recursive grep, file read) are listed; every other tool falls
  * through to {@link DEFAULT_INLINE_THRESHOLD_BYTES} (Infinity → stays inline).
- * The values are M1 defaults (A6/Open-Q2 leaves them tunable for a later phase).
+ * The values are initial defaults, deliberately left tunable.
  */
 export const RESULT_REF_THRESHOLDS: Record<string, number> = {
   web_fetch: 15_000,
@@ -100,22 +101,22 @@ export function shouldMaterialize(toolName: string, byteCount: number): boolean 
 }
 
 // ---------------------------------------------------------------------------
-// GC / cap math (REF-03) — all pure, all injected-now, no fs.
+// GC / cap math — all pure, all injected-now, no fs.
 // ---------------------------------------------------------------------------
 
 /**
  * Per-file cap: a single materialized result larger than this is REFUSED by the
  * store (the runner surfaces a `result_ref_too_large` honest-degrade, never a
- * silent truncate). ~8 MiB is a sane M1 default — far above the 15 KB handle
+ * silent truncate). ~8 MiB is a sane default — far above the 15 KB handle
  * threshold so legitimate large returns materialize, but bounded so one tool
- * call can't fill the workspace (A6/Open-Q2 — tunable later).
+ * call can't fill the workspace (tunable later).
  */
 export const PER_FILE_CAP_BYTES = 8 * 1024 * 1024;
 
 /**
  * Per-run aggregate cap: the total `results/` budget for one orchestrate run.
  * When the sum exceeds this, the run-GC evicts oldest-first via
- * {@link selectEvictions}. ~64 MiB (8× the per-file cap) is a sane M1 default.
+ * {@link selectEvictions}. ~64 MiB (8× the per-file cap) is a sane default.
  */
 export const PER_RUN_AGGREGATE_CAP_BYTES = 64 * 1024 * 1024;
 
@@ -169,7 +170,7 @@ export function selectEvictions(
 }
 
 /**
- * Reject a materialize that exceeds the per-file cap (REF-03). Returns `ok` when
+ * Reject a materialize that exceeds the per-file cap. Returns `ok` when
  * `bytes <= capBytes`, else an `err` carrying the overflow so the store can
  * surface an honest `result_ref_too_large` instead of writing/clamping.
  */

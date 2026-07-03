@@ -25,11 +25,11 @@ export interface SttFallbackLogger {
  * - "openai": OpenAI gpt-4o-mini-transcribe (requires OPENAI_API_KEY)
  * - "groq": Groq whisper-large-v3-turbo (requires GROQ_API_KEY)
  * - "deepgram": Deepgram nova-3 (requires DEEPGRAM_API_KEY)
- * - "local": keyless local whisper (LOCAL-01/03). Two branches:
+ * - "local": keyless local whisper. Two branches:
  *     • `transcription.local.baseUrl` set → reuse the OpenAI-compatible adapter
  *       against the local server with the KEYLESS sentinel bearer
  *       ("ollama-no-auth"), NEVER an empty string (an empty bearer re-introduces
- *       the 401 this milestone fixes);
+ *       a 401 rejection);
  *     • otherwise → the in-process `createLocalWhisperAdapter` (Transformers.js),
  *       which auto-downloads a small ONNX model into the scoped `dataDir` cache.
  *
@@ -79,12 +79,12 @@ export function createSTTProvider(
     case "local": {
       const local = config.local;
       if (local?.baseUrl) {
-        // LOCAL-03: an OpenAI-compatible local whisper server, keyless. The
-        // bearer is the KEYLESS sentinel — NEVER apiKey:"" (Pitfall 5 → an empty
-        // bearer re-introduces the 401 this milestone fixes). The trailing slash
+        // An OpenAI-compatible local whisper server, keyless. The
+        // bearer is the KEYLESS sentinel — NEVER apiKey:"" (an empty
+        // bearer re-introduces a 401 rejection). The trailing slash
         // is trimmed so the adapter's `${baseUrl}/audio/transcriptions` join is clean.
         //
-        // SEC-02 (Surface B): `localServerGuard: true` opts THIS construction
+        // SSRF guard (Surface B): `localServerGuard: true` opts THIS construction
         // into the adapter's validate-then-fetch SSRF guard. An explicit
         // transcription.provider:"local" bypasses the boot probe
         // (resolve-transcription-provider.ts:100), so the adapter is the only
@@ -102,7 +102,7 @@ export function createSTTProvider(
           }),
         );
       }
-      // LOCAL-01: in-process WASM/ONNX whisper. The scoped `dataDir` is threaded
+      // In-process WASM/ONNX whisper. The scoped `dataDir` is threaded
       // through as the model-cache root (`<dataDir>/models/whisper/`).
       return ok(
         createLocalWhisperAdapter({

@@ -8,26 +8,25 @@
 // runtime, so a write that cannot complete degrades to "this session is missed on the
 // next recover" (it is flipped `lost` on boot, never re-attached), never a throw.
 /**
- * The DUR-01 DAEMON-side durable SESSION-DESCRIPTOR store — the daemon impl of the
- * {@link SessionDescriptorStorePort} the registry's recover-on-boot (165-06) consumes,
- * and the SIBLING of the DUR-02 journal store ({@link
- * ./terminal-drive-journal-persistence.js}).
+ * The DAEMON-side durable SESSION-DESCRIPTOR store — the daemon impl of the
+ * {@link SessionDescriptorStorePort} the registry's recover-on-boot consumes, and the
+ * SIBLING of the drive-journal store ({@link ./terminal-drive-journal-persistence.js}).
  *
- * WHY THIS EXISTS (the DUR-01 gap, framed in terminal-reattach-match.ts). The tmux
- * re-attach MECHANISM already ships (deterministic `comis-<id>` name + `has-session`-
+ * WHY THIS EXISTS (the durable-reattach gap, framed in terminal-reattach-match.ts). The
+ * tmux re-attach MECHANISM already ships (deterministic `comis-<id>` name + `has-session`-
  * gated create-vs-reattach + a linux survival test). The genuine gap is one layer UP:
  * the registry's `sessionId` is an ephemeral `randomUUID()` it never persists, and there
  * is no recover-on-boot — so on a daemon restart its `sessions` Map starts EMPTY and a
- * healthy 40h drive whose `comis-<old-id>` is STILL alive under tmux is wrongly flipped
- * `lost`. This store persists the {@link SessionDescriptor} IDENTITY (the I5
+ * healthy multi-day drive whose `comis-<old-id>` is STILL alive under tmux is wrongly
+ * flipped `lost`. This store persists the {@link SessionDescriptor} IDENTITY (the
  * allowId/owner/scope/tmuxName) at create-time so the registry's recover-on-boot
- * (`applyRecoveredSessions`, 165-06) can run each through 165-01's pure
- * `reattachDecision` and re-attach the survivors instead of flipping them `lost`.
+ * (`applyRecoveredSessions`) can run each through the pure `reattachDecision` and
+ * re-attach the survivors instead of flipping them `lost`.
  *
  * **Daemon-side placement (a deliberate CO-LOCATION CHOICE, NOT a forced constraint).**
  * It lives in the daemon layer as a sibling of `terminal-wake-persistence.ts` +
  * `terminal-drive-journal-persistence.ts` because it is co-located with the daemon-side
- * recover-on-boot wiring (165-07 Task 4 injects it onto the registry deps). The
+ * recover-on-boot wiring (which injects it onto the registry deps). The
  * `skills → observability` edge it would otherwise traverse is ALLOWED (the architecture
  * graph permits `skills: {shared, core, observability}`), so this is a placement
  * decision, not a workaround for a forbidden edge — it mirrors exactly where the journal
@@ -39,32 +38,31 @@
  * unlink-then-`O_CREAT | O_EXCL | O_NOFOLLOW` atomic create with a defensive `fchmod`) —
  * with `dataDir` threaded as the `confinedBaseDir` ancestor-symlink defense.
  *
- * **The confined durable dir (resolved Q2, the journal store's sibling):**
+ * **The confined durable dir (the journal store's sibling):**
  * `<dataDir>/terminal-drive/<agentId>/descriptors/<sessionId>.json` — the confined
  * background-task per-agent pattern (runtime state OUT of the agent's user-visible
  * `<agentWs>/terminal/` workspace), the journal store's `journals/` sibling.
  *
- * **Content-free + I5 identity (I3 / T-165-26).** The descriptor is content-free BY
- * CONSTRUCTION (ids/enums/counts only — `serializeDescriptor`); this store persists those
- * opaque bytes verbatim and never re-structures them into a credential field. The
- * persisted file is mode-`0o600` in a `0o700` confined dir (V8). The recovered descriptor
- * carries the SAME allowId/owner/scope it was persisted with — durability changes WHERE,
- * never WHAT.
+ * **Content-free identity.** The descriptor is content-free BY CONSTRUCTION (ids/enums/
+ * counts only — `serializeDescriptor`); this store persists those opaque bytes verbatim
+ * and never re-structures them into a credential field. The persisted file is mode-`0o600`
+ * in a `0o700` confined dir. The recovered descriptor carries the SAME allowId/owner/scope
+ * it was persisted with — durability changes WHERE, never WHAT.
  *
  * **The port is INSTANCE-bound to one `(dataDir, agentId)`** because
  * `SessionDescriptorStorePort.persist(descriptor)`/`recover()`/`remove(sessionId)` are
- * the agent-scoped surface the registry deps inject; the daemon (165-07 Task 4)
- * constructs one per agent. `persist` reads the agent from the descriptor's
- * `owner.agentId` for an audit cross-check but the store's confinement root is the bound
- * `agentId` (the registry only ever persists its own sessions).
+ * the agent-scoped surface the registry deps inject; the daemon constructs one per agent.
+ * `persist` reads the agent from the descriptor's `owner.agentId` for an audit cross-check
+ * but the store's confinement root is the bound `agentId` (the registry only ever persists
+ * its own sessions).
  *
  * **TOTAL recover (the recovery contract).** A corrupt-after-crash descriptor is a
- * corrupt-SKIP via 165-01's `deserializeDescriptor` (it REJECTS a missing/wrong-typed
- * identity field to `undefined`, never a partially-trusted authorization object — unlike
- * the journal's safe-default); a file that fails to even READ is skipped. `recover` NEVER
+ * corrupt-SKIP via `deserializeDescriptor` (it REJECTS a missing/wrong-typed identity
+ * field to `undefined`, never a partially-trusted authorization object — unlike the
+ * journal's safe-default); a file that fails to even READ is skipped. `recover` NEVER
  * crashes the daemon constructor (a degenerate `dataDir`/`agentId` → an empty list).
  *
- * **I10 preserve-on-failure.** `persist`/`recover` NEVER delete a descriptor — {@link
+ * **Preserve-on-failure.** `persist`/`recover` NEVER delete a descriptor — {@link
  * SessionDescriptorStorePort.remove} is the DISTINCT explicit call (the registry calls it
  * on a genuinely-gone / cleanly-evicted session).
  *
@@ -139,7 +137,7 @@ export function descriptorDir(dataDir: string, agentId: string): string {
 
 /**
  * Construct the daemon-side durable descriptor store bound to one `(dataDir, agentId)` —
- * the {@link SessionDescriptorStorePort} the registry deps inject (165-07 Task 4). All
+ * the {@link SessionDescriptorStorePort} the registry deps inject. All
  * three methods are best-effort + total (never throw): `persist` swallows a write fault
  * (the registry handle is the runtime source of truth), `recover` skips a corrupt /
  * unreadable file (never crashes boot), `remove` is ENOENT-tolerant.
@@ -157,7 +155,7 @@ export function createSessionDescriptorStore(deps: SessionDescriptorPersistenceD
     persist(descriptor: SessionDescriptor): void {
       // Best-effort: a failure (a PathTraversalError from a degenerate dataDir/agentId,
       // an unwritable target, a write fault) is SWALLOWED — it must not propagate off the
-      // registry's create path (the in-memory handle already exists). NEVER deletes (I10).
+      // registry's create path (the in-memory handle already exists). NEVER deletes.
       try {
         const dir = descriptorDir(deps.dataDir, deps.agentId);
         ensure({ dir, mode: 0o700, confinedBaseDir: deps.dataDir });
@@ -223,7 +221,7 @@ export function createSessionDescriptorStore(deps: SessionDescriptorPersistenceD
     },
 
     remove(sessionId: string): void {
-      // The DISTINCT explicit delete (I10: persist/recover NEVER delete; only this does).
+      // The DISTINCT explicit delete (persist/recover NEVER delete; only this does).
       // ENOENT-tolerant; per the module's all-best-effort contract a genuine fault is
       // swallowed too (the lingering file is overwritten/skipped on the next boot).
       let filePath: string;

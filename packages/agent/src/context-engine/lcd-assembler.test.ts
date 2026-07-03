@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LCD `dag`-mode assembly engine (Plan 128-02, A1/A2/A4).
+ * Tests for the LCD `dag`-mode assembly engine.
  *
- * RED-first. Drives the corrected loop-fix path:
+ * Drives the assembly contract:
  *  - history reconstructed from the STORE via the core `partsToMessage` codec
- *    (verbatim `metadata.raw` blocks, stable ids) — NOT flattened-to-text (the
- *    deleted dag-assembler bug that produced the 54-read loop),
- *  - the fresh tail (last N STEPS) sliced from the LIVE array VERBATIM (A1),
- *  - `sanitizeToolUseResultPairing` (Plan 01) run as the FINAL step (A2),
+ *    (verbatim `metadata.raw` blocks, stable ids) — NOT flattened-to-text
+ *    (a text-flattened history hides the tool_use/tool_result pairing from the
+ *    model, which then re-issues the same tool call in a loop),
+ *  - the fresh tail (last N STEPS) sliced from the LIVE array VERBATIM,
+ *  - `sanitizeToolUseResultPairing` run as the FINAL step,
  *  - the assembled array grows on a tool step and carries a top-level
- *    `toolResult` (A4 unit-level shadow).
+ *    `toolResult`.
  *
  * The store is the REAL `createLcdStore(new Database(":memory:"))` — `@comis/memory`
  * is an agent devDependency, allowed in `.test.ts` only (NOT production code —
@@ -37,10 +38,10 @@ import type { ModelProfile } from "../executor/model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { ContextExhaustionError } from "./errors.js";
 import type { SecurityPinMarkers } from "./security-context-pinner.js";
-// DEPTH-01: the test file (excluded from the I2 grep) imports the real scorer to prove the
+// The test file imports the real scorer to prove the
 // END-TO-END relevance reorder through the wired margin-arbiter middle-band seam.
 import { scoreRelevance } from "../rag/relevance-scorer.js";
-// TOK-01 (Phase 179): the factored family-2 root — the read-time max() at
+// The script-aware factored estimator — the read-time max() at
 // resolveContextItem compares stored counts against THIS estimator.
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { factoredMessageTokens } from "./factored-message-tokens.js";
@@ -113,7 +114,7 @@ function makeDeps(store: ContextStorePort): {
     contextStore: store,
     conversationId: CONVERSATION_ID,
     agentId: "agent_a",
-    tenantId: "tenant_a", // R4 (132-03): the assembler needs the full scope to read (else it fails closed — WR-02)
+    tenantId: "tenant_a", // The assembler needs the full scope to read (else it fails closed).
     sessionKey: "sess-a",
   };
   return { deps, logger };
@@ -149,7 +150,7 @@ function roleOf(m: AgentMessage): string {
 // ---------------------------------------------------------------------------
 
 describe("freshTailBoundaryIndex", () => {
-  it("Test 1: counts the last N ASSISTANT messages (steps), not user-turns", () => {
+  it("counts the last N ASSISTANT messages (steps), not user-turns", () => {
     const msgs: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
       assistantToolCall("tu_1", "read", {}) as AgentMessage, // assistant_a
@@ -164,7 +165,7 @@ describe("freshTailBoundaryIndex", () => {
     expect(msgs.slice(idx).map(roleOf)).toEqual(["assistant", "user", "assistant"]);
   });
 
-  it("Test 1b: N larger than the number of assistant messages returns 0 (whole array)", () => {
+  it("N larger than the number of assistant messages returns 0 (whole array)", () => {
     const msgs: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
       assistantText("a") as AgentMessage,
@@ -182,7 +183,7 @@ describe("createLcdContextEngine", () => {
     store = createLcdStore(db);
   });
 
-  it("Test 2: the fresh tail is the ORIGINAL live blocks (verbatim, not text-flattened)", async () => {
+  it("the fresh tail is the ORIGINAL live blocks (verbatim, not text-flattened)", async () => {
     // Live array: a tool-call step lives in the fresh tail.
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
@@ -206,7 +207,7 @@ describe("createLcdContextEngine", () => {
     expect(blocks[0]).toBe((live[1] as unknown as { content: unknown[] }).content[0]);
   });
 
-  it("Test 3: history is reconstructed from the STORE via the codec (paired, stable ids, NOT flattened)", async () => {
+  it("history is reconstructed from the STORE via the codec (paired, stable ids, NOT flattened)", async () => {
     // A multi-step turn persisted to the store: user → assistant(tu_1) → toolResult(tu_1) → assistant(text)
     const persisted: Message[] = [
       userMsg("u0"),
@@ -252,10 +253,10 @@ describe("createLcdContextEngine", () => {
     expect(historyAssistant).not.toBe(live[1]);
   });
 
-  it("Test 4: transcript repair runs LAST — an unpaired tool_use gets a synthesized result", async () => {
+  it("transcript repair runs LAST — an unpaired tool_use gets a synthesized result", async () => {
     // A turn whose assistant tool_use NEVER got a matching result (a dangling
-    // call), then a trailing assistant text. Store and live are 1:1 (the 128
-    // no-compaction invariant). freshTailTurns=1 → fresh tail = [assistant("final")],
+    // call), then a trailing assistant text. Store and live are 1:1 (no
+    // compaction has run). freshTailTurns=1 → fresh tail = [assistant("final")],
     // so the orphan call sits in the reconstructed-from-store HISTORY.
     const turn: Message[] = [
       userMsg("u0"),
@@ -289,7 +290,7 @@ describe("createLcdContextEngine", () => {
     expect(resultIds).toContain("tu_orphan"); // synthesized
   });
 
-  it("Test 5: a tool step GROWS the array and contains a top-level toolResult (A4 shadow)", async () => {
+  it("a tool step GROWS the array and contains a top-level toolResult", async () => {
     // Tool-free turn baseline.
     const toolFree: Message[] = [userMsg("u0"), assistantText("hi")];
     for (let i = 0; i < toolFree.length; i++) append(store, toolFree[i] as Message, i);
@@ -315,7 +316,7 @@ describe("createLcdContextEngine", () => {
     expect(outTool.some((m) => roleOf(m) === "toolResult")).toBe(true); // carries the toolResult
   });
 
-  it("Test 7: history/fresh-tail overlap does NOT double a message", async () => {
+  it("history/fresh-tail overlap does NOT double a message", async () => {
     // Both the store and the live array hold the full 4-message turn; with
     // freshTailTurns large enough the fresh tail covers part of it. The concat
     // must NOT emit a message twice (fresh tail authoritative for its range).
@@ -354,7 +355,7 @@ describe("createLcdContextEngine", () => {
     expect(tu1Results).toBe(1);
   });
 
-  it("Test 8: mid-turn (live LONGER than store) drops NO middle-history message and doubles NONE (CR-01)", async () => {
+  it("mid-turn (live LONGER than store) drops NO middle-history message and doubles NONE", async () => {
     // THE PRODUCTION STATE the count-subtraction de-dup got wrong. `transformContext`
     // runs BEFORE every LLM call mid-turn, but the store is written only at
     // afterTurn — so the live array always carries the current turn's
@@ -408,7 +409,7 @@ describe("createLcdContextEngine", () => {
     expect(out[11]).toBe(live[11]);
   });
 
-  it("Test 9: live array SHRINKS below the store count — assembler over-includes nothing, doubles nothing (WR-01)", async () => {
+  it("live array SHRINKS below the store count — assembler over-includes nothing, doubles nothing", async () => {
     // A future heal/compaction could reassign state.messages SMALLER than the
     // append-only store. The assembler seam must stay robust to live.length <=
     // store.length: no negative slice, no double at the join.
@@ -450,7 +451,7 @@ describe("createLcdContextEngine", () => {
   });
 });
 
-describe("B-8: fresh-tail tool-result bounding", () => {
+describe("fresh-tail tool-result bounding", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -469,12 +470,12 @@ describe("B-8: fresh-tail tool-result bounding", () => {
     );
   }
 
-  it("Test B-8.1: an oversized tool RESULT in the unconditional fresh tail is bounded to the per-result cap with a lossless-recoverable marker", async () => {
+  it("an oversized tool RESULT in the unconditional fresh tail is bounded to the per-result cap with a lossless-recoverable marker", async () => {
     // A fresh tail carrying a single huge tool result. The live array is JUST the
     // fresh-tail step (user → assistant tool_use → giant toolResult → trailing
     // assistant text), so the overflow comes PURELY from the fresh tail (history is
     // empty; nothing is persisted). With freshTailTurns large enough the whole
-    // array is the fresh tail, sliced + concatenated UNCONDITIONALLY (A1/A3).
+    // array is the fresh tail, sliced + concatenated UNCONDITIONALLY.
     const HUGE = "X".repeat(200_000);
     const live: AgentMessage[] = [
       userMsg("read that file") as AgentMessage,
@@ -504,7 +505,7 @@ describe("B-8: fresh-tail tool-result bounding", () => {
     expect(text).toContain("truncated");
     expect(text.toLowerCase()).toContain("lossless");
 
-    // A2: the assistant tool_use and its toolResult are STILL PAIRED and in order
+    // Pairing: the assistant tool_use and its toolResult are STILL PAIRED and in order
     // (the masker only shrank CONTENT; pairing repair still ran after it).
     const callIdx = out.findIndex(
       (m) =>
@@ -518,9 +519,9 @@ describe("B-8: fresh-tail tool-result bounding", () => {
     expect(resultIdx).toBeGreaterThan(callIdx);
   });
 
-  it("Test B-8.2: a fresh tail with only SMALL tool results is returned byte-identical (the masker is a no-op below the cap — A1 preserved for what fits)", async () => {
+  it("a fresh tail with only SMALL tool results is returned byte-identical (the masker is a no-op below the cap — verbatim preserved for what fits)", async () => {
     // Small tool results — well under the cap. The masker must not rewrite them at
-    // all: the fresh-tail blocks pass through referentially identical (A1).
+    // all: the fresh-tail blocks pass through referentially identical.
     const live: AgentMessage[] = [
       userMsg("read small") as AgentMessage,
       assistantToolCall("tu_s", "read", { path: "/s" }) as AgentMessage,
@@ -543,15 +544,15 @@ describe("B-8: fresh-tail tool-result bounding", () => {
   });
 });
 
-describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message bricks the session)", () => {
-  // Small-model e2e 2026-06-12 UC-3: a single ~170K-char user message on a 32K
-  // small window made the turn fail context_exhausted (correct) — and then EVERY
-  // later turn too (the brick): the message persisted into the live array, rode
+describe("fresh-tail oversized-MESSAGE bounding (one oversized message must not brick the session)", () => {
+  // Failure mode guarded here: a single ~170K-char user message on a 32K
+  // small window makes the turn fail context_exhausted (correct) — and then EVERY
+  // later turn too (the brick): the message persists into the live array, rides
   // the UNCONDITIONAL fresh tail forever (a failed turn appends no assistant
   // step, so the fresh-tail boundary never advances past it), and whole-message
-  // eviction can never shrink ONE message. The fix bounds any oversized
-  // user/assistant message AT ASSEMBLY (head+tail+honest marker), like the B-8
-  // tool-result guard — the full content stays losslessly in the LCD store.
+  // eviction can never shrink ONE message. The guard bounds any oversized
+  // user/assistant message AT ASSEMBLY (head+tail+honest marker), like the
+  // tool-result guard above — the full content stays losslessly in the LCD store.
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -560,7 +561,7 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
     store = createLcdStore(db);
   });
 
-  /** Deps with a 32K small-class profile (the live qwen3.6 incident shape). */
+  /** Deps with a 32K small-class profile (a typical local small-model shape). */
   function makeSmallDeps(): { deps: ContextEngineDeps; onAssembledInputTokens: ReturnType<typeof vi.fn<[number], void>> } {
     const onAssembledInputTokens = vi.fn<[number], void>();
     const profile32K: ModelProfile = {
@@ -594,7 +595,7 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
       .join("");
   }
 
-  it("Issue1-A: ONE user message larger than the effective window is bounded at assembly — the turn assembles instead of throwing context_exhausted", async () => {
+  it("ONE user message larger than the effective window is bounded at assembly — the turn assembles instead of throwing context_exhausted", async () => {
     // ~170K chars ≈ 48.6K tokens at the 3.5 ratio — alone exceeds the 32K window.
     const HUGE = "The semiconductor sector saw revenue growth amid shifting macro conditions. ".repeat(2200);
     expect(HUGE.length).toBeGreaterThan(160_000);
@@ -606,19 +607,19 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
 
     const { deps, onAssembledInputTokens } = makeSmallDeps();
     const engine = createLcdContextEngine(dagConfig(8), deps);
-    // Pre-patch: the fresh tail ships the 170K-char message verbatim → the
-    // pre-flight fit check throws ContextExhaustionError. Post-patch: bounded.
+    // Without the bound, the fresh tail ships the 170K-char message verbatim → the
+    // pre-flight fit check throws ContextExhaustionError. With it: bounded.
     const out = await engine.transformContext(live);
 
-    // ISSUE #1 (2026-06-22) changed the resolution for an oversized OLD turn: the
-    // protected fresh tail is now bounded to the residual room, so the 170K-char
+    // Resolution for an oversized OLD turn: the
+    // protected fresh tail is bounded to the residual room, so the 170K-char
     // message (turn 1, NOT the current turn) is DEMOTED out of the protected tail to
     // the evictable prefix, where the eviction drops it (it alone dwarfs the window).
     // The CURRENT turn ("2 + 2") is always protected and ships, so the turn assembles
     // instead of throwing — the brick is still prevented, just by eviction rather than
     // by char-bounding an old turn that could never fit a 32K window anyway. (The
-    // CURRENT-message-oversized char-bounding path — B-8 — is exercised by Issue1-D's
-    // current-turn variant and the brick repro Issue1-B.)
+    // CURRENT-message-oversized char-bounding path is exercised by the
+    // toolCall-preserving bound test and the brick repro below.)
     const outCurrent = out.find((m) => roleOf(m) === "user" && textOf(m).includes("2 + 2"));
     expect(outCurrent).toBeDefined(); // the current turn ships
     // The assembled input fits the small window minus headroom (no exhaustion):
@@ -628,7 +629,7 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
     expect(reported).toBeLessThanOrEqual(32_000 - 768);
   });
 
-  it("Issue1-B: the brick repro — after the oversized turn, a TINY follow-up in the same session assembles fine (no permanent context_exhausted)", async () => {
+  it("the brick repro — after the oversized turn, a TINY follow-up in the same session assembles fine (no permanent context_exhausted)", async () => {
     // The persisted shape after the failed oversized turn: history holds the
     // oversized message too (ingestion stores the RAW message), and the live
     // array still carries it in the fresh tail.
@@ -654,8 +655,8 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
 
     const { deps, onAssembledInputTokens } = makeSmallDeps();
     const engine = createLcdContextEngine(dagConfig(8), deps);
-    // Pre-patch: throws ContextExhaustionError forever (the brick). Post-patch:
-    // the oversized message is bounded every turn, so the tiny follow-up works.
+    // Without the bound this throws ContextExhaustionError forever (the brick);
+    // with it the oversized message is bounded every turn, so the tiny follow-up works.
     const out = await engine.transformContext(live);
     expect(out.length).toBeGreaterThan(0);
     const reported = onAssembledInputTokens.mock.calls[0]![0];
@@ -664,7 +665,7 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
     expect(out.some((m) => textOf(m).includes("what is 2 + 2"))).toBe(true);
   });
 
-  it("Issue1-C (A1): a user message below the cap passes through unchanged — the bound is a no-op for everything that fits", async () => {
+  it("a user message below the cap passes through unchanged — the bound is a no-op for everything that fits", async () => {
     const live: AgentMessage[] = [
       userMsg("a normal sized question about the market") as AgentMessage,
       assistantText("a normal answer") as AgentMessage,
@@ -679,7 +680,7 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
     expect(JSON.stringify(out)).not.toContain("truncated");
   });
 
-  it("Issue1-D (A2): an assistant message with a toolCall block and oversized text is bounded WITHOUT touching the toolCall block or its id", async () => {
+  it("an assistant message with a toolCall block and oversized text is bounded WITHOUT touching the toolCall block or its id", async () => {
     const HUGE = "Y".repeat(170_000);
     const assistantHuge = {
       role: "assistant",
@@ -717,7 +718,7 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
     const callBlock = blocks.find((b) => b.type === "toolCall");
     expect(textBlock!.text!.length).toBeLessThan(HUGE.length); // text bounded
     expect(callBlock).toMatchObject({ id: "tu_keep", name: "read" }); // call untouched
-    // A2: the toolResult is still paired after the (call-id-preserving) bound.
+    // Pairing: the toolResult is still paired after the (call-id-preserving) bound.
     const resultIdx = out.findIndex(
       (m) => roleOf(m) === "toolResult" && (m as unknown as { toolCallId: string }).toolCallId === "tu_keep",
     );
@@ -726,7 +727,7 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
   });
 });
 
-describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () => {
+describe("createLcdContextEngine context_items + eviction", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -746,7 +747,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     return msgs;
   }
 
-  it("Plan05 Test A: a leaf summary surfaces as a user-role text message at the replaced ordinal, in order", async () => {
+  it("a leaf summary surfaces as a user-role text message at the replaced ordinal, in order", async () => {
     // 6 turns (12 messages, seq 0..11). Lazy-seed makes context_items 1:1.
     const msgs = seedTextTurns(6);
     expect(msgs.length).toBe(12);
@@ -777,8 +778,8 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     const engine = createLcdContextEngine(dagConfig(1), deps);
     const out = await engine.transformContext(live);
 
-    // The summary content surfaces as a USER-role text message (the 130 swap
-    // point — NEVER system/assistant; untrusted-by-role per T-129-14).
+    // The summary content surfaces as a USER-role text message (the summarizer
+    // swap point — NEVER system/assistant; untrusted by role).
     const summaryMsg = out.find(
       (m) =>
         roleOf(m) === "user" &&
@@ -807,12 +808,12 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(texts).not.toContain("a1");
   });
 
-  it("scrubs secrets out of a summary body before it surfaces as a user-role message (FIX 2c egress)", async () => {
+  it("scrubs secrets out of a summary body before it surfaces as a user-role message", async () => {
     // A summary derived from a region that legitimately contained a credential.
-    // Pre-patch `summaryRefToMessage` wrapped the body but injected it VERBATIM, so
-    // the secret re-entered the model context every turn the summary was assembled.
-    // The assembled summary message must have the secret REDACTED while keeping the
-    // taint wrap + the trusted `[LCD summary …]` header.
+    // Without egress scrubbing, `summaryRefToMessage` wraps the body but injects it
+    // VERBATIM, so the secret re-enters the model context every turn the summary is
+    // assembled. The assembled summary message must have the secret REDACTED while
+    // keeping the taint wrap + the trusted `[LCD summary …]` header.
     const SECRET = "sk-proj-LEAKTEST9999abcdefghijklmnop";
     const msgs = seedTextTurns(6);
     store.getContextItems(SCOPE);
@@ -851,7 +852,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(blob).toContain("UNTRUSTED");
   });
 
-  it("Plan05 Test B: over-budget eviction drops the OLDEST evictable steps; the fresh tail is intact even when H is tiny", async () => {
+  it("over-budget eviction drops the OLDEST evictable steps; the fresh tail is intact even when H is tiny", async () => {
     // 10 turns (20 messages). Each store message tokenCount=1 (append() default),
     // so the evictable prefix is cheap per message; we force a TINY model window
     // so the H budget allows only a couple of steps.
@@ -861,7 +862,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     const logger = createMockLogger();
     // A SMALL context window: with computeTokenBudget's O+M+R reserves this
     // produces H = 0 (everything reserved) — the eviction must drop the entire
-    // evictable prefix while the fresh tail STILL ships (A3 unconditional concat).
+    // evictable prefix while the fresh tail STILL ships (unconditional concat).
     const deps: ContextEngineDeps = {
       logger: logger as unknown as ContextEngineDeps["logger"],
       getModel: () => ({ reasoning: true, contextWindow: 1_000, maxTokens: 256 }),
@@ -899,15 +900,15 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(out.length).toBeLessThan(live.length);
   });
 
-  // ISSUE #1 (multi-turn nano, 2026-06-22): on a small window where systemTokens
+  // On a small window where systemTokens
   // dominates, accumulated EVICTABLE history must be capped to the residual room so
   // the SHIPPED assembled prompt stays under the pre-flight bound across N turns —
-  // and the assembler must NEVER throw on evictable history. Pre-fix the assembler
-  // evicted `budgeted` under the looser token-budget H (W−S−O−M−R−P + the 8K-starve
-  // add-back ≈ 4096 on an 8192 nano window) while the pre-flight bound only tolerated
-  // ~1900, so the shipped history overflowed (and the pre-flight threw — without a
-  // canary the harder-eviction rung was skipped entirely). Drives the REAL assembler.
-  it("Plan05 Test B2 (ISSUE #1): nano 8192, S dominates — shipped history is bounded to the residual room across many turns, no throw", async () => {
+  // and the assembler must NEVER throw on evictable history. Evicting under the
+  // looser token-budget H alone (W−S−O−M−R−P + the 8K-starve
+  // add-back ≈ 4096 on an 8192 nano window) keeps more history than the pre-flight
+  // bound tolerates (~1900), so the shipped history would overflow and the
+  // pre-flight would throw. Drives the REAL assembler.
+  it("nano 8192, S dominates — shipped history is bounded to the residual room across many turns, no throw", async () => {
     // Per-message tokenCount ~300 (the budget authority for evictable history), so a
     // long conversation genuinely accumulates past the room. Append 20 turns.
     const TURN_TOKENS = 300;
@@ -930,10 +931,10 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     const live: AgentMessage[] = msgs as AgentMessage[];
 
     const logger = createMockLogger();
-    // nano 8192, systemTokens 5210 (the live VPS value), NO securityPinMarkers.
+    // nano 8192, systemTokens 5210 (a realistic large prompt), NO securityPinMarkers.
     // relevanceFirst:true + the real scorer → the PRODUCTION nano path
-    // (evictUnderArbiter / marginArbitrate), NOT the recency path. (codex nano has
-    // no prompt cache → resolveScaffoldDefaults sets relevanceFirst true.)
+    // (evictUnderArbiter / marginArbitrate), NOT the recency path. (A nano model
+    // without a prompt cache gets relevanceFirst=true from resolveScaffoldDefaults.)
     const deps: ContextEngineDeps = {
       logger: logger as unknown as ContextEngineDeps["logger"],
       getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 4_096 }),
@@ -964,7 +965,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(keptHistoryTokens).toBeLessThan(7_424 - 5_210 + 2 * TURN_TOKENS); // fits the bound with fresh-tail slack
   });
 
-  it("Plan05 Test B3 (ISSUE #1): GROWING history across sequential turns never throws (sliding window)", async () => {
+  it("GROWING history across sequential turns never throws (sliding window)", async () => {
     // Simulate turns 1..8, each adding 2 messages (~600 tok/turn) of UNBOUNDED
     // growth, re-running the REAL assembler each turn. None may throw.
     const TURN_TOKENS = 300;
@@ -999,18 +1000,18 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     }
   });
 
-  // ISSUE #1 — THE REAL ROOT CAUSE (lead's live lcd-evict, 2026-06-22): the
-  // PROTECTED fresh tail grows unbounded on a tiny window, NOT the evictable history
-  // (B2/B3 above bounded the evictable band but missed this). resolveClampedFreshTailTurns
-  // budgeted 30% of the RAW 8192 window (~6 turns) blind to systemTokens(5210) — so
-  // ~6 recent turns sat in the un-evictable fresh tail and grew ~900/turn. assembled
-  // = S + budgetedHistory(bounded) + freshTail(UNBOUNDED) → exhausts at turn 3.
+  // The PROTECTED fresh tail can grow unbounded on a tiny window even when the
+  // evictable history is bounded (the two tests above cover the evictable band).
+  // Without a residual bound, resolveClampedFreshTailTurns
+  // budgets 30% of the RAW 8192 window (~6 turns) blind to systemTokens(5210) — so
+  // ~6 recent turns sit in the un-evictable fresh tail and grow ~900/turn. assembled
+  // = S + budgetedHistory(bounded) + freshTail(UNBOUNDED) → exhausts within a few turns.
   // This test sizes each turn ~285 tok and asserts the ASSEMBLED MESSAGE TOTAL (history
   // + protected fresh tail — everything `out` carries, which sits ALONGSIDE S in the
   // window) PLATEAUS ≤ the residual room (window − headroom − S ≈ 2214) across many
-  // turns. RED pre-fix (the fresh tail grows past it). The protected fresh tail must be
+  // turns. The protected fresh tail must be
   // bounded to the residual so it ALWAYS fits.
-  it("Plan05 Test B4 (ISSUE #1): the protected fresh tail is bounded to the residual room — assembled message total plateaus across turns", async () => {
+  it("the protected fresh tail is bounded to the residual room — assembled message total plateaus across turns", async () => {
     const TURN_CHARS = 1_000; // ~285 tok per message → ~570/turn, grows fast on a tiny window
     const TURNS = 12;
     const live: AgentMessage[] = [];
@@ -1031,8 +1032,8 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
       live.push(u as AgentMessage, a as AgentMessage);
 
       const logger = createMockLogger();
-      // The reconciled nano profile codex carries on the VPS (contextWindow = the 8192
-      // effective window). modelProfile.contextWindow drives the fresh-tail residual.
+      // A reconciled nano profile (contextWindow = the 8192 effective window).
+      // modelProfile.contextWindow drives the fresh-tail residual.
       const nanoProfile: ModelProfile = {
         ...FAIL_CLOSED_PROFILE,
         capabilityClass: "nano" as const,
@@ -1055,9 +1056,9 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
         relevanceScorer: scoreRelevance,
       };
       const engine = createLcdContextEngine(dagConfig(8), deps); // configured freshTailTurns=8 (the default)
-      // PRIMARY INVARIANT: transformContext must NOT throw on ANY turn — the awaited
-      // call rejects with ContextExhaustionError pre-fix (turn ~4 on da254cea). A
-      // throw here fails the test.
+      // PRIMARY INVARIANT: transformContext must NOT throw on ANY turn — without
+      // the residual bound the awaited call rejects with ContextExhaustionError
+      // after a few turns. A throw here fails the test.
       const out = await engine.transformContext([...live]);
 
       // The assembled message total (the WHOLE `out` — kept history + protected fresh
@@ -1071,34 +1072,34 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
       perTurnAssembled.push(assembledMsgTokens);
       maxAssembledMsgTokens = Math.max(maxAssembledMsgTokens, assembledMsgTokens);
     }
-    // PRIMARY: no turn threw (the awaited transformContext above) — the exhaustion is
-    // GONE. That is the guarantee the lead's live re-test checks (4+ turns, no exhaust).
+    // PRIMARY: no turn threw (the awaited transformContext above) — no exhaustion
+    // across many consecutive turns.
     //
     // PLATEAU: the assembled total stays BOUNDED — it does NOT track the conversation's
     // unbounded growth. By turn 12 the raw conversation is ~12 × 570 ≈ 6840 tok; the
     // assembled total stays well under that (fresh tail capped to the residual + older
-    // history evicted), and under the window (pre-fix it blew past 8192 and threw).
+    // history evicted), and under the window (unbounded it blows past 8192 and throws).
     const rawConversationTokens = TURNS * 2 * estimateMessageTokens(userMsg(`question 0 `.repeat(Math.ceil(TURN_CHARS / 12))));
     expect(maxAssembledMsgTokens).toBeLessThan(W);
     expect(maxAssembledMsgTokens).toBeLessThan(rawConversationTokens); // bounded < the full conversation
     // Steady state: the last 3 turns are within ~one turn of each other (the total has
-    // settled, not climbing ~570/turn as the bug did).
+    // settled, not climbing ~570/turn).
     const tail3 = perTurnAssembled.slice(-3);
     const tailSpan = Math.max(...tail3) - Math.min(...tail3);
     expect(tailSpan).toBeLessThanOrEqual(2 * 285 + 50); // ≤ ~one turn of jitter
   });
 
-  // ISSUE #3 — THE GAP B4 MISSED (lead's live OpenAI gpt-5-nano @8192, 2026-06-22): B4
-  // used a LARGE S (5210 → small residual ~2214), where Fix C's ×0.83 estimator-gap
-  // fudge happened to cover the absolute gap. With a SMALL S (the reduced nano prompt:
-  // ~1145 → LARGE residual ~6279) the absolute gap between Fix C's estimator
-  // (estimateMessageTokens 4:1) and the pre-flight's (factored 3.5:1) scales with the
-  // residual and EXCEEDS the 17% the fudge covers → the bounded fresh tail measures
-  // higher at the pre-flight's ratio than the cap → t6 EXHAUSTS (live: freshTail 5407 >
-  // the 5212 ×0.83 cap, assembled 6552 of an 8192 window). The fix is estimator PARITY:
+  // Estimator parity under a SMALL S: the plateau test above uses a LARGE S
+  // (5210 → small residual ~2214), where a ×0.83 estimator-gap
+  // fudge would happen to cover the absolute gap. With a SMALL S (a reduced nano prompt:
+  // ~1145 → LARGE residual ~6279) the absolute gap between a bound measured with
+  // estimateMessageTokens (4:1) and the pre-flight's (factored 3.5:1) scales with the
+  // residual and EXCEEDS the 17% a fudge covers → the bounded fresh tail measures
+  // higher at the pre-flight's ratio than the cap → EXHAUSTS (e.g. freshTail 5407 >
+  // the 5212 ×0.83 cap, assembled 6552 of an 8192 window). The contract is estimator PARITY:
   // boundFreshTailTotalToResidual must measure with the SAME factored estimator the
-  // pre-flight uses, so the bound == the pre-flight's measure for ANY S. RED pre-fix.
-  it("Plan05 Test B5 (ISSUE #3): the protected fresh tail fits under a SMALL S (large residual) — no exhaustion across 10 turns", async () => {
+  // pre-flight uses, so the bound == the pre-flight's measure for ANY S.
+  it("the protected fresh tail fits under a SMALL S (large residual) — no exhaustion across 10 turns", async () => {
     const TURN_CHARS = 2_400; // ~685 tok/msg → ~1370/turn — fills the large residual fast
     const TURNS = 10;
     const live: AgentMessage[] = [];
@@ -1135,11 +1136,11 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
         relevanceScorer: scoreRelevance,
       };
       const engine = createLcdContextEngine(dagConfig(8), deps);
-      // PRIMARY INVARIANT (the live guarantee — "8+ turns must answer with no
-      // exhaustion"): transformContext must NOT throw on ANY turn. Pre-fix, the ×0.83
-      // fudge capped the protected fresh tail by the 4:1 estimator, but the pre-flight
-      // re-measured it at the factored 3.5:1 ratio — and on this SMALL S (large residual
-      // ~6279) the absolute gap pushed the bounded tail's factored measure over the
+      // PRIMARY INVARIANT (8+ turns must answer with no
+      // exhaustion): transformContext must NOT throw on ANY turn. Without parity, a ×0.83
+      // fudge caps the protected fresh tail by the 4:1 estimator while the pre-flight
+      // re-measures it at the factored 3.5:1 ratio — and on this SMALL S (large residual
+      // ~6279) the absolute gap pushes the bounded tail's factored measure over the
       // bound → ContextExhaustionError. The awaited call below rejects on a throw → fails.
       const out = await engine.transformContext([...live]);
       expect(out.length, `turn ${turn} must assemble (not throw)`).toBeGreaterThan(0);
@@ -1155,12 +1156,12 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     // estimator parity fixes.
   });
 
-  it("Plan05 Test B5-bound (ISSUE #3): boundFreshTailTotalToResidual + the pre-flight measure agree (no estimator gap) for a small S", () => {
+  it("boundFreshTailTotalToResidual + the pre-flight measure agree (no estimator gap) for a small S", () => {
     // Unit-level estimator-parity proof: a fresh tail that exceeds the residual is
     // trimmed by boundFreshTailTotalToResidual, and the pre-flight's OWN factored measure
-    // of the trimmed tail is ≤ the residual — for a SMALL S (large residual). Pre-fix the
-    // bound used estimateMessageTokens (4:1) so the factored (3.5:1) measure of the
-    // trimmed tail exceeded the residual; with parity they agree exactly.
+    // of the trimmed tail is ≤ the residual — for a SMALL S (large residual). A bound
+    // measured with estimateMessageTokens (4:1) lets the factored (3.5:1) measure of the
+    // trimmed tail exceed the residual; with parity they agree exactly.
     const W = 8_192, S = 1_145, HEADROOM = 768;
     const residual = W - S - HEADROOM; // 6279
     const tail: AgentMessage[] = [];
@@ -1179,16 +1180,16 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     );
   });
 
-  // ISSUE #3b — THE GAP B5 MISSED (lead's live OpenAI gpt-5-nano NATIVE, 2026-06-22): B5
-  // used a reasoningStyle="none" nano profile, whose floor headroom (768) matched Fix C's
-  // assumption. gpt-5-nano is a REASONING model (reasoningStyle="native") — the pre-flight
+  // Native-reasoning headroom parity: the small-S test above uses a
+  // reasoningStyle="none" nano profile, whose floor headroom (768) is the easy case.
+  // For a NATIVE-reasoning model (e.g. gpt-5-nano) the pre-flight
   // reserves the native floor headroom (computeOutputHeadroom("native","low") = 1024+768 =
-  // 1792) that Fix C's residual must ALSO subtract. If Fix C subtracts only 768 (the none
-  // floor), its residual is ~873 too large → it does NOT trim a fresh tail the pre-flight
-  // (headroom 1792) then exhausts on (live t6: freshTail 5407, assembled 6552 > the native
-  // bound 6400). This drives the REAL assembler with a NATIVE nano profile at a SMALL S
-  // (large residual) → must NOT exhaust across 10 turns. RED pre-fix.
-  it("Plan05 Test B6 (ISSUE #3b): a NATIVE-reasoning nano model at a small S does not exhaust — Fix C subtracts the native floor headroom the pre-flight reserves", async () => {
+  // 1792), and the residual bound must ALSO subtract it. Subtracting only 768 (the none
+  // floor) makes the residual ~873 too large → the bound does NOT trim a fresh tail the
+  // pre-flight (headroom 1792) then exhausts on (e.g. freshTail 5407, assembled 6552 > the
+  // native bound 6400). This drives the REAL assembler with a NATIVE nano profile at a
+  // SMALL S (large residual) → must NOT exhaust across 10 turns.
+  it("a NATIVE-reasoning nano model at a small S does not exhaust — the residual bound subtracts the native floor headroom the pre-flight reserves", async () => {
     const TURN_CHARS = 2_400;
     const TURNS = 10;
     const live: AgentMessage[] = [];
@@ -1226,23 +1227,25 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
         relevanceScorer: scoreRelevance,
       };
       const engine = createLcdContextEngine(dagConfig(8), deps);
-      // Must NOT throw — Fix C must subtract the SAME native floor headroom the pre-flight
-      // reserves, so the protected fresh tail is trimmed to fit the native-headroom bound.
+      // Must NOT throw — the residual bound must subtract the SAME native floor headroom
+      // the pre-flight reserves, so the protected fresh tail is trimmed to fit it.
       const out = await engine.transformContext([...live]);
       expect(out.length, `turn ${turn} (native nano) must assemble`).toBeGreaterThan(0);
     }
   });
 
-  // ISSUE #3c — THE CONFIRMED ROOT CAUSE (lead's lcd-freshtail-bound DEBUG: window=16000,
-  // 2026-06-22): the capabilityClass=nano pin gives a model a RAW contextWindow (16000)
+  // Raw-window vs capped-window divergence: a capabilityClass=nano pin can give a
+  // model a RAW contextWindow (16000)
   // LARGER than effectiveContextCapNano (8192). The pre-flight throws against the CAPPED
-  // window (budget.windowTokens = min(16000, 8192) = 8192), but Fix C read the raw 16000 →
-  // residual ~12865 (huge) → never trimmed → the pre-flight (effective 8192) exhausted.
-  // Fix C must use budget.windowTokens (the capped value). This drives the REAL assembler
-  // with contextWindow 16000 + effectiveContextCapNano 8192 → Fix C must bound to the
-  // CAPPED 8192 (the fresh-tail-bound log shows effectiveWindow:8192, NOT 16000) and NOT
-  // exhaust. The codex test couldn't expose this (codex raw window == 8192 == the cap).
-  it("Plan05 Test B7 (ISSUE #3c): a nano pin with raw window > cap bounds to the CAPPED window, not the raw — no exhaustion", async () => {
+  // window (budget.windowTokens = min(16000, 8192) = 8192); a residual bound reading the
+  // raw 16000 computes a huge residual (~12865) → never trims → the pre-flight
+  // (effective 8192) exhausts.
+  // The bound must use budget.windowTokens (the capped value). This drives the REAL
+  // assembler with contextWindow 16000 + effectiveContextCapNano 8192 → the bound must
+  // use the CAPPED 8192 (the fresh-tail-bound log shows effectiveWindow:8192, NOT 16000)
+  // and NOT exhaust. A model whose raw window equals the cap cannot expose this
+  // (the two values coincide).
+  it("a nano pin with raw window > cap bounds to the CAPPED window, not the raw — no exhaustion", async () => {
     const RAW_WINDOW = 16_000; // the nano-pin raw contextWindow
     const CAP = 8_192;          // effectiveContextCapNano
     const S = 1_145;
@@ -1286,11 +1289,11 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
         relevanceScorer: scoreRelevance,
       };
       const engine = createLcdContextEngine(cfgWithCap, deps);
-      // Must NOT throw — Fix C bounds to the CAPPED 8192 window (not the raw 16000).
+      // Must NOT throw — the bound uses the CAPPED 8192 window (not the raw 16000).
       const out = await engine.transformContext([...live]);
       expect(out.length, `turn ${turn} (capped nano) must assemble`).toBeGreaterThan(0);
-      // The fresh-tail-bound diagnostic must report the CAPPED window (8192), proving Fix C
-      // reads budget.windowTokens — the live bug logged 16000 here.
+      // The fresh-tail-bound diagnostic must report the CAPPED window (8192), proving the
+      // bound reads budget.windowTokens — a raw-window read would log 16000 here.
       const ftCall =
         (logger.debug as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => (c[0] as { step?: string })?.step === "fresh-tail-bound") ??
         (logger.warn as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => (c[0] as { step?: string })?.step === "fresh-tail-bound");
@@ -1302,9 +1305,9 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(sawCappedWindow, "the fresh-tail-bound log must have fired with the capped window").toBe(true);
   });
 
-  it("Plan05 Test C: no-summary path still assembles 1:1 (the 128 round-trip invariant holds under context_items resolution)", async () => {
+  it("no-summary path still assembles 1:1 (the lossless round-trip invariant holds under context_items resolution)", async () => {
     // A plain 3-turn conversation, NO leaf pass. Lazy-seeded context_items are
-    // 1:1 with messages → the assembled output must equal the 128 behavior
+    // 1:1 with messages → the assembled output must equal the no-compaction behavior
     // (every message present once, paired, in order) with a generous budget.
     const persisted: Message[] = [
       userMsg("u0"),
@@ -1338,12 +1341,12 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(anyFallback).toBe(false);
   });
 
-  it("WR-01: an ACTIVE leaf summary + a live array LONGER than the store does NOT drop the oldest summarized content at the eviction seam", async () => {
-    // THE UNTESTED COMBINED CASE the eviction `overlapCount` math relied on by
-    // an unverified invariant (REVIEW WR-01): a prior leaf compaction is present
+  it("an ACTIVE leaf summary + a live array LONGER than the store does NOT drop the oldest summarized content at the eviction seam", async () => {
+    // THE COMBINED CASE the eviction `overlapCount` math must survive: a prior
+    // leaf compaction is present
     // (`resolved` is COLLAPSED — strictly shorter than `rows.length`) AND the
     // live array carries an in-flight, not-yet-persisted delta (`live > store`,
-    // the CR-01 mid-turn state). The buggy math computed
+    // the mid-turn state). The buggy math computed
     //   overlapCount = max(0, rows.length − tailStart)   // a RAW-message count
     //   evictable    = resolved.slice(0, resolved.length − overlapCount)
     // i.e. it subtracted a RAW count from the COLLAPSED `resolved.length`. When
@@ -1369,7 +1372,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     // Force the lazy 1:1 seed, then collapse the OLDEST run [0,1] (u0,a0) into
     // ONE leaf summary. context_items is now [SUMMARY@0, u1@1, a1@2, u2@3, a2@4]
     // → resolved.length = 5 (1 summary-ref + 4 trailing message-refs), while
-    // rows.length stays 6. THIS is the count/length mismatch WR-01 is about.
+    // rows.length stays 6. THIS is the count/length mismatch under test.
     store.getContextItems(SCOPE);
     const SUMMARY_TEXT = "LEAF-SUMMARY-OF-OLDEST-TURN-u0-a0";
     store.appendLeafSummary({
@@ -1388,7 +1391,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     });
 
     // The LIVE array = the 6 raw persisted messages PLUS one in-flight, not-yet-
-    // persisted assistant turn (a3). live.length = 7 > rows.length = 6 (CR-01).
+    // persisted assistant turn (a3). live.length = 7 > rows.length = 6 (mid-turn).
     const live: AgentMessage[] = [
       ...(persisted as AgentMessage[]),
       assistantText("a3") as AgentMessage,
@@ -1416,12 +1419,12 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     // Defensive: the eviction must never have produced a negative/over-eager
     // slice that also nukes the surviving recent history. The full conversation
     // (summary + the live tail) is representable; assert the live fresh tail rode
-    // through verbatim (it is never evicted — A1/A3).
+    // through verbatim (it is never evicted).
     expect(out[out.length - 1]).toBe(live[live.length - 1]); // a3 (live object)
   });
 
   // -------------------------------------------------------------------------
-  // I1: recall-aware eviction (a heavy recall block compacts history harder)
+  // Recall-aware eviction (a heavy recall block compacts history harder)
   // -------------------------------------------------------------------------
 
   /** Count the kept EVICTABLE (store-reconstructed) messages — i.e. everything
@@ -1436,7 +1439,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     return out.length - liveTail;
   }
 
-  it("I1 / WR-01: a heavier fresh-tail preamble evicts MORE history than a light one (the preamble is visible to the budget)", async () => {
+  it("a heavier fresh-tail preamble evicts MORE history than a light one (the preamble is visible to the budget)", async () => {
     // 10 turns (20 messages), each store tokenCount=1. Window 13_667 with the
     // O+M+R reserves (8192 + 2048-floor + 3417) leaves H_light = 10 tokens → the
     // newest 10 evictable messages kept; a 5-token preamble block drops H to 5 →
@@ -1466,16 +1469,16 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
 
     // The load-bearing assertion: a larger getFreshTailPreambleTokensEstimate keeps
     // FEWER store-history steps (it ate into H). On a 2-arg budget call the preamble
-    // dep is ignored, so keptHeavy === keptLight and this FAILS (RED).
+    // dep is ignored, so keptHeavy === keptLight and this assertion fails.
     expect(keptHeavy).toBeLessThan(keptLight);
 
-    // The fresh tail is intact in BOTH runs (A1/A3 — never evicted).
+    // The fresh tail is intact in BOTH runs (never evicted).
     expect(lightOut[lightOut.length - 1]).toBe(live[live.length - 1]);
     expect(heavyOut[heavyOut.length - 1]).toBe(live[live.length - 1]);
   });
 
-  it("I1 / WR-01: with no getFreshTailPreambleTokensEstimate dep (omitted), eviction is byte-identical to today", async () => {
-    // Mirrors Plan05 Test B (tiny window forces H=0) but asserts the omitted-dep
+  it("with no getFreshTailPreambleTokensEstimate dep (omitted), eviction matches the no-preamble baseline", async () => {
+    // Mirrors the tiny-window eviction test above (H=0) but asserts the omitted-dep
     // path matches the documented behavior: the whole evictable prefix drops, the
     // fresh tail ships, oldest turns gone.
     const msgs = seedTextTurns(10);
@@ -1506,10 +1509,10 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
   });
 
   // -------------------------------------------------------------------------
-  // O1: the LCD path emits a real, content-free context:evicted event
+  // The LCD path emits a real, content-free context:evicted event
   // -------------------------------------------------------------------------
 
-  it("O1: emits context:evicted with the real dropped count (counts/ids only — never content) when eviction drops items", async () => {
+  it("emits context:evicted with the real dropped count (counts/ids only — never content) when eviction drops items", async () => {
     const msgs = seedTextTurns(10);
     const live: AgentMessage[] = msgs as AgentMessage[];
     const emit = vi.fn();
@@ -1545,7 +1548,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     );
   });
 
-  it("O1: emits NO context:evicted event when nothing is evicted (droppedCount === 0)", async () => {
+  it("emits NO context:evicted event when nothing is evicted (droppedCount === 0)", async () => {
     // A generous window keeps every evictable step → droppedCount === 0 → no emit
     // (mirrors the pipeline engine's `> 0` guard).
     const msgs = seedTextTurns(3);
@@ -1570,16 +1573,16 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
   });
 });
 
-describe("B-19: consecutive summary-ref head (defensive coalesce)", () => {
-  // DEFENSIVE guard — a documented NON-ISSUE on the mainline. EVIDENCE (planning):
+describe("consecutive summary-ref head (defensive coalesce)", () => {
+  // DEFENSIVE guard — not a mainline crash fix.
   // pi-ai's transform-messages.ts + anthropic.js convertMessages do NOT coalesce
   // consecutive user-role messages, so ≥2 contiguous summary-refs reach the wire as
   // separate `user` entries — BUT the Anthropic Messages API EXPLICITLY merges
-  // consecutive same-role turns server-side (no 400), which is why the real
-  // openai-codex run with a 3-leaf + 2-condensed head SUCCEEDED. Coalescing LOCALLY
+  // consecutive same-role turns server-side (no 400; confirmed live with a
+  // multi-summary head). Coalescing LOCALLY
   // still earns its keep: (i) it stops distinct summaries from being silently
   // muddied by an opaque server merge, and (ii) it is safe for STRICTER
-  // Anthropic-compatible endpoints (the z.ai-style ones pi-ai special-cases) that
+  // Anthropic-compatible endpoints (the ones pi-ai special-cases) that
   // may enforce role alternation. So this is a small, local hardening, not a fix for
   // a mainline crash.
   let store: ContextStorePort;
@@ -1602,13 +1605,14 @@ describe("B-19: consecutive summary-ref head (defensive coalesce)", () => {
     return msgs;
   }
 
-  it("Test B-19.1: ≥2 contiguous summary-refs at the head coalesce into ONE user message — no provider-invalid consecutive-same-role summary run", async () => {
+  it("≥2 contiguous summary-refs at the head coalesce into ONE user message — no provider-invalid consecutive-same-role summary run", async () => {
     // 6 turns (12 messages, seq 0..11 → ordinals 0..11: u0,a0,u1,a1,u2,a2,…).
     // Force the lazy 1:1 seed, then range-replace TWO oldest ranges with TWO leaf
-    // summary-refs (as Plan05 Test A does once) so the resolved head is ≥2
+    // summary-refs (as the leaf-summary ordering test above does once) so the
+    // resolved head is ≥2
     // contiguous user-role summary-refs FOLLOWED BY an assistant message-ref (so
-    // coalescing the summary run yields a cleanly-alternating head — the plan only
-    // coalesces the summary run; message-refs alternate naturally).
+    // coalescing the summary run yields a cleanly-alternating head — only the
+    // summary run is coalesced; message-refs alternate naturally).
     const msgs = seedTextTurns(6);
     store.getContextItems(SCOPE);
     const SUMMARY_A = "LEAF-SUMMARY-A-OLDEST";
@@ -1656,8 +1660,8 @@ describe("B-19: consecutive summary-ref head (defensive coalesce)", () => {
 
     // PRIMARY GUARANTEE: the ≥2 summary-refs are coalesced into EXACTLY ONE
     // user-role summary message — the head no longer emits a consecutive-same-role
-    // summary run. On pre-patch code each summary-ref is its own user message, so
-    // there are TWO summary-bearing user messages → this FAILS (RED).
+    // summary run. Without the coalesce each summary-ref is its own user message, so
+    // there are TWO summary-bearing user messages → this assertion fails.
     const summaryBearingUserMsgs = out.filter(
       (m) =>
         roleOf(m) === "user" &&
@@ -1687,13 +1691,13 @@ describe("B-19: consecutive summary-ref head (defensive coalesce)", () => {
     expect((text.match(/<<<UNTRUSTED_[a-f0-9]+>>>/g) ?? []).length).toBe(2);
   });
 
-  it("Test B-19.2: a SINGLE summary-ref at the head is unchanged (the run-of-1 degenerate case — no gratuitous rewrite)", async () => {
-    // The Plan05 Test A shape: ONE summary-ref. Coalescing a run of 1 is a no-op —
+  it("a SINGLE summary-ref at the head is unchanged (the run-of-1 degenerate case — no gratuitous rewrite)", async () => {
+    // The single-summary shape: ONE summary-ref. Coalescing a run of 1 is a no-op —
     // the single summary renders exactly as before (regression guard that the
     // defensive coalesce does not touch the common single-summary head). NOTE: the
-    // summary↔next-message-ref boundary may be user↔user (the plan does NOT repair
-    // message-ref alternation), so this test asserts ONLY the run-of-1 no-op, not a
-    // global no-adjacent-user invariant.
+    // summary↔next-message-ref boundary may be user↔user (the coalesce does NOT
+    // repair message-ref alternation), so this test asserts ONLY the run-of-1
+    // no-op, not a global no-adjacent-user invariant.
     const msgs = seedTextTurns(6);
     store.getContextItems(SCOPE);
     const SOLO = "SOLO-LEAF-SUMMARY";
@@ -1732,7 +1736,7 @@ describe("B-19: consecutive summary-ref head (defensive coalesce)", () => {
   });
 });
 
-describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
+describe("summaryRefToMessage (honest, taint-safe render)", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -1777,7 +1781,7 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
     return blocks[0]!.text;
   }
 
-  it("P1 Test A: a leaf summary renders TRUSTED depth/descendant_count/time-range/trust markers + an Expand footer around a wrapExternalContent-wrapped body", async () => {
+  it("a leaf summary renders TRUSTED depth/descendant_count/time-range/trust markers + an Expand footer around a wrapExternalContent-wrapped body", async () => {
     // 3 turns (6 messages). Collapse the oldest 2 turns into one leaf summary.
     const msgs = seedTextTurns(3);
     store.getContextItems(SCOPE); // force the lazy 1:1 seed
@@ -1825,7 +1829,7 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
     expect(header).toContain("depth=0");
   });
 
-  it("P1 Test B: a condensed depth>0 summary surfaces depth=2 in the trusted header", async () => {
+  it("a condensed depth>0 summary surfaces depth=2 in the trusted header", async () => {
     // Seed 6 turns; collapse the oldest two turns into two contiguous leaves,
     // then condense those two leaves into ONE depth-2 condensed summary.
     const msgs = seedTextTurns(6);
@@ -1887,8 +1891,8 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
     expect(text).toContain("trust=untrusted");
   });
 
-  it("P1 Test C (SECURITY anti-spoof): a poisoned summary body CANNOT forge trust=untrusted and its forged end-delimiter is neutralized", async () => {
-    // The headline threat (T-130-11/T-130-12): a summary whose CONTENT forges a
+  it("SECURITY anti-spoof: a poisoned summary body CANNOT forge trust=untrusted and its forged end-delimiter is neutralized", async () => {
+    // The headline threat: a summary whose CONTENT forges a
     // `trust=trusted` marker + a fake closing delimiter + an injection. The render
     // MUST still carry the REAL `trust=untrusted` (from the store row, outside the
     // untrusted region) and MUST neutralize the forged delimiter (replaceMarkers).
@@ -1905,7 +1909,7 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
       latestAt: FIXED_CREATED_AT,
       fileIds: [],
       fallback: false,
-      taint: true, // a taint-flagged row still renders trust=untrusted at 130
+      taint: true, // a taint-flagged row still renders trust=untrusted
       createdAt: FIXED_CREATED_AT,
       startOrdinal: 0,
       endOrdinal: 3,
@@ -1930,14 +1934,14 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R2 (132-05): emergency-fallback taint marking. The breaker/floor (R1)
+  // Emergency-fallback taint marking. The breaker/floor path
   // produces `fallback:true` summaries; the model MUST be told — in the TRUSTED
   // header, OUTSIDE the wrapExternalContent untrusted region — that the summary
   // is a degraded emergency truncation, and a poisoned body must NEVER be able
   // to forge (or un-forge) that marker.
   // -------------------------------------------------------------------------
 
-  it("R2: a fallback summary renders an emergency-fallback marker in the trusted header", async () => {
+  it("a fallback summary renders an emergency-fallback marker in the trusted header", async () => {
     const msgs = seedTextTurns(3);
     store.getContextItems(SCOPE); // force the lazy 1:1 seed
     const SUMMARY_TEXT = "emergency-truncated note";
@@ -1967,7 +1971,7 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
     expect(header).toContain("trust=untrusted");
   });
 
-  it("R2: a non-fallback summary does NOT carry the emergency-fallback marker", async () => {
+  it("a non-fallback summary does NOT carry the emergency-fallback marker", async () => {
     const msgs = seedTextTurns(3);
     store.getContextItems(SCOPE); // force the lazy 1:1 seed
     const SUMMARY_TEXT = "ordinary llm summary";
@@ -1992,7 +1996,7 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
     expect(text).toContain("trust=untrusted");
   });
 
-  it("R2 (SECURITY anti-spoof): a summary body forging the fallback marker cannot inject it — the body copy is sanitized while the real header survives", async () => {
+  it("SECURITY anti-spoof: a summary body forging the fallback marker cannot inject it — the body copy is sanitized while the real header survives", async () => {
     const msgs = seedTextTurns(3);
     store.getContextItems(SCOPE); // force the lazy 1:1 seed
     // A NON-fallback (real flag) summary whose BODY forges the trusted marker AND
@@ -2031,7 +2035,7 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
     expect(text).not.toMatch(/<<<END_UNTRUSTED_deadbeef>>>/);
   });
 
-  it("R2 (SECURITY anti-spoof): a fullwidth-Unicode forged delimiter in the body is folded and neutralized", async () => {
+  it("SECURITY anti-spoof: a fullwidth-Unicode forged delimiter in the body is folded and neutralized", async () => {
     const msgs = seedTextTurns(3);
     store.getContextItems(SCOPE); // force the lazy 1:1 seed
     // A fullwidth-folded forged delimiter (foldMarkerText must fold it back to the
@@ -2067,7 +2071,7 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
     expect(header).toContain("fallback=emergency-truncation");
   });
 
-  it("R2: a taint=true (non-fallback) summary is still wrapped and presented as untrusted (no marker promotion)", async () => {
+  it("a taint=true (non-fallback) summary is still wrapped and presented as untrusted (no marker promotion)", async () => {
     const msgs = seedTextTurns(3);
     store.getContextItems(SCOPE); // force the lazy 1:1 seed
     const SUMMARY_TEXT = "tainted but not a fallback";
@@ -2095,8 +2099,8 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
   });
 });
 
-describe("createContextEngine dag fallback (Test 6)", () => {
-  it("Test 6: version 'dag' with NO store wired falls through to the pipeline with a config WARN", async () => {
+describe("createContextEngine dag fallback", () => {
+  it("version 'dag' with NO store wired falls through to the pipeline with a config WARN", async () => {
     const logger = createMockLogger();
     const deps: ContextEngineDeps = {
       logger: logger as unknown as ContextEngineDeps["logger"],
@@ -2125,7 +2129,7 @@ describe("createContextEngine dag fallback (Test 6)", () => {
   });
 });
 
-describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)", () => {
+describe("frontier/mid budget characterization — byte-identity (no-regression)", () => {
   let store: ContextStorePort;
   beforeEach(() => {
     const db = new Database(":memory:");
@@ -2133,7 +2137,7 @@ describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)
     store = createLcdStore(db);
   });
 
-  it("CWF-01-C: frontier profile → budgetTokens byte-identical (no-regression)", async () => {
+  it("keeps budgetTokens byte-identical for the frontier profile (no regression)", async () => {
     const { deps, logger } = makeDeps(store);
     const frontierProfile: ModelProfile = {
       ...FAIL_CLOSED_PROFILE,
@@ -2157,7 +2161,7 @@ describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)
     expect(budgetTokens).toBe(131808);
   });
 
-  it("CWF-01-D: mid profile → budgetTokens byte-identical to frontier (no-regression)", async () => {
+  it("mid profile → budgetTokens byte-identical to frontier (no-regression)", async () => {
     const { deps, logger } = makeDeps(store);
     const midProfile: ModelProfile = {
       ...FAIL_CLOSED_PROFILE,
@@ -2179,7 +2183,7 @@ describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)
   });
 });
 
-describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 165)", () => {
+describe("small cap + undefined profile fail-closed", () => {
   let store: ContextStorePort;
   beforeEach(() => {
     const db = new Database(":memory:");
@@ -2187,24 +2191,24 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
     store = createLcdStore(db);
   });
 
-  it("CWF-01-A RED: unthreaded 131K window → budgetTokens uncapped (57808 pre-patch, capped post-patch)", async () => {
-    // Reproduces the live NVDA incident: W=131072, S=25584, P=166
-    // The profile is NOT threaded into deps (modelProfile absent) — this is the
-    // production pre-patch state where setupContextEngine never passes modelProfile.
-    // Pre-patch: frontier fallback → budgetTokens=57808 (fails this assertion)
-    // Post-patch: fail-closed nano cap fires → budgetTokens=0 (passes this assertion)
+  it("unthreaded 131K window → the fail-closed nano cap zeroes the budget (never the uncapped frontier fallback)", async () => {
+    // Scenario: W=131072, S=25584, P=166.
+    // The profile is NOT threaded into deps (modelProfile absent) — the
+    // missing-wire state where setupContextEngine never passes modelProfile.
+    // Falling open to frontier → budgetTokens=57808 (fails this assertion);
+    // the fail-closed nano cap fires → budgetTokens=0 (passes this assertion).
     const { deps, logger } = makeDeps(store);
     const depsUnthreaded = {
       ...deps,
-      // modelProfile deliberately absent — reproduces the live incident (unthreaded profile)
+      // modelProfile deliberately absent — the unthreaded-profile scenario
       getModel: () => ({ reasoning: false, contextWindow: 131_072, maxTokens: 8_192 }),
       getSystemTokensEstimate: () => 25_584,
       getFreshTailPreambleTokensEstimate: () => 166,
     };
     const engine = createLcdContextEngine(dagConfig(2), depsUnthreaded);
-    // v2.19 OF-01 interaction: with S=25584 counted by the pre-flight and the nano
+    // Pre-flight interaction: with S=25584 counted by the pre-flight and the nano
     // cap = 16000, the system manifest ALONE overflows the window (25584 > 16000),
-    // so the turn is infeasible even at minimal thinking → transformContext now
+    // so the turn is infeasible even at minimal thinking → transformContext
     // correctly degrades LOUDLY (ContextExhaustionError → context_exhausted) instead
     // of silently dispatching a doomed prompt. The lcd-evict log (budgetTokens) and
     // the fail-closed nano cap are still emitted BEFORE the throw — asserted below.
@@ -2215,13 +2219,13 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
     expect(evictCalls.length).toBeGreaterThan(0);
     const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).availableHistoryTokens as number;
     // The fail-closed nano cap fired (visible in the lcd-evict log before the throw):
-    // budgetTokens = max(0, 16000 - 25584 - 8192 - 2048 - 4000 - 166) = 0 (was 57808 uncapped pre-Phase-165).
+    // budgetTokens = max(0, 16000 - 25584 - 8192 - 2048 - 4000 - 166) = 0 (57808 if it fell open to frontier).
     expect(budgetTokens).toBe(0);
   });
 
-  it("CWF-01-B RED: undefined modelProfile → WARN(errorKind:config) + nano cap applied", async () => {
-    // Pre-patch: no WARN is emitted with errorKind:"config" (fails the warn assertion)
-    // Post-patch: WARN emitted with errorKind:"config" + nano cap (passes both assertions)
+  it("undefined modelProfile → WARN(errorKind:config) + nano cap applied", async () => {
+    // A silent fallback emits no WARN with errorKind:"config" (fails the warn
+    // assertion); the fail-closed path emits the WARN AND applies the nano cap.
     const { deps: baseDeps, logger } = makeDeps(store);
     // Deliberately omit modelProfile (it is not set by makeDeps — this is the missing-wire scenario)
     const depsWithoutProfile = {
@@ -2232,18 +2236,18 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
       getFreshTailPreambleTokensEstimate: () => 166,
     };
     const engine = createLcdContextEngine(dagConfig(2), depsWithoutProfile);
-    // v2.19 OF-01: S=25584 > nano cap 16000 → manifest overflows the window → the
+    // S=25584 > nano cap 16000 → manifest overflows the window → the
     // turn degrades loudly (ContextExhaustionError). The fail-closed WARN + the
     // capped lcd-evict log are emitted BEFORE the throw — asserted below.
     await expect(engine.transformContext([])).rejects.toThrow(/* ContextExhaustionError */);
 
-    // RED assertion 1: WARN emitted with errorKind:"config"
+    // Assertion 1: WARN emitted with errorKind:"config"
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ errorKind: "config" }),
       expect.any(String),
     );
 
-    // RED assertion 2: budget was capped to nano (≤16000 effective window)
+    // Assertion 2: budget was capped to nano (≤16000 effective window)
     // The nano profile sets contextWindow=W in the fallback, then classCap(nano)=16000 applies
     // effectiveWindow = min(W=131072, nano_cap=16000) = 16000
     // H will be negative (16000 - 25584 - ...) → clamped to 0
@@ -2256,10 +2260,10 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
 });
 
 // ---------------------------------------------------------------------------
-// Phase 166 CWF-02: pre-flight fit check + security-pin threading (T-S4)
+// Pre-flight fit check + security-pin threading
 // ---------------------------------------------------------------------------
 
-describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
+describe("pre-flight fit check + security-pin", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -2312,7 +2316,7 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     reasoningStyle: "native" as const,
   };
 
-  it("CWF-02-A: 8K non-reasoning window — assembled input after pre-flight eviction fits in W − headroom(none,medium)=7424", async () => {
+  it("8K non-reasoning window — assembled input after pre-flight eviction fits in W − headroom(none,medium)=7424", async () => {
     // Seed many turns with high token counts to fill the window. The pre-flight
     // check should evict history so assembled stays ≤ 7424 tokens.
     // Each message gets tokenCount=400 → 20 messages = 8000 tokens → exceeds 7424.
@@ -2348,7 +2352,7 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     expect(reported).toBeLessThanOrEqual(7424);
   });
 
-  it("CWF-02-B: 32K non-reasoning window — assembled input fits in W − headroom(none,medium)=32000", async () => {
+  it("32K non-reasoning window — assembled input fits in W − headroom(none,medium)=32000", async () => {
     // Seed many turns with tokenCount=1000 → 20 × 1000 = 20000 tokens.
     // headroomBound = 32768 − 768 = 32000. Should not throw; assembled ≤ 32000.
     seedTurnsWithTokens(10, 1_000);
@@ -2388,20 +2392,20 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     expect(reported).toBeLessThanOrEqual(32000);
   });
 
-  it("CWF-02-D: tight 32K native/high window with large fresh tail → thinking governor fires and down-shifts", async () => {
+  it("tight 32K native/high window with large fresh tail → thinking governor fires and down-shifts", async () => {
     // Governor triggers when: assembledInputTokens > effectiveWindow − outputHeadroom("native","high")
     // effectiveWindow = min(32768, 32000) = 32000 (small cap)
     // computeOutputHeadroom("native","high") = 8192 + 768 = 8960
     // headroomBound_high = 32000 − 8960 = 23040
     //
     // Strategy: seed small history (fits comfortably), create a large fresh tail of
-    // SEVERAL sub-cap messages. (A single huge message no longer reaches the governor:
-    // the Issue-1 fresh-tail bound shrinks it first — bounding is per-message, so the
-    // governor's pressure case is now the AGGREGATE of individually-fitting messages.)
+    // SEVERAL sub-cap messages. (A single huge message never reaches the governor:
+    // the fresh-tail bound shrinks it first — bounding is per-message, so the
+    // governor's pressure case is the AGGREGATE of individually-fitting messages.)
     // assembledInputTokens = budgetedTokens + freshTailTokens.
     // With budgetedTokens=0 (empty store), freshTailTokens must > 23040.
     // 3 × 28000 chars ≈ 84000 / 3.5 = 24000 tokens > 23040; each message stays below
-    // the Issue-1 per-message cap (0.8 × H × 3.5 ≈ 50K chars for this profile).
+    // the per-message cap (0.8 × H × 3.5 ≈ 50K chars for this profile).
     //
     // After governor down-shifts to "medium": headroomBound_medium = 32000 - (3072+768) = 28160
     // assembledInputTokens ≈ 24000 < 28160 → fits under "medium". Governor wins.
@@ -2444,11 +2448,11 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     expect(governorFired).toBe(true);
   });
 
-  it("CWF-02-E (ISSUE #1): an AGGREGATE of older fresh-tail turns is TRIMMED to fit — the turn assembles, no longer throws", async () => {
-    // PRE-ISSUE#1 this aggregate (3 × 40000 chars ≈ 34286 tok > the 30208 low bound)
-    // threw ContextExhaustionError — the protected fresh tail was un-trimmable. ISSUE #1
-    // (2026-06-22) bounds the protected fresh tail's TOTAL to the residual: the OLDER
-    // large turns are dropped (trimmed) while the CURRENT turn ships, so the turn
+  it("an AGGREGATE of older fresh-tail turns is TRIMMED to fit — the turn assembles instead of throwing", async () => {
+    // Without the residual bound this aggregate (3 × 40000 chars ≈ 34286 tok > the
+    // 30208 low bound) throws ContextExhaustionError — the protected fresh tail would
+    // be un-trimmable. Bounding the protected fresh tail's TOTAL to the residual drops
+    // the OLDER large turns (trimmed) while the CURRENT turn ships, so the turn
     // ASSEMBLES instead of throwing. Accumulated trimmable fresh-tail turns must NEVER
     // exhaust — only the non-evictable fixed overhead (S) or an oversized CURRENT message
     // still throws (covered by lcd-preflight.test.ts fixed_overhead / oversized_input).
@@ -2497,14 +2501,14 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     expect(out.some((m) => roleOf(m) === "assistant" && textOfMsg(m).includes("done"))).toBe(true);
   });
 
-  it("CWF-02-F (T-S4): security-pinned message survives aggressive eviction under tight 8K window", async () => {
-    // T-S4: a message containing the canaryToken MUST survive even under tight-window pressure
+  it("security-pinned message survives aggressive eviction under tight 8K window", async () => {
+    // A message containing the canaryToken MUST survive even under tight-window pressure
     // that would normally evict it.
     // W=8192, reasoningStyle="none" (no thinking reserve), headroomBound = 8192 − 768 = 7424
     // Seed 8 turns × 600 tokens each = 16 messages × 600 = 9600 tokens total.
     // One of those messages is the "security message" containing CANARY_TOKEN.
     // After pre-flight eviction (security pinned excluded), the canary message must survive.
-    const CANARY_TOKEN = "CANARY-TOKEN-166-T-S4";
+    const CANARY_TOKEN = "CANARY-TOKEN-SECURITY-PIN";
 
     // Seed non-pinned history first (seq 0..13 = 7 turns = 14 messages)
     seedTurnsWithTokens(7, 600);
@@ -2566,15 +2570,16 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     const engine = createLcdContextEngine(dagConfig(1), deps);
     const out = await engine.transformContext(live);
 
-    // T-S4 CORE ASSERTION: the security-pinned message (containing the canaryToken)
+    // CORE ASSERTION: the security-pinned message (containing the canaryToken)
     // MUST be present in the assembled output even under tight-window pressure.
     const outBlob = JSON.stringify(out);
     expect(outBlob).toContain(CANARY_TOKEN);
   });
 
-  it("CWF-02 characterization: frontier profile (W=200K) — no ContextExhaustionError, assembled tokens unchanged (byte-identical path)", async () => {
+  it("frontier profile (W=200K) — no ContextExhaustionError, assembled tokens unchanged (byte-identical path)", async () => {
     // Frontier profile: cap=∞ → pre-flight check is a no-op for large windows.
-    // Use exact same data as CWF-01-C to prove byte-identical frontier path.
+    // Uses the exact same data as the frontier budget characterization above to
+    // prove the byte-identical frontier path.
     const msgs: Message[] = [];
     for (let i = 0; i < 5; i++) {
       msgs.push(userMsg(`u${i}`));
@@ -2608,14 +2613,14 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
 });
 
 // ---------------------------------------------------------------------------
-// EFF-01: bounded working-set reads in the dag assembler
+// Bounded working-set reads in the dag assembler
 // These tests verify that the assembler:
-//   A-1: produces byte-identical output after the refactor
-//   A-2: calls getMessagesByIds with bounded ids (not getMessages for all rows)
-//   A-3: empty context_items → no store fetch for messages/summaries
+//   - produces byte-identical output with bounded reads
+//   - calls getMessagesByIds with bounded ids (not getMessages for all rows)
+//   - empty context_items → no store fetch for messages/summaries
 // ---------------------------------------------------------------------------
 
-describe("EFF-01: assembler bounded working-set reads", () => {
+describe("assembler bounded working-set reads", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -2624,7 +2629,7 @@ describe("EFF-01: assembler bounded working-set reads", () => {
     store = createLcdStore(db);
   });
 
-  it("EFF-01-A-1: byte-identical characterization — same assembled output before and after the bounded-read refactor", async () => {
+  it("byte-identical characterization — bounded working-set reads leave the assembled output unchanged", async () => {
     // Build a fixture with 20 messages and 3 leaf summaries.
     // Persist all 20 messages first.
     const msgs: Message[] = [];
@@ -2685,8 +2690,8 @@ describe("EFF-01: assembler bounded working-set reads", () => {
     const out = await engine.transformContext(live);
 
     // The characterization snapshot: the output must be a non-empty array.
-    // After the EFF-01 refactor the output MUST be byte-identical — this test
-    // locks the snapshot in as GREEN and acts as a regression guard.
+    // Bounded reads MUST leave the output byte-identical — this test
+    // locks the snapshot in and acts as a regression guard.
     expect(out.length).toBeGreaterThan(0);
     // Spot-check: all messages are present (at least the user messages from live tail).
     const texts = out.flatMap((m) => {
@@ -2702,7 +2707,7 @@ describe("EFF-01: assembler bounded working-set reads", () => {
     expect(texts.some((t) => t === "a19")).toBe(true);
   });
 
-  it("EFF-01-A-2: O(working-set) regression — assembler calls getMessagesByIds with bounded ids, NOT getMessages", async () => {
+  it("O(working-set) regression — assembler calls getMessagesByIds with bounded ids, NOT getMessages", async () => {
     // Fixture: 50 messages in the store, but only 5 are referenced via context_items
     // (the other 45 have been collapsed into summaries).
     const msgs: Message[] = [];
@@ -2757,7 +2762,7 @@ describe("EFF-01: assembler bounded working-set reads", () => {
     const engine = createLcdContextEngine(dagConfig(2), spiedDeps);
     await engine.transformContext(live);
 
-    // Post-patch: getMessagesByIds MUST have been called (bounded fetch).
+    // getMessagesByIds MUST have been called (bounded fetch).
     expect(getMessagesByIdsSpy).toHaveBeenCalled();
 
     // The ids passed MUST be bounded to the referenced message-refs (~5 ids).
@@ -2765,14 +2770,13 @@ describe("EFF-01: assembler bounded working-set reads", () => {
     const allPassedIds = getMessagesByIdsSpy.mock.calls.flatMap(([, ids]) => ids);
     expect(allPassedIds.length).toBeLessThanOrEqual(10);
 
-    // Pre-patch assertion: getMessages (the old O(total) path) must NOT be called
+    // getMessages (the O(total-history) path) must NOT be called
     // by transformContext for messages (it may still be called by helpers, but
     // the assembler's own message-fetch path must be the bounded one).
-    // Post-patch: getMessages call count from assembler's own context fetch = 0.
     expect(getMessagesSpy).not.toHaveBeenCalled();
   });
 
-  it("EFF-01-A-3: empty context_items → getMessagesByIds not called (or called with [])", async () => {
+  it("empty context_items → getMessagesByIds not called (or called with [])", async () => {
     // New conversation: no messages persisted yet, no context_items seeded.
     const live: AgentMessage[] = [];
     const { deps } = makeDeps(store);
@@ -2800,7 +2804,7 @@ describe("EFF-01: assembler bounded working-set reads", () => {
   });
 });
 
-describe("EFF-02: assembler freshTailTurns tier-aware clamping", () => {
+describe("assembler freshTailTurns tier-aware clamping", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -2809,7 +2813,7 @@ describe("EFF-02: assembler freshTailTurns tier-aware clamping", () => {
     store = createLcdStore(db);
   });
 
-  it("EFF-02-B-1: frontier profile (contextWindow=Infinity) → output byte-identical to pre-EFF-02 baseline", async () => {
+  it("frontier profile (contextWindow=Infinity) → the clamp is a no-op and output matches the unclamped baseline", async () => {
     // Build a 5-turn conversation
     const msgs: Message[] = [];
     for (let i = 0; i < 5; i++) {
@@ -2820,7 +2824,7 @@ describe("EFF-02: assembler freshTailTurns tier-aware clamping", () => {
     const live = msgs as AgentMessage[];
 
     // Frontier profile: contextWindow=Infinity → resolveClampedFreshTailTurns(Infinity, 2) = 2 (unchanged)
-    // The Infinity guard returns configuredTurns unchanged — byte-identical to pre-EFF-02.
+    // The Infinity guard returns configuredTurns unchanged — the clamp never fires.
     const frontierProfile: ModelProfile = {
       ...FAIL_CLOSED_PROFILE,
       capabilityClass: "frontier" as const,
@@ -2831,12 +2835,12 @@ describe("EFF-02: assembler freshTailTurns tier-aware clamping", () => {
     const depsWithFrontier = { ...deps, modelProfile: frontierProfile };
 
     // Baseline: same config WITHOUT the frontier profile (uses getModel contextWindow=200K)
-    // The EFF-02 path hits isFinite(Infinity)=false → returns configuredTurns unchanged.
+    // The clamp path hits isFinite(Infinity)=false → returns configuredTurns unchanged.
     // Verify the assembler completes successfully with frontier (clamp is a no-op).
     const engine = createLcdContextEngine(dagConfig(2), depsWithFrontier);
     const result = await engine.transformContext(live);
     expect(result).toBeDefined();
-    // The fresh tail must still contain the last 2 assistant steps (EFF-02 didn't change it)
+    // The fresh tail must still contain the last 2 assistant steps (the clamp left it alone)
     const assembled = result as AgentMessage[];
     const assistantMsgs = assembled.filter((m) => (m as unknown as { role: string }).role === "assistant");
     // With freshTailTurns=2 and 5 assistant messages, at least 2 assistant messages survive
@@ -2845,18 +2849,19 @@ describe("EFF-02: assembler freshTailTurns tier-aware clamping", () => {
 });
 
 // ---------------------------------------------------------------------------
-// RETR-02/03/05 (Phase 173-03): the margin arbiter wired at the evict seam.
+// The margin arbiter wired at the evict seam.
 //
-// The KEYSTONE invariant (LOCKED #2, Pitfall 5): frontier/mid assembly is
+// The KEYSTONE invariant: frontier/mid assembly is
 // BYTE-IDENTICAL with the flag present — the arbiter does NOT run for them. The
-// frontier/mid branch calls the EXACT pre-patch `evictHistoryUnderBudget(evictable,
+// frontier/mid branch calls the plain `evictHistoryUnderBudget(evictable,
 // budget.availableHistoryTokens)`. The gate is "the arbiter did not run," proven by
 // (a) NO context:arbitrated event AND (b) deep equality of the assembled AgentMessage[]
 // flag-OFF (relevanceFirst absent / undefined) vs flag-path (relevanceFirst:false).
-// The relevance-first path (small non-caching) runs the arbiter (event fires); S4 pins
-// survive arbitration unconditionally; the context:arbitrated event is content-free.
+// The relevance-first path (small non-caching) runs the arbiter (event fires);
+// security pins survive arbitration unconditionally; the context:arbitrated event is
+// content-free.
 // ---------------------------------------------------------------------------
-describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identical + arbiter path + S4 pins)", () => {
+describe("margin arbiter at the evict seam (frontier byte-identical + arbiter path + security pins)", () => {
   let store: ContextStorePort;
   beforeEach(() => {
     const db = new Database(":memory:");
@@ -2912,7 +2917,7 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     return JSON.parse(JSON.stringify(out, (key, value) => (key === "timestamp" ? undefined : value)));
   }
 
-  it("Test 1 (KEYSTONE — FRONTIER BYTE-IDENTICAL): assembled output is deep-equal flag-OFF vs flag-path; arbiter does NOT run", async () => {
+  it("KEYSTONE — FRONTIER BYTE-IDENTICAL: assembled output is deep-equal flag-OFF vs flag-path; arbiter does NOT run", async () => {
     seedTurns(8, 600); // 9600 tokens → forces eviction under the 200K window? no — but exercises the evict seam
     const live: AgentMessage[] = [];
     for (let i = 0; i < 8; i++) {
@@ -2920,7 +2925,7 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
       live.push(assistantText(`a${i}`) as AgentMessage);
     }
 
-    // Path A: relevanceFirst ABSENT (frontier default — the pre-patch state).
+    // Path A: relevanceFirst ABSENT (the frontier default).
     const emitA = vi.fn<[string, unknown], void>();
     const { deps: depsA } = makeDeps(store);
     const outA = await createLcdContextEngine(dagConfig(2), {
@@ -2948,7 +2953,7 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     expect(outA.length).toBeGreaterThan(0);
   });
 
-  it("Test 2 (MID byte-identical): mid profile is byte-identical flag-OFF vs flag-path; arbiter does NOT run", async () => {
+  it("MID byte-identical: mid profile is byte-identical flag-OFF vs flag-path; arbiter does NOT run", async () => {
     seedTurns(6, 600);
     const live: AgentMessage[] = [];
     for (let i = 0; i < 6; i++) {
@@ -2978,7 +2983,7 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     expect(stripVolatile(outA)).toEqual(stripVolatile(outB));
   });
 
-  it("Test 3 (relevance-first path runs the arbiter): small non-caching + relevanceFirst=true emits context:arbitrated", async () => {
+  it("relevance-first path runs the arbiter: small non-caching + relevanceFirst=true emits context:arbitrated", async () => {
     // Tight 8K window + heavy turns → the evict seam is exercised; the arbiter runs.
     seedTurns(8, 600);
     const live: AgentMessage[] = [];
@@ -3002,8 +3007,8 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     expect(arb).toBeDefined();
   });
 
-  it("Test 4 (S4 pin survival on the arbiter path): a canary-marked history item is NEVER a relevance candidate and is always kept", async () => {
-    const CANARY = "CANARY-TOKEN-173-03-ARBITER";
+  it("security-pin survival on the arbiter path: a canary-marked history item is NEVER a relevance candidate and is always kept", async () => {
+    const CANARY = "CANARY-TOKEN-ARBITER-PIN";
     seedTurns(7, 600);
     // Append the security-pinned message (seq 14) — a canary-bearing user message.
     const securityMsg: Message = {
@@ -3050,7 +3055,7 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     expect(JSON.stringify(out)).toContain(CANARY);
   });
 
-  it("Test 5 (T0 fresh-tail unconditional on the relevance path): the fresh tail is always kept", async () => {
+  it("T0 fresh-tail unconditional on the relevance path: the fresh tail is always kept", async () => {
     seedTurns(8, 600);
     const live: AgentMessage[] = [];
     for (let i = 0; i < 8; i++) {
@@ -3065,11 +3070,11 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
       getThinkingLevel: () => "medium",
       relevanceFirst: true,
     }).transformContext(live);
-    // The last live message (the fresh tail) ALWAYS ships (A1/A3) on the arbiter path too.
+    // The last live message (the fresh tail) ALWAYS ships on the arbiter path too.
     expect(out[out.length - 1]).toBe(live[live.length - 1]);
   });
 
-  it("Test 6 (content-free context:arbitrated emit): the payload carries per-tier counts + pool tokens + boolean only (NO content)", async () => {
+  it("content-free context:arbitrated emit: the payload carries per-tier counts + pool tokens + boolean only (NO content)", async () => {
     seedTurns(8, 600);
     const live: AgentMessage[] = [];
     for (let i = 0; i < 8; i++) {
@@ -3091,8 +3096,8 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     expect(arb).toBeDefined();
     const payload = arb![1] as Record<string, unknown>;
     // CONTENT-FREE: exactly the counts/ids/tokens/boolean/timestamp keys — nothing else.
-    // WR-03 adds poolTokensUsed + floorTokens (consumed vs offered + the floor weight).
-    // WR-02 adds keptLtmIds + keptKgIds (the content-free ids the type doc promises).
+    // poolTokensUsed + floorTokens report consumed vs offered + the floor weight.
+    // keptLtmIds + keptKgIds are the content-free ids the type doc promises.
     expect(Object.keys(payload).sort()).toEqual(
       [
         "agentId",
@@ -3115,22 +3120,21 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     // perTierKept is a counts map (history/ltm/kg) — no content strings.
     const perTier = payload.perTierKept as Record<string, unknown>;
     expect(typeof perTier.history).toBe("number");
-    // WR-03: poolTokensUsed (CONSUMED) + floorTokens are numeric and content-free.
+    // poolTokensUsed (CONSUMED) + floorTokens are numeric and content-free.
     expect(typeof payload.poolTokensUsed).toBe("number");
     expect(typeof payload.floorTokens).toBe("number");
     // poolTokensUsed (consumed) never exceeds discretionaryPoolTokens (offered).
     expect(payload.poolTokensUsed as number).toBeLessThanOrEqual(payload.discretionaryPoolTokens as number);
-    // WR-02: keptLtmIds/keptKgIds are id arrays (empty on the C2 history-only path) — ids only.
+    // keptLtmIds/keptKgIds are id arrays (empty on the history-only path) — ids only.
     expect(Array.isArray(payload.keptLtmIds)).toBe(true);
     expect(Array.isArray(payload.keptKgIds)).toBe(true);
   });
 
-  it("Test 8 (WR-03 observability): context:arbitrated surfaces poolTokensUsed (consumed), distinct from discretionaryPoolTokens (offered)", async () => {
-    // The small-model context-exhaustion bar (§2.7): an operator must be able to tell the
-    // budget OFFERED from the budget CONSUMED. Pre-patch the event only carried
-    // discretionaryPoolTokens (the input pool) and dropped poolTokensUsed entirely, so the
-    // S4-pinned floors blowing past the pool was invisible. RED on pre-patch: the payload
-    // has no poolTokensUsed / floorTokens / keptLtmIds / keptKgIds keys.
+  it("observability: context:arbitrated surfaces poolTokensUsed (consumed), distinct from discretionaryPoolTokens (offered)", async () => {
+    // An operator must be able to tell the
+    // budget OFFERED from the budget CONSUMED. Without these fields the event only carries
+    // discretionaryPoolTokens (the input pool) and drops poolTokensUsed entirely, so
+    // security-pinned floors blowing past the pool are invisible.
     seedTurns(8, 600);
     const live: AgentMessage[] = [];
     for (let i = 0; i < 8; i++) {
@@ -3159,7 +3163,7 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     expect(payload.poolTokensUsed as number).toBeLessThanOrEqual(payload.discretionaryPoolTokens as number);
   });
 
-  it("Test 7 (no over-allocate composes with Fix-3): assembled history tokens ≤ budget.availableHistoryTokens on the arbiter path", async () => {
+  it("no over-allocate: assembled history tokens ≤ budget.availableHistoryTokens on the arbiter path", async () => {
     seedTurns(8, 600);
     const live: AgentMessage[] = [];
     for (let i = 0; i < 8; i++) {
@@ -3188,8 +3192,8 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     expect(keptCount * 600).toBeLessThanOrEqual(pool);
   });
 
-  it("Test 8 (DEPTH-01 END-TO-END relevance reorder): a relevant OLDER message survives where pure recency would drop it", async () => {
-    // The CR-01 proof at the assembler level: with the real scorer + the real FTS store wired
+  it("END-TO-END relevance reorder: a relevant OLDER message survives where pure recency would drop it", async () => {
+    // The end-to-end proof at the assembler level: with the real scorer + the real FTS store wired
     // through the margin-arbiter middle-band seam, an OLDER message whose text matches the live
     // query is KEPT while a less-relevant NEWER one is DROPPED — the SELECTION differs from
     // recency. The distinctive terms ("zebra deploy trading bot") appear in the OLDEST seeded
@@ -3272,26 +3276,26 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
 });
 
 // ---------------------------------------------------------------------------
-// TOK-01 (Phase 179, plan 179-05): read-time max(stored, factored-live) at
-// resolveContextItem — stored-row honesty for pre-phase under-counted rows.
+// Read-time max(stored, factored-live) at
+// resolveContextItem — stored-row honesty for under-counted rows.
 //
-// Rows ingested BEFORE the script-aware factor carry flat ceil(chars/4)
-// token_counts that under-count dense scripts ~2x. The fix lifts each budget
+// Rows stored WITHOUT the script-aware factor carry flat ceil(chars/4)
+// token_counts that under-count dense scripts ~2x. The assembler lifts each budget
 // item at READ time to max(stored, estimateMessageTokens(reconstructed)) —
-// max(), never replace (the stored count carries F3 thinking weight a
+// max(), never replace (the stored count carries thinking weight a
 // re-estimate would miss), with the summary leg comparing against
 // summary.content (the SAME input the stored count was computed over), NEVER
 // the rendered summaryRefToMessage wrap.
 //
 // Every fixture row round-trips the REAL parts codec (messageToParts at
-// store-time, partsToMessage inside the real assembly) — RESEARCH Pitfall 4:
-// hand-built rows can fabricate or hide an I1 break via UNKNOWN_BLOCK_CHARS
+// store-time, partsToMessage inside the real assembly) —
+// hand-built rows can fabricate or hide a byte-identity break via UNKNOWN_BLOCK_CHARS
 // inflation. The observable is the preflight's context:budget_computed event
 // (budgetedHistoryTokens = the kept evictable items' token sum), so resolution
 // happens through the REAL assembly entry — hand-built BudgetItems are
 // FORBIDDEN here (they bypass the production change under test).
 // ---------------------------------------------------------------------------
-describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () => {
+describe("resolveContextItem read-time max() (stored-row honesty)", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -3314,7 +3318,7 @@ describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () =>
   };
 
   /** Persist one message through the REAL parts codec with an EXPLICIT stored
-   *  tokenCount (simulating what a given ingest version wrote). */
+   *  tokenCount (simulating a row stored without the script-aware factor). */
   function appendStored(msg: Message, seq: number, storedTokenCount: number): void {
     store.append({
       scope: SCOPE,
@@ -3322,7 +3326,7 @@ describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () =>
       role: msg.role,
       tokenCount: storedTokenCount,
       createdAt: FIXED_CREATED_AT,
-      parts: messageToParts(msg), // the REAL codec round-trip (Pitfall 4)
+      parts: messageToParts(msg), // the REAL codec round-trip
     });
   }
 
@@ -3372,26 +3376,26 @@ describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () =>
     return msgs;
   }
 
-  it("a stored pre-phase Hebrew row carries max(stored, factored-live), not the stored under-count", async () => {
-    // Pre-patch: tokens === row.tokenCount (stored under-count) — the fit
-    // guarantee ran on stale math. The flat formula is what pre-179 ingest
-    // wrote: ceil(chars/4), ~0.55x the factored estimate for Hebrew → RED.
+  it("a stored flat-count Hebrew row carries max(stored, factored-live), not the stored under-count", async () => {
+    // Without the lift, tokens === row.tokenCount (stored under-count) — the fit
+    // guarantee runs on stale math. The flat formula
+    // ceil(chars/4) is ~0.55x the factored estimate for Hebrew.
     const heText = HE_SENTENCE.repeat(15); // 615 chars
     const heMsg = userMsg(heText);
-    appendStored(heMsg, 0, Math.ceil(heText.length / 4)); // SIMULATED pre-phase flat count
+    appendStored(heMsg, 0, Math.ceil(heText.length / 4)); // SIMULATED stale flat count
     const live: AgentMessage[] = [heMsg as AgentMessage, assistantText("ok") as AgentMessage];
 
     const payload = await assembleAndReadBudget(live);
     expect(payload.budgetedHistoryTokens).toBeGreaterThanOrEqual(estimateMessageTokens(heMsg));
   });
 
-  it("I1: an ASCII row stored with today's factored count resolves byte-identical (max is a no-op)", async () => {
+  it("an ASCII row stored with the current factored count resolves byte-identical (max is a no-op)", async () => {
     // The Latin no-op: the same estimator over the real codec round-trip
-    // reproduces the stored value exactly, so max() returns stored verbatim.
-    // Passes pre- AND post-patch by design (the byte-identical direction).
+    // reproduces the stored value exactly, so max() returns stored verbatim
+    // (the byte-identical direction).
     const asciiText = "The quarterly report shows steady growth across all regions this year.";
     const asciiMsg = userMsg(asciiText);
-    const stored = estimateMessageTokens(asciiMsg); // today's factored root — flat for ASCII
+    const stored = estimateMessageTokens(asciiMsg); // the current factored estimator — flat for ASCII
     expect(stored).toBe(Math.ceil(asciiText.length / 4)); // factor 1.0 — identical to flat
     appendStored(asciiMsg, 0, stored);
     const live: AgentMessage[] = [asciiMsg as AgentMessage, assistantText("ok") as AgentMessage];
@@ -3400,10 +3404,10 @@ describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () =>
     expect(payload.budgetedHistoryTokens).toBe(stored); // EXACT — never lifted
   });
 
-  it("a stored pre-phase Hebrew summary carries max(stored, factored estimate of summary.content)", async () => {
-    // Pre-patch: the summary item carries the stored flat count verbatim → RED.
+  it("a stored flat-count Hebrew summary carries max(stored, factored estimate of summary.content)", async () => {
+    // Without the lift the summary item carries the stored flat count verbatim.
     const heContent = HE_SENTENCE.repeat(49); // ~2009 chars of Hebrew summary body
-    const flatStored = Math.ceil(heContent.length / 4); // SIMULATED pre-phase flat count
+    const flatStored = Math.ceil(heContent.length / 4); // SIMULATED stale flat count
     const msgs = seedSummaryOnly(heContent, flatStored);
 
     const payload = await assembleAndReadBudget(msgs as AgentMessage[]);
@@ -3413,13 +3417,13 @@ describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () =>
   });
 
   it("summary comparison runs against summary.content, never the rendered wrap", async () => {
-    // The I1 trap (RESEARCH Pitfall 5): summaryRefToMessage wraps the body in a
+    // The trap: summaryRefToMessage wraps the body in a
     // trusted header + delimited untrusted region + footer. If the read-time
     // re-estimate ran over that RENDERED wrap, the extra header/footer chars
     // would EXCEED the stored count and max() would lift EVERY Latin summary —
     // this exact-equality pin fails in that case. The comparison must use
     // summary.content — the SAME input summarize-tier-targets computed the
-    // stored count over. Passes pre- AND post-patch by design.
+    // stored count over.
     const asciiContent =
       "Earlier discussion summarized: deployment pipeline configured; tests green; release scheduled.";
     const stored = estimateMessageTokens({ role: "user", content: asciiContent } as Message);
@@ -3429,11 +3433,11 @@ describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () =>
     expect(payload.budgetedHistoryTokens).toBe(stored); // EXACT — the wrap never inflates it
   });
 
-  it("F3 direction: a stored count EXCEEDING the re-estimate is kept (max, not replacement)", async () => {
-    // The stored count carries F3 thinking weight a re-estimate would
+  it("thinking-weight direction: a stored count EXCEEDING the re-estimate is kept (max, not replacement)", async () => {
+    // The stored count carries thinking-block weight a re-estimate would
     // under-count (lcd-assembler docstring) — a LOWER re-estimate must fall
     // back to stored. Simulate stored thinking weight: stored = estimate + 50.
-    // Passes pre- AND post-patch by design (replacement would break it).
+    // (Replacement instead of max would break it.)
     const asciiText = "Reviewed the incident timeline and drafted the remediation steps for rollout.";
     const asciiMsg = userMsg(asciiText);
     const storedWithThinking = estimateMessageTokens(asciiMsg) + 50;
@@ -3446,24 +3450,24 @@ describe("resolveContextItem read-time max() (TOK-01 stored-row honesty)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// THE PHASE PIN (TOK-01, plan 179-05): the v2.18 fit guarantee must hold for a
+// THE END-TO-END PIN: the fit guarantee must hold for a
 // Hebrew-saturated prompt at the small-model cap INCLUDING pre-existing
 // under-counted history. Stored flat-count rows flow through REAL assembly
 // (messageToParts → store → resolveContextItem → eviction) into the preflight
-// (lcd-assembler.ts itself calls runPreflightFitCheck), so this harness is the
-// genuine end-to-end RED:
+// (lcd-assembler.ts itself calls runPreflightFitCheck), so this harness is a
+// genuine end-to-end regression guard:
 //
-//   Pre-patch: the assembler copies the stored under-counts into the budget
-//   items, assembledInputTokens stays under headroomBound, the fit check
-//   passes silently (the silent-truncation bug) → the ladder-engages assertion
-//   FAILS = RED.
-//   Post-patch (read-time max()): the honest items push assembledInputTokens
-//   over the bound and the thinking governor engages (downshift) = GREEN.
+//   Without the read-time lift: the assembler copies the stored under-counts
+//   into the budget items, assembledInputTokens stays under headroomBound, the
+//   fit check passes silently (the silent-truncation bug) → the ladder-engages
+//   assertion FAILS.
+//   With it (read-time max()): the honest items push assembledInputTokens
+//   over the bound and the exhaustion ladder engages.
 //
 // Hand-built BudgetItems are FORBIDDEN for this pin — they bypass the
-// production change under test and pass pre-patch (checker finding).
+// production change under test and would pass either way.
 // ---------------------------------------------------------------------------
-describe("fit guarantee honest for a Hebrew-saturated prompt at the small cap incl. pre-existing history (TOK-01)", () => {
+describe("fit guarantee honest for a Hebrew-saturated prompt at the small cap incl. pre-existing history", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -3481,15 +3485,15 @@ describe("fit guarantee honest for a Hebrew-saturated prompt at the small cap in
     // H = (32000 − 8192 − 2048 − 8000) + (8192 − 4096) = 17856.
     //
     // History: 31 Hebrew turns (62 rows × ~1025 chars) stored with SIMULATED
-    // PRE-PHASE flat counts ceil(len/4) = 257 each → flat sum 15934:
-    //   - fits H (15934 < 17856) → nothing evicted pre-patch;
-    //   - flat sum + factored freshTail ≈ 22.1K < 23040 → pre-patch the fit
-    //     check passes SILENTLY (no downshift, no throw) → RED.
-    // Post-patch each item lifts to estimateMessageTokens ≈ 466 → the factored
+    // stale flat counts ceil(len/4) = 257 each → flat sum 15934:
+    //   - fits H (15934 < 17856) → nothing evicted without the lift;
+    //   - flat sum + factored freshTail ≈ 22.1K < 23040 → without the lift the
+    //     fit check passes SILENTLY (no downshift, no throw).
+    // With the lift each item rises to estimateMessageTokens ≈ 466 → the factored
     // sum (~28.9K) overfills H, eviction keeps ~17.7K, and the assembled input
-    // (~23.9K) crosses headroomBound(high) → the governor downshifts = GREEN.
+    // (~23.9K) crosses headroomBound(high) → the degrade ladder engages.
     const heRowText = HE_SENTENCE.repeat(25); // ~1025 chars per row
-    const flatCount = Math.ceil(heRowText.length / 4); // the flat formula — what pre-179 ingest wrote
+    const flatCount = Math.ceil(heRowText.length / 4); // the flat formula a script-blind ingest writes
     const persisted: Message[] = [];
     for (let i = 0; i < 31; i++) {
       persisted.push(userMsg(heRowText));
@@ -3500,14 +3504,14 @@ describe("fit guarantee honest for a Hebrew-saturated prompt at the small cap in
         scope: SCOPE,
         seq: i,
         role: persisted[i]!.role,
-        tokenCount: flatCount, // SIMULATED pre-phase stored under-count
+        tokenCount: flatCount, // SIMULATED stale stored under-count
         createdAt: FIXED_CREATED_AT,
-        parts: messageToParts(persisted[i] as Message), // REAL codec (Pitfall 4)
+        parts: messageToParts(persisted[i] as Message), // the REAL codec round-trip
       });
     }
 
     // A Hebrew fresh tail (~11.9K chars ≈ 6.2K factored tokens — under the
-    // Issue-1 per-message cap of ~50K chars, so it ships unbounded).
+    // per-message cap of ~50K chars, so it ships unbounded).
     const heFresh = HE_SENTENCE.repeat(290);
     const live: AgentMessage[] = [
       ...(persisted as AgentMessage[]),
@@ -3539,11 +3543,11 @@ describe("fit guarantee honest for a Hebrew-saturated prompt at the small cap in
     const out = await engine.transformContext(live);
     expect(out.length).toBeGreaterThan(0);
 
-    // THE PHASE ASSERTION (TOK-01): the honest factored counts ENGAGE A DEGRADE
-    // where the flat stored under-counts silently passed. Pre-179 the flat sum
-    // (~15934) fit H (17856) with NOTHING evicted; the factored sum (~28.9K)
-    // overfills H so OLD history MUST be evicted. ISSUE #1 (2026-06-22) changed
-    // the degrade SHAPE: the unconditional harder-eviction rung now trims history
+    // THE CORE ASSERTION: the honest factored counts ENGAGE A DEGRADE
+    // where the flat stored under-counts silently pass. The flat sum
+    // (~15934) fits H (17856) with NOTHING evicted; the factored sum (~28.9K)
+    // overfills H so OLD history MUST be evicted. Degrade SHAPE:
+    // the unconditional harder-eviction rung trims history
     // to fit the headroom bound BEFORE the thinking governor would fire, so the
     // honest-math degrade manifests as EVICTION (fewer kept messages) rather than a
     // thinking down-shift — evicting cheap old history is preferable to degrading

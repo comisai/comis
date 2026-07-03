@@ -6,8 +6,8 @@
  * (turn it OFF, re-run, read the delta). The keyless head-to-head harness drives
  * `sweepCells` at $0.
  *
- * THE VERIFIED KNOB LEAVES (re-grepped against recall-types.ts:142-182 +
- * schema-memory-reasoning.ts:41 -- an earlier draft was WRONG on three of them):
+ * THE VERIFIED KNOB LEAVES (verified against recall-types.ts:142-182 +
+ * schema-memory-reasoning.ts:41 -- three of them have plausible-but-wrong spellings):
  *   - kg-graph-spread    -> `lanes.graphSpread.enabled`        (recall-types.ts:157)
  *   - iq-mmr             -> `mmr.enabled`         (recall-types.ts:178; NOT `rag.mmr.enabled`)
  *   - iq-intent          -> `queryUnderstanding.intentReweight` (recall-types.ts:182; the leaf
@@ -74,8 +74,8 @@ export const REASON_WRITE_SIDE_FACTOR = "reason-observations" as const;
 
 /**
  * The shipped ablation factors, each pinned to its VERIFIED knob leaf. The
- * grep acceptance criteria + the off=byte-identity test guard these paths against
- * the stale `rag.`-prefixed / `.intent` draft leaves.
+ * off=byte-identity test guards these paths against the plausible-but-wrong
+ * `rag.`-prefixed / `.intent` spellings (which are not real config leaves).
  */
 export const V28_ABLATION_FACTORS: readonly AblationFactor[] = [
   { factor: "kg-graph-spread", knobPath: "lanes.graphSpread.enabled", on: true, off: false },

@@ -28,7 +28,7 @@ import { Command } from "commander";
 // -----------------------------------------------------------------------------
 
 // Mock @comis/core — all the OAuth helpers + file-lock + createConsoleLogger
-// live here. Single combined mock now that auth.ts imports ALL these symbols
+// live here. Single combined mock because auth.ts imports ALL these symbols
 // from @comis/core.
 vi.mock("@comis/core", async () => {
   const actual = await vi.importActual<typeof import("@comis/core")>(
@@ -60,7 +60,7 @@ vi.mock("@comis/core", async () => {
       isLocked: vi.fn(async () => false),
       cleanupStaleLocks: vi.fn(async () => 0),
     })),
-    // createConsoleLogger replaces @comis/infra's createLogger. Returns a
+    // createConsoleLogger is the CLI's Pino-free logger. Returns a
     // no-op logger — auth.ts tests never exercise the log body, only the
     // CLI control flow.
     createConsoleLogger: vi.fn(() => ({
@@ -76,7 +76,7 @@ vi.mock("@comis/core", async () => {
     })),
     loadConfigFile: vi.fn(() => ({ ok: false, error: new Error("no config") })),
     validateConfig: vi.fn(),
-    // loadStorageMode now reads the mode via preReadStorageMode (a direct YAML
+    // loadStorageMode reads the mode via preReadStorageMode (a direct YAML
     // scan, no ${VAR} substitution) rather than the mockable loadConfigFile —
     // so these file-mode rendering/login tests must pin it to "file" here, else
     // it would read the host's real ~/.comis/config.yaml (encrypted) and route

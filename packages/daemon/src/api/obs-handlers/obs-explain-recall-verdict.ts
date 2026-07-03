@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RECALL-01: the `recall_miss` root-cause verdict predicate spliced into the
+ * The `recall_miss` root-cause verdict predicate spliced into the
  * `obs-explain-heuristics` registry.
  *
  * Extracted into this sibling (the `obs-explain-learning-verdicts.ts` /
@@ -14,7 +14,7 @@
  * (zeroHits === recalls), NO tool failures (so it never steals from the catch-all,
  * which REQUIRES failures — the two are mutually exclusive), and the authoritative
  * `degraded` flag (a zero-hit recall on a healthy turn is benign — the agent simply
- * didn't need memory — and never fires). Grounded in the v2.22 Hebrew / LM-3 runs
+ * didn't need memory — and never fires). Grounded in live Hebrew-language runs
  * where recall silently missed and `comis explain` root-caused nothing, so the
  * lane/scope gap had to be hand-queried from memory_fts. The return type is
  * structurally identical to the registry's `RootCause` (no cross-module type import

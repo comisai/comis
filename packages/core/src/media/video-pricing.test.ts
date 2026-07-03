@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { estimateVideoCostUsd, VIDEO_PRICING } from "./video-pricing.js";
 
 /**
- * estimateVideoCostUsd is a PURE worst-case cost estimate (SEC-02 / I6): a video
+ * estimateVideoCostUsd is a PURE worst-case cost estimate: a video
  * clip is already rendering once submitted, so the ceiling must be checked
  * pre-submit against a conservative duration × per-second estimate. Audio and 4k
  * raise the rate. Per-second rates live in ONE table (VIDEO_PRICING) and are
@@ -77,7 +77,7 @@ describe("estimateVideoCostUsd", () => {
 
   it("keeps an audio=true veo estimate conservatively HIGH (audio surcharge ceiling)", () => {
     // Native Veo 3.x bills audio in-base, so audioPerSecond is a conservative
-    // over-estimate ceiling (Pitfall 4) — the audio estimate must exceed the
+    // over-estimate ceiling — the audio estimate must exceed the
     // audio-off estimate so the pre-submit ceiling is never under-counted.
     const audioOff = estimateVideoCostUsd("veo", undefined, {
       durationSecs: 8,
@@ -96,7 +96,7 @@ describe("estimateVideoCostUsd", () => {
 
   it("estimates the grok backend at the conservative refined per-second rate", () => {
     // Conservative worst-case 0.07/s; the actual is reconciled from
-    // cost_in_usd_ticks by the Grok adapter (Plan 02).
+    // cost_in_usd_ticks by the Grok adapter.
     const est = estimateVideoCostUsd("grok", undefined, { durationSecs: 6 });
     expect(est).toBeCloseTo(0.42, 5);
   });
@@ -129,10 +129,10 @@ describe("estimateVideoCostUsd", () => {
     expect(unknown).toBe(known);
   });
 
-  // SEC-04: the pricing estimate must NEVER index VIDEO_PRICING with a poisoned
+  // The pricing estimate must NEVER index VIDEO_PRICING with a poisoned
   // key (defense-in-depth — the resolver also guards, but the estimate is a
-  // second untrusted-id index site that DIVERGENCE 4 covers).
-  it("never indexes VIDEO_PRICING with a prototype-pollution key (SEC-04)", () => {
+  // second untrusted-id index site).
+  it("never indexes VIDEO_PRICING with a prototype-pollution key", () => {
     const safe = estimateVideoCostUsd("fal", undefined, { durationSecs: 8 });
     // A poisoned key must fall back to the fal rate, never read a planted
     // prototype property — so the estimate is identical to the fal estimate.

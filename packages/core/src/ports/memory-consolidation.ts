@@ -5,24 +5,21 @@ import type { MemoryEntry } from "../domain/memory-entry.js";
 /**
  * MemoryConsolidationStore: the SEGREGATED maintenance boundary for the LIVE
  * read + deletion-reconciliation surface over consolidated observation rows
- * (`proof_count IS NOT NULL`, the column-flag model §4.1).
+ * (`proof_count IS NOT NULL` is the column flag marking a consolidated row).
  *
- * Phase 226 (SIMPLIFY-02): TRIMMED to its live surface. The consolidation CRON
- * (the WRITER — clustering raw memories into observations) was retired in phase
- * 225, so its writer methods (`listConsolidationCandidates` / `applyConsolidation`
- * / `foldIntoExisting` / `knnDistances` surprisal-gate / `markReasoned`
- * deductive-drain) + their candidate/plan input types are gone (grep-proven: 0
- * live, non-cron callers). What REMAINS are three methods with live, non-cron
- * consumers that must keep working:
+ * The port is deliberately limited to this read/maintenance surface — there is
+ * no consolidation-writer surface (no clustering of raw memories into
+ * observations). Its three methods each have a live consumer that must keep
+ * working:
  *   - `listObservations`             — the `comis memory` observation listing
  *                                      (daemon `memory.observations` handler).
- *   - `unlinkDeletedSources`         — DIST-05 deletion reconciliation after
+ *   - `unlinkDeletedSources`         — deletion reconciliation after
  *   - `purgeConsolidatedDerivedFrom`   `session.reset_conversation --memory`.
  *
- * This is a NEW port — it deliberately does NOT widen the security-reviewed
- * agent-facing `MemoryPort` (store/search/delete). Per design §3.2 that surface
+ * This is a SEPARATE port — it deliberately does NOT widen the security-reviewed
+ * agent-facing `MemoryPort` (store/search/delete). That surface
  * is never widened for agent use; new maintenance capabilities arrive as their
- * own segregated port (the same pattern as `MemoryEntityStore` §6.5, guarding
+ * own segregated port (the same pattern as `MemoryEntityStore`, guarding
  * against Elevation of Privilege). The sole adapter lives in the memory package
  * (it owns the `db` handle and runs all SQL); the daemon injects the concrete
  * adapter; consumers import this port TYPE only (the agent↛memory build cut).
@@ -45,7 +42,7 @@ export interface MemoryConsolidationStore {
   ): Promise<Result<MemoryEntry[], Error>>;
 
   /**
-   * Phase 172 (DIST-05): Unlink the given session's memory ids from all
+   * Unlink the given session's memory ids from all
    * consolidated observations after those source memories were deleted by
    * `session.reset_conversation --memory`.
    *
@@ -65,7 +62,7 @@ export interface MemoryConsolidationStore {
    * source id no longer present in `memories` for this tenant is treated as
    * deleted. See the adapter for the exact predicate.
    *
-   * R4 (WR-05): scoped on `tenant_id` AND `agent_id` — matching
+   * Scoped on `tenant_id` AND `agent_id` — matching
    * `deleteBySessionKey`'s (tenant, agent) scope exactly. A cross-tenant OR
    * cross-agent observation is a fail-closed no-op (never touched). Returns the
    * count of orphan observations deleted.
@@ -82,13 +79,13 @@ export interface MemoryConsolidationStore {
   ): Promise<Result<number, Error>>;
 
   /**
-   * Phase 172 (DIST-05): Nuclear escalation — delete EVERY consolidated
+   * Nuclear escalation — delete EVERY consolidated
    * observation derived from THIS session's deleted memory ids. Use ONLY when
    * `--purge-derived` is explicitly requested — it is destructive (an observation
    * corroborated by OTHER sessions is STILL deleted when it also cites a
    * this-session source) and cannot be undone.
    *
-   * WR-02 (session-scoped, not coarse): the predicate is
+   * Session-scoped, not coarse: the predicate is
    * `source_ids ∩ thisSessionIds ≠ ∅` — an observation is purged ONLY if it
    * references one of THIS session's memory ids (captured BEFORE the delete via
    * `MemoryPort.listMemoryIdsBySessionKey`). An UNRELATED observation that merely
@@ -96,7 +93,7 @@ export interface MemoryConsolidationStore {
    * session's purge) is NOT touched. When `thisSessionIds` is empty, nothing is
    * purged.
    *
-   * R4 (WR-05): scoped on `tenant_id` AND `agent_id` — a cross-tenant or
+   * Scoped on `tenant_id` AND `agent_id` — a cross-tenant or
    * cross-agent observation is a fail-closed no-op. Returns the count purged.
    *
    * @param sessionKey - The session key to purge derived observations for (audit)

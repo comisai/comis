@@ -83,8 +83,8 @@ export interface BackgroundSessionResolver {
  * Dependencies required by the resolver.
  *
  * Only the registry is needed today — the resolver is a pure-function
- * wrapper. No logger / event-bus injection (CLAUDE.md: NO logging in
- * pure-function helpers).
+ * wrapper, so it takes no logger / event-bus injection (pure-function
+ * helpers do not log).
  */
 export interface BackgroundSessionResolverDeps {
   activeRunRegistry: ActiveRunRegistry;
@@ -126,7 +126,7 @@ function formatComposite(key: ActiveSessionKey): string {
  *
  * Public-facing methods accept ONLY the composite key (agentId,
  * channelType, channelId) — no single-arg fallback. Production callers
- * no longer reach into `activeRunRegistry.has(...)` / `.get(...)`
+ * never reach into `activeRunRegistry.has(...)` / `.get(...)`
  * directly.
  */
 export function createBackgroundSessionResolver(
@@ -134,8 +134,8 @@ export function createBackgroundSessionResolver(
 ): BackgroundSessionResolver {
   // Local alias: the resolver IS the abstraction over the underlying
   // single-arg registry. We rename to `registry` so source-grep tooling
-  // (`activeRunRegistry.has|get(`) does not flag this file as a callsite
-  // to migrate -- the resolver IS the migration target. Invariant:
+  // (`activeRunRegistry.has|get(`) does not flag this file as a direct
+  // callsite -- the resolver is the intended sole consumer. Invariant:
   // *production callers* of `activeRunRegistry` go through this resolver;
   // the resolver itself remains the sole consumer of the underlying
   // single-arg surface.

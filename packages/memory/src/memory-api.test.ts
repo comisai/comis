@@ -10,7 +10,7 @@ const testConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false, // WAL not supported on :memory:
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall keepers nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,
@@ -603,7 +603,7 @@ describe("MemoryApi", () => {
       expect(afterUnpin?.pinned).toBe(0);
     });
 
-    it("CR-01: pin with agentId does NOT pin a same-tenant entry owned by a different agent", async () => {
+    it("pin with agentId does NOT pin a same-tenant entry owned by a different agent", async () => {
       // Two entries: same tenant, different agents. Pinning for agent-a must not pin agent-b's entry.
       const entryA = makeEntry({ tenantId: "t-cr01", agentId: "agent-a" });
       const entryB = makeEntry({ tenantId: "t-cr01", agentId: "agent-b" });
@@ -622,7 +622,7 @@ describe("MemoryApi", () => {
       expect(rowB?.pinned).toBe(0);
     });
 
-    it("CR-01: pin with wrong agentId returns ok(false) and leaves the row unpinned", async () => {
+    it("pin with wrong agentId returns ok(false) and leaves the row unpinned", async () => {
       const entry = makeEntry({ tenantId: "t-cr01b", agentId: "agent-b" });
       await adapter.store(entry as MemoryEntry);
 
@@ -638,12 +638,12 @@ describe("MemoryApi", () => {
     });
   });
 
-  // ── WR-01: clear() pin immunity unconditional ──────────────────────────────
-  describe("WR-01: clear() pin immunity is unconditional (not bypassed by trustLevel scope)", () => {
-    it("WR-01: clear() with trustLevel:'external' still spares pinned entries", async () => {
-      // The pin immunity `AND pinned != 1` must apply even when scope.trustLevel is set.
-      // Pre-patch: the condition is gated on !scope.trustLevel, so clear({ trustLevel: 'external' })
-      // deletes the pinned external-trust entry. Post-patch: immunity is unconditional.
+  // ── clear() pin immunity unconditional ─────────────────────────────────────
+  describe("clear() pin immunity is unconditional (not bypassed by trustLevel scope)", () => {
+    it("clear() with trustLevel:'external' still spares pinned entries", async () => {
+      // The pin immunity `AND pinned != 1` must apply even when scope.trustLevel is
+      // set — otherwise clear({ trustLevel: 'external' }) would delete the pinned
+      // external-trust entry. Immunity is unconditional.
       const db = adapter.getDb();
       const pinnedExternalId = crypto.randomUUID();
       db.prepare(

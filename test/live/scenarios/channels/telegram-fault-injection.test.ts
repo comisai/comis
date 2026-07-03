@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FAULT-01/02 — the FOUR hard-won adapter fallbacks fired for REAL under fault
- * injection + `classifyTelegramError` classification (Phase 208, Plan 02 — the
- * highest-risk surfaces 208 touches for the first time; NONE of these fallbacks
- * is reachable from the chat API).
+ * injection + `classifyTelegramError` classification (the highest-risk surfaces;
+ * NONE of these fallbacks is reachable from the chat API).
  *
  * The emulator's `fail(method, error, {once, matchChat})` seam makes a Bot-API
  * method return the Telegram error envelope `{ ok:false, error_code, description,
@@ -24,12 +23,12 @@
  * {parameters:{retry_after}} → rate_limited; 400 not-editable → not_supported
  * {edit}; 403 forbidden → permission. ⚠ THE NUANCE: the classifier's OWN default
  * (unmatched) is {kind:"internal"}, NOT ok:true — the "default → ok"
- * success-criterion refers to the NO-FAULT Bot-API method returning {ok:true},
+ * criterion refers to the NO-FAULT Bot-API method returning {ok:true},
  * which is a SEPARATE assertion. Both are asserted, distinctly. The 429
  * eventual-success leg proves @grammyjs/auto-retry (3 attempts / 10s) eventually
  * succeeds after a bounded backoff.
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205/206 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO model): the FOUR
  *     fallbacks via the REAL bare grammy adapter (createTelegramPlugin) booted
@@ -38,7 +37,7 @@
  *
  *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) drives a fallback against the
  *     full daemon + real agent (the parse_mode retry on a real reply). NO-FALSE-
- *     SUCCESS (I5): a fallback that can't be confirmed is an honest reason-coded
+ *     SUCCESS: a fallback that can't be confirmed is an honest reason-coded
  *     finding, never a faked green. SKIPPED (skip != fail) without COMIS_LIVE.
  *
  * Run:
@@ -51,14 +50,13 @@
  *  projects exclude test/live -> 0 files, exit 0 = false green. ALWAYS pass
  *  `-c test/live/vitest.config.ts`.)
  *
- * DEFECT-WATCH (binding here): these four fallbacks + the classifier are the
- * highest-risk surfaces. If a fallback does NOT fire as its seam claims (the 206
- * class), that is a real product bug — STOP, close it TEST-FIRST in the packages
- * source-tree, full `pnpm validate`. A clean Defect-Watch (all four fire
- * correctly) is also a first-class result (the 207-06 precedent). RESULT: CLEAN —
- * all four fallbacks fired correctly under fail(); ZERO product behavior change
- * (the one product touch is the classifyTelegramError barrel widening, a
- * VISIBILITY-only Defect-Watch surface-gap closure landed test-first).
+ * HIGH-RISK SURFACES (binding here): these four fallbacks + the classifier are
+ * the highest-risk surfaces. If a fallback does NOT fire as its seam claims,
+ * that is a real product bug — STOP, close it TEST-FIRST in the packages
+ * source-tree, full `pnpm validate`. All four firing correctly is a first-class
+ * result. RESULT: CLEAN — all four fallbacks fired correctly under fail(); ZERO
+ * product behavior change (the one product touch is the classifyTelegramError
+ * barrel widening, a VISIBILITY-only surface-gap closure landed test-first).
  *
  * TEST-HARNESS — lives under `test/`, never the packages source-tree; ZERO
  * production code change.
@@ -290,8 +288,8 @@ describe("FAULT-02 Stage-B — classifyTelegramError classification + 429 auto-r
 
   it("the \"default → ok\" criterion: a NO-FAULT Bot-API send returns {ok:true} (distinct from the classifier default)", async () => {
     // This is the SEPARATE assertion: with NO fault set, the real adapter's send
-    // succeeds — the Bot-API envelope is {ok:true}. This is the success-criterion
-    // "default → ok", NOT the classifier's {kind:"internal"} default above.
+    // succeeds — the Bot-API envelope is {ok:true}. This is the "default → ok"
+    // criterion, NOT the classifier's {kind:"internal"} default above.
     const emulator = createTgEmulator({ botToken: BOT_TOKEN });
     const handle = await emulator.start();
     try {
@@ -385,9 +383,9 @@ describe("SEC-02 Stage-B — the never-published guard re-verifies + the phase d
     // The four fallbacks + the classifier are already wired in packages/channels/src
     // and verified at HEAD — the harness DRIVES what they consume. The ONLY product
     // touch this plan makes is the classifyTelegramError barrel widening (a
-    // VISIBILITY-only Defect-Watch surface-gap closure landed test-first, committed).
-    // Any UNCOMMITTED packages/*/src change here means a Defect-Watch fired mid-run
-    // (the 206 class) — STOP and see the SUMMARY.
+    // VISIBILITY-only surface-gap closure landed test-first, committed).
+    // Any UNCOMMITTED packages/*/src change here means a real product bug fired
+    // mid-run — STOP.
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
     const offending = porcelain
@@ -419,7 +417,7 @@ describe.skipIf(!isLive)("FAULT-01 Stage-C — the parse_mode fallback on a real
   });
 
   it(
-    "a parse-entities fault on the agent's reply send → the reply still lands as plain text (honest finding if not, I5)",
+    "a parse-entities fault on the agent's reply send → the reply still lands as plain text (honest finding if not)",
     async () => {
       const r = built;
       expect(r, "rig booted").toBeDefined();
@@ -441,7 +439,7 @@ describe.skipIf(!isLive)("FAULT-01 Stage-C — the parse_mode fallback on a real
       // fallback delivered the user's message under the adverse Bot-API condition.
       expect(
         reply.parseMode,
-        "FINDING: the landed reply still carried parse_mode — the parse-entities fallback did not fire on the real reply path (NOT a faked green, I5).",
+        "FINDING: the landed reply still carried parse_mode — the parse-entities fallback did not fire on the real reply path (NOT a faked green).",
       ).toBeUndefined();
     },
     1_800_000,

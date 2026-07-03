@@ -26,7 +26,7 @@ export interface AdaptiveCacheRetentionConfig {
   escalationThreshold: number;
   /** Called once when retention escalates from cold to warm. */
   onEscalated?: () => void;
-  /** Design 2.4: Minimum turns before escalation. Default: 3. */
+  /** Minimum turns before escalation. Default: 3. */
   escalationTurnThreshold?: number;
 }
 
@@ -50,7 +50,7 @@ export interface AdaptiveCacheRetention {
   /** Set cost gate state. When false, escalation requires
    *  escalationTurnThreshold + 2 turns. The fast-path is exempt. */
   setCostGateOpen(open: boolean): void;
-  /** Design 2.4: Record a completed turn for turn-count-based escalation. */
+  /** Record a completed turn for turn-count-based escalation. */
   recordTurn(): void;
   /** Record a completed turn with its cache write token count.
    *  Fast-path: if first turn wrote >FAST_PATH_CACHE_WRITE_THRESHOLD tokens,
@@ -68,7 +68,7 @@ export interface AdaptiveCacheRetention {
 export function createAdaptiveCacheRetention(
   config: AdaptiveCacheRetentionConfig,
 ): AdaptiveCacheRetention {
-  const turnThreshold = config.escalationTurnThreshold ?? 3;  // Design 2.4: require 3+ turns
+  const turnThreshold = config.escalationTurnThreshold ?? 3;  // require 3+ turns before escalation
 
   let totalCacheReads = 0;
   let turnCount = 0;

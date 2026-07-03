@@ -268,7 +268,7 @@ describe("agentStep", () => {
     expect(result.agentName).toBe("my-agent");
   });
 
-  // ---------- B1-B4: catalog-driven model picker regression tests ----------
+  // ---------- Catalog-driven model picker regression tests ----------
 
   it("uses catalogModels[0].modelId as initialValue when state.model is unset", async () => {
     vi.mocked(createModelCatalog).mockReturnValue({

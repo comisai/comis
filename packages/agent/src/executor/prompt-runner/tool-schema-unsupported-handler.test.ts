@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Behavioral tests for `handleToolSchemaUnsupported` — GBNF-02's repair half.
+ * Behavioral tests for `handleToolSchemaUnsupported` — the
+ * tool_schema_unsupported strip-and-retry repair.
  *
- * Pins the full handler contract from Plan 175-05:
+ * Pins the full handler contract:
  *   - strip-before-retry ORDERING observed at the retry-invocation boundary
  *     (the fake invokeRetry serializes mergedCustomTools AT INVOCATION TIME);
- *     the PROPAGATION proof is the A5 real-SDK decider in
+ *     the PROPAGATION proof is the real-SDK decider in
  *     tool-schema-strip.test.ts — the two compose, neither substitutes;
  *   - exactly ONE invokeRetry per session (module once-gate keyed by
- *     formatSessionKey, set BEFORE the retry — T-175-14);
+ *     formatSessionKey, set BEFORE the retry);
  *   - signed-replay-shaped post-retry empty-check;
- *   - I7 WARN: tool + keyword NAMES only, hint names
+ *   - privacy-bounded WARN: tool + keyword NAMES only, hint names
  *     comisCompat.toolSchemaProfile, errorKind "validation", NO schema
  *     bodies and NO raw provider body in any new log line;
- *   - execution:tool_schema_unsupported event with the locked 7-field payload;
+ *   - execution:tool_schema_unsupported event with the locked 8-field payload;
  *   - NOTHING-TO-STRIP branch: no futile retry, honest terminal failure.
  *
  * @module
@@ -24,15 +25,13 @@ import { hostileMcpTool, wellFormedTool } from "../../provider/tool-schema/gbnf-
 import { setSessionStateClock } from "../executor-session-state.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import type { BridgeSnapshot, InvokeRetry, RetryState } from "./silent-failure-handlers.js";
-// Pre-patch this import crashes the suite (module missing) — intended RED
-// for a brand-new test file with no pre-existing tests.
 import {
   handleToolSchemaUnsupported,
   resetToolSchemaStripGateForTest,
 } from "./tool-schema-unsupported-handler.js";
 
 // Module-level clock for executor-session-state's bounded session map (the
-// CR-02 session-lifetime once-gate lives there now).
+// session-lifetime once-gate lives there).
 setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 // ---------------------------------------------------------------------------
@@ -171,7 +170,7 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
     expect(retryState.promptError).toBeInstanceOf(Error);
   });
 
-  it("WARN carries tool + keyword NAMES with errorKind validation and a hint naming comisCompat.toolSchemaProfile — never schema bodies or the raw provider body (I7)", async () => {
+  it("WARN carries tool + keyword NAMES with errorKind validation and a hint naming comisCompat.toolSchemaProfile — never schema bodies or the raw provider body", async () => {
     const { params, logger } = makeParams();
     const retryState = makeRetryState();
     const invokeRetry: InvokeRetry = vi.fn(async () => ({ succeeded: true }));
@@ -187,7 +186,7 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
     expect(warnArg.errorKind).toBe("validation");
     expect(String(warnArg.hint)).toContain("comisCompat.toolSchemaProfile");
 
-    // I7: no schema bodies, no raw provider body in ANY new log line.
+    // Privacy: no schema bodies, no raw provider body in ANY new log line.
     const allArgs = allLogArgsStringified(logger);
     expect(allArgs).not.toContain("SECRET_MARKER");
     expect(allArgs).not.toContain('{\\"type\\"');
@@ -210,7 +209,7 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
       strippedKeywords: ["pattern", "format"],
       retried: true,
       succeeded: true,
-      // WR-05 (175-REVIEW): the branch discriminator — without it the
+      // The branch discriminator — without it the
       // gate-closed and nothing-to-strip terminal events were byte-identical
       // and the obs verdict misdirected the operator.
       reason: "stripped",
@@ -238,7 +237,7 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
     expect(String(secondState.promptError)).toContain("JSON schema conversion failed");
     const gateEvents = second.emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported");
     expect(gateEvents).toHaveLength(1);
-    // WR-05: gate-closed must be distinguishable from nothing-to-strip — a
+    // Gate-closed must be distinguishable from nothing-to-strip — a
     // session that healed once and then hit the gate previously produced a
     // verdict claiming "nothing strippable" when stripping WAS performed.
     expect(gateEvents[0][1]).toMatchObject({

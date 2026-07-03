@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 
-// CAP-03: the gated session.spawn handler requires an injected `_capabilities`
+// The gated session.spawn handler requires an injected `_capabilities`
 // (orch:spawn) at its top — production supplies it via createAgentRpcCall
 // (setup-tools-capabilities.ts). These body-tests call the handlers directly,
 // so wrap the bound record to carry the held cap each gated method needs. The
@@ -187,7 +187,7 @@ describe("createSessionHandlers - session management", () => {
       try {
         const rows = scanWorkspaceSessions(root);
         expect(rows).toHaveLength(1);
-        // Canonical tenant:user:channel key (UX-1): the channel directory is part
+        // Canonical tenant:user:channel key: the channel directory is part
         // of the key, so sessions/default/chat-1/chat-1.jsonl => default:chat-1:chat-1
         // (the resettable/parseable form the LCD/reset/explain paths use).
         expect(rows[0]?.sessionKey).toBe("default:chat-1:chat-1");

@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeSlackAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the Slack EditPlace renderer (§18.1 "fake adapter records
- * every method call").
+ * the Slack EditPlace renderer; it records every method call.
  *
  * Mirrors `createFakeTelegramAdapter` (the canonical fake) but:
  *   - mints `sl-msg-N` ids (Slack's `ts` analogue; the determinism source for
- *     byte-stable fixtures — Pitfall 2), and
+ *     byte-stable fixtures), and
  *   - exposes a Slack-Bolt-shaped (`{ data: { error }, retryAfter? }`) `nextError`
  *     injection seam (distinct from grammy's `error_code` and discord's `.code`).
  *
@@ -25,7 +24,7 @@
  *
  * The Block Kit `actions` approval is a SHELL only: no interaction handler is
  * registered and no signed callback_data is produced — the
- * InteractiveCallbackRouter is handled separately (§17.3).
+ * InteractiveCallbackRouter is handled separately.
  */
 import { ok, err, type Result } from "@comis/shared";
 import type {

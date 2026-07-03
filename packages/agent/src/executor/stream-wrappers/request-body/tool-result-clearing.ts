@@ -24,7 +24,7 @@ export const MICROCOMPACT_MIN_CONTENT_LENGTH = 1000;
  * Edit/write tool results are preserved because they carry the LLM's understanding
  * of what was changed -- clearing them loses context.
  *
- * EFF-02: these are Comis's ACTUAL emitted builtin tool names (the `block.name` on the
+ * These are Comis's ACTUAL emitted builtin tool names (the `block.name` on the
  * `tool_use` blocks in the message stream), verified at the builtin registrations:
  * `read` (read-tool), `grep` (grep-tool), `find` (find-tool), `ls` (ls-tool),
  * `exec` (exec-tool), `web_fetch` (web-fetch-tool), `web_search` (web-search-tool).
@@ -264,14 +264,14 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
 /**
  * Strip thinking blocks from EVERY assistant message in the outgoing (replayed) request.
  *
- * cache break #C1/#C2 (2026-06-19): the LCD codec (parts-codec F3) reconstructs assistant
- * messages WITHOUT thinking (topLevelReasoningOnly), but the SDK's in-memory conversation
- * carries thinking on the ACTIVE tool cycle (the last assistant in the request). The earlier
- * #C1 fix kept that last assistant's thinking — but that one block is exactly what breaks the
- * cache: it is written WITH thinking (this call, where it is the active/last assistant) and
- * re-sent WITHOUT thinking the next call (when a newer assistant arrives and it becomes
+ * Why: the LCD codec (parts-codec) reconstructs assistant messages WITHOUT thinking
+ * (topLevelReasoningOnly), but the SDK's in-memory conversation carries thinking on the
+ * ACTIVE tool cycle (the last assistant in the request). Keeping only that last
+ * assistant's thinking is exactly what breaks the cache: the block is written WITH
+ * thinking (this call, where it is the active/last assistant) and re-sent WITHOUT
+ * thinking the next call (when a newer assistant arrives and it becomes
  * historical → stripped) → the cached prefix mutates at that index every turn boundary →
- * read collapse + re-write on thinking-heavy (coding) turns (#C2). Stripping thinking from
+ * read collapse + re-write on thinking-heavy (coding) turns. Stripping thinking from
  * EVERY replayed assistant (no keep-last exception) makes the cached form byte-identical to
  * the durable LCD form (zero historical thinking) so the prefix never mutates. Anthropic
  * tolerates a tool-use assistant with no thinking block as the active cycle — validated live
@@ -356,12 +356,12 @@ const RECALL_PREFIX_RE = /^\s*\[Relevant context from memory:/;
  * Move the inline-recall block on the CURRENT (latest) user message off the cached
  * prefix and onto the UNCACHED tail.
  *
- * cache #C4 (2026-06-19): `envelope-wrapper` prepends the top-1 RAG recall block to the
+ * Why: `envelope-wrapper` prepends the top-1 RAG recall block to the
  * current user query, and pi-ai marks that message's last block with cache_control — so
  * the recall is CACHED while it's the current turn. The next call, that message goes
- * historical and `stripTransientRecallFromHistory` (C-FIX-3) removes the recall → the
+ * historical and `stripTransientRecallFromHistory` removes the recall → the
  * cached prefix mutates at that message → read collapse + a re-write of everything after
- * it (the dominant turn-boundary re-write, formerly mislabeled "#C3 / 4-marker cap").
+ * it (the dominant turn-boundary re-write).
  *
  * Unlike thinking (regenerated, so strippable everywhere — see `stripReplayThinking`),
  * recall is FUNCTIONAL input the model needs on the current turn, so it can't be removed.
@@ -418,7 +418,8 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
  * Strip the TRANSIENT inline-recall block from every HISTORICAL user-message item in an
  * OpenAI **Responses-API `input`** array, keeping it only on the latest user message.
  *
- * cache #C4-OAI (2026-06-19): the Anthropic prefix-stabilizers (C-FIX-3/#C4) are gated to
+ * Why: the Anthropic prefix-stabilizers (`stripTransientRecallFromHistory` /
+ * `deferRecallToUncachedTail`) are gated to
  * Anthropic-family providers (the cache_control machinery would 400 the Responses tools), so
  * they NEVER run for openai-codex — and Comis's request-body injector passes through entirely
  * for it. Result: the recall block on a user item is present while it's the current turn but
@@ -469,7 +470,7 @@ export function stripTransientRecallFromResponsesInput(input: Array<Record<strin
  * Strip ALL replayed `reasoning` items from an OpenAI Responses `input` array — the OpenAI
  * analog of {@link stripReplayThinking}.
  *
- * cache #C5-OAI (2026-06-19): on the native openai Responses API (`store: false`), the
+ * Why: on the native openai Responses API (`store: false`), the
  * pi-coding-agent conversation manager keeps `reasoning` items (which carry `encrypted_content`
  * for cross-step continuity) for RECENT turns but DROPS them from OLDER turns as the
  * conversation grows. A reasoning item present at an early index one turn is therefore gone the
@@ -481,7 +482,8 @@ export function stripTransientRecallFromResponsesInput(input: Array<Record<strin
  * this turn, then goes historical and is dropped next turn — the same boundary mutation). The
  * only byte-stable option is removing them CONSISTENTLY, every call. SAFE: the SDK already drops
  * aged reasoning and OpenAI still returns 200 (verified live: all turns ok, no 400). QUALITY
- * CAVEAT (bounded, reversible — the C-FIX-8 analog): the model re-reasons each step instead of
+ * CAVEAT (bounded, reversible — the same tradeoff as {@link stripReplayThinking}): the model
+ * re-reasons each step instead of
  * resuming the encrypted chain; reasoning-quality impact is unmeasured but the conclusions
  * (assistant messages + tool results) remain in context. Gated by the caller to the native
  * `openai`/Azure Responses path (codex keeps its reasoning stable and was already optimal).
@@ -504,7 +506,7 @@ export function stripReplayReasoningFromResponsesInput(input: Array<Record<strin
  * Defer the inline-recall block on the CURRENT (latest) user item of an OpenAI Responses
  * `input` array off the cacheable prefix and onto the UNCACHED tail.
  *
- * cache #C4-OAI (2026-06-19): stripping recall from HISTORICAL items alone
+ * Why: stripping recall from HISTORICAL items alone
  * (`stripTransientRecallFromResponsesInput`) is INSUFFICIENT — the LATEST user item still
  * carries recall, so this turn's auto-cache WRITE includes "U_latest + recall". Next turn that
  * item goes historical and the LCD rebuild emits it CLEAN (recall is transient, never

@@ -16,8 +16,8 @@ export function createRateLimiter(opts: {
   /**
    * The hourly ceiling. A function resolves it PER-AGENT (called on each
    * tryAcquire) so an agent's own `notification.maxPerHour` config takes effect
-   * rather than a single global default — previously the limiter baked in one
-   * number and silently ignored the schema-supported per-agent ceiling.
+   * rather than a single global default — a fixed number would silently ignore
+   * the schema-supported per-agent ceiling.
    */
   maxPerHour: number | ((agentId: string) => number);
   nowMs?: () => number;

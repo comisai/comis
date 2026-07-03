@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TestSink — the Echo terminus rendering strategy (§7.2 / §7.3 row "TestSink").
+ * TestSink — the Echo terminus rendering strategy.
  *
  * Unlike the channel strategies, TestSink applies NO coalescing and performs NO
  * channel I/O: it records the canonical render stream verbatim so an in-memory
  * acceptance test can assert it received every `apply(frame)`
  * and the single `finalize(outcome)` with full payload. This is the Echo
- * channel's "TestSink" routing (`selectStrategy(cap, "echo")`, §7.1).
+ * channel's "TestSink" routing (`selectStrategy(cap, "echo")`).
  *
  * `canDelete` / `canEdit` are false (Echo has no edit/delete surface) and the
  * strategy identity is `"TestSink"`. Implements the core `ChannelActivityRenderer`

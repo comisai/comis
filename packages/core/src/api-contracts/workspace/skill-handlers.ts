@@ -104,10 +104,10 @@ export const SkillsUploadContract = defineContract({
     ok: z.literal(true),
     path: z.string(),
   }),
-  // 210-GAP CR-01: skills.* mutating methods are the orchestration/skill surface
-  // the capability model owns (orch:skill), NOT control plane. Re-scoped
-  // admin→rpc so the deny-by-origin chokepoint (keyed on scopes.includes("admin"))
-  // no longer denies an agent its own granted orch:skill before the
+  // skills.* mutating methods are the orchestration/skill surface the
+  // capability model owns (orch:skill), NOT control plane. Scoped rpc (not
+  // admin) so the deny-by-origin chokepoint (keyed on scopes.includes("admin"))
+  // does not deny an agent its own granted orch:skill before the
   // requireCapability gate runs. Admin gateway tokens carry rpc, so the web-UI
   // skills manager is unaffected; the handler still gates on orch:skill.
   scopes: ["rpc"] as const,
@@ -137,7 +137,7 @@ export const SkillsImportContract = defineContract({
     name: z.string(),
     fileCount: z.number(),
   }),
-  // 210-GAP CR-01: orch:skill surface, rpc-scoped (see skills.upload rationale).
+  // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,
 });
 
@@ -160,7 +160,7 @@ export const SkillsDeleteContract = defineContract({
   response: z.object({
     ok: z.literal(true),
   }),
-  // 210-GAP CR-01: orch:skill surface, rpc-scoped (see skills.upload rationale).
+  // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,
 });
 
@@ -197,7 +197,7 @@ export const SkillsCreateContract = defineContract({
     path: z.string(),
     name: z.string(),
   }),
-  // 210-GAP CR-01: orch:skill surface, rpc-scoped (see skills.upload rationale).
+  // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,
 });
 
@@ -222,7 +222,7 @@ export const SkillsUpdateContract = defineContract({
     ok: z.literal(true),
     name: z.string(),
   }),
-  // 210-GAP CR-01: orch:skill surface, rpc-scoped (see skills.upload rationale).
+  // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,
 });
 

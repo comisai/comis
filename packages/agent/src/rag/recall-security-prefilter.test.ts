@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for recall-security-prefilter.ts — the RETR-04 pre-fusion security gate.
+ * Unit tests for recall-security-prefilter.ts — the pre-fusion security gate.
  *
  * Pure-helper coverage:
  *  - resolveEffectiveBaseFloor: explicit floor wins; relevanceFirst → class default; else 0.
@@ -44,14 +44,14 @@ function makeResult(id: string, trustLevel: TrustLevel, score: number): MemorySe
 
 const ALLOWED = new Set<TrustLevel>(["system", "learned"]);
 
-describe("resolveEffectiveBaseFloor — WR-02 arbiter-scoped fail-closed", () => {
+describe("resolveEffectiveBaseFloor — arbiter-scoped fail-closed floor resolution", () => {
   it("explicit operator floor wins over the class default under relevanceFirst", () => {
     expect(resolveEffectiveBaseFloor(0.3, true)).toBe(0.3);
   });
   it("explicit operator floor wins when relevanceFirst is off", () => {
     expect(resolveEffectiveBaseFloor(0.25, false)).toBe(0.25);
   });
-  it("unconfigured (0) + relevanceFirst → the class default 0.15 (the WR-02 closure)", () => {
+  it("unconfigured (0) + relevanceFirst → the class default 0.15 (never a silent fail-open)", () => {
     expect(resolveEffectiveBaseFloor(0, true)).toBe(RELEVANCE_FIRST_DEFAULT_BASE_FLOOR);
     expect(resolveEffectiveBaseFloor(undefined, true)).toBe(0.15);
   });
@@ -114,7 +114,7 @@ describe("gateLanes — accumulates dropped ids across supplies", () => {
   });
 });
 
-describe("passesBaseFloor — fail-closed on a missing breakdown (WR-02)", () => {
+describe("passesBaseFloor — fail-closed on a missing breakdown", () => {
   const bd = (base: number): ScoreBreakdown =>
     ({ base, recency: 1, temporal: 1, proof: 1, trust: 1, usefulness: 1, forget: 1, final: base }) as ScoreBreakdown;
   it("DROPS a memory with no breakdown (undefined)", () => {

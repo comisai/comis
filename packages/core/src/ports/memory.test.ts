@@ -27,8 +27,8 @@ const SESSION: SessionKey = { tenantId: "t", userId: "u", channelId: "c" } as un
  *
  * Surfaces the FTS-ranked and vector-ranked candidate lists SEPARATELY across
  * the port boundary (the un-fused split), so the agent's `fuse()` can fuse them
- * with operator-tunable weights. It is ADDED OPTIONAL — `search()` stays
- * byte-unchanged (the security-reviewed surface is never widened).
+ * with operator-tunable weights. It is OPTIONAL — `search()` stays a required,
+ * standalone method (the security-reviewed surface is never widened).
  */
 describe("MemoryPort.searchLanes — the un-fused per-lane split", () => {
   it("declares an OPTIONAL searchLanes method and keeps search() unchanged (source grep — RED on pre-patch)", () => {

@@ -6,13 +6,13 @@
  * runSweep is a pure async function (no process.exit, no side effects) —
  * importable by tests. Tests inject a mock probe registry via opts.probeRegistry.
  *
- * SWP-01: one minimal LLM-free probe per integration, green|red|skip.
+ * One minimal LLM-free probe per integration, green|red|skip.
  *
- * Security notes (T-135-06, T-135-07):
+ * Security notes:
  *   - ProbeVerdict.reason may carry API error text — never write to disk without
- *     assertNoSecrets (enforced in gap-report.ts Plan 03).
+ *     assertNoSecrets (enforced in gap-report.ts).
  *   - governor.declare() + governor.check() are called before every probe.run()
- *     to enforce the COMIS_LIVE_BUDGET_USD ceiling (T-135-07).
+ *     to enforce the COMIS_LIVE_BUDGET_USD ceiling.
  *
  * @module
  */
@@ -59,7 +59,7 @@ export interface SweepOpts {
   /**
    * Override the module-level PROBE_REGISTRY.
    * Intended for test injection of mock probes.
-   * T-135-09: this parameter is used only in tests; production path always
+   * This parameter is used only in tests; production path always
    * uses the module-level PROBE_REGISTRY.
    */
   probeRegistry?: Map<string, Probe>;
@@ -79,7 +79,7 @@ export interface SweepOpts {
  * Run all probes in the registry (or the filtered subset) under the cost
  * governor and credential registry, returning a SweepResult.
  *
- * Orchestration loop (T-135-07 compliance):
+ * Orchestration loop (budget-ceiling compliance):
  *   1. governor.declare(probe.costTier, probe.id) — accumulate cost
  *   2. governor.check() — if non-null, record skip with that reason and skip run()
  *   3. (unless dry) probe.run(registry, governor) — collect ProbeResult
@@ -101,7 +101,7 @@ export async function runSweep(
   // Each token matches a probe if it is an exact probe ID match, a dash-prefix
   // match (e.g. "search" matches "search-brave", "search-tavily", …), or an
   // exact category match. This aligns with the documented example:
-  //   COMIS_LIVE_PROBES=search → all search-* probes run (WR-01).
+  //   COMIS_LIVE_PROBES=search → all search-* probes run.
   if (opts.probeIds && opts.probeIds.length > 0) {
     probes = probes.filter((p) =>
       opts.probeIds!.some(
@@ -113,7 +113,7 @@ export async function runSweep(
   const verdicts: ProbeVerdict[] = [];
 
   for (const probe of probes) {
-    // T-135-07: declare cost tier BEFORE checking budget
+    // Declare cost tier BEFORE checking budget
     governor.declare(probe.costTier, probe.id);
     const budgetVerdict = governor.check();
 
@@ -156,7 +156,7 @@ export async function runSweep(
  * Comma-separated: "llm-anthropic,search-brave" → ["llm-anthropic","search-brave"]
  *
  * Mirrors test/support/test-providers.ts:parseTestProviders idiom.
- * No injection risk — used only as an ID allowlist string comparison (T-135-08).
+ * No injection risk — used only as an ID allowlist string comparison.
  */
 export function parseProbeFilter(): string[] {
   return (

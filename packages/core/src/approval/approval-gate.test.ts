@@ -628,7 +628,7 @@ describe("denial cache", () => {
     expect(gateWithTtl.pending()).toHaveLength(1);
   });
 
-  it("explicit denial still populates cache even after timeout fix", async () => {
+  it("explicit denial populates the denial cache (unlike a timeout denial)", async () => {
     // First request: deny explicitly
     const promise1 = gateWithTtl.requestApproval(makeRequest());
     const [pending1] = gateWithTtl.pending();
@@ -1340,7 +1340,7 @@ describe("approval cache serialization and logging", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 16. shortId minting / emission / persistence (§6.4.1)
+// 16. shortId minting / emission / persistence
 // ---------------------------------------------------------------------------
 
 const SHORT_ID_RE = /^[0-9A-Za-z]{12}$/;
@@ -1513,7 +1513,7 @@ describe("shortId secondary index + read helpers", () => {
     expect(gate.getRequestByShortId("ZZZZZZZZZZZZ")).toBeUndefined();
   });
 
-  it("getRequestByShortId returns undefined after the request is resolved (atomic dual-map removal — Pitfall 4)", async () => {
+  it("getRequestByShortId returns undefined after the request is resolved (atomic dual-map removal)", async () => {
     const promise = gate.requestApproval(makeRequest());
     const [pending] = gate.pending();
     const shortId = pending!.shortId;

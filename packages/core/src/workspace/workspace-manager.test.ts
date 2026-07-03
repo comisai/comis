@@ -42,8 +42,8 @@ describe("workspace-manager", () => {
     });
 
     it("does not overwrite user-owned files", async () => {
-      // Renamed 2026-05-20: SOUL.md is now platform-owned and gets refreshed by
-      // ensureWorkspace; user-owned IDENTITY.md is the correct surface for the
+      // SOUL.md is platform-owned and gets refreshed by ensureWorkspace;
+      // user-owned IDENTITY.md is the correct surface for the
       // "preserve existing content" assertion.
       const dir = await makeTempDir();
       await fs.mkdir(dir, { recursive: true });
@@ -249,10 +249,9 @@ describe("workspace-manager", () => {
       });
 
       it("skips tracker registration for pre-existing user-owned files (writeIfMissing returned false)", async () => {
-        // Renamed/retargeted 2026-05-20: this test originally pre-created SOUL.md
-        // (now platform-owned) and asserted ensureWorkspace did not touch it.
-        // SOUL.md is now refreshed-when-stale, so we use IDENTITY.md (user-owned)
-        // to exercise the same "pre-existing file is not re-registered" path.
+        // SOUL.md is platform-owned and refreshed-when-stale, so IDENTITY.md
+        // (user-owned) is the surface that exercises the
+        // "pre-existing file is not re-registered" path.
         const dir = await makeTempDir();
         await fs.mkdir(dir, { recursive: true });
         // Pre-create IDENTITY.md with custom content; ensureWorkspace must NOT
@@ -276,7 +275,7 @@ describe("workspace-manager", () => {
         expect(calls).toHaveLength(WORKSPACE_FILE_NAMES.length - 1);
       });
 
-      it("does nothing when no tracker is provided (backwards-compatible)", async () => {
+      it("does nothing when no tracker is provided (tracker is optional)", async () => {
         const dir = await makeTempDir();
         // No tracker argument -- should not throw, should still create files.
         const result = await ensureWorkspace({ dir });
@@ -296,12 +295,11 @@ describe("workspace-manager", () => {
   });
 
   describe("refreshPlatformFiles (content-hash refresh)", () => {
-    // 2026-05-20 lineage: the prior `wx`-only seed flow let stale pre-fix
-    // templates persist forever, so an installed agent's inherited workspace
-    // kept promising a pre-warmed venv that no code provisioned. These tests
-    // lock the architectural contract — platform-owned files heal on the next
-    // ensureWorkspace call; user-owned files and cleared BOOTSTRAP.md are
-    // preserved.
+    // A `wx`-only seed flow would let stale template copies persist forever,
+    // so an installed agent's inherited workspace could keep promising
+    // capabilities no code provisions. These tests lock the architectural
+    // contract — platform-owned files heal on the next ensureWorkspace call;
+    // user-owned files and cleared BOOTSTRAP.md are preserved.
 
     it("drifted AGENTS.md is refreshed to canonical on next ensureWorkspace", async () => {
       const dir = await makeTempDir();
@@ -342,7 +340,7 @@ describe("workspace-manager", () => {
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(
         path.join(dir, "BOOTSTRAP.md"),
-        "# Stale seed content from v1.0.37\n",
+        "# Stale seed content from an older install\n",
         "utf-8",
       );
 
@@ -564,7 +562,7 @@ describe("workspace-manager", () => {
       expect(debugCalls[0].obj).toMatchObject({ dir, registered: 0, skipped: 0 });
     });
 
-    it("back-compat -- no-logger form still succeeds and returns counts", async () => {
+    it("no-logger form still succeeds and returns counts (logger is optional)", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
       const tracker = createIdempotencyTracker();
@@ -575,7 +573,7 @@ describe("workspace-manager", () => {
       expect(result.skipped).toBe(0);
     });
 
-    it("idempotency guard works with trackers that omit getReadState (back-compat)", async () => {
+    it("registers unconditionally with trackers that omit the optional getReadState", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
 

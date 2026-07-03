@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LCD condensation summarizer (Phase 130, C2 — Plan 02 Task 1).
+ * Tests for the LCD condensation summarizer.
  *
- * RED-first. Drives the two pure-ish responsibilities of `lcd-condense.ts`, the
+ * Drives the two pure-ish responsibilities of `lcd-condense.ts`, the
  * sibling of `lcd-leaf-summarizer.ts` whose input is CHILD-SUMMARY content
  * strings (not reconstructed messages):
  *
  *   1. {@link selectCondensableTier} — given per-depth CONTIGUOUS summary-ref
- *      runs, pick the SHALLOWEST depth whose run length ≥ `condensedMinFanout`.
- *      A run split by a message-ref is TWO separate runs (Pitfall 3): only a
+ *      runs, pick the DEEPEST depth whose run length ≥ the effective fanout.
+ *      A run split by a message-ref is TWO separate runs: only a
  *      single contiguous run of length ≥ fanout qualifies.
  *   2. {@link summarizeCondensedChunk} — the SAME 3-level escalation as
  *      `summarizeLeafChunk`, but the before-size is `Σ children.tokenCount`
- *      (the STORED counts — never a re-estimate, Pitfall 2/5) and the
+ *      (the STORED counts — never a re-estimate) and the
  *      summarizer input is the child `content` strings. The produced summary's
  *      `tokenCount` is ALWAYS < `Σ children.tokenCount` (oversized stub →
  *      deterministic Level-3 floor; throwing stub → Level-3, never throws out).
  *
- * NO REAL LLM (Pitfall 6): the summarizer is a plain stub function; the test
+ * NO REAL LLM: the summarizer is a plain stub function; the test
  * imports no provider and makes no network call. The agent↛memory cut: this
  * file imports ONLY agent-side modules (no `@comis/memory`).
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, it, expect, vi } from "vitest";
 
-// B-5 twin (260605-ney): mock the SDK generateSummary so the test can read the
+// Mock the SDK generateSummary so the test can read the
 // `model` argument buildCondenseSummarizeFn passes it. Hoisted above the SUT
 // import, exactly as lcd-leaf-summarizer.test.ts does for buildLeafSummarizeFn.
 // The existing summarizeCondensedChunk tests inject a stub `summarize` and never
@@ -92,7 +92,7 @@ function shortSummarizer(text = "CONDENSED: prior summaries merged (short)."): C
  *  child tokenCount → forces the ladder past Levels 1+2 to the deterministic
  *  Level-3 floor. Sized in CHARS independent of the (tiny) content so it always
  *  exceeds the stored before-size (the condense before-size is the stored Σ, NOT
- *  the content length — Pitfall 2/5). 40_000 chars ≈ 10_000 tokens ≫ any test Σ.
+ *  the content length). 40_000 chars ≈ 10_000 tokens ≫ any test Σ.
  *  No network. */
 function oversizedSummarizer(): CondenseSummarizer {
   return vi.fn(async () => "BLOAT ".repeat(8_000));
@@ -106,13 +106,13 @@ function throwingSummarizer(): CondenseSummarizer {
 }
 
 /**
- * B-4 (260605-ney): a SPY-with-PROPORTIONAL-OUTPUT condense summarizer — models a
+ * A SPY-with-PROPORTIONAL-OUTPUT condense summarizer — models a
  * real model writing TO its token target. Records every `reserveTokens` it is
  * handed and returns a string of `reserveTokens * k * CHARS_PER_TOKEN` chars
- * (measured tokens ≈ `reserveTokens * k`). The SAME stub FLOORS pre-patch (it sees
- * the full 2000 target → its output exceeds the run's rendered-4:1 ceiling →
- * escalate → Level-3) and REDUCES post-patch (it sees the bounded effective target
- * → its output is below the ceiling → accepted at Level 1). `k = 1`.
+ * (measured tokens ≈ `reserveTokens * k`). The SAME stub FLOORS when handed the
+ * unbounded target (it sees the full 2000 → its output exceeds the run's
+ * rendered-4:1 ceiling → escalate → Level-3) and REDUCES when handed the bounded
+ * effective target (its output is below the ceiling → accepted at Level 1). `k = 1`.
  */
 function proportionalSpySummarizer(k = 1): {
   fn: CondenseSummarizer;
@@ -136,7 +136,7 @@ function makeDeps(summarize: CondenseSummarizer): LeafSummarizerDeps {
 }
 
 // ===========================================================================
-// selectCondensableTier — shallowest contiguous run ≥ fanout
+// selectCondensableTier — deepest contiguous run ≥ fanout
 // ===========================================================================
 
 describe("selectCondensableTier — picks the DEEPEST contiguous run at/over the effective fanout", () => {
@@ -158,9 +158,9 @@ describe("selectCondensableTier — picks the DEEPEST contiguous run at/over the
   });
 
   it("prefers the DEEPEST depth when multiple depths each reach fanout, so depth-1→depth-2 can fire", () => {
-    // The CORE FIX: a depth-1 run that reaches fanout must be condensed (→ depth-2)
+    // A depth-1 run that reaches fanout must be condensed (→ depth-2)
     // rather than always re-folding the shallowest depth-0 run. Selecting shallowest
-    // (the old behavior) left depth-1→depth-2 unreachable — max depth stuck at 1.
+    // would leave depth-1→depth-2 unreachable — max depth stuck at 1.
     const d1 = run(1, [child("c0", 10, { depth: 1 }), child("c1", 11, { depth: 1 }), child("c2", 12, { depth: 1 }), child("c3", 13, { depth: 1 })]);
     const d0 = run(0, [child("s0", 0), child("s1", 1), child("s2", 2), child("s3", 3)]);
     // Pass the shallow run FIRST to prove the selection is by depth, not order.
@@ -190,7 +190,7 @@ describe("selectCondensableTier — picks the DEEPEST contiguous run at/over the
     expect(picked!.children[0]!.summaryId).toBe("s0");
   });
 
-  it("never selects across a non-contiguous boundary — only a single run of length >= fanout qualifies (Pitfall 3)", () => {
+  it("never selects across a non-contiguous boundary — only a single run of length >= fanout qualifies", () => {
     const lead = run(0, [child("s0", 0)]);
     const trail = run(0, [child("s2", 2), child("s3", 3), child("s4", 4)]);
     expect(selectCondensableTier([lead, trail], 4, 2, false)).toBeUndefined();
@@ -275,17 +275,17 @@ describe("summarizeCondensedChunk — 3-level escalation, before-size is Σ chil
     expect(summarize).toHaveBeenCalled();
   });
 
-  it("uses the STORED Σ child tokenCount as the before-size, NOT a re-estimate of the concatenation (Pitfall 5)", async () => {
+  it("uses the STORED Σ child tokenCount as the before-size, NOT a re-estimate of the concatenation", async () => {
     // Children whose STORED tokenCount (300 each = 900) is far larger than their
     // rendered content measure: a Level-1 stub returning a ~5-token string must be
     // accepted (5 < both the rendered shrink ceiling AND the stored 900), proving
     // the before-size / budget authority is the summed STORED counts (900), not a
     // re-estimate that would understate the chunk.
     //
-    // B-4 (260605-ney): the ACCEPT ceiling is now the rendered 4:1 measure (the
+    // The ACCEPT ceiling is the rendered 4:1 measure (the
     // candidate is judged like-for-like) — so the content here is realistic prose
     // (a degenerate 1-char content would make the self-consistent ceiling tiny,
-    // which is the now-correctly-rejected case, not the intended scenario). The
+    // which is a correctly-rejected case, not the intended scenario). The
     // STORED Σ (900) remains the floor/budget authority; the L1 acceptance still
     // proves the comparison is not driven by a tiny re-estimated concatenation.
     const tinyContentBigCount = [
@@ -302,14 +302,14 @@ describe("summarizeCondensedChunk — 3-level escalation, before-size is Σ chil
 });
 
 // ===========================================================================
-// B-5 twin (260605-ney): buildCondenseSummarizeFn must pass a REAL pi-ai
+// buildCondenseSummarizeFn must pass a REAL pi-ai
 // Model<any> to generateSummary on the PRIMARY path — NOT the 4-field
-// CompactionModelSnapshot. Mirrors the leaf B-5 test (cf781ac7) verbatim in
+// CompactionModelSnapshot. Mirrors the equivalent leaf-tier test verbatim in
 // shape: the snapshot lacks the provider-client runtime the SDK invokes, so
 // handing it to generateSummary throws every condense LLM call. The real Model is
 // the executor-resolved model threaded via deps.getRealModel.
 // ===========================================================================
-describe("buildCondenseSummarizeFn passes a REAL Model to generateSummary (B-5 twin)", () => {
+describe("buildCondenseSummarizeFn passes a REAL Model to generateSummary, never the snapshot", () => {
   // A sentinel "real Model" — carries a marker the 4-field snapshot lacks, so the
   // test can prove the snapshot is NOT what generateSummary received.
   const realModel = { id: "claude", provider: "anthropic", generate: () => {}, __realModel: true };
@@ -360,16 +360,16 @@ describe("buildCondenseSummarizeFn passes a REAL Model to generateSummary (B-5 t
 });
 
 // ===========================================================================
-// B-4 (260605-ney): the spurious deterministic floor on a SMALL condense run —
-// the leaf B-4 fix mirrored at the condense tier. The summarize TARGET
-// (`reserveTokens` = condensedTargetTokens, default 2000) can EXCEED a small run's
-// rendered size → the model is told to write more than it compresses → guaranteed
-// non-reduction → floor. The fix BOUNDS the effective target below the run's
-// rendered-4:1 shrink ceiling AND makes the shrink-CHECK self-consistent (candidate
-// and ceiling both measured at 4:1 rendered prose). The STORED Σ child tokenCount
-// stays the budget/floor authority (the Level-3 floor still beats it).
+// The spurious deterministic floor on a SMALL condense run —
+// the same guard the leaf tier has, mirrored at the condense tier. The summarize
+// TARGET (`reserveTokens` = condensedTargetTokens, default 2000) can EXCEED a small
+// run's rendered size → the model is told to write more than it compresses →
+// guaranteed non-reduction → floor. The guard BOUNDS the effective target below the
+// run's rendered-4:1 shrink ceiling AND makes the shrink-CHECK self-consistent
+// (candidate and ceiling both measured at 4:1 rendered prose). The STORED Σ child
+// tokenCount stays the budget/floor authority (the Level-3 floor still beats it).
 // ===========================================================================
-describe("summarizeCondensedChunk does not spuriously floor a small run — bounds the target + self-consistent ceiling (B-4)", () => {
+describe("summarizeCondensedChunk does not spuriously floor a small run — bounds the target + self-consistent ceiling", () => {
   const SHRINK_TARGET_FRACTION = 0.5; // mirrors the production constant.
 
   /** The rendered-4:1 shrink ceiling over the run's ONE concatenated pseudo-message. */
@@ -379,12 +379,12 @@ describe("summarizeCondensedChunk does not spuriously floor a small run — boun
     return Math.ceil(renderedChars / CHARS_PER_TOKEN);
   }
 
-  /** The bounded effective target the fix derives from the rendered ceiling. */
+  /** The bounded effective target derived from the rendered ceiling. */
   function boundedTarget(children: CondenseChildSummary[]): number {
     return Math.max(1, Math.floor(renderedCeiling(children) * SHRINK_TARGET_FRACTION));
   }
 
-  it("(iv) small run: a run whose Σ child tokenCount is under condensedTargetTokens is accepted at level 1, not floored", async () => {
+  it("small run: a run whose Σ child tokenCount is under condensedTargetTokens is accepted at level 1, not floored", async () => {
     // A run whose Σ STORED child tokenCount (modest) is well under condensedTargetTokens (2000).
     const children = [
       child("s0", 0, { tokenCount: 90, content: "alpha: decided to use postgres; ran read tool; succeeded; file config.yaml updated" }),
@@ -397,7 +397,7 @@ describe("summarizeCondensedChunk does not spuriously floor a small run — boun
     const spy = proportionalSpySummarizer(1);
     const result = await summarizeCondensedChunk(children, makeDeps(spy.fn), { reserveTokens: 2_000 });
 
-    // Post-fix: accepted at level 1. Pre-patch the spy sees 2000 → its proportional
+    // Accepted at level 1. Without the bound the spy sees 2000 → its proportional
     // summary (~2000 tok) exceeds the run's rendered ceiling → escalates to Level-3.
     expect(result.level).toBe(1);
     expect(result.fallback).toBe(false);
@@ -407,11 +407,11 @@ describe("summarizeCondensedChunk does not spuriously floor a small run — boun
     for (const seen of spy.seenReserveTokens()) {
       expect(seen).toBeLessThanOrEqual(cap);
     }
-    // The accepted summary is strictly smaller than the STORED Σ (the C2 invariant).
+    // The accepted summary is strictly smaller than the STORED Σ (the escalation invariant).
     expect(result.tokenCount).toBeLessThan(before);
   });
 
-  it("(v) invariant preserved: a truly non-reducing (oversized) summary still floors strictly below the STORED Σ", async () => {
+  it("invariant preserved: a truly non-reducing (oversized) summary still floors strictly below the STORED Σ", async () => {
     // The bound only caps the TARGET; an oversized summarizer ignores it and returns
     // a fixed string exceeding ANY run → the ladder must STILL fall through to the
     // deterministic Level-3 floor, strictly below the STORED Σ child tokenCount

@@ -23,7 +23,7 @@ const RPC_REFRESH_INTERVAL_MS = 30_000;
 const DEFAULT_WINDOW_MS = 86_400_000;
 
 /**
- * The content-free `obs.cacheBreaks.byReason` row projection (179-04). The view
+ * The content-free `obs.cacheBreaks.byReason` row projection. The view
  * narrows the loose wire rows to this shape — a closed cache-break `reason` label
  * + a `count` + the summed `estCostUsd` ($-lost). Structurally content-free: no
  * message/body/query/secret field is ever surfaced.
@@ -36,12 +36,12 @@ interface CacheBreakRow {
 
 /**
  * `ic-cache-health-view` — the native mirror of the Grafana Cache dashboard, no
- * Grafana required (WEBUI-02, 179-07). Renders the cache-break rate across the
- * reasons + the $-lost SUM (the 179-04 `obs.cacheBreaks.byReason` RPC) + the
- * hit/write ratio (the existing `obs.cacheStats.window` RPC).
+ * Grafana required. Renders the cache-break rate across the reasons + the $-lost
+ * SUM (the `obs.cacheBreaks.byReason` RPC) + the hit/write ratio (the existing
+ * `obs.cacheStats.window` RPC).
  *
- * Admin-gating rides the admin-gated 179-04 RPC (an "Admin access required"
- * rejection surfaces the error path, never a silent render). Honest-degradation:
+ * Admin-gating rides the admin-gated `obs.cacheBreaks.byReason` RPC (an "Admin
+ * access required" rejection surfaces the error path, never a silent render). Honest-degradation:
  * an empty `{ rows: [] }` renders "cache health not configured" rather than a
  * blank success that could read as "no cache breaks". Content-free: only the
  * pre-aggregated {reason,count,estCostUsd} numbers are surfaced.
@@ -206,7 +206,7 @@ export class IcCacheHealthView extends LitElement {
     const since = systemNowMinus(this._sinceMs);
 
     try {
-      // The 179-04 cache-break-by-reason RPC ($-lost SUM) — the primary surface.
+      // The cache-break-by-reason RPC ($-lost SUM) — the primary surface.
       const raw = await rpc.call<{ rows?: unknown[] }>("obs.cacheBreaks.byReason", { since });
       const wireRows = Array.isArray(raw?.rows) ? raw.rows : [];
       this._rows = wireRows.map((r) => this._narrowRow(r as Record<string, unknown>));

@@ -23,7 +23,7 @@ const ChannelFeaturesSchema = z.strictObject({
     threads: z.boolean().default(false),
     /** Interactive-button capability flavour for this channel. "none" when the
      *  platform has no button surface. Defaults exist only as a safety net for
-     *  *new* plugins (§19.5); the 10 in-tree plugins declare this explicitly. */
+     *  *new* plugins; the 10 in-tree plugins declare this explicitly. */
     buttons: z
       .enum(["inline", "components", "blockkit", "quickreply", "none"])
       .default("none"),

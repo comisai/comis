@@ -26,9 +26,9 @@
  *
  * GATED on the built dist existing (`describe.skipIf(!existsSync(...))`): it
  * needs `pnpm build` first, so it RUNS in CI / `pnpm validate` (which build
- * before test) and SKIPS in a pure-`src` watch run. On the pre-fix named
- * imports the subprocess exits 1 (RED); after the `createRequire` fix it exits
- * 0 (GREEN).
+ * before test) and SKIPS in a pure-`src` watch run. With bare named CJS
+ * imports the subprocess exits 1; with the `createRequire` loading idiom it
+ * exits 0.
  *
  * @module
  */

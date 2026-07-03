@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 describe("emitBootstrapConfigObserveRecords — daemon bootstrap config.observe wiring", () => {
-  it("appends exactly one config.observe record per observation, carrying the full §9.2 shape", async () => {
+  it("appends exactly one config.observe record per observation, carrying the full forensics shape", async () => {
     // Seed two config files at known paths.
     const cfgA = path.join(tmpDir, "config-a.yaml");
     const cfgB = path.join(tmpDir, "config-b.yaml");

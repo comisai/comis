@@ -59,13 +59,13 @@ export interface SsrfFetcherConfig {
   /** Maximum response body size (from MediaInfraConfigSchema.maxRemoteFetchBytes). */
   readonly maxBytes: number;
   /**
-   * MEDIA-INPUT-SSRF (30uc-20260624 UC-05): operator-configured trusted fetch ORIGINS
+   * Operator-configured trusted fetch ORIGINS
    * (`scheme://host:port`, e.g. a self-hosted local Bot API server / the test emulator at
    * `http://127.0.0.1:38411`), normalized from the channel `apiRoot` config. A media URL whose
    * origin EXACTLY matches one of these is validated leniently (loopback/private-IP permitted)
    * so the file-byte download from a custom apiRoot works; EVERY other URL — including an
    * arbitrary loopback like `127.0.0.1:4766` — still goes through the strict `validateUrl`
-   * SSRF firewall. Host:port-scoped, so the SSRF block (UC-10) is preserved. Default: none.
+   * SSRF firewall. Host:port-scoped, so the SSRF block is preserved. Default: none.
    */
   readonly trustedFetchOrigins?: ReadonlyArray<string>;
 }
@@ -138,7 +138,7 @@ function classifyFetchError(error: unknown): ClassifiedError {
 
 // ---------------------------------------------------------------------------
 // Agent-based DNS pinning — `createPinnedAgent` is the shared primitive in
-// ../integrations/pinned-fetch.ts (CR-01, Phase 197); this fetcher reuses it
+// ../integrations/pinned-fetch.ts; this fetcher reuses it
 // rather than hand-rolling its own copy.
 // ---------------------------------------------------------------------------
 
@@ -163,10 +163,10 @@ export function createSsrfGuardedFetcher(
       return fromPromise(
         (async (): Promise<FetchedMedia> => {
           // 1. Validate URL via SSRF guard (DNS resolution + IP range check + DNS pinning).
-          //    MEDIA-INPUT-SSRF: a URL whose ORIGIN exactly matches a configured trusted apiRoot
+          //    A URL whose ORIGIN exactly matches a configured trusted apiRoot
           //    (a self-hosted local Bot API server / the emulator) is validated leniently
           //    (loopback/private permitted via validateLocalServerUrl); everything else — incl. any
-          //    other loopback URL — goes through strict validateUrl (the SSRF firewall, UC-10).
+          //    other loopback URL — goes through strict validateUrl (the SSRF firewall).
           let urlOrigin: string | undefined;
           try {
             urlOrigin = new URL(url).origin;

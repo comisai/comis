@@ -254,9 +254,7 @@ describe("sessions list --tenant filters by tenant", () => {
     // The CLI's --tenant flag is a no-op against the SessionListContract
     // surface. Tenant scoping flows through the dispatcher-injected
     // `_tenantId` internal (auth-context-derived), NOT a public request
-    // field. Historically the CLI sent `{ tenantId: options.tenant }` which
-    // the daemon silently ignored — same observable behavior, now via the
-    // typed contract.
+    // field.
     const program = createTestProgram();
     registerSessionsCommand(program);
 
@@ -273,9 +271,9 @@ describe("sessions inspect full details", () => {
   // SessionStatusContract returns a flat per-agent runtime stats payload,
   // NOT a wrapped { session: {...} } shape. The CLI's `key` argument is
   // preserved as display context; the RPC returns the current agent's
-  // status regardless. The CLI no longer pre-validates "session not found"
+  // status regardless. The CLI does not pre-validate "session not found"
   // client-side (the contract returns valid stats unconditionally —
-  // session-not-found cases now surface as an RPC error from the daemon,
+  // session-not-found cases surface as an RPC error from the daemon,
   // caught by the catch block below).
   const SESSION_STATUS = {
     model: "anthropic:claude-sonnet-4-5",
@@ -398,9 +396,8 @@ describe("sessions delete with --yes sends RPC", () => {
 
   it("sends session.delete RPC with correct session_key when --yes provided", async () => {
     // The contract uses `session_key` (snake_case — matches the daemon
-    // handler's actual parameter name). Historically the CLI sent `{ key }`
-    // which the daemon ignored, then the handler threw "Missing required
-    // parameter: session_key" — the contract makes delete actually succeed.
+    // handler's actual parameter name); any other key name would make the
+    // handler throw "Missing required parameter: session_key".
     callSpy.mockResolvedValue({
       sessionKey: "test-tenant:user-1:discord-main",
       deleted: true,

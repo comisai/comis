@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the PURE M1 fleet-triage corpus loader
- * (Phase 158 — PROVE & gate: fleet-triage baseline, requirement M1).
+ * RED-first unit tests for the PURE fleet-triage corpus loader.
  *
- * The corpus loader is the M1 half of the measure-first PROVE phase: it reads the
- * frozen triage-corpus.json + manual-cost-to-beat.json (this session's v2.14-review
+ * The corpus loader is the by-hand-corpus half of the measure-first baseline: it reads the
+ * frozen triage-corpus.json + manual-cost-to-beat.json (the by-hand fleet-health-review
  * findings, encoded as structured reference data) into a typed FleetCorpus the
- * Plan-03 gate measurement consumes. Because the gate is only as trustworthy as the
+ * gate measurement consumes. Because the gate is only as trustworthy as the
  * loader, the loader is proven RED→GREEN here BEFORE the script consumes it — the
- * `--selftest` discipline, mirroring the Phase-149 diagnosis-harness.test.ts loader
+ * `--selftest` discipline, mirroring the diagnosis-harness.test.ts loader
  * tests (the EXACT analog).
  *
- * CRITICAL DIVERGENCE from 149 (RESEARCH Pitfall 1): M1 is an ENCODING of
- * already-written prose (FLEET_HEALTH_LENS_PHASE.md §2), NOT a reconstruction from a
- * rotating daemon.log. loadCorpus reads a STATIC frozen JSON fixture; there is no
- * trajectory.jsonl to parse and no daemon to re-run.
+ * CRITICAL DIVERGENCE: the corpus is an ENCODING of the already-written by-hand
+ * fleet-health review, NOT a reconstruction from a rotating daemon.log. loadCorpus
+ * reads a STATIC frozen JSON fixture; there is no trajectory.jsonl to parse and no
+ * daemon to re-run.
  *
- * NOTE on the run command (RESEARCH Pitfall 6): these `support/*.test.ts` files are
+ * NOTE on the run command: these `support/*.test.ts` files are
  * NOT in the ROOT vitest workspace (`projects: ["packages/*", ...]`), so a bare
  * `pnpm vitest run` resolves the root config and runs NOTHING (a false-RED). Verify
  * under the LIVE config:
@@ -36,7 +35,7 @@ import {
 } from "./fleet-triage-corpus.js";
 
 // Track every tmp dir we seed so afterEach can tear them down — NEVER touch ~/.comis
-// (Phase-155 no-prod-datadir rule; these unit tests use mkdtempSync tmp dirs only).
+// (no-prod-datadir rule; these unit tests use mkdtempSync tmp dirs only).
 const tmpDirs: string[] = [];
 function seedDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -51,7 +50,7 @@ afterEach(() => {
   }
 });
 
-// A well-formed M1 corpus — the §2 by-hand findings as a FleetSignal[]. The
+// A well-formed corpus — the by-hand findings as a FleetSignal[]. The
 // load-bearing fields the shape-guard asserts: signal / byHandCount / location /
 // alreadyStructured. Counts + typed enums only — NEVER raw log bodies.
 const SIGNALS: FleetSignal[] = [
@@ -90,7 +89,7 @@ const SIGNALS: FleetSignal[] = [
   },
 ];
 
-// The §2 "cost/effort to beat" — the RE-PROVE bar (Phase 162 P1). Counts + a
+// The "cost/effort to beat" — the RE-PROVE bar. Counts + a
 // described scrape STEP (not raw model output), PII-free by construction.
 const MANUAL_COST: ManualCostToBeat = {
   severityHistogram: { warn: 7, error: 0, info: 12 },
@@ -102,7 +101,7 @@ const MANUAL_COST: ManualCostToBeat = {
     "pm2 logs comis --nostream | grep tokenizer — manual model-health scrape (the step the lens must replace)",
 };
 
-describe("fleet-triage-corpus loadCorpus — reads the frozen M1 corpus into a typed bundle", () => {
+describe("fleet-triage-corpus loadCorpus — reads the frozen corpus into a typed bundle", () => {
   it("loadCorpus parses triage-corpus.json + manual-cost-to-beat.json from a seeded directory", () => {
     const dir = seedDir("fleet-corpus-ok-");
     writeFileSync(join(dir, "triage-corpus.json"), JSON.stringify({ signals: SIGNALS }));
@@ -116,7 +115,7 @@ describe("fleet-triage-corpus loadCorpus — reads the frozen M1 corpus into a t
     expect(lcd!.byHandCount).toBe(7);
     expect(lcd!.location).toBe("daemon.log");
     expect(lcd!.alreadyStructured).toBe(false);
-    // manualCost carries the three §2 fields (Pino's canonical "warn" level key,
+    // manualCost carries the three cost-to-beat fields (Pino's canonical "warn" level key,
     // matching the committed manual-cost-to-beat.json — Pino never emits "warning").
     expect(corpus.manualCost.severityHistogram["warn"]).toBe(7);
     expect(corpus.manualCost.groupByMessage).toHaveLength(2);
@@ -179,7 +178,7 @@ describe("fleet-triage-corpus loadCorpus — reads the frozen M1 corpus into a t
   });
 });
 
-describe("fleet-triage-corpus loadCorpus — null/non-object roots & entries throw the documented Error, not a raw TypeError (WR-01)", () => {
+describe("fleet-triage-corpus loadCorpus — null/non-object roots & entries throw the documented Error, not a raw TypeError", () => {
   // The module's stated contract (JSDoc): replace the "opaque TypeError … with no fixture
   // path" with a controlled, PATH-ONLY throw. A `null` JSON root or a `[null]` entry is a
   // JSON-valid-but-mis-shaped corpus and MUST hit the documented Error (which names the
@@ -229,7 +228,7 @@ describe("fleet-triage-corpus loadCorpus — null/non-object roots & entries thr
   });
 });
 
-describe("fleet-triage-corpus loadCorpus — out-of-enum signal/location values are rejected by the shape-guard (WR-02)", () => {
+describe("fleet-triage-corpus loadCorpus — out-of-enum signal/location values are rejected by the shape-guard", () => {
   // The README + the FleetSignal JSDoc advertise `signal`/`location` as CLOSED string
   // unions ("never a bare string"; "an out-of-enum value fails the loader's shape-guard").
   // The pre-patch guard only checks `typeof === "string"`, so a typo'd / stale signal name

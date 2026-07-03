@@ -500,16 +500,14 @@ describe("AnnouncementDeadLetterQueue", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: a DLQ-recovered delivery must record its idempotency key as delivered.
-// The whole point of DELIVERY-03 is that a budget-failed node's failure-key ==
-// its success-key, so a second sweep does not double-notify — but that depends
-// on the key being in the shared deliveredKeys set. The DLQ delivers to the
-// user on drain() but had no way to mark the key, re-opening the double-notify
-// window. drain() now accepts an onDelivered sink the wiring binds to
-// deliveryDedup.mark / batcher.markDelivered.
+// A DLQ-recovered delivery must record its idempotency key as delivered.
+// A budget-failed node's failure-key == its success-key, so a second sweep
+// does not double-notify — but that depends on the key being in the shared
+// deliveredKeys set. drain() accepts an onDelivered sink the wiring binds to
+// deliveryDedup.mark / batcher.markDelivered, so a recovered key is marked.
 // ---------------------------------------------------------------------------
 
-describe("AnnouncementDeadLetterQueue drain marks recovered keys (WR-01)", () => {
+describe("AnnouncementDeadLetterQueue drain marks recovered keys", () => {
   let tmpDir: string;
   let filePath: string;
 
@@ -600,14 +598,14 @@ describe("AnnouncementDeadLetterQueue drain marks recovered keys (WR-01)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// HIGH-2 (ONCE-03/04): the DLQ drain must consult the ONCE ledger before
+// The DLQ drain must consult the ONCE ledger before
 // re-delivering. The in-memory deliveredKeys set rebuilds EMPTY on restart, so a
 // JSONL entry whose announcement already COMMITTED in the durable ledger would be
 // blindly re-delivered after a daemon restart — a second notify for the same run.
-// The ledger is the only durable source of "already sent". The fix: an entry that
+// The ledger is the only durable source of "already sent". An entry that
 // carries a persisted (rootRunId, stepIndex) is checked against the ledger; a
 // committed row → SKIP the send, treat as delivered (no double-notify). Old-format
-// entries (no rootRunId/stepIndex) degrade to the existing at-least-once behavior.
+// entries (no rootRunId/stepIndex) degrade to the at-least-once behavior.
 // ---------------------------------------------------------------------------
 
 /**
@@ -650,7 +648,7 @@ function committedRow(rootRunId: string, stepIndex: number): OutwardSendRecord {
   };
 }
 
-describe("AnnouncementDeadLetterQueue drain consults the ONCE ledger (HIGH-2, ONCE-03/04)", () => {
+describe("AnnouncementDeadLetterQueue drain consults the ONCE ledger", () => {
   let tmpDir: string;
   let filePath: string;
 
@@ -663,7 +661,7 @@ describe("AnnouncementDeadLetterQueue drain consults the ONCE ledger (HIGH-2, ON
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("committed → SKIP: an entry whose (rootRunId, stepIndex) is committed is NOT re-sent after restart (the HIGH-2 fix)", async () => {
+  it("committed → SKIP: an entry whose (rootRunId, stepIndex) is committed is NOT re-sent after restart", async () => {
     const eventBus = createMockEventBus();
     // A DLQ entry that carries its durable idempotency key.
     const entry = makeFullEntry({

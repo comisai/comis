@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Production-wiring integration test for the window-aware tool-budget
- * fit-enforcement (the VPS gpt-5.3-codex under-defer investigation, 2026-06-22).
+ * fit-enforcement (the gpt-5.3-codex under-defer incident observed on a live
+ * VPS deployment).
  *
  * Unlike executor-tool-assembly.test.ts (which mocks tool-deferral entirely to
  * focus on merge/override wiring), THIS file leaves `tool-deferral.js` AND
  * `budget-capacity-cap.js` REAL, mocking only the heavy/irrelevant collaborators
  * (SDK SettingsManager, prompt-assembly, lifecycle, JIT/pipeline). It drives the
- * FULL assembleTools() path end-to-end for the exact production scenario the VPS
- * deploy-proof reported:
+ * FULL assembleTools() path end-to-end for the exact production scenario that
+ * live deployment reported:
  *
  *   gpt-5.3-codex → capabilityClass "frontier" (openai-codex provider heuristic),
  *   effective window 8192 (the model's own registry window, windowCapSource
@@ -240,11 +241,11 @@ describe("assembleTools — window-aware fit runs against the EFFECTIVE window (
     );
   });
 
-  // THE KEYSTONE (the lead's explicit ask + the gap the unit tests missed): route
+  // THE KEYSTONE (the gap the unit tests missed): route
   // the assembled result through the REAL runPreflightFitCheck — the SAME pre-flight
-  // that threw `context_exhausted` (assembled 13725 > 8192) on the VPS — and assert
+  // that threw `context_exhausted` (assembled 13725 > 8192) on a live VPS — and assert
   // it NO LONGER throws after the fit pass deferred. cachedSystemTokensEstimate is
-  // exactly what the context engine wires to deps.getSystemTokensEstimate (the OF-01
+  // exactly what the context engine wires to deps.getSystemTokensEstimate (the
   // S term = system prompt + SHIPPED tool schemas), so feeding it to the real
   // pre-flight reproduces the production decision end-to-end. The test has teeth:
   // the pre-fix systemTokens (all 65 tools, ~13K) is shown to throw on the same window.
@@ -287,7 +288,7 @@ describe("assembleTools — window-aware fit runs against the EFFECTIVE window (
     ).toThrow(ContextExhaustionError);
   });
 
-  // THE REAL ROOT CAUSE (VPS, 2026-06-22): the fit pass correctly defers to ~12
+  // THE REAL ROOT CAUSE (observed on the live VPS): the fit pass correctly defers to ~12
   // active tools, BUT createAutoDiscoveryStubs then pushes 44 stubs into
   // mergedCustomTools each carrying parameters: entry.original.parameters (FULL
   // schema). createStubFilterInjector strips them from the WIRE (zero wire cost),
@@ -296,8 +297,8 @@ describe("assembleTools — window-aware fit runs against the EFFECTIVE window (
   // This test computes systemTokens over the FULL shipped set (incl. stubs), exactly
   // as the over-counting production path does, and drives the REAL runPreflightFitCheck:
   // RED pre-fix (stubs full schema → > 8192 → throws), GREEN post-fix (stubs minimal).
-  // The lead's instruction: route the FULL assembly INCLUDING stubs into the pre-flight,
-  // so the stub over-count is what makes it RED — the blind spot the non-stub test missed.
+  // Routing the FULL assembly INCLUDING stubs into the pre-flight is deliberate:
+  // the stub over-count is what makes it RED — the blind spot the non-stub test missed.
   it("the pre-flight over the FULL shipped set (incl. auto-discovery stubs) does NOT exhaust 8192", async () => {
     const tools = Array.from({ length: 65 }, (_, i) => makeTool(`mcp__srv--tool_${i}`, 560, 120));
     const result = await assembleTools(makeParams(tools));
@@ -328,7 +329,7 @@ describe("assembleTools — window-aware fit runs against the EFFECTIVE window (
     ).not.toThrow();
   });
 
-  // REGRESSION GUARD (the lead's prescribed pin): getCachedSystemTokensEstimate()
+  // REGRESSION GUARD: getCachedSystemTokensEstimate()
   // — the production S-term the pre-flight reads (executor-context-engine-setup.ts:582
   // ← pi-executor.ts:1025 `() => cachedSystemTokensEstimate` ← assembleTools result)
   // — IS result.cachedSystemTokensEstimate. It MUST stay stub-EXCLUDED (the line-680/681
@@ -347,7 +348,7 @@ describe("assembleTools — window-aware fit runs against the EFFECTIVE window (
     expect(result.cachedSystemTokensEstimate).toBeLessThan(7_000);
   });
 
-  // Multi-turn discovered-tool write-back (the lead's flagged stale-count): when a
+  // Multi-turn discovered-tool write-back (the stale-count hazard): when a
   // tool is already DISCOVERED (re-included with its full schema) and the fit pass
   // then DROPS it, it must leave BOTH activeTools AND discoveredTools — else the
   // line-662 mergedCustomTools rebuild re-includes it and the S estimate re-counts it.
@@ -384,7 +385,7 @@ describe("assembleTools — window-aware fit runs against the EFFECTIVE window (
     }
   });
 
-  // THE PRODUCTION PATH (the lead's must-do A): gpt-5.3-codex is capabilityClass
+  // THE PRODUCTION PATH: gpt-5.3-codex is capabilityClass
   // NANO on the VPS — NOT frontier. nano's aggressive CORE_TOOLS-only deferral leaves
   // ~1 active + 64 deferred → 64 auto-discovery stubs. With the stub-skip +
   // minimal-schema fix, the post-deferral S term (result.cachedSystemTokensEstimate =
@@ -426,10 +427,10 @@ describe("assembleTools — window-aware fit runs against the EFFECTIVE window (
     ).not.toThrow();
   });
 
-  // MULTI-TURN nano (the lead's discoveredTools concern): when EVERY deferred tool
+  // MULTI-TURN nano (the discoveredTools stale-count hazard): when EVERY deferred tool
   // was previously discovered, deferral re-includes them — some as discoveredTools
   // (full schema, genuinely shipping) and the rest as stubs. Pre-fix, the stubs were
-  // counted at full schema → S ballooned (~12758 on da254cea). With the stub-skip,
+  // counted at full schema → S ballooned (~12758 in the live incident). With the stub-skip,
   // result.cachedSystemTokensEstimate stays bounded (the discovered tools that
   // genuinely ship are counted; the wire-stripped stubs are not), and the REAL
   // pre-flight does not exhaust 8192. A regression that re-counts stubs FAILS here.

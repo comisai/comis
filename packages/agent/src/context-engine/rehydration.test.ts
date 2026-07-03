@@ -594,7 +594,7 @@ describe("createRehydrationLayer", () => {
     expect(pos1Text).not.toContain("[Restored prompt skills]");
   });
 
-  it("19) overflow stage 1 -- strips files from position-1 (existing behavior)", async () => {
+  it("19) overflow stage 1 -- strips files from position-1", async () => {
     const onOverflow = vi.fn();
     const { deps } = createMockDeps({
       readFile: async () => "x".repeat(500),
@@ -619,7 +619,7 @@ describe("createRehydrationLayer", () => {
     );
   });
 
-  it("20) overflow stage 2 -- strips skills from position-1 (NEW)", async () => {
+  it("20) overflow stage 2 -- strips skills from position-1", async () => {
     // Build a scenario: files already stripped but skills push it over budget
     const bigSkillsXml = `<available_skills>
 <skill name="big_skill"><description>${"S".repeat(2000)}</description><arguments>arg</arguments></skill>
@@ -653,7 +653,7 @@ describe("createRehydrationLayer", () => {
     );
   });
 
-  it("21) overflow stage 3 -- removes position-1 entirely (renumbered)", async () => {
+  it("21) overflow stage 3 -- removes position-1 entirely, keeps the end message", async () => {
     const onOverflow = vi.fn();
     const { deps } = createMockDeps({
       getAgentsMdContent: () => "## Session Startup\n" + "X".repeat(800),
@@ -687,7 +687,7 @@ describe("createRehydrationLayer", () => {
     );
   });
 
-  it("22) overflow stage 4 -- removes all rehydration (renumbered)", async () => {
+  it("22) overflow stage 4 -- removes all rehydration content", async () => {
     const onOverflow = vi.fn();
     const { deps } = createMockDeps({
       getAgentsMdContent: () => "## Session Startup\n" + "X".repeat(3000),
@@ -750,7 +750,7 @@ describe("createRehydrationLayer", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // POST-COMPACT-BUDGET: Per-skill and total rehydration token budget tests
+  // Per-skill and total rehydration token budget tests
   // ---------------------------------------------------------------------------
 
   it("24) per-skill budget -- individual skill exceeding 5,000 chars is truncated", async () => {

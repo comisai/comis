@@ -2,7 +2,7 @@
 /**
  * DAG templates — pre-structured pipeline templates with ${VAR} slot filling.
  *
- * Implements O2: four canonical named-graph templates (research-fanout, debate,
+ * Four canonical named-graph templates (research-fanout, debate,
  * vote, map-reduce) that can be filled by weak models supplying slot values
  * rather than emitting full graph JSON. Unresolved slots produce an err result
  * rather than silently propagating a malformed task string.
@@ -59,7 +59,7 @@ export interface NamedGraphStoreLike {
 // ---------------------------------------------------------------------------
 
 /**
- * Four canonical DAG templates for the small-model path (O2/O3).
+ * Four canonical DAG templates for the small-model path.
  *
  * Each template uses ${VAR} placeholders in task strings:
  *   - research-fanout: ${TOPIC}
@@ -190,14 +190,12 @@ const SLOT_REPLACE_RE = /\$\{([A-Z_]+)\}/g;
  * remain: VAR1, VAR2") if any slot remains after filling — the caller must
  * treat this as a failure and NOT proceed with the unfilled graph.
  *
- * WR-02 wiring status: the canonical templates ARE seeded into the named-graph
- * store at daemon boot (seedDefaultDagTemplates, wired in daemon.ts). The
- * PRODUCER that selects a template and calls fillDagTemplate with weak-model
- * slot values is the small-model graph-repair path, which lands in Phase 157
- * alongside repairDagWithBoundedRetries (see graph-helpers.ts buildGraphInput,
- * which fail-closes the weak+invalid branch and documents the same deferral).
- * fillDagTemplate is exported and ready for that caller — it is not silently
- * dead: seeding is live, and the fill call site is an explicit Phase-157 item.
+ * Wiring: the canonical templates are seeded into the named-graph store at
+ * daemon boot (seedDefaultDagTemplates, wired in daemon.ts). The producers
+ * that select a template and call fillDagTemplate with weak-model slot values
+ * are the small-model graph-repair path (the conservative template matcher in
+ * dag-template-match.ts, alongside repairDagWithBoundedRetries) and the intent
+ * synthesizer (dag-synthesizer.ts).
  *
  * @param template - The DAG template to fill.
  * @param vars - Map of slot name (e.g. "TOPIC") to replacement value.
@@ -213,7 +211,7 @@ export function fillDagTemplate(
   // Note: SLOT_REPLACE_RE is global — reset lastIndex between uses by
   // always using it only within .replace() which handles index internally.
   //
-  // CR-03: slot values come straight from a weak model and may contain JSON
+  // Slot values come straight from a weak model and may contain JSON
   // metacharacters (double-quote, backslash, newline). Substituting them RAW
   // into the serialized JSON string would corrupt the structure and make the
   // JSON.parse below throw an uncaught SyntaxError out of this Result-returning
@@ -234,7 +232,7 @@ export function fillDagTemplate(
     return err(`Unresolved template slots remain: ${remaining.join(", ")}`);
   }
 
-  // CR-03: defensive parse guard. Escaping above already prevents structural
+  // Defensive parse guard. Escaping above already prevents structural
   // corruption, but a Result-returning contract must never throw — surface any
   // residual parse failure as err() rather than letting it propagate.
   let filled: DagTemplateNode[];

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DeleteAndRepost strategy tests (§7.3 row "DeleteAndRepost").
+ * DeleteAndRepost strategy tests.
  *
  * Used by Signal (no edit, has delete). Each render transition deletes the
  * previous activity message and posts a new one. On success the last activity
@@ -77,7 +77,7 @@ const RECEIPT: FinalDeliveryReceipt = {
   ok: true, deliveredChunks: 1, lastChunkMessageId: "final", deliveredAtMs: 0,
 };
 
-/** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
+/** The ascii theme's markers: bracketed pure-ASCII tags, zero emoji. */
 const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
 
 describe("createDeleteAndRepostRenderer", () => {
@@ -97,10 +97,9 @@ describe("createDeleteAndRepostRenderer", () => {
     await r.apply(makeFrame(1, "step 2")); // delete prev (msg-0) + send msg-1
     await r.apply(makeFrame(2, "step 3")); // delete prev (msg-1) + send msg-2
 
-    // [Rule 1 — bug fix, quick-260528-nsv] Per-transition send text now
-    // carries the running 🔧 marker (eventLabel re-derives it on the
-    // tool-kind running events post-patch); the delete-prev + send-next
-    // state-machine invariant is unchanged.
+    // Per-transition send text carries the running 🔧 marker (eventLabel
+    // re-derives it on tool-kind running events); the delete-prev +
+    // send-next state-machine invariant is what this asserts.
     expect(calls).toEqual([
       { op: "send", text: "🔧 step 1", id: "msg-0" },
       { op: "delete", id: "msg-0" },
@@ -189,7 +188,7 @@ describe("createDeleteAndRepostRenderer", () => {
     expect(sends[sends.length - 1].text).toBe("❌ timeout");
   });
 
-  // --- §8.5 production wiring (elapsedMs threading) ---
+  // --- elapsed-time fallback wiring (elapsedMs threading) ---
   //
   // DeleteAndRepost captures `startedAtMs` on the first apply() and passes
   // `elapsedMs = clock.now() - startedAtMs` to renderFrameText on EVERY
@@ -209,7 +208,7 @@ describe("createDeleteAndRepostRenderer", () => {
     expect(sends[0].text).toContain("(running 0 s)");
   });
 
-  it("DeleteAndRepost passes elapsedMs into each repost — after 7 500 ms advancement the latest send contains (running 7 s) (§8.5 production wiring)", async () => {
+  it("DeleteAndRepost passes elapsedMs into each repost — after 7 500 ms advancement the latest send contains (running 7 s)", async () => {
     const { actions, calls } = makeRecordingActions();
     const clock = createFakeClock(1000);
     const timer = createFakeTimers();

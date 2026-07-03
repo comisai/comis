@@ -61,7 +61,7 @@ import { createMemoryRecall, type MemoryRecallDeps, type MemoryRecallConfig } fr
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
 // Constructed contradiction pairs (Paris/vegetarian) -- the SAME fixtures the gate
-// consumes; reused here to drive the NEW KG write-path invalidation.
+// consumes; reused here to drive the KG write-path invalidation.
 import { buildContradictionPairs } from "./suite-scenario.js";
 // Determinism helpers (test/support -- 5 segments up).
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";

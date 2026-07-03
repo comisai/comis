@@ -73,7 +73,7 @@ describe("CACHE-01 Stage-A — cache-trace asserter mechanics (no COMIS_LIVE)", 
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // "JSON-RPC method error" is expected in Stage-A: rpc-dispatch.ts emits this
@@ -84,7 +84,7 @@ describe("CACHE-01 Stage-A — cache-trace asserter mechanics (no COMIS_LIVE)", 
       expectedErrors: ["JSON-RPC method error"],
     });
 
-    // FND-11 persistence oracle — only run if memory.db was created by the turn
+    // Persistence oracle — only run if memory.db was created by the turn
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -179,7 +179,7 @@ describe.skipIf(!isLive)("Live — CACHE-01 Anthropic write→hit→invalidate (
 
   afterEach(async () => {
     if (!canRun) return;
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
     // Real successful turns emit no ERROR/FATAL lines
     await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
@@ -201,7 +201,7 @@ describe.skipIf(!isLive)("Live — CACHE-01 Anthropic write→hit→invalidate (
       await expectCacheWrite({ minCreationTokens: 1 }, t1Lines);
 
       // Turn 2 — identical prefix → cacheReadInputTokens > 0 (hit).
-      // WR-02: Snapshot cumulative readTokens BEFORE turn 2, then assert a DELTA > 0
+      // Snapshot cumulative readTokens BEFORE turn 2, then assert a DELTA > 0
       // after turn 2.  Reading the whole file and checking totalReadTokens directly
       // would falsely pass if a prior warm-cache run already populated read tokens
       // from turn 1 (e.g., a partial cold-start hit against a previously warmed cache).

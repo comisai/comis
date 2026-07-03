@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED → GREEN for the X2 report-level bounding pass `boundIncidentReport`.
+ * Tests for the report-level bounding pass `boundIncidentReport`.
  *
- * These tests pin the X2 contract BEFORE the implementation exists:
+ * These tests pin the bounding contract:
  *   - `depth:"summary"` serializes to ≤ 6144 bytes (the ~1,500-token proxy at
  *     ~4 B/token).
  *   - `failures[]` is capped at 20 newest-first in summary depth; each
@@ -49,7 +49,7 @@ function manyToolStats(count: number): IncidentReport["toolStats"] {
 }
 
 // ---------------------------------------------------------------------------
-// Local factories — build a VALID §6.3 IncidentReport (no real session data).
+// Local factories — build a VALID IncidentReport (no real session data).
 // ---------------------------------------------------------------------------
 
 function makeFailure(overrides: Partial<IncidentFailure> = {}): IncidentFailure {
@@ -144,7 +144,7 @@ const INJECTION_MARKER = ["SECURITY", "NOTICE"].join(" ");
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("boundIncidentReport — X2 report-level bounding pass", () => {
+describe("boundIncidentReport — report-level bounding pass", () => {
   it("serializes a 40-failure report to ≤ 6144 bytes at summary depth", () => {
     const report = makeReport({ failures: manyFailures(40, 500) });
     const bounded = boundIncidentReport(report, "summary");
@@ -283,8 +283,8 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
   it("records a residual report-overage truncation when non-discretionary fields alone exceed 6 KB", () => {
     // A large `suggestedNextSteps` array (NOT a field the report-level shed
     // touches — only summary + failures are shed) keeps the report over 6144
-    // bytes after discretionary shedding. The post-loop honesty check (threat
-    // T-153-12) records ONE residual `report` overage rather than silently
+    // bytes after discretionary shedding. The post-loop honesty check
+    // records ONE residual `report` overage rather than silently
     // handing back an over-budget report. The loop terminates (no hang).
     const report = makeReport({
       summary: "ok", // ≤ 80, nothing to shed here
@@ -317,13 +317,14 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
   });
 
   // ------------------------------------------------------------------------
-  // CR-01 — breakerTimeline / offloads must NOT escape the summary byte budget.
+  // breakerTimeline / offloads must NOT escape the summary byte budget.
   // A flapping breaker (or a session that offloads thousands of large results)
-  // produces a multi-thousand-element array. Pre-fix these arrays were exempt
-  // from the structural cap AND never shed → a 150 KB+ "summary" report.
+  // produces a multi-thousand-element array. These arrays are exempt from the
+  // structural cap, so without a length cap here the result is a 150 KB+
+  // "summary" report.
   // ------------------------------------------------------------------------
 
-  it("serializes a 2000-entry breakerTimeline report to ≤ 6144 bytes at summary depth (CR-01)", () => {
+  it("serializes a 2000-entry breakerTimeline report to ≤ 6144 bytes at summary depth", () => {
     const report = makeReport({ breakerTimeline: manyBreakerEvents(2000) });
     const bounded = boundIncidentReport(report, "summary");
     const bytes = Buffer.byteLength(JSON.stringify(bounded), "utf8");
@@ -332,7 +333,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(bounded.breakerTimeline.length).toBeLessThanOrEqual(20);
   });
 
-  it("serializes a 2000-entry offloads report to ≤ 6144 bytes at summary depth (CR-01)", () => {
+  it("serializes a 2000-entry offloads report to ≤ 6144 bytes at summary depth", () => {
     const report = makeReport({ offloads: manyOffloads(2000) });
     const bounded = boundIncidentReport(report, "summary");
     const bytes = Buffer.byteLength(JSON.stringify(bounded), "utf8");
@@ -340,7 +341,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(bounded.offloads.length).toBeLessThanOrEqual(20);
   });
 
-  it("caps breakerTimeline newest-first and records an honest truncations[] ledger entry (CR-01)", () => {
+  it("caps breakerTimeline newest-first and records an honest truncations[] ledger entry", () => {
     const report = makeReport({ breakerTimeline: manyBreakerEvents(2000) });
     const bounded = boundIncidentReport(report, "summary");
     // Newest-first: the retained entries are the highest-seq ones.
@@ -352,7 +353,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(entry!.reason).toMatch(/2000/);
   });
 
-  it("caps offloads newest-first and records an honest truncations[] ledger entry (CR-01)", () => {
+  it("caps offloads newest-first and records an honest truncations[] ledger entry", () => {
     const report = makeReport({ offloads: manyOffloads(2000) });
     const bounded = boundIncidentReport(report, "summary");
     const seqs = bounded.offloads.map((o) => o.seq);
@@ -363,7 +364,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(entry!.reason).toMatch(/2000/);
   });
 
-  it("keeps a worst-case combined report (large breaker + offloads + failures) ≤ 6144 bytes at summary (CR-01)", () => {
+  it("keeps a worst-case combined report (large breaker + offloads + failures) ≤ 6144 bytes at summary", () => {
     const report = makeReport({
       breakerTimeline: manyBreakerEvents(3000),
       offloads: manyOffloads(3000),
@@ -373,7 +374,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(Buffer.byteLength(JSON.stringify(bounded), "utf8")).toBeLessThanOrEqual(6 * 1024);
   });
 
-  it("relaxes the breaker/offload array caps at full depth but still trims the worst case (CR-01)", () => {
+  it("relaxes the breaker/offload array caps at full depth but still trims the worst case", () => {
     const report = makeReport({
       breakerTimeline: manyBreakerEvents(3000),
       offloads: manyOffloads(3000),
@@ -388,13 +389,13 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
   });
 
   // ------------------------------------------------------------------------
-  // WR-03 — report-level free-text scalar fields (channel.id, agentId, traceId,
+  // Report-level free-text scalar fields (channel.id, agentId, traceId,
   // endReason) and toolStats KEYS must go through the same > MAX_INLINE_STRING
   // → digest sweep, not rely solely on the 32 KB structural floor. channel.id
   // in particular is channel/peer-derived (attacker-influenced).
   // ------------------------------------------------------------------------
 
-  it("digests an oversized channel.id rather than emitting it verbatim (WR-03)", () => {
+  it("digests an oversized channel.id rather than emitting it verbatim", () => {
     const huge = "c".repeat(32 * 1024); // a 32 KB channel id (peer-derived)
     const report = makeReport({ channel: { type: "peer", id: huge } });
     const bounded = boundIncidentReport(report, "full");
@@ -403,7 +404,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(bounded.truncations.some((t) => t.field === "channel.id")).toBe(true);
   });
 
-  it("applies a digest to oversized agentId / traceId / endReason free-text fields (WR-03)", () => {
+  it("applies a digest to oversized agentId / traceId / endReason free-text fields", () => {
     const huge = "h".repeat(1000); // > MAX_INLINE_STRING (256)
     const report = makeReport({
       agentId: huge,
@@ -420,7 +421,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(bounded.truncations.some((t) => t.field === "outcome.endReason")).toBe(true);
   });
 
-  it("digests an oversized toolStats KEY (tool name) rather than emitting it raw (WR-03)", () => {
+  it("digests an oversized toolStats KEY (tool name) rather than emitting it raw", () => {
     const hugeTool = "t".repeat(2000);
     const report = makeReport({
       toolStats: { [hugeTool]: { ok: 1, failed: 2, topErrorKind: "dependency" } },
@@ -434,7 +435,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(bounded.truncations.some((t) => /toolStats/.test(t.field))).toBe(true);
   });
 
-  it("leaves normal-length free-text fields untouched (no spurious WR-03 truncations)", () => {
+  it("leaves normal-length free-text fields untouched (no spurious free-text truncations)", () => {
     const report = makeReport(); // small channel.id, agentId, traceId, endReason
     const bounded = boundIncidentReport(report, "summary");
     expect(bounded.channel.id).toBe("678314278");
@@ -446,12 +447,12 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     ).toBe(false);
   });
 
-  // CR-01: spawnTree was added (215-03) without a report-level cap OR a backstop
-  // exemption. >64 distinct leases → limitPayloadValue replaces the WHOLE array
+  // Without a report-level cap OR a backstop exemption for spawnTree,
+  // >64 distinct leases → limitPayloadValue replaces the WHOLE array
   // with a {__bounded__} sentinel → IncidentReportSchema.parse throws client-side
   // (comis explain, and --offline) on EXACTLY the unattended run the tree exists
   // to diagnose. These pin the cap + exemption.
-  it("caps spawnTree at summary depth as a valid SpawnTreeNode[] — never a {__bounded__} sentinel — + records a truncations[] entry (CR-01)", () => {
+  it("caps spawnTree at summary depth as a valid SpawnTreeNode[] — never a {__bounded__} sentinel — + records a truncations[] entry", () => {
     const report = makeReport({ spawnTree: manySpawnNodes(80) });
     const bounded = boundIncidentReport(report, "summary");
 
@@ -468,7 +469,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(bounded.truncations.some((t) => t.field === "spawnTree")).toBe(true);
   });
 
-  it("relaxes the spawnTree cap at full depth but stays a schema-valid array (CR-01)", () => {
+  it("relaxes the spawnTree cap at full depth but stays a schema-valid array", () => {
     const report = makeReport({ spawnTree: manySpawnNodes(80) });
     const bounded = boundIncidentReport(report, "full");
     expect(Array.isArray(bounded.spawnTree)).toBe(true);
@@ -480,7 +481,6 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-TOOLSTATS-SENTINEL (memory-learning-stress-catalog-codex-20260629 RUN2):
 // `toolStats` is a RECORD, not an array — so it is NOT in REPORT_ARRAY_FIELDS and
 // the structural backstop's plain-object key cap applies. On a MANY-tool session
 // (>PAYLOAD_BOUNDS.maxObjectKeys=64 distinct tools — a long session, or an
@@ -492,7 +492,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
 // record stays schema-valid and never reaches the backstop's key cap.
 // ---------------------------------------------------------------------------
 
-describe("boundIncidentReport — toolStats count cap (OBS-TOOLSTATS-SENTINEL)", () => {
+describe("boundIncidentReport — toolStats count cap keeps the record schema-valid", () => {
   it("caps a >64-tool toolStats to proper {ok,failed} objects (no {__bounded__} sentinel) so the report stays schema-valid", () => {
     const report = makeReport({ toolStats: manyToolStats(140) });
     const bounded = boundIncidentReport(report, "full");

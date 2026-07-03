@@ -89,7 +89,7 @@ type WorkspacePackage = (typeof WORKSPACE_PACKAGES)[number];
  * depends on @comis/agent either; the previous runtime substring imports
  * were retargeted to @comis/core. The @comis/memory edge was temporarily
  * closed after secrets + auth moved to daemon RPC, and is re-opened for
- * the offline secrets bootstrap path (L11 re-open, one bounded adapter site:
+ * the offline secrets bootstrap path (one bounded adapter site:
  * `util/offline-secrets-store.ts`).
  *
  * NOTE on agent vs skills: packages/agent does NOT import @comis/skills
@@ -111,7 +111,7 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // so the graph is now one-arrow:
   //   @comis/core ← @comis/observability ← @comis/infra
   infra: new Set(["shared", "core", "observability"]),
-  // @comis/observability edge (176-03 AUDIT-01): the security-audit JSONL writer
+  // @comis/observability edge: the security-audit JSONL writer
   // (audit-mutations.ts) reuses the config-audit append/rotate/confine helpers
   // (appendRegularFile / rotateConfigAuditLogIfNeeded / ensureConfigAuditParentDir)
   // + sanitizeForPersistence — DON'T hand-roll 0600/rotation/symlink-safety.
@@ -127,7 +127,7 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // 0o600 in 0o700 dir under ~/.comis/mcp-tokens/). Observability depends only
   // on @comis/core + @comis/shared (both already skills deps) so the edge is acyclic.
   //
-  // @comis/agent edge (AUTHOR-02 / Phase 174-04): pipeline-tool.ts's from_intent
+  // @comis/agent edge: pipeline-tool.ts's from_intent
   // action imports `synthesizeFromIntent` to deterministically expand a one-line
   // intent into a validated ExecutionGraph (then dispatches it via graph.execute
   // so governance applies). The edge is FORWARD + acyclic: agent depends only on
@@ -157,11 +157,11 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // cli: depends on shared, core, observability, memory, and daemon.
   // config-write hook in sync-tooling needs the config-audit JSONL append
   // helpers (observability). The @comis/memory edge is re-opened for the
-  // offline secrets bootstrap path (daemon-free first-time setup, L11 re-open):
+  // offline secrets bootstrap path (daemon-free first-time setup):
   // `util/offline-secrets-store.ts` is the single allowed import site; all
   // other CLI memory access still routes through daemon RPC.
   //
-  // @comis/daemon edge (W14 obs-llm-troubleshooting): the OFFLINE obs fallback.
+  // @comis/daemon edge: the OFFLINE obs fallback.
   // `comis explain`/`comis fleet` reuse the daemon's exported pure assemblers
   // (assembleIncidentReportFromSources / makeRealReader /
   // assembleFleetHealthReport) to build the post-mortem directly from the
@@ -206,7 +206,7 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
  *
  * The allowlist mechanism mirrors test/support/architecture-allowlist.ts
  * shrink-only semantics: entries can be REMOVED but should NOT be ADDED
- * without a refactor PR + design-doc citation. PR review catches additions.
+ * without a refactor PR + a documented rationale. PR review catches additions.
  */
 const DRIFT_ALLOWLIST: ReadonlySet<string> = new Set([]);
 
@@ -388,7 +388,7 @@ describe("architecture-graph -- dual-graph alignment", () => {
         violations: violations.map(structureViolation),
         suggestedFix:
           "Both files must list the same set of @comis/* deps. If a package needs a type-only reference (no runtime), keep it in tsconfig refs AND package.json devDependencies (or use workspace:* in dependencies for runtime). " +
-          "For intentional divergence, see DRIFT_ALLOWLIST in this file — adding entries requires a PR review + design-doc citation.",
+          "For intentional divergence, see DRIFT_ALLOWLIST in this file — adding entries requires a PR review + a documented rationale.",
         designRef: "target package graph (closed set)",
         allowlistRef: "(none — closed set; DRIFT_ALLOWLIST is empty)",
       }),

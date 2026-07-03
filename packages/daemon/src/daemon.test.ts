@@ -8,10 +8,8 @@ import type { TokenTracker } from "./observability/token-tracker.js";
 import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
 import { main, type DaemonOverrides, type DaemonInstance, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
-// hardenDataDirPermissions was extracted to wiring/main-helpers.ts (Phase 188 —
-// to recover daemon.ts line-cap headroom for the video-gen wiring), then moved
-// again to its own wiring/harden-data-dir.ts (Phase 193 — to clear the
-// main-helpers.ts over-cap inherited from the v2.24 squash; shrink-only split).
+// hardenDataDirPermissions lives in its own wiring/harden-data-dir.ts (kept out
+// of daemon.ts and main-helpers.ts to stay under their file-size caps).
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import type { MediaResult } from "./wiring/setup-media.js";
 import * as fs from "node:fs";
@@ -42,13 +40,13 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         ...gatewayOverrides,
       },
       memory: {
-        // Master kill switch (Phase 226 — renamed from costFeatures.enabled; schema default true).
+        // Master kill switch (schema default true).
         // Present here because the real bootstrap always defaults it; the daemon's first-run
         // notice + dialectic wiring read it.
         enabled: true,
         dbPath: ":memory:",
         walMode: false,
-        // Phase 226: the recall keepers nest under memory.recall.
+        // The recall knobs nest under memory.recall.
         recall: { embeddingModel: "text-embedding-3-small", embeddingDimensions: 1536 },
         compaction: { enabled: false, threshold: 1000, targetSize: 500 },
         retention: { maxAgeDays: 0 },
@@ -167,7 +165,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
           allowAgents: [],
           subAgentRetentionMs: 3_600_000,
           waitTimeoutMs: 60_000,
-          // DELIVERY-02: the announcement batcher reads delivery.maxRetries for
+          // The announcement batcher reads delivery.maxRetries for
           // its transient-retry cap (schema-defaulted in real config).
           delivery: { maxRetries: 3 },
         },
@@ -500,7 +498,7 @@ describe("daemon main()", () => {
     // we drop VITEST for the duration of the call.
     const prevVitest = process.env["VITEST"];
     delete process.env["VITEST"];
-    // P0: preReadStorageMode reads the default config files (if they exist) before
+    // preReadStorageMode reads the default config files (if they exist) before
     // bootstrap. If the developer's real ~/.comis/config.yaml contains legacy keys,
     // the migration guard throws before bootstrap is called, breaking this test.
     // Override COMIS_DATA_DIR to a fresh tmpdir so the default paths point at
@@ -509,7 +507,7 @@ describe("daemon main()", () => {
     // the path assert below is still valid because we are testing the shape of
     // DEFAULT_CONFIG_PATHS, not the actual file location.
     const { overrides } = buildOverrides();
-    // P0: preReadStorageMode reads the default config files (if they exist) before
+    // preReadStorageMode reads the default config files (if they exist) before
     // bootstrap. If the developer's real ~/.comis/config.yaml contains legacy keys,
     // the migration guard throws before bootstrap is called, breaking this test.
     // Use the override seam to return "file" so the boot gate passes

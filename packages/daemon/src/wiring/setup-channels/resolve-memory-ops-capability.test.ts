@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for resolveMemoryOpsCapability (CR-01).
+ * Unit tests for resolveMemoryOpsCapability.
  *
- * The helper derives the R6 { capabilityClass, hasCapableModelOverride } the
+ * The helper derives the { capabilityClass, hasCapableModelOverride } the
  * three daemon memory-job sites thread into their deps so the abstain branch is
  * reachable in production. It keys on the CRON/MEMORY model (not the agent
  * primary) and mirrors pi-executor's resolveModelProfile heuristic + the
@@ -30,7 +30,7 @@ function caps(capabilityClass?: ProviderCapabilities["capabilityClass"]): Provid
   } as ProviderCapabilities;
 }
 
-describe("resolveMemoryOpsCapability (CR-01)", () => {
+describe("resolveMemoryOpsCapability", () => {
   it("a local/ollama cron model with NO override → small + no override (abstain branch reachable)", () => {
     const cap = resolveMemoryOpsCapability({ provider: "ollama", modelId: "qwen3.6:35b" }, undefined);
     expect(cap.capabilityClass).toBe("small");

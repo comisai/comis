@@ -25,7 +25,8 @@ const SENSITIVE_HEADERS_TO_STRIP_ON_CROSS_HOST: readonly string[] = [
   "authorization",
   "cookie",
   "proxy-authorization",
-  // Extended auth headers (OpenClaw 13-header set — cross-origin exfil vectors)
+  // Extended vendor auth headers — these also carry credentials, so they are
+  // cross-origin exfil vectors and must be stripped on cross-host redirect.
   "x-auth-token",
   "x-api-key",
   "x-authorization",

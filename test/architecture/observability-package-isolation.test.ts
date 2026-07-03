@@ -142,19 +142,19 @@ describe("@comis/observability isolation — no @comis/agent + @comis/daemon + @
 });
 
 /**
- * Hexagonal renderer-port boundary lock (Agent Transparency; §16.5 /
- * §16.11 / §17.8 ship gate). The activity rendering port
+ * Hexagonal renderer-port boundary lock (the Agent Transparency ship gate).
+ * The activity rendering port
  * (`core/activity/channel-activity-renderer.ts`) and the strategy selector
  * (`core/activity/activity-strategy.ts`) live in `@comis/core`, NOT in
- * `@comis/channels` — that placement is the milestone's hard constraint (the
- * reviewer's original blocking finding). The channel strategy BODIES depend on
+ * `@comis/channels` — that placement is a hard architectural constraint. The
+ * channel strategy BODIES depend on
  * core (`channels → core` is allowed), never the reverse.
  *
  * This guard makes the placement permanent: any future file in `packages/core/`
  * OR `packages/observability/` that imports `@comis/channels` fails CI. The
- * §17.8 global ship-gate line reads literally "No file in `packages/core/` or
+ * global ship-gate rule reads literally "No file in `packages/core/` or
  * `packages/observability/` imports from `packages/channels/`." — this is the
- * mechanical enforcement of that line.
+ * mechanical enforcement of that rule.
  *
  * Mirrors the OBSERVABILITY_SRC pattern above: a source-level AST walk via
  * `findForbiddenImports` PLUS package.json + tsconfig grep assertions, so a
@@ -175,7 +175,7 @@ describe("core + observability isolation — neither imports @comis/channels (re
       expect(
         violations,
         formatViolations({
-          description: `${label}/src must not import @comis/channels — the activity renderer port (ChannelActivityRenderer) + selectStrategy live in @comis/core; channels depend on core, never the reverse (§16.5/§16.11).`,
+          description: `${label}/src must not import @comis/channels — the activity renderer port (ChannelActivityRenderer) + selectStrategy live in @comis/core; channels depend on core, never the reverse.`,
           violations: violations.map((v) => ({
             file: v.file,
             line: v.line,
@@ -183,9 +183,9 @@ describe("core + observability isolation — neither imports @comis/channels (re
             snippet: v.snippet,
           })),
           suggestedFix:
-            "Move the port/type into core/activity (it already lives there) and import it from @comis/core. A channel-side renderer/strategy duplicate collapses the hexagonal boundary the milestone is built to preserve — strike it.",
+            "Move the port/type into core/activity (it already lives there) and import it from @comis/core. A channel-side renderer/strategy duplicate collapses the hexagonal boundary this project preserves — strike it.",
           designRef:
-            "AGENT-TRANSPARENCY-SPEC §16.5/§16.11 + §17.8 ship gate: no file in core/ or observability/ imports from channels/",
+            "ship gate: no file in core/ or observability/ imports from channels/",
         }),
       ).toEqual([]);
       expect(

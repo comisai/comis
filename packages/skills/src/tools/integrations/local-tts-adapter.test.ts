@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the in-process keyless local/Piper TTS adapter (TTS-02).
+ * Unit tests for the in-process keyless local/Piper TTS adapter.
  *
  * The near-verbatim TTS twin of `local-stt-adapter.test.ts`: the engine
  * (`@huggingface/transformers` `text-to-audio`) and the ffmpeg waveform ENCODE

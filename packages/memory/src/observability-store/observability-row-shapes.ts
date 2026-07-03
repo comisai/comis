@@ -48,13 +48,13 @@ export interface TokenUsageDbRow {
   cost_cache_write: number;
   cache_saved: number;
   latency_ms: number;
-  // PERSIST-02 columns (nullable — pre-migration rows / omitted inserts are NULL).
+  // Cost-correctness columns (nullable — pre-migration rows / omitted inserts are NULL).
   warmup_turn: number | null;
   cache_eligible: number | null;
   cost_correction: number | null;
   pending_cache_investment_usd: number | null;
   pricing_state: string | null;
-  // COST-01: the JSON-stringified distinct-tool array (nullable — NULL on
+  // The JSON-stringified distinct-tool array (nullable — NULL on
   // pre-tool_tag rows / no-tool turns).
   tool_tag: string | null;
 }
@@ -145,7 +145,7 @@ export function tokenUsageFromRow(row: TokenUsageDbRow): TokenUsageRow {
     costCacheWrite: row.cost_cache_write,
     cacheSaved: row.cache_saved,
     latencyMs: row.latency_ms,
-    // PERSIST-02: INTEGER 0/1 ↔ boolean for the two flags (NULL → undefined);
+    // INTEGER 0/1 ↔ boolean for the two flags (NULL → undefined);
     // REAL/TEXT passthroughs (NULL → undefined) for the rest.
     warmupTurn: row.warmup_turn === null ? undefined : row.warmup_turn === 1,
     cacheEligible: row.cache_eligible === null ? undefined : row.cache_eligible === 1,
@@ -154,7 +154,7 @@ export function tokenUsageFromRow(row: TokenUsageDbRow): TokenUsageRow {
       row.pending_cache_investment_usd === null ? undefined : row.pending_cache_investment_usd,
     pricingState:
       row.pricing_state === null ? undefined : (row.pricing_state as "priced" | "free" | "unknown"),
-    // COST-01: parse the JSON distinct-tool array back (NULL/malformed → undefined,
+    // Parse the JSON distinct-tool array back (NULL/malformed → undefined,
     // never a throw — observability reads degrade, never crash the read path).
     toolTag: parseToolTag(row.tool_tag),
   };

@@ -39,8 +39,9 @@ export interface IcCronSchedulePreviewInput {
   atDateTime: string;
 }
 
-/** Debounce delay for preview recompute (ms). Matches the
- *  pre-extraction value from ic-cron-editor.ts line 524. */
+/** Debounce delay for preview recompute (ms). Kept in sync with the
+ *  cron editor so the next-runs preview does not recompute on every
+ *  keystroke. */
 export const PREVIEW_DEBOUNCE_MS = 500;
 
 /** Number of runs the preview surfaces. */

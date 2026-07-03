@@ -10,7 +10,7 @@ import {
 import type { FakeClock } from "../../../../test/support/fake-clock.js";
 
 // ---------------------------------------------------------------------------
-// RATE-01: per-root + per-socket calls/sec bounded by a sliding window, with a
+// Per-root + per-socket calls/sec bounded by a sliding window, with a
 // connection-churn cap and the maxEntries + TTL-evict leak guards from the
 // injection-rate-limiter pattern. Clock + timers are INJECTED — no Date.now.
 // ---------------------------------------------------------------------------

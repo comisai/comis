@@ -280,12 +280,12 @@ export function sanitizeSessionSecrets(sessionPath: string): number {
     // ancestor-symlink defense lives at that boundary; this writer
     // remains a leaf consumer.
     //
-    // Substrate Result.err is intentionally discarded: the pre-migration
-    // contract was best-effort — the bare write call's throw was swallowed
-    // by the outer try/finally in `comis-session-manager.withWriteLock`,
-    // matching the existing semantics. The next reader still observes
-    // the unredacted on-disk state if the rewrite fails, but the inner
-    // `finally` semantics around the JSONL write lock are preserved.
+    // Substrate Result.err is intentionally discarded: the contract is
+    // best-effort — sanitization runs inside the session manager's
+    // try/finally while the write lock is held, and must never throw out
+    // of that finally. The next reader still observes the unredacted
+    // on-disk state if the rewrite fails, but the `finally` semantics
+    // around the JSONL write lock are preserved.
     writeRegularFile({ path: sessionPath, content: lines.join("\n") });
   }
 

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `outcome_events` ledger DDL — the v2.26 Verified Learning (WS1) durable
- * record of a finished trajectory's net task-outcome (OUTCOME-01). Every row is
+ * The `outcome_events` ledger DDL — the durable record of a finished
+ * trajectory's net task-outcome. Every row is
  * one raw observation from one signal source (tool / pipeline / correction /
  * judge / reaction / explicit); `resolve()` fuses all rows for a trajectory into
  * one verdict (precedence-first then confidence).
  *
  * Forward-only, re-run-safe: `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT
- * EXISTS` only — no destructive or reverse DDL, no branch on an old shape (design
- * §9, additive). Extracted from `schema.ts` (which is at the 800-line cap), like
+ * EXISTS` only — no destructive or reverse DDL, no branch on an old shape
+ * (additive). Extracted from `schema.ts` (which is at the 800-line cap), like
  * `schema-video-jobs.ts` — `initSchema` CALLS this so the table exists on every
  * boot.
  *
@@ -16,14 +16,14 @@
  * `(tenant_id, agent_id, trajectory_id, source, observed_at)` computed in the
  * store before insert, AND the table carries a `UNIQUE (…)` backstop on that
  * tuple — a replayed observation is a no-op at BOTH layers (the store inserts
- * `ON CONFLICT … DO NOTHING`; OUTCOME-01 / T-198-09).
+ * `ON CONFLICT … DO NOTHING`).
  *
- * SECURITY (SEC-01 / T-198-05): `(tenant_id, agent_id)` are bare `NOT NULL`
+ * SECURITY: `(tenant_id, agent_id)` are bare `NOT NULL`
  * columns and lead every key/index — the store filters EVERY statement on them,
  * so a row under one (tenant, agent) is never visible to a read under another in
- * the multi-agent DB. No trust column exists (T-198-10): `confidence` /
+ * the multi-agent DB. No trust column exists: `confidence` /
  * `sender_trust` are descriptive, never authorization. No message bodies are
- * stored — ids + closed enums + confidence only (content-free, §V12).
+ * stored — ids + closed enums + confidence only (content-free).
  *
  * `better-sqlite3` durability is WAL + path-based chmod (never fd-based file
  * sync), so this DDL is permission-model-safe by construction — no fd-fs guard is

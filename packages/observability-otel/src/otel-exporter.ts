@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The OTLP + Prometheus exporter registration (OTEL-01/02 / PROM-01).
+ * The OTLP + Prometheus exporter registration.
  *
  * `registerOtelExporter` builds the OTel SDK surface from ONE metric definition
- * (the Plan 01 catalog, via `wireMetricMapping`) and TWO readers on a SINGLE
- * `MeterProvider` (decision #3 / Pitfall 2 — the OTLP `PeriodicExportingMetricReader`
+ * (the catalog, via `wireMetricMapping`) and TWO readers on a SINGLE
+ * `MeterProvider` (the OTLP `PeriodicExportingMetricReader`
  * AND the `PrometheusExporter`, each gated on its OWN enable flag so `/metrics`
  * serves STANDALONE with `otel.enabled:false`). It also wires a `NodeTracerProvider`
  * (OTLP traces, gated on `otel.enabled && otel.traces`) and a `LoggerProvider`
  * (OTLP logs, gated on `otel.enabled && otel.logs`).
  *
  * The `PrometheusExporter` opens its OWN loopback HTTP listener (host/port from
- * config — NOT the gateway; Pitfall 5). Transport: only the `-proto`
- * (HTTP/protobuf) exporters ship this phase; `protocol:'grpc'` falls back to
- * `-proto` with a WARN+hint (honest degradation — T-178-09). Exemplars are NOT
- * rendered on the pull surface (`PROMETHEUS_EXEMPLARS_SUPPORTED===false`); the
- * `traceId` rides as the `comis.trace_id` span attribute instead (Pitfall 4/6).
+ * config — NOT the gateway). Transport: only the `-proto` (HTTP/protobuf)
+ * exporters are used; `protocol:'grpc'` falls back to `-proto` with a WARN+hint
+ * (honest degradation). Exemplars are NOT rendered on the pull surface
+ * (`PROMETHEUS_EXEMPLARS_SUPPORTED===false`); the `traceId` rides as the
+ * `comis.trace_id` span attribute instead.
  *
  * Returns `{ shutdown }` so the daemon shutdown chain flushes + closes every
  * provider (the OTLP batches drain; the /metrics listener stops).
@@ -38,7 +38,7 @@ import { wireMetricMapping } from "./metric-mapping.js";
 import type { SpendSnapshotReader } from "./spend-snapshot.js";
 import { wireSeriesCardinality } from "./prometheus-surface.js";
 
-/** The dependency contract the daemon's config-gated load seam passes in (Plan 03 wires it). */
+/** The dependency contract the daemon's config-gated load seam passes in. */
 export interface OtelExporterDeps {
   /** The typed event bus the extension subscribes for live metric increments. */
   readonly eventBus: TypedEventBus;
@@ -46,7 +46,7 @@ export interface OtelExporterDeps {
   readonly clock: ClockPort;
   /** The resolved observability config (the `otel` / `prometheus` keys gate everything). */
   readonly observability: AppConfig["observability"];
-  /** The 177 spend accumulator's read accessor — the `comis_spend_*` gauge source. */
+  /** The spend accumulator's read accessor — the `comis_spend_*` gauge source. */
   readonly spendAccumulator?: SpendSnapshotReader;
   /** The daemon version label for `comis_build_info` (from `pkgJson.version`). */
   readonly version?: string;
@@ -64,8 +64,8 @@ export interface OtelExporterHandle {
  * never hang the daemon's shutdown chain: the OTLP HTTP exporter's flush retries
  * for ~10s+ against a dead endpoint, which would stall every daemon stop. We race
  * each disposal against this cap and move on — the telemetry on the wire is
- * best-effort, daemon liveness is not. (T-178-06's sibling: enabled-but-unavailable
- * must degrade, never block.)
+ * best-effort, daemon liveness is not. (enabled-but-unavailable must degrade,
+ * never block.)
  */
 const SHUTDOWN_STEP_TIMEOUT_MS = 2_000;
 
@@ -90,7 +90,7 @@ export function registerOtelExporter(deps: OtelExporterDeps): OtelExporterHandle
   const otel = observability.otel;
   const prometheus = observability.prometheus;
 
-  // Honest degradation (T-178-09): only the -proto transport ships; grpc warns + falls back.
+  // Honest degradation: only the -proto transport is used; grpc warns + falls back.
   if (otel.enabled && otel.protocol === "grpc") {
     logger?.warn(
       {
@@ -104,7 +104,7 @@ export function registerOtelExporter(deps: OtelExporterDeps): OtelExporterHandle
   const resource = resourceFromAttributes({ [ATTR_SERVICE_NAME]: "comis" });
   const shutdownFns: Array<() => Promise<void>> = [];
 
-  // ── Metrics: ONE MeterProvider, readers:[otlp?, prometheus?] (Pitfall 2) ──
+  // ── Metrics: ONE MeterProvider, readers:[otlp?, prometheus?] ──
   const readers: MetricReader[] = [];
   let prometheusExporter: PrometheusExporter | undefined;
 
@@ -145,8 +145,8 @@ export function registerOtelExporter(deps: OtelExporterDeps): OtelExporterHandle
       },
     });
 
-    // PROM-01: the comis_prometheus_series self-cardinality gauge + the
-    // cardinalityCap WARN-with-hint (the label-explosion guard, T-178-07).
+    // The comis_prometheus_series self-cardinality gauge + the
+    // cardinalityCap WARN-with-hint (the label-explosion guard).
     wireSeriesCardinality({
       meter,
       eventBus,

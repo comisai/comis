@@ -96,12 +96,12 @@ function collectDependencyNames(): Set<string> {
     }
   }
 
-  // Merge lockfile names for transitive coverage (SC4)
+  // Merge lockfile names for transitive coverage
   for (const name of collectLockfileNames()) names.add(name);
   return names;
 }
 
-/** Package names from pnpm-lock.yaml (transitive coverage). SC4. */
+/** Package names from pnpm-lock.yaml (transitive coverage). */
 function collectLockfileNames(): Set<string> {
   const names = new Set<string>();
   const lockPath = resolve(REPO_ROOT, "pnpm-lock.yaml");
@@ -144,14 +144,13 @@ export function claimsDocNamesAbsentIsolationLibrary(
 }
 
 /**
- * AUDIT-06 (Phase 176): returns true if `audit.mdx` claims the audit is durably
+ * Returns true if `audit.mdx` claims the audit is durably
  * PERSISTED (survives restart) WITHOUT naming the backing durable sink(s) the
  * codebase actually writes — `obs_audit_events` (the SQLite table) and/or
- * `security-audit.jsonl` (the 0600 rotated JSONL). The historical over-claim
+ * `security-audit.jsonl` (the 0600 rotated JSONL). A historical over-claim
  * named ONLY `~/.comis/logs/daemon.log` as the durable store while there were
- * ZERO `.audit()` callers — the doc was flatly wrong (the gap Plan 03 closed +
- * Plan 05 documents). RED when the doc still over-claims; GREEN once the doc
- * names a real sink AND that sink exists.
+ * ZERO `.audit()` callers — the doc was flatly wrong. RED when the doc still
+ * over-claims; GREEN once the doc names a real sink AND that sink exists.
  *
  * The persistence claim is detected by the doc asserting durability ("persist"
  * across restarts) OR naming the daemon-log file as the store of record; the
@@ -173,7 +172,7 @@ export function auditDocClaimsDurabilityWithoutSink(auditDocText: string): boole
 
 const SECURITY_MD = sanitizeDocText(readDoc("SECURITY.md"));
 const README_MD   = sanitizeDocText(readDoc("README.md"));
-// AUDIT-06 (Phase 176): the audit doc is scanned for the durability-claim↔sink
+// The audit doc is scanned for the durability-claim↔sink
 // invariant. Scanned WITH code fences stripped so the `grep '...'` examples (which
 // legitimately reference daemon.log) do not satisfy the sink check — the PROSE
 // claim must name the real sink. THREAT_MODEL.md stays EXCLUDED by design (below).
@@ -208,18 +207,18 @@ describe("security documentation claims match the codebase", () => {
     }
   });
 
-  it("THREAT_MODEL.md exists at repo root so SC1 is machine-enforced", () => {
+  it("THREAT_MODEL.md exists at the repo root and is machine-enforced", () => {
     expect(
       existsSync(resolve(REPO_ROOT, "THREAT_MODEL.md")),
       "THREAT_MODEL.md not found — run the threat model publishing task first.",
     ).toBe(true);
   });
 
-  // AUDIT-06 (Phase 176): audit.mdx's durable-persistence claim must name the
+  // audit.mdx's durable-persistence claim must name the
   // real backing sink (obs_audit_events / security-audit.jsonl), not over-claim a
   // daemon.log-only store that historically had zero .audit() callers. RED on the
-  // pre-correction doc; GREEN once the doc names a real sink (Plan 05) AND that
-  // sink exists (Plan 03). THREAT_MODEL.md is deliberately NOT in the scanned set.
+  // pre-correction doc; GREEN once the doc names a real sink AND that
+  // sink exists. THREAT_MODEL.md is deliberately NOT in the scanned set.
   it("audit.mdx does not claim durable persistence without naming a backing sink", () => {
     expect(
       auditDocClaimsDurabilityWithoutSink(AUDIT_MDX),
@@ -227,7 +226,7 @@ describe("security documentation claims match the codebase", () => {
     ).toBe(false);
   });
 
-  // AUDIT-06: THREAT_MODEL.md stays EXCLUDED from the scanned set by design — it
+  // THREAT_MODEL.md stays EXCLUDED from the scanned set by design — it
   // legitimately names non-mechanisms/corrections. This pins that exclusion so a
   // future change cannot silently start scanning it (the inverse-regression guard).
   it("THREAT_MODEL.md is NOT in the audit claim↔sink scanned set (excluded by design)", () => {

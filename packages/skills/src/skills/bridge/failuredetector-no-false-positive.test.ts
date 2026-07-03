@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Shrink-only arch invariant: no registered failureDetector may flag a
- * status:200 + no-error result (the codified c53ab0f invariant, D2).
+ * status:200 + no-error result (the codified c53ab0f invariant).
  *
  * c53ab0f fixed two web tools (web_search / web_fetch) whose body-substring
  * detectors mis-flagged a HTTP-200 success — e.g. a share price
@@ -9,13 +9,13 @@
  * This test generalizes that fix to ALL registered detectors (present AND
  * future) at static/CI time: it iterates every `getAllToolMetadata()` entry
  * with a `failureDetector`, probes it with a `{status:200, text:…}` /
- * no-error result, and asserts NONE flags it. Paired with Plan 04's runtime
+ * no-error result, and asserts NONE flags it. Paired with the runtime
  * guard (defense in depth: this static gate + a live net at the chokepoint).
  *
  * Shrink-only: the violation set may only DECREASE (it is empty today and the
  * assertion is `toEqual([])`). A `>1 detector` sanity guard prevents a vacuous
- * pass if `registerAllToolMetadata()` failed to populate the singleton Map
- * (RESEARCH Pitfall 6). Co-located in `@comis/skills` for a DIRECT source
+ * pass if `registerAllToolMetadata()` failed to populate the singleton Map.
+ * Co-located in `@comis/skills` for a DIRECT source
  * import of `registerAllToolMetadata` — no `pnpm build` / dist-alias step.
  *
  * @module
@@ -46,7 +46,7 @@ function isFlagged(detected: boolean | object | undefined): boolean {
   return detected !== false && detected !== undefined;
 }
 
-describe("failureDetector no-false-positive invariant (D2)", () => {
+describe("failureDetector no-false-positive invariant", () => {
   it("never flags a status:200 + no-error result for any registered detector (the codified c53ab0f invariant)", () => {
     const violations: string[] = [];
     for (const [name, meta] of getAllToolMetadata()) {

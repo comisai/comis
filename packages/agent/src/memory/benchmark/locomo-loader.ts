@@ -51,7 +51,7 @@ export interface LocomoParsed {
   docs: LocomoDoc[];
   /**
    * Kept qa items (category-5 excluded). `questionId` is the
-   * cross-plan gold-map key (`${sample_id}:${qaIdx}`, original pre-filter index);
+   * gold-map key the harness joins on (`${sample_id}:${qaIdx}`, original pre-filter index);
    * `query` (NOT `question`) carries the question text under the SAME field name
    * as LongMemEvalParsed.questions[].query so the harness reads `q.query`
    * uniformly across both datasets.

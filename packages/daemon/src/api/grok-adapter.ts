@@ -1,46 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: integration/REST boundary wrapper; throws caught by fromPromise at the port boundary.
 /**
- * xAI Grok Imagine video adapter (GROK-01 / GROK-02).
+ * xAI Grok Imagine video adapter.
  *
  * A `VideoGenerationPort` over the xAI REST video API. Unlike the FAL adapter
  * (an SDK queue) and the Veo adapter (an SDK LRO), xAI ships NO JS SDK for video
  * — this adapter is RAW `fetch` against `api.x.ai/v1/videos`:
  *   - submit:  `POST /v1/videos/generations { model, prompt, ... }` → the REST
- *              `request_id` is the durable, secret-free jobId (VPORT-03) —
+ *              `request_id` is the durable, secret-free jobId —
  *              DIFFERS from Veo's `operation.name`.
  *   - poll:    `GET /v1/videos/{request_id}` → a `status` STRING union
  *              `pending | done | failed | expired`. The `failed`+`expired`
  *              terminals DIFFER from FAL (no failed status) and Veo (an
  *              `operation.error` object) — both map to the normalized `"failed"`.
- *   - fetch:   `status:"done"` → `video.url` fetched → a Buffer (DEL-01:
- *              download BEFORE return so the expiring CDN URL can never orphan
- *              the job); `usage.cost_in_usd_ticks / 1e10` → the ACTUAL cost.
+ *   - fetch:   `status:"done"` → `video.url` fetched → a Buffer (download BEFORE
+ *              return so the expiring CDN URL can never orphan the job);
+ *              `usage.cost_in_usd_ticks / 1e10` → the ACTUAL cost.
  *
  * WIRE-ENCODING DIFFERENCES (vs FAL/Veo): `duration` is an INTEGER seconds value
  * (NOT the FAL `${n}s` string, NOT Veo's `durationSeconds`); resolution is
  * `480p`/`720p` ONLY (the corrected live-doc drift — NOT 1080p; validated
- * upstream by the Phase 191 VIDEO_MODELS matrix, passed through here). The model
+ * upstream by the VIDEO_MODELS matrix, passed through here). The model
  * default is `grok-imagine-video` — the ONLY documented GA id; gate any
  * `-preview` behind config.
  *
- * COST (GROK-02): `reconcileTicksToUsd` converts `cost_in_usd_ticks` to USD
+ * COST: `reconcileTicksToUsd` converts `cost_in_usd_ticks` to USD
  * (1 USD = 1e10 ticks, CITED docs.x.ai) and GUARDS against a non-number / NaN /
  * non-finite / NEGATIVE value — a spoofed-negative `cost_in_usd_ticks` must NOT
  * produce a negative `costUsd` that under-reports spend and bypasses the SHIPPED
- * cost ceiling (T-190-09). An invalid/absent value → `undefined`, so the handler
+ * cost ceiling. An invalid/absent value → `undefined`, so the handler
  * falls back to the pre-submit estimate.
  *
- * AUTH (A1 — key-primary, OAuth defensive): the `XAI_API_KEY` Bearer is the
+ * AUTH (key-primary, OAuth defensive): the `XAI_API_KEY` Bearer is the
  * WIRED/proven PRIMARY path. A SuperGrok OAuth branch is built DEFENSIVELY in the
- * codex-image-adapter per-call-bearer shape so CRED-01's key-or-OAuth contract
- * holds structurally — BUT there is NO xai/SuperGrok OAuth provider registered in
- * the codebase today (`oauthManager.getSupportedProviders()` returns only
- * `openai-codex`), so the OAuth branch is forward-looking: it activates when/if
- * pi-ai adds an xAI OAuth provider. Key-auth is the documented common case; GROK
- * is NOT blocked on OAuth. The static `XAI_API_KEY` is BOOT-BOUND (captured at
- * construction, rotation needs a daemon restart); only the defensive OAuth branch
- * is per-call-fresh (WR-03 — see `resolveBearer`).
+ * codex-image-adapter per-call-bearer shape so the key-or-OAuth availability
+ * contract holds structurally — BUT there is NO xai/SuperGrok OAuth provider
+ * registered in the codebase today (`oauthManager.getSupportedProviders()` returns
+ * only `openai-codex`), so the OAuth branch is forward-looking: it activates
+ * when/if pi-ai adds an xAI OAuth provider. Key-auth is the documented common
+ * case; Grok is NOT blocked on OAuth. The static `XAI_API_KEY` is BOOT-BOUND
+ * (captured at construction, rotation needs a daemon restart); only the defensive
+ * OAuth branch is per-call-fresh (see `resolveBearer`).
  *
  * PLACEMENT: this adapter lives in `@comis/daemon/src/api/` (NOT `@comis/skills`,
  * where `fal-adapter.ts` lives). The OAuth path needs the daemon-side
@@ -52,7 +52,7 @@
  *
  * SECURITY: the bearer (key OR OAuth token) flows ONLY into the `Authorization`
  * header — NEVER to a logger. The `request_id` jobId is opaque + secret-free
- * (safe to log — VPORT-03). If `opts.logger` is used, only `{ model, jobId, step }`
+ * (safe to log). If `opts.logger` is used, only `{ model, jobId, step }`
  * shapes are logged.
  *
  * @module
@@ -76,17 +76,17 @@ const XAI_VIDEO_BASE = "https://api.x.ai/v1";
 
 /**
  * Default Grok video model — the ONLY documented GA id (re-verified 2026-06-15;
- * `grok-imagine-video-1.5-preview` from the design §15 sketch is NOT in live
- * docs). LOCK: a `-preview` id is config-only, never the default.
+ * `grok-imagine-video-1.5-preview` is NOT in live docs). LOCK: a `-preview` id
+ * is config-only, never the default.
  */
 const DEFAULT_GROK_MODEL = "grok-imagine-video";
 
 /**
- * The ASSUMED SuperGrok OAuth provider id (A1 — UNVERIFIED/forward-looking). No
+ * The ASSUMED SuperGrok OAuth provider id (UNVERIFIED/forward-looking). No
  * xai OAuth provider is registered in the codebase today; this id is used only by
  * the defensive OAuth branch and activates when/if pi-ai adds one.
  *
- * IN-02 (Phase 190): EXPORTED as the single source of truth — the boot selector
+ * EXPORTED as the single source of truth — the boot selector
  * (setup-video-provider.ts) gates `oauthManager.hasCredentials(...)` on this SAME
  * constant rather than a bare `"xai"` literal, so the selector's credsAvailable
  * gate can never drift from what the adapter actually resolves if a future xai
@@ -95,20 +95,20 @@ const DEFAULT_GROK_MODEL = "grok-imagine-video";
 export const XAI_OAUTH_PROVIDER_ID = "xai";
 
 /**
- * WR-01: hard fallback timeout for the result download when the caller threads no
- * AbortSignal (a standalone `fetchResult` from Phase 189's poller). Bounds a hung
- * CDN on the download leg. Copied from fal-adapter.ts.
+ * Hard fallback timeout for the result download when the caller threads no
+ * AbortSignal (a standalone `fetchResult` from the off-turn poller). Bounds a
+ * hung CDN on the download leg. Copied from fal-adapter.ts.
  */
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 /**
- * WR-01: default streamed byte ceiling for the result download (a Content-Length
+ * Default streamed byte ceiling for the result download (a Content-Length
  * pre-check + a streamed running total → OOM guard). 200 MB matches
  * VIDEO_PERSIST_MAX_BYTES. Copied from fal-adapter.ts.
  */
 const DEFAULT_DOWNLOAD_MAX_BYTES = 200 * 1024 * 1024;
 
-/** Options bounding the result download (WR-01). Copied from fal-adapter.ts. */
+/** Options bounding the result download. Copied from fal-adapter.ts. */
 export interface VideoFetchResultOpts {
   signal?: AbortSignal;
   maxBytes?: number;
@@ -129,8 +129,8 @@ interface GrokVideoStatus {
  * @param opts.apiKey       - The `XAI_API_KEY` Bearer (the PRIMARY, wired path;
  *   flows ONLY into the `Authorization` header, never logged). Exactly one of
  *   `apiKey`/`oauthManager` is the auth source; the key wins when present.
- * @param opts.oauthManager - The DEFENSIVE SuperGrok OAuth manager (A1 —
- *   forward-looking; no xai OAuth provider registered today). Its `getApiKey`
+ * @param opts.oauthManager - The DEFENSIVE SuperGrok OAuth manager
+ *   (forward-looking; no xai OAuth provider registered today). Its `getApiKey`
  *   refreshes inside on expiry; `hasCredentials` backs `isAvailable`.
  * @param opts.oauthProfiles - The agent's `Record<provider, profileId>` map,
  *   passed to `getApiKey` for per-agent profile preference.
@@ -152,14 +152,14 @@ export function createGrokVideoAdapter(opts: {
 
   /**
    * Resolve the Bearer on each submit/poll/fetchResult call. The two auth sources
-   * differ in freshness (WR-03 — the comment matches the behavior):
+   * differ in freshness (the comment matches the behavior):
    *   - STATIC KEY (the proven primary): `opts.apiKey` is captured by this closure
    *     at construction and returned verbatim — it is BOOT-BOUND, NOT re-read from
    *     the secret store per call, so a key rotation requires a daemon restart to
    *     take effect (parity with the Veo adapter's GoogleGenAI instance + the
    *     "key rotation requires a daemon restart" boot-built contract). A future
    *     per-call re-selection is the deferred multi-agent per-agent re-read.
-   *   - DEFENSIVE OAUTH (A1, forward-looking): `getApiKey` IS per-call-fresh —
+   *   - DEFENSIVE OAUTH (forward-looking): `getApiKey` IS per-call-fresh —
    *     it refreshes on expiry inside the manager (the codex per-call-bearer idiom).
    * The bearer flows ONLY into the `Authorization` header, never to a logger.
    */
@@ -210,7 +210,7 @@ export function createGrokVideoAdapter(opts: {
   };
 
   /**
-   * WR-04: build the `VideoGenOutput` from an ALREADY-FETCHED terminal status body
+   * Build the `VideoGenOutput` from an ALREADY-FETCHED terminal status body
    * — the single source of the download decision. `fetchResult` GETs the status
    * once then calls this; `execute()` passes the terminal body its poll loop
    * ALREADY read, so it makes ONE status GET instead of two (the old code re-GET
@@ -228,14 +228,14 @@ export function createGrokVideoAdapter(opts: {
     if (!url) {
       throw mapEmpty(); // -> empty_response (done-but-no-video.url)
     }
-    // DEL-01: download the expiring CDN URL to a Buffer BEFORE returning. The
+    // Download the expiring CDN URL to a Buffer BEFORE returning. The
     // download leg uses the SAME injected `doFetch` as submit/poll, so the
     // adapter is deterministically testable without mutating globals.
     const { buffer, contentType } = await downloadVideoBytes(url, doFetch, fetchOpts);
-    // GROK-02: reconcile the ACTUAL cost from cost_in_usd_ticks, GUARDED against a
+    // Reconcile the ACTUAL cost from cost_in_usd_ticks, GUARDED against a
     // spoofed negative/NaN (never a cost-ceiling bypass).
     const costUsd = reconcileTicksToUsd(body.usage?.cost_in_usd_ticks);
-    // WR-03: the output model reflects what actually rendered — `job.model` (set
+    // The output model reflects what actually rendered — `job.model` (set
     // at submit from `input.model ?? construction model`; round-tripped through
     // the persisted row to the off-turn poller) when present, else the default.
     const outModel = job.model || model;
@@ -252,15 +252,15 @@ export function createGrokVideoAdapter(opts: {
 
   return {
     id: "grok",
-    // CRED-01: availability is a present key OR the (forward-looking) OAuth
-    // manager reporting credentials for the xai provider (A1 — no-op today).
+    // Availability is a present key OR the (forward-looking) OAuth
+    // manager reporting credentials for the xai provider (a no-op today).
     isAvailable: () =>
       opts.apiKey !== undefined || (opts.oauthManager?.hasCredentials(XAI_OAUTH_PROVIDER_ID) ?? false),
 
     submit(input: VideoGenInput): Promise<Result<VideoGenJob, Error>> {
       return fromPromise(
         (async () => {
-          // WR-03: the PER-REQUEST `input.model` (what the IN-02 handler validated
+          // The PER-REQUEST `input.model` (what the model-validation handler checked
           // against, `params.model ?? config.model`) wins over the construction
           // default so validation and execution AGREE. poll()/fetchResult() key on
           // the request_id URL (not the model), so the effective model only matters
@@ -280,9 +280,9 @@ export function createGrokVideoAdapter(opts: {
             throw new Error("xai: submit returned no request_id");
           }
           const job: VideoGenJob = {
-            jobId: request_id, // opaque, secret-free, stable across poll() (VPORT-03)
+            jobId: request_id, // opaque, secret-free, stable across poll()
             provider: "grok",
-            model: effectiveModel, // WR-03: the model that actually rendered
+            model: effectiveModel, // the model that actually rendered
           };
           opts.logger?.debug(
             { model: effectiveModel, jobId: job.jobId, step: "video.submit" },
@@ -301,7 +301,7 @@ export function createGrokVideoAdapter(opts: {
           // failures (both → "failed"); anything not done/failed/expired is pending.
           const state: VideoJobStatus["state"] =
             body.status === "done" ? "done" : body.status === "failed" || body.status === "expired" ? "failed" : "pending";
-          // WR-01: on a terminal failed/expired, thread the SAME classified
+          // On a terminal failed/expired, thread the SAME classified
           // kind+hint the execute() path emits onto the snapshot (reusing the
           // existing classifier — `body.status` is the failed|expired discriminant
           // here) so the off-turn poller persists the specific kind + actionable
@@ -319,7 +319,7 @@ export function createGrokVideoAdapter(opts: {
     fetchResult(job: VideoGenJob, fetchOpts?: VideoFetchResultOpts): Promise<Result<VideoGenOutput, Error>> {
       return fromPromise(
         (async () => {
-          // Standalone path (the Phase-189 off-turn poller calls poll() then
+          // Standalone path (the off-turn poller calls poll() then
           // fetchResult() with NO terminal snapshot): GET the status ONCE here,
           // then build the output from it.
           const body = await getStatus(job.jobId);
@@ -338,7 +338,7 @@ export function createGrokVideoAdapter(opts: {
 
       const deadline = createPollDeadline(runOpts.timeoutMs);
       let lastErr: Error | undefined;
-      // WR-04: capture the TERMINAL status body the poll loop reads so fetchResult
+      // Capture the TERMINAL status body the poll loop reads so fetchResult
       // does not re-GET it. The poll callback GETs the status DIRECTLY (once per
       // iteration) and derives the state, instead of calling this.poll() (which
       // would discard the body) + a separate re-GET of the status on the failed
@@ -385,7 +385,7 @@ export function createGrokVideoAdapter(opts: {
         return mapThrownToErr(lastErr ?? new Error("grok: job failed"));
       }
 
-      // WR-04: build from the terminal status the loop already read — no second
+      // Build from the terminal status the loop already read — no second
       // status GET. `doneBody` is set whenever the loop reached `done`.
       const fetched = await fromPromise(
         buildGrokOutput(job, doneBody ?? (await getStatus(job.jobId)), runOpts.signal ? { signal: runOpts.signal } : undefined),
@@ -393,7 +393,7 @@ export function createGrokVideoAdapter(opts: {
       if (!fetched.ok) {
         return mapThrownToErr(fetched.error);
       }
-      // WR-05: when the provider reports no duration, fall back to the duration WE
+      // When the provider reports no duration, fall back to the duration WE
       // requested so the handler's reconcile + delivery metadata is not empty.
       if (fetched.value.durationSecs === undefined && input.durationSecs !== undefined) {
         return ok({ ...fetched.value, durationSecs: input.durationSecs });
@@ -404,7 +404,7 @@ export function createGrokVideoAdapter(opts: {
 }
 
 /**
- * THE COST GUARD (GROK-02 / T-190-09 / SEC). Convert `cost_in_usd_ticks` to USD
+ * THE COST GUARD (security-critical). Convert `cost_in_usd_ticks` to USD
  * (1 USD = 1e10 ticks — CITED docs.x.ai). Returns `undefined` for any
  * non-number / NaN / non-finite / NEGATIVE value: a spoofed-negative
  * `cost_in_usd_ticks` must NEVER produce a negative `costUsd` that under-reports
@@ -417,18 +417,18 @@ function reconcileTicksToUsd(ticks: unknown): number | undefined {
 }
 
 /**
- * Map a normalized `VideoGenInput` to the xAI request body (GROK-01). `duration`
+ * Map a normalized `VideoGenInput` to the xAI request body. `duration`
  * is an INTEGER seconds value (NOT the FAL `${n}s` string, NOT Veo's
  * `durationSeconds`); resolution is validated to `480p`/`720p` upstream (the
- * Phase 191 VIDEO_MODELS matrix — passed through here). Omitted input fields are
+ * VIDEO_MODELS matrix — passed through here). Omitted input fields are
  * ABSENT (the `...(x !== undefined ? {k:x} : {})` idiom — no `undefined` keys).
  *
- * IN-01 (Phase 191): when a first-frame `referenceImage` is present (i2v), add
+ * When a first-frame `referenceImage` is present (i2v), add
  * `image` to the body — xAI accepts `{ url | file_id }`; we use the data-URI
  * `{ url }` form. SAME `grok-imagine-video` model id for t2v AND i2v (no endpoint
  * swap, unlike FAL). Only the SINGULAR referenceImage is consumed; the additive
- * `referenceImages` array (Grok `reference_images[]`) is a LOCKED fast-follow
- * deferral — not mapped here this phase.
+ * `referenceImages` array (Grok `reference_images[]`) is a deliberate
+ * deferral — not mapped here yet.
  */
 function buildGrokBody(input: VideoGenInput, model: string): Record<string, unknown> {
   return {
@@ -444,18 +444,18 @@ function buildGrokBody(input: VideoGenInput, model: string): Record<string, unkn
 }
 
 /**
- * WR-07 (trust boundary): `url` is the xAI `video.url` — a PROVIDER-OWNED CDN
+ * Trust boundary: `url` is the xAI `video.url` — a PROVIDER-OWNED CDN
  * URL, NOT the agent-supplied i2v `image_url`. The input path is SSRF-guarded
  * elsewhere; this OUTPUT download trusts the xAI CDN by design and so does NOT
  * re-run the SSRF resolver — but it still hardens with `redirect:"error"` (never
- * silently follow a CDN open-redirect to an internal IP), a bounded signal
- * (CR-01/WR-01), and a streamed byte cap. COPIED from fal-adapter.ts (the FAL
- * file's comment directs Phase 190 to follow this shape), with one change: the
+ * silently follow a CDN open-redirect to an internal IP), a bounded signal,
+ * and a streamed byte cap. COPIED from fal-adapter.ts (whose comment directs
+ * new adapters to follow this shape), with one change: the
  * `doFetch` is passed in (the adapter's injected `fetchImpl`) rather than the
  * global `fetch`, so the download leg is deterministically testable.
  *
- * @returns the downloaded bytes plus the CDN `content-type` (for WR-06 MIME).
- * @throws on a non-2xx status (CR-01), an empty body, an over-cap body (WR-01),
+ * @returns the downloaded bytes plus the CDN `content-type` (for MIME derivation).
+ * @throws on a non-2xx status, an empty body, an over-cap body,
  *   or an aborted signal — all caught by `fromPromise` at the call site and
  *   classified by `classifyGrokVideoError` into a typed `VideoGenError`.
  */
@@ -465,18 +465,18 @@ async function downloadVideoBytes(
   opts?: VideoFetchResultOpts,
 ): Promise<{ buffer: Buffer; contentType: string | null }> {
   const maxBytes = opts?.maxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES;
-  // WR-01: honor the caller's deadline signal; else a hard fallback timeout.
+  // Honor the caller's deadline signal; else a hard fallback timeout.
   const signal = opts?.signal ?? AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
   const response = await doFetch(url, { redirect: "error", signal });
 
-  // CR-01: reject a non-2xx status BEFORE reading the body (an expired/4xx xAI
+  // Reject a non-2xx status BEFORE reading the body (an expired/4xx xAI
   // CDN URL returns a 403 error page; without this guard it flows out as a
-  // "successful" mp4 — the orphan-on-expiry class DEL-01 closes).
+  // "successful" mp4 — the orphan-on-expiry class download-before-return closes).
   if (!response.ok) {
     throw new Error(`xai: failed to download video.url: HTTP ${response.status}`);
   }
 
-  // WR-01: Content-Length pre-check — abort before buffering if the server
+  // Content-Length pre-check — abort before buffering if the server
   // DECLARES a body over the cap (an OOM guard).
   const declared = parseInt(response.headers.get("content-length") ?? "", 10);
   if (Number.isFinite(declared) && declared > maxBytes) {
@@ -484,7 +484,7 @@ async function downloadVideoBytes(
     throw new Error(`xai: video.url body exceeds the ${maxBytes}-byte cap (declared ${declared})`);
   }
 
-  // WR-01: stream with a running byte cap when a body reader is available; fall
+  // Stream with a running byte cap when a body reader is available; fall
   // back to arrayBuffer otherwise.
   const reader = response.body?.getReader?.();
   let buffer: Buffer;
@@ -519,7 +519,7 @@ async function downloadVideoBytes(
   return { buffer, contentType: response.headers.get("content-type") };
 }
 
-/** Known video MIME types for the URL-extension fallback (WR-06). Copied from fal-adapter.ts. */
+/** Known video MIME types for the URL-extension fallback. Copied from fal-adapter.ts. */
 const VIDEO_EXT_MIME: Record<string, string> = {
   mp4: "video/mp4",
   webm: "video/webm",
@@ -527,7 +527,7 @@ const VIDEO_EXT_MIME: Record<string, string> = {
 };
 
 /**
- * WR-06: derive the output MIME from the CDN `content-type` header when it is a
+ * Derive the output MIME from the CDN `content-type` header when it is a
  * `video/*` type, else from the URL path extension, else fall back to mp4. The
  * `url` passed here is the (un-credentialed) `video.url`. Copied from fal-adapter.ts.
  */

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * RED->GREEN unit suite for {@link buildSuiteReport} -- the GENERIC per-tier
- * benchmark-report builder every Tier-3 / external / BEAM harness writes via
+ * benchmark-report builder every Comis-unique / external / BEAM harness writes via
  * writeRegularFile, and its LOAD-BEARING security property: it structurally
  * omits all secrets.
  *
  * WHY A SIBLING OF qa-report.ts: `BenchmarkReport.benchmark`
- * is a CLOSED union (`"longmemeval" | "locomo" | "combined"`). The Tier-3 / BEAM /
+ * is a CLOSED union (`"longmemeval" | "locomo" | "combined"`). The Comis-unique / BEAM /
  * external tiers (`poisoning`, `redaction`, `trust-contradiction`, `recall-learning`,
  * `beam`, `longmemeval-v2`, `memoryagentbench`, …) need OPEN tier names, so widening
  * the shipped J1 manifest union would risk its frozen secret-omission tests. This is

@@ -82,15 +82,15 @@ describe("skipCacheWrite derivation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CR-01 — main-path maxTokens resolution wiring
+// Main-path maxTokens resolution wiring
 //
 // Reproduces the exact ConfigResolver maxTokens expression from
 // executor-stream-setup.ts:
 //   maxTokens: config.maxTokens ?? (modelProfile
 //     ? resolveMainPathMaxOutputTokens(modelProfile) : undefined)
 //
-// The regression: this previously used resolveMaxOutputTokens (verdict
-// reserve = 512 for non-reasoning), clamping every visible answer at 512.
+// The pitfall: using resolveMaxOutputTokens instead (verdict
+// reserve = 512 for non-reasoning) would clamp every visible answer at 512.
 // ---------------------------------------------------------------------------
 
 function makeProfile(overrides: Partial<ModelProfile> = {}): ModelProfile {
@@ -120,7 +120,7 @@ function resolveConfigMaxTokens(
     : undefined);
 }
 
-describe("CR-01 main-path maxTokens wiring — non-reasoning answer is never clamped to 512", () => {
+describe("main-path maxTokens wiring — non-reasoning answer is never clamped to 512", () => {
   it("non-reasoning profile, no operator maxTokens → resolves to the full profile budget (NOT 512)", () => {
     const profile = makeProfile({ reasoningStyle: "none", maxOutputTokens: 4096 });
     const resolved = resolveConfigMaxTokens(undefined, profile);
@@ -150,12 +150,12 @@ describe("CR-01 main-path maxTokens wiring — non-reasoning answer is never cla
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// tool:result_offloaded emit (B2b)
+// tool:result_offloaded emit
 // ---------------------------------------------------------------------------
 
 describe("buildOffloadCallback -- emits tool:result_offloaded and preserves cache-break detection", () => {
   // The microcompaction guard hands offload payloads to this callback (it holds
-  // no eventBus/clock itself, T-151-07). The callback emits tool:result_offloaded
+  // no eventBus/clock itself). The callback emits tool:result_offloaded
   // with deps.clock (NOT Date.now()) and MUST keep the existing
   // cacheBreakDetector.notifyContentModification side-effect.
   it("emits tool:result_offloaded carrying {toolName,toolCallId,originalChars,diskPathRel} + clock timestamp", () => {
@@ -174,7 +174,7 @@ describe("buildOffloadCallback -- emits tool:result_offloaded and preserves cach
       toolName: "bash",
       toolCallId: "call-xyz",
       originalChars: 12_345,
-      // workspace-relative pointer ONLY — never the absolute host path (T-151-05)
+      // workspace-relative pointer ONLY — never the absolute host path
       diskPathRel: "tool-results/call-xyz.json",
       timestamp: 1_700_000_000_000,
     });
@@ -212,7 +212,7 @@ describe("diagnostics_cache_trace_returned -- params.cacheTrace surfaces the cac
 });
 
 // ---------------------------------------------------------------------------
-// CR-02: outputHeadroomRef wiring — native/high must yield 8960 (not 768)
+// outputHeadroomRef wiring — native/high must yield 8960 (not 768)
 //
 // The bug: outputHeadroomRef is created at MIN_VISIBLE_OUTPUT_TOKENS (768) and
 // never updated, so config-resolver always clamps with headroom=768 regardless
@@ -224,7 +224,7 @@ describe("diagnostics_cache_trace_returned -- params.cacheTrace surfaces the cac
 // getOutputHeadroom() closure.
 // ---------------------------------------------------------------------------
 
-describe("CR-02: outputHeadroomRef wiring — native/high model uses 8960 floor (not 768)", () => {
+describe("outputHeadroomRef wiring — native/high model uses 8960 floor (not 768)", () => {
   it("computeOutputHeadroom('native','high') === 8960 (the pinned value config-resolver must use)", () => {
     // This is the EXACT value the pre-flight computed; the ref must carry it.
     expect(computeOutputHeadroom("native", "high")).toBe(8_960);
@@ -256,7 +256,7 @@ describe("CR-02: outputHeadroomRef wiring — native/high model uses 8960 floor 
     // Reproduce the full config-resolver lazy-evaluation path:
     // getOutputHeadroom() closure over a mutable ref, updated before dispatch.
     const outputHeadroomRef = { current: MIN_VISIBLE_OUTPUT_TOKENS }; // initial stale
-    // Simulate pre-flight firing and updating the ref (the CR-02 fix wires this)
+    // Simulate pre-flight firing and updating the ref (the wired callback does this)
     outputHeadroomRef.current = computeOutputHeadroom("native", "high"); // = 8960
 
     const { createConfigResolver } = await import("./stream-wrappers/config-resolver.js");

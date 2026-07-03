@@ -140,13 +140,13 @@ describe("SpawnPacketBuilder", () => {
     expect(packet.agentWorkspaces).toEqual({ "default": "/ws/default", "analyst": "/ws/analyst" });
   });
 
-  it("build() passes through a non-en language (GEN-03)", () => {
+  it("build() passes through a non-en inherited conversation language", () => {
     const builder = createSpawnPacketBuilder(createDefaultDeps());
     const packet = builder.build({ task: "Summarize", language: "he" });
     expect(packet.language).toBe("he");
   });
 
-  it("build() omits the language field when language is undefined (byte-identical packet, I1)", () => {
+  it("build() omits the language field when language is undefined (byte-identical packet)", () => {
     const builder = createSpawnPacketBuilder(createDefaultDeps());
     const packet = builder.build({ task: "Summarize" });
     expect(packet.language).toBeUndefined();

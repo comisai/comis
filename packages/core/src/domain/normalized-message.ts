@@ -89,8 +89,8 @@ export function parseMessage(raw: unknown): Result<NormalizedMessage, z.ZodError
  *
  * Returns the `metadata.traceId` string when it is present and is a string;
  * returns `undefined` otherwise. The defensive `typeof v === "string"` check
- * guards against messages that were not parsed through the new schema (e.g.
- * messages constructed before the schema change shipped, or from external sources).
+ * guards against messages that never passed through the schema validator
+ * (e.g. persisted messages or ones constructed from external sources).
  *
  * Usage (orchestrator wrap site):
  * ```typescript

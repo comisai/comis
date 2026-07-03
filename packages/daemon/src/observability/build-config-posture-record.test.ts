@@ -4,7 +4,7 @@ import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { buildConfigPostureRecord, countPricingGaps, isLoopbackHost } from "./build-config-posture-record.js";
 
-describe("isLoopbackHost (OBS-7 — TLS-off is benign on a loopback bind)", () => {
+describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
   it("treats 127.0.0.1 / ::1 / localhost / 127.x as loopback (TLS-off suppressed)", () => {
     for (const h of ["127.0.0.1", "::1", "localhost", "127.0.1.1", "LOCALHOST", " 127.0.0.1 "]) {
       expect(isLoopbackHost(h)).toBe(true);
@@ -18,7 +18,7 @@ describe("isLoopbackHost (OBS-7 — TLS-off is benign on a loopback bind)", () =
 });
 
 // ---------------------------------------------------------------------------
-// buildConfigPostureRecord (I3 — boot-time config_posture snapshot row)
+// buildConfigPostureRecord (boot-time config_posture snapshot row)
 //
 // A one-shot direct insertDiagnostic at boot capturing the three log-file-only
 // posture FINDINGS (TLS-off / stranded-secret COUNTS / canary-fallback) as a
@@ -66,18 +66,18 @@ describe("buildConfigPostureRecord", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     // EXACTLY the five closed keys — counts + booleans + closed labels only.
-    // WR-01: the canary field is an HONEST boolean (0|N presence proxy keyed on
+    // The canary field is an HONEST boolean (0|N presence proxy keyed on
     // CANARY_SECRET in env-or-store), NOT a misleading per-agent tally.
-    // KNOB-03: servedBelowConfiguredCount is a COUNT, never provider names.
+    // servedBelowConfiguredCount is a COUNT, never provider names.
     expect(details).toEqual({
       tlsOff: true,
       allowInsecureHttp: false,
       stranded: [{ stranded: "encrypted:secrets", entryCount: 2 }],
       canaryFallbackActive: true,
       servedBelowConfiguredCount: 0,
-      chimericModelCount: 0, // RESOLVE-01: always present (0 default), count-only
-      pricingGapCount: 0, // SPEND-05: always present (0 default), count-only
-      sandboxNoDowngradeDisabled: false, // RELAX-SURFACE: always present (false default)
+      chimericModelCount: 0, // always present (0 default), count-only
+      pricingGapCount: 0, // always present (0 default), count-only
+      sandboxNoDowngradeDisabled: false, // always present (false default)
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -115,7 +115,7 @@ describe("buildConfigPostureRecord", () => {
     });
   });
 
-  it("RESOLVE-01: flips severity to warning and carries the count when a chimeric provider/model is configured", () => {
+  it("flips severity to warning and carries the count when a chimeric provider/model is configured", () => {
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(1);
     buildConfigPostureRecord(
@@ -205,7 +205,7 @@ describe("buildConfigPostureRecord", () => {
     const clock = createFakeClock(3000);
 
     // The ?.-chained call must silently no-op — a disabled-persistence boot
-    // cannot crash shutdown (Pitfall 5).
+    // cannot crash shutdown.
     expect(() =>
       buildConfigPostureRecord(
         undefined,
@@ -239,14 +239,14 @@ describe("buildConfigPostureRecord", () => {
   });
 
   // -------------------------------------------------------------------------
-  // KNOB-03 (Phase 176): servedBelowConfiguredCount — providers whose
+  // servedBelowConfiguredCount — providers whose
   // Ollama-served window < configured at the latest boot. A COUNT, never
   // provider names (the record's counts/booleans-only contract). The count
-  // alone must flip severity to "warning" (Pitfall 10: forget the hasIssue OR
-  // and severity stays "info" while the fleet finding fires).
+  // alone must flip severity to "warning" (if the hasIssue OR forgets this
+  // count, severity stays "info" while the fleet finding fires).
   // -------------------------------------------------------------------------
 
-  it("KNOB-03-1: flips severity to warning when ONLY servedBelowConfiguredCount is non-zero, and carries the count in details", () => {
+  it("flips severity to warning when ONLY servedBelowConfiguredCount is non-zero, and carries the count in details", () => {
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(7000);
 
@@ -268,7 +268,7 @@ describe("buildConfigPostureRecord", () => {
     expect(details["servedBelowConfiguredCount"]).toBe(1);
   });
 
-  it("KNOB-03-2: keeps severity info when servedBelowConfiguredCount is 0 and all else is healthy, and details carries the 0", () => {
+  it("keeps severity info when servedBelowConfiguredCount is 0 and all else is healthy, and details carries the 0", () => {
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(8000);
 
@@ -291,13 +291,13 @@ describe("buildConfigPostureRecord", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SPEND-05 (Phase 177): pricingGapCount — configured agents burning tokens on
+  // pricingGapCount — configured agents burning tokens on
   // remote-unknown-priced models (resolvePricingState == "unknown"). A COUNT,
   // never agent ids / model names (the no-free-text contract). The count alone
   // must flip severity to "warning" (the served-below/chimeric hasIssue precedent).
   // -------------------------------------------------------------------------
 
-  it("SPEND-05-1: flips severity to warning when ONLY pricingGapCount is non-zero, and carries the count in details", () => {
+  it("flips severity to warning when ONLY pricingGapCount is non-zero, and carries the count in details", () => {
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(9000);
 
@@ -320,7 +320,7 @@ describe("buildConfigPostureRecord", () => {
     expect(details["pricingGapCount"]).toBe(2);
   });
 
-  it("SPEND-05-2: keeps severity info when pricingGapCount is 0 and all else is healthy, and details carries the 0", () => {
+  it("keeps severity info when pricingGapCount is 0 and all else is healthy, and details carries the 0", () => {
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(10_000);
 
@@ -345,18 +345,16 @@ describe("buildConfigPostureRecord", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEND-05 (Phase 177): countPricingGaps — the boot producer counting configured
+// countPricingGaps — the boot producer counting configured
 // agents whose provider+model resolves to the "unknown" pricing state (a NATIVE
-// provider with no catalog entry — the ffe11736 fail-open). A "free" local/gateway
+// provider with no catalog entry — the fail-open). A "free" local/gateway
 // agent (honest $0) is NOT counted; a "priced" agent is NOT counted. Co-located
 // with countChimericModels (keeps daemon.ts under its 3000-line cap). Uses the
 // shipped 3-state `resolvePricingState`, never a catalog-presence boolean.
-//
-// RED: countPricingGaps does not exist yet.
 // ---------------------------------------------------------------------------
 
 describe("countPricingGaps — boot count of remote-unknown-priced agents (resolvePricingState == 'unknown')", () => {
-  it("counts a NATIVE provider + an off-catalog model (the unknown / ffe11736 case)", () => {
+  it("counts a NATIVE provider + an off-catalog model (the unknown-pricing case)", () => {
     // anthropic is a native single-family provider; a non-claude model id has no
     // catalog rate → resolvePricingState returns "unknown".
     const agents = {

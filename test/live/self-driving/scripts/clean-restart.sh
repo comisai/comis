@@ -7,10 +7,10 @@ DATA="${DATA:-/home/comis/.comis}"
 CHATID="${CHATID:-678314278}"
 # WIPE_CRONS=1 → also clear the persisted cron store (default OFF). The scheduler persists jobs to
 # <workspace>/.scheduler/cron-jobs.json which survives a memory.db wipe, so STALE crons registered by a
-# PRIOR (different-dist) daemon linger into a "from-scratch" run — e.g. a v2.31 daemon (3 learning crons:
-# Reflection/Memory lifecycle/Memory review) inherits 10 crons incl. the DELETED Skill synthesis /
+# PRIOR (different-dist) daemon linger into a "from-scratch" run — e.g. a daemon with 3 learning crons
+# (Reflection/Memory lifecycle/Memory review) inherits 10 crons incl. the DELETED Skill synthesis /
 # Online tuning / consolidation / reasoning / user-representation / usefulness-judge / triple-extraction
-# sentinels, whose stale fires hit an unknown-sentinel path on the new code (hindsight-reflection-20260626).
+# sentinels, whose stale fires hit an unknown-sentinel path on the new code.
 # The daemon re-registers its CURRENT cron set from config on boot, so wiping is safe. Learning / from-
 # scratch-acceptance runs (EXAMPLE-verified-learning target) MUST set WIPE_CRONS=1 for a true clean slate.
 WIPE_CRONS="${WIPE_CRONS:-0}"
@@ -21,8 +21,8 @@ pkill -9 -f "^node .*daemon\.js" 2>/dev/null || true; sleep 2
 # the daemon), so they SURVIVE the daemon kill. Worse, the durable-drive store cleared below would otherwise
 # RESURRECT them on the next boot — recover-on-boot replays the persisted journal and RE-LAUNCHES + re-runs
 # the drive (not a clean re-attach), so a prior run's backgrounded "build X" drive comes back into a
-# from-scratch run, burning model tokens (webhook-claude-cli-tdd-20260630-rerun: DURABLE-DRIVE-RESURRECT-ON-
-# RESTART — the sockets are PID-named `tmux-<pid>.sock`, so the new daemon can't re-attach the old pane).
+# from-scratch run, burning model tokens (the sockets are PID-named `tmux-<pid>.sock`, so the new
+# daemon can't re-attach the old pane).
 for s in "$DATA"/terminal-worker/*.sock; do [ -e "$s" ] && { sudo -u comis tmux -S "$s" kill-server 2>/dev/null || true; }; done
 pkill -9 -f "share/claude/versions|share/codex|bwrap.*permission-mode" 2>/dev/null || true
 rm -f "$DATA"/terminal-worker/*.sock 2>/dev/null || true
@@ -30,7 +30,7 @@ sleep 1
 # IMPORTANT: the session dir is default/<chatId>/ — NOT default/telegram/. Replacing memory.db clears the
 # LCD (prior-conversation replay); a bare jsonl rm is not enough (runbook §5).
 sudo -u comis bash -c "
-  # KIT-2 (dispatch-learning-20260627): wipe ALL default/* session dirs, NOT just default/<CHATID>.
+  # Wipe ALL default/* session dirs, NOT just default/<CHATID>.
   # A chatId-only wipe leaves STALE per-chat / cron@ / sub-agent dirs from prior (possibly different-config)
   # runs — they pollute (a) fleet activeChannels, (b) cross-run model greps (a prior CODEX run's cron@ dirs
   # showed gpt-5.x modelIds while THIS run's config was anthropic — a phantom 'chimera'), and (c) re-prime a
@@ -41,33 +41,32 @@ sudo -u comis bash -c "
   rm -f '$DATA'/memory.db '$DATA'/memory.db-wal '$DATA'/memory.db-shm
   # NOT just *.log — fleet's activeChannels/activeAgents enumerate session-index.<date>.jsonl
   # (the whole-day file, not time-windowed), and cache-trace.jsonl pollutes the cache lens, so a
-  # bare '*.log' leaves a 'clean' rig surfacing prior runs (F-OBS-1, 30uc-20260624 Phase 0).
+  # bare '*.log' leaves a 'clean' rig surfacing prior runs.
   rm -f '$DATA'/logs/*.log '$DATA'/logs/session-index.*.jsonl* '$DATA'/logs/cache-trace.jsonl
   rm -rf '$DATA'/graph-runs/* '$DATA'/subagent-results/*
   # Clear the DURABLE TERMINAL DRIVE + WAKE-STATE stores. A backgrounded coding-CLI drive persists its
   # descriptor/journal in <DATA>/terminal-drive/ AND its wake-dispatch FSM state in <DATA>/terminal-wake/
-  # {sessionId}.json (OPS-09). On boot, recoverWakeStates RE-HYDRATES the wake-state + re-fires the wake →
+  # {sessionId}.json. On boot, recoverWakeStates RE-HYDRATES the wake-state + re-fires the wake →
   # re-runs the drive's agent turn → spawns a FRESH coding CLI, so a prior run's drive RESURRECTS into a
   # from-scratch run and (worse) RESPAWNS in a loop. Both live OUTSIDE workspace/sessions, so the
   # session + memory.db wipe above does NOT catch them. terminal-wake is the LOAD-BEARING one (the
-  # re-fire trigger); clearing only terminal-drive leaves the wake-state to resurrect. (DURABLE-DRIVE-
-  # RESURRECT-ON-RESTART — webhook-claude-cli-tdd-20260630-rerun.)
+  # re-fire trigger); clearing only terminal-drive leaves the wake-state to resurrect.
   rm -rf '$DATA'/terminal-drive/* '$DATA'/terminal-wake/*
   # Optional (WIPE_CRONS=1): clear the persisted cron store so a from-scratch run inherits NO stale crons
   # from a prior (different-dist) daemon. The daemon re-registers its current cron set from config on boot.
   # ALSO wipe execution.jsonl -- the ExecutionTracker per-job run HISTORY persists there (NOT in memory.db),
-  # so without this a from-scratch daemon inherits a prior session cron.runs history. This bit the
-  # reflect-obs run 2026-06-27: a stale reflect outcome=admitted record from a previous daemon showed
-  # up in cron.runs jobName Reflection on a freshly-wiped memory.db (mental_models=0), masking E-5
-  # (cron.runs empty on a fresh daemon) and muddying a from-scratch OBS-2/6b reflection-run proof.
+  # so without this a from-scratch daemon inherits a prior session cron.runs history: a stale reflect
+  # outcome=admitted record from a previous daemon can show up in cron.runs jobName Reflection on a
+  # freshly-wiped memory.db (mental_models=0), masking the cron.runs-empty-on-a-fresh-daemon check
+  # and muddying a from-scratch reflection-run proof.
   # NOTE: this comment lives INSIDE the sudo -u comis bash -c double-quoted string, so it must carry NO
   # backticks / inner double-quotes / dollar-signs -- the OUTER shell command-substitutes/word-toggles them
-  # BEFORE bash -c ever sees the leading hash (the reflect/cron.runs command-not-found noise of
-  # threat-hunting-20260627, which a backtick in THIS very comment re-triggered -- keep it plain text).
+  # BEFORE bash -c ever sees the leading hash (the reflect/cron.runs command-not-found noise that
+  # a backtick in THIS very comment once re-triggered -- keep it plain text).
   if [ '$WIPE_CRONS' = '1' ]; then rm -f '$DATA'/workspace*/.scheduler/cron-jobs.json '$DATA'/workspace*/.scheduler/cron-jobs.json.bak '$DATA'/workspace*/.scheduler/cron-jobs.json.lock '$DATA'/workspace*/.scheduler/execution.jsonl; fi
   # The SUPERVISOR's stdout capture lives at \$HOME/comis-m1.log (NOT under \$DATA/logs), so the rm above
   # never touched it → it accumulated 14k+ lines across boots and the boot-grep below showed cumulative
-  # 'N Comis daemon started', masking the current boot (the pm2 stale-log trap; M2 run 2026-06-24). Truncate
+  # 'N Comis daemon started', masking the current boot (the pm2 stale-log trap). Truncate
   # it here so each clean-restart's log belongs to THIS boot only (the daemon is dead at this point — line 9
   # SIGKILL'd it (137≠42 → supervisor loop exits), so the file is safe to truncate).
   : > /home/comis/comis-m1.log

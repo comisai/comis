@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `mental_models` table DDL — the v2.31 Mental Model doc store (generalized
- * from the v2.26 Verified Learning WS2 / SKILL-01 `learned_skills` procedural
- * store). Each row is one advisory doc of `kind ∈ {skill, profile, topic}`
+ * The `mental_models` table DDL — the mental-model doc store (generalized
+ * from the `learned_skills` procedural store). Each row is one advisory doc of
+ * `kind ∈ {skill, profile, topic}`
  * (markdown `body`) distilled from successful trajectories; candidates are
  * admitted here at `trust=learned`, `state=candidate`, and a proof count drives
  * promote/demote/evict. A `kind='skill'` row materializes byte-identically to the
@@ -10,7 +10,7 @@
  *
  * Forward-only, re-run-safe: `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT
  * EXISTS` + `CREATE … VIRTUAL TABLE IF NOT EXISTS` only — no reverse DDL, no
- * branch on an old shape (design §9, additive) — PLUS a one-time copy-forward
+ * branch on an old shape (additive) — PLUS a one-time copy-forward
  * REBUILD from a pre-existing `learned_skills` table (below). Extracted from
  * `schema.ts` (which is at the 800-line cap), like `schema-outcome-events.ts` /
  * `schema-video-jobs.ts` — `initSchema` CALLS this so the table exists on every
@@ -25,9 +25,9 @@
  * `params_schema` / `mutating` advisory-metadata columns are KEPT (the surface
  * filter reads `mutating`). The dead `trigger` column is dropped too (zero
  * readers). The new `structured_body` / `history` JSON columns are provisioned
- * NULL this phase (Phase 223 populates `structured_body` via typed delta-ops).
+ * NULL for now (`structured_body` is populated later via typed delta-ops).
  *
- * ## SEC-01 trust ceiling (T-201-05) — the keystone
+ * ## Trust ceiling — the keystone
  *
  * `trust_level TEXT NOT NULL CHECK (trust_level IN ('learned')) DEFAULT 'learned'`
  * makes a learned doc STRUCTURALLY incapable of being `system`: the DB REJECTS
@@ -35,7 +35,7 @@
  * `'learned'` in code (belt-and-suspenders) — a candidate claiming `trust:'system'`
  * is rejected by the DB AND never even reaches the column.
  *
- * ## SEC-01 isolation (T-201-06) — the multi-tenant boundary
+ * ## Tenant/agent isolation — the multi-tenant boundary
  *
  * `(tenant_id, agent_id)` are bare `NOT NULL` columns and lead every key/index;
  * the store filters EVERY statement on them, so a doc under one (tenant, agent)
@@ -70,7 +70,7 @@ import type Database from "better-sqlite3";
  * Safe to call multiple times (all DDL uses IF NOT EXISTS; the copy-forward only
  * fires while a `learned_skills` table still exists). Called from `initSchema`
  * right after `ensureOutcomeEventsTable` so the table exists on every daemon
- * boot. The `CHECK` constraints pin the `trust_level` (the SEC-01 keystone),
+ * boot. The `CHECK` constraints pin the `trust_level` (the trust keystone),
  * `kind`, and `state` closed enums; the `UNIQUE (…)` is the lookup key +
  * idempotency backstop; the index serves the scoped `list()` read.
  *
@@ -199,7 +199,7 @@ export function ensureMentalModelsTable(
   // column so the `'rebuild'` command (which re-reads the external content table)
   // can find it — naming it `content` here threw "no such column: content" on
   // every boot, silently leaving the index reliant on incremental triggers and
-  // never re-derivable after an unclean shutdown (WR-04).
+  // never re-derivable after an unclean shutdown.
   try {
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS mental_models_fts USING fts5(

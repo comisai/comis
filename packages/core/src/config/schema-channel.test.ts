@@ -128,7 +128,7 @@ describe("ChannelEntrySchema — SecretRef union", () => {
     }
   });
 
-  it("still accepts a plain string for botToken (backward compat)", () => {
+  it("accepts a plain string for botToken (string and SecretRef forms are both valid)", () => {
     const result = ChannelEntrySchema.safeParse({
       enabled: true,
       botToken: "plaintext-token",

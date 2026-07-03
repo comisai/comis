@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit test for the REAL `terminal_session_status` tool (124-06) — the lone P0
- * `not_implemented` stub promoted to a classifier-backed, owner-scoped factory.
+ * Unit test for the REAL `terminal_session_status` tool — the lone `not_implemented`
+ * stub promoted to a classifier-backed, owner-scoped factory.
  *
- * RED on pre-patch: the stub takes NO deps and `execute()` throws `[not_implemented]`
- * (Phase 124). GREEN: `createTerminalSessionStatusTool(deps).execute(id, {sessionId})`
- * returns a jsonResult of the spec §5 status view (state from the classifier, via
+ * RED on pre-patch: the stub takes NO deps and `execute()` throws `[not_implemented]`.
+ * GREEN: `createTerminalSessionStatusTool(deps).execute(id, {sessionId})`
+ * returns a jsonResult of the status view (state from the classifier, via
  * `registry.status`) for an owned session, and degrades to the not-found minimal view
  * for a non-owned session (owner-scoping is inherited from `registry.status`).
  *
  * Also asserts (architecture) that `terminal_session_status` stays
- * `mcpExportPolicy:"never-export"` — the SEC-08 default-deny that keeps a driven
- * session off any remote MCP surface (T-124-16).
+ * `mcpExportPolicy:"never-export"` — the default-deny that keeps a driven
+ * session off any remote MCP surface.
  *
  * Pure-JS / macOS-green.
  *
@@ -60,15 +60,15 @@ const OWNED_VIEW: TerminalStatusView = {
   interactions: 2,
   cursorParked: true,
   screenDiffEmpty: true,
-  // 163-03 (CLASS-02): the classifier confidence + reason ride the view; a dialog
-  // verdict is {medium, dialog_detected}. Once TerminalStatusView widened (163-03
-  // Task 1) this fixture is a tsc error without them — the type-level RED.
+  // The classifier confidence + reason ride the view; a dialog verdict is
+  // {medium, dialog_detected}. TerminalStatusView carries them, so a fixture without
+  // them is a tsc error — the type-level RED.
   confidence: "medium",
   reason: "dialog_detected",
 };
 
-describe("terminal_session_status — the real classifier-backed tool (124-06)", () => {
-  it("execute returns a jsonResult of the spec §5 status (classifier state) for an owned session — NOT a not_implemented throw", async () => {
+describe("terminal_session_status — the real classifier-backed tool", () => {
+  it("execute returns a jsonResult of the status (classifier state) for an owned session — NOT a not_implemented throw", async () => {
     const { deps, statusCalls } = makeStatusDeps(async () => OWNED_VIEW);
     const tool = createTerminalSessionStatusTool(deps);
 
@@ -80,7 +80,7 @@ describe("terminal_session_status — the real classifier-backed tool (124-06)",
     expect(view.state).toBe("awaiting-input");
     expect(view.cursorParked).toBe(true);
     expect(view.interactions).toBe(2);
-    // 163-03 (CLASS-02): the serialized view surfaces the classifier confidence +
+    // The serialized view surfaces the classifier confidence +
     // reason — the WHY/HOW-SURE the autonomous policy + `comis explain` read; the
     // richer view flows through the tool's jsonResult verbatim (no tool edit).
     expect(view.confidence).toBe("medium");
@@ -97,7 +97,7 @@ describe("terminal_session_status — the real classifier-backed tool (124-06)",
       cursorParked: false,
       screenDiffEmpty: true,
       // The not-found degrade carries the safe total default (high/exited) — never a
-      // real classifier verdict (T-124-15 / T-163-08).
+      // real classifier verdict.
       confidence: "high",
       reason: "exited",
     };
@@ -114,7 +114,7 @@ describe("terminal_session_status — the real classifier-backed tool (124-06)",
     expect(view.reason).toBe("exited");
   });
 
-  it("stays mcpExportPolicy 'never-export' — never exposed to a remote MCP client (T-124-16, SEC-08)", () => {
+  it("stays mcpExportPolicy 'never-export' — never exposed to a remote MCP client", () => {
     const meta = getToolMetadata("terminal_session_status");
     expect(meta).toBeDefined();
     expect(meta!.mcpExportPolicy).toBe("never-export");

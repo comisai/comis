@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: integration/SDK boundary wrapper; throws caught by fromPromise at the port boundary.
 /**
- * Google Veo video adapter (VEO-01 / VEO-02).
+ * Google Veo video adapter.
  *
  * A `VideoGenerationPort` over `@google/genai@1.52.0`. Unlike the FAL adapter
  * (a queue API), Veo is an SDK LONG-RUNNING OPERATION (LRO):
  *   - submit:  `ai.models.generateVideos({ model, prompt, config })` → an
  *              operation whose `.name` is the durable, secret-free jobId
- *              (VPORT-03) — DIFFERS from FAL's queue `request_id`.
+ *              — DIFFERS from FAL's queue `request_id`.
  *   - poll:    `ai.operations.getVideosOperation({ operation: { name } })` →
  *              `.done` + `.error`; `!done ? pending : (error ? failed : done)`.
  *   - fetch:   `op.response.generatedVideos[0].video` → either inline base64
  *              `videoBytes` (no fetch) or a 2-day-expiry `uri` fetched WITH the
- *              Dev-API `&key=` query param → a Buffer (DEL-01: download BEFORE
+ *              Dev-API `&key=` query param → a Buffer (download BEFORE
  *              return so the expiring URI can never orphan the job).
  *
  * PLACEMENT: this adapter lives in `@comis/daemon/src/api/` (NOT `@comis/skills`,
@@ -22,7 +22,7 @@
  * helpers are COPIED from `fal-adapter.ts` (private there) rather than imported,
  * to avoid a skills→daemon import edge (the FAL file's comment directs this).
  *
- * COST (A4): `GenerateVideosResponse` has NO usage/cost field — Veo's actual
+ * COST: `GenerateVideosResponse` has NO usage/cost field — Veo's actual
  * cost is the pre-submit estimate (rate × duration). The adapter therefore does
  * NOT populate `costUsd`; the handler's `estimateVideoCostUsd` is the actual.
  *
@@ -56,20 +56,20 @@ import { classifyVeoVideoError } from "./classify-veo-video-error.js";
 const DEFAULT_VEO_MODEL = "veo-3.0-fast-generate-001";
 
 /**
- * WR-01: hard fallback timeout for the result download when the caller threads no
- * AbortSignal (a standalone `fetchResult` from Phase 189's poller). Bounds a hung
+ * Hard fallback timeout for the result download when the caller threads no
+ * AbortSignal (a standalone `fetchResult` from the off-turn poller). Bounds a hung
  * CDN on the download leg. Copied from fal-adapter.ts.
  */
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 /**
- * WR-01: default streamed byte ceiling for the result download (a Content-Length
+ * Default streamed byte ceiling for the result download (a Content-Length
  * pre-check + a streamed running total → OOM guard). 200 MB matches
  * VIDEO_PERSIST_MAX_BYTES. Copied from fal-adapter.ts.
  */
 const DEFAULT_DOWNLOAD_MAX_BYTES = 200 * 1024 * 1024;
 
-/** Options bounding the result download (WR-01). Copied from fal-adapter.ts. */
+/** Options bounding the result download. Copied from fal-adapter.ts. */
 export interface VideoFetchResultOpts {
   signal?: AbortSignal;
   maxBytes?: number;
@@ -92,18 +92,18 @@ export function createVeoVideoAdapter(opts: {
   const model = opts.model ?? DEFAULT_VEO_MODEL;
 
   /** Re-poll the operation by name to obtain its current state/response. Both
-   *  poll() and fetchResult() use this (the 189 poller calls them with only the
+   *  poll() and fetchResult() use this (the off-turn poller calls them with only the
    *  persisted { jobId }, so the operation handle is reconstructed from the name —
    *  the SDK reads `.name`). */
   const getOperation = (jobId: string): Promise<GenerateVideosOperation> =>
     ai.operations.getVideosOperation({ operation: { name: jobId } as GenerateVideosOperation });
 
   /**
-   * WR-04: build the `VideoGenOutput` from an ALREADY-FETCHED terminal operation
+   * Build the `VideoGenOutput` from an ALREADY-FETCHED terminal operation
    * — the single source of the download decision. `fetchResult` polls once then
    * calls this; `execute()` passes the terminal operation its poll loop ALREADY
-   * read, so it makes ONE getVideosOperation round-trip instead of two (the old
-   * code re-read the operation inside fetchResult). The download fetch is separate.
+   * read, so it makes ONE getVideosOperation round-trip instead of two.
+   * The download fetch is separate.
    */
   const buildVeoOutput = async (
     job: VideoGenJob,
@@ -123,11 +123,11 @@ export function createVeoVideoAdapter(opts: {
     let buffer: Buffer;
     let mimeType: string;
     if (video.videoBytes) {
-      // Inline base64 — no fetch (Pitfall 2).
+      // Inline base64 — no fetch.
       buffer = Buffer.from(video.videoBytes, "base64");
       mimeType = video.mimeType ?? "video/mp4";
     } else if (video.uri) {
-      // Dev API requires the key as a query param (A5). SEC: this keyed URL is
+      // The Dev API requires the key as a query param. SEC: this keyed URL is
       // NEVER logged. deriveVideoMime reads the UN-keyed video.uri.
       const url = `${video.uri}&key=${opts.apiKey}`;
       const { buffer: dl, contentType } = await downloadVideoBytes(url, fetchOpts);
@@ -138,12 +138,12 @@ export function createVeoVideoAdapter(opts: {
       throw new VideoGenError(c.hint, c);
     }
 
-    // WR-03: the output model reflects what actually rendered — `job.model` (set
+    // The output model reflects what actually rendered — `job.model` (set
     // at submit from `input.model ?? construction model`; round-tripped through
     // the persisted row to the off-turn poller) when present, else the default.
     const outModel = job.model || model;
     opts.logger?.debug({ model: outModel, jobId: job.jobId, step: "video.fetch" }, "veo: downloaded result");
-    // NO costUsd (A4): GenerateVideosResponse has no usage/cost field; the
+    // NO costUsd: GenerateVideosResponse has no usage/cost field; the
     // handler's estimate is the actual. Do NOT invent a cost field.
     return {
       buffer,
@@ -161,7 +161,7 @@ export function createVeoVideoAdapter(opts: {
     submit(input: VideoGenInput): Promise<Result<VideoGenJob, Error>> {
       return fromPromise(
         (async () => {
-          // WR-03: the PER-REQUEST `input.model` (what the IN-02 handler validated
+          // The PER-REQUEST `input.model` (what the handler validated
           // against, `params.model ?? config.model`) wins over the construction
           // default so validation and execution AGREE. poll()/fetchResult() key on
           // the operation NAME (not the model), so the effective model only matters
@@ -170,12 +170,12 @@ export function createVeoVideoAdapter(opts: {
           const op = await ai.models.generateVideos({
             model: effectiveModel,
             prompt: input.prompt,
-            // IN-01 (A4): the first-frame image is a TOP-LEVEL generateVideos arg
+            // The first-frame image is a TOP-LEVEL generateVideos arg
             // (the SDK Image_2 raw-bytes shape { imageBytes, mimeType }), NOT a
             // config field. SAME model id for t2v AND i2v (no endpoint swap,
             // unlike FAL). Only the SINGULAR referenceImage is consumed; the
-            // additive referenceImages array (Veo lastFrame/referenceImages) is a
-            // LOCKED fast-follow deferral — buildVeoConfig is unchanged on that axis.
+            // additive referenceImages array (Veo lastFrame/referenceImages) is
+            // deliberately unsupported — buildVeoConfig is unchanged on that axis.
             ...(input.referenceImage
               ? { image: { imageBytes: input.referenceImage.data, mimeType: input.referenceImage.mimeType } }
               : {}),
@@ -185,9 +185,9 @@ export function createVeoVideoAdapter(opts: {
             throw new Error("veo: generateVideos returned no operation name");
           }
           const job: VideoGenJob = {
-            jobId: op.name, // op.name is the durable, secret-free jobId (VPORT-03)
+            jobId: op.name, // op.name is the durable, secret-free jobId
             provider: "veo",
-            model: effectiveModel, // WR-03: the model that actually rendered
+            model: effectiveModel, // the model that actually rendered
           };
           opts.logger?.debug(
             { model: effectiveModel, jobId: job.jobId, step: "video.submit" },
@@ -203,7 +203,7 @@ export function createVeoVideoAdapter(opts: {
         (async () => {
           const cur = await getOperation(job.jobId);
           const state: VideoJobStatus["state"] = !cur.done ? "pending" : cur.error ? "failed" : "done";
-          // WR-01: on a terminal failure, thread the SAME classified kind+hint the
+          // On a terminal failure, thread the SAME classified kind+hint the
           // execute() path emits onto the snapshot (reusing the existing classifier,
           // not a third one) so the off-turn poller persists the specific kind +
           // actionable hint instead of collapsing to empty_response. The hint is a
@@ -220,7 +220,7 @@ export function createVeoVideoAdapter(opts: {
     fetchResult(job: VideoGenJob, fetchOpts?: VideoFetchResultOpts): Promise<Result<VideoGenOutput, Error>> {
       return fromPromise(
         (async () => {
-          // Standalone path (the Phase-189 off-turn poller calls poll() then
+          // Standalone path (the off-turn poller calls poll() then
           // fetchResult() with NO terminal snapshot): read the operation ONCE here
           // — it is the source of the download uri/bytes — then build the output.
           const cur = await getOperation(job.jobId);
@@ -239,11 +239,11 @@ export function createVeoVideoAdapter(opts: {
 
       const deadline = createPollDeadline(runOpts.timeoutMs);
       let lastErr: Error | undefined;
-      // WR-04: capture the TERMINAL operation the poll loop reads so fetchResult
+      // Capture the TERMINAL operation the poll loop reads so fetchResult
       // does not re-read it. The poll callback reads the operation DIRECTLY (once
       // per iteration) and derives the state, instead of calling this.poll() (which
       // would discard the operation) + a separate re-read of operation.error on the
-      // failed branch — collapsing the old 2–3 reads to one read per iteration.
+      // failed branch — one read per iteration instead of 2–3.
       let doneOp: GenerateVideosOperation | undefined;
       const outcome = await pollUntilDone<VideoJobStatus>({
         poll: async () => {
@@ -280,7 +280,7 @@ export function createVeoVideoAdapter(opts: {
         return mapThrownToErr(lastErr ?? new Error("veo: job failed"));
       }
 
-      // WR-04: build from the terminal operation the loop already read — no second
+      // Build from the terminal operation the loop already read — no second
       // getVideosOperation. `doneOp` is set whenever the loop reached `done`.
       const fetched = await fromPromise(
         buildVeoOutput(job, doneOp ?? (await getOperation(job.jobId)), runOpts.signal ? { signal: runOpts.signal } : undefined),
@@ -288,7 +288,7 @@ export function createVeoVideoAdapter(opts: {
       if (!fetched.ok) {
         return mapThrownToErr(fetched.error);
       }
-      // WR-05: Veo reports no duration (A4) — fall back to the duration WE
+      // Veo reports no duration — fall back to the duration WE
       // requested so the handler's reconcile + delivery metadata is not empty.
       if (fetched.value.durationSecs === undefined && input.durationSecs !== undefined) {
         return ok({ ...fetched.value, durationSecs: input.durationSecs });
@@ -299,15 +299,15 @@ export function createVeoVideoAdapter(opts: {
 }
 
 /**
- * Map a normalized `VideoGenInput` to the Veo `GenerateVideosConfig` (VEO-02).
+ * Map a normalized `VideoGenInput` to the Veo `GenerateVideosConfig`.
  * `durationSeconds` is a NUMBER (NOT the FAL `${n}s` string). Omitted input
  * fields are ABSENT from the config (the `...(x !== undefined ? {k:x} : {})`
  * idiom — no `undefined` keys).
  *
- * IN-01 (Phase 191): the first-frame i2v image is wired as a TOP-LEVEL
- * `generateVideos({image})` arg in `submit` (A4), NOT here — the config holds
- * only `lastFrame`/`referenceImages`, which are the LOCKED multi-ref deferral
- * (no adapter reads `input.referenceImages` this phase), so this config is
+ * The first-frame i2v image is wired as a TOP-LEVEL
+ * `generateVideos({image})` arg in `submit`, NOT here — the config holds
+ * only `lastFrame`/`referenceImages`, which are deliberately unsupported
+ * (no adapter reads `input.referenceImages`), so this config is
  * unchanged on the i2v axis.
  */
 function buildVeoConfig(input: VideoGenInput): GenerateVideosConfig {
@@ -322,16 +322,16 @@ function buildVeoConfig(input: VideoGenInput): GenerateVideosConfig {
 }
 
 /**
- * WR-07 (trust boundary): `url` is the Veo `video.uri` (with the Dev-API key) — a
+ * Trust boundary: `url` is the Veo `video.uri` (with the Dev-API key) — a
  * PROVIDER-OWNED CDN URL, NOT the agent-supplied i2v `image_url`. The input path
  * is SSRF-guarded elsewhere; this OUTPUT download trusts the Google CDN by design
  * and so does NOT re-run the SSRF resolver — but it still hardens with
  * `redirect:"error"` (never silently follow a CDN open-redirect to an internal
- * IP), a bounded signal (CR-01/WR-01), and a streamed byte cap. COPIED from
- * fal-adapter.ts (the FAL file's comment directs Phase 190 to follow this shape).
+ * IP), a bounded signal, and a streamed byte cap. COPIED from
+ * fal-adapter.ts (see the module header for why it is copied, not imported).
  *
- * @returns the downloaded bytes plus the CDN `content-type` (for WR-06 MIME).
- * @throws on a non-2xx status (CR-01), an empty body, an over-cap body (WR-01),
+ * @returns the downloaded bytes plus the CDN `content-type` (for MIME derivation).
+ * @throws on a non-2xx status, an empty body, an over-cap body,
  *   or an aborted signal — all caught by `fromPromise` at the call site and
  *   classified by `classifyVeoVideoError` into a typed `VideoGenError`.
  */
@@ -340,18 +340,18 @@ async function downloadVideoBytes(
   opts?: VideoFetchResultOpts,
 ): Promise<{ buffer: Buffer; contentType: string | null }> {
   const maxBytes = opts?.maxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES;
-  // WR-01: honor the caller's deadline signal; else a hard fallback timeout.
+  // Honor the caller's deadline signal; else a hard fallback timeout.
   const signal = opts?.signal ?? AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
   const response = await fetch(url, { redirect: "error", signal });
 
-  // CR-01: reject a non-2xx status BEFORE reading the body (an expired/4xx Veo
-  // URI returns a 403 error page; without this guard it flows out as a
-  // "successful" mp4 — the orphan-on-expiry class DEL-01 closes).
+  // Reject a non-2xx status BEFORE reading the body: an expired/4xx Veo
+  // URI returns a 403 error page; without this guard it would flow out as a
+  // "successful" mp4, orphaning the job when the URI has expired.
   if (!response.ok) {
     throw new Error(`veo: failed to download video.uri: HTTP ${response.status}`);
   }
 
-  // WR-01: Content-Length pre-check — abort before buffering if the server
+  // Content-Length pre-check — abort before buffering if the server
   // DECLARES a body over the cap (an OOM guard).
   const declared = parseInt(response.headers.get("content-length") ?? "", 10);
   if (Number.isFinite(declared) && declared > maxBytes) {
@@ -359,7 +359,7 @@ async function downloadVideoBytes(
     throw new Error(`veo: video.uri body exceeds the ${maxBytes}-byte cap (declared ${declared})`);
   }
 
-  // WR-01: stream with a running byte cap when a body reader is available; fall
+  // Stream with a running byte cap when a body reader is available; fall
   // back to arrayBuffer otherwise.
   const reader = response.body?.getReader?.();
   let buffer: Buffer;
@@ -394,7 +394,7 @@ async function downloadVideoBytes(
   return { buffer, contentType: response.headers.get("content-type") };
 }
 
-/** Known video MIME types for the URL-extension fallback (WR-06). Copied from fal-adapter.ts. */
+/** Known video MIME types for the URL-extension fallback. Copied from fal-adapter.ts. */
 const VIDEO_EXT_MIME: Record<string, string> = {
   mp4: "video/mp4",
   webm: "video/webm",
@@ -402,9 +402,9 @@ const VIDEO_EXT_MIME: Record<string, string> = {
 };
 
 /**
- * WR-06: derive the output MIME from the CDN `content-type` header when it is a
+ * Derive the output MIME from the CDN `content-type` header when it is a
  * `video/*` type, else from the URL path extension, else fall back to mp4. The
- * `url` passed here is the UN-keyed `video.uri` (SEC — no credential in a
+ * `url` passed here is the UN-keyed `video.uri` (no credential in a
  * logged/errored mime-derivation source). Copied from fal-adapter.ts.
  */
 function deriveVideoMime(contentType: string | null, url: string): string {

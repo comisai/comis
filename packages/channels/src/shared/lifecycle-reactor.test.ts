@@ -436,15 +436,13 @@ describe("createLifecycleReactor", () => {
     // Emit message:received to create state (starts at idle, transitions to queued)
     emitMessageReceived(deps.eventBus, "telegram", "chat-1", "msg-100", "telegramMessageId");
 
-    // Now send message:sent (done) -- but current phase is "queued", queued -> done IS valid
-    // To test truly invalid: we would need a state that can't go to the target.
-    // idle -> done is invalid. But message:received auto-transitions to queued.
-    // Let's check: the reactor creates state at idle then immediately transitions to queued.
-    // So we can't stay at idle after message:received. Instead, test that we don't
-    // crash on an event with no matching message (no state created).
-    // That case is handled by "message already cleaned up" check.
+    // A true idle -> done transition cannot be constructed through events:
+    // message:received creates state at idle and immediately transitions it to
+    // queued (and queued -> done IS valid). What CAN be exercised is the
+    // no-matching-state path: a done event for a channel with no reactor state
+    // must be ignored without crashing (the "message already cleaned up" check).
 
-    // The test intent: emit a done event for a non-existent channel
+    // Emit a done event for a non-existent channel
     deps.eventBus.emit("message:sent", {
       channelId: "nonexistent-channel",
       messageId: "resp-1",

@@ -20,7 +20,6 @@
   <a href="#quick-start"><strong>Quick Start</strong></a> ·
   <a href="https://docs.comis.ai">Docs</a> ·
   <a href="#why-comis">Why Comis</a> ·
-  <a href="#how-comis-compares">Compare</a> ·
   <a href="#contributing">Contribute</a>
 </p>
 
@@ -186,29 +185,6 @@ Developer docs: [Architecture](https://docs.comis.ai/developer-guide/architectur
 
 ---
 
-## How Comis Compares
-
-Comis was built after studying [OpenClaw](https://github.com/openclaw/openclaw) and [Hermes Agent](https://github.com/NousResearch/hermes-agent). Both are strong projects with different goals.
-
-| If you want... | Choose |
-| --- | --- |
-| A personal assistant with the widest channel list and native mobile-first feel | **OpenClaw** |
-| A self-improving research agent that can rewrite its own skills | **Hermes Agent** |
-| A self-hosted agent platform for multiple agents, multiple operators, scoped secrets, sandboxed tools, and auditability | **Comis** |
-
-| Area | Comis | OpenClaw | Hermes Agent |
-| --- | --- | --- | --- |
-| Design center | Multi-agent, multi-operator platform | Personal assistant for a trusted operator | Single-tenant personal agent |
-| Exec posture | Sandbox on by default (kernel-enforced on Linux); the agent can't reach the CLI, token, or secrets even with `exec` | Docker sandbox is opt-in; default is host-first exec | Host-first by default; containers confine terminal backends, not the full agent |
-| Secrets | AES-256-GCM store + credential broker option | Plaintext config/auth profiles supported; opt-in SecretRefs | Plaintext `.env` with optional Bitwarden flow |
-| Memory | **Learns + revises the behavioral strategy** — outcome-gated, corroboration-admitted, reuse-promoted, supersede/demote; trust-aware, anti-poison, keyless, local, benchmarked | Fact memory; no trust levels | Self-rewriting skills; no trust levels; learning loop not publicly benchmarked |
-| Channels | 9 | 23+ | 20+ platform adapters |
-| License | Apache-2.0 | MIT | MIT |
-
-<sub>Sourced from each project's repository and security documentation, June 2026. Detailed pages: [Comis vs OpenClaw](https://comis.ai/compare/openclaw) · [Comis vs Hermes](https://comis.ai/compare/hermes)</sub>
-
----
-
 ## Contributing
 
 Comis is designed to be extended. The most useful contributions are:
@@ -234,6 +210,6 @@ If Comis looks useful, star the repository so more people can find it. If you wa
 
 ---
 
-Comis builds on prior art from [OpenClaw](https://github.com/openclaw/openclaw), [Hermes Agent](https://github.com/NousResearch/hermes-agent), and [pi-mono](https://github.com/earendil-works/pi) by [Mario Zechner](https://mariozechner.at/), studied closely and credited gladly.
+Comis builds on prior art from [pi-mono](https://github.com/earendil-works/pi) by [Mario Zechner](https://mariozechner.at/), studied closely and credited gladly.
 
 **License:** [Apache-2.0](LICENSE) across all packages. Commercial use, modification, redistribution, and private deployment are permitted.

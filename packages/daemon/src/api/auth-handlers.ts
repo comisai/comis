@@ -17,8 +17,8 @@
  * packages/core/src/ports/oauth-credential-store.ts lines 46-52).
  *
  * `auth.set` (AuthSetContract, scopes:["admin"]) is the daemon-assisted
- * OAuth-login RPC, authorized by the §8.1 threat-model amendment in
- * DESIGN-credential-storage-modes.md. The CLI runs the OAuth browser/device
+ * OAuth-login RPC — an admin-gated, audited write that is the sanctioned way
+ * tokens enter the encrypted store. The CLI runs the OAuth browser/device
  * flow locally, then delegates persistence to this handler so the CLI never
  * imports @comis/memory or opens secrets.db.
  *
@@ -243,9 +243,9 @@ export function createAuthHandlers(
 
       // Bespoke profileId guard runs BEFORE the contract parse so the
       // user-facing error message stays
-      // `"Missing required parameter: profileId"` (legacy UX). The
-      // contract's `z.string().min(1)` would otherwise raise a Zod
-      // message that is noisier and less actionable for operators.
+      // `"Missing required parameter: profileId"`. The contract's
+      // `z.string().min(1)` would otherwise raise a Zod message that is
+      // noisier and less actionable for operators.
       const profileIdRaw = rawParams.profileId as string | undefined;
       if (!profileIdRaw || typeof profileIdRaw !== "string") {
         throw new Error("Missing required parameter: profileId");
@@ -408,7 +408,7 @@ export function createAuthHandlers(
         },
       });
       // The identity field must NOT embed accountId when email is absent.
-      // The residency rule (§6, auth-handlers.ts header) allows only
+      // The residency rule (see this file's header) allows only
       // provider/profileId/redacted-email in log output. Using a non-
       // identifying sentinel keeps the log line informative without leaking
       // an account identifier when the OAuth provider returns no email.

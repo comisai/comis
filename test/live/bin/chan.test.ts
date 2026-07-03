@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit coverage for the `chan`/`tg` CLI pure core (Phase 205, Plan 05):
+ * Unit coverage for the `chan`/`tg` CLI pure core:
  *   - `parseArgs` (verb / --channel / tg-default / --json / --endpoint / positionals)
  *   - the honest-exit reason-code mapping (`toFailure` + `exitCodeFor`, the four
- *     closed FailureKind classes → distinct non-zero exit codes — CLI-04)
+ *     closed FailureKind classes → distinct non-zero exit codes)
  *   - the `tg rpc` malformed-json reject (`tryParseJson`, validated BEFORE the
- *     passthrough — V5 / T-205-15)
+ *     passthrough)
  *
- * Task-1 scope: the PURE, side-effect-free core only — NO subprocess, NO daemon
- * boot. (Task 2 adds the `runVerb` dispatch with injected seams.)
+ * Scope: the PURE, side-effect-free core plus the `runVerb` dispatch with
+ * injected seams — NO subprocess, NO daemon boot.
  *
  * Run under the LIVE vitest config — the bare root config excludes `test/live`
  * (0 files → false green):
@@ -36,7 +36,7 @@ import {
 } from "./chan.js";
 
 // ---------------------------------------------------------------------------
-// Test helpers for the runVerb dispatch (Task 2). The seams are injected via
+// Test helpers for the runVerb dispatch. The seams are injected via
 // `ctx` so the dispatch is unit-testable WITHOUT booting a daemon: a fake `rpc`
 // (a vi.fn() returning a canned result) and a throwaway loopback `/control/*`
 // server that records the POST + returns canned outbound.
@@ -173,18 +173,18 @@ describe("chan/tg CLI — parseArgs captures value-bearing + boolean sub-flags",
   });
 
   it("resolves --event/--tool/--timeout regardless of their position relative to the trajectory file", () => {
-    // CR-01 / IN-01: a flag BEFORE the positional must not shadow the trajectory file.
+    // A flag BEFORE the positional must not shadow the trajectory file.
     const parsed = parseArgs(["wait", "--event", "model.completed", "s.jsonl"]);
     expect(parsed.args).toEqual(["s.jsonl"]);
     expect(parsed.event).toBe("model.completed");
   });
 });
 
-describe("chan/tg CLI — parseArgs → runVerb integration seam (CR-01: the real CLI path)", () => {
+describe("chan/tg CLI — parseArgs → runVerb integration seam (the real CLI path)", () => {
   it("tg wait <file> --event <type> reaches the waiter through the FULL parse→dispatch path", async () => {
     // Drive the REAL entry path: parseArgs → contextFromParsed → runVerb. The
     // earlier suite called the waiter in isolation, MASKING the parseArgs flag-strip
-    // that made `tg wait` non-functional through `runMain` (CR-01).
+    // that made `tg wait` non-functional through `runMain`.
     const waitFn = vi.fn().mockResolvedValue({ matched: true, type: "model.completed", reason: "matched" });
     const parsed = parseArgs(["wait", "s.jsonl", "--event", "model.completed"]);
     const ctx = contextFromParsed(parsed, fakeHandle());
@@ -239,7 +239,7 @@ describe("chan/tg CLI — parseArgs → runVerb integration seam (CR-01: the rea
   });
 });
 
-describe("chan/tg CLI — honest-exit reason codes (CLI-04)", () => {
+describe("chan/tg CLI — honest-exit reason codes", () => {
   const kinds: FailureKind[] = ["no_reply", "rpc_error", "dead_handle", "bad_json"];
 
   it("toFailure builds an { error: <kind> } body carrying the detail", () => {
@@ -278,7 +278,7 @@ describe("chan/tg CLI — honest-exit reason codes (CLI-04)", () => {
   });
 });
 
-describe("chan/tg CLI — tryParseJson (the rpc bad-json guard, V5)", () => {
+describe("chan/tg CLI — tryParseJson (the rpc bad-json guard)", () => {
   it("parses valid JSON into { ok: true, value }", () => {
     expect(tryParseJson('{"a":1}')).toEqual({ ok: true, value: { a: 1 } });
   });
@@ -309,7 +309,7 @@ describe("chan/tg CLI — tryParseJson (the rpc bad-json guard, V5)", () => {
   });
 });
 
-describe("chan/tg CLI — runVerb: rpc passthrough (AUTO-01)", () => {
+describe("chan/tg CLI — runVerb: rpc passthrough", () => {
   it("forwards method + params VERBATIM to the injected rpc and returns the result", async () => {
     const rpc = vi.fn().mockResolvedValue({ ok: true, status: "healthy" });
     const ctx: VerbContext = { handle: fakeHandle(), rpc };
@@ -335,7 +335,7 @@ describe("chan/tg CLI — runVerb: rpc passthrough (AUTO-01)", () => {
     await expect(
       runVerb("rpc", ["agents.create", "{not json"], { handle: fakeHandle(), rpc }),
     ).rejects.toMatchObject({ kind: "bad_json" });
-    // The passthrough was NEVER called — V5 validates first.
+    // The passthrough was NEVER called — validated first.
     expect(rpc).not.toHaveBeenCalled();
   });
 
@@ -384,7 +384,7 @@ describe("chan/tg CLI — runVerb: rpc passthrough (AUTO-01)", () => {
   });
 });
 
-describe("chan/tg CLI — runVerb: trigger fires the real time-based RPCs over WS (AUTO-04)", () => {
+describe("chan/tg CLI — runVerb: trigger fires the real time-based RPCs over WS", () => {
   it("`tg trigger cron <id>` fires cron.run with { jobName } (no real-time wait)", async () => {
     const rpc = vi.fn().mockResolvedValue({ triggered: true, mode: "force", jobName: "nvda-scan" });
     const result = await runVerb("trigger", ["cron", "nvda-scan"], { handle: fakeHandle(), rpc });
@@ -398,7 +398,7 @@ describe("chan/tg CLI — runVerb: trigger fires the real time-based RPCs over W
     expect(result).toMatchObject({ triggered: true });
   });
 
-  it("`tg trigger cron <id> --agent A` threads the agentId (TARGET-01 multi-agent)", async () => {
+  it("`tg trigger cron <id> --agent A` threads the agentId (multi-agent)", async () => {
     const rpc = vi.fn().mockResolvedValue({ triggered: true, resolvedAgentId: "mldag" });
     const parsed = parseArgs(["trigger", "cron", "nvda-scan", "--agent", "mldag"]);
     const ctx = contextFromParsed(parsed, fakeHandle());
@@ -414,7 +414,7 @@ describe("chan/tg CLI — runVerb: trigger fires the real time-based RPCs over W
   it("`tg trigger heartbeat --agent A` fires heartbeat.trigger { agentId } through the full parse→dispatch path", async () => {
     const rpc = vi.fn().mockResolvedValue({ agentId: "default", triggered: true });
     // --agent is a FLAG (resolved by parseArgs into ctx.agent), not a positional —
-    // drive the real CLI path so the flag reaches the verb (the CR-01 masking lesson).
+    // drive the real CLI path so the flag reaches the verb (the flag-masking lesson).
     const parsed = parseArgs(["trigger", "heartbeat", "--agent", "default"]);
     const ctx = contextFromParsed(parsed, fakeHandle());
     await runVerb(parsed.verb as string, parsed.args, { ...ctx, rpc });
@@ -492,7 +492,7 @@ describe("chan/tg CLI — runVerb: trigger fires the real time-based RPCs over W
   });
 });
 
-describe("chan/tg CLI — runVerb: reconfigure (W1 in-process-only / Option-A detached, AUTO-04 + 208-08)", () => {
+describe("chan/tg CLI — runVerb: reconfigure (in-process-only vs detached)", () => {
   it("`tg reconfigure` against an IN-PROCESS handle (no pid) returns lifecycle_in_process_only (never a faked rewrite)", async () => {
     const parsed = parseArgs(["reconfigure", "--set", "agents.default.model=qwen3.6:14b", "--restart"]);
     // fakeHandle has NO pid → the in-process rig branch (its controller dies with
@@ -505,7 +505,7 @@ describe("chan/tg CLI — runVerb: reconfigure (W1 in-process-only / Option-A de
     expect(JSON.stringify(result)).toMatch(/--detached/);
   });
 
-  it("`tg reconfigure` against a DETACHED handle (pid present) POSTs the rig-control /reconfigure with the overrides (Option A)", async () => {
+  it("`tg reconfigure` against a DETACHED handle (pid present) POSTs the rig-control /reconfigure with the overrides", async () => {
     const parsed = parseArgs(["reconfigure", "--set", "agents.default.model=qwen3.6:14b", "--restart"]);
     // A DETACHED handle carries a pid + a real rig-control endpoint (≠ gateway).
     const handle = fakeHandle({ pid: 999001, rigControlEndpoint: "http://127.0.0.1:55001" });
@@ -527,7 +527,7 @@ describe("chan/tg CLI — runVerb: reconfigure (W1 in-process-only / Option-A de
   });
 });
 
-describe("chan/tg CLI — runVerb: dead handle (CLI-04)", () => {
+describe("chan/tg CLI — runVerb: dead handle", () => {
   it("a non-up verb with NO resolved handle throws VerbFailure(dead_handle) suggesting tg up", async () => {
     const err = await runVerb("send", ["hi"], { handle: undefined }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(VerbFailure);
@@ -544,7 +544,7 @@ describe("chan/tg CLI — runVerb: dead handle (CLI-04)", () => {
   });
 });
 
-describe("chan/tg CLI — runVerb: drive verbs over /control/* (CLI-02)", () => {
+describe("chan/tg CLI — runVerb: drive verbs over /control/*", () => {
   it("send POSTs the message then returns the reply when outbound is non-empty", async () => {
     const stub = await startControlStub([{ messageId: 1002, text: "pong" }]);
     try {
@@ -588,7 +588,7 @@ describe("chan/tg CLI — runVerb: drive verbs over /control/* (CLI-02)", () => 
   });
 });
 
-describe("chan/tg CLI — runVerb: control-response shape guard (WR-03: no exit-0 false success)", () => {
+describe("chan/tg CLI — runVerb: control-response shape guard (no exit-0 false success)", () => {
   /** A fake fetch whose responses are scripted per (method, url-substring). */
   function fakeFetch(
     handler: (url: string, init?: RequestInit) => { status?: number; body: unknown },
@@ -662,7 +662,7 @@ describe("chan/tg CLI — runVerb: control-response shape guard (WR-03: no exit-
   });
 });
 
-describe("chan/tg CLI — runVerb: react correlates to the botReplyId arg (REACT-02 / attribution)", () => {
+describe("chan/tg CLI — runVerb: react correlates to the botReplyId arg (attribution)", () => {
   /**
    * A recording fake fetch: captures every (method, url, parsed-body) and
    * returns a scripted status/body per url-substring. Lets the react tests
@@ -780,13 +780,13 @@ describe("chan/tg CLI — runVerb: react correlates to the botReplyId arg (REACT
 });
 
 // ---------------------------------------------------------------------------
-// Phase 207: the four wired verbs (tap / edit / send-photo / send-voice). A
+// The four wired verbs (tap / edit / send-photo / send-voice). A
 // shared recording fetch captures every (method, url, parsed-body) and returns a
 // scripted status/body per url-substring — the same shape the react suite uses,
-// lifted to module scope for re-use across the 207 suites.
+// lifted to module scope for re-use across these suites.
 // ---------------------------------------------------------------------------
 
-/** A recording fake fetch (lifted from the react suite) for the 207 verb suites. */
+/** A recording fake fetch (lifted from the react suite) for these verb suites. */
 function recording207Fetch(script: (url: string) => { status?: number; body?: unknown }): {
   fetch: typeof fetch;
   calls: Array<{ method: string; url: string; body: unknown }>;
@@ -814,7 +814,7 @@ function recording207Fetch(script: (url: string) => { status?: number; body?: un
   return { fetch: fn, calls };
 }
 
-describe("chan/tg CLI — runVerb: tap drives the callbacks route (INTERACT-01 / attribution)", () => {
+describe("chan/tg CLI — runVerb: tap drives the callbacks route (attribution)", () => {
   it("POSTs {fromUserId:111, botMessageId:<arg>, data} to /callbacks and returns { tapped } — the ARG, not tg last", async () => {
     const rec = recording207Fetch((url) => {
       if (url.includes("/callbacks")) return { status: 200, body: { ok: true } };
@@ -830,7 +830,7 @@ describe("chan/tg CLI — runVerb: tap drives the callbacks route (INTERACT-01 /
     expect(call.method).toBe("POST");
     // ATTRIBUTION: the URL is the callbacks route on the handle's chat.
     expect(call.url.endsWith(`/control/chats/${fakeHandle().chatId}/callbacks`)).toBe(true);
-    // ATTRIBUTION (T-207-15): the body taps the ARG id (42), NOT a re-read `last`.
+    // ATTRIBUTION: the body taps the ARG id (42), NOT a re-read `last`.
     expect(call.body).toEqual({ fromUserId: 111, botMessageId: 42, data: "page=2" });
     // The honest result echoes the attributed reply id + the callback data.
     expect(result).toEqual({ tapped: { botReplyId: 42, data: "page=2" } });
@@ -850,7 +850,7 @@ describe("chan/tg CLI — runVerb: tap drives the callbacks route (INTERACT-01 /
     expect(rec.calls.every((c) => c.url.includes("/callbacks"))).toBe(true);
   });
 
-  it("the scalar callback data survives verbatim (a &-laden value is IN-04 safe on the JSON path)", async () => {
+  it("the scalar callback data survives verbatim (a &-laden value is safe on the JSON path)", async () => {
     const rec = recording207Fetch((url) => {
       if (url.includes("/callbacks")) return { status: 200, body: { ok: true } };
       return { status: 200, body: [] };
@@ -887,7 +887,7 @@ describe("chan/tg CLI — runVerb: tap drives the callbacks route (INTERACT-01 /
     expect(rec.calls).toHaveLength(0);
   });
 
-  it("a control POST !ok (502) → VerbFailure(dead_handle, control_post_error) — no false exit-0 (T-207-14)", async () => {
+  it("a control POST !ok (502) → VerbFailure(dead_handle, control_post_error) — no false exit-0", async () => {
     const rec = recording207Fetch((url) => {
       if (url.includes("/callbacks")) return { status: 502, body: { ok: false } };
       return { status: 200, body: [] };
@@ -909,8 +909,7 @@ describe("chan/tg CLI — runVerb: tap drives the callbacks route (INTERACT-01 /
 });
 
 // ---------------------------------------------------------------------------
-// FIX #2 (CHAN2-02 foundation-design-bug + the §3A.4 honest-degradation): a
-// GENERAL caps gate. A button/edit-dependent verb on a channel that LACKS the
+// A GENERAL caps gate. A button/edit-dependent verb on a channel that LACKS the
 // capability (Signal `buttons:false`/`edits:false`) honest-degrades to a
 // DISTINCT non-zero exit + `unsupported_on_channel` reason BEFORE any POST —
 // NEVER a silent no-op, NEVER a fabricated success (the no-false-success
@@ -920,10 +919,10 @@ describe("chan/tg CLI — runVerb: tap drives the callbacks route (INTERACT-01 /
 // UNAFFECTED (Signal supports reactions). Telegram (`buttons:true`/`edits:true`)
 // is byte-identical: the gate passes, the verb POSTs as today.
 // ---------------------------------------------------------------------------
-describe("chan/tg CLI — runVerb: caps gate honest-degrade for an unsupported verb (FIX #2 / §3A.4)", () => {
+describe("chan/tg CLI — runVerb: caps gate honest-degrade for an unsupported verb", () => {
   it("tap on Signal (buttons:false) honest-degrades: a DISTINCT non-zero exit + unsupported_on_channel BEFORE the POST — no silent no-op, no false success", async () => {
     const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
-    // The threaded channel is signal (the gate keys on ctx.channel, FIX #1).
+    // The threaded channel is signal (the gate keys on ctx.channel).
     const parsed = parseArgs(["--channel", "signal", "tap", "42", "page=2"]);
     const ctx: VerbContext = { ...contextFromParsed(parsed, fakeHandle({ channel: "signal" })), controlFetch: rec.fetch };
     const err = await runVerb(parsed.verb as string, parsed.args, ctx).catch((e: unknown) => e);
@@ -1019,7 +1018,7 @@ describe("chan/tg CLI — runVerb: caps gate honest-degrade for an unsupported v
   });
 });
 
-describe("chan/tg CLI — runVerb: edit drives the edits route (INTERACT-02)", () => {
+describe("chan/tg CLI — runVerb: edit drives the edits route", () => {
   it("POSTs {messageId:<arg>, newText} to /edits and returns { edited } on a 2xx", async () => {
     const rec = recording207Fetch((url) => {
       if (url.includes("/edits")) return { status: 200, body: { ok: true } };
@@ -1063,7 +1062,7 @@ describe("chan/tg CLI — runVerb: edit drives the edits route (INTERACT-02)", (
     expect(rec.calls).toHaveLength(0);
   });
 
-  it("a control POST !ok (500) → VerbFailure(dead_handle, control_post_error) — no false exit-0 (T-207-14)", async () => {
+  it("a control POST !ok (500) → VerbFailure(dead_handle, control_post_error) — no false exit-0", async () => {
     const rec = recording207Fetch((url) => {
       if (url.includes("/edits")) return { status: 500, body: { ok: false } };
       return { status: 200, body: [] };
@@ -1084,7 +1083,7 @@ describe("chan/tg CLI — runVerb: edit drives the edits route (INTERACT-02)", (
   });
 });
 
-describe("chan/tg CLI — runVerb: send-photo / send-voice drive the media route (MEDIA-01)", () => {
+describe("chan/tg CLI — runVerb: send-photo / send-voice drive the media route", () => {
   /** A tiny base64 payload the tests POST as the media bytes. */
   const PHOTO_B64 = Buffer.from("\x89PNG\r\n\x1a\n-fake-photo-bytes").toString("base64");
   const VOICE_B64 = Buffer.from("OggS-fake-voice-bytes").toString("base64");
@@ -1122,7 +1121,7 @@ describe("chan/tg CLI — runVerb: send-photo / send-voice drive the media route
     expect(result).toMatchObject({ inboundId: 3001, botReplyId: 3002, reply: "got it" });
   });
 
-  it("send-photo with an EMPTY outbound throws VerbFailure(no_reply) — no false success (T-207-14)", async () => {
+  it("send-photo with an EMPTY outbound throws VerbFailure(no_reply) — no false success", async () => {
     const rec = recording207Fetch((url) => {
       if (url.includes("/media")) return { status: 200, body: { ok: true, messageId: 4001 } };
       if (url.includes("/outbound")) return { status: 200, body: [] }; // honest no-reply
@@ -1209,7 +1208,7 @@ describe("chan/tg CLI — runVerb: send-photo / send-voice drive the media route
   });
 });
 
-describe("chan/tg CLI — runVerb: oracle-read reason codes (WR-02: not rpc_error)", () => {
+describe("chan/tg CLI — runVerb: oracle-read reason codes (not rpc_error)", () => {
   it("db against a MISSING memory.db is a dead_handle (db_unavailable), NOT rpc_error", async () => {
     // A freshly-spawned rig before its first write: the db path does not exist.
     // better-sqlite3 throws "unable to open database file" — that is an I/O
@@ -1250,7 +1249,7 @@ describe("chan/tg CLI — runVerb: oracle-read reason codes (WR-02: not rpc_erro
   });
 });
 
-describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
+describe("chan/tg CLI — runVerb: lifecycle", () => {
   it("down with an explicit --endpoint REFUSES to wipe (never destroy what you didn't spawn)", async () => {
     const err = await runVerb("down", [], {
       handle: fakeHandle(),
@@ -1261,7 +1260,7 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
     expect(JSON.stringify((err as VerbFailure).body)).toMatch(/refus|endpoint/i);
   });
 
-  it("down with an explicit --endpoint refuses (reason: refused) even when NO local handle resolved (WR-04)", async () => {
+  it("down with an explicit --endpoint refuses (reason: refused) even when NO local handle resolved", async () => {
     // The --endpoint refusal is independent of whether a handle file exists; it
     // must fire BEFORE the generic dead-handle guard so the reason code is the
     // precise "refused", not a generic "dead_handle".
@@ -1299,10 +1298,10 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
     expect(result["detached"]).toBe(true);
   });
 
-  // ── FIX #1 (CHAN2-02 foundation-design-bug): `up` must thread the PARSED channel
-  // into StandaloneRigOptions.channel — `chan --channel signal up` boots a Signal
-  // rig, NOT the hard-coded Telegram one. Drive the REAL parse→ctx→dispatch path so
-  // the --channel flag actually reaches the verb (the CR-01 masking lesson).
+  // ── `up` must thread the PARSED channel into StandaloneRigOptions.channel —
+  // `chan --channel signal up` boots a Signal rig, NOT the hard-coded Telegram
+  // one. Drive the REAL parse→ctx→dispatch path so the --channel flag actually
+  // reaches the verb (the flag-masking lesson).
 
   it("up threads the PARSED channel into the launcher (chan --channel signal up → channel:'signal')", async () => {
     const startStandaloneRigFn = vi.fn().mockResolvedValue({ reused: false, handle: fakeHandle({ channel: "signal" }) });
@@ -1343,9 +1342,9 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
     expect(startStandaloneRigFn.mock.calls[0]?.[0]).toMatchObject({ channel: "signal", detached: true });
   });
 
-  // ── Cold-shell DETACHED lifecycle (Plan 208-08, Option A) — a handle WITH a pid.
+  // ── Cold-shell DETACHED lifecycle — a handle WITH a pid.
 
-  it("restart against a DETACHED handle (pid present) POSTs the rig-control /restart (Option A)", async () => {
+  it("restart against a DETACHED handle (pid present) POSTs the rig-control /restart", async () => {
     const handle = fakeHandle({ pid: 999100, rigControlEndpoint: "http://127.0.0.1:55100" });
     const calls: string[] = [];
     const controlFetch = vi.fn(async (url: string | URL | Request) => {
@@ -1358,7 +1357,7 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
     expect(calls[0]).toBe("http://127.0.0.1:55100/restart");
   });
 
-  it("reset --deep against a DETACHED handle (pid present) POSTs the rig-control /reset (Option A)", async () => {
+  it("reset --deep against a DETACHED handle (pid present) POSTs the rig-control /reset", async () => {
     const handle = fakeHandle({ pid: 999101, rigControlEndpoint: "http://127.0.0.1:55101" });
     const calls: string[] = [];
     const controlFetch = vi.fn(async (url: string | URL | Request) => {
@@ -1389,9 +1388,9 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
   });
 });
 
-describe("chan/tg CLI — runVerb: deferred verbs exit honestly (Deferred-Ideas boundary)", () => {
-  // Phase 207 wired send-photo/send-voice/tap/edit to the control routes — ONLY
-  // `group` remains deferred (Phase 208). The four 207 verbs are covered by the
+describe("chan/tg CLI — runVerb: deferred verbs exit honestly (honest-deferral boundary)", () => {
+  // send-photo/send-voice/tap/edit are wired to the control routes — ONLY
+  // `group` remains deferred. Those four verbs are covered by the
   // wired-verb suites below; they must NO LONGER throw not_implemented_in_phase.
   it.each([["group", "208"]])(
     "%s throws VerbFailure with not_implemented_in_phase pointing at phase %s",
@@ -1409,7 +1408,7 @@ describe("chan/tg CLI — runVerb: deferred verbs exit honestly (Deferred-Ideas 
     ["send-voice"],
     ["tap"],
     ["edit"],
-  ])("%s is NO LONGER a not_implemented_in_phase stub (wired in Phase 207)", async (verb) => {
+  ])("%s is NO LONGER a not_implemented_in_phase stub (now wired to a control route)", async (verb) => {
     // It must reach the verb body (which then fails honestly on the fake handle's
     // dead control endpoint / bad args) — NOT short-circuit to the deferred stub.
     const err = await runVerb(verb, ["1", "x"], { handle: fakeHandle() }).catch((e: unknown) => e);

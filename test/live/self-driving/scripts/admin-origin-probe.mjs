@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // admin-origin-probe.mjs — DETERMINISTIC admin-tool security-gate oracle prover (run on the VPS).
 //
-// WHY THIS EXISTS (admin-manage-tools run 2026-06-25): the 8 admin `*_manage` tools are guarded by
+// WHY THIS EXISTS: the 8 admin `*_manage` tools are guarded by
 // FOUR mechanisms. The NON-ADMIN-DENIAL / SUB-AGENT-NEVER / CONTENT-FREE-AUDIT oracles are
 // provider-independent, prove-once code-paths — and a capable frontier model (claude-sonnet-4-6)
 // won't reliably "try an admin tool and get denied" on demand (it refuses the adversarial framing,
@@ -15,7 +15,7 @@
 //                                                      admin-trust _agentId PASSES (inherits); operator PASSES
 //   audit   H-AUDIT the denial audit event carries method+reason ONLY (no param value / secret leaks)
 //   adminset ADMIN_METHODS = API_CONTRACTS_ORDERED.filter(scopes∋"admin") covers every manage mutator,
-//                                                      and EXCLUDES memory.store (MD-02 #245 intact)
+//                                                      and EXCLUDES memory.store (#245 intact)
 //   denylist layer-3 SUB_AGENT_TOOL_DENYLIST contains all 8 (sub-agent can never be delegated them)
 //
 // Usage (on the VPS):  node /root/admin-origin-probe.mjs [guard|origin|audit|adminset|denylist|all]
@@ -133,7 +133,7 @@ async function probeAudit() {
        : `leaked=[${leaked}] metadataKeys=[${mdKeys}] kind=${aud?.kind}`);
 }
 
-// --- adminset: ADMIN_METHODS covers every manage mutator + EXCLUDES memory.store (MD-02) ---
+// --- adminset: ADMIN_METHODS covers every manage mutator + EXCLUDES memory.store ---
 async function probeAdminset() {
   const { API_CONTRACTS_ORDERED } = await import(P.core);
   if (!Array.isArray(API_CONTRACTS_ORDERED)) return record("adminset", false, "API_CONTRACTS_ORDERED not an array");
@@ -142,7 +142,7 @@ async function probeAdminset() {
   for (const [prefix, actions] of Object.entries(MANAGE_METHODS)) {
     for (const a of actions) { const m = `${prefix}.${a}`; if (!ADMIN.has(m)) missing.push(m); }
   }
-  // MD-02 + the rpc-scoped agent-reachable memory surface must NOT be admin-gated by the chokepoint.
+  // The rpc-scoped agent-reachable memory surface must NOT be admin-gated by the chokepoint.
   const mustBeRpc = ["memory.store", "memory.ask", "memory.search_files", "memory.get_file", "channels.health", "channels.capabilities"];
   const wronglyAdmin = mustBeRpc.filter((m) => ADMIN.has(m));
   const ok = missing.length === 0 && wronglyAdmin.length === 0;

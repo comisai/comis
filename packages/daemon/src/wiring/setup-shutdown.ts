@@ -114,7 +114,7 @@ export interface ShutdownDeps {
   auditAggregator?: { destroy: () => void };
   /** Injection rate limiter for clearing timers on shutdown (optional). */
   injectionRateLimiter?: { destroy: () => void };
-  /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + dedicated reaction rate limiter (optional). */ destroyReactionWiring?: () => void;
+  /** Tear down the reaction/session trajectory maps + dedicated reaction rate limiter (optional). */ destroyReactionWiring?: () => void;
   /** Periodic lock cleanup timer (from setupAgents). */
   lockCleanupTimer?: import("@comis/core").TimerHandle;
   /** Data directory for restart continuation file (optional). */
@@ -131,7 +131,7 @@ export interface ShutdownDeps {
   /** Lifecycle reactors for cleanup on shutdown */
   lifecycleReactors?: Array<{ destroy: () => void }>;
   /** Observability persistence write buffers for shutdown drain */ obsPersistence?: { drainAll(): void; snapshotTimer: ReturnType<typeof setInterval> };
-  disposeActivityStream?: () => void; otelShutdown?: () => Promise<void>; // §17.7 drain ActivityStream; Phase 178 flush+close OTLP/Prometheus exporter (undefined when disabled)
+  disposeActivityStream?: () => void; otelShutdown?: () => Promise<void>; // drain ActivityStream; flush+close OTLP/Prometheus exporter (undefined when disabled)
   /** Context pipeline collector for shutdown cleanup */
   contextPipelineCollector?: { dispose(): void };
   /** Gemini CachedContent lifecycle manager for shutdown disposal. */
@@ -159,9 +159,9 @@ export interface ShutdownDeps {
   proxyTypingCleanup?: () => void;
   /** Stop the delivery queue (from setupDeliveryQueue). */
   shutdownDeliveryQueue?: () => void;
-  /** Stop the background video poller — sweeper interval + in-flight loops (189). */
+  /** Stop the background video poller — sweeper interval + in-flight loops. */
   shutdownVideoPoller?: () => void;
-  durableResumeShutdown?: () => void; // Phase 216: cancel the durable-resume watchdog interval (no leaked timer).
+  durableResumeShutdown?: () => void; // cancel the durable-resume watchdog interval (no leaked timer).
   /** Stop the delivery mirror (from setupDeliveryMirror). */
   shutdownDeliveryMirror?: () => void;
   /** Stop the output retention housekeeper (from setupOutputRetention). */ outputRetentionShutdown?: () => void;
@@ -170,7 +170,7 @@ export interface ShutdownDeps {
   /** Unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
   /** Stop the credential broker (TCP + unix socket teardown). Only present when executor.broker is configured. */
   brokerStop?: () => Promise<void>;
-  capEndpointStop?: () => Promise<void>; // Phase 211 — present only with an autonomy agent.
+  capEndpointStop?: () => Promise<void>; // present only with an autonomy agent.
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -583,7 +583,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "broker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "broker", daemonLogger);
       }
-      if (capEndpointStop) { // Phase 211 — AFTER background processes (no jailed exec dialing cap.sock).
+      if (capEndpointStop) { // AFTER background processes (no jailed exec dialing cap.sock).
         const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await capEndpointStop();
@@ -615,7 +615,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           diagnosticCollector.dispose();
           channelActivityTracker.dispose();
           deliveryTracer.dispose();
-          await otelShutdown?.(); daemonLogger.info({ component: "observability", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped"); // otelShutdown: Phase 178 flush+close OTLP/Prometheus exporter (timeout-bounded; no-op when disabled)
+          await otelShutdown?.(); daemonLogger.info({ component: "observability", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped"); // otelShutdown: flush+close OTLP/Prometheus exporter (timeout-bounded; no-op when disabled)
         }, "observability", daemonLogger);
       }
       // Wait for background embedding indexing to finish (with timeout -- has its own 5s race)
@@ -654,7 +654,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "injection-rate-limiter", shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "injection-rate-limiter", daemonLogger);
       }
-      if (destroyReactionWiring) { // WR-01: cancel reaction/session map + reaction limiter TTL timers (else they accumulate across SIGUSR2 hot-reload)
+      if (destroyReactionWiring) { // cancel reaction/session map + reaction limiter TTL timers (else they accumulate across SIGUSR2 hot-reload)
         await withStepTimeout(() => {
           destroyReactionWiring();
           daemonLogger.info({ component: "reaction-wiring", shutdownOrder: ++shutdownOrder }, "Component stopped");
@@ -683,7 +683,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       }
   };
   // shutdown(signal): re-entry guard, hard-timeout, ordered cleanup, flush, exit dispatch.
-  // exitCode set EARLY so a graceful SIGUSR2 restart still exits 42 even if the loop drains during the awaited flush before exitFnLocal() runs (drain bug 2026-06-14; full incident in setup-shutdown.test.ts). SIGUSR2 ⇒ 42; else 0; error/timeout still exitFnLocal(1), which overrides exitCode.
+  // exitCode set EARLY so a graceful SIGUSR2 restart still exits 42 even if the loop drains during the awaited flush before exitFnLocal() runs (the drain-exit failure mode; full explanation in setup-shutdown.test.ts). SIGUSR2 ⇒ 42; else 0; error/timeout still exitFnLocal(1), which overrides exitCode.
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;

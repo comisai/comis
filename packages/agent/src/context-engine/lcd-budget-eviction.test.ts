@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the A3 budget-eviction unit (Plan 129-04).
+ * Tests for the LCD budget-eviction unit.
  *
- * RED-first. {@link evictHistoryUnderBudget} is a PURE function over the evictable
+ * {@link evictHistoryUnderBudget} is a PURE function over the evictable
  * history prefix (the assembler splits `history` from the protected `freshTail` at
- * the documented `lcd-assembler.ts:110-119` seam; A3 shrinks ONLY `history`). It
+ * the documented `lcd-assembler.ts` seam; this unit shrinks ONLY `history`). It
  * keeps the NEWEST whole steps that fit a token budget and drops the OLDEST,
  * NEVER splitting a `tool_use`/`tool_result` pair — it evicts whole STEPS.
  *
  * A step = an assistant (or a leading user/summary) message + the `toolResult`
  * messages immediately following it (the inseparable unit; a `tool_result`'s
- * tokens are bound to the assistant `tool_use` that produced it). The headline A3
+ * tokens are bound to the assistant `tool_use` that produced it). The headline
  * invariants asserted here:
  *  - the kept array NEVER starts with an ORPHAN `toolResult` (no split pair),
  *  - when even the single newest step cannot fit, the result is EMPTY (never a
@@ -19,7 +19,7 @@
  *  - the input array is NOT mutated (purity).
  *
  * No store, no LLM, no clock — the per-message token counts are SUPPLIED by the
- * caller (Pitfall 2: stored `tokenCount` for store history, `estimateMessageTokens`
+ * caller (stored `tokenCount` for store history, `estimateMessageTokens`
  * for live), so the function never re-estimates.
  */
 import type { Message } from "@earendil-works/pi-ai";
@@ -102,7 +102,7 @@ function toolCallId(m: AgentMessage): string | undefined {
 // ---------------------------------------------------------------------------
 
 describe("evictHistoryUnderBudget", () => {
-  it("Test 1: under-budget evictable prefix is returned UNCHANGED (no eviction)", () => {
+  it("under-budget evictable prefix is returned UNCHANGED (no eviction)", () => {
     const evictable = [
       item(userMsg("u0"), 10),
       item(assistantText("a0"), 10),
@@ -114,7 +114,7 @@ describe("evictHistoryUnderBudget", () => {
     expect(out.map(textOf)).toEqual(["u0", "a0", "u1", "a1"]);
   });
 
-  it("Test 2: budget exactly equal to the total keeps the WHOLE prefix", () => {
+  it("budget exactly equal to the total keeps the WHOLE prefix", () => {
     const evictable = [
       item(userMsg("u0"), 10),
       item(assistantText("a0"), 10),
@@ -125,7 +125,7 @@ describe("evictHistoryUnderBudget", () => {
     expect(out.map(textOf)).toEqual(["u0", "a0", "u1"]);
   });
 
-  it("Test 3: over budget drops the OLDEST whole steps, keeps the NEWEST contiguous run that fits", () => {
+  it("over budget drops the OLDEST whole steps, keeps the NEWEST contiguous run that fits", () => {
     // Four single-message steps (user/assistant text alternating), each 10 tokens.
     const evictable = [
       item(userMsg("u0"), 10),
@@ -139,7 +139,7 @@ describe("evictHistoryUnderBudget", () => {
     expect(out.map(textOf)).toEqual(["u1", "a1"]);
   });
 
-  it("Test 4: a step = assistant tool_use + its toolResults is kept or dropped WHOLE (never split)", () => {
+  it("a step = assistant tool_use + its toolResults is kept or dropped WHOLE (never split)", () => {
     // Step A (old): user(u0). Step B (newest): assistant(tu_1) + toolResult(tu_1).
     const evictable = [
       item(userMsg("u0"), 10),
@@ -161,7 +161,7 @@ describe("evictHistoryUnderBudget", () => {
     expect(toolCallId(out2[0]!)).toBe("tu_1");
   });
 
-  it("Test 5: the kept array NEVER starts with an orphan toolResult (no split pair)", () => {
+  it("the kept array NEVER starts with an orphan toolResult (no split pair)", () => {
     // Newest step is an assistant tool_use + TWO toolResults (multi-result step).
     const evictable = [
       item(userMsg("u0"), 10),
@@ -191,7 +191,7 @@ describe("evictHistoryUnderBudget", () => {
     expect(out.filter((m) => roleOf(m) === "toolResult")).toHaveLength(2);
   });
 
-  it("Test 6: when even the single newest step cannot fit, returns EMPTY (never a partial step)", () => {
+  it("when even the single newest step cannot fit, returns EMPTY (never a partial step)", () => {
     // The newest step alone is an assistant tool_use (60) + result (60) = 120.
     const evictable = [
       item(userMsg("u0"), 10),
@@ -199,26 +199,26 @@ describe("evictHistoryUnderBudget", () => {
       item(toolResult("tu_3", "read", "big"), 60),
     ];
     // Budget 100 < the newest step's 120 → cannot fit one whole step → drop the
-    // ENTIRE evictable prefix (the fresh tail still ships via the assembler, A3).
+    // ENTIRE evictable prefix (the fresh tail still ships via the assembler).
     const out = evictHistoryUnderBudget(evictable, 100);
     expect(out).toEqual([]);
   });
 
-  it("Test 7: budget of 0 returns an EMPTY array (drop everything evictable)", () => {
+  it("budget of 0 returns an EMPTY array (drop everything evictable)", () => {
     const evictable = [item(userMsg("u0"), 10), item(assistantText("a0"), 10)];
     expect(evictHistoryUnderBudget(evictable, 0)).toEqual([]);
   });
 
-  it("Test 8: a negative budget returns an EMPTY array (defensive; nothing fits)", () => {
+  it("a negative budget returns an EMPTY array (defensive; nothing fits)", () => {
     const evictable = [item(userMsg("u0"), 10)];
     expect(evictHistoryUnderBudget(evictable, -5)).toEqual([]);
   });
 
-  it("Test 9: an empty evictable prefix returns an empty array", () => {
+  it("an empty evictable prefix returns an empty array", () => {
     expect(evictHistoryUnderBudget([], 100)).toEqual([]);
   });
 
-  it("Test 10: the input array is NOT mutated (purity) and the return is a NEW array", () => {
+  it("the input array is NOT mutated (purity) and the return is a NEW array", () => {
     const evictable = [
       item(userMsg("u0"), 10),
       item(assistantText("a0"), 10),
@@ -235,7 +235,7 @@ describe("evictHistoryUnderBudget", () => {
     expect(out).not.toBe(evictable as unknown as AgentMessage[]);
   });
 
-  it("Test 11: newest-kept is by POSITION, not by token size — a large newest message is kept over a smaller older one", () => {
+  it("newest-kept is by POSITION, not by token size — a large newest message is kept over a smaller older one", () => {
     // The NEWEST message is large (90), the older ones are small (10 each). Budget
     // only fits the newest. Newest-kept ordering must keep the large newest, NOT
     // the cheaper older messages.
@@ -249,7 +249,7 @@ describe("evictHistoryUnderBudget", () => {
     expect(out.map(textOf)).toEqual(["newest-expensive"]);
   });
 
-  it("Test 12: keeps multiple whole steps when several fit, stopping at the first that would exceed", () => {
+  it("keeps multiple whole steps when several fit, stopping at the first that would exceed", () => {
     // Steps: A=user(u0)+toolResult-less assistant baseline. Build 3 clean steps.
     // Step 1 (oldest): user(u0) 20. Step 2: assistant(a1) 20. Step 3 (newest): assistant(a2) 20.
     const evictable = [

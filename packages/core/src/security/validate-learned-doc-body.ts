@@ -1,29 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * validateLearnedDocBody — the STATIC poison/secret scan that is ALL the validation
- * an advisory Mental Model doc receives before it crosses into durable storage
- * (D-06 / SKILL-02 / INV-3).
+ * an advisory Mental Model doc receives before it crosses into durable storage.
  *
- * It is the extracted, renamed STATIC half of the old sandbox adapter's `scanFields`
- * (packages/skills/src/learning/sandbox-skill-validation-adapter.ts): each untrusted
- * text field (`name` / `body` / `description`) is run through the
+ * Each untrusted text field (`name` / `body` / `description`) is run through the
  * {@link validateMemoryWrite} keystone, and a CRITICAL on ANY field rejects the doc
- * (the memory-poison `injection-trajectory` + secret-egress defenses, T-223-04). A
+ * (the memory-poison `injection-trajectory` + secret-egress defenses). A
  * `warn` severity is benign — the keystone records it but it NEVER rejects (severity
  * is a classification, never coerced to a boolean). The attacker-influenced `name`
  * (LLM output distilled from an UNTRUSTED transcript) is ALSO length-bounded to
  * reject a megabyte-name DoS before the scan runs over it.
  *
- * STATIC-ONLY by construction (SKILL-02 / INV-3): an advisory doc carries no embedded
- * procedure (that column was dropped in Phase 222), no parameter schema, no tool
- * policy and no dynamic-replay surface — so this function has none of that. There is
- * no process execution, no sandbox, and no skills-package import; the
- * learned-code-execution attack surface is removed entirely (T-223-05). It depends
- * ONLY on `validateMemoryWrite`, which already lives in @comis/core — the
- * simplification-true placement that lets the agent reflection job (Plan 04) call it
- * directly and lets the daemon reflect bundle shed its skills-package dependency.
+ * STATIC-ONLY by construction: an advisory doc carries no embedded procedure,
+ * no parameter schema, no tool policy and no dynamic-replay surface — so this
+ * function has none of that. There is no process execution, no sandbox, and no
+ * skills-package import; the learned-code-execution attack surface is removed
+ * entirely. It depends ONLY on `validateMemoryWrite`, which already lives in
+ * @comis/core — a placement that lets the agent reflection job call it
+ * directly and keeps the daemon reflect bundle free of a skills-package
+ * dependency.
  *
- * Privacy (T-223-06): a finding carries the field name + pattern NAMES /
+ * Privacy: a finding carries the field name + pattern NAMES /
  * `criticalPatterns` labels (e.g. `secret-egress-guard`) — NEVER the matched secret
  * value or the offending body text. This is the existing `validateMemoryWrite`
  * contract, unchanged.
@@ -34,8 +31,8 @@
 import { validateMemoryWrite } from "./memory-write-validator.js";
 
 /**
- * The maximum char length allowed for a learned-doc `name` (was
- * `MAX_SKILL_NAME_LENGTH`). `name` is attacker-influenced (LLM output distilled from
+ * The maximum char length allowed for a learned-doc `name`.
+ * `name` is attacker-influenced (LLM output distilled from
  * an UNTRUSTED transcript) and flows into durable storage / lookup keys / prompts, so
  * a sane ceiling rejects a megabyte-name DoS at validation. 120 chars matches the
  * prompt's "short, stable, kebab-case" instruction.
@@ -63,8 +60,7 @@ export interface LearnedDocValidation {
  * `description`. A CRITICAL on ANY field (a DANGEROUS_COMMAND_PATTERN or a
  * secret-egress hit) ⇒ reject; an over-cap `name` ⇒ reject. A `warn` is recorded by
  * the keystone but never rejects. No embedded procedure, no parameter schema, no tool
- * policy, no dynamic replay — this is the entire validation an advisory doc receives
- * (SKILL-02 / INV-3).
+ * policy, no dynamic replay — this is the entire validation an advisory doc receives.
  *
  * @param doc - the candidate advisory doc (untrusted, LLM-distilled).
  * @returns `{ ok, findings }` — `ok:false` with per-field findings on any rejection.

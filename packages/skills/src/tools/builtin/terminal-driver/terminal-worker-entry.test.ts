@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the supervised Terminal Worker entry (spec §2.1/§2.2/§2.3).
+ * Unit tests for the supervised Terminal Worker entry.
  *
  * Pure-JS / fully-injected → runs green on macOS without forking a process.
  * The worker is a FACTORY (`createTerminalWorker(deps)`) so node-pty, the
@@ -395,7 +395,7 @@ describe("createTerminalWorker — backend selection", () => {
     expect(fake.spawn).toHaveBeenCalledTimes(1);
   });
 
-  // 124-08 (OPS-05): the THIRD backend selection — a create frame requesting
+  // The THIRD backend selection — a create frame requesting
   // backend:"tmux" with a wired loadTmux selects the tmux named-session backend (the
   // survival path), and the tmux handle satisfies the SAME FakePtyLike seam (onData→ring).
   it("selects the tmux backend and reports backend tmux when backend:tmux is requested + loadTmux is wired", async () => {
@@ -441,7 +441,7 @@ describe("createTerminalWorker — backend selection", () => {
     // The loader received the per-session sessionId (the survival name derives from it) and
     // the COMPOSED plan command: bwrap is the outer bin (the jail), the driven /bin/bash
     // rides inside plan.argv after the bwrap `--` — i.e. tmux drives the bwrap-jailed child
-    // (no unjailed path; the jail is still present, 124-08 nesting note).
+    // (no unjailed path; the jail is still present — tmux drives the jailed child).
     expect(receivedArgs?.sessionId).toBe("s1");
     expect(receivedArgs?.bin).toBe("/usr/bin/bwrap");
     expect(receivedArgs?.argv).toContain("/bin/bash");
@@ -459,7 +459,7 @@ describe("createTerminalWorker — backend selection", () => {
     expect((read.result as { screen: string }).screen).toContain("tmux-pane-out");
   });
 
-  // 124-08: a backend:"tmux" request with NO loadTmux wired must NOT crash — it falls back
+  // A backend:"tmux" request with NO loadTmux wired must NOT crash — it falls back
   // to the node-pty path (a worker built without the tmux loader cannot drive tmux).
   it("falls back to pty when backend:tmux is requested but loadTmux is absent (no crash)", async () => {
     const fake = makeFakeBackend();
@@ -476,18 +476,18 @@ describe("createTerminalWorker — backend selection", () => {
 });
 
 // ===========================================================================
-// BL-01 (165-REVIEW): the worker `reattach` frame — the load-bearing fix for the
+// The worker `reattach` frame — the load-bearing fix for the
 // recover-on-boot ZOMBIE. The registry rehydrates a recovered durable session
 // `running` but the worker (freshly spawned, EMPTY sessions map) only re-attaches a
 // tmux pane inside `handleCreate`. So a recovered session's first `read`/`status`
 // returned alive:false — a zombie. The fix: a distinct `reattach` method that
 // ATTACHES to an EXISTING tmux session by name (hasSession true → register + attach;
-// hasSession false → ok:false, NEVER a fresh new-session/create — I10 no-double-drive).
+// hasSession false → ok:false, NEVER a fresh new-session/create — no double-drive).
 //
 // THE GAP THE ORIGINALS MISSED: drive a `read` AGAINST the reattached session and
 // assert it returns the LIVE pane (alive:true), with exactly one reattach (no spawn).
 // ===========================================================================
-describe("createTerminalWorker — reattach frame (BL-01: recover-on-boot is not a zombie)", () => {
+describe("createTerminalWorker — reattach frame (recover-on-boot is not a zombie)", () => {
   /** A fake tmux loader whose `reattach` returns a live pane handle iff `alive`. */
   function makeReattachLoader(alive: boolean): {
     loadTmux: { spawn: ReturnType<typeof vi.fn>; reattach: ReturnType<typeof vi.fn> };
@@ -527,7 +527,7 @@ describe("createTerminalWorker — reattach frame (BL-01: recover-on-boot is not
     };
   }
 
-  it("re-attaches a LIVE tmux session (ok:true) so a subsequent read returns the LIVE pane (alive:true), with ZERO spawn (I10)", async () => {
+  it("re-attaches a LIVE tmux session (ok:true) so a subsequent read returns the LIVE pane (alive:true), with ZERO spawn", async () => {
     const tmux = makeReattachLoader(true);
     const worker = createTerminalWorker(
       baseDeps({
@@ -560,10 +560,10 @@ describe("createTerminalWorker — reattach frame (BL-01: recover-on-boot is not
     expect((read.result as { screen: string }).screen).toContain("resumed-pane-output");
   });
 
-  it("re-attaches a durable claude session WITH the profile render transform — FINDING-3 survives a restart (RENDER-01)", async () => {
-    // The integration-checker BLOCKER: a recovered durable session must re-resolve its platform
+  it("re-attaches a durable claude session WITH the profile render transform so the ghost-strip survives a restart", async () => {
+    // A recovered durable session must re-resolve its platform
     // profile by allowId, or the ghost-strip (and perception) silently revert to the agnostic path
-    // after a daemon restart — reviving FINDING-3 on the DEFAULT durable deployment.
+    // after a daemon restart on the DEFAULT durable deployment.
     const tmux = makeReattachLoader(true);
     const recEmu = makeRecordingEmulator();
     const worker = createTerminalWorker(
@@ -579,7 +579,7 @@ describe("createTerminalWorker — reattach frame (BL-01: recover-on-boot is not
     expect(typeof recEmu.lastConstruct()?.transformSnapshot).toBe("function");
   });
 
-  it("re-attaches with NO render transform for an unknown allowId (the agnostic default, INV-1)", async () => {
+  it("re-attaches with NO render transform for an unknown allowId (the agnostic default)", async () => {
     const tmux = makeReattachLoader(true);
     const recEmu = makeRecordingEmulator();
     const worker = createTerminalWorker(
@@ -1744,7 +1744,7 @@ describe("createTerminalWorker — wait (settle -> {matched,isComplete,reason,sc
   });
 
   it("wait EXIT on the PTY backend: a node-pty onExit resolves reason:'exit' (not timeout) — the VPS real-PTY gate", async () => {
-    // REGRESSION (RED-first): the PTY (node-pty) backend MUST wire `handle.onExit`
+    // REGRESSION: the PTY (node-pty) backend MUST wire `handle.onExit`
     // → markExited the same way the pipe backend wires `close`/`error`. Without it,
     // a real node-pty child that exits never notifies the in-flight settle's onExit
     // subscription, so `wait({forExit:true})` runs to TIMEOUT (reason "timeout")
@@ -1948,8 +1948,8 @@ describe("createTerminalWorker — read serializes the REAL @xterm grid", () => 
     };
 
     expect(view.screen).toContain("abc");
-    // RED-provable: the pre-patch ring path returned cursor {0,0}; the emulator
-    // returns the REAL cursorX (3 after "abc").
+    // The emulator returns the REAL cursorX (3 after "abc"), not the {0,0} a
+    // plain ring would report.
     expect(view.cursor.x).toBe(3);
     expect(view.alt).toBe(false);
     expect(view.alive).toBe(true);
@@ -2008,8 +2008,8 @@ describe("createTerminalWorker — read serializes the REAL @xterm grid", () => 
     expect(recEmu.lastConstruct()?.scrollback).toBeGreaterThan(0);
   });
 
-  it("selects the claude-code profile by allowId and injects its render transform (RENDER-01)", async () => {
-    // §5/INV-3: the worker selects the read-side profile by the operator-declared allowId
+  it("selects the claude-code profile by allowId and injects its render transform", async () => {
+    // The worker selects the read-side profile by the operator-declared allowId
     // (never content-sniffed) and threads its transformSnapshot into the emulator construction.
     const rec = makeRecordingBackend();
     const recEmu = makeRecordingEmulator();
@@ -2087,7 +2087,7 @@ describe("createTerminalWorker — read serializes the REAL @xterm grid", () => 
 
 // ===========================================================================
 // The worker read threads format/scrollback into emu.snapshot AND
-// awaits the pending write-parse before serializing (the §2.4 stability flush).
+// awaits the pending write-parse before serializing (the stability flush).
 // ===========================================================================
 
 function readFrameWith(params: { format?: string; scrollback?: number }): TerminalRequestFrame {
@@ -2138,12 +2138,12 @@ describe("createTerminalWorker — read threads format/scrollback + awaits the w
     expect(scrolled.screen).toContain("LINE-01"); // the worker passed scrollback to emu.snapshot
   });
 
-  it("read AWAITS the pending write-parse — an immediate read (no manual flush) reflects the chunk (§2.4)", async () => {
+  it("read AWAITS the pending write-parse — an immediate read (no manual flush) reflects the chunk", async () => {
     // The load-bearing stability guarantee: the worker tracks the latest write-
     // flush promise and `read` awaits it before serializing. With the real async
     // @xterm write(data, cb), a NON-awaiting read would observe a stale (blank)
     // grid. Here we emit and IMMEDIATELY read WITHOUT flushEmulator() — the read
-    // must still reflect the just-emitted bytes (RED on the pre-patch path).
+    // must still reflect the just-emitted bytes.
     const rec = makeRecordingBackend();
     const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
     await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
@@ -2208,7 +2208,7 @@ describe("createTerminalWorker — settle gated on !hasContentBelowFold (load-be
 
     // A pending-detector: race the wait against a synchronous sentinel so a
     // resolved wait is detectable AFTER draining microtasks (a thorough drain so
-    // a RED state — no gate — that resolved idle at the first advance is caught).
+    // a broken build — no gate — that resolved idle at the first advance is caught).
     const PENDING = Symbol("pending");
     const waitP = worker.handle(waitFrame({ forIdleMs: 50 }));
     const drain = async (): Promise<void> => {
@@ -2270,9 +2270,9 @@ describe("createTerminalWorker — settle gated on !hasContentBelowFold (load-be
 });
 
 // ===========================================================================
-// Wave 2 (124-05): the worker drives classifyFrame on each SETTLED frame and
+// The worker drives classifyFrame on each SETTLED frame and
 // emits an attention TerminalEventFrame on fd3 via the injected writeFd3 — the
-// no-poll mechanism's worker half (TR-11). EDGE-triggered: a settled+parked frame
+// no-poll mechanism's worker half. EDGE-triggered: a settled+parked frame
 // emits terminal:input_needed; a never-parked working stream emits nothing. The
 // injected fd3-writer captures the frames so the wiring is provable on macOS.
 // ===========================================================================
@@ -2292,8 +2292,8 @@ function makeFd3Capture(): {
   };
 }
 
-describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (no poll)", () => {
-  it("a foreground `wait` settle on a cursor-parked prompt SUPPRESSES the fd3 emit (LIVE-04 #4 — the wait reply is the agent's attention signal)", async () => {
+describe("createTerminalWorker — fd3 attention emit on a settled frame (no poll)", () => {
+  it("a foreground `wait` settle on a cursor-parked prompt SUPPRESSES the fd3 emit (the wait reply is the agent's attention signal)", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
     const fd3 = makeFd3Capture();
@@ -2302,7 +2302,7 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
         loadPty: () => ({ spawn: rec.spawn }),
         setTimer: sched.setTimer,
         clearTimer: sched.clearTimer,
-        writeFd3: fd3.writeFd3, // 124-05: the injected fd3 push-channel writer
+        writeFd3: fd3.writeFd3, // the injected fd3 push-channel writer
       }),
     );
     await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
@@ -2312,7 +2312,7 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
     rec.emit("boot output line\n");
     rec.emit("Do you trust this? (y/n) ");
 
-    // A `wait` settle resolves idle on the now-quiet, parked frame. LIVE-04 (#4): this is the
+    // A `wait` settle resolves idle on the now-quiet, parked frame. This is the
     // agent's FOREGROUND wait — its REPLY (the resolved WaitResult) is the agent's attention signal
     // (it unblocks + drives), so the worker SUPPRESSES the fd3 emit for a wait settle. A fd3 woken
     // turn here would RACE the agent (the launch escalation: at launch claude's welcome screen
@@ -2385,7 +2385,7 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
     expect((reply.result as { reason: string }).reason).toBe("idle");
   });
 
-  it("a child that exits with NO settle pending still pushes terminal:session_state(exited) on fd3 (the exit wake — TR-11 holds for completion, not just prompts)", async () => {
+  it("a child that exits with NO settle pending still pushes terminal:session_state(exited) on fd3 (the exit wake holds for completion, not just prompts)", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
     const fd3 = makeFd3Capture();
@@ -2401,10 +2401,10 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
 
     // Output, then the child EXITS while the agent has NOTHING in flight — no wait,
     // no read, no send (the "long command finished while the agent sat idle" shape;
-    // ALSO the `claude --help` soak shape: print + exit, never a prompt). Pre-patch
-    // the ONLY emit site is the settle path, so this exit pushes NOTHING and an
+    // ALSO the `claude --help` soak shape: print + exit, never a prompt). Without the
+    // exit-wake, the ONLY emit site is the settle path, so this exit pushes NOTHING and an
     // event-driven agent would never be woken — it would have to poll (the exact
-    // anti-pattern TR-11 forbids).
+    // anti-pattern the no-poll model forbids).
     rec.emit("done\n");
     await flushEmulator();
     rec.emitExit({ exitCode: 0 });
@@ -2457,14 +2457,11 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
 });
 
 // ===========================================================================
-// 124-06 Task 1 — the worker `status` frame: the classifier stays SINGLE-HOMED
+// The worker `status` frame: the classifier stays SINGLE-HOMED
 // in the worker. A `status` request builds a ClassifierFrame from the current
 // emulator snapshot (+ the diff vs the previously-classified frame + the
-// per-session progress clock), runs classifyFrame, and replies the spec §5
+// per-session progress clock), runs classifyFrame, and replies the
 // perception subset {state, cursorParked, screenDiffEmpty, interactions, exitCode?}.
-// RED on pre-patch: there is NO `status` dispatch case → dispatch replies the
-// `unknown method: status` ok:false (the default branch), so `reply.ok` is false
-// and `result` is undefined.
 // ===========================================================================
 
 /** A `status` request frame for the default session id. */
@@ -2478,7 +2475,7 @@ function statusFrame(): TerminalRequestFrame {
   };
 }
 
-describe("createTerminalWorker — 124-06 status frame (classifier single-homed in the worker)", () => {
+describe("createTerminalWorker — status frame (classifier single-homed in the worker)", () => {
   it("a settled, cursor-parked prompt → status replies state:'awaiting-input', cursorParked:true, screenDiffEmpty:true", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
@@ -2506,7 +2503,7 @@ describe("createTerminalWorker — 124-06 status frame (classifier single-homed 
     expect(view.state).toBe("awaiting-input");
     expect(view.cursorParked).toBe(true);
     expect(view.screenDiffEmpty).toBe(true);
-    // 163-03 (CLASS-02): the classifier confidence + reason ride the worker reply
+    // The classifier confidence + reason ride the worker reply
     // end-to-end (statusReplyFromState -> the `status` frame result). A cursor-parked
     // prompt is the high-confidence structural certainty.
     expect(view.confidence).toBe("high");
@@ -2534,7 +2531,7 @@ describe("createTerminalWorker — 124-06 status frame (classifier single-homed 
     expect(view.exitCode).toBe(7);
   });
 
-  it("an ABSENT session → status degrades to the safe total default (state:'exited', confidence:'high', reason:'exited') — the 5th plumbing seam (163-03)", async () => {
+  it("an ABSENT session → status degrades to the safe total default (state:'exited', confidence:'high', reason:'exited')", async () => {
     // handleStatus has its OWN absent-session degrade (separate from statusReplyFromState):
     // a `status` frame for an unknown session id is gone → `exited`. The widened
     // WorkerStatusPerception must stay total here too — confidence/reason cannot be

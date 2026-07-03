@@ -19,7 +19,7 @@
  * anchored on a fixed-byte-length prefix (`sk-`, `ghp_`, `Authorization:`,
  * etc.) or have explicit word boundaries — the chunk size is far larger
  * than any conceivable credential, so cross-chunk straddle is not a
- * practical concern. This is the design-§5 trade documented in the plan.
+ * practical concern.
  *
  * Single-pass below the threshold (≤ 32 768 chars) so the small-input
  * fast path stays a single `replace` call.

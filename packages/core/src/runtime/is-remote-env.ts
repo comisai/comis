@@ -11,6 +11,8 @@
  * so operators can override the heuristic when it guesses wrong (e.g. tmux
  * over SSH where DISPLAY is set by tunneling but they still want manual paste).
  *
+ * Derived from third-party code; see NOTICE.
+ *
  * @module
  */
 
@@ -25,8 +27,8 @@ export interface IsRemoteEnvironmentInput {
 /**
  * Decide whether to skip browser-open and go straight to manual-paste.
  *
- * Heuristic (simplified from OpenClaw's remote-env.ts — no WAYLAND_DISPLAY,
- * no isWSLEnv check; Comis is Linux-only per CLAUDE.md):
+ * Heuristic (deliberately minimal — no WAYLAND_DISPLAY and no WSL check;
+ * Comis is Linux-only per CLAUDE.md):
  *   - force === "remote" → true
  *   - force === "local"  → false
  *   - SSH_CLIENT or SSH_TTY present → true

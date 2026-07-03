@@ -2,23 +2,23 @@
 /**
  * TerminalEvents: interactive terminal-driver lifecycle events (terminal:*).
  *
- * P0/OPS-07 emits a state-transition event and a spawn-failure event. P4
- * (Phase 123, SEC-10/OPS-06) makes the keystroke + eviction audit surface LIVE
- * with two more: `terminal:keystroke` (every send_text/send_key) and
- * `terminal:session_evicted` (the reaper / cap-trip signal). P5 (Phase 124,
- * TR-11/OPS-04/SEC-11/SEC-12) adds the attention + audit set: `terminal:input_needed`
+ * The driver emits a state-transition event and a spawn-failure event. The
+ * keystroke + eviction audit surface adds
+ * two more: `terminal:keystroke` (every send_text/send_key) and
+ * `terminal:session_evicted` (the reaper / cap-trip signal). The attention +
+ * audit set covers `terminal:input_needed`
  * (the agent-wake signal), `terminal:stuck` (settled, no progress), `terminal:escalated`
  * (an auto-answer escalation / hop-limit / loop audit), and `terminal:auto_answered`
- * (a safe-pattern answer was sent). Phase 164 (DRIVE-02, v2.24) adds the autonomous-drive
- * promotion signal `terminal:drive_promoted` (a long drive crossed the inline→detached
+ * (a safe-pattern answer was sent). The autonomous-drive
+ * promotion signal `terminal:drive_promoted` fires when a long drive crossed the inline→detached
  * threshold — the skills wait tool emits it, the daemon wake dispatcher consumes it to
- * fire ONE "drive started (backgrounded)" notification). Phase 165 (DUR-01, v2.24) adds the
- * durability RE-ATTACH signal `terminal:drive_reattached` (on a daemon restart the session
- * registry recovered a durable drive whose detached tmux server SURVIVED + re-attached it as
- * `running` instead of `lost` — the daemon emits it so a 40h drive's restart is reconstructable
- * via `comis explain`, design §9); the genuinely-gone path REUSES the existing
+ * fire ONE "drive started (backgrounded)" notification. The
+ * durability RE-ATTACH signal `terminal:drive_reattached` fires when on a daemon restart the
+ * session registry recovered a durable drive whose detached tmux server SURVIVED + re-attached it
+ * as `running` instead of `lost` — the daemon emits it so a 40h drive's restart is reconstructable
+ * via `comis explain`; the genuinely-gone path REUSES the existing
  * `terminal:session_state(state:"lost")` (there is NO `failed` member — the user-facing `failed`
- * OUTCOME is Phase 166 NOTIFY-01's, derived from lost + a durable journal + an unrecoverable
+ * OUTCOME is derived downstream from lost + a durable journal + an unrecoverable
  * reason). Every payload carries `sessionId` + `agentId` + `timestamp` so a transition is
  * reconstructable from the bus alone (AGENTS.md §2.7).
  *
@@ -36,26 +36,26 @@ export interface TerminalEvents {
     agentId: string;
     state: "created" | "running" | "exited" | "lost";
     /**
-     * CR-01 (Phase 166): the GENUINE-DEATH discriminator for a `lost` transition. `lost`
+     * The GENUINE-DEATH discriminator for a `lost` transition. `lost`
      * has TWO indistinguishable-on-the-bus sources: a genuinely unrecoverable death
      * (terminal-durable-wiring.ts `onUnrecoverable` — the durable tmux is truly gone on
-     * recover-on-boot; the ONLY I9-legitimate user-facing `failed`) and a TRANSIENT
+     * recover-on-boot; the ONLY legitimate source of a user-facing `failed`) and a TRANSIENT
      * worker-process crash that respawns (terminal-worker-supervisor.ts → the fd3 re-publish;
      * the supervisor's own hint says "worker will re-spawn") or a durable session that
-     * re-attaches (I10). Set `true` ONLY at the genuine-death emit; ABSENT on a
+     * re-attaches. Set `true` ONLY at the genuine-death emit; ABSENT on a
      * transient/recoverable `lost` (a worker-crash respawn or the reaper's plain lost). The
-     * NOTIFY-01 wake holder maps `lost` → `failed` ONLY when this is `true` — otherwise it
-     * reclaims in-memory state with NO `failed` notification (the I9/I10 invariant). A boolean
-     * flag, content-free (I3).
+     * wake holder maps `lost` → `failed` ONLY when this is `true` — otherwise it
+     * reclaims in-memory state with NO `failed` notification (a recoverable lost must never
+     * surface as a user-facing failure). A boolean flag, content-free.
      */
     unrecoverable?: boolean;
     /**
-     * CR-01 / WR-03 (Phase 166): the content-free unrecoverable reason (a SHORT structural
+     * The content-free unrecoverable reason (a SHORT structural
      * tag, e.g. `"tmux_session_gone"`) carried ONLY on a genuine-death `lost` (paired with
-     * `unrecoverable:true`) so NOTIFY-01 / `comis explain` can name the actual cause on the
+     * `unrecoverable:true`) so the wake holder / `comis explain` can name the actual cause on the
      * `failed` outcome + the §2.7 WARN, rather than a generic "session_lost". A machine tag,
      * NEVER screen text / keystrokes / command output (the redacted detail rides the structured
-     * LOG, never the bus — I3).
+     * LOG, never the bus).
      */
     reason?: string;
     /**
@@ -126,9 +126,9 @@ export interface TerminalEvents {
   };
 
   /**
-   * Attention wake (TR-11): the classifier settled the grid to a state that
+   * Attention wake: the classifier settled the grid to a state that
    * needs the agent — the cursor is parked at a plausible input position
-   * (`awaiting-input`) or the session is `stuck`. The dispatcher (124-07) turns
+   * (`awaiting-input`) or the session is `stuck`. The dispatcher turns
    * this into AT MOST ONE woken turn per unanswered frame. Carries a typed
    * `state` + a SHORT STRUCTURAL `reason` tag (e.g. `"settled_cursor_parked"`)
    * — NEVER screen text. The screen contents that drove the classification ride
@@ -141,17 +141,17 @@ export interface TerminalEvents {
     /** A short structural classification tag (e.g. "settled_cursor_parked") — NEVER screen text. */
     reason: string;
     /**
-     * Classifier confidence (CLASS-02) — `high` for the structural certainties
+     * Classifier confidence — `high` for the structural certainties
      * (cursor parked at a prompt), `medium` for the heuristics (e.g. `dialog_detected`).
-     * A 2-value enum, content-free: it rides the wake event for the autonomous policy
-     * (164–166) + a future `comis explain`. The screen that drove it rides the LOG.
+     * A 2-value enum, content-free: it rides the wake event for the autonomous
+     * policy. The screen that drove it rides the LOG.
      */
     confidence: "high" | "medium";
     timestamp: number;
   };
 
   /**
-   * Stuck signal (OPS-04): the session settled with no affordance and made no
+   * Stuck signal: the session settled with no affordance and made no
    * progress for longer than the operator `stuckMs`. A DURATION signal, not
    * content — `noProgressMs` is the elapsed no-progress window, nothing about
    * what is (or is not) on screen.
@@ -163,17 +163,17 @@ export interface TerminalEvents {
     noProgressMs: number;
     /**
      * The classifier's structural reason tag (e.g. "no_progress") — surface-only for
-     * observability symmetry with `terminal:input_needed` (CLASS-02; RESEARCH Open Q3).
-     * A machine tag, NEVER screen text; the FSM does NOT branch on it in 163.
+     * observability symmetry with `terminal:input_needed`.
+     * A machine tag, NEVER screen text; the wake FSM does NOT branch on it.
      */
     reason: string;
-    /** Classifier confidence (CLASS-02) — a 2-value enum, content-free (see input_needed). */
+    /** Classifier confidence — a 2-value enum, content-free (see input_needed). */
     confidence: "high" | "medium";
     timestamp: number;
   };
 
   /**
-   * Escalation audit (SEC-11/SEC-12): the auto-answer policy or a guard escalated
+   * Escalation audit: the auto-answer policy or a guard escalated
    * to a human instead of acting — a destructive/approval/auth-login prompt, a
    * detected loop, the dispatcher hop limit, a stuck session, or a frame that
    * matched no safe pattern. Carries a typed closed `reason` ONLY (the audited
@@ -194,7 +194,7 @@ export interface TerminalEvents {
   };
 
   /**
-   * Auto-answer audit (SEC-12): a safe-pattern answer was sent. Carries the
+   * Auto-answer audit: a safe-pattern answer was sent. Carries the
    * matched operator-pattern INDEX + the count of keystrokes sent — NEVER the
    * keystroke itself (mirrors `terminal:keystroke`'s redaction-safe summary). The
    * redacted keystroke detail rides the structured LOG, never the bus.
@@ -205,7 +205,7 @@ export interface TerminalEvents {
     /** Index of the matched safe affordance (a hintPattern OR a profile dialog — see `source`) — an id, not the prompt. */
     matchedPatternIndex: number;
     /** WHICH allowlist authorized the keystroke: `"hint"` (operator hintPattern) or `"dialog"` (the
-     *  selected platform profile's safe dialog, v2.26 DIALOG-01) — the audit provenance for a
+     *  selected platform profile's safe dialog) — the audit provenance for a
      *  security-sensitive auto-answer; content-free. Absent on the worker fd3-republish path. */
     source?: "hint" | "dialog";
     /** Count of keystrokes the canned answer sent — a size signal, not the content. */
@@ -214,16 +214,16 @@ export interface TerminalEvents {
   };
 
   /**
-   * Autonomous-drive promotion (DRIVE-02, Phase 164, v2.24): a backgrounded-capable
+   * Autonomous-drive promotion: a backgrounded-capable
    * drive crossed the inline→detached threshold. The skills wait tool (Context A,
-   * the agent's LLM turn) consults the pure `shouldPromoteDrive` predicate (164-02) on
+   * the agent's LLM turn) consults the pure `shouldPromoteDrive` predicate on
    * its `WaitResult` and, on a qualifying wait, emits this event; the fd3 wake dispatcher
    * (Context B, the daemon) consumes it into a closure-local promoted-Set and fires
    * EXACTLY ONE "drive started (backgrounded)" notification (promote-once — the skills
    * tool emits per-qualifying-wait, the daemon collapses to one). A sub-threshold inline
-   * drive (a `git status` one-shot) emits nothing (I1).
+   * drive (a `git status` one-shot) emits nothing.
    *
-   * CONTENT-FREE (I3): carries `sessionId`/`agentId` + a typed `reason` enum (the WHY it
+   * CONTENT-FREE: carries `sessionId`/`agentId` + a typed `reason` enum (the WHY it
    * promoted) + `timestamp` ONLY — NEVER the screen, command output, or a secret. The
    * screen digest that drove the wait rides the structured LOG, never the bus.
    */
@@ -231,7 +231,7 @@ export interface TerminalEvents {
     sessionId: string;
     agentId: string;
     /**
-     * Why the drive promoted (a closed enum, NEVER screen text — I3):
+     * Why the drive promoted (a closed enum, NEVER screen text):
      * `producing` = the honest `isComplete:false,producing:true` settle signal under
      * `mode:"auto"` (the program is still working); `mode_detached` = the operator set
      * `drive.mode:"detached"` (promote-at-first-wait, an explicit opt-in).
@@ -241,34 +241,34 @@ export interface TerminalEvents {
   };
 
   /**
-   * Autonomous-drive RE-ATTACH (DUR-01, Phase 165, v2.24): on a daemon restart the session
+   * Autonomous-drive RE-ATTACH: on a daemon restart the session
    * registry recovered a persisted descriptor whose detached tmux server SURVIVED and
-   * re-attached the drive as `running` (NOT `lost`) WITHOUT a second create frame (I10 — the
+   * re-attached the drive as `running` (NOT `lost`) WITHOUT a second create frame (the
    * worker's `has-session`-gated backend re-attaches the surviving pane on the next read). The
    * registry's `onReattached` hook (injected, infra-decoupled) drives this so a 40h drive's
-   * restart/re-attach is reconstructable via `comis explain` (design §9). MIRRORS
-   * {@link TerminalEvents}["terminal:drive_promoted"]'s content-free shape (the 164 precedent).
+   * restart/re-attach is reconstructable via `comis explain`. MIRRORS
+   * {@link TerminalEvents}["terminal:drive_promoted"]'s content-free shape.
    *
    * The genuinely-gone counterpart is NOT a new event: it REUSES the existing
    * `terminal:session_state(state:"lost")` + a content-free unrecoverable reason on the
    * structured LOG. There is NO `state:"failed"` member (the union is
-   * created|running|exited|lost); the user-facing `failed` OUTCOME is Phase 166 NOTIFY-01's,
+   * created|running|exited|lost); the user-facing `failed` OUTCOME is
    * derived downstream from (`lost` + a durable drive journal + the unrecoverable reason).
    *
-   * CONTENT-FREE (I3): sessionId / agentId + a single-member `reason` enum (the WHY it
+   * CONTENT-FREE: sessionId / agentId + a single-member `reason` enum (the WHY it
    * re-attached, NEVER the screen) / timestamp ONLY. The screen the drive resumed on rides the
    * detached tmux session, never the bus.
    *
-   * OBSERVABILITY NOTE (165-REVIEW ME-01): this event can fire DURING the daemon's boot sweep
+   * OBSERVABILITY NOTE: this event can fire DURING the daemon's boot sweep
    * BEFORE the wake-FSM subscribes (the recover-on-boot race), and it is NOT in observability's
-   * TRAJECTORY_BRIDGE_MAPPING — so the AUTHORITATIVE §9 boot re-attach record an operator
+   * TRAJECTORY_BRIDGE_MAPPING — so the AUTHORITATIVE boot re-attach record an operator
    * reconstructs via `comis explain` is the INFO log at the emit site
    * (`terminal-durable-wiring.ts`'s onReattached), which survives regardless of any subscriber.
    */
   "terminal:drive_reattached": {
     sessionId: string;
     agentId: string;
-    /** Why the drive re-attached (a closed enum, NEVER screen text — I3): `tmux_alive` = the persisted descriptor's `comis-<id>` tmux server survived the restart, so it re-attached instead of being flipped `lost`. */
+    /** Why the drive re-attached (a closed enum, NEVER screen text): `tmux_alive` = the persisted descriptor's `comis-<id>` tmux server survived the restart, so it re-attached instead of being flipped `lost`. */
     reason: "tmux_alive";
     timestamp: number;
   };

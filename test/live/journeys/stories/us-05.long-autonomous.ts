@@ -2,11 +2,11 @@
 /**
  * US-05 / J5 — Long autonomous task (compaction + expansion + memory).
  *
- * §7.7 flow: a goal spanning a long multi-turn → background tasks + DAG/LCD
+ * Flow: a goal spanning a long multi-turn → background tasks + DAG/LCD
  * compaction + in-session expansion + memory. Subsystems composed: A core-loop,
  * B LLM, D context-engine (compact+expand), E memory, F tools.
  *
- * Gated behind CTX + MEM Stage-C certs (138/139). The `context:dag_compacted` /
+ * Gated behind CTX + MEM Stage-C certs. The `context:dag_compacted` /
  * `compaction:started` events ARE in the harness subscribed set (assertable at
  * Stage-D). In sandbox: shape validated + requires-skip; the real long run is Stage-D.
  *

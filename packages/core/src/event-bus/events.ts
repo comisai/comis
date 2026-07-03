@@ -23,16 +23,16 @@ import type {
  * - MessagingEvents: message, session, compaction, context, response, command
  * - AgentEvents: skill, tool, audit, security, memory, observability (token/latency/spend)
  * - ModelEvents: model-failover (model:*) + provider-health (provider:*) lifecycle
- * - OrchestrationEvents: multi-agent graph lifecycle (graph:*, subagent:budget_exceeded — BUDGET-03)
- * - LearningEvents: verified-learning write-back/telemetry (memory:skill_used — ATTR-02)
+ * - OrchestrationEvents: multi-agent graph lifecycle (graph:*, subagent:budget_exceeded)
+ * - LearningEvents: verified-learning write-back/telemetry (memory:skill_used)
  * - TrajectoryEvents: trajectory-bridge lifecycle (prompt:submitted, session:started/ended/summary, memory:injected, tool:timeout)
  * - ChannelEvents: channel, queue, streaming, typing, autoreply, sendpolicy, debounce, priority, retry, ack
  * - InfraEvents: config, plugin, hook, browser, auth, device, diagnostic, media, scheduler, system, metrics
  * - TerminalEvents: interactive terminal-driver session lifecycle (session_state, spawn_failed)
- * - MediaGenerationEvents: image-generation lifecycle (image:requested/generated/delivered/failed — OBS-04)
- * - MediaVisionEvents: vision-analysis lifecycle (media.vision:requested/completed/failed — VIS-04)
- * - MediaVideoGenerationEvents: video-generation lifecycle (video:requested/submitted/generated/delivered/failed — OBS-04, Phase 192)
- * - MediaSttEvents / MediaTtsEvents: voice STT/TTS lifecycle (media.stt / media.tts requested/completed/failed — OBS-02/03, Phase 196)
+ * - MediaGenerationEvents: image-generation lifecycle (image:requested/generated/delivered/failed)
+ * - MediaVisionEvents: vision-analysis lifecycle (media.vision:requested/completed/failed)
+ * - MediaVideoGenerationEvents: video-generation lifecycle (video:requested/submitted/generated/delivered/failed)
+ * - MediaSttEvents / MediaTtsEvents: voice STT/TTS lifecycle (media.stt / media.tts requested/completed/failed)
  */
 export interface EventMap
   extends MessagingEvents,

@@ -28,8 +28,7 @@ import type { AnnouncementBatcher } from "@comis/orchestrator";
  * node mapping, timers, outputs, concurrency counters, driver states, etc.
  */
 // @optional-field-count: per-run accumulator state — optional fields are genuinely per-run-conditional
-// (caller/announce/driver/cache/prewarm context), accreted across phases; GEN-03 (181-05) added
-// resolvedLanguage, the 13th, crossing the 12 threshold. Not bloat-by-negligence; co-located audit per the gate.
+// (caller/announce/driver/cache/prewarm context). Not bloat-by-negligence; audited where declared.
 export interface GraphRunState {
   graphId: string;
   /** Trace ID shared by all sub-agent spawns within this graph run. */
@@ -46,13 +45,13 @@ export interface GraphRunState {
   runningCount: number;
   callerSessionKey?: string;
   callerAgentId?: string;
-  /** Phase 213 CR-01: the tree-stable rootRunId shared by EVERY node spawn in
+  /** The tree-stable rootRunId shared by EVERY node spawn in
    *  this graph run, resolved ONCE at submission (inherit the driving sub-agent's
    *  root, else the caller session's stable root). Threaded into each
-   *  `subAgentRunner.spawn` so the tree-wide ceiling (CEIL-01) and
+   *  `subAgentRunner.spawn` so the tree-wide ceiling and
    *  `killByRootRun` see one tree per graph run instead of a fresh root per node
-   *  (which made a `run.kill {rootRunId}` miss graph children). Undefined ⇒ no
-   *  resolver wired (the runner mints per node — pre-213 behavior). */
+   *  (which would make a `run.kill {rootRunId}` miss graph children). Undefined ⇒ no
+   *  resolver wired (the runner mints a fresh root per node). */
   rootRunId?: string;
   announceChannelType?: string;
   announceChannelId?: string;
@@ -61,7 +60,7 @@ export interface GraphRunState {
   cumulativeTokens: number;
   cumulativeCost: number;
   cancelReason?: "timeout" | "budget" | "manual";
-  /** Reply language resolved once at graph submission (DET-02), carried to node envelopes. */
+  /** Reply language resolved once at graph submission, carried to node envelopes. */
   resolvedLanguage?: string;
   /** Shared directory path for inter-node data sharing. */
   sharedDir: string;
@@ -75,10 +74,10 @@ export interface GraphRunState {
   syntheticRunResults: Map<string, string>;
   /** Per-node cache token data captured from completion events */
   nodeCacheData: Map<string, { cacheReadTokens: number; cacheWriteTokens: number }>;
-  /** Per-node full-run token spend captured from completion events (BUDGET-03). */
+  /** Per-node full-run token spend captured from completion events. */
   nodeTokenSpend: Map<string, number>;
-  /** Per-node CUMULATIVE corrected-$ cost ledger captured from completion events
-   *  (COST-02). Accumulates event.cost (the same corrected value feeding
+  /** Per-node CUMULATIVE corrected-$ cost ledger captured from completion
+   *  events. Accumulates event.cost (the same corrected value feeding
    *  cumulativeCost) per nodeId; the subtree rollup sums a node + its
    *  descendants over this ledger. (tenant,agent)-scoped (gs IS that scope). */
   nodeCost: Map<string, number>;
@@ -148,16 +147,16 @@ export interface GraphCoordinatorDeps {
       callerAgentId?: string;
       model?: string;
       max_steps?: number;
-      /** Per-spawn token budget (BUDGET-01). The child's own per-execution cap. */
+      /** Per-spawn token budget — the child's own per-execution cap. */
       tokenBudget?: number;
       callerType?: "agent" | "graph";
       graphSharedDir?: string;
       graphTraceId?: string;
       graphId?: string;
       nodeId?: string;
-      /** Phase 213 CR-01: the graph run's tree-stable root, shared by all nodes. */
+      /** The graph run's tree-stable root, shared by all nodes. */
       rootRunId?: string;
-      /** Phase 213 REVOKE-02: the lease that authorized the graph run (cascade correlation). */
+      /** The lease that authorized the graph run (cascade correlation). */
       parentLeaseId?: string;
       /** Sorted tool name superset for graph sub-agent cache prefix sharing. */
       graphToolNames?: string[];
@@ -173,30 +172,29 @@ export interface GraphCoordinatorDeps {
     }): string;
     killRun(runId: string): { killed: boolean; error?: string };
     getRunStatus(runId: string): { status: string; result?: { response: string; finishReason?: string }; error?: string; sessionKey?: string } | undefined;
-    /** Phase 213 CR-01: resolve a driving sub-agent's run by its session key so a
+    /** Resolve a driving sub-agent's run by its session key so a
      *  graph submitted BY a sub-agent inherits that run's tree root. Optional
-     *  (older narrowed wiring); absent ⇒ the resolver/mint fallback applies. */
+     *  (narrowed wiring may omit it); absent ⇒ the resolver/mint fallback applies. */
     getRunBySessionKey?(sessionKey: string): { rootRunId: string; parentLeaseId?: string } | undefined;
   };
   /**
-   * Phase 213 CR-01: resolve the caller session's tree-stable rootRunId for a
+   * Resolve the caller session's tree-stable rootRunId for a
    * TOP-LEVEL graph submission (no driving sub-agent). Bound by the daemon to the
    * same resolver the session.spawn handler + per-root budget use. Optional —
-   * absent ⇒ each node mints its own root (pre-213 behavior, graph fan-out is
+   * absent ⇒ each node mints its own root (graph fan-out is
    * still bounded by the graph concurrency gate).
    */
   resolveRootRunId?: (sessionKey: SessionKey) => string;
   /**
-   * Phase 216 DUR-01/DUR-02 (Plan 11): the durable run-checkpoint store. When
+   * The durable run-checkpoint store. When
    * present AND the graph run has a resolved tree-stable `rootRunId`, the
    * coordinator checkpoints the per-node completion state (the
    * GraphExecutionSnapshot → `spawn_tree`) at every node transition, so a DAG
    * interrupted by a restart resumes (or is honestly orphaned) instead of
-   * vanishing. Optional — absent ⇒ no DAG durability (pre-216 behavior; the
-   * graph still runs, it just is not restart-survivable). The daemon.ts store
-   * injection into `buildGraphCoordinatorDeps` is the dedicated wiring Plan 12
-   * (NEW-2: no two same-wave plans edit daemon.ts); this plan defines the dep +
-   * the consumption logic, Plan 12 supplies the instance.
+   * vanishing. Optional — absent ⇒ no DAG durability (the
+   * graph still runs, it just is not restart-survivable). daemon.ts injects
+   * the store instance via `buildGraphCoordinatorDeps`; this module owns the
+   * dep definition and the consumption logic.
    */
   durableRuns?: DurableRunPort;
   eventBus: TypedEventBus;
@@ -214,7 +212,7 @@ export interface GraphCoordinatorDeps {
   maxResultLength?: number;      // default 12000
   /** Operator default per-node token budget inherit-share source (security.agentToAgent.tokenBudget).
    *  null = no operator default (per-node budgets resolve from node.tokenBudget or the graph-budget
-   *  inherit-share only). BUDGET-02/03, D3. */
+   *  inherit-share only). */
   subAgentTokenBudget?: number | null;
   graphRetentionMs?: number;     // default 3_600_000 (1 hour)
   logger?: {
@@ -275,7 +273,7 @@ export interface GraphCoordinatorDeps {
 export interface CoordinatorConfig {
   maxConcurrency: number;
   maxResultLength: number;
-  /** Operator default per-node token budget inherit-share source (BUDGET-02/03, D3).
+  /** Operator default per-node token budget inherit-share source.
    *  null = no operator default. */
   subAgentTokenBudget: number | null;
   graphRetentionMs: number;

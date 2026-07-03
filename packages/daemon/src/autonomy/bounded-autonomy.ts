@@ -1,35 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `createBoundedAutonomy` — the single bounded-autonomy chokepoint (Phase 213-06,
- * RESEARCH §Pattern-1).
+ * `createBoundedAutonomy` — the single bounded-autonomy chokepoint.
  *
- * ONE typed daemon-wide service that COMPOSES the five mechanism modules built in
- * Plans 04/05 into one place, keyed on `rootRunId`, so every bound decision is
- * reconstructable from a single seam — the seam the Phase-215 audit reads:
- *   - the per-`rootRunId` spawn semaphore (CEIL-01, {@link createRootRunSemaphore}):
+ * ONE typed daemon-wide service that COMPOSES the five mechanism modules
+ * into one place, keyed on `rootRunId`, so every bound decision is
+ * reconstructable from a single seam:
+ *   - the per-`rootRunId` spawn semaphore ({@link createRootRunSemaphore}):
  *     bounds a `for(;;) spawn()` fork-bomb tree-wide on concurrency/depth/fanout,
- *   - the per-`rootRunId` $/token/wall-clock budget meter (BUDGET-01/02/03,
- *     {@link createPerRootBudget}): aborts a self-spawning loop on cost, with token
+ *   - the per-`rootRunId` $/token/wall-clock budget meter
+ *     ({@link createPerRootBudget}): aborts a self-spawning loop on cost, with token
  *     + wall-clock limbs that bite even a zero-price subscription/Codex model,
- *   - the per-key sliding-window call-rate limiter + connection-churn cap (RATE-01,
- *     {@link createCallRateLimiter}): bounds the RATE of cap-socket calls,
- *   - the outward quota (QUOTA-01/02, {@link createOutwardQuota}): the
+ *   - the per-key sliding-window call-rate limiter + connection-churn cap
+ *     ({@link createCallRateLimiter}): bounds the RATE of cap-socket calls,
+ *   - the outward quota ({@link createOutwardQuota}): the
  *     irreversible-action gate for agent-initiated outward sends.
  *
  * Plus two correlation/accessor seams the composite owns:
  *   - `registerRoot(rootRunId, leaseId, parentLeaseId?)` — anchors the budget's
  *     wall-clock deadline at the tree root AND records the rootRunId↔leaseId
  *     correlation (`leaseIdsForRoot`) for the audit/kill fan-out,
- *   - `cronCount(agentId)` — the NAMED RATE-02 cron-cap count source the
+ *   - `cronCount(agentId)` — the NAMED cron-cap count source the
  *     capability endpoint reaches THROUGH this service (it has no cron store of
- *     its own): delegates to the injected `cronJobCount` provider Plan 07 binds to
- *     the per-agent `CronScheduler.getJobs().length`.
+ *     its own): delegates to the injected `cronJobCount` provider the daemon
+ *     wiring binds to the per-agent `CronScheduler.getJobs().length`.
  *
  * Discipline (the daemon arch gates): EVERY numeric cap is sourced from the
  * resolved {@link ResolvedAutonomy} — no hard-coded limits except the structural
  * sliding-window sizes (1000ms call window / 60_000ms churn window) which are
  * documented. The service NEVER throws (it composes Result/discriminated-union
- * returning modules — the chokepoint converts a deny in Plans 07/08); all time is
+ * returning modules — the message-handler chokepoint converts a deny); all time is
  * the injected {@link ClockPort}/{@link TimerPort} (never the wall-clock global —
  * the globals gate). `destroy()` tears down the rate limiter's timers for clean
  * shutdown.
@@ -58,10 +57,10 @@ const CHURN_WINDOW_MS = 60_000;
 // not a policy cap (which roots/sockets are admitted is the per-window count).
 const RATE_MAX_ENTRIES = 100_000;
 
-/** The composed bounded-autonomy surface — the single chokepoint (Phase 215 reads it). */
+/** The composed bounded-autonomy surface — the single chokepoint every bound decision flows through. */
 export interface BoundedAutonomy {
   /**
-   * Atomically check + reserve one spawn slot for `rootRunId` (CEIL-01). Denies on
+   * Atomically check + reserve one spawn slot for `rootRunId`. Denies on
    * the depth → fanout → concurrency bounds (all from `config.spawn.*`). Delegates
    * to the per-root semaphore; the reserve is synchronous.
    */
@@ -73,7 +72,7 @@ export interface BoundedAutonomy {
   /** Release one spawn slot for `rootRunId` (paired with a prior `tryAcquireSpawn`). */
   releaseSpawn(rootRunId: string): void;
   /**
-   * KEYING-01: re-anchor an IDLE root's wall-clock + token limbs at a turn
+   * Re-anchor an IDLE root's wall-clock + token limbs at a turn
    * boundary (the bridge calls this once per turn). A no-op when `rootRunId` has a
    * LIVE spawn (`activeCount > 0`) so a runaway-tree backstop is never weakened;
    * preserves the $ accumulator + the leaseId index (unlike `releaseSpawn`). Fixes
@@ -82,17 +81,17 @@ export interface BoundedAutonomy {
    */
   evictRootIfIdle(rootRunId: string): void;
   /**
-   * Record one cap-socket call (RATE-01). Composes the per-root AND per-socket
+   * Record one cap-socket call. Composes the per-root AND per-socket
    * sliding-window limits — denies if EITHER trips: the per-root key on
    * `config.rate.perRootCallsPerSec`, the per-socket key on its OWN
-   * `config.rate.perSocketCallsPerSec` (WR-01 — these are two distinct caps with
+   * `config.rate.perSocketCallsPerSec` (these are two distinct caps with
    * two distinct limiters, not one cap applied twice).
    */
   tryCall(rootRunId: string, socketId: string): { ok: true } | { ok: false; reason: "rate" };
-  /** Record one cap-socket (re)connection for `rootRunId` (the churn cap, RATE-01). */
+  /** Record one cap-socket (re)connection for `rootRunId` (the churn cap). */
   tryChurn(rootRunId: string): { ok: true } | { ok: false; reason: "churn" };
   /**
-   * Reserve budget for one LLM/web call against the tree root (BUDGET-01/02/03).
+   * Reserve budget for one LLM/web call against the tree root.
    * Returns a {@link SpendGateOutcome} — `ok`/`free`/`unpriceable`/`exceeded`.
    */
   reserveBudget(
@@ -102,7 +101,7 @@ export interface BoundedAutonomy {
     estUsd: number,
     estTokens: number,
   ): SpendGateOutcome;
-  /** Gate one outward agent send (QUOTA-01/02). Returns `Result<void, QuotaError>`. */
+  /** Gate one outward agent send. Returns `Result<void, QuotaError>`. */
   tryOutward(
     agentId: string,
     channelId: string,
@@ -119,12 +118,12 @@ export interface BoundedAutonomy {
   leaseIdsForRoot(rootRunId: string): ReadonlySet<string>;
   /**
    * The composite remaining-state snapshot for one run — the read surface the
-   * `capabilities.introspect`/`whoami` RPC reports (INTRO-01). Composes the two
+   * `capabilities.introspect`/`whoami` RPC reports. Composes the two
    * per-module {@link PerRootBudget.remaining} + {@link OutwardQuota.remaining}
    * accessors (delegating to the sub-modules the composite already holds) plus
    * the rootRunId↔leaseId correlation. A PURE read — no gate mutation, no window
-   * advance, no budget reserve (T-215-05): it surfaces the SAME numbers the gates
-   * enforce against (so the read matches the gate, T-215-06).
+   * advance, no budget reserve: it surfaces the SAME numbers the gates
+   * enforce against (so the read always matches the gate).
    */
   snapshot(
     rootRunId: string,
@@ -136,7 +135,7 @@ export interface BoundedAutonomy {
     leaseIds: ReadonlyArray<string>;
   };
   /**
-   * The agent's live cron-job count (RATE-02) — the NAMED count source the cap
+   * The agent's live cron-job count — the NAMED count source the cap
    * endpoint consults THROUGH this service. Delegates to the injected
    * `cronJobCount` provider; 0 when no provider is wired (fail-open on this limb).
    */
@@ -156,9 +155,9 @@ export interface BoundedAutonomy {
  *   own the full bound surface in one place).
  * @param deps.config - the resolved {@link ResolvedAutonomy} — the SINGLE source
  *   of every numeric cap (spawn/budget/rate/outward + message.maxPerHour).
- * @param deps.cronJobCount - the per-agent cron-job count provider (the RATE-02
- *   count source). Optional — absent ⇒ `cronCount` returns 0 (Plan 07 binds it to
- *   the per-agent `CronScheduler.getJobs().length`).
+ * @param deps.cronJobCount - the per-agent cron-job count provider (the cron-cap
+ *   count source). Optional — absent ⇒ `cronCount` returns 0 (the daemon wiring
+ *   binds it to the per-agent `CronScheduler.getJobs().length`).
  * @param deps.logger - structured logger threaded into the sub-modules.
  */
 export function createBoundedAutonomy(deps: {
@@ -202,10 +201,10 @@ export function createBoundedAutonomy(deps: {
     maxEntries: RATE_MAX_ENTRIES,
   });
 
-  // WR-01 (213-REVIEW): a SEPARATE limiter for the per-SOCKET dimension. The
+  // A SEPARATE limiter for the per-SOCKET dimension. The
   // shared sliding-window body enforces ONE `maxPerWindow`, so a single limiter
-  // cannot apply two different per-key caps — pre-fix, both the root AND socket
-  // keys rode the per-root cap, making `perSocketCallsPerSec` (default 10) dead
+  // cannot apply two different per-key caps — if both the root AND socket
+  // keys rode the per-root cap, `perSocketCallsPerSec` (default 10) would be dead
   // config. This second limiter's callWindow uses `perSocketCallsPerSec` so the
   // `socket:<id>` key is bounded by its own configured cap. Its churn limb is
   // unused (churn is per-root, gated by `rate.tryChurn`); a positive placeholder
@@ -244,7 +243,7 @@ export function createBoundedAutonomy(deps: {
 
     releaseSpawn(rootRunId): void {
       semaphore.releaseSpawn(rootRunId);
-      // WR-05: when the tree has no live spawns left, evict ALL per-root state in
+      // When the tree has no live spawns left, evict ALL per-root state in
       // one place — the semaphore already dropped its own entry inside
       // releaseSpawn (active→0), so mirror that here for the budget meter's
       // wall-clock/token maps AND the leaseId correlation index, so a storm of
@@ -257,13 +256,13 @@ export function createBoundedAutonomy(deps: {
     },
 
     evictRootIfIdle(rootRunId): void {
-      // KEYING-01: re-anchor an IDLE root's wall-clock + token limbs at a turn
+      // Re-anchor an IDLE root's wall-clock + token limbs at a turn
       // boundary. An interactive SESSION root (`root-session-*`) acquires NO spawn
       // slot, so `releaseSpawn` never fires for it and its wall-clock/token anchors
       // would accumulate across the WHOLE conversation — a session alive >
-      // wallClockMs then falsely aborts EVERY subsequent turn (live finding
-      // 2026-06-24). The bridge calls this once per turn so each turn re-anchors
-      // from its own start (the next reserveBudget re-anchors via the IN-02
+      // wallClockMs would then falsely abort EVERY subsequent turn.
+      // The bridge calls this once per turn so each turn re-anchors
+      // from its own start (the next reserveBudget re-anchors via the
       // first-reserve write). GUARD: only when `activeCount === 0` — a root with a
       // LIVE spawn is NOT reset, so the genuine runaway-TREE wall-clock backstop
       // holds. Drops ONLY the budget meter's wall-clock + token maps (via
@@ -279,7 +278,7 @@ export function createBoundedAutonomy(deps: {
       // Compose the per-root AND per-socket sliding-window limits — deny if EITHER
       // trips. The per-root key bounds the whole tree's call rate
       // (`perRootCallsPerSec`); the per-socket key bounds a single orchestration
-      // socket via its OWN limiter (`perSocketCallsPerSec`, WR-01). Check the root
+      // socket via its OWN limiter (`perSocketCallsPerSec`). Check the root
       // bound first (the tree-wide cap), then the socket bound.
       const perRoot = rate.tryCall(`root:${rootRunId}`);
       if (!perRoot.ok) return perRoot;
@@ -324,7 +323,7 @@ export function createBoundedAutonomy(deps: {
       outwardQuota: ReturnType<OutwardQuota["remaining"]>;
       leaseIds: ReadonlyArray<string>;
     } {
-      // PURE read (INTRO-01 / T-215-05): delegate to the per-module remaining()
+      // PURE read: delegate to the per-module remaining()
       // accessors (themselves pure) + materialize the lease-correlation set as an
       // array. No gate state is mutated here.
       return {
@@ -335,7 +334,7 @@ export function createBoundedAutonomy(deps: {
     },
 
     cronCount(agentId): number {
-      // Delegate to the injected provider (the RATE-02 count source); the service
+      // Delegate to the injected provider (the cron-cap count source); the service
       // holds NO cron store of its own. Absent provider ⇒ 0 (fail-open on this
       // single limb — the endpoint gates origin/scope first).
       return deps.cronJobCount?.(agentId) ?? 0;

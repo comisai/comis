@@ -5,9 +5,9 @@
  * component - so "9 channels", "15 packages", "35 providers", or "~71%" can
  * never be stated two different ways across the site.
  *
- * Every value here is copied verbatim from the audited README + the phase-157
- * accuracy contract (CONTEXT "Accuracy contract (LOCKED)"). Do NOT round,
- * rephrase, or recompute a number - that is the entire point of this module.
+ * Every value here is copied verbatim from the audited README and is treated
+ * as a locked accuracy contract. Do NOT round, rephrase, or recompute a
+ * number - that is the entire point of this module.
  * It is plain `as const` data: no logic and no derived counts.
  *
  * @module

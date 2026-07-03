@@ -1073,13 +1073,14 @@ describe("gateway tool", () => {
     });
 
     // ---------------------------------------------------------------------------
-    // Plan 02-02: mode-accurate hint — RED tests
-    // These tests fail until the stale hint text is replaced with:
+    // Mode-accurate preflight hint. When the secrets store is unavailable, the
+    // hint must guide the operator with:
     //   "To store secrets, set security.storage: encrypted or security.storage: file
     //    in config.yaml and restart the daemon."
+    // and must not mention the stale env-mode text.
     // ---------------------------------------------------------------------------
 
-    it("(02-02) env-mode preflight hint does NOT mention SECRETS_MASTER_KEY (stale hint removed)", async () => {
+    it("env-mode preflight hint does NOT mention SECRETS_MASTER_KEY (stale hint removed)", async () => {
       const rpcCall = createUnavailableStoreMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
 
@@ -1098,7 +1099,7 @@ describe("gateway tool", () => {
       expect(hint).not.toContain("~/.comis/.env");
     });
 
-    it("(02-02) env-mode preflight hint mentions security.storage: encrypted", async () => {
+    it("env-mode preflight hint mentions security.storage: encrypted", async () => {
       const rpcCall = createUnavailableStoreMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
 
@@ -1115,7 +1116,7 @@ describe("gateway tool", () => {
       expect(hint).toContain("security.storage: encrypted");
     });
 
-    it("(02-02) env-mode preflight hint mentions security.storage: file", async () => {
+    it("env-mode preflight hint mentions security.storage: file", async () => {
       const rpcCall = createUnavailableStoreMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
 

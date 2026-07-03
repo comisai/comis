@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SUMW-01 (Phase 178): THE one resolved-summarizer window read, extracted into
- * its own module from `lcd-leaf-summarizer.ts` (which sits at the 800-line
- * file-size cap). The deps shape stays {@link LeafSummarizerDeps} — this module
+ * THE one resolved-summarizer window read, kept in its own module so
+ * `lcd-leaf-summarizer.ts` stays under the 800-line file-size cap.
+ * The deps shape stays {@link LeafSummarizerDeps} — this module
  * only owns the window-resolution read; the summarizer seam, chunk selection,
  * and escalation ladder remain in `lcd-leaf-summarizer.ts`.
  *
  * Consumed by: llm-compaction (pipeline span clamp, via
- * {@link effectiveSummarizerWindow}) and the 178-03 LCD leaf/condense clamps
+ * {@link effectiveSummarizerWindow}) and the LCD leaf/condense clamps
  * (lcd-compaction-trigger / lcd-condense-trigger, via
  * {@link resolveSummarizerWindowTokens}).
  *
@@ -17,10 +17,10 @@
 import type { LeafSummarizerDeps } from "./lcd-leaf-summarizer.js";
 
 /**
- * INT-W1: combine a candidate summarizer's CONFIGURED contextWindow with the
- * provider-SERVED window bound to that candidate (Phase 176) into the one
+ * Combine a candidate summarizer's CONFIGURED contextWindow with the
+ * provider-SERVED window bound to that candidate into the one
  * effective window the span clamps size against. Finite-positive guards on
- * both inputs (WR-05 parity — an invalid number never disables or inflates a
+ * both inputs (an invalid number never disables or inflates a
  * clamp):
  *
  *  - both valid → `min(configured, served)` — the provider truncates anything
@@ -52,10 +52,10 @@ export function effectiveSummarizerWindow(
 }
 
 /**
- * SUMW-01 (Phase 178): THE one resolved-summarizer window read. Mirrors
+ * THE one resolved-summarizer window read. Mirrors
  * `buildLeafSummarizeFn`'s PRIMARY model resolution EXACTLY
  * (`overrideModel?.model ?? getRealModel()`) so a span clamp and the primary
- * LLM call always agree about WHICH model summarizes. Pitfall 2: `getModel()`
+ * LLM call always agree about WHICH model summarizes. Pitfall: `getModel()`
  * is the session-PRIMARY snapshot — with an `operationModels.compaction`
  * override the summarizer is a DIFFERENT model; a clamp keyed to the primary
  * would pass a 131K span to an 8K summarizer. `getRealModel` is optional-called
@@ -65,17 +65,17 @@ export function effectiveSummarizerWindow(
  * finite-positive guard falls back to `getModel().contextWindow` (the snapshot
  * — never silently huge).
  *
- * INT-W1 (served-window truth): the configured window is then min()'d with the
- * Phase-176 provider-SERVED window bound to the SAME candidate the `??` chain
+ * Served-window truth: the configured window is then min()'d with the
+ * provider-SERVED window bound to the SAME candidate the `??` chain
  * resolved — `overrideModel.servedWindow` when the override summarizes,
  * `primaryServedWindow` when the primary does. Both values were provider-gated
- * at the wiring site against the 176 `{providerKey, window}` pair (WR-02
- * config-key space), so a served bound can never clamp a summarizer on another
+ * at the wiring site against the probed `{providerKey, window}` pair, so a
+ * served bound can never clamp a summarizer on another
  * provider; on the flagship gap (configured 131_072, Ollama serving 8_192,
  * summarizer = primary) this resolves 8_192 and the leaf/condense/pipeline
  * clamps bind against the window the provider will actually serve.
  *
- * KNOWN LIMIT (review IN-02): this resolves the PRIMARY summarizer only. The
+ * KNOWN LIMIT: this resolves the PRIMARY summarizer only. The
  * production `summarize` seam may be failover-wrapped
  * (`wrapSummarizerWithFailover` via `summarizerFallbackProviders`): on
  * primary failure a fallback model with a possibly SMALLER window serves the
@@ -84,7 +84,7 @@ export function effectiveSummarizerWindow(
  * through the escalation ladder (degraded, never data loss). Clamping to
  * min(primary, ...fallback windows) is a deliberate non-goal until a live
  * incident motivates it.
- * Consumed by: llm-compaction (pipeline span clamp) and the 178-03 LCD
+ * Consumed by: llm-compaction (pipeline span clamp) and the LCD
  * leaf/condense clamps.
  */
 export function resolveSummarizerWindowTokens(
@@ -97,7 +97,7 @@ export function resolveSummarizerWindowTokens(
     typeof win === "number" && Number.isFinite(win) && win > 0
       ? win
       : deps.getModel().contextWindow; // documented fallback: the snapshot — never silently huge
-  // INT-W1: the served truth rides the SAME candidate the ?? above resolved
+  // The served truth rides the SAME candidate the ?? above resolved
   // (`!= null` is the exact nullish test `??` applies to overrideModel.model),
   // so clamp and call can never disagree about which provider's bound applies.
   const served = overrideResolved != null ? deps.overrideModel?.servedWindow : deps.primaryServedWindow;

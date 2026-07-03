@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The VERIFY-ONLY cache-stack assertion (Phase 221, §23.5 "do-not-rebuild" guard;
- * CONTEXT decision "Verify-only (already shipped — do NOT rebuild)").
+ * The VERIFY-ONLY cache-stack assertion (the "do-not-rebuild" guard).
  *
  * The multi-zone cache strategy, cache-break attribution, adaptive/monotonic TTL,
- * defer-recall, and strip-thinking are SHIPPED machinery 221 ASSERTS — it does not
+ * defer-recall, and strip-thinking are SHIPPED machinery this file ASSERTS — it does not
  * re-implement them. This file is that assertion: it imports each stabilizer and
  * makes a minimal behavioral check so a future refactor that DELETES or RENAMES a
- * stabilizer (the T-221-VERIFY-01 tampering threat) trips a named failing test
+ * stabilizer trips a named failing test
  * rather than silently dropping a load-bearing cache-stability control.
  *
- * It ALSO pins the cooperation invariant introduced by the EFF every-turn pass
- * (Plan 01): `runEveryTurnMicrocompact` must signal `onContentModification` when
+ * It ALSO pins the cooperation invariant of the every-turn microcompact
+ * pass: `runEveryTurnMicrocompact` must signal `onContentModification` when
  * it clears (so the cache-break detector attributes the change as DELIBERATE, not
  * a cache bust) and must NOT call `onAdaptiveRetentionReset` (the warm-cache rule,
- * mirroring `runTokenCeilingMicrocompact`). EFF cooperates with — never bypasses —
- * the verify-only stack.
+ * mirroring `runTokenCeilingMicrocompact`). The every-turn pass cooperates with —
+ * never bypasses — the verify-only stack.
  *
- * This is a guard/assertion test: NO production change accompanies it. If an import
+ * This is a guard/assertion test. If an import
  * fails to resolve or a behavioral check fails, that is a regression in the shipped
- * stack (or the EFF wiring) to fix, not a license to rebuild here.
+ * stack (or the every-turn wiring) to fix, not a license to rebuild here.
  *
  * @module
  */
@@ -27,7 +26,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { ClockPort } from "@comis/core";
 
-// --- The verify-only stabilizers (§23.5), each imported at its canonical name. ---
+// --- The verify-only stabilizers, each imported at its canonical name. ---
 import {
   createAdaptiveCacheRetention,
   createStaticRetention,
@@ -53,7 +52,7 @@ import {
   deferRecallToUncachedTail,
 } from "./tool-result-clearing.js";
 
-// --- The EFF every-turn pass whose cooperation with the stack we pin. ---
+// --- The every-turn microcompact pass whose cooperation with the stack we pin. ---
 import { runEveryTurnMicrocompact } from "./microcompact.js";
 import { createMockLogger } from "../__test-helpers/index.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
@@ -65,7 +64,7 @@ function makeStubClock(start = 1_700_000_000_000): { clock: ClockPort; advance: 
   return { clock, advance: (ms: number) => { nowMs += ms; } };
 }
 
-describe("verify-only cache stack is present and unbroken (§23.5 do-not-rebuild guard)", () => {
+describe("verify-only cache stack is present and unbroken (do-not-rebuild guard)", () => {
   it("adaptive-cache-retention escalates cold→warm on confirmed reads + turns, and resets", () => {
     // The adaptive retention starts cold ("short") and escalates to warm ("long")
     // once enough turns + cache reads confirm a warm cache — the multi-zone retention
@@ -132,11 +131,11 @@ describe("verify-only cache stack is present and unbroken (§23.5 do-not-rebuild
     }
   });
 
-  it("cache-break detector exposes notifyContentModification — the deliberate-change attribution EFF rides", () => {
+  it("cache-break detector exposes notifyContentModification — the deliberate-change attribution the every-turn pass rides", () => {
     // The cache-break detector is the attribution engine: a deliberate content
     // modification (microcompaction / observation masking) must be announced via
     // notifyContentModification so the NEXT response is not flagged as a cache bust.
-    // Assert the detector constructs + exposes that entrypoint (the seam EFF uses).
+    // Assert the detector constructs + exposes that entrypoint (the seam the every-turn pass uses).
     const sessionKey = "verify-detector-session";
     const eventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn() } as unknown as Parameters<
       typeof createCacheBreakDetector
@@ -202,7 +201,7 @@ describe("verify-only cache stack is present and unbroken (§23.5 do-not-rebuild
   it("defer-recall strips transient recall from history and defers it off the cached prefix", () => {
     // The recall block (envelope-wrapper top-1 RAG) must be stripped from historical
     // user turns (prefix stability) and, on the current turn, deferred to an uncached
-    // trailing block — the two defer-recall stabilizers C-FIX-3 / cache #C4.
+    // trailing block — the two defer-recall stabilizers.
     // Must match the shipped INLINE_RECALL_BLOCK_RE: a `(recorded YYYY-MM-DD)`
     // stamp and the block at the START of the text (the envelope-wrapper prepends it).
     const recallLine = "[Relevant context from memory: the user prefers metric units (recorded 2026-06-20)]";
@@ -246,7 +245,7 @@ function messagesWithStaleReads(count: number): Array<Record<string, unknown>> {
   return msgs;
 }
 
-describe("EFF every-turn pass cooperates with the verify-only stack (does NOT bypass it)", () => {
+describe("every-turn microcompact pass cooperates with the verify-only stack (does NOT bypass it)", () => {
   it("calls onContentModification when it clears so the cache-break detector treats it as deliberate", () => {
     // The cooperation invariant: clearing stale results must announce a deliberate
     // content modification (wired to detector.notifyContentModification in the

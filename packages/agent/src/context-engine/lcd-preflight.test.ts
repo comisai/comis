@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for lcd-preflight.ts (Phase 166 CWF-02).
+ * Unit tests for lcd-preflight.ts.
  *
  * Covers:
- *  - WR-01: errorKind "resource" (not "capacity") in WARN calls
- *  - CR-03: onAssembledInputTokens reports actual assembled count (not simulated undercount)
- *  - IN-01: fresh-tail token estimation handles non-string (multi-part) content
- *  - WR-02: minVisibleOutputTokens config value threads into computeOutputHeadroom
+ *  - errorKind "resource" (not "capacity") in WARN calls
+ *  - onAssembledInputTokens reports actual assembled count (not simulated undercount)
+ *  - fresh-tail token estimation handles non-string (multi-part) content
+ *  - minVisibleOutputTokens config value threads into computeOutputHeadroom
  *  - Escalation ladder: governor fire + exhaustion throw
  *
  * @module
@@ -57,20 +57,20 @@ function makeBudgetItems(count: number, tokensEach: number): BudgetItem[] {
 }
 
 // ---------------------------------------------------------------------------
-// OF-01 (v2.19): the pre-flight must count the FULL SDK prompt (system + tools)
+// The pre-flight must count the FULL SDK prompt (system + tools).
 //
-// Live qwen3.6 re-measure: systemTokens=25584 (the dominant term) was OMITTED
-// from the fit-check, so a real ~31.5K prompt looked like ~6.5K, passed the
-// check, and the model truncated silently at stopReason:length — the governor /
-// clamp / context-exhausted ladder never engaged. These tests reproduce that:
+// With systemTokens=25584 (the dominant term) OMITTED
+// from the fit-check, a real ~31.5K prompt looks like ~6.5K, passes the
+// check, and the model truncates silently at stopReason:length — the governor /
+// clamp / context-exhausted ladder never engages. These tests reproduce that:
 // with S counted, the check fires (governor down-shift, or loud context_exhausted)
-// instead of a silent pass. See design/small-model-orchestration-fidelity.md §6 Fix 1.
+// instead of a silent pass.
 // ---------------------------------------------------------------------------
-describe("OF-01: pre-flight counts systemTokens in the assembled-input fit check", () => {
-  it("engages the thinking governor when system+history exceeds the headroom bound (was: silent pass)", () => {
-    // Live turn: S=25584, effectiveWindow=32000, native/high → headroom 8960, bound 23040.
-    // Pre-patch: assembledInput = history(200) only → 200 < 23040 → check never fires (silent).
-    // Post-patch: S(25584)+200 = 25784 > 23040 → governor fires; at medium (bound 28160) it fits.
+describe("pre-flight counts systemTokens in the assembled-input fit check", () => {
+  it("engages the thinking governor when system+history exceeds the headroom bound (never a silent pass)", () => {
+    // S=25584, effectiveWindow=32000, native/high → headroom 8960, bound 23040.
+    // Without S counted: assembledInput = history(200) only → 200 < 23040 → check never fires (silent).
+    // With S counted: S(25584)+200 = 25784 > 23040 → governor fires; at medium (bound 28160) it fits.
     const onThinkingDownshifted = vi.fn();
     const onAssembledInputTokens = vi.fn();
     const deps = makeDeps({
@@ -89,10 +89,10 @@ describe("OF-01: pre-flight counts systemTokens in the assembled-input fit check
     expect(reported).toBeGreaterThanOrEqual(25_584);
   });
 
-  it("throws ContextExhaustionError when system+freshTail is infeasible even at the thinking floor (live turn-4)", () => {
+  it("throws ContextExhaustionError when system+freshTail is infeasible even at the thinking floor", () => {
     // S=25584 + a ~6000-token fresh tail (the accumulated tool results) = ~31584,
     // which exceeds even the off-thinking bound (32000-768=31232) → loud degrade.
-    // Pre-patch: assembledInput = freshTail(6000) only → 6000 < 23040 → no throw (silent length-trunc).
+    // Without S counted: assembledInput = freshTail(6000) only → 6000 < 23040 → no throw (silent length-trunc).
     const deps = makeDeps({
       getThinkingLevel: () => "high",
       getSystemTokensEstimate: () => 25_584,
@@ -105,8 +105,8 @@ describe("OF-01: pre-flight counts systemTokens in the assembled-input fit check
     expect(() => runPreflightFitCheck(deps, 32_000, [], 0, freshTail as never, "native")).toThrow(ContextExhaustionError);
   });
 
-  it("is byte-identical when no systemTokens estimate is supplied (frontier/test path)", () => {
-    // getSystemTokensEstimate unset → S=0 → assembledInput = history only → no fire (as before).
+  it("does not fire the governor when no systemTokens estimate is supplied (frontier/test path)", () => {
+    // getSystemTokensEstimate unset → S=0 → assembledInput = history only → no fire.
     const onThinkingDownshifted = vi.fn();
     const deps = makeDeps({
       getThinkingLevel: () => "high",
@@ -121,9 +121,9 @@ describe("OF-01: pre-flight counts systemTokens in the assembled-input fit check
 });
 
 // ---------------------------------------------------------------------------
-// W1 (obs-llm-troubleshooting): capped-window provenance must reach the throw
-// and the exhaustion WARN. Live incident: the WARN said effectiveWindow=32000
-// while config declared 131072 — the clamp (effectiveContextCapSmall) was
+// Capped-window provenance must reach the throw
+// and the exhaustion WARN. Without it the WARN says effectiveWindow=32000
+// while config declared 131072 — the clamp (effectiveContextCapSmall) is
 // invisible from the log line and the error string.
 // ---------------------------------------------------------------------------
 describe("capped-window provenance in the exhaustion throw and WARN", () => {
@@ -180,7 +180,7 @@ describe("capped-window provenance in the exhaustion throw and WARN", () => {
   });
 
   it("emits a fits-verdict context:budget_computed event carrying the full budget equation", () => {
-    // W2 (obs-llm-troubleshooting): the budget math must reach the trajectory.
+    // The budget math must reach the trajectory.
     const emit = vi.fn();
     const deps = makeDeps({
       getThinkingLevel: () => "high",
@@ -260,8 +260,8 @@ describe("capped-window provenance in the exhaustion throw and WARN", () => {
     expect(p.windowCapSource).toBe("effectiveContextCapSmall");
   });
 
-  it("KNOB-02-9: a served-bound exhaustion names the Ollama knobs in the throw, the WARN hint, and the budget event", () => {
-    // KNOB-02 (Phase 176): when the served window bound the effective window,
+  it("a served-bound exhaustion names the Ollama knobs in the throw, the WARN hint, and the budget event", () => {
+    // When the served window binds the effective window,
     // the exhaustion remedy is OLLAMA_CONTEXT_LENGTH / PARAMETER num_ctx — not
     // a contextEngine.budget.* knob. Both the thrown message and the WARN hint
     // must carry the served-shaped remedy with the TRUE configured number, and
@@ -329,10 +329,10 @@ describe("capped-window provenance in the exhaustion throw and WARN", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: errorKind "resource" in WARN calls
+// errorKind "resource" in WARN calls
 // ---------------------------------------------------------------------------
 
-describe("WR-01: errorKind is 'resource' in WARN calls (not the invalid 'capacity')", () => {
+describe("errorKind is 'resource' in WARN calls (not the invalid 'capacity')", () => {
   it("governor WARN uses errorKind 'resource'", () => {
     // Create a scenario where the governor fires: native/high, window pressure.
     // effectiveWindow=5000, headroom for native/high=8960 → headroomBound=5000-8960 < 0
@@ -371,7 +371,7 @@ describe("WR-01: errorKind is 'resource' in WARN calls (not the invalid 'capacit
       eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
     });
 
-    // effectiveWindow=2000. After the ISSUE #1 fix, EVICTABLE history is always
+    // effectiveWindow=2000. EVICTABLE history is always
     // trimmed (never throws), so exhaustion must come from the NON-evictable fresh
     // tail: an oversized current user message (~4000 tok) that ships unconditionally
     // and cannot be evicted. "low" headroom=1792, bound=208; 4000 > 208 → exhaustion.
@@ -392,10 +392,10 @@ describe("WR-01: errorKind is 'resource' in WARN calls (not the invalid 'capacit
 });
 
 // ---------------------------------------------------------------------------
-// CR-03: onAssembledInputTokens reports actual assembled count
+// onAssembledInputTokens reports the actual assembled count
 // ---------------------------------------------------------------------------
 
-describe("CR-03: onAssembledInputTokens reports actual assembled count (not simulated undercount)", () => {
+describe("onAssembledInputTokens reports actual assembled count (not simulated undercount)", () => {
   it("under no window pressure: reports budgetedTokens + freshTailTokens", () => {
     const captured: number[] = [];
     const deps = makeDeps({
@@ -415,10 +415,10 @@ describe("CR-03: onAssembledInputTokens reports actual assembled count (not simu
     expect(captured[0]).toBe(1_002);
   });
 
-  it("CR-03 REGRESSION: under security-pin window pressure, reports original assembled count (not simulation)", () => {
+  it("REGRESSION: under security-pin window pressure, reports original assembled count (not simulation)", () => {
     // Scenario: assembledInputTokens > headroomBound AND securityPinMarkers present.
-    // Pre-fix: deps.onAssembledInputTokens received the SIMULATED (lower) count.
-    // Post-fix: deps.onAssembledInputTokens receives the ORIGINAL (actual) count.
+    // Reporting the SIMULATED (lower) count here is the regression this guards:
+    // deps.onAssembledInputTokens must receive the ORIGINAL (actual) count.
     const captured: number[] = [];
     const markers = { canaryToken: "canary-xyz", contentDelimiter: "---delim---" };
 
@@ -461,12 +461,12 @@ describe("CR-03: onAssembledInputTokens reports actual assembled count (not simu
     runPreflightFitCheck(deps, 3_000, evictable, 7, [], "none");
 
     expect(captured.length).toBe(1);
-    // Post-fix: must equal ORIGINAL assembled count = 3500 (not simulated ~2000)
+    // Must equal the ORIGINAL assembled count = 3500 (not simulated ~2000)
     // The ORIGINAL count is budgetedTokens + freshTailTokens = 3500 + 0 = 3500
     expect(captured[0]).toBe(3_500);
   });
 
-  it("CR-03: no security pins — onAssembledInputTokens always reports original count", () => {
+  it("no security pins — onAssembledInputTokens always reports original count", () => {
     // Without security pins, step (a) is skipped entirely → no divergence.
     const captured: number[] = [];
     const deps = makeDeps({
@@ -483,10 +483,10 @@ describe("CR-03: onAssembledInputTokens reports actual assembled count (not simu
 });
 
 // ---------------------------------------------------------------------------
-// IN-01: fresh-tail token estimation handles non-string content
+// Fresh-tail token estimation handles non-string content
 // ---------------------------------------------------------------------------
 
-describe("IN-01: fresh-tail token estimation includes multi-part / array content", () => {
+describe("fresh-tail token estimation includes multi-part / array content", () => {
   it("string content is counted (baseline)", () => {
     const captured: number[] = [];
     const deps = makeDeps({
@@ -502,7 +502,7 @@ describe("IN-01: fresh-tail token estimation includes multi-part / array content
     expect(captured[0]).toBe(100);
   });
 
-  it("IN-01: array content blocks are counted (not silently zeroed)", () => {
+  it("array content blocks are counted (not silently zeroed)", () => {
     const captured: number[] = [];
     const deps = makeDeps({
       onAssembledInputTokens: (t) => captured.push(t),
@@ -524,14 +524,14 @@ describe("IN-01: fresh-tail token estimation includes multi-part / array content
     ];
     runPreflightFitCheck(deps, 100_000, [], 0, freshTail as never, "none");
 
-    // Post-fix: array content should be counted → ceil(700/3.5)=200 tokens
-    // Pre-fix: array content contributes 0 → reported=0
+    // Array content must be counted → ceil(700/3.5)=200 tokens
+    // (a string-only extractor would report 0 for this message).
     expect(captured[0]).toBeGreaterThan(0);
     // The exact value: (350+350)/3.5 = 200 tokens
     expect(captured[0]).toBe(200);
   });
 
-  it("IN-01: mixed messages (string + array) each contribute to total", () => {
+  it("mixed messages (string + array) each contribute to total", () => {
     const captured: number[] = [];
     const deps = makeDeps({
       onAssembledInputTokens: (t) => captured.push(t),
@@ -549,11 +549,11 @@ describe("IN-01: fresh-tail token estimation includes multi-part / array content
 });
 
 // ---------------------------------------------------------------------------
-// WR-02: minVisibleOutputTokens config value used as floor
+// minVisibleOutputTokens config value used as floor
 // ---------------------------------------------------------------------------
 
-describe("WR-02: minVisibleOutputTokens config value threads into headroom computation", () => {
-  it("default (no config) uses 768 — frontier/mid byte-identical", () => {
+describe("minVisibleOutputTokens config value threads into headroom computation", () => {
+  it("default (no config) uses the 768-token headroom floor", () => {
     const captured: number[] = [];
     const deps = makeDeps({
       onAssembledInputTokens: (t) => captured.push(t),
@@ -580,7 +580,7 @@ describe("WR-02: minVisibleOutputTokens config value threads into headroom compu
     } as Partial<ContextEngineDeps>);
 
     // With custom 1200 floor: headroomBound = 5000 - 1200 = 3800.
-    // The pressure is in the NON-evictable fresh tail (ISSUE #1: evictable history is
+    // The pressure is in the NON-evictable fresh tail (evictable history is
     // always trimmed, so it can't discriminate the floor) — a ~4000-token current
     // message. 4000 > 3800 (custom floor) → exhaustion; with the default 768 floor the
     // bound would be 4232 and 4000 < 4232 → no throw. So a throw proves the 1200
@@ -592,13 +592,9 @@ describe("WR-02: minVisibleOutputTokens config value threads into headroom compu
       onThrowCapture(e);
     }
 
-    // With custom 1200 the pre-flight SHOULD throw (4000 > 3800 and no pins/governor for none)
-    // But WITHOUT config threading: headroomBound = 5000-768=4232, 4000 < 4232 → no throw
-    // This test VERIFIES the config value threads through (post-WR-02 fix).
-    // For now, this test serves as a characterization: if minVisibleOutputTokens is NOT
-    // threaded, the function completes without throwing.
-    // After the fix, this should throw.
-    // We document this as "requires human verification" since it tests a specific threading path.
+    // With custom 1200 the pre-flight SHOULD throw (4000 > 3800 and no pins/governor for none).
+    // WITHOUT config threading: headroomBound = 5000-768=4232, 4000 < 4232 → no throw.
+    // So the throw is the proof that the config value threads through.
     expect(onThrowCapture).toHaveBeenCalledTimes(1);
     expect(onThrowCapture.mock.calls[0][0]).toBeInstanceOf(ContextExhaustionError);
   });
@@ -650,8 +646,8 @@ describe("runPreflightFitCheck escalation ladder", () => {
       onEffectiveWindow: vi.fn(),
       logger: makeLogger() as unknown as ContextEngineDeps["logger"],
     });
-    // effectiveWindow=2000: headroomBound = 2000-768=1232. After the ISSUE #1 fix,
-    // evictable history is always trimmed to fit, so exhaustion requires NON-evictable
+    // effectiveWindow=2000: headroomBound = 2000-768=1232. Because
+    // evictable history is always trimmed to fit, exhaustion requires NON-evictable
     // pressure: a ~4000-token current user message in the fresh tail (ships
     // unconditionally) → 4000 > 1232, no governor (none) → exhaustion.
     const freshTail = [{ role: "user", content: "X".repeat(14_000) }];
@@ -660,29 +656,30 @@ describe("runPreflightFitCheck escalation ladder", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ISSUE #1 (multi-turn nano, 2026-06-22): the harder-eviction rung (a) was gated
-// on `if (deps.securityPinMarkers)`. On a fresh session with NO canary (markers
-// undefined — the common case), the block was SKIPPED, so accumulated EVICTABLE
-// history was never re-evicted against the real residual room (window − S −
-// headroom) and the turn threw ContextExhaustionError on history that COULD have
-// been evicted. Live repro: 4 tiny Q&As on nano 8192, systemTokens 5210; turns 3-4
-// exhausted (assembled 7980/8911 > bound 7424) because budgetedHistory grew past
-// the ~1900 room and the tighter re-eviction never ran without markers.
+// The harder-eviction rung (a) must not be gated
+// on `if (deps.securityPinMarkers)`. Gated, on a fresh session with NO canary
+// (markers undefined — the common case), the block is SKIPPED, so accumulated
+// EVICTABLE history is never re-evicted against the real residual room (window −
+// S − headroom) and the turn throws ContextExhaustionError on history that COULD
+// have been evicted. Repro shape: 4 tiny Q&As on an 8192 nano window, systemTokens
+// 5210; turns 3-4 exhaust (assembled 7980/8911 > bound 7424) because
+// budgetedHistory grows past the ~1900 room and the tighter re-eviction never
+// runs without markers.
 //
-// The fix: the harder-eviction rung runs UNCONDITIONALLY. With no markers, EVERY
-// evictable item is non-pinned → evict ALL history under
+// The guarantee: the harder-eviction rung runs UNCONDITIONALLY. With no markers,
+// EVERY evictable item is non-pinned → evict ALL history under
 // `headroomBound − systemTokens − freshTailTokens`. Accumulated evictable history
 // must NEVER cause exhaustion — it evicts down to whatever fits (even near-zero →
 // a degraded-but-running stateless turn). Only the non-evictable fixed overhead
 // (S) or a single oversized step can still throw.
 // ---------------------------------------------------------------------------
-describe("ISSUE #1: harder-eviction runs WITHOUT securityPinMarkers (no exhaustion on evictable history)", () => {
+describe("harder-eviction runs WITHOUT securityPinMarkers (no exhaustion on evictable history)", () => {
   it("nano 8192, S dominates, many small history items, NO markers → evicts history to fit, does NOT throw", () => {
     const logger = makeLogger();
     const onAssembled: number[] = [];
     const deps = makeDeps({
       getThinkingLevel: () => "off",
-      getSystemTokensEstimate: () => 5_210, // the live VPS nano systemTokens
+      getSystemTokensEstimate: () => 5_210, // a realistic nano-deployment system+tools footprint
       onAssembledInputTokens: (t) => onAssembled.push(t),
       onEffectiveWindow: vi.fn(),
       eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
@@ -694,8 +691,8 @@ describe("ISSUE #1: harder-eviction runs WITHOUT securityPinMarkers (no exhausti
     // small step, so eviction CAN trim it to fit. A tiny current message in the tail.
     const evictable = makeBudgetItems(9, 300);
     const freshTail = [{ role: "user", content: "capital of France?" }];
-    // Pre-fix: harder-eviction skipped (no markers) → assembled 5210+2700 = 7910 >
-    // bound 7424 → throws. Post-fix: evicts history to ≤2214 → fits → no throw.
+    // If the harder eviction were skipped (no markers) → assembled 5210+2700 = 7910 >
+    // bound 7424 → throw. Unconditional: evicts history to ≤2214 → fits → no throw.
     expect(() =>
       runPreflightFitCheck(deps, 8_192, evictable, 9, freshTail as never, "none"),
     ).not.toThrow();
@@ -725,10 +722,10 @@ describe("ISSUE #1: harder-eviction runs WITHOUT securityPinMarkers (no exhausti
 });
 
 // ---------------------------------------------------------------------------
-// W5 (obs-llm-troubleshooting): the fit check returns the ORIGINAL assembled
+// The fit check returns the ORIGINAL assembled
 // count so the assembler's INFO line can log the full budget equation.
 // ---------------------------------------------------------------------------
-describe("runPreflightFitCheck return value (W5)", () => {
+describe("runPreflightFitCheck return value", () => {
   it("returns the original assembled input token count for the INFO budget line", () => {
     const deps = makeDeps({
       getThinkingLevel: () => "high",
@@ -743,11 +740,11 @@ describe("runPreflightFitCheck return value (W5)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Issue-6 (small-model e2e 2026-06-12 UC-3): the throw classifies WHY the fit
-// failed, so the degraded reply can branch its advice. "narrow the ask" was
-// misleading when the offender was a persisted oversized HISTORY message.
+// The throw classifies WHY the fit
+// failed, so the degraded reply can branch its advice. "narrow the ask" is
+// misleading when the offender is a persisted oversized HISTORY message.
 // ---------------------------------------------------------------------------
-describe("Issue-6: exhaustion cause classification at the throw", () => {
+describe("exhaustion cause classification at the throw", () => {
   function throwFrom(
     evictable: BudgetItem[],
     keptCount: number,
@@ -781,9 +778,9 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
     expect(err.message).toContain("[cause: oversized_input]");
   });
 
-  it("an EVICTABLE oversized EARLIER message is DROPPED, NOT thrown (ISSUE #1: evictable history never exhausts)", () => {
+  it("an EVICTABLE oversized EARLIER message is DROPPED, NOT thrown (evictable history never exhausts)", () => {
     // One oversized history BudgetItem of 40000 tokens; the current input is tiny.
-    // PRE-ISSUE#1 this threw oversized_history_message. Now the item is evictable
+    // The item is evictable
     // (no security pin) → the harder-eviction drops it → the tiny current message
     // fits → NO throw. Accumulated evictable history must never cause exhaustion.
     const deps = makeDeps({
@@ -802,9 +799,9 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
   });
 
   it("classifies a SECURITY-PINNED oversized EARLIER message (un-evictable) as cause oversized_history_message", () => {
-    // When the oversized history item is security-pinned (T-S4), it is EXCLUDED from
+    // When the oversized history item is security-pinned, it is EXCLUDED from
     // the harder-eviction and cannot be dropped → it still overflows → throws with the
-    // oversized_history_message cause (the only path that reaches it post-ISSUE#1).
+    // oversized_history_message cause (the only path that can still reach that cause).
     const canaryToken = "canary-xyz-pin";
     const deps = makeDeps({
       getThinkingLevel: () => "medium",
@@ -841,12 +838,12 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
     expect(err.message).not.toContain("[cause:");
   });
 
-  it("ISSUE #2b: history fully evicted + the current user message DOMINATES the fresh-tail overflow → cause oversized_input (not aggregate)", () => {
-    // Live turn-14 residual shape (nano 8192, S=5210): history is fully evicted
+  it("history fully evicted + the current user message DOMINATES the fresh-tail overflow → cause oversized_input (not aggregate)", () => {
+    // Shape: nano 8192, S=5210 — history is fully evicted
     // (keptCount=0, evictable=[]), and the protected fresh tail is the sole overflow —
     // a large current user message (just UNDER the single-item bound 2214 so the
     // existing oversized_input rule does NOT fire) plus a tiny prior assistant turn.
-    // Pre-fix this fell to "aggregate" (no single message > bound), giving the generic
+    // Without the dominance rule this falls to "aggregate" (no single message > bound), giving the generic
     // aggregate advice. But with finalHist=0 and the user's message being the dominant
     // term, the remedy is "your message is too large for this model's window — reduce
     // the prompt footprint" → oversized_input.
@@ -881,20 +878,20 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
     expect(err.message).toContain("[cause: oversized_input]");
   });
 
-  // ROOT-CAUSE fix (2026-06-22): when the NON-EVICTABLE fixed overhead (S =
+  // When the NON-EVICTABLE fixed overhead (S =
   // system prompt + tool schemas) ALONE exceeds the bound, the failure is the
-  // overhead, NOT the message. Pre-patch this mis-classified as `oversized_input`
+  // overhead, NOT the message. Classified any later, this mis-reads as `oversized_input`
   // (singleItemBound = finalBound − systemTokens goes NEGATIVE, so any message
   // token count > negative → "oversized_input"), producing the misleading "your
   // message alone is larger than this model's context window" reply for a
-  // 10-token "What is the capital of France?". It must classify as the new
+  // 10-token "What is the capital of France?". It must classify as
   // `fixed_overhead_exceeds_window`.
   it("systemTokens ALONE exceeds the bound with a tiny message → cause fixed_overhead_exceeds_window (not oversized_input)", () => {
     // S = 31000 on a 32000 window, "none" → bound = 32000 − 768 = 31232. S(31000)
     // already leaves room < the tiny message but the OVERFLOW is S, not the input.
-    // Pre-patch: singleItemBound = 31232 − 31000 = 232; the 4-token message
-    // (~16 chars → ceil(16/3.5)=5 tokens) is NOT > 232, so pre-patch would land on
-    // "aggregate"… so push S above the bound itself to force the misread:
+    // With S = 31000: singleItemBound = 31232 − 31000 = 232; the 4-token message
+    // (~16 chars → ceil(16/3.5)=5 tokens) is NOT > 232, which would land on
+    // "aggregate"… so push S above the bound itself to force the discriminating case:
     // S = 31500 > bound 31232 → infeasible with ZERO message tokens.
     const deps = makeDeps({
       getThinkingLevel: () => "medium",
@@ -936,7 +933,7 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Part 2 (2026-06-22) — degenerate window (window < system prompt). The
+// Degenerate window (window < system prompt). The
 // window-aware tool-budget fit pass (enforceToolBudgetFit) defers ALL tools when
 // the residual budget is negative, but the FIXED S term (system prompt) is
 // non-evictable, so a window smaller than S itself is genuinely infeasible. The
@@ -945,10 +942,10 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
 // message. A minimal-system-prompt fallback was considered and DEFERRED (it would
 // be deeply invasive in the 1954-line prompt-assembly.ts with its session
 // snapshot + once-per-session systemPromptOverride); the honest throw + truthful
-// degraded reply is the chosen Part-2 behavior. See the dated TODO in
+// degraded reply is the chosen behavior. See the dated TODO in
 // lcd-preflight.ts.
 // ---------------------------------------------------------------------------
-describe("Part 2: degenerate window smaller than the system prompt throws honestly", () => {
+describe("degenerate window smaller than the system prompt throws honestly", () => {
   it("throws fixed_overhead_exceeds_window with zero tools, zero history, and an empty message", () => {
     // 4K window, S = 5000 (system prompt alone > the whole window). "none" → bound
     // = 4000 − 768 = 3232 < S. No history, freshTail is a single empty user msg.
@@ -973,21 +970,21 @@ describe("Part 2: degenerate window smaller than the system prompt throws honest
 });
 
 // ---------------------------------------------------------------------------
-// TOK-01 (Phase 179): script-aware freshTail accounting in the fit check
+// Script-aware freshTail accounting in the fit check.
 //
-// The freshTail per-message math divides flat chars by 3.5, blind to script
+// A flat per-message estimate divides chars by 3.5, blind to script
 // density — a Hebrew message carries ~1.8× the tokens the flat estimate counts,
 // so the assembled sum (systemTokens + budgetedTokens + freshTailTokens) under-
-// states the real prompt and the v2.18 fit guarantee is void for non-Latin.
-// Pre-patch the Hebrew case computes flat chars/3.5 → RED. The per-message
-// ARRAY shape must survive (the Issue-6 cause classifier above consumes it
+// states the real prompt and the fit guarantee is void for non-Latin.
+// The per-message
+// ARRAY shape must survive (the exhaustion-cause classifier above consumes it
 // element-wise — its suite is the regression proof).
 // ---------------------------------------------------------------------------
-describe("TOK-01: script-aware freshTail token accounting", () => {
+describe("script-aware freshTail token accounting", () => {
   it("a Hebrew freshTail message raises freshTailTokens to the factored estimate in the budget event and the assembled sum", () => {
     // Pure-Hebrew payload (letters + neutral spaces → hebrew-letters row factor).
-    // Pre-patch: freshTailTokens = ceil(he.length / 3.5) ≈ 0.55× the factored
-    // bound → RED on both assertions.
+    // A flat estimate would give freshTailTokens = ceil(he.length / 3.5) ≈ 0.55×
+    // the factored bound — both assertions would fail.
     const he = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ".repeat(40); // ~1_680 chars
     const emit = vi.fn();
     const onAssembledInputTokens = vi.fn();
@@ -1009,9 +1006,9 @@ describe("TOK-01: script-aware freshTail token accounting", () => {
     expect(onAssembledInputTokens.mock.calls[0]?.[0] as number).toBeGreaterThanOrEqual(factoredBound);
   });
 
-  it("I1: an all-ASCII freshTail (string + array blocks) reports byte-identical flat per-message tokens", () => {
-    // The Latin guarantee: factor 1.0 → per-message ceil(chars / 3.5) EXACTLY as
-    // today, including the array-content text/content fallback chain (IN-01 shape).
+  it("an all-ASCII freshTail (string + array blocks) reports the exact flat per-message tokens", () => {
+    // The Latin guarantee: factor 1.0 → per-message ceil(chars / 3.5) exactly,
+    // including the array-content text/content fallback chain.
     const emit = vi.fn();
     const captured: number[] = [];
     const deps = makeDeps({
@@ -1032,7 +1029,7 @@ describe("TOK-01: script-aware freshTail token accounting", () => {
     ];
     runPreflightFitCheck(deps, 100_000, [], 0, freshTail as never, "none");
 
-    // Expected values computed with TODAY'S flat per-message formula inline.
+    // Expected values computed with the flat per-message formula inline.
     const expected = Math.ceil(701 / 3.5) + Math.ceil((353 + 211) / 3.5);
     expect(captured[0]).toBe(expected);
     const payload = emit.mock.calls.find((c) => c[0] === "context:budget_computed")?.[1] as {
@@ -1043,23 +1040,22 @@ describe("TOK-01: script-aware freshTail token accounting", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TOK-01 (Phase 179, plan 179-05) — CONTRACT test, NO RED claim: the preflight
-// itself is unchanged by plan 179-05 (these pass pre-patch by design). This
+// CONTRACT test: this
 // documents the boundary the assembler's read-time max(stored, factored-live)
 // relies on: BudgetItem.tokens is the preflight's ONLY history-token authority,
 // so flat stored under-counts slip under headroomBound silently, while the
 // SAME conversation at factored counts crosses the bound and the exhaustion
 // ladder engages. Hand-built items are legitimate HERE (and only here): the
 // contract under pin is the preflight's consumption of item.tokens, not the
-// assembler's construction of it (that end-to-end RED lives in
-// lcd-assembler.test.ts). Also pins the 179-04 freshTail-factoring interaction
+// assembler's construction of it (that end-to-end coverage lives in
+// lcd-assembler.test.ts). Also pins the freshTail-factoring interaction
 // at the small cap: the Hebrew fresh tail is factored in BOTH cases.
 // ---------------------------------------------------------------------------
-describe("contract: flat stored counts slip under the small cap where the SAME items at factored counts engage the ladder (TOK-01)", () => {
+describe("contract: flat stored counts slip under the small cap where the SAME items at factored counts engage the ladder", () => {
   // A pure-Hebrew chat sentence (letters + neutral spaces), ~3485 chars total.
   const HE = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ".repeat(85);
 
-  it("hand-built flat-count budget items pass the fit check at the small cap (the silent pre-phase state)", () => {
+  it("hand-built flat-count budget items pass the fit check at the small cap (the silent under-count state)", () => {
     // effectiveWindow 32000, "none" style → headroomBound = 32000 − 768 = 31232.
     // 25 items × 1000 flat tokens + the factored Hebrew freshTail (~1.8K) stays
     // under the bound → verdict "fits", no throw.
@@ -1077,7 +1073,7 @@ describe("contract: flat stored counts slip under the small cap where the SAME i
       runPreflightFitCheck(deps, 32_000, flatItems, 25, freshTail as never, "none"),
     ).not.toThrow();
 
-    // The freshTail term is FACTORED (179-04) in both cases — pin the sum.
+    // The freshTail term is FACTORED in both cases — pin the sum.
     const heTokens = Math.ceil(HE.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(HE)));
     expect(onAssembledInputTokens.mock.calls[0]?.[0]).toBe(25_000 + heTokens);
     const payload = emit.mock.calls.find((c) => c[0] === "context:budget_computed")?.[1] as {
@@ -1086,9 +1082,9 @@ describe("contract: flat stored counts slip under the small cap where the SAME i
     expect(payload.verdict).toBe("fits");
   });
 
-  it("a Hebrew fresh-tail message whose FACTORED count crosses the bound engages the ladder (ContextExhaustionError) where its FLAT count would not (TOK-01)", () => {
-    // The fresh tail is NON-evictable, so it isolates the TOK-01 factoring contract
-    // from the ISSUE #1 history-eviction (evictable history is always trimmed). A big
+  it("a Hebrew fresh-tail message whose FACTORED count crosses the bound engages the ladder (ContextExhaustionError) where its FLAT count would not", () => {
+    // The fresh tail is NON-evictable, so it isolates the factoring contract
+    // from the history-eviction rung (evictable history is always trimmed). A big
     // pure-Hebrew current message: flat chars/3.5 stays under the 31232 bound, but the
     // FACTORED count (chars / (3.5 × scriptTokenFactor) ≈ 1.8×) crosses it → with
     // "none" style the ladder is the loud throw. Proves the freshTail is factored.

@@ -2,9 +2,9 @@
 /**
  * Tests for dag-template-match.ts — the deterministic, conservative matcher that
  * maps a weak-model raw graph to a canonical DAG template by SHAPE (node count +
- * dependency topology) + slot inference (AUTHOR-01 / Phase 174-03).
+ * dependency topology) + slot inference.
  *
- * Contract (D-CONSERVATIVE, T-174-FALSESYNTH): the matcher returns "matched"
+ * Contract: the matcher returns "matched"
  * ONLY when exactly one canonical template fits unambiguously; otherwise
  * "ambiguous" (>=2 plausible) or "no-match". It NEVER calls a model — it is a
  * pure function. On "matched" the slot values are filled via fillDagTemplate
@@ -29,12 +29,12 @@ function assertGovernanceClean(filledNodes: unknown[], label: string): void {
   expect(validated.ok).toBe(true);
 }
 
-describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
+describe("matchRawGraphToTemplate (conservative matcher)", () => {
   // -------------------------------------------------------------------------
-  // Test 1: unambiguous debate (3 nodes: two independent advocates + a fan-in
+  // Unambiguous debate (3 nodes: two independent advocates + a fan-in
   // moderator). The 3-node 2+1 shape is unique to debate among the canon.
   // -------------------------------------------------------------------------
-  it("Test 1: a raw graph shaped like `debate` (2 independent + 1 fan-in) → matched debate, filledNodes parse clean", () => {
+  it("a raw graph shaped like `debate` (2 independent + 1 fan-in) → matched debate, filledNodes parse clean", () => {
     const rawGraph = {
       label: "should we ship",
       nodes: [
@@ -57,11 +57,11 @@ describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 2: unambiguous research-fanout (N independent + one fan-in synthesize).
+  // Unambiguous research-fanout (N independent + one fan-in synthesize).
   // research-fanout / vote / map-reduce all share the 4-node 3+1 shape, so the
   // disambiguator is slot/keyword inference (research/synthesize keywords).
   // -------------------------------------------------------------------------
-  it("Test 2: a raw graph shaped+worded like `research-fanout` (N independent + fan-in synthesize) → matched research-fanout", () => {
+  it("a raw graph shaped+worded like `research-fanout` (N independent + fan-in synthesize) → matched research-fanout", () => {
     const rawGraph = {
       label: "ai safety",
       nodes: [
@@ -80,11 +80,11 @@ describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3: ambiguous — a bare 4-node 3+1 shape with NO disambiguating
-  // keywords plausibly fits research-fanout / vote / map-reduce. D-CONSERVATIVE
-  // demands "ambiguous" (no false synthesis), NOT a guess.
+  // Ambiguous — a bare 4-node 3+1 shape with NO disambiguating
+  // keywords plausibly fits research-fanout / vote / map-reduce. The
+  // conservative contract demands "ambiguous" (no false synthesis), NOT a guess.
   // -------------------------------------------------------------------------
-  it("Test 3: a 4-node 3+1 graph with NO distinguishing keywords → ambiguous (candidates listed, no false synthesis)", () => {
+  it("a 4-node 3+1 graph with NO distinguishing keywords → ambiguous (candidates listed, no false synthesis)", () => {
     const rawGraph = {
       label: "do stuff",
       nodes: [
@@ -106,10 +106,10 @@ describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: a graph fitting no canonical shape (e.g. a deep linear chain) →
+  // A graph fitting no canonical shape (e.g. a deep linear chain) →
   // no-match (falls through to the existing throw downstream).
   // -------------------------------------------------------------------------
-  it("Test 4: a graph fitting no canonical fan-in shape (linear chain) → no-match", () => {
+  it("a graph fitting no canonical fan-in shape (linear chain) → no-match", () => {
     const rawGraph = {
       label: "pipeline",
       nodes: [
@@ -126,10 +126,10 @@ describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 5: slot values with JSON metacharacters are JSON-escaped (delegated to
-  // fillDagTemplate) — the matched graph still parses (CR-03 carried through).
+  // Slot values with JSON metacharacters are JSON-escaped (delegated to
+  // fillDagTemplate) — the matched graph still parses.
   // -------------------------------------------------------------------------
-  it("Test 5: slot values containing JSON metacharacters are escaped → the matched graph still parses", () => {
+  it("slot values containing JSON metacharacters are escaped → the matched graph still parses", () => {
     const rawGraph = {
       // A debate topic carrying a double-quote + backslash + newline.
       label: 'ship "v2"\\beta\nnow',
@@ -145,14 +145,14 @@ describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
     if (m.kind !== "matched") return;
     expect(m.pattern).toBe("debate");
     // Despite the metacharacters in the inferred slot value, the filled graph is
-    // valid JSON and parses clean (fillDagTemplate's CR-03 escaping).
+    // valid JSON and parses clean (fillDagTemplate's escaping).
     assertGovernanceClean(m.filledNodes, "debate");
   });
 
   // -------------------------------------------------------------------------
-  // Test 6: non-object / malformed input → no-match (never throws — pure fn).
+  // Non-object / malformed input → no-match (never throws — pure fn).
   // -------------------------------------------------------------------------
-  it("Test 6: malformed input (null / no nodes array) → no-match, never throws", () => {
+  it("malformed input (null / no nodes array) → no-match, never throws", () => {
     expect(matchRawGraphToTemplate(null).kind).toBe("no-match");
     expect(matchRawGraphToTemplate({}).kind).toBe("no-match");
     expect(matchRawGraphToTemplate({ nodes: "not-an-array" }).kind).toBe("no-match");
@@ -160,16 +160,16 @@ describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01 (174-REVIEW): the shape-unique `debate` branch must NOT match on
-  // shape alone. `debate` is the only 3-node 2+1 template, so PRE-FIX ANY
-  // 3-node fan-in graph repaired to debate — and fillDagTemplate REPLACES the
-  // user's tasks with "Argue FOR/AGAINST..." canonical strings. So a genuine
-  // 2-way analysis/aggregate intent (not adversarial at all) got silently
-  // rewritten into a pro/con debate it never asked for. The fix gates the
+  // The shape-unique `debate` branch must NOT match on shape alone. `debate`
+  // is the only 3-node 2+1 template, so a shape-only match would repair ANY
+  // 3-node fan-in graph to debate — and fillDagTemplate REPLACES the user's
+  // tasks with "Argue FOR/AGAINST..." canonical strings, silently rewriting a
+  // genuine 2-way analysis/aggregate intent (not adversarial at all) into a
+  // pro/con debate it never asked for. The matcher therefore gates the
   // shape-unique match on a debate keyword hit (corroborating the intent),
   // returning the structured did-you-mean instead of a false synthesis.
   // -------------------------------------------------------------------------
-  it("WR-01: a 3-node fan-in graph whose content is NOT a debate → did-you-mean (NOT a silent debate rewrite)", () => {
+  it("a 3-node fan-in graph whose content is NOT a debate → did-you-mean (NOT a silent debate rewrite)", () => {
     const rawGraph = {
       label: "quarterly revenue analysis",
       nodes: [
@@ -182,17 +182,18 @@ describe("matchRawGraphToTemplate (AUTHOR-01 conservative matcher)", () => {
     };
 
     const m = matchRawGraphToTemplate(rawGraph);
-    // PRE-FIX: kind === "matched", pattern === "debate" (the false synthesis).
-    // POST-FIX: the shape is debate-unique but the content does not corroborate,
-    // so the matcher returns did-you-mean rather than rewriting the tasks.
+    // A shape-only matcher would return kind "matched" / pattern "debate" (the
+    // false synthesis). The shape is debate-unique but the content does not
+    // corroborate, so the matcher returns did-you-mean rather than rewriting
+    // the tasks.
     expect(m.kind).toBe("ambiguous");
     if (m.kind !== "ambiguous") return;
     expect(m.candidates).toContain("debate");
   });
 
-  it("WR-01: a 3-node fan-in graph WITH debate vocabulary still matches debate (no false negative)", () => {
+  it("a 3-node fan-in graph WITH debate vocabulary still matches debate (no false negative)", () => {
     // The conservatism must not over-correct: a genuinely debate-worded graph
-    // (the Test-1 shape) still matches — the keyword corroborates the intent.
+    // (the 2-advocate + fan-in shape) still matches — the keyword corroborates the intent.
     const rawGraph = {
       label: "should we adopt the new framework",
       nodes: [

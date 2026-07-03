@@ -90,9 +90,8 @@ jobs:
 
       # The unit suite includes the Linux-only sandbox/jail (`*.linux.test.ts`) and
       # daemon config-versioning tests, which need bubblewrap + a relaxed apparmor
-      # sysctl + a git identity (just like the integration/e2e jobs). The pre-sharding
-      # single test job had these; the sharded `unit` job must too, else those tests
-      # fail across all shards (regression from CI commit 91585f61).
+      # sysctl + a git identity (just like the integration/e2e jobs). Every unit
+      # shard needs these system deps too, else those tests fail across all shards.
       - name: Install system dependencies (ffmpeg, bubblewrap)
         # ffmpeg/ffprobe drive the media-conversion skill; bubblewrap is the
         # OS-level exec sandbox the sandbox/jail suites exercise.

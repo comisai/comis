@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram approval-UI tests (rich-channel half; §7.7 / §17.3 / §6.4.3).
+ * Telegram approval-UI tests (rich-channel half).
  *
  * The Telegram renderer paints a `kind:"approval"` frame as a
  * grammY inline keyboard: `buildApprovalButtons` (over the renderer-injected
  * `SignCallbackData`) yields signed `RichButton` rows, and `renderTelegramButtons`
  * (the budget-guarded mapper) turns them into the `InlineKeyboard`. Each
- * `callback_data` is the §6.4.2 wire string `v1.<choice>.<shortId>.<hmac>` and
+ * `callback_data` is the signed wire string `v1.<choice>.<shortId>.<hmac>` and
  * survives the 64-byte budget — the over-budget guard OMITS a button (never
  * truncates a signed payload), but the worst-case real payload is ~40 bytes so
  * every choice fits.

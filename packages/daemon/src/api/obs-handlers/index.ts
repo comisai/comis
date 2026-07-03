@@ -11,7 +11,7 @@
 
 export type { ObsHandlerDeps } from "./obs-helpers.js";
 
-// The shared obs.explain assembler + its production reader (154-03). Re-exported
+// The shared obs.explain assembler + its production reader. Re-exported
 // so the daemon composition root can build the trust-flag-FREE
 // obsExplainForMcpClient closure over the SAME assembler the admin RPC handler
 // delegates to (the obs_explain MCP tool runs it directly under daemon
@@ -22,35 +22,35 @@ export {
 } from "./obs-explain.js";
 export { makeRealReader } from "./obs-explain-readers.js";
 
-// A3 (159-03): the multi-day session-index aggregate reader — the activity half
+// The multi-day session-index aggregate reader — the activity half
 // of the fleet lens. Generalizes the single-traceId resolveTraceToSession into a
 // windowed aggregate over <dataDir>/logs/session-index.*.jsonl. Re-exported so
-// the Phase-161 obs.fleet.health handler can assemble it alongside A1/A2.
+// the obs.fleet.health handler can assemble it alongside the other aggregates.
 export {
   readSessionIndexWindow,
   type FleetSessionIndexSummary,
 } from "./fleet-session-index.js";
 
-// The obs.fleet.health assembler (161-01). Re-exported so the daemon composition
-// root (161-02) can build the trust-flag-FREE obsFleetHealthForMcpClient closure
+// The obs.fleet.health assembler. Re-exported so the daemon composition
+// root can build the trust-flag-FREE obsFleetHealthForMcpClient closure
 // over the SAME assembler the admin RPC handler delegates to — mirroring the
 // assembleIncidentReportFromSources re-export above (the obs_fleet_health MCP tool
 // runs it directly under daemon authority; no admin RPC, no admin trust).
 export { assembleFleetHealthReport } from "./fleet-health.js";
 
-// The obs.audit.query binder (AUDIT-05, 176-05). Re-exported for symmetry with
+// The obs.audit.query binder. Re-exported for symmetry with
 // the other obs-handler slices; the daemon composition root spreads it into
 // createObsHandlers below (no separate MCP closure — the audit query is an
 // admin-RPC-only read surface, not an operator-allowlisted MCP tool).
 export { bindObsAuditHandlers } from "./obs-audit.js";
 
-// The obs.cacheBreaks.byReason binder (WEBUI-02, 179-04). Re-exported for symmetry
+// The obs.cacheBreaks.byReason binder. Re-exported for symmetry
 // with the other obs-handler slices; the daemon composition root spreads it into
 // createObsHandlers below (admin-RPC-only read surface, no MCP closure).
 export { bindObsCacheBreaksHandlers } from "./obs-cache-breaks.js";
 
-// The obs.spend.snapshot binder (WEBUI-02, 179-04). Reads the LIVE spend snapshot
-// threaded into the obs deps (locked A1); admin-RPC-only read surface.
+// The obs.spend.snapshot binder. Reads the LIVE spend snapshot
+// threaded into the obs deps; admin-RPC-only read surface.
 export { bindObsSpendHandlers } from "./obs-spend.js";
 
 import type { RpcHandler } from "../types.js";

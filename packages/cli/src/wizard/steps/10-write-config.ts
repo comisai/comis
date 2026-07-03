@@ -116,8 +116,8 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
 
   // Security section -- emit the resolved credential storage mode chosen at
   // step 02b so the daemon's storage mode is explicit + auditable in
-  // config.yaml (init previously never wrote security.storage). AppConfig
-  // accepts a top-level security object with a storage enum.
+  // config.yaml. AppConfig accepts a top-level security object with a
+  // storage enum.
   if (state.storageMode) {
     config.security = { storage: state.storageMode };
   }
@@ -269,8 +269,8 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
   // Image-generation credential (step 08d). Only present when the wizard
   // collected a STATIC key (fal always; cross-provider openai/google/openrouter).
   // A key-reusing choice, `auto`, or `openai-codex` (OAuth) carries no apiKey
-  // here — the matching key is already in the map from the provider section
-  // (CRED-01). Set() is idempotent, so a duplicate same-value write is harmless.
+  // here — the matching key is already in the map from the provider section.
+  // Set() is idempotent, so a duplicate same-value write is harmless.
   if (state.imageProvider?.apiKey) {
     const envKey = IMAGE_PROVIDER_ENV_KEYS[state.imageProvider.provider];
     if (envKey) managed.set(envKey, state.imageProvider.apiKey);
@@ -279,7 +279,7 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
   // Video-generation credential (step 08c). Only present when the wizard
   // collected a key (fal always; cross-provider google/xai). A key-reusing
   // google/xai or `auto` carries no apiKey here — the GOOGLE_API_KEY/XAI_API_KEY
-  // is already in the map from the provider section (CRED-01). Set() is
+  // is already in the map from the provider section. Set() is
   // idempotent, so a duplicate same-value write is harmless.
   if (state.videoProvider?.apiKey) {
     const envKey = VIDEO_PROVIDER_ENV_KEYS[state.videoProvider.provider];
@@ -375,7 +375,7 @@ export const writeConfigStep: WizardStep = {
     // 3. Storage mode is decided at step 02b and carried on state.storageMode.
     // "encrypted" routes collected secrets into the encrypted secrets.db (and
     // writes a placeholder .env); anything else writes a plaintext .env. The
-    // old secrets.db-gated prompt was removed — the choice happens once, early.
+    // choice happens exactly once, at step 02b — this step never re-prompts.
     const useSecretsStore = state.storageMode === "encrypted";
 
     // 4. Build config object
@@ -453,8 +453,7 @@ export const writeConfigStep: WizardStep = {
         // SECRETS_MASTER_KEY. The encrypted secrets.db is sealed with it; if
         // this overwrite removed it, the next daemon boot would regenerate a
         // fresh key that no longer matches the store (DECRYPTION_FAILED), and
-        // every stored secret would be orphaned/lost. (This branch previously
-        // clobbered .env, which bricked the encrypted store after `comis init`.)
+        // every stored secret would be orphaned/lost.
         const secretsEnvLines = [
           "# Comis secrets -- managed by secrets store",
           "# API keys are stored encrypted in secrets.db",
@@ -468,10 +467,10 @@ export const writeConfigStep: WizardStep = {
         writeFileSync(envPath, secretsEnvLines.join("\n") + "\n", { mode: 0o600 });
         spinner.update(".env written (secrets store mode)");
 
-        // 10a. PERSIST the collected secrets into the encrypted store. The
-        // wizard used to merely PRINT `comis secrets set …` and discard the
-        // values it already held — so the config it wrote referenced ${VAR}s
-        // that were never stored, and the daemon FATAL-crash-looped on boot.
+        // 10a. PERSIST the collected secrets into the encrypted store — the
+        // wizard must never discard values it already holds: a ${VAR}
+        // referenced by the written config but never stored leaves the daemon
+        // FATAL-crash-looping on boot.
         // The .env (with SECRETS_MASTER_KEY) is already written above, so the
         // offline store write can decrypt/seal correctly. The daemon is not
         // running during init, so the daemon-free direct-store path is correct.
@@ -512,7 +511,7 @@ export const writeConfigStep: WizardStep = {
         prompter.log.success(themeSuccess(`${dataDir}/ created`));
       }
 
-      // Secrets store summary: the wizard now PERSISTS the keys it collected
+      // Secrets store summary: the wizard PERSISTS the keys it collected
       // (see step 10a) rather than asking the user to re-enter them.
       if (useSecretsStore) {
         if (storedCount > 0) {

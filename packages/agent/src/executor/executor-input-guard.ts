@@ -25,7 +25,7 @@ import {
 import type { ComisLogger, ErrorKind } from "@comis/core";
 
 /**
- * GIANT-INPUT-WEDGE guard (30uc-20260624 UC-09): the default maximum inbound user-message
+ * GIANT-INPUT-WEDGE guard: the default maximum inbound user-message
  * size, in characters, processed by a single turn. A message larger than this is rejected
  * honestly BEFORE the jailbreak scan + the downstream tokenize / LCD-ingest / embed path —
  * a multi-MB message otherwise drives O(words) synchronous work (the scan's typoglycemia
@@ -74,7 +74,7 @@ export function validateInput(params: {
   const maxInputChars = params.maxInputChars ?? DEFAULT_MAX_INPUT_CHARS;
   let safetyReinforcement: string | undefined;
 
-  // GIANT-INPUT-WEDGE (30uc UC-09): reject an over-cap message BEFORE the jailbreak scan AND the
+  // GIANT-INPUT-WEDGE: reject an over-cap message BEFORE the jailbreak scan AND the
   // downstream tokenize/LCD-ingest/embed. A multi-MB message drives O(words) sync work that blocks
   // the Node event loop for minutes (the whole daemon freezes). This early-return keeps the gateway
   // responsive and the failure HONEST + reason-coded; the context engine handles within-cap inputs.
@@ -123,7 +123,7 @@ export function validateInput(params: {
     }
   }
 
-  // : Jailbreak scoring
+  // Jailbreak scoring
   if (inputGuard) {
     const guardResult = inputGuard.scan(msg.text);
 

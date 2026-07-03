@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: (1) exhaustiveness guard on networkMode union; unreachable at runtime, caught by TypeScript; equivalent to assertNever(). (2) JAIL-03 screenBind() fails LOUD at jail construction on a denylisted bind — a misconfig must never be a silently-emitted hole.
+// @allow-throw: (1) exhaustiveness guard on networkMode union; unreachable at runtime, caught by TypeScript; equivalent to assertNever(). (2) screenBind() fails LOUD at jail construction on a denylisted bind — a misconfig must never be a silently-emitted hole.
 /**
  * BwrapProvider -- Linux sandbox provider using Bubblewrap (bwrap).
  *
@@ -26,7 +26,7 @@ import type {
 } from "./types.js";
 
 /**
- * JAIL-04 / v8 §4.6 — Node-runtime honesty. Surfaces 2/3 (orchestrate / CLI)
+ * Node-runtime honesty. Surfaces 2/3 (orchestrate / CLI)
  * need a `node` INSIDE the jail; there is NO bundled Node. Resolve, in order:
  *   1. PROBE — a `node` executable resolves under one of the bound RO `pathDirs`
  *      (the SYSTEM_RO_PATHS + ~/.nvm binds put one there on most hosts) → "path"
@@ -35,8 +35,8 @@ import type {
  *      (precedent: the terminal-driver execPath binds) → "bind".
  *   3. UNAVAILABLE — else surfaces 2/3 cannot run jailed; the caller surfaces a
  *      loud doctor/boot signal. The hint NEVER claims a bundled Node and NEVER
- *      implies a silent unjailed fallback (T-211-21 spoofing). Surface 1
- *      (in-process typed tools) still works.
+ *      implies a silent unjailed fallback — either would spoof containment
+ *      that does not exist. Surface 1 (in-process typed tools) still works.
  *
  * PURE: the only I/O is the injected `exists` predicate (defaults to
  * `existsSync`), so the resolver is macOS-unit-testable with a fake PATH/execPath.
@@ -74,19 +74,19 @@ export function resolveJailNode(opts: {
 }
 
 /**
- * CLI-05/06 — comis-agent CLI-binary honesty. The `comis-agent` CLI surface
+ * comis-agent CLI-binary honesty. The `comis-agent` CLI surface
  * needs its `#!/usr/bin/env node` entry (`comis-agent-entry.js`) bound into the
  * jail, sha256-PINNED against the committed build manifest so a swapped/modified
- * binary is never bound (T-219-22 tampering). Resolve in two honest modes:
+ * (tampered) binary is never bound. Resolve in two honest modes:
  *   1. BIND — the entry exists AND its sha256 matches `expectedSha` (the manifest
  *      pin) → RO-bind it (src==dest, so COMIS_AGENT_BIN/PATH resolves it in-jail).
  *   2. UNAVAILABLE — the entry is MISSING, or present but its bytes do NOT match
  *      the pin (tamper) → the CLI surface is UNAVAILABLE with a LOUD, content-free
- *      hint (CLI-06). The caller (orchestrate-tool) degrades ONLY the CLI surface
+ *      hint. The caller (orchestrate-tool) degrades ONLY the CLI surface
  *      — the orchestrate SCRIPT surface still runs (unlike resolveJailNode, an
  *      unavailable comis-agent binary does NOT refuse the whole jail).
  *
- * Content-free (§2.7): the hint names the CAUSE (missing | hash-mismatch) and the
+ * Content-free: the hint names the CAUSE (missing | hash-mismatch) and the
  * operator action — it NEVER echoes the expected hash or the binary bytes.
  *
  * PURE: the only I/O is the injected `exists` predicate (defaults to existsSync)
@@ -120,7 +120,7 @@ export function resolveJailAgentCli(opts: {
   }
 
   // 2. HASH MISMATCH (tamper) — present but its bytes diverge from the manifest
-  //    pin. REFUSE to bind a tampered binary (T-219-22); the CLI surface is
+  //    pin. REFUSE to bind a tampered binary; the CLI surface is
   //    unavailable. The hint NEVER echoes the hash or the bytes (content-free).
   const actualSha = createHash("sha256").update(readFile(opts.binPath)).digest("hex");
   if (actualSha !== opts.expectedSha) {
@@ -140,10 +140,10 @@ export function resolveJailAgentCli(opts: {
 }
 
 /**
- * Screen a caller-controlled host bind path through the JAIL-03 denylist
+ * Screen a caller-controlled host bind path through the credential-denylist
  * backstop (validateBindMount) before it is emitted as a `--bind`/`--ro-bind`.
  *
- * Scope (v8 invariant 10 — the validator is a DENYLIST BACKSTOP on the ALLOW-LIST
+ * Scope (the validator is a DENYLIST BACKSTOP on the ALLOW-LIST
  * binds, NOT the primary boundary): this screens the DYNAMIC, caller/agent-supplied
  * binds — the workspace, the temp dir, operator/graph shared paths, and skill
  * discovery read-only paths — which are the attack surface (an agent/operator
@@ -303,7 +303,7 @@ export class BwrapProvider implements SandboxProvider {
       this.available();
     }
     const args: string[] = [this.bwrapPath!];
-    // WR-05: the credential-denylist base (`validateBindMount(hostPath, home)`)
+    // The credential-denylist base (`validateBindMount(hostPath, home)`)
     // must be an EXPLICIT trusted value, not a hidden ambient read inside this
     // pure arg generator. Prefer the caller-supplied `opts.home` (resolved once
     // from trusted config); fall back to `os.homedir()` only when omitted, so
@@ -311,13 +311,13 @@ export class BwrapProvider implements SandboxProvider {
     // default rather than an implicit coupling. With `opts.home` supplied the
     // generator is deterministic (the screen-vs-bind interaction is unit-testable
     // without mocking process env), matching the purity discipline the rest of
-    // the JAIL-03 surface (getUserRoPaths(home), validateBindMount(_, home))
+    // the bind-screening surface (getUserRoPaths(home), validateBindMount(_, home))
     // already follows.
     const home = opts.home ?? os.homedir();
 
     // -- System paths (read-only, cached at first call) --
     // CURATED allow-list — the vetted boundary itself; NOT screened by the
-    // JAIL-03 denylist backstop (it would false-positive on /etc/resolv.conf).
+    // credential-denylist backstop (it would false-positive on /etc/resolv.conf).
     for (const sysPath of this.getSystemPaths()) {
       args.push("--ro-bind", sysPath, sysPath);
     }
@@ -330,17 +330,17 @@ export class BwrapProvider implements SandboxProvider {
     // -- Temp directory (read-write) --
     args.push("--tmpfs", "/tmp");
     if (opts.tempDir && opts.tempDir !== "/tmp") {
-      screenBind(opts.tempDir, home); // JAIL-03: caller-controlled → screened.
+      screenBind(opts.tempDir, home); // caller-controlled → screened.
       args.push("--bind", opts.tempDir, opts.tempDir);
     }
 
     // -- Workspace (read-write) --
-    screenBind(opts.workspacePath, home); // JAIL-03: caller-controlled → screened.
+    screenBind(opts.workspacePath, home); // caller-controlled → screened.
     args.push("--bind", opts.workspacePath, opts.workspacePath);
 
     // -- Shared paths (read-write) --
     for (const sp of opts.sharedPaths) {
-      screenBind(sp, home); // JAIL-03: operator/graph-supplied → screened.
+      screenBind(sp, home); // operator/graph-supplied → screened.
       args.push("--bind", sp, sp);
     }
 
@@ -374,12 +374,12 @@ export class BwrapProvider implements SandboxProvider {
     // -- Read-only paths (discovery paths, custom) --
     for (const ro of opts.readOnlyPaths) {
       if (existsSync(ro)) {
-        screenBind(ro, home); // JAIL-03: discovery/operator-supplied → screened.
+        screenBind(ro, home); // discovery/operator-supplied → screened.
         args.push("--ro-bind", ro, ro);
       }
     }
 
-    // -- Node runtime (JAIL-04 / v8 §4.6) --
+    // -- Node runtime --
     // When the resolved Node mode is "bind", RO-bind the daemon's node binary so
     // surfaces 2/3 (orchestrate/CLI) have a node inside the jail. READ-ONLY only
     // — a writable interpreter binary is a host-RCE vector. "path" (node already
@@ -390,12 +390,12 @@ export class BwrapProvider implements SandboxProvider {
       args.push("--ro-bind", opts.jailNode.execPath, opts.jailNode.execPath);
     }
 
-    // -- comis-agent CLI binary (CLI-05) --
+    // -- comis-agent CLI binary --
     // When the resolved CLI mode is "bind", RO-bind the sha256-pinned comis-agent
     // entry so the in-jail `comis-agent` CLI resolves (the caller sets
     // COMIS_AGENT_BIN to this same path). READ-ONLY only — a writable binary is a
-    // host-RCE vector (the §4.7 .linux audit proves a write to it from the jail
-    // fails). src==dest so COMIS_AGENT_BIN/PATH resolves it in-jail. The mode is a
+    // host-RCE vector (the .linux hardening suite proves a write to it from the
+    // jail fails). src==dest so COMIS_AGENT_BIN/PATH resolves it in-jail. The mode is a
     // RESOLVED INPUT (resolveJailAgentCli — hash-verified), never a live fs probe.
     // "unavailable" (missing/tampered) emits NO bind — the caller degrades ONLY
     // the CLI surface (the script surface is unaffected).
@@ -422,10 +422,10 @@ export class BwrapProvider implements SandboxProvider {
       // none: kernel-enforced deny-all egress — --unshare-all already dropped the
       // netns; we simply do NOT re-share it (no --share-net, no socket, no proxy).
       // The skill-validation jail uses this so a synthesized script cannot reach
-      // the network during dynamic validation (T-201-35).
+      // the network during dynamic validation.
       args.push("--unshare-net");
     } else if (networkMode === "cap-socket") {
-      // cap-socket (Phase 211, ENDPOINT-03): kernel-enforced network namespace;
+      // cap-socket: kernel-enforced network namespace;
       // the capability-lease loopback endpoint's 0600 unix socket is reachable
       // via bind-mount only. Mirrors broker-only arg-order EXACTLY — --unshare-net
       // FIRST, then the socket --bind — because a netns affects IP sockets only,
@@ -435,7 +435,7 @@ export class BwrapProvider implements SandboxProvider {
       // NOT screened: like the broker socket, the cap socket is a DAEMON-MINTED
       // per-run path (conventionally /run/comis or the data dir) — part of the
       // trusted allow-list, not the agent-supplied attack surface the denylist
-      // backstop guards. The endpoint (211-06) chooses this path, not the agent.
+      // backstop guards. The endpoint chooses this path, not the agent.
       args.push("--bind", capSocketPath, capSocketPath);
     } else {
       // exhaustiveness guard — TypeScript will flag this if the
@@ -448,11 +448,11 @@ export class BwrapProvider implements SandboxProvider {
       "--new-session",
     );
 
-    // -- Seccomp profile (JAIL-01) --
+    // -- Seccomp profile --
     // bwrap --seccomp takes an FD to raw BPF bytecode (resolved by the caller via
     // loadSeccompProfileFd(); buildArgs stays a pure arg generator). Emit ONLY
     // when an fd is provided — a null/absent blob degrades to NO --seccomp (the
-    // other §4.7 controls above still apply). The .linux.test.ts proves the blob
+    // other hardening controls above still apply). The .linux.test.ts proves the blob
     // actually blocks the dangerous syscalls on the VPS.
     if (typeof opts.seccompFd === "number") {
       args.push("--seccomp", String(opts.seccompFd));

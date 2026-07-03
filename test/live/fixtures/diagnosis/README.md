@@ -1,19 +1,19 @@
-# Diagnosis-fixture corpus (Phase 149 — PROVE: LLM-diagnosis baseline)
+# Diagnosis-fixture corpus (the LLM-diagnosis baseline)
 
-This directory is the **M1 deliverable**: a frozen, committed corpus of degraded Comis
-sessions used by the Plan-03 baseline RUN and the Phase-156/G1 RE-PROVE. Each fixture is a
+This directory is a frozen, committed corpus of degraded Comis
+sessions used by the diagnosis baseline RUN and the RE-PROVE. Each fixture is a
 directory with three files read by `loadFixture` (`test/live/support/diagnosis-harness.ts`):
 
 | File | Shape |
 |------|-------|
 | `trajectory.jsonl` | NDJSON — one JSON object per line (the session's events as they survive). |
 | `session-metadata.json` | `{ sessionId, endReason, ... }` — the degraded signal + non-secret telemetry. |
-| `answer-key.json` | The `AnswerKey` contract (Plan 01): `rootCause` at causal-**mechanism** granularity, `expectedDegraded`, `visibleSymptoms`, `hiddenMechanism`, `surfaceCeiling`, `mechanismTokens`. |
+| `answer-key.json` | The `AnswerKey` contract: `rootCause` at causal-**mechanism** granularity, `expectedDegraded`, `visibleSymptoms`, `hiddenMechanism`, `surfaceCeiling`, `mechanismTokens`. |
 
 Every committed file passes the secret/PII sweep (`scanForSecrets` from `test/live/cost.ts`
 returns zero matches). Answer-keys encode the **hidden mechanism the logs do not show**, not
-just the visible symptom — that is the lever that makes the Plan-03 baseline correctly FAIL on
-today's observability surface (RESEARCH.md Pitfall 4).
+just the visible symptom — that is the lever that makes the baseline correctly FAIL on
+today's observability surface.
 
 ## `session-678314278` — historical (pre-`c53ab0f`), replayed from disk
 
@@ -24,8 +24,8 @@ today's observability surface (RESEARCH.md Pitfall 4).
   fully contained in lines 156–584) — both belonging to the one session.
 - **Why frozen, not live-reproduced:** the bugs that caused it are fixed (`c53ab0f` detector fix,
   `e9d2711f` breaker render-peel fix), so it can no longer be triggered. `daemon.1.log` is
-  machine-local and **rotates** — this fixture is the only durable record (RESEARCH.md Pitfall 1).
-- **Scrub procedure applied (T-149-02-01), field-aware per line then a string sweep:**
+  machine-local and **rotates** — this fixture is the only durable record.
+- **Scrub procedure applied, field-aware per line then a string sweep:**
   - `hostname` `Moshes-MacBook-Pro-2.local` → `test-host`
   - `pid` `1129` → `0`; `instanceId` `451ad8fb` → `test`
   - `profileId` OAuth email `…:anconina@gmail.com` → `…:test-user@example.com`
@@ -38,23 +38,23 @@ today's observability surface (RESEARCH.md Pitfall 4).
 - **Real telemetry (non-secret, pulled from the extracted lines):** `durationMs` 247740,
   `totalTokens` 735800 (max `tokensTotal`), `sessionCostUsd` 1.320669 (final cumulative). The raw
   log carries `finishReason:"stop"` (no literal `endReason`); `completed_with_tool_errors` is the
-  derived classification per the v2.14 design §1.1.
+  derived classification.
 - **Load-bearing symptoms preserved:** the 14× "Tool execution failed", the `success:true`
   web_fetch entries (the misclassified 200s), the breaker "DO NOT retry", the accumulating
   `costUsd` — these keep the fixture faithful.
 
-## `live-503-breaker` — the still-live class (Phase-156 G1(b) re-prove target)
+## `live-503-breaker` — the still-live class (re-prove target)
 
-- **Failure class:** `503-breaker`. The **most important** live fixture — Phase-156/G1(b)
-  re-proves it (`obs.explain` over a genuine repeated-503 → breaker must yield
-  `likelyRootCause.code:'breaker_opened_repeated_failure'` + the offending `toolName`).
+- **Failure class:** `503-breaker`. The **most important** live fixture — the re-prove runs
+  `obs.explain` over a genuine repeated-503 → breaker and asserts
+  `likelyRootCause.code:'breaker_opened_repeated_failure'` + the offending `toolName`.
 - **Generation:** an HTTP **503** fault driven through the real product classifier
   `classifyError` (`@comis/agent`) → confirmed **`category: "overloaded"`, `retryable: true`**.
   The trajectory carries 5 repeated `web_fetch` 503 failures + the retry-breaker "DO NOT retry"
   block (the breaker open transition itself is dark — there is no `tool:breaker_opened` event,
-  which is the GA3 gap the answer-key encodes).
+  which is the observability gap the answer-key encodes).
   - _Note on the fault kind:_ `makeFaultInjector({kind:"5xx"})` throws **HTTP 500**, which
-    `classifyError` maps to `unknown`. The design-doc target (§10.2(b)) is a repeated **503**,
+    `classifyError` maps to `unknown`. The still-live class we target is a repeated **503**,
     which maps to `overloaded` — so this fixture uses 503 (the faithful still-live class), not the
     bare 500 the injector emits. `classifyError(new Error("HTTP 503 …")).category === "overloaded"`
     is the verified product path (also asserted in `failure-injection.test.ts:113`).
@@ -62,9 +62,8 @@ today's observability surface (RESEARCH.md Pitfall 4).
 
 ## `live-exec-modulenotfound`
 
-- **Failure class:** `exec-modulenotfound`. A RESEARCH.md Pitfall-5 candidate: it may already be
-  1-call diagnosable via `obs.diagnostics` (Plan-03's gating table tests this; if so it TRIMS a
-  downstream phase).
+- **Failure class:** `exec-modulenotfound`. It may already be
+  1-call diagnosable via `obs.diagnostics` (the gating table tests this).
 - **Generation:** hand-authored faithful exec failure — an `exec` tool ran `python3 script.py`
   importing an uninstalled `pandas`; the runtime raised `ModuleNotFoundError`, surfaced via
   `exitCode:1` + a `stderr` traceback. A dependency/environment failure (classified by
@@ -79,7 +78,7 @@ today's observability surface (RESEARCH.md Pitfall 4).
   (`0.55 → 1.10 → 1.65 → 2.20`) crossing the configured **$2.00** ceiling, ending in a
   `budget_exhausted` stop. A resource limit, not a tool failure.
 - **Hidden mechanism:** the per-session cost rollup must be summed by hand across `token_usage`
-  records today (the D5 flight-recorder gap).
+  records today (the flight-recorder gap).
 - **`mechanismTokens`:** `["budget","exhausted","costUsd"]`.
 
 ## `live-provider-timeout`
@@ -91,7 +90,7 @@ today's observability surface (RESEARCH.md Pitfall 4).
   - _Note:_ `classifyError` on the bare timeout fault returns `unknown`; the faithful timeout
     category comes from `classifyPromptTimeout(30000)` → `prompt_timeout`.
 - **Hidden mechanism:** the timeout classification provenance (`classifiedFailureBy`) is not
-  recorded today (GA1).
+  recorded today.
 - **`mechanismTokens`:** `["timeout","30000","prompt_timeout"]`.
 
 ## Reproducing the freeze
@@ -101,4 +100,4 @@ transform (hostname/pid/instanceId/profileId/preview rewrite + a `/Users/<name>/
 sweep), then verified with `scanForSecrets`. The 4 live fixtures are synthesized from the
 `makeFaultInjector` + `classifyError` product path (see each section above) and frozen once — the
 cassette pattern (`test/live/cassette.ts`): faithful via the real classify path, deterministic on
-replay. Only the Plan-03 RUN ledger under `benchmarks/live/` is git-ignored; this corpus IS committed.
+replay. Only the baseline RUN ledger under `benchmarks/live/` is git-ignored; this corpus IS committed.

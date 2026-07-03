@@ -6,12 +6,11 @@
  * A stray NUL byte — typically an editor/paste artifact inside a template
  * literal — makes `grep`, `ripgrep`, `git diff`, and code-review tooling treat
  * the whole file as BINARY and silently skip its text. That is a direct
- * diagnosability hazard: a NUL in `skill-synthesis-job.ts` / `offline-learning.ts`
- * (v2.26 learning code) hid those files from every text search, which is exactly
- * how a real defect can escape review. The fail-safe is to forbid the byte
- * outright — a separator inside a key-join string should be a normal character.
- *
- * Found during the Phase 201 code-review fix (two `${a}\\0${b}` key-join helpers).
+ * diagnosability hazard: a NUL in the learning code (`skill-synthesis-job.ts`
+ * / `offline-learning.ts`) hid those files from every text search, which is
+ * exactly how a real defect can escape review. The fail-safe is to forbid the
+ * byte outright — a separator inside a key-join string should be a normal
+ * character.
  *
  * @module
  */

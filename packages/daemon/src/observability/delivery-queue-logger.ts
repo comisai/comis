@@ -11,8 +11,8 @@
  *   confirmed), queue_drained (startup drain complete).
  * - WARN for degraded states: nack (transient failure, will retry) and fail
  *   (permanent failure). WARN events include hint and errorKind as required.
- * - DEBUG for the reply->trajectory binding breadcrumb (delivery:reply_bound,
- *   WR-01): a high-frequency per-reply positive signal, kept at DEBUG so it does
+ * - DEBUG for the reply->trajectory binding breadcrumb (delivery:reply_bound):
+ *   a high-frequency per-reply positive signal, kept at DEBUG so it does
  *   not flood INFO, but present so a reaction map-miss is one-call diagnosable
  *   (the bind fired vs never fired) from the log trail alongside the bus event.
  * @module
@@ -137,7 +137,7 @@ export function setupDeliveryQueueLogging(deps: {
   });
 
   // 8. Reply bound: the agent-reply messageId was bound to its trajectory scope
-  // on the primary inbound-reply path (WR-01). DEBUG, not INFO — this is a
+  // on the primary inbound-reply path. DEBUG, not INFO — this is a
   // per-reply positive signal that would flood INFO, but the breadcrumb is
   // load-bearing for diagnosing a reaction map-miss (a `delivery:reply_bound`
   // for the messageId means the bind fired → a later miss is an eviction; its

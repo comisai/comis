@@ -2,7 +2,7 @@
 // @comis/core exports — Security utilities
 
 export { safePath, PathTraversalError } from "../security/index.js";
-// JAIL-03 bind-mount validator (Phase 211) — consumed by 211-05 (bwrap-provider).
+// Bind-mount validator — consumed by the bwrap sandbox provider.
 export { validateBindMount } from "../security/index.js";
 // Master-key file helpers (daemon-free `secrets init` body)
 export { writeMasterKeyIfAbsent, generateMasterKey } from "../security/index.js";
@@ -13,26 +13,26 @@ export { classifyAction, requiresConfirmation } from "../security/index.js";
 export type { ActionClassification } from "../security/index.js";
 export { AuditEventSchema, createAuditEvent, AUDIT_KINDS, kindIsSecuritySignal } from "../security/index.js";
 export type { AuditEvent, AuditKind, CreateAuditEventParams } from "../security/index.js";
-// Agent orchestration capabilities (Phase 210) + the Phase 211 mint-attenuation
-// trust boundary (attenuateCaps — consumed by the 211-06 broker lease mint).
+// Agent orchestration capabilities + the mint-attenuation trust boundary
+// (attenuateCaps — consumed by the broker lease mint).
 export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError, attenuateCaps } from "../security/index.js";
 export type { AgentCapability } from "../security/index.js";
-// HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
+// HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth
 export { HANDLER_CAPABILITY_MAP } from "../security/index.js";
 export type { HandlerCapabilityClassification, GatedMethodName } from "../security/index.js";
-// SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception (CLI-01/02),
-// surfaced on the @comis/core barrel for the @comis/infra lease audience (Plan 02).
+// SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception, surfaced
+// on the @comis/core barrel for the @comis/infra lease audience.
 export { SELF_SCOPED_AGENT_READS } from "../security/index.js";
 export type { SelfScopedAgentRead } from "../security/index.js";
-// CLI_SUBCOMMAND_MAP — the comis-agent subcommand→{tool|method} 1:1 table
-// (CLI-01, v8 §7), surfaced on the @comis/core barrel for the @comis/skills
-// comis-agent-cli dispatch (Plan 04) and the Plan 05 same-gate arch-test.
+// CLI_SUBCOMMAND_MAP — the comis-agent subcommand→{tool|method} 1:1 table,
+// surfaced on the @comis/core barrel for the @comis/skills comis-agent-cli
+// dispatch and the same-gate arch-test.
 export { CLI_SUBCOMMAND_MAP } from "../security/index.js";
 export type { CliCallTarget, CliSubcommand } from "../security/index.js";
-// TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP + ResultRef — the Phase 212 tool.invoke
-// surface single-source + the minimal result-handle, surfaced on the @comis/core
-// barrel for the daemon gate (Plan 02), the lease audience (Plan 02) and the
-// comis_tools SDK codegen (Plan 03).
+// TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP + ResultRef — the tool.invoke surface
+// single-source + the minimal result-handle, surfaced on the @comis/core
+// barrel for the daemon gate, the lease audience and the comis_tools SDK
+// codegen.
 export { TOOL_CAPABILITY_MAP, TOOL_ROUTE_MAP } from "../security/index.js";
 export type { ToolName, ToolRoute } from "../security/index.js";
 export {
@@ -93,9 +93,9 @@ export { createInputSecurityGuard } from "../security/index.js";
 export type { InputSecurityGuard, InputSecurityGuardResult, InputSecurityGuardConfig } from "../security/index.js";
 export { validateMemoryWrite } from "../security/index.js";
 export type { MemoryWriteValidationResult } from "../security/index.js";
-// Learned-doc static scan (v2.31 Reflection) — surfaced on the public @comis/core
-// barrel so the agent reflection job (223-04) and the daemon reflect path (223-05)
-// consume it directly (the static scan is ALL the validation an advisory doc gets).
+// Learned-doc static scan — surfaced on the public @comis/core barrel so the
+// agent reflection job and the daemon reflect path consume it directly (the
+// static scan is ALL the validation an advisory doc gets).
 export { validateLearnedDocBody, MAX_DOC_NAME_LENGTH } from "../security/index.js";
 export type { LearnedDocValidation, LearnedDocFinding } from "../security/index.js";
 export { createInjectionRateLimiter } from "../security/index.js";

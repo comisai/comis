@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture guard for the window-isolation invariant (ISO-01/02/03, Phase
- * 218, design §23.10 "long-running coordinator").
+ * Architecture guard for the window-isolation invariant (the "long-running
+ * coordinator" case).
  *
  * The invariant: a spawned `sessions_spawn` child runs an ISOLATED context loop
  * whose transcript NEVER re-enters the parent (lead) window. The child gets its
@@ -12,11 +12,11 @@
  * `"none"` so the child does not inherit the parent window either. So a
  * megabyte child grows the lead's window by a summary, not by the child's whole
  * conversation: `main_context ≈ Σ(child summaries)`, roughly flat across N
- * tasks (ISO-03).
+ * tasks.
  *
  * This is asserted STRUCTURALLY, never numerically. A token-magnitude test
  * (`expect(parentTokens).toBeLessThan(Σ child work)`) is non-deterministic
- * (LLM output varies) and would flake (RESEARCH Pitfall 1, T-218-20). The
+ * (LLM output varies) and would flake. The
  * deterministic, testable form is the STRUCTURE: the child-return type is the
  * bounded `{response, tokensUsed, cost, ...}` object with no `messages:` key,
  * and the only parent-injection site is the bounded announcement.
@@ -33,13 +33,13 @@
  * this test RED.
  *
  * Discriminating power (the one-line edits that flip each assertion to RED):
- *   - ISO-01: removing `createStepCounter(...)` (child reuses the parent step
+ *   - Removing `createStepCounter(...)` (child reuses the parent step
  *     budget) or `createEphemeralComisSessionManager(...)` (child shares the
  *     parent message list) fails the isolation grep.
- *   - ISO-02: adding `messages: result.messages` (or `messages:
+ *   - Adding `messages: result.messages` (or `messages:
  *     result.transcript`) to `buildExecuteSubAgent`'s bounded return — i.e.
  *     returning the child transcript to the parent — fails the no-leak grep.
- *   - ISO-03: replacing `condensedResult.result.summary` with `result.response`
+ *   - Replacing `condensedResult.result.summary` with `result.response`
  *     (injecting the raw child output) or flipping the
  *     `includeParentHistory ?? "none"` default to `"summary"` fails.
  *
@@ -70,7 +70,7 @@ const CHILD_LOOP_TS = resolve(
  *  default. */
 const RUNNER_TS = resolve(REPO_ROOT, "packages/agent/src/spawn/sub-agent-runner.ts");
 
-const DESIGN_REF = "v8 §23.10 (long-running coordinator) / Phase 218 ISO-01/02/03";
+const DESIGN_REF = "the long-running coordinator window-isolation invariant";
 
 /** Strip line + block comments so a token inside a comment cannot satisfy (or
  *  defeat) a structural assertion — a comment naming `messages:` is NOT a
@@ -95,15 +95,15 @@ function stripComments(src: string): string {
  * closing brace. A file-wide `/return[\s\S]{0,200}messages:/` was rejected: once
  * comments are stripped it bridges the early `return "long";` to the
  * `{ messages: unknown[] }` type signature — a false positive (the regex must be
- * tuned to the final source, per the plan).
+ * tuned to the final source).
  */
 function extractChildReturnBlock(stripped: string): string | undefined {
   const m = stripped.match(/return\s*\{[^}]*response:\s*result\.response[\s\S]*?\};/);
   return m?.[0];
 }
 
-describe("window-isolation invariant — ISO-01/02/03 (the child loop never writes the parent window)", () => {
-  it("ISO-01: verifies the child loop runs an isolated context with its own step budget + ephemeral session", () => {
+describe("window-isolation invariant — the child loop never writes the parent window", () => {
+  it("verifies the child loop runs an isolated context with its own step budget + ephemeral session", () => {
     const src = stripComments(readFileSync(CHILD_LOOP_TS, "utf8"));
     // Fresh per-spawn step budget — the child cannot draw down the parent's
     // step counter (isolated spawn, not fork-mode).
@@ -114,7 +114,7 @@ describe("window-isolation invariant — ISO-01/02/03 (the child loop never writ
     expect(src).toMatch(/createEphemeralComisSessionManager\s*\(/);
   });
 
-  it("ISO-02: verifies buildExecuteSubAgent returns a summary-scale shape, never the child transcript or the parent message list", () => {
+  it("verifies buildExecuteSubAgent returns a summary-scale shape, never the child transcript or the parent message list", () => {
     const src = stripComments(readFileSync(CHILD_LOOP_TS, "utf8"));
     const childReturn = extractChildReturnBlock(src);
 
@@ -131,14 +131,14 @@ describe("window-isolation invariant — ISO-01/02/03 (the child loop never writ
     // Negative (the load-bearing leak guard): the child→parent return carries NO
     // `messages:` key. Returning `messages: result.messages` (the child's
     // transcript) would let a megabyte child blow up the lead window — the exact
-    // ISO-02 regression this guard fails on.
+    // regression this guard fails on.
     const violations: ViolationCitation[] = /\bmessages\b\s*:/.test(block)
       ? [
           {
             file: "packages/daemon/src/wiring/setup-cross-session/setup-cross-session-graph.ts",
             line: 0,
             snippet:
-              "buildExecuteSubAgent's child→parent return includes a `messages:` key — the child transcript is leaking into the lead window (ISO-02 violation).",
+              "buildExecuteSubAgent's child→parent return includes a `messages:` key — the child transcript is leaking into the lead window.",
           },
         ]
       : [];
@@ -146,7 +146,7 @@ describe("window-isolation invariant — ISO-01/02/03 (the child loop never writ
       violations,
       formatViolations({
         description:
-          "The isolated child loop returns its transcript / message list to the parent — Information Disclosure + context-exhaustion DoS (T-218-18).",
+          "The isolated child loop returns its transcript / message list to the parent — Information Disclosure + context-exhaustion DoS.",
         violations,
         suggestedFix:
           "buildExecuteSubAgent must return ONLY the bounded summary-scale shape ({ response, tokensUsed, cost, finishReason, stepsExecuted, toolCallHistory }). Never add a `messages:`/transcript field — the parent receives the condensed summary via the runner's announcement, not the child's raw conversation.",
@@ -155,7 +155,7 @@ describe("window-isolation invariant — ISO-01/02/03 (the child loop never writ
     ).toEqual([]);
   });
 
-  it("ISO-03: verifies the runner injects ONLY a bounded summary into the parent (single injection site, includeParentHistory defaults to none)", () => {
+  it("verifies the runner injects ONLY a bounded summary into the parent (single injection site, includeParentHistory defaults to none)", () => {
     const src = stripComments(readFileSync(RUNNER_TS, "utf8"));
     // The parent-facing announcement is built from the BOUNDED condensed
     // summary — not the raw child response. This is the single injection site
@@ -165,7 +165,7 @@ describe("window-isolation invariant — ISO-01/02/03 (the child loop never writ
     // includeParentHistory defaults to "none" (opt-in "summary" only).
     expect(src).toMatch(/includeParentHistory[\s\S]{0,40}\?\?[\s\S]{0,10}"none"/);
 
-    // STRUCTURAL only — explicitly NOT a token-magnitude assertion (RESEARCH
-    // Pitfall 1 / T-218-20): a numeric main_context ≈ Σ test would flake.
+    // STRUCTURAL only — explicitly NOT a token-magnitude assertion: a numeric
+    // main_context ≈ Σ test would flake.
   });
 });

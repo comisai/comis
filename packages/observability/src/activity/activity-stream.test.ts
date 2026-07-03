@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the ActivityStream EventBus subscriber.
- *
- * Fails on pre-patch code: `./activity-stream.js` does not exist.
+ * Tests for the ActivityStream EventBus subscriber.
  *
  * Behavior under test:
  *   - maps tool:started → tool:executed to ordered ActivityEvents (validated by
@@ -66,7 +64,7 @@ function makeLogger(): ComisLogger & {
   return logger;
 }
 
-describe("createActivityStream (spec §5)", () => {
+describe("createActivityStream (EventBus → ActivityEvent mapping)", () => {
   it("maps tool:started then tool:executed to ordered ActivityEvents for the turn", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
@@ -105,7 +103,7 @@ describe("createActivityStream (spec §5)", () => {
     sub.unsubscribe();
   });
 
-  it("clamps a marker-prepended over-long defaultLabel to the 120-char cap so the event is NOT dropped (FIX 3)", () => {
+  it("clamps a marker-prepended over-long defaultLabel to the 120-char cap so the event is NOT dropped", () => {
     // A registered label spec whose rendered label is already near/over the 120-char
     // ActivityEvent cap. onToolStarted prepends the running marker (`🔧 `), pushing the
     // final defaultLabel past 120 → parseActivityEvent rejects → the event is DROPPED
@@ -228,8 +226,8 @@ describe("createActivityStream (spec §5)", () => {
 
     expect(received).toHaveLength(2);
     // The resolved event must reuse the authoritative minted shortId — NOT a
-    // weakly-derived placeholder. Pre-patch deriveShortId(requestId) produced a
-    // value that neither matched the start event nor was unguessable.
+    // weakly-derived placeholder. A value derived from the requestId would
+    // neither match the start event nor be unguessable.
     expect(received[1].approval?.shortId).toBe(SHORT_ID);
     expect(received[1].approval?.shortId).toBe(received[0].approval?.shortId);
     sub.unsubscribe();
@@ -378,7 +376,7 @@ describe("createActivityStream (spec §5)", () => {
     const received: ActivityEvent[] = [];
     const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
     // Many distinct tool calls within one turn: each routes through the
-    // subscriber's bounded queue (spec §5.1) and is delivered in order.
+    // subscriber's bounded queue and is delivered in order.
     for (let i = 0; i < 100; i++) {
       bus.emit("tool:started", {
         toolName: "edit",
@@ -441,8 +439,8 @@ describe("ActivityStream themed status markers", () => {
   });
 
   it("no theme preserves the robot emoji subagent label byte-identically", () => {
-    // Default-parity: a markerless construction is byte-identical to today's
-    // hardcoded glyph, so existing channel golden fixtures do not regress.
+    // Default-parity: a markerless construction is byte-identical to the exact
+    // glyph the channel golden fixtures assert.
     const event = spawnSubagentLabel();
     expect(event.defaultLabel).toBe(`🤖 ${AGENT} subagent`);
   });
@@ -522,8 +520,8 @@ describe("failure paths leak nothing", () => {
     const received: ActivityEvent[] = [];
     const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
     const before = received.length;
-    // The emit-site `reason` embeds a host-shaped denyEntry (tool-bridge.ts) — the
-    // Pitfall-5 leak vector. tool:policy_filtered is deliberately NOT in
+    // The emit-site `reason` embeds a host-shaped denyEntry (tool-bridge.ts) — a
+    // potential leak vector. tool:policy_filtered is deliberately NOT in
     // SUBSCRIBED_EVENTS, so it maps to ZERO ActivityEvents and the denyEntry never
     // reaches any rendered label. (Would FAIL if it were subscribed.)
     bus.emit("tool:policy_filtered", {
@@ -615,11 +613,11 @@ describe("buildLabel compresses the post-redaction defaultLabel", () => {
   });
 
   it("leaves a redact-compacted path untouched in the rendered label", () => {
-    // Pitfall 2 / redact-then-compress order: redactValue compacts the absolute
+    // Redact-then-compress order: redactValue compacts the absolute
     // path ($HOME→~, last-2-segments) BEFORE compressLabel runs; the compressor
     // must treat that as a fixed point and NOT re-trim it. The emit site then
-    // prepends `${markers.running} ` (subagent precedent at
-    // activity-stream.ts:602/621) — the compaction body is unchanged.
+    // prepends `${markers.running} ` (as with the subagent labels) — the
+    // compaction body is unchanged.
     const event = renderToolLabel(
       "ux02_path_tool",
       { actions: { run: { label: "reading {path}", detailKeys: ["path"] } } },
@@ -683,7 +681,7 @@ describe("activity-stream — markers.running prefix on phase:start", () => {
     // Default theme (no explicit theme arg → DEFAULT_MARKERS). The `read` tool
     // has no LabelSpec registered here, so buildLabel falls back to the
     // humanized tool name ("read"). The stream MUST prefix `🔧 ` at the emit
-    // site (subagent precedent mirror at activity-stream.ts:602/621).
+    // site (as with the subagent labels).
     const { bus, received, sub } = streamWith();
     bus.emit("tool:started", {
       toolName: "read",
@@ -703,7 +701,7 @@ describe("activity-stream — markers.running prefix on phase:start", () => {
     sub.unsubscribe();
   });
 
-  it("onToolStarted emits defaultLabel with [..] prefix under ascii theme — §8.9", () => {
+  it("onToolStarted emits defaultLabel with [..] prefix under ascii theme", () => {
     // Ascii theme strips ALL Unicode > U+007F (themes/ascii.ts:8 LOCKED FACT).
     // The marker `[..]` is pure ASCII; combined with the fallback tool name
     // "read" the entire defaultLabel must be strictly ASCII.
@@ -750,13 +748,11 @@ describe("activity-stream — markers.running prefix on phase:start", () => {
     sub.unsubscribe();
   });
 
-  it("onToolExecuted (phase:end) does NOT prefix markers.running — Pitfall 7 invariant", () => {
+  it("onToolExecuted (phase:end) does NOT prefix the running marker", () => {
     // The running marker conveys "in flight" — applying it to a completed
-    // (phase:"end") event mis-conveys status. Pitfall 7 from RESEARCH.md lines
-    // 818-826: tool:executed dispatch MUST NEVER carry the running marker.
-    // This is a regression-lock: passes against current code (no marker
-    // anywhere) AND must continue passing after the GREEN patch lands the
-    // marker only on the two phase:"start"/"progress" dispatch sites.
+    // (phase:"end") event mis-conveys status. The tool:executed dispatch MUST
+    // NEVER carry the running marker; it is prefixed only on the phase:"start"
+    // and phase:"progress" dispatch sites.
     const { bus, received, sub } = streamWith();
     bus.emit("tool:executed", {
       toolName: "read",
@@ -775,25 +771,25 @@ describe("activity-stream — markers.running prefix on phase:start", () => {
     expect(event.status).toBe("completed");
     expect(
       event.defaultLabel?.startsWith("🔧"),
-      "phase:\"end\" events MUST NOT carry markers.running (Pitfall 7)",
+      "phase:\"end\" events MUST NOT carry markers.running",
     ).toBe(false);
     expect(
       event.defaultLabel,
-      "phase:\"end\" events MUST NOT carry markers.running (Pitfall 7)",
+      "phase:\"end\" events MUST NOT carry markers.running",
     ).not.toMatch(/🔧/);
     sub.unsubscribe();
   });
 
   it("marker resolution captures the markers reference at stream construction — replacing deps.theme.markers post-construction is ignored", () => {
-    // Pattern 2 contract: the implementation
-    // at activity-stream.ts:198 does `const markers = deps.theme?.markers ??
-    // DEFAULT_MARKERS;` — capturing the markers OBJECT REFERENCE once. Any
+    // Reference-capture contract: the implementation does
+    // `const markers = deps.theme?.markers ?? DEFAULT_MARKERS;` at construction —
+    // capturing the markers OBJECT REFERENCE once. Any
     // subsequent re-assignment of `deps.theme.markers` to a NEW object MUST be
     // invisible to the closure (it still holds the original reference).
     //
     // NOTE: mutating an inner field on the captured object (e.g. `markers
-    // .running = "X"`) is observable today by design — the subagent precedent
-    // at lines 602/621 reads `markers.subagent` lazily via the same closure.
+    // .running = "X"`) is observable by design — the subagent labels read
+    // `markers.subagent` lazily via the same closure.
     // The test below pins the reference-capture invariant (the strongest one
     // the current code guarantees).
     const bus = new TypedEventBus();
@@ -826,7 +822,7 @@ describe("activity-stream — markers.running prefix on phase:start", () => {
     expect(received[0].defaultLabel?.startsWith("[..] ")).toBe(true);
 
     // Replace the markers OBJECT REFERENCE on the deps-supplied theme. The
-    // closure captured the original reference at line 198 and ignores this.
+    // closure captured the original reference at construction and ignores this.
     themeRef.markers = {
       success: "NEW-OK",
       failure: "NEW-ERR",

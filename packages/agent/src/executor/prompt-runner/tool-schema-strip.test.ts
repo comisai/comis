@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Contract tests for the reactive 2-keyword schema strip (GBNF-02 repair
- * half) plus the A5 propagation decider at the REAL SDK boundary.
+ * Contract tests for the reactive 2-keyword schema strip (the
+ * tool_schema_unsupported repair payload) plus the in-place-mutation
+ * propagation decider at the REAL SDK boundary.
  *
  * The strip module is the repair payload of `handleToolSchemaUnsupported`:
  * when a grammar-400 classifies as `tool_schema_unsupported`, the handler
@@ -12,8 +13,8 @@
  *      nesting depth, purity, dedup'd keyword reporting;
  *   2. the in-place application (`applyReactiveSchemaStripInPlace`) —
  *      OBJECT IDENTITY of both the tool entry AND its `parameters` object
- *      (the propagation mechanism — see the A5 decider below);
- *   3. the A5 decider — a REAL `AgentSession` (no fakes) proving the
+ *      (the propagation mechanism — see the decider below);
+ *   3. the propagation decider — a REAL `AgentSession` (no fakes) proving the
  *      mutation is visible through the SDK's own registry accessor
  *      `session.getToolDefinition()` AND on the agent-state wire surface.
  *
@@ -34,8 +35,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { hostileMcpTool, wellFormedTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
-// Pre-patch this import crashes the suite (module missing) — the intended
-// wholesale RED for a brand-new test file with no pre-existing tests.
 import {
   REACTIVE_STRIP_KEYWORDS,
   stripSchemaKeywordsDeep,
@@ -118,11 +117,11 @@ describe("stripSchemaKeywordsDeep", () => {
     expect((schema as Record<string, unknown>).additionalProperties).toEqual({ type: "string" });
   });
 
-  // WR-06 (175-REVIEW): $defs/definitions bodies are referenced via $ref,
+  // $defs/definitions bodies are referenced via $ref,
   // which llama.cpp RESOLVES at grammar-compile — a pattern inside $defs that
   // survives the strip guarantees the one-shot retry re-sends the rejected
   // keyword and burns the session's only repair attempt.
-  it("WR-06: removes the keywords inside $defs and definitions entry schemas ($ref resolved at grammar-compile)", () => {
+  it("removes the keywords inside $defs and definitions entry schemas ($ref resolved at grammar-compile)", () => {
     const input = {
       type: "object",
       properties: { item: { $ref: "#/$defs/due" } },
@@ -140,7 +139,7 @@ describe("stripSchemaKeywordsDeep", () => {
     expect(stripped).toEqual(["pattern", "format"]);
   });
 
-  it("WR-06: removes the keywords inside patternProperties VALUE schemas while preserving the key regexes verbatim", () => {
+  it("removes the keywords inside patternProperties VALUE schemas while preserving the key regexes verbatim", () => {
     const input = {
       type: "object",
       patternProperties: {
@@ -157,7 +156,7 @@ describe("stripSchemaKeywordsDeep", () => {
     expect(stripped).toEqual(["format"]);
   });
 
-  it("WR-06: removes the keywords inside prefixItems tuple entries", () => {
+  it("removes the keywords inside prefixItems tuple entries", () => {
     const input = {
       type: "array",
       prefixItems: [
@@ -219,10 +218,10 @@ describe("stripSchemaKeywordsDeep", () => {
     expect(stripSchemaKeywordsDeep("x", REACTIVE_STRIP_KEYWORDS)).toEqual({ schema: "x", stripped: [], depthLimited: false });
   });
 
-  // WR-03 (175-REVIEW): the strip walk shares the un-capped-recursion flaw —
+  // An un-capped recursive walk is a crash hazard here —
   // a hostile MCP schema deep enough to overflow it would crash the repair
   // path the schema rejection itself triggered.
-  describe("WR-03: depth-limited recursion (attacker-controlled MCP schemas)", () => {
+  describe("depth-limited recursion (attacker-controlled MCP schemas)", () => {
     function makeDeepPropertiesChain(
       depth: number,
       leaf: Record<string, unknown>,
@@ -271,8 +270,7 @@ describe("applyReactiveSchemaStripInPlace", () => {
     const result = applyReactiveSchemaStripInPlace(tools);
 
     // Same tool object — replacing the array entry would silently not
-    // propagate to the session registry (RESEARCH Pitfall 6 / the v2.20
-    // rigged-test class).
+    // propagate to the session registry.
     expect(tools[0]).toBe(toolBefore);
     // Same parameters object — this is the LOAD-BEARING identity: the SDK's
     // wrapped AgentTools capture `definition.parameters` by reference at
@@ -326,33 +324,34 @@ describe("applyReactiveSchemaStripInPlace", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A5 propagation decider — REAL SDK boundary (RESEARCH Open Questions Q2,
-// RESOLVED). THE (a-lite)-vs-(b) decider; this is the test a fake cannot
-// satisfy.
+// In-place-mutation propagation decider — REAL SDK boundary. Decides whether
+// the same-turn in-place strip is a valid propagation mechanism at all; this
+// is the test a fake cannot satisfy.
 //
 // FALLBACK TRIGGER (do NOT weaken these assertions): if this decider FAILS
 // on the real SDK (clone-at-creation — getToolDefinition or the agent-state
 // wire surface returns stale schema content after the in-place strip), or if
 // `createAgentSession` proves un-constructible in a unit context (heavyweight
-// runtime deps), the decider is NOT proven. In that case Plan 175-05 Task 3
-// implements design-blessed option (b) next-turn constraint memory instead
+// runtime deps), the same-turn strip is NOT proven. In that case the repair
+// must switch to next-turn constraint memory instead
 // (handler classifies + WARNs + sets the session flag + ends THIS turn as
 // honest classified failure; the next turn's per-turn assembly applies the
 // strip), and the handler tests' same-turn-retry expectations are adapted to
-// the (b) contract in the same commit. Never ship (a-lite) on faked evidence.
+// that contract in the same commit. Never ship the same-turn strip on faked
+// evidence.
 //
 // Composition this decider relies on: pi-ai converts `parameters:
 // tool.parameters` VERBATIM per request at request-build time
-// (openai-completions.js:819, verified 0.78.1; design-verified 0.79.1) from
+// (openai-completions.js:819, verified on 0.78.1 and 0.79.1) from
 // the agent-state tools — so a mutation visible on BOTH the SDK registry
 // (`getToolDefinition`) and the agent-state wire surface (`session.state.tools`)
 // is wire-visible on the retry request.
 // ---------------------------------------------------------------------------
-describe("A5 propagation decider — REAL SDK boundary (RESEARCH Open Questions Q2, RESOLVED)", () => {
+describe("in-place strip propagation decider — REAL SDK boundary", () => {
   let scratchDir: string;
 
   beforeAll(() => {
-    scratchDir = mkdtempSync(resolve(tmpdir(), "comis-a5-decider-"));
+    scratchDir = mkdtempSync(resolve(tmpdir(), "comis-strip-decider-"));
   });
 
   afterAll(() => {

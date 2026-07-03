@@ -1,47 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DURABLE-RESUME-E2E: the exactly-once chaos restart acceptance gate (Phase 216).
+ * Exactly-once chaos restart acceptance gate.
  *
- * THE proof of security invariant #12 — "a daemon restart NEVER re-DMs / re-posts
- * a message a crashed-mid-send run already delivered, and NEVER silently drops
- * one." It boots the REAL daemon (`autonomy.durability.enabled`), drives a REAL
- * autonomy-originated outward send through the wrapped send path (Plan 05), and
- * crashes the daemon in the EXACT window the invariant protects — BETWEEN the
- * ledger-write (`unknown_after_send`) and the platform-ack (`commit`) — via the
- * live `__setOutwardSendCrashHookForTest` seam (MED-6: the unknown_after_send row
- * is written by the REAL code path, so the RED is a genuine double-send, not a
- * "no such table" miss). It then restarts against the SAME dataDir
- * (memory.db survives — the per-fork dataDir is memoized) so boot recovery runs,
- * and asserts the EXACT Echo delivery count.
+ * THE proof of the exactly-once outward-send security invariant — "a daemon
+ * restart NEVER re-DMs / re-posts a message a crashed-mid-send run already
+ * delivered, and NEVER silently drops one." It boots the REAL daemon
+ * (`autonomy.durability.enabled`), drives a REAL autonomy-originated outward send
+ * through the wrapped send path, and crashes the daemon in the EXACT window the
+ * invariant protects — BETWEEN the ledger-write (`unknown_after_send`) and the
+ * platform-ack (`commit`) — via the live `__setOutwardSendCrashHookForTest` seam
+ * (the unknown_after_send row is written by the REAL code path, so the RED is a
+ * genuine double-send, not a "no such table" miss). It then restarts against the
+ * SAME dataDir (memory.db survives — the per-fork dataDir is memoized) so boot
+ * recovery runs, and asserts the EXACT Echo delivery count.
  *
- * RED proof (recorded in 216-08-SUMMARY): on a naive recovery that blind-replays
- * an `unknown_after_send` row, scenario (A) — the message DID land before the
- * crash — re-delivers it, so the Echo delivery count is 2 (a double-send) and the
- * `toBe(1)` assertion FAILS with `expected 1, received 2`. The wired stack's
- * reconcileSend resolves it to `sent` → commit, NO replay → the count stays 1.
+ * RED proof: on a naive recovery that blind-replays an `unknown_after_send` row,
+ * scenario (A) — the message DID land before the crash — re-delivers it, so the
+ * Echo delivery count is 2 (a double-send) and the `toBe(1)` assertion FAILS with
+ * `expected 1, received 2`. The wired stack's reconcileSend resolves it to `sent`
+ * → commit, NO replay → the count stays 1.
  *
  * The Echo channel is the controllable channel: it is NOT a daemon config channel
- * type, so the test registers an `EchoChannelAdapter` on `daemon.adapterRegistry`
- * (the activity-composition precedent), and Echo's deterministic `reconcileSend`
- * (Plan 06) is the oracle — a pre-seeded Echo (modeling the platform's durable
- * retention) reports `sent`; a fresh Echo reports `not_sent`.
+ * type, so the test registers an `EchoChannelAdapter` on `daemon.adapterRegistry`,
+ * and Echo's deterministic `reconcileSend` is the oracle — a pre-seeded Echo
+ * (modeling the platform's durable retention) reports `sent`; a fresh Echo reports
+ * `not_sent`.
  *
  * Cases (each on observable state — delivery count, ledger state, run status):
- *   - ONCE-04 SENT: crash after the platform recorded it → restart → reconcile
+ *   - SENT: crash after the platform recorded it → restart → reconcile
  *     sent → commit, NO replay → Echo shows EXACTLY 1 delivery (no double-send).
- *   - ONCE-04 NOT_SENT: crash before the platform recorded it → restart →
+ *   - NOT_SENT: crash before the platform recorded it → restart →
  *     reconcile not_sent → the wired engine PARKS unresolved (the content-free
- *     ledger has no body to replay — Pitfall-2 honesty) → Echo shows 0, the row
- *     is `unresolved` (NEVER a blind double-send). [M1 limitation documented.]
- *   - HIGH-1/NEW-1: two outward sends with a CHECKPOINT WRITE interleaved → the
- *     checkpoint does NOT reset the outward_step counter (send #2 keeps index 1) →
- *     exactly 2 deliveries, two committed ledger rows at (root,0)+(root,1).
- *   - DUR-02 / NEW-5: a never-sent run (stepIndex = -1) RESUMES after a restart,
- *     NOT orphaned.
- *   - DUR-04: a lapsed-heartbeat run is detected + recovered, not left hung.
- *   - DUR-03: a revoked run is NOT resumed (no re-mint) + orphaned on boot.
- *   - HIGH-3 DAG: a multi-node DAG killed mid-flight resumes its incomplete
- *     frontier; the completed node's outward send is NOT re-delivered.
+ *     ledger has no body to replay) → Echo shows 0, the row is `unresolved`
+ *     (NEVER a blind double-send). [documented engine limitation.]
+ *   - Two outward sends with a CHECKPOINT WRITE interleaved → the checkpoint does
+ *     NOT reset the outward_step counter (send #2 keeps index 1) → exactly 2
+ *     deliveries, two committed ledger rows at (root,0)+(root,1).
+ *   - A never-sent run (stepIndex = -1) RESUMES after a restart, NOT orphaned.
+ *   - A lapsed-heartbeat run is detected + recovered, not left hung.
+ *   - A revoked run is NOT resumed (no re-mint) + orphaned on boot.
+ *   - A multi-node DAG killed mid-flight resumes its incomplete frontier; the
+ *     completed node's outward send is NOT re-delivered.
  *
  * Stale-dist trap: imports `@comis/daemon` + `@comis/channels` + `@comis/memory`
  * from dist/ — run `pnpm build` before this test or the seam edits are masked.
@@ -106,9 +105,10 @@ function dbPathOf(handle: TestDaemonHandle): string {
 /**
  * Open the daemon's memory.db read/write (the daemon is stopped between stages,
  * so a direct seed is safe) and run `fn` against a real DurableRunPort +
- * OutwardSendLedgerPort built on the SAME db. Used to (a) seed the DUR-02/03/04
- * STRUCTURAL cases and (b) seed a durable_runs row whose rootRunId matches the
- * live crash seam's ledger row so boot recovery reconciles it.
+ * OutwardSendLedgerPort built on the SAME db. Used to (a) seed the never-sent /
+ * lapsed-heartbeat / revoked STRUCTURAL cases and (b) seed a durable_runs row
+ * whose rootRunId matches the live crash seam's ledger row so boot recovery
+ * reconciles it.
  */
 async function withStores<T>(
   dbAbsPath: string,
@@ -184,7 +184,7 @@ function registerEcho(handle: TestDaemonHandle, channelId: string, echo?: EchoCh
 // Suite
 // ---------------------------------------------------------------------------
 
-describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance gate, invariant #12)", () => {
+describe("exactly-once chaos restart acceptance gate for the outward-send durability invariant", () => {
   let tmpDir: string;
   let configPath: string;
   let killSpy: ReturnType<typeof vi.spyOn>;
@@ -255,9 +255,9 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
   });
 
   // =========================================================================
-  // ONCE-04 (A): crash AFTER the platform recorded it → reconcile SENT → no double-send
+  // Crash AFTER the platform recorded it → reconcile SENT → no double-send
   // =========================================================================
-  describe("ONCE-04: crash between ledger-write and ack, restart, reconcile resolves SENT → no double-send", () => {
+  describe("crash between ledger-write and ack, restart, reconcile resolves SENT → no double-send", () => {
     let handle: TestDaemonHandle | undefined;
 
     it("delivers EXACTLY ONCE — the platform truth=sent reconcile commits without a blind replay (no double-send)", async () => {
@@ -271,7 +271,7 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
       handle = await boot();
       registerEcho(handle, channelId);
 
-      // Arm the live crash seam (the plan's `crashAfterLedgerUnknown` seam, MED-6):
+      // Arm the live crash seam (the `crashAfterLedgerUnknown` seam):
       // run doSend (Echo records → platform truth=sent) THEN throw before commit,
       // leaving a REAL unknown_after_send row written by the REAL wrapped send path.
       __setOutwardSendCrashHookForTest("after_send"); // crashAfterLedgerUnknown: after_send variant
@@ -333,12 +333,12 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
   });
 
   // =========================================================================
-  // ONCE-04 (B): crash BEFORE the platform recorded it → reconcile NOT_SENT
+  // Crash BEFORE the platform recorded it → reconcile NOT_SENT
   // =========================================================================
-  describe("ONCE-04: reconcile resolves NOT_SENT → parked unresolved, never a blind double-send", () => {
+  describe("reconcile resolves NOT_SENT → parked unresolved, never a blind double-send", () => {
     let handle: TestDaemonHandle | undefined;
 
-    it("never double-sends: the platform truth=not_sent row is parked unresolved (the content-free ledger has no body to replay — Pitfall-2 honesty)", async () => {
+    it("never double-sends: the platform truth=not_sent row is parked unresolved (the content-free ledger has no body to replay)", async () => {
       const channelId = `echo-notsent-${randomUUID().slice(0, 8)}`;
       const rootRunId = rootRunIdFor(channelId);
       const content = "exactly-once not-sent-case payload";
@@ -374,30 +374,30 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
 
       // Wait for the reconcile to run (the watchdog reconciles the row → not_sent).
       // The wired engine's replaySend errs (the content-free ledger has no body to
-      // re-deliver — Pitfall-2 honesty), so the row is recorded as reconcile=not_sent
+      // re-deliver), so the row is recorded as reconcile=not_sent
       // but the replay PARKS it (state stays unknown_after_send — never blind-sent).
       await pollUntil(() => handle!.getOutwardLedgerRow(rootRunId, 0)?.reconcileOutcome === "not_sent", 10_000);
 
       // ---- ASSERT: NO double-send. Echo shows ZERO deliveries; the row was reconciled
-      // not_sent and PARKED (the M1 engine never blind-replays a body it does not have). ----
+      // not_sent and PARKED (the engine never blind-replays a body it does not have). ----
       const finalEcho = handle.daemon.adapterRegistry.get(ECHO_TYPE) as EchoChannelAdapter;
       expect(
         getEchoDeliveries(finalEcho),
-        "the not_sent row is parked (no body to replay) — the M1 engine NEVER blind-replays, " +
-          "so Echo shows ZERO deliveries (never 2 — the invariant #12 no-double-send guarantee holds)",
+        "the not_sent row is parked (no body to replay) — the engine NEVER blind-replays, " +
+          "so Echo shows ZERO deliveries (never 2 — the no-double-send guarantee holds)",
       ).toHaveLength(0);
       const finalRow = handle.getOutwardLedgerRow(rootRunId, 0);
       // not_sent recorded as the reconcile verdict; the row is NOT committed and NOT
-      // blind-replayed — it stays unknown_after_send (parked), the honest M1 outcome.
+      // blind-replayed — it stays unknown_after_send (parked), the honest outcome.
       expect(finalRow?.reconcileOutcome).toBe("not_sent");
       expect(finalRow?.state).not.toBe("committed");
     }, 120_000);
   });
 
   // =========================================================================
-  // HIGH-1 / NEW-1: two distinct sends + an INTERLEAVED checkpoint → exactly 2 deliveries
+  // Two distinct sends + an INTERLEAVED checkpoint → exactly 2 deliveries
   // =========================================================================
-  describe("HIGH-1/NEW-1: two outward sends with a CHECKPOINT WRITE between them survive with exactly TWO deliveries", () => {
+  describe("two outward sends with a CHECKPOINT WRITE between them survive with exactly TWO deliveries", () => {
     let handle: TestDaemonHandle | undefined;
 
     it("the interleaved checkpoint does NOT reset the outward_step counter (send #2 keeps index 1) → exactly 2 deliveries, two committed rows", async () => {
@@ -408,8 +408,8 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
       await echo.start();
       const dbAbs = dbPathOf(handle);
 
-      // Use the REAL durable-run store's allocateOutwardStep so the NEW-1 invariant
-      // (upsertCheckpoint MUST NOT reset outward_step) is exercised end-to-end.
+      // Use the REAL durable-run store's allocateOutwardStep so the invariant that
+      // upsertCheckpoint MUST NOT reset outward_step is exercised end-to-end.
       const step0 = await withStores(dbAbs, async ({ durableRuns }) => {
         // Register the run first so allocateOutwardStep + upsertCheckpoint share a row.
         await durableRuns.upsertCheckpoint(runningRecord({ rootRunId }));
@@ -422,15 +422,15 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
 
       // CHECKPOINT WRITE INTERLEAVED between the two sends (a child spawn / DAG node
       // transition does exactly this via upsertCheckpoint). If upsertCheckpoint
-      // clobbered outward_step, the next allocate would re-yield 0 (the NEW-1 bug).
+      // clobbered outward_step, the next allocate would re-yield 0 (the counter-reset bug).
       const step1 = await withStores(dbAbs, async ({ durableRuns }) => {
         await durableRuns.upsertCheckpoint(
           runningRecord({ rootRunId, spawnTree: [`lease-${rootRunId}`, "child-1"] }),
         );
         return durableRuns.allocateOutwardStep(rootRunId);
       });
-      // NEW-1: the checkpoint did NOT reset the counter — the next index is 1, not 0.
-      expect(step1.ok && step1.value, "NEW-1: an interleaved checkpoint must not reset outward_step").toBe(1);
+      // The checkpoint did NOT reset the counter — the next index is 1, not 0.
+      expect(step1.ok && step1.value, "an interleaved checkpoint must not reset outward_step").toBe(1);
 
       // Outward send #2 at step 1 (commits) — a DIFFERENT idempotency key, so it is
       // NOT deduped against send #1 and is NOT dropped.
@@ -441,7 +441,7 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
       expect(
         getEchoDeliveries(finalEcho),
         "two distinct outward sends with an interleaved checkpoint must yield EXACTLY 2 deliveries — " +
-          "NOT 1 (NEW-1 silent drop from a counter reset) and NOT 3 (double-send)",
+          "NOT 1 (a silent drop from a counter reset) and NOT 3 (a double-send)",
       ).toHaveLength(2);
       expect(handle.getOutwardLedgerRow(rootRunId, 0)?.state).toBe("committed");
       expect(handle.getOutwardLedgerRow(rootRunId, 1)?.state).toBe("committed");
@@ -449,9 +449,9 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
   });
 
   // =========================================================================
-  // DUR-02 / NEW-5: a never-sent run (stepIndex = -1) RESUMES after a restart, NOT orphaned
+  // A never-sent run (stepIndex = -1) RESUMES after a restart, NOT orphaned
   // =========================================================================
-  describe("DUR-02/NEW-5: a run checkpointed at spawn with NO outward send yet (stepIndex = -1) RESUMES, not orphaned", () => {
+  describe("a run checkpointed at spawn with NO outward send yet (stepIndex = -1) RESUMES, not orphaned", () => {
     let handle: TestDaemonHandle | undefined;
 
     it("the -1 never-sent sentinel passes parseDurableRunRecord and is resumed (not falsely orphaned with 'invalid caps')", async () => {
@@ -466,12 +466,12 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
         durableRuns.upsertCheckpoint(runningRecord({ rootRunId, stepIndex: -1 })),
       );
 
-      // ---- Restart → boot recovery resumes the run (NEW-5: -1 is a legitimate sentinel). ----
+      // ---- Restart → boot recovery resumes the run (-1 is a legitimate sentinel). ----
       handle = await boot();
 
       // The run is resumed (status flips out of 'running' to a terminal/handled
-      // state, OR stays running but is NOT orphaned). The regression (pre-NEW-5)
-      // is parseDurableRunRecord rejecting -1 → status 'orphaned' with 'invalid caps'.
+      // state, OR stays running but is NOT orphaned). The regression this guards
+      // against is parseDurableRunRecord rejecting -1 → status 'orphaned' with 'invalid caps'.
       await pollUntil(() => {
         const r = handle!.getDurableRun(rootRunId);
         // Resumed successfully → marked completed by the re-anchor path, or still
@@ -485,17 +485,17 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
       expect(finalRun, "the never-sent run must still exist in durable_runs after restart").toBeDefined();
       expect(
         finalRun?.status,
-        "NEW-5: a never-sent run (stepIndex=-1) must RESUME, never be orphaned with 'invalid caps'",
+        "a never-sent run (stepIndex=-1) must RESUME, never be orphaned with 'invalid caps'",
       ).not.toBe("orphaned");
-      // Belt: the orphan reason must NOT be the NEW-5 false-orphan signature.
+      // Belt: the orphan reason must NOT be the false-orphan signature.
       expect(finalRun?.orphanReason ?? "").not.toContain("invalid caps");
     }, 120_000);
   });
 
   // =========================================================================
-  // DUR-04: a lapsed-heartbeat run is detected + recovered, not left hung
+  // A lapsed-heartbeat run is detected + recovered, not left hung
   // =========================================================================
-  describe("DUR-04: a run with a lapsed heartbeat is detected and re-picked-up after restart", () => {
+  describe("a run with a lapsed heartbeat is detected and re-picked-up after restart", () => {
     let handle: TestDaemonHandle | undefined;
 
     it("a stale (long-ago heartbeat) running run is swept by recovery, not left hung in 'running'", async () => {
@@ -538,9 +538,9 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
   });
 
   // =========================================================================
-  // DUR-03: a revoked run is NOT resumed (no re-mint) + orphaned/terminal on boot
+  // A revoked run is NOT resumed (no re-mint) + orphaned/terminal on boot
   // =========================================================================
-  describe("DUR-03: a revoked run is NOT resumed across a restart (no new lease re-minted)", () => {
+  describe("a revoked run is NOT resumed across a restart (no new lease re-minted)", () => {
     let handle: TestDaemonHandle | undefined;
 
     it("a revoked run is filtered out of resume (never re-minted) — a restart cannot resurrect pre-revoke caps", async () => {
@@ -550,7 +550,7 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
       await stop(handle);
       handle = undefined;
       // Seed a running run, then revoke it (invalidateForRevoke flips status to
-      // 'revoked' — the DUR-03 terminal state).
+      // 'revoked' — the terminal state).
       await withStores(dbAbs, async ({ durableRuns }) => {
         await durableRuns.upsertCheckpoint(runningRecord({ rootRunId, caps: ["orch:message"] }));
         return durableRuns.invalidateForRevoke(rootRunId);
@@ -569,15 +569,15 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
       // so it is NEVER re-minted/resumed. Its status stays 'revoked' (terminal).
       expect(
         finalRun?.status,
-        "DUR-03: a revoked run must NOT be resumed — it stays revoked (resume cannot resurrect pre-revoke caps)",
+        "a revoked run must NOT be resumed — it stays revoked (resume cannot resurrect pre-revoke caps)",
       ).toBe("revoked");
     }, 120_000);
   });
 
   // =========================================================================
-  // HIGH-3 DAG: a multi-node DAG killed mid-flight — completed node's send not re-delivered
+  // A multi-node DAG killed mid-flight — completed node's send not re-delivered
   // =========================================================================
-  describe("HIGH-3 DAG: a multi-node DAG killed mid-flight resumes; the completed node's outward send is NOT re-delivered", () => {
+  describe("a multi-node DAG killed mid-flight resumes; the completed node's outward send is NOT re-delivered", () => {
     let handle: TestDaemonHandle | undefined;
 
     it("node A (completed, already delivered+committed) is NOT re-run on resume → its message stays exactly ONE delivery", async () => {
@@ -594,7 +594,7 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
       await echo.sendMessage(channelId, "node-A-output"); // the already-delivered message (1 delivery)
       await withStores(dbAbs, async ({ durableRuns, ledger }) => {
         // A DAG-shaped record: node A completed, node B mid-flight (running). The
-        // object-with-`status` spawn_tree is the LOW-2 DAG discriminator.
+        // object-with-`status` spawn_tree is the DAG discriminator.
         const dagRecord: DurableRunRecord = {
           rootRunId,
           spawnTree: [
@@ -646,7 +646,7 @@ describe("DURABLE-RESUME-E2E: exactly-once chaos restart (Phase 216 acceptance g
       const nodeADeliveries = getEchoDeliveries(finalEcho).filter((m) => m.text === "node-A-output");
       expect(
         nodeADeliveries,
-        "HIGH-3: a completed DAG node's outward send is committed in the ONCE ledger — resume must NOT " +
+        "a completed DAG node's outward send is committed in the ONCE ledger — resume must NOT " +
           "re-deliver it (exactly-once on DAG resume)",
       ).toHaveLength(deliveriesAfterRestartSeed);
       // Node A's ledger row stays committed (a re-scan is a no-op, never re-sent).

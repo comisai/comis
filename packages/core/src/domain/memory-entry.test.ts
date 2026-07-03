@@ -295,16 +295,16 @@ describe("MemoryEntry", () => {
       }
     });
 
-    it("accepts the generalization observationKind (GENERAL-01 higher-order synthesis kind)", () => {
-      // GENERAL-01 (v2.26 Phase 203): the higher-order generalization kind — a
+    it("accepts the generalization observationKind (the higher-order synthesis kind)", () => {
+      // The higher-order generalization kind — a
       // semantic memory abstracting a cross-context cluster, written by
-      // runMemoryConsolidation. RED on pre-patch HEAD (the closed enum rejects it).
+      // runMemoryConsolidation.
       const result = parseMemoryEntry(validEntry({ observationKind: "generalization" }));
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.observationKind).toBe("generalization");
     });
 
-    it("accepts all valid patternType values (the Honcho-derived inductive pattern class set)", () => {
+    it("accepts all valid patternType values (the closed inductive pattern class set)", () => {
       for (const patternType of [
         "preference",
         "behavior",
@@ -343,11 +343,11 @@ describe("ExtractedEntitySchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("STRIPS a benign extra key like type instead of rejecting (live finding 2026-06-11)", () => {
-    // The extraction LLM naturally emits { name, type: "person" }. The old
-    // strictObject rejected it — failing the memory and discarding the WHOLE
+  it("STRIPS a benign extra key like type instead of rejecting the entity", () => {
+    // The extraction LLM naturally emits { name, type: "person" }. A
+    // strictObject would reject it — failing the memory and discarding the WHOLE
     // extraction batch. There is still no `type` field in the domain
-    // (design §4.2 canonical_name-only); it is stripped, not carried.
+    // (the entity table is canonical_name-only); it is stripped, not carried.
     const result = ExtractedEntitySchema.safeParse({ name: "user", type: "person" });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -372,7 +372,7 @@ describe("StructuredMemorySchema (lenient LLM output)", () => {
     }
   });
 
-  it("STRIPS a benign extra LLM key instead of rejecting (Pitfall 5)", () => {
+  it("STRIPS a benign extra LLM key instead of rejecting the memory", () => {
     // The LLM may emit { confidence: 0.9 }; a lenient z.object must keep the valid
     // content and drop the unknown key — NOT discard the whole memory.
     const result = StructuredMemorySchema.safeParse({
@@ -398,9 +398,9 @@ describe("StructuredMemorySchema (lenient LLM output)", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts plain string entities and normalizes them to { name } (live finding 2026-06-11)", () => {
-    // The extraction LLM emits "entities": ["user", "Biscuit"] — every memory
-    // in every live batch failed on this field when only objects were accepted.
+  it("accepts plain string entities and normalizes them to { name }", () => {
+    // The extraction LLM emits "entities": ["user", "Biscuit"] — if only
+    // objects were accepted, every memory in such a batch would fail on this field.
     const result = StructuredMemorySchema.safeParse({
       content: "User has a golden retriever named Biscuit.",
       entities: ["user", "Biscuit"],
@@ -460,7 +460,7 @@ describe("StructuredMemorySchema (lenient LLM output)", () => {
   // The additive LENIENT `causes` field.
   //
   // The fact stated in `content` is the CAUSE; each `effect` string is a
-  // consequence (A2 — the cause is the memory's own content). The field is
+  // consequence (the cause is the memory's own content). The field is
   // ADDITIVE (defaults to []) and the schema stays LENIENT (`z.object`): an
   // omitting LLM is unaffected, a benign extra key is still stripped (NOT
   // rejected), but the typed `{ effect: string.min(1) }` shape still REJECTS
@@ -475,7 +475,7 @@ describe("StructuredMemorySchema (lenient LLM output)", () => {
     }
   });
 
-  it("defaults `causes` to [] when omitted (additive — an old extraction is unaffected)", () => {
+  it("defaults `causes` to [] when omitted (additive — an extraction that omits it is unaffected)", () => {
     const result = StructuredMemorySchema.safeParse({ content: "x" });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -508,9 +508,9 @@ describe("StructuredMemorySchema (lenient LLM output)", () => {
     expect(result.success).toBe(false);
   });
 
-  it("STRIPS an unknown key on a causes entry instead of rejecting (live finding 2026-06-11)", () => {
-    // Same class as the entity fix: an extra key on one cause used to fail
-    // the memory and discard the whole extraction batch. `effect` stays
+  it("STRIPS an unknown key on a causes entry instead of rejecting the whole memory", () => {
+    // Same lenient-parse contract as `entities`: an extra key on one cause must
+    // not fail the memory and discard the whole extraction batch. `effect` stays
     // required + non-empty; the extra key is stripped.
     const result = StructuredMemorySchema.safeParse({
       content: "x",

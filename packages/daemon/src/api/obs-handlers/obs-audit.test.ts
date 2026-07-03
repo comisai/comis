@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs.audit.query` handler acceptance tests (AUDIT-05, Phase 176 Plan 05).
+ * `obs.audit.query` handler acceptance tests.
  *
  * Drives the REAL handler over a seeded `:memory:` ObservabilityStore (the real
- * `insertAuditEvent` / `queryAuditEvents` shipped in Plan 03), mirroring the
+ * `insertAuditEvent` / `queryAuditEvents` store methods), mirroring the
  * `fleet-health.test.ts` seam.
  *
  * Cases pinned:
  *   1. ROUND-TRIP — seeded rows come back through `obs.audit.query`.
- *   2. H1 admin gate — a non-admin `_trustLevel` is rejected; `stripInternalFields`
+ *   2. Admin gate — a non-admin `_trustLevel` is rejected; `stripInternalFields`
  *      keeps `_trustLevel` out of the store query / the result.
  *   3. FILTERS — the kind/agent/outcome/since/until filter surface narrows the scan.
  *   4. CONTENT-FREE — the rows carry NO `value`-shaped field (structural — the row
@@ -31,7 +31,7 @@ function makeStore(): ObservabilityStore {
   return createObservabilityStore(db);
 }
 
-/** A content-free audit row (the Plan-03 `AuditEventRow` shape). */
+/** A content-free audit row (the `AuditEventRow` shape). */
 function makeRow(overrides: Partial<AuditEventRow> = {}): AuditEventRow {
   return {
     id: overrides.id ?? `audit-${Math.random().toString(36).slice(2)}`,
@@ -55,7 +55,7 @@ function makeHandler(store?: ObservabilityStore) {
   return bindObsAuditHandlers(deps)["obs.audit.query"];
 }
 
-describe("obs.audit.query handler (AUDIT-05)", () => {
+describe("obs.audit.query handler", () => {
   it("round-trips seeded audit rows (admin)", async () => {
     const store = makeStore();
     store.insertAuditEvent(makeRow({ id: "a1", kind: "secret_access" }));
@@ -72,7 +72,7 @@ describe("obs.audit.query handler (AUDIT-05)", () => {
     expect(ids).toEqual(["a1", "a2"]);
   });
 
-  it("rejects a non-admin _trustLevel (H1 dual-layer admin gate)", async () => {
+  it("rejects a non-admin _trustLevel (dual-layer admin gate)", async () => {
     const store = makeStore();
     store.insertAuditEvent(makeRow());
     const handler = makeHandler(store);
@@ -103,7 +103,7 @@ describe("obs.audit.query handler (AUDIT-05)", () => {
     expect(byWindow.rows.map((r) => r.id)).toEqual(["k2"]);
   });
 
-  it("returns content-free rows — no secret value field reaches the wire (T-176-19)", async () => {
+  it("returns content-free rows — no secret value field reaches the wire", async () => {
     const store = makeStore();
     // Even a row whose scrubbed `refs` blob carries arbitrary JSON has NO `value`
     // key promoted to the row level — the row type is counts/ids/enums + refs only.
@@ -118,7 +118,7 @@ describe("obs.audit.query handler (AUDIT-05)", () => {
     expect("value" in row).toBe(false);
     expect("secret" in row).toBe(false);
     expect("apiKey" in row).toBe(false);
-    // The expected content-free key set (Plan 03 AuditEventRow).
+    // The expected content-free key set (the AuditEventRow columns).
     expect(Object.keys(row).sort()).toEqual(
       [
         "action",

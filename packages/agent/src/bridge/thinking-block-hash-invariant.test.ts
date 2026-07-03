@@ -360,9 +360,9 @@ describe("AssertResult return shape", () => {
     expect(result.anyResponseIdMatched).toBe(false);
   });
 
-  it("regression: existing void-return-style call sites still work (return is silently discardable)", () => {
-    // Old callers expecting void must compile and run unchanged. The return
-    // value being unused does not affect logger side effects.
+  it("regression: void-return-style call sites still work (return is silently discardable)", () => {
+    // Callers that treat the function as void must compile and run unchanged.
+    // The return value being unused does not affect logger side effects.
     const blocks = [blockA()];
     const prior = computeThinkingBlockHashes(blocks);
     const error = vi.fn();

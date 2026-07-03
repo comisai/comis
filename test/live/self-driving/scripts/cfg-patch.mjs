@@ -30,7 +30,7 @@ const require = createRequire('/root/comis-src/packages/daemon/package.json');
 const YAML = require('yaml');
 const path = (process.env.HOME || '/home/comis') + '/.comis/config.yaml';
 // argv[2] is inline JSON, OR a path to a JSON file, ELSE fall back to /tmp/patch.json. The
-// path-detection avoids the footgun (webhook-claude-cli-tdd-20260701-backstop) where passing
+// path-detection avoids the footgun where passing
 // `cfg-patch.mjs /tmp/patch.json` JSON.parsed the PATH STRING and threw "Unexpected token '/'"
 // — a file arg now Just Works instead of silently needing the no-arg form.
 const arg = process.argv[2];

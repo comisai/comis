@@ -26,7 +26,7 @@ const DEFAULT_LIMIT = 200;
  * The content-free `obs.audit.query` row projection (mirrors the daemon's
  * `AuditEventRowWire`). The view narrows the loose wire rows to this shape — it
  * is structurally content-free: counts / ids / closed enums / a scrubbed `refs`
- * blob, never a secret value field (Phase 176 scrubbed at write).
+ * blob, never a secret value field. The daemon scrubs secrets at write time.
  */
 interface AuditRow {
   id: string;
@@ -44,11 +44,10 @@ interface AuditRow {
 type FilterField = "kind" | "agentId" | "tenant" | "outcome" | "severity";
 
 /**
- * `ic-durable-audit-log` — the durable, queryable security-audit view, the FIRST
- * SPA consumer of the Phase-176 `obs.audit.query` RPC (already shipped,
- * admin-gated, content-free). It REPLACES the live SSE feed in the Security
- * view's Audit Log tab (Pitfall 2 — replace, do not sit beside) so audit history
- * survives a daemon restart.
+ * `ic-durable-audit-log` — the durable, queryable security-audit view. It
+ * consumes the admin-gated, content-free `obs.audit.query` RPC and renders the
+ * Security view's Audit Log tab, replacing the live SSE feed there so audit
+ * history survives a daemon restart.
  *
  * Filters by kind / agent / tenant / outcome / severity (the `obs.audit.query`
  * request shape); admin-gating rides the existing RPC (an "Admin access required"

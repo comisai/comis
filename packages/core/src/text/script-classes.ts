@@ -4,16 +4,16 @@
  * classifier functions over it (classifyCodepointToRow, classifyCodepoint,
  * scriptShares, dominantScript).
  *
- * Single source of truth for per-script token factors (Phase 179 estimators),
- * FTS routing (Phase 180), and observability event classes (Phases 180/181).
+ * Single source of truth for per-script token factors (the context estimators),
+ * FTS routing, and observability event classes.
  * Adding a script later is a data edit — append a row, never a new mechanism.
  *
- * Defined in @comis/core so @comis/agent (Phase 179 estimators),
- * @comis/memory and @comis/skills (Phase 180 FTS routing), and the executor
- * (Phase 181 reply-language resolver) can import it without creating a
+ * Defined in @comis/core so @comis/agent (token estimators),
+ * @comis/memory and @comis/skills (FTS routing), and the executor
+ * (reply-language resolver) can import it without creating a
  * package cycle. NO imports from any @comis package — this file is pure
- * static data + pure functions, no I/O/clock/env (I9), and contains no
- * regex (V5 — zero ReDoS surface; classification is a single O(n)
+ * static data + pure functions, no I/O/clock/env, and contains no
+ * regex (zero ReDoS surface; classification is a single O(n)
  * codepoint-range scan, allocation bounded by the table size, never by input).
  * @module
  */
@@ -32,19 +32,19 @@ export type ScriptClass =
 
 /** One row of the SCRIPT_CLASSES table. Rows are scanned in declaration order
  *  (first-match-wins), so a combining-marks row placed BEFORE its letters row
- *  takes the lower factor for ambiguous codepoints (I3). */
+ *  takes the lower factor for ambiguous codepoints. */
 export interface ScriptClassRow {
   readonly class: ScriptClass;
   /** Inclusive codepoint ranges `[lo, hi]`. Empty for the `other` fallback row. */
   readonly ranges: ReadonlyArray<readonly [number, number]>;
-  /** Chars-per-token multiplier in (0, 1]; latin === 1.0 exactly (I1). */
+  /** Chars-per-token multiplier in (0, 1]; latin === 1.0 exactly. */
   readonly tokenFactor: number;
 }
 
 /**
  * Per-script classification table. Scanned in declaration order
  * (first-match-wins): the hebrew/arabic MARKS rows precede their letter rows
- * so combining marks take the lower factor (I3). Ranges use numeric
+ * so combining marks take the lower factor. Ranges use numeric
  * `[lo, hi]` pairs (never regex) with per-range named comments, mirroring the
  * auditable boundary documentation of `hasCjkCodepoints` (lcd-fts.ts).
  * Every factor carries a measurement provenance comment; the only unmeasured
@@ -52,9 +52,10 @@ export interface ScriptClassRow {
  */
 export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   {
-    // hebrew MARKS — cantillation/te'amim + niqqud points (the FTS-02 strip set).
+    // hebrew MARKS — cantillation/te'amim + niqqud points (the
+    // normalizeForSearch strip set).
     // niqqud-bearing Hebrew measured 0.84 chars/token (46 chars → 55 tokens),
-    // qwen3-coder:30b probe 2026-06-12 (179-RESEARCH Pitfall 2); each mark
+    // qwen3-coder:30b probe 2026-06-12; each mark
     // ≈ 1 token → 0.1; refined by scripts/token-fixtures.
     class: "hebrew",
     ranges: [
@@ -68,11 +69,10 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   {
     // hebrew letters — block + presentation forms.
     // unpointed chat Hebrew measured 2.71 chars/token → implied max 0.679
-    // (probe 2026-06-12); shipped 0.55. The TOK-02 corpus held for every
+    // (probe 2026-06-12). The token-fixtures corpus held for every
     // pure-Hebrew entry (worst implied 0.600) but the MIXED entry he_mixed_04
     // violated through the harmonic blend with latin LOCKED at 1.0 — implied
-    // letters bound 0.5016 — lowered by TOK-02 corpus, 2026-06-12
-    // (same-commit rule, plan 179-05).
+    // letters bound 0.5016, hence 0.5 (corpus measurement, 2026-06-12).
     class: "hebrew",
     ranges: [
       [0x0590, 0x05ff], // Hebrew block
@@ -83,8 +83,8 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   {
     // arabic MARKS — harakat/tanween + superscript alef.
     // Same byte-level BPE behavior as Hebrew niqqud (≈ 1 token per mark) → 0.1;
-    // TOK-02 corpus measured the harakat entries at 1.26 chars/token aggregate
-    // (2026-06-12) — 0.1 holds; refined by scripts/token-fixtures.
+    // the token-fixtures corpus measured the harakat entries at 1.26 chars/token
+    // aggregate (2026-06-12) — 0.1 holds; refined by scripts/token-fixtures.
     class: "arabic",
     ranges: [
       [0x064b, 0x065f], // harakat + tanween
@@ -109,9 +109,9 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   {
     // latin — A–Z, a–z, Latin-1 letters excl. × U+00D7 / ÷ U+00F7,
     // Extended-A/B, Extended Additional.
-    // TOK-02 corpus measured en at 5.16 chars/token aggregate, worst entry
-    // implied max 1.150 (2026-06-12) — 1.0 holds with margin.
-    // 1.0 LOCKED — I1 Latin byte-identity; never lower.
+    // The token-fixtures corpus measured en at 5.16 chars/token aggregate, worst
+    // entry implied max 1.150 (2026-06-12) — 1.0 holds with margin.
+    // 1.0 LOCKED — Latin byte-identity; never lower.
     class: "latin",
     ranges: [
       [0x0041, 0x005a], // A–Z
@@ -125,10 +125,10 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   },
   {
     // cyrillic — single-sentence probe measured 3.32 chars/token → implied
-    // max 0.831 → shipped 0.75 (probe 2026-06-12). The TOK-02 corpus measured
-    // 13 ru chat/mixed violations (worst ru_chat_14 at 2.39 chars/token,
-    // implied max 0.598) — lowered by TOK-02 corpus, 2026-06-12
-    // (same-commit rule, plan 179-05).
+    // max 0.831 (probe 2026-06-12), but the token-fixtures corpus measured
+    // 13 ru chat/mixed violations against that bound (worst ru_chat_14 at
+    // 2.39 chars/token, implied max 0.598) — hence 0.59 (corpus measurement,
+    // 2026-06-12).
     class: "cyrillic",
     ranges: [
       [0x0400, 0x04ff], // Cyrillic
@@ -137,8 +137,8 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
     tokenFactor: 0.59,
   },
   {
-    // greek — measured 1.12 chars/token → implied max 0.279 (design's 0.8
-    // probe-disproven); 0.25 (probe 2026-06-12).
+    // greek — measured 1.12 chars/token → implied max 0.279;
+    // 0.25 (probe 2026-06-12).
     class: "greek",
     ranges: [
       [0x0370, 0x03ff], // Greek and Coptic
@@ -148,7 +148,7 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   {
     // cjk — the six hasCjkCodepoints ranges PLUS the shipped trigger's two
     // gap ranges (CJK Symbols U+3000–303F, Ext-B U+20000–2A6DF). Yi (U+A000–)
-    // and Hangul Jamo (U+1100–) deliberately excluded (WR-01 over-match guard).
+    // and Hangul Jamo (U+1100–) deliberately excluded (over-match guard).
     // zh 1.73 / ja 1.36 chars/token → implied max 0.433/0.339; 0.3 covers both
     // (probe 2026-06-12).
     class: "cjk",
@@ -159,7 +159,7 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
       [0x3400, 0x4dbf], // CJK Extension A
       [0x4e00, 0x9fff], // CJK Unified Ideographs
       [0xac00, 0xd7af], // Hangul Syllables
-      [0xf900, 0xfaff], // CJK Compatibility Ideographs (NOT the literal glyph — WR-01)
+      [0xf900, 0xfaff], // CJK Compatibility Ideographs (numeric range, never a pasted glyph)
       [0x20000, 0x2a6df], // CJK Extension B (astral — gap range)
     ],
     tokenFactor: 0.3,
@@ -174,8 +174,8 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
     tokenFactor: 0.4,
   },
   {
-    // devanagari — measured 1.05 chars/token → implied max 0.261 (design's
-    // 0.5 probe-disproven); 0.25 (probe 2026-06-12).
+    // devanagari — measured 1.05 chars/token → implied max 0.261;
+    // 0.25 (probe 2026-06-12).
     class: "devanagari",
     ranges: [
       [0x0900, 0x097f], // Devanagari
@@ -184,7 +184,7 @@ export const SCRIPT_CLASSES: ReadonlyArray<ScriptClassRow> = [
   },
   {
     // other — unmeasured — structurally unmeasurable (no single corpus exists
-    // for "everything else"); conservative 0.75 (design §4 TOK-02).
+    // for "everything else"); conservative 0.75.
     class: "other",
     ranges: [],
     tokenFactor: 0.75,
@@ -217,8 +217,8 @@ export function classifyCodepoint(cp: number): ScriptClass | null {
  * UTF-16-unit-weighted shares over non-neutral chars; the values sum to 1
  * when any non-neutral char exists; empty Map otherwise.
  *
- * Codepoint iteration (`for..of`) is surrogate-safe (Pitfall 9); weights are
- * UTF-16 units via `ch.length` (Pitfall 11) so shares line up with the
+ * Codepoint iteration (`for..of`) is surrogate-safe; weights are
+ * UTF-16 units via `ch.length` so shares line up with the
  * `.length` denominators the estimators divide.
  */
 export function scriptShares(text: string): ReadonlyMap<ScriptClass, number> {
@@ -238,11 +238,11 @@ export function scriptShares(text: string): ReadonlyMap<ScriptClass, number> {
 }
 
 /**
- * Non-Latin preference threshold for dominantScript. The pinned design
+ * Non-Latin preference threshold for dominantScript. The pinned
  * fixture ("ספר על docker") has 5 Hebrew vs 6 Latin units, so plain argmax
- * and strict-majority both return "latin" — WRONG (Pitfall 10): a Hebrew
- * utterance naming an English tool is Hebrew. OBS-01's mixed-code tolerance
- * (Phase 180) relies on code-dominated chunks (non-Latin share ≪ 0.30)
+ * and strict-majority both return "latin" — WRONG: a Hebrew
+ * utterance naming an English tool is Hebrew. The generation-quality
+ * mixed-code tolerance relies on code-dominated chunks (non-Latin share ≪ 0.30)
  * still returning "latin".
  */
 const DOMINANT_NON_LATIN_MIN_SHARE = 0.3;

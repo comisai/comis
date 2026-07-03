@@ -36,7 +36,7 @@ floor held even with a bare prompt carrying no guardrail instructions at all.
 
 **`qwen3.6:27b`** is a viable smaller alternative. Its security floor is identical to 35b. The
 one measured cliff is comprehension 7/8: it fails the single-step "turn this natural-language
-request into a multi-agent graph" instruction that 35b passes. The v2.19 orchestration repair
+request into a multi-agent graph" instruction that 35b passes. The orchestration repair
 loop — type-aware validation of graph instructions, recovery of malformed completion markers,
 and tolerance for every common instruction form the model emits — is what makes 27b
 orchestration usable in practice.

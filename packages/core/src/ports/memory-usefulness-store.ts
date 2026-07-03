@@ -6,14 +6,14 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * MemoryUsefulnessStore: the SEGREGATED hexagonal boundary for the recall-utility
  * feedback loop — the durable per-memory signal of whether a recalled
  * memory was actually USED (attributed) or IGNORED, so recall can learn from
- * outcomes (the leapfrog Hindsight structurally cannot follow — `access_count`
- * is dead schema there; HINDSIGHT_VS_COMIS.md #7).
+ * outcomes rather than from raw access counts (an access counter alone cannot
+ * distinguish a memory that helped from one that was merely fetched).
  *
- * This is a NEW port — it deliberately does NOT widen the security-reviewed
- * `MemoryPort` (store/search/delete). Per design §3.2 that surface is never
- * widened for agent use; new capabilities arrive as their own segregated port
- * (the same pattern as `MemoryConsolidationStore` §6.5 / `MemoryEntityStore`
- * §3.2). The sole adapter is in @comis/memory (it owns the `db` handle and runs
+ * This is a deliberately separate port — it does NOT widen the security-reviewed
+ * `MemoryPort` (store/search/delete). That surface is never widened for agent
+ * use; new capabilities arrive as their own segregated port
+ * (the same pattern as `MemoryConsolidationStore` and `MemoryEntityStore`).
+ * The sole adapter is in @comis/memory (it owns the `db` handle and runs
  * all SQL); the agent read path (recall scoring) consumes this port TYPE from
  * @comis/core — it cannot import @comis/memory (the agent↛memory build cut). No
  * new authority is granted beyond a scoped read/write within the caller's own
@@ -30,8 +30,9 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * one (tenant, agent) must NEVER be visible to a read under another, even when
  * the `memory_id` is identical.
  *
- * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} — the isolation
- * fields are NOT re-declared (the 15× per-port repetition the collapse kills).
+ * Unified onto the canonical {@link LearningScope} — the isolation
+ * fields are NOT re-declared here (one canonical definition instead of a
+ * per-port copy).
  * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope`, re-narrows
  * the injected clock `now` to REQUIRED (the `recordUsage`/`recordFailure` write
  * paths), AND carries the usefulness-specific `intent?` per-query bucket key
@@ -47,8 +48,8 @@ export type UsefulnessScope = LearningScope & {
   /**
    * Optional query-INTENT bucket. When present, the read fetches /
    * the write records the per-intent usefulness signal (a memory's usefulness FOR
-   * THAT intent); when OMITTED the adapter resolves the GLOBAL bucket (intent="")
-   * — byte-identical to the prior behaviour. The closed-union value comes from the agent's
+   * THAT intent); when OMITTED the adapter resolves the GLOBAL bucket
+   * (intent=""). The closed-union value comes from the agent's
    * deterministic `classifyIntent` (LLM-free); typed here as a plain string so
    * @comis/core takes no @comis/agent dependency. NOT a security
    * boundary — (tenantId, agentId) remain the isolation scope; intent is an
@@ -74,7 +75,7 @@ export interface UsefulnessSignal {
   /** Epoch ms of the last "used" attribution (absent until first use). */
   lastUsefulAt?: number;
   /**
-   * WR-03 (RANK-01): outcome-attributed task FAILURE count — surfaced ONLY when > 0
+   * Outcome-attributed task FAILURE count — surfaced ONLY when > 0
    * (absent for a clean memory, like `lastUsefulAt`). It is the NEGATIVE-reward signal
    * the OFFLINE bandit feed consumes (a memory in the `recalled_ids` of a `failure`/
    * `corrected` trajectory accrues it, corroboration-gated). The recall HOT PATH
@@ -113,14 +114,14 @@ export interface MemoryUsefulnessStore {
   ): Promise<Result<Map<string, UsefulnessSignal>, Error>>;
 
   /**
-   * WRITE (FORGET-02). Accrue an outcome-attributed task FAILURE for `memoryId`
+   * WRITE. Accrue an outcome-attributed task FAILURE for `memoryId`
    * — increment `failure_count` on the (tenant, agent, memory_id, intent) bucket
    * (first touch INSERTs failure_count=1). `failure_count` is a DISTINCT signal
    * from `ignored_count`: a correct-but-unused memory accrues `ignored_count`
    * (recalled-but-not-cited), NEVER `failure_count`; only a memory in the
    * `recalled_ids` of a `failure`/`corrected` trajectory accrues here — and the
    * caller (the daemon reward seam) gates that on the anti-induced-eviction
-   * corroboration rule (FORGET-03). Idempotent at the row level
+   * corroboration rule. Idempotent at the row level
    * (INSERT ... ON CONFLICT DO UPDATE). The (tenant, agent) filter is the
    * load-bearing isolation boundary; `intent` is an ADDITIONAL key.
    */

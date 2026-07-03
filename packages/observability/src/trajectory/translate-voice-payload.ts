@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Trajectory bridge payload translators for the voice (`media.stt:*` /
- * `media.tts:*`) lifecycle (OBS-02/03, Phase 196).
+ * `media.tts:*`) lifecycle.
  *
  * Extracted from `translate-payload.ts` (which is at the file-size cap) — the
  * main `translatePayload` switch delegates its six voice cases here. No behavior
  * change vs. inlining; this is purely a file-size split (the exact precedent that
  * produced `translate-video-payload.ts`).
  *
- * CONTENT-FREE (T-196-04): each arm forwards ONLY content-free ids / labels /
+ * CONTENT-FREE: each arm forwards ONLY content-free ids / labels /
  * numbers / booleans / closed-enum reasons (`provider` / `keyless` / `model` /
  * `durationMs` / `audioBytes` / `costUsd` / `outcome` / `errorKind` / `source` /
  * `onSkip`) and STRIPS the envelope (`agentId` / `sessionKey` / `traceId` /
  * `timestamp`) — NEVER the audio bytes, the transcript text, the synthesized
- * audio, or a credential. `costUsd` rides `*:completed` (OBS-05 Route a — the
+ * audio, or a credential. `costUsd` rides `*:completed` (the
  * image:generated cost-carry precedent); it + `model` + `durationMs` + `audioBytes`
  * spread presence-conditionally, so an absent value never appears as an
  * `undefined` key AND keyless `costUsd: 0` (passed explicitly by the emitter) IS
- * forwarded (FLAG 4 — "$0" is load-bearing visibility, never stripped). The
- * `onSkip` reasons (a closed rung-list, no free text — the OBS-03 selection
+ * forwarded ("$0" is load-bearing visibility, never stripped). The
+ * `onSkip` reasons (a closed rung-list, no free text — the selection
  * observability) ride `*:requested` so `comis explain` can show WHY `auto` picked
  * the rung, beyond the chosen `source`.
  *
@@ -45,7 +45,7 @@ export function translateVoicePayload(
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
   switch (eventName) {
-    // *:requested → the resolved rung + the OBS-03 onSkip reasons (WHY auto
+    // *:requested → the resolved rung + the onSkip reasons (WHY auto
     // skipped the other rungs). onSkip spreads presence-conditionally (absent on
     // an explicit pin → no undefined key).
     case "media.stt:requested":
@@ -58,7 +58,7 @@ export function translateVoicePayload(
       };
 
     // *:completed → outcome:"ok" + the cost-carry (keyless costUsd:0 PRESENT —
-    // the emitter passes it explicitly; keyed-no-cost omits the key — FLAG 4).
+    // the emitter passes it explicitly; keyed-no-cost omits the key).
     case "media.stt:completed":
     case "media.tts:completed":
       return {

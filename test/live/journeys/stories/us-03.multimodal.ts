@@ -2,10 +2,10 @@
 /**
  * US-03 / J3 — Multimodal (image-in → vision analysis → image-gen → out).
  *
- * §7.7 flow: Discord image upload → vision analysis → image-gen response → deliver.
+ * Flow: Discord image upload → vision analysis → image-gen response → deliver.
  * Subsystems composed: A core-loop, B LLM, M vision+image-gen, S delivery.
  *
- * Gated behind MEDIA Stage-C cert (142). In sandbox: shape validated + requires-skip
+ * Gated behind MEDIA Stage-C cert. In sandbox: shape validated + requires-skip
  * (no vision/image-gen keys); the real vision→image-gen round-trip runs at Stage-D.
  *
  * @module

@@ -294,11 +294,11 @@ Frontier models write valid execution graphs directly. Weaker models sometimes e
 
 **Governance is preserved end to end.** None of the paths below execute a graph directly: the repair producer and the intent synthesizer *return* a graph, which is then dispatched through the same `graph.execute` path a hand-authored graph takes. A synthesized or repaired graph runs the **identical** validation, tool denylist, and child⊆parent sandbox-intersection checks as one you wrote by hand. The authoring layer can never produce a graph that bypasses governance.
 
-### Conservative repair (AUTHOR-01)
+### Conservative repair
 
 When a weak-tier model emits a schema-invalid graph and `orchestration.authoring.repairProducer` is on, the daemon attempts a **deterministic, conservative** match of the raw graph to one of the four canonical templates (`research-fanout`, `debate`, `vote`, `map-reduce`) by shape -- node count, the fan-in topology, and disambiguating keywords. It repairs the graph **only on a single unambiguous match**; it never guesses. If the shape fits more than one template, the daemon returns a structured **"did you mean this template?"** response rather than synthesizing a graph the model did not intend. A no-match (or a repaired graph that still fails validation) returns the unchanged fail-closed validation error. The calling model's tier is resolved **server-side** from the authoring agent -- a tool-supplied `capabilityClass` is never trusted -- and only weak tiers take the repair path (frontier authoring is left untouched). A successful repair emits the [`graph:repaired`](/developer-guide/event-bus) audit event (counts/ids only).
 
-### Synthesis from a one-line intent (AUTHOR-02)
+### Synthesis from a one-line intent
 
 When `orchestration.authoring.intentAction` is on, the `pipeline` tool exposes a `from_intent` action: instead of hand-writing the node list, an agent expresses a one-line intent -- a canonical `pattern` plus a few agent or task names -- and the daemon deterministically expands it into a validated graph. For example, the bull-vs-bear debate above is authorable from one line:
 
@@ -313,7 +313,7 @@ The synthesizer maps the `pattern` to its canonical template, fills the agent/ta
 
 `from_intent` produces **template-shaped** graphs — plain agent nodes in the named fan-out → fan-in shape — not the typed orchestration drivers. A synthesized `debate` is a one-shot pro/con fan-in into a moderator, not the multi-round `type_id: debate` driver; for the typed multi-round drivers (with `type_config.rounds` / `synthesizer`), author the graph with `define`/`execute` and per-node `type_id` + `type_config`. Accordingly, `from_intent` takes no `rounds` parameter.
 
-### Grammar-constrained schema (AUTHOR-03, best-effort)
+### Grammar-constrained schema (best-effort)
 
 When `orchestration.authoring.gbnfConstrain` is on, the daemon grammar-constrains the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family -- never a cloud provider inferred by name), nudging a local model toward emitting structurally-valid graph JSON. This is **best-effort and removal/relaxation-only**: it never widens field *value* validation, and the daemon-side schema validation remains the single source of truth for what a graph may contain. GBNF makes a valid emission more likely; it does not replace -- and cannot weaken -- the daemon's governance.
 
@@ -326,8 +326,8 @@ The graph coordinator emits three lifecycle events during execution, plus two au
 | `graph:started` | Graph execution begins | `graphId`, `label`, `nodeCount` |
 | `graph:node_updated` | A node transitions to a new status | `graphId`, `nodeId`, `status`, `durationMs`, `error` |
 | `graph:completed` | Graph reaches terminal state | `graphId`, `status`, `durationMs`, `nodesCompleted`, `nodesFailed`, `nodesSkipped`, `cancelReason` |
-| `graph:repaired` | A weak-model graph is repaired to a canonical template (gated off; AUTHOR-01) | `pattern`, `nodeCount`, `capabilityClass` |
-| `graph:synthesized_from_intent` | A graph is synthesized from a one-line intent (gated off; AUTHOR-02) | `pattern`, `nodeCount` |
+| `graph:repaired` | A weak-model graph is repaired to a canonical template (gated off by default) | `pattern`, `nodeCount`, `capabilityClass` |
+| `graph:synthesized_from_intent` | A graph is synthesized from a one-line intent (gated off by default) | `pattern`, `nodeCount` |
 
 Both authoring events are counts/ids/enums only -- never a graph body, a node config value, a task/label string, or the intent text -- and fire only after the graph passes the same validation a hand-authored graph runs. See [Event Bus](/developer-guide/event-bus) for the full event reference.
 

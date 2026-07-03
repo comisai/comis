@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure classifier for FAL video-generation failures (FAL-02).
+ * Pure classifier for FAL video-generation failures.
  *
  * The FAL queue status union has only IN_QUEUE / IN_PROGRESS / COMPLETED — there
- * is NO "FAILED" status (RESEARCH Pitfall 2). FAL signals failure two ways:
+ * is NO "FAILED" status. FAL signals failure two ways:
  *   1. it THROWS from `queue.status()` / `queue.result()` (an HTTP 4xx/5xx), or
  *   2. it returns COMPLETED with no `video.url` (the `emptyResult` case).
  *

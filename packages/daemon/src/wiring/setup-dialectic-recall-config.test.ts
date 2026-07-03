@@ -6,8 +6,8 @@
  *
  *   - The `forget` gate (`rag.forget`) — prompt-assembly.ts passes it.
  *     Omitted in the dialectic ⇒ no FadeMem decay on memory.ask even when `rag.forget.enabled`.
- *   - Recall scoring is the FIXED `rag.scoring` alphas. Phase 224 (RECALL-02/03) DELETED the
- *     UCB tuned-alpha bandit + its overlay, so the dialectic path — like the main path — applies
+ *   - Recall scoring is the FIXED `rag.scoring` alphas. There is no UCB tuned-alpha
+ *     bandit or overlay, so the dialectic path — like the main path — applies
  *     the config-sourced alphas only. There is no learned-weight read on memory.ask.
  *
  * This test drives the REAL `buildDialecticWiring` and SPIES on `createMemoryRecall` (mocking
@@ -115,7 +115,7 @@ describe("dialectic recall config parity with the main recall path", () => {
     expect(config.forget).toEqual((agentConfig as any).rag.forget);
   });
 
-  it("scoring is the FIXED config.rag.scoring alphas — the bandit overlay was deleted in Phase 224 (RECALL-02/03)", async () => {
+  it("scoring is the FIXED config.rag.scoring alphas — no bandit overlay exists on the dialectic path", async () => {
     // No tuned-alpha read, no overlay: the dialectic recall passes rag.scoring straight through,
     // by OBJECT IDENTITY (the same reference the config holds) — exactly like the main path.
     const agentConfig = makeAgentConfig();

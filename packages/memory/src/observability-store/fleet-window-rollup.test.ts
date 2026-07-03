@@ -1,22 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `reduceFleetWindow` — pure cross-session window-rollup reducer (A2).
+ * `reduceFleetWindow` — pure cross-session window-rollup reducer.
  *
- * The reducer folds the per-session A1 rollups (`SessionSummaryRollup[]` from
- * 159-01) into a single fleet aggregate: session count, degraded rate, merged +
+ * The reducer folds the per-session rollups (`SessionSummaryRollup[]`) into a
+ * single fleet aggregate: session count, degraded rate, merged +
  * capped top errorKinds, breaker-trip total, per-tool ok/failed, and cost — with
  * synthetic sessions (`source !== "runtime"`) excluded.
  *
  * THE LOAD-BEARING TEST is `excludes synthetic …`: it asserts the two
  * `excludeSynthetic` branches produce DIFFERENT counts (sessionCount 1 vs 2,
- * degradedRate 0 vs 0.5). If the exclusion were a no-op (the Phase-158 gap-gate
- * trap), both branches would be byte-identical and the assertion would fail. The
+ * degradedRate 0 vs 0.5). If the exclusion were a no-op,
+ * both branches would be byte-identical and the assertion would fail. The
  * filter therefore PROVABLY acts on the real `SessionSummaryRollup.source` field
- * that 159-01 threaded onto the row's `details` JSON — not a field that does not
+ * threaded onto the row's `details` JSON — not a field that does not
  * exist.
- *
- * RED on pre-patch code: `./fleet-window-rollup.js` does not exist, so the import
- * of `reduceFleetWindow` / `FleetWindowRollup` fails to resolve.
  */
 import { describe, it, expect } from "vitest";
 import { reduceFleetWindow } from "./fleet-window-rollup.js";
@@ -160,16 +157,15 @@ describe("reduceFleetWindow", () => {
     expect(out.degradedRate).toBe(0.5); // 2 of 4
   });
 
-  it("exposes the ABSOLUTE degradedCount over the KEPT (synthetic-excluded) rows, reconciling with degradedRate (WR-01)", () => {
-    // WR-01: the reducer already excludes synthetic rows from every metric and
+  it("exposes the ABSOLUTE degradedCount over the KEPT (synthetic-excluded) rows, reconciling with degradedRate", () => {
+    // The reducer already excludes synthetic rows from every metric and
     // computes the absolute degraded count internally; it must EXPOSE that count
     // so the fleet handler's `sessions.degraded` shares the synthetic-excluded
     // population with `total` (sessionCount) and `degradedRate` — instead of
     // re-deriving degraded from the UNFILTERED rows (which double-counts a
     // synthetic degraded row). A `{degraded:true, source:"test"}` row must NOT
     // inflate degradedCount, and degradedCount/sessionCount must equal
-    // degradedRate exactly. Pre-patch the rollup has no `degradedCount` field at
-    // all, so this FAILS to type-check / is undefined (RED).
+    // degradedRate exactly.
     const rows: SessionSummaryRollup[] = [
       makeRollup({ sessionKey: "r1", source: "runtime", degraded: true, endReason: "context_exhausted" }),
       makeRollup({ sessionKey: "r2", source: "runtime", degraded: false }),
@@ -213,9 +209,9 @@ describe("reduceFleetWindow", () => {
     expect(empty.degradedRate).toBe(0);
   });
 
-  it("coerces non-finite / non-number nested values to finite numbers (WR-03: NaN/string corruption guard)", () => {
+  it("coerces non-finite / non-number nested values to finite numbers (NaN/string corruption guard)", () => {
     // A malformed row that bypassed query-layer validation (the reducer is a
-    // public export reachable directly by the Phase-161 handler, so it must not
+    // public export reachable directly by the fleet handler, so it must not
     // trust its caller). `topErrorKinds.timeout` is a STRING and `toolStats.write`
     // is a number-instead-of-{ok,failed} — both would corrupt the arithmetic.
     const malformed = makeRollup({
@@ -252,7 +248,7 @@ describe("reduceFleetWindow", () => {
     expect(Number.isFinite(out.degradedRate)).toBe(true);
   });
 
-  it("emits toolStats keys in a deterministic (name-asc) order independent of input ordering (WR-05)", () => {
+  it("emits toolStats keys in a deterministic (name-asc) order independent of input ordering", () => {
     // Two rows whose tool names sort differently from their insertion order.
     const rowsA: SessionSummaryRollup[] = [
       makeRollup({ sessionKey: "s1", toolStats: { zzz: { ok: 1, failed: 0 } } }),
@@ -297,7 +293,7 @@ describe("reduceFleetWindow", () => {
   });
 
   // ------------------------------------------------------------------------
-  // QT2/QT3 — degradedByCause: the fleet-level detector ("N sessions degraded
+  // degradedByCause: the fleet-level detector ("N sessions degraded
   // by context_exhausted, M by output_starved" over the window).
   // ------------------------------------------------------------------------
 
@@ -349,8 +345,8 @@ describe("reduceFleetWindow", () => {
     expect(out.degradedByCause.context_exhausted).toBe(1);
   });
 
-  it("keeps EVERY distinct degraded cause in a window — the cap covers the full closed endReason union, so no real cause is silently dropped (IN-02)", () => {
-    // IN-02: the cap must cover the FULL closed degraded-cause union so a
+  it("keeps EVERY distinct degraded cause in a window — the cap covers the full closed endReason union, so no real cause is silently dropped", () => {
+    // The cap must cover the FULL closed degraded-cause union so a
     // pathological window that touches every cause cannot silently drop the
     // lowest-count tail (which would understate sum(degradedByCause) vs
     // sessions.degraded with no truncations[] breadcrumb). The reachable
@@ -358,7 +354,6 @@ describe("reduceFleetWindow", () => {
     // union (error, timeout, budget_exceeded, budget_exhausted, circuit_open,
     // provider_degraded, completed_with_tool_errors, context_exhausted,
     // output_starved) PLUS the defensive "unknown" bucket = 10 distinct causes.
-    // Pre-patch the cap is 5, so 5 of these 10 are silently dropped (RED).
     const degradedCauses = [
       "error",
       "timeout",
@@ -398,7 +393,7 @@ describe("reduceFleetWindow", () => {
   it("is deterministic + bounded: degradedByCause is capped and key-order-stable across input permutations", () => {
     // Distinct causes with differing counts so the top-N selection + tie-break
     // are deterministic. The cap covers the full closed degraded-cause union
-    // (10, IN-02), so these 5 distinct causes are within bound — the bound is
+    // (10), so these 5 distinct causes are within bound — the bound is
     // asserted explicitly below; the determinism/key-order pins are the focus.
     const rows: SessionSummaryRollup[] = [
       makeRollup({ sessionKey: "a", degraded: true, endReason: "context_exhausted" }),

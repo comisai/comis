@@ -308,11 +308,11 @@ export const McpConnectContract = defineContract({
     // Auth scheme for remote transports. When "oauth", the daemon promotes
     // the new entry to auth:"oauth" and `mcp.oauth_login` can drive the PKCE
     // flow via `mcp_login`. When "headers" (or absent), credential injection
-    // via the `headers` field is used (legacy/default behaviour). Accepted on
+    // via the `headers` field is used (the default behaviour). Accepted on
     // `mcp.connect` and PERSISTED so the auth requirement survives a daemon
-    // restart (R11-01 first-install OAuth promotion). The field MUST be
+    // restart (first-install OAuth promotion). The field MUST be
     // included in the contract schema or z.object strict-parsing strips it
-    // before it reaches the handler (RESEARCH.md Common Pitfall 1).
+    // before it reaches the handler.
     auth: z.enum(["headers", "oauth"]).optional(),
   }),
   response: z.object({

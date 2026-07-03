@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * macOS-unit tests for the `orchestrate` runner (ORCH-01/02). The Linux-gated
+ * macOS-unit tests for the `orchestrate` runner. The Linux-gated
  * surface (real bwrap stdout-only / `~/.comis` mask) is proven in
  * `orchestrate-jail.linux.test.ts`; HERE we unit-test the pure / mockable parts
  * WITHOUT a real spawn: the SDK-write, the cap-socket arg construction (via the
@@ -249,12 +249,12 @@ describe("orchestrate-tool", () => {
     expect(command).not.toMatch(/^node\s/);
   });
 
-  // Live VPS finding (2026-06-23): the runner passes `tempDir: <workspace>/.tmp`
+  // The runner passes `tempDir: <workspace>/.tmp`
   // to BwrapProvider.buildArgs, which `--bind`s it into the jail — and bwrap
-  // requires the bind SOURCE to exist. The runner never created `.tmp`, so EVERY
-  // real jailed run died at construction with `bwrap: Can't find source path
+  // requires the bind SOURCE to exist. A runner that never creates `.tmp` makes
+  // EVERY real jailed run die at construction with `bwrap: Can't find source path
   // .../.tmp: No such file or directory` → exit 1, breaking the orchestrate
-  // happy-path. (Passed every macOS unit test because they inject a fake spawn
+  // happy-path. (Invisible to the macOS unit tests, which inject a fake spawn
   // that never runs bwrap.) The runner must create `.tmp` before spawning.
   it("creates the .tmp tempDir before spawning so bwrap can --bind it", async () => {
     let tmpExistsAtSpawn: boolean | undefined;
@@ -270,7 +270,7 @@ describe("orchestrate-tool", () => {
     expect(tmpExistsAtSpawn).toBe(true);
   });
 
-  describe("scrubSecretEnv (ORCH-02 pure helper)", () => {
+  describe("scrubSecretEnv (pure env-scrub helper)", () => {
     it("drops every *KEY*/*TOKEN*/*SECRET* key (case-insensitive)", () => {
       const scrubbed = scrubSecretEnv({
         PATH: "/usr/bin",
@@ -295,7 +295,7 @@ describe("orchestrate-tool", () => {
       expect(scrubbed).toEqual({ A: "1", C: "3" });
     });
 
-    it("drops common credential names that contain no KEY/TOKEN/SECRET substring (IN-01 defense-in-depth)", () => {
+    it("drops common credential names that contain no KEY/TOKEN/SECRET substring (defense-in-depth)", () => {
       // The base env is the credential-free execToolEnv today, so this is pure
       // defense-in-depth — but the scrub is the documented credential boundary,
       // so it must also drop the credential classes that name no
@@ -347,7 +347,7 @@ describe("orchestrate-tool", () => {
     });
   });
 
-  describe("clampTimeoutMs (WR-02 — bounded wall-clock)", () => {
+  describe("clampTimeoutMs (bounded wall-clock)", () => {
     it("clamps a model-supplied timeout above MAX_TIMEOUT_MS down to the ceiling", () => {
       // A jailed script must not be able to pin a child for ~11.5 days
       // (timeoutMs: 999_999_999). The clamp caps it at MAX_TIMEOUT_MS.
@@ -395,12 +395,12 @@ describe("orchestrate-tool", () => {
     expect(childEnv!.BAR_TOKEN).toBeUndefined();
     expect(childEnv!.BAZ_SECRET).toBeUndefined();
     // ...but the daemon-injected lease vars survive (they ride placeholders,
-    // merged AFTER the scrub — Pitfall 4).
+    // merged AFTER the scrub).
     expect(childEnv!.COMIS_CAP_LEASE).toBe("lease-xyz");
     expect(childEnv!.COMIS_ORCH_SOCKET).toBe(capSocketPath);
   });
 
-  it("honest-degrades on an unavailable jail (no node/bwrap) — throws, NO spawn (S4)", async () => {
+  it("honest-degrades on an unavailable jail (no node/bwrap) — throws, NO spawn", async () => {
     const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild(""));
     const { deps } = makeDeps({
       spawnFn,
@@ -414,9 +414,9 @@ describe("orchestrate-tool", () => {
     expect(spawnFn).not.toHaveBeenCalled();
   });
 
-  // -- CLI-05/06: bind the comis-agent binary + honest-degrade the CLI surface --
+  // -- Bind the comis-agent binary + honest-degrade the CLI surface --
 
-  describe("comis-agent CLI bind + honest-degrade (CLI-05/06)", () => {
+  describe("comis-agent CLI bind + honest-degrade", () => {
     const binPath = "/jail/comis-agent-entry.js";
 
     /** Capture the spawn bin/args + the child env (the runner's only spawn seam). */
@@ -549,7 +549,7 @@ describe("orchestrate-tool", () => {
     expect(text).not.toContain("SECRET-STDERR-LEAK");
   });
 
-  it("calls cleanupRun on the runId after the run completes (REF-03 lifecycle)", async () => {
+  it("calls cleanupRun on the runId after the run completes (run lifecycle)", async () => {
     const { deps, cleanupRun } = makeDeps();
     const tool = createOrchestrateTool(deps);
 
@@ -562,7 +562,7 @@ describe("orchestrate-tool", () => {
     expect(arg.runId.length).toBeGreaterThan(0);
   });
 
-  it("calls cleanupRun even when the jailed child fails (finally — REF-03)", async () => {
+  it("calls cleanupRun even when the jailed child fails (runs in the finally)", async () => {
     const spawnFn: OrchestrateSpawnFn = () => makeFakeChild("partial", 1);
     const { deps, cleanupRun } = makeDeps({ spawnFn });
     const tool = createOrchestrateTool(deps);
@@ -572,11 +572,11 @@ describe("orchestrate-tool", () => {
     expect(cleanupRun).toHaveBeenCalledTimes(1);
   });
 
-  // OBS finding (hermes-usecases live-test 2026-06-25): a failing orchestrate
-  // script surfaced ONLY "jailed child exited with code 1" — the child's stderr
-  // (the REAL cause, e.g. `content.trim is not a function` when the model's
-  // script mishandled the structured comis_tools.read result) was read+discarded,
-  // so an operator/agent could not diagnose WHY without re-running with try/catch.
+  // Diagnosability: if a failing orchestrate script surfaced ONLY "jailed child
+  // exited with code 1", the child's stderr — the REAL cause, e.g.
+  // `content.trim is not a function` when the model's script mishandles the
+  // structured comis_tools.read result — would be read+discarded, and an
+  // operator/agent could not diagnose WHY without re-running with try/catch.
   // The non-zero-exit error must carry a BOUNDED stderr tail. (Success path stays
   // stdout-only — the tail is surfaced ONLY on a non-zero exit.)
   it("surfaces the jailed child's stderr tail on a non-zero exit (diagnosability)", async () => {
@@ -653,18 +653,18 @@ describe("orchestrate-tool", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CR-01: the parent's seccomp fd MUST be closed once the child has been
+  // The parent's seccomp fd MUST be closed once the child has been
   // spawned. The fd is opened WITHOUT O_CLOEXEC (so the bwrap child inherits
   // it), so the daemon keeps its OWN copy after fork — leaking one descriptor
   // per orchestrate run exhausts the fd table on a long-running daemon
-  // (seccomp-profile.ts:21-43 documents this lifecycle as MANDATORY). On the
+  // (seccomp-profile.ts documents this lifecycle as MANDATORY). On the
   // macOS unit path the real loader returns null (blob absent), so we inject a
   // REAL fd (a temp file stands in for the BPF blob) and prove the runner
   // releases the PARENT copy: fstatSync on it after the run must fail EBADF (a
   // leaked fd would still fstat cleanly). This is the property the production
   // (Linux) path relies on.
   // -------------------------------------------------------------------------
-  describe("CR-01 seccomp fd lifecycle (close in finally)", () => {
+  describe("seccomp fd lifecycle (close in finally)", () => {
     let fdDir: string;
     let realFd: number;
 
@@ -730,14 +730,14 @@ describe("orchestrate-tool", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01: the daemon-side stdout collector must be BYTE-CAPPED in-stream. The
+  // The daemon-side stdout collector must be BYTE-CAPPED in-stream. The
   // STDOUT_MAX_CHARS bounce only runs AFTER the child exits, so without an
   // in-stream ceiling a jailed (attacker-controlled) script running
   // `while (true) console.log("A".repeat(1e6))` grows the daemon heap without
   // bound for the whole run. The fix fails CLOSED: stop appending past a hard
   // ceiling and SIGKILL the child.
   // -------------------------------------------------------------------------
-  describe("WR-01 stdout hard cap (in-stream OOM guard)", () => {
+  describe("stdout hard cap (in-stream OOM guard)", () => {
     /** A fake child that emits ONE over-cap stdout chunk, then would close. */
     function makeFloodingChild(killSpy: () => void): OrchestrateSpawnedChild {
       const child = new EventEmitter() as unknown as OrchestrateSpawnedChild & EventEmitter;

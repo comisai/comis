@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `wait` — the AUTO-03 mechanic powering `tg wait --tool <name> | --event
- * <type> [--timeout ms]` (Phase 205, Plan 02).
+ * <type> [--timeout ms]`.
  *
  * It BLOCKS until a trajectory signal appears so a 15-25-minute agentic turn
  * (server-side) is awaited rather than mistaken for a timeout-failure, then
@@ -11,11 +11,11 @@
  *   - `--tool <name>` → the first `tool.result` line whose `data.toolName`
  *     equals `<name>` (the on-disk shape — see the record-shape note below).
  *
- * Two guards make the wait HONEST (§13-Q4, T-205-05):
+ * Two guards make the wait HONEST:
  *   1. `--event` is validated against the REAL closed enum
  *      `TRAJECTORY_EVENT_TYPES` (imported from the observability package)
  *      BEFORE any tailing begins. An unknown value is a reason-coded throw,
- *      never a silent never-match (Pitfall 5).
+ *      never a silent never-match.
  *   2. A settle-timeout fallback: when the file stops being appended for
  *      `settleMs` and no match was seen, the waiter resolves
  *      `{ matched: false, reason: "settle_timeout" }` — well before the hard
@@ -27,8 +27,8 @@
  * EXACTLY (the canonical pointer chain): the pointer's `runtimeFile` when it
  * fence-checks, else the co-located `<sessionFile>.trajectory.jsonl`. It NEVER
  * builds a flat `<dataDir>/sessions/<id>` path — that path never existed on
- * disk; it is the documented §2.10 bug class (read `workspace/sessions/...` +
- * the `.trajectory-path.json` pointer instead, T-205-06).
+ * disk; it is a known bug class (read `workspace/sessions/...` +
+ * the `.trajectory-path.json` pointer instead).
  *
  * Record-shape note (the production contract): a trajectory line is one JSON
  * object per line with a TOP-LEVEL `type` envelope (runtime.ts `buildEvent`:
@@ -64,7 +64,7 @@ import {
  *   2. Else fall back to the co-located `<sessionFile>.trajectory.jsonl`.
  *
  * Soft-fail: a missing/corrupt pointer falls through to the co-located path —
- * it never throws the §2.10 wrong-base-path. Mirrors
+ * it never throws the wrong-base-path error. Mirrors
  * `obs-explain-readers.ts:resolveTrajectoryFile` verbatim.
  */
 export function resolveTrajectoryFile(sessionFile: string): string {
@@ -101,7 +101,7 @@ export interface WaitSignalOptions {
   readonly tool?: string;
   /**
    * Hard ceiling (ms). The waiter always resolves by `timeoutMs` even if the
-   * file keeps changing. Default 1_500_000 (25 min — §10A.6, a long agentic turn).
+   * file keeps changing. Default 1_500_000 (25 min — a long agentic turn).
    */
   readonly timeoutMs?: number;
   /**
@@ -125,7 +125,7 @@ export interface WaitSignalResult {
   readonly reason: WaitReason;
 }
 
-/** Default hard timeout — a long agentic turn (§10A.6). */
+/** Default hard timeout — a long agentic turn. */
 const DEFAULT_TIMEOUT_MS = 1_500_000;
 /** Default settle (quiet-period) timeout. */
 const DEFAULT_SETTLE_MS = 500;
@@ -167,7 +167,7 @@ function readLines(file: string): Array<Record<string, unknown>> {
     try {
       out.push(JSON.parse(line) as Record<string, unknown>);
     } catch {
-      // T-205-04: a malformed line is ignored, never fatal — the loop continues.
+      // A malformed line is ignored, never fatal — the loop continues.
     }
   }
   return out;
@@ -195,7 +195,7 @@ function lineMatches(
  * resolve with the matched record. Validates `--event` against the real closed
  * enum BEFORE tailing; requires exactly one of `event`/`tool`. Never hangs:
  * resolves `settle_timeout` after a quiet-period with no match, or `timeout` at
- * the hard ceiling, each with an explicit reason code (§13-Q4, T-205-05).
+ * the hard ceiling, each with an explicit reason code.
  */
 export async function waitForTrajectorySignal(
   opts: WaitSignalOptions,
@@ -209,7 +209,7 @@ export async function waitForTrajectorySignal(
       "tg wait: supply exactly one of --event <type> or --tool <name>",
     );
   }
-  // An unknown --event is a reason-coded reject, never a silent never-match (Pitfall 5).
+  // An unknown --event is a reason-coded reject, never a silent never-match.
   if (event !== undefined && !(TRAJECTORY_EVENT_TYPES as readonly string[]).includes(event)) {
     throw new Error(
       `tg wait: unknown --event '${event}' (not a trajectory event type)`,
@@ -253,7 +253,7 @@ export async function waitForTrajectorySignal(
     }
 
     // Settle-timeout: the file went quiet for settleMs with no match → give up
-    // honestly, well before the hard timeoutMs (§13-Q4).
+    // honestly, well before the hard timeoutMs.
     if (now - lastChange >= settleMs) {
       return { matched: false, reason: "settle_timeout" };
     }

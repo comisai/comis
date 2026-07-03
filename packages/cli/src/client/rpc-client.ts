@@ -121,9 +121,9 @@ function resolveEnvRef(value: string): string {
  * pointed at — e.g. a test/second daemon on another port. Falls back to the
  * standard `~/.comis/config.yaml` when unset or blank.
  *
- * UX-2 (LOCAL re-test 2026-06-20): without this the CLI always read
- * `~/.comis/config.yaml`, so a `COMIS_DATA_DIR`/`COMIS_CONFIG_PATHS` daemon on
- * :4777 was unreachable via the CLI unless you also set `COMIS_GATEWAY_URL`.
+ * Without this the CLI would always read `~/.comis/config.yaml`, so a
+ * `COMIS_DATA_DIR`/`COMIS_CONFIG_PATHS` daemon on a non-default port would be
+ * unreachable via the CLI unless `COMIS_GATEWAY_URL` were also set.
  */
 export function resolveGatewayConfigPath(): string {
   const fromEnv = systemGetEnv("COMIS_CONFIG_PATHS");
@@ -312,7 +312,7 @@ export function checkTransportSecurity(url: string, token: string | undefined, a
  * @throws Error if connection times out or is refused
  */
 /**
- * Stable prefix of the gateway token-rejection error (W13 obs-llm-troubleshooting).
+ * Stable prefix of the gateway token-rejection error.
  * The gateway closes an unauthorized WebSocket with code 4001 (hono-server.ts);
  * mapping that close onto this named error lets `isDaemonRunning` treat an
  * auth-rejection as PROOF the daemon is up — the old path collapsed it into
@@ -464,9 +464,9 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
     ws.on("close", (code?: number, reason?: Buffer) => {
       systemClearTimeout(timeout);
       closed = true;
-      // W13: surface WHY. The gateway closes 4001/4003 for token problems —
-      // collapsing those into the generic message sent operators (and the
-      // live investigation) chasing a daemon that was up the whole time.
+      // Surface WHY the socket closed. The gateway closes 4001/4003 for token
+      // problems — collapsing those into the generic message sends operators
+      // chasing a daemon that was up the whole time.
       const closeErr = closeCodeError(code, reason?.toString() ?? "");
       // A close BEFORE open (handshake-stage rejection) must reject the
       // connection promise instead of hanging until the timeout.

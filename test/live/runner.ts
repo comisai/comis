@@ -13,7 +13,7 @@
  *
  * live.env loading: if test/live/live.env exists it is read and injected
  * into process.env before the COMIS_LIVE gate check. Values are never
- * logged — T-134-18 (Information Disclosure) mitigation.
+ * logged — information-disclosure mitigation.
  *
  * parseArgs is a named export so runner.test.ts can unit-test it without
  * triggering any side effects (process.exit, env reads, execSync).
@@ -39,10 +39,9 @@ const LIVE_ENV_PATH = join(__dirname, "live.env");
 const REPORT_FILE = resolve(PROJECT_ROOT, ".test-live-report.json");
 const READINESS_FILE = resolve(PROJECT_ROOT, "READINESS.md");
 const SMOKE_TEST = "test/live/scenarios/smoke.test.ts";
-// Phase 148 (260606-live-tier-daemon-concurrency-flake fix): the dedicated
-// live-tier config sets fileParallelism:false so daemon-booting scenarios do not
-// oversubscribe the host — the gate is reliable WITHOUT the manual
-// --no-file-parallelism flag every mode previously needed.
+// The dedicated live-tier config sets fileParallelism:false so daemon-booting
+// scenarios do not oversubscribe the host — the gate is reliable WITHOUT the
+// manual --no-file-parallelism flag.
 const VITEST_CONFIG = "test/live/vitest.config.ts";
 const BENCHMARKS_DIR = resolve(PROJECT_ROOT, "benchmarks");
 
@@ -72,8 +71,8 @@ export function parseArgs(argv: string[]): { dry: boolean; mode: string; profile
 }
 
 // ---------------------------------------------------------------------------
-// live.env loading — T-134-18: values are injected into process.env only;
-// never logged or passed to external processes as visible strings.
+// live.env loading — values are injected into process.env only; never logged
+// or passed to external processes as visible strings (information disclosure).
 // ---------------------------------------------------------------------------
 
 function loadLiveEnv(): void {
@@ -124,9 +123,9 @@ if (isMain) {
   loadLiveEnv();
 
   // --readiness: generate the honest READINESS.md and exit. This runs BEFORE the
-  // COMIS_LIVE gate — the keyless PARTIAL readiness IS the headline §16 DoD
+  // COMIS_LIVE gate — the keyless PARTIAL readiness IS the headline readiness
   // artifact (most categories PARTIAL: deterministic Stage-A/B certified, real-
-  // provider Stage-C deferred §20; NO faked CERTIFIED). An operator run with
+  // provider Stage-C deferred to an operator run; NO faked CERTIFIED). An operator run with
   // COMIS_LIVE set generates the live readiness. Parsed from process.argv directly
   // so parseArgs's {dry,mode,profile} shape is unchanged (runner.test.ts toEqual).
   if (process.argv.slice(2).includes("--readiness")) {
@@ -265,7 +264,7 @@ async function runMain(): Promise<void> {
     } else if (args.mode === "journeys") {
       console.log("E2E journey scenarios (E2E-01..05): user-story library + generic journey-runner");
       console.log("  test/live/journeys/*.test.ts");
-      console.log("  Cost tier: $0 Stage-A/B (zod UserStory schema + self-registering STORY_LIBRARY + the open/closed zero-harness-change extensibility test + the generic journey-runner interpreting a story on echo+mock + requires→skip gating + coverage auto-wiring + the 8 seed-story shapes US-01..08 — all in-process/keyless/deterministic, no model); Stage-C/D needs COMIS_LIVE + a real provider + the component Stage-C certs (136–146) for the real-LLM multi-turn journey execution (goal-achieved + judged task-success + one stitched traceId + obs.billing, N-run pass-rate × model grid); J7 terminal-driven is SKIPPED(no-bwrap/linux-only) on macOS");
+      console.log("  Cost tier: $0 Stage-A/B (zod UserStory schema + self-registering STORY_LIBRARY + the open/closed zero-harness-change extensibility test + the generic journey-runner interpreting a story on echo+mock + requires→skip gating + coverage auto-wiring + the 8 seed-story shapes US-01..08 — all in-process/keyless/deterministic, no model); Stage-C/D needs COMIS_LIVE + a real provider + the component Stage-C certs for the real-LLM multi-turn journey execution (goal-achieved + judged task-success + one stitched traceId + obs.billing, N-run pass-rate × model grid); J7 terminal-driven is SKIPPED(no-bwrap/linux-only) on macOS");
     } else if (args.mode === "prove") {
       console.log("PROVE scenarios (PROVE-01..05): obs-meta, cold-start, soak-smoke");
       console.log("  test/live/scenarios/prove/*.test.ts");
@@ -290,7 +289,7 @@ async function runMain(): Promise<void> {
   let testsFailed = false;
 
   if (args.mode === "sweep") {
-    // Phase 135: sweep mode — run all probes, write gap report
+    // sweep mode — run all probes, write gap report
     const probeIds = parseProbeFilter();
     const result = await runSweep(credentialRegistry, governor, { dry: args.dry, probeIds });
 
@@ -323,7 +322,7 @@ async function runMain(): Promise<void> {
     console.log("");
 
   } else if (args.mode === "core" || args.mode === "loop") {
-    // Phase 136: core real-LLM conversation loop scenarios (LOOP-01..04)
+    // core real-LLM conversation loop scenarios (LOOP-01..04)
     const LOOP_TEST_GLOB = "test/live/scenarios/loop/*.test.ts";
     const loopCmd = [
       "npx vitest run",
@@ -337,7 +336,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "cache") {
-    // Phase 137: LLM cache scenarios (CACHE-01..03)
+    // LLM cache scenarios (CACHE-01..03)
     const CACHE_TEST_GLOB = "test/live/scenarios/cache/*.test.ts";
     const cacheCmd = [
       "npx vitest run",
@@ -351,7 +350,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "ctx") {
-    // Phase 138: context engine scenarios (CTX-01..05)
+    // context engine scenarios (CTX-01..05)
     const CTX_TEST_GLOB = "test/live/scenarios/ctx/*.test.ts";
     const ctxCmd = [
       "npx vitest run",
@@ -365,7 +364,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "memory") {
-    // Phase 139: long-term memory scenarios (MEM-01..08)
+    // long-term memory scenarios (MEM-01..08)
     const MEM_TEST_GLOB = "test/live/scenarios/memory/*.test.ts";
     const memCmd = [
       "npx vitest run",
@@ -379,7 +378,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "tools") {
-    // Phase 140: TOOL+MCP — built-in tool invocation scenarios (TOOL-01..02)
+    // built-in tool invocation scenarios (TOOL-01..02)
     const TOOLS_TEST_GLOB = "test/live/scenarios/tools/*.test.ts";
     const toolsCmd = [
       "npx vitest run",
@@ -393,7 +392,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "mcp") {
-    // Phase 140: TOOL+MCP — MCP transport×auth matrix + policy + trust scenarios (MCP-01..03)
+    // MCP transport×auth matrix + policy + trust scenarios (MCP-01..03)
     const MCP_TEST_GLOB = "test/live/scenarios/mcp/*.test.ts";
     const mcpCmd = [
       "npx vitest run",
@@ -407,7 +406,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "orch") {
-    // Phase 141: ORCH — subagent DAG + routing + isolation + re-entry (ORCH-01..04)
+    // subagent DAG + routing + isolation + re-entry (ORCH-01..04)
     const ORCH_TEST_GLOB = "test/live/scenarios/orch/*.test.ts";
     const orchCmd = [
       "npx vitest run",
@@ -421,7 +420,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "media") {
-    // Phase 142: MEDIA — voice round-trip, fallback chain, vision, image-gen (MEDIA-01..04)
+    // voice round-trip, fallback chain, vision, image-gen (MEDIA-01..04)
     const MEDIA_TEST_GLOB = "test/live/scenarios/media/*.test.ts";
     const mediaCmd = [
       "npx vitest run",
@@ -435,7 +434,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "web") {
-    // Phase 143: WEB — search providers, link understanding, document extraction (WEB-01..03)
+    // search providers, link understanding, document extraction (WEB-01..03)
     const WEB_TEST_GLOB = "test/live/scenarios/web/*.test.ts";
     const webCmd = [
       "npx vitest run",
@@ -449,7 +448,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "channels") {
-    // Phase 144: CHANNELS — echo golden + delivery modes (CHAN-01..03)
+    // echo golden + delivery modes (CHAN-01..03)
     const CHAN_TEST_GLOB = "test/live/scenarios/channels/*.test.ts";
     const chanCmd = [
       "npx vitest run",
@@ -463,7 +462,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "sec") {
-    // Phase 145: SECURITY & FAILURE INJECTION — SEC-01..06
+    // security & failure injection — SEC-01..06
     const SEC_TEST_GLOB = "test/live/scenarios/sec/*.test.ts";
     const secCmd = [
       "npx vitest run",
@@ -477,7 +476,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "plat") {
-    // Phase 146: PLATFORM — PLAT-01..04
+    // platform scenarios — PLAT-01..04
     const PLAT_TEST_GLOB = "test/live/scenarios/plat/*.test.ts";
     const platCmd = [
       "npx vitest run",
@@ -491,7 +490,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "journeys") {
-    // Phase 147: E2E — user-story library + generic journey-runner (E2E-01..05)
+    // E2E — user-story library + generic journey-runner (E2E-01..05)
     const JOURNEYS_TEST_GLOB = "test/live/journeys/*.test.ts";
     const journeysCmd = [
       "npx vitest run",
@@ -505,7 +504,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "prove") {
-    // Phase 148: PROVE — obs-meta + cold-start + soak-smoke (PROVE-01..05).
+    // PROVE — obs-meta + cold-start + soak-smoke (PROVE-01..05).
     // NOTE: vitest treats a positional arg as a path-SUBSTRING filter (NOT a shell
     // glob — a quoted `*.test.ts` matches nothing). Pass the directory path so the
     // live-tier config's include (test/live/**/*.test.ts) is filtered to the prove dir.
@@ -521,7 +520,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else if (args.mode === "all") {
-    // Phase 148: the FULL tier — every test under test/live (every scenario incl.
+    // the FULL tier — every test under test/live (every scenario incl.
     // prove + the smoke, every journey, the harness unit tests), run sequentially
     // under the dedicated live-tier config (fileParallelism:false). This is the
     // scheduled release-gate run; keyless ⇒ the deterministic Stage-A/B layers run
@@ -538,7 +537,7 @@ async function runMain(): Promise<void> {
       testsFailed = true;
     }
   } else {
-    // Default (unknown mode): smoke test (Phase 134 baseline)
+    // Default (unknown mode): smoke test baseline
     const smokeCmd = [
       "npx vitest run",
       SMOKE_TEST,

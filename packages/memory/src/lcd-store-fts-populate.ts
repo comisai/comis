@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD FTS populate helpers — the index-write half of FTS-01 (Phase 180).
+ * LCD FTS populate helpers — the index-write half of the FTS search path.
  * Extracted from `lcd-store.ts` so the adapter stays under the 800-line
  * file-size cap (mirrors the prior `lcd-store-writes.ts` / `lcd-fts.ts`
- * extractions; RESEARCH Pitfall 4). This file holds the populate logic + its
+ * extractions). This file holds the populate logic + its
  * prepared statements; `createLcdStore` calls `createFtsPopulator(db)` ONCE at
  * factory top and invokes the returned methods inside its write transactions
  * (so the "prepare once" discipline is preserved — the statements are prepared
@@ -12,11 +12,11 @@
  * The WORD-lane populate (`populateMessageFts`) was relocated BYTE-IDENTICALLY
  * (same SQL strings, same `messageRowidRowMapper` guard, same `isFtsAvailable`
  * gate, same narrow catch). The normalized TRIGRAM-TWIN inserts
- * (`populateMessageTri` / `insertSummaryTri`) are the index half of the FTS-01
- * symmetry: they fold RAW content through `normalizeForSearch` HERE — the I7
+ * (`populateMessageTri` / `insertSummaryTri`) are the index half of the trigram
+ * symmetry: they fold RAW content through `normalizeForSearch` HERE — the
  * single call site — so the call sites in `lcd-store.ts` / `lcd-store-writes.ts`
  * CANNOT forget the fold. The stored twin text is the SAME symbol the query side
- * (plan 180-05) imports, which is the entire FTS-01 contract: query מלך finds
+ * imports, which is the entire contract: query מלך finds
  * stored מלכים because both fold identically.
  *
  * Each twin's statements are prepared inside its OWN try/catch — `prepare()`
@@ -24,11 +24,11 @@
  * so a failed prep sets THAT twin's handles null and its methods become a clean
  * no-op. This mirrors the `isFtsAvailable` defensive posture without a second
  * probe: if a twin's statements compiled, that twin's table exists. The preps are
- * INDEPENDENT (WR-01) so a partial-schema host with one twin present and the other
+ * INDEPENDENT so a partial-schema host with one twin present and the other
  * absent keeps the present twin live — matching ensureTrigramTwins's per-block DDL.
  *
  * `@comis/memory` is infra-free (AGENTS.md §2.4 — no logger): a degraded
- * populate skips the index row silently by design (WR-03); a twin failure leaves
+ * populate skips the index row silently by design; a twin failure leaves
  * the row DE-INDEXED (the fail-safe direction), never a rolled-back base write.
  *
  * @module
@@ -40,8 +40,8 @@ import { normalizeForSearch } from "@comis/core";
 import { renderMessageFtsText, isFtsAvailable } from "./lcd-fts.js";
 import { messageRowidRowMapper } from "./lcd-store-mappers.js";
 
-/** The two-column scope the FTS UNINDEXED columns carry (R4). The FTS tables hold
- *  NO tenant_id — `conversation_id` encodes the tenant boundary (lcd-fts.ts:24). */
+/** The two-column scope the FTS UNINDEXED columns carry. The FTS tables hold
+ *  NO tenant_id — `conversation_id` encodes the tenant boundary. */
 export interface FtsPopulateScope {
   conversationId: string;
   agentId: string;
@@ -54,12 +54,12 @@ export interface FtsPopulator {
    *  `isFtsAvailable`; the narrow catch swallows a post-boot INSERT failure. */
   populateMessageFts(messageId: string, parts: LcdMessagePart[], scope: FtsPopulateScope): void;
   /** Trigram-twin populate: `normalizeForSearch(renderMessageFtsText(parts))`
-   *  into `lcd_messages_fts_tri` at the base rowid. Normalizes internally (I7).
+   *  into `lcd_messages_fts_tri` at the base rowid. Normalizes internally.
    *  No-op when the twins are absent (trigram-less host). */
   populateMessageTri(messageId: string, parts: LcdMessagePart[], scope: FtsPopulateScope): void;
   /** Trigram-twin populate for a summary: `normalizeForSearch(rawContent)` into
    *  `lcd_summaries_fts_tri` at the summary's base rowid (resolved by summary_id).
-   *  Normalizes internally (I7). No-op when the twins are absent. */
+   *  Normalizes internally. No-op when the twins are absent. */
   insertSummaryTri(summaryId: string, rawContent: string, scope: FtsPopulateScope): void;
 }
 
@@ -81,13 +81,13 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
   const selectMessageRowid = db.prepare("SELECT rowid FROM lcd_messages WHERE id = ?");
 
   function populateMessageFts(messageId: string, parts: LcdMessagePart[], scope: FtsPopulateScope): void {
-    // E1 (gap #1): populate the CONTENTLESS lcd_messages_fts with the rendered
+    // Populate the CONTENTLESS lcd_messages_fts with the rendered
     // part-text so ctx_search finds this message. lcd_messages has no content
     // column (text is JSON in the parts), so the adapter — not a trigger — is the
     // only place that can render + index it; keep the FTS rowid in step with the
     // lcd_messages rowid (joinable).
     //
-    // WR-03: GATE the populate on isFtsAvailable(db) (memoized per db). On an
+    // GATE the populate on isFtsAvailable(db) (memoized per db). On an
     // FTS5-uncompiled host the lcd_*_fts tables are absent, so this is a CLEAN
     // CONDITIONAL SKIP — the EXPECTED degraded-host case no longer rides the
     // exception path (the old bare `catch {}` swallowed it indistinguishably from
@@ -96,12 +96,12 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
     // genuinely-exceptional populate failure (e.g. on-disk FTS corruption after a
     // healthy boot). The swallow is RETAINED — and must be — because appendTxn is
     // a db.transaction: re-throwing would roll back the message+parts write the
-    // contentless index is merely best-effort for (LOSSLESS-CLAW §4: the lossless
+    // contentless index is merely best-effort for (the lossless
     // base tables are authoritative; search is a recoverable derived index that
     // the LIKE fallback also covers). @comis/memory is intentionally logger-free
     // (AGENTS.md §2.4 — no getLogger import), so this content-free swallow is the
     // floor; the agent-side boundary-observability line for FTS-populate health
-    // rides the injected-logger write path (Plan 128), not this layer.
+    // rides the injected-logger write path, not this layer.
     if (isFtsAvailable(db)) {
       try {
         const parsedRowid = messageRowidRowMapper.parseOptionalRow(selectMessageRowid.get(messageId));
@@ -110,7 +110,7 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
             parsedRowid.value.rowid,
             renderMessageFtsText(parts),
             scope.conversationId,
-            scope.agentId, // R4: agent_id UNINDEXED so the FTS MATCH filters by agent (WR-02)
+            scope.agentId, // agent_id UNINDEXED so the FTS MATCH filters by agent
             messageId,
           );
         }
@@ -126,13 +126,13 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
   // ── Trigram twins (probe-gated via guarded prep) ────────────────────────────
   // `prepare()` THROWS on a trigram-less host (the twin tables do not exist →
   // "no such table"). A failed prep leaves the handles null and every twin method
-  // is a clean no-op — search degrades to the scan floors (plan 180-05), the
+  // is a clean no-op — search degrades to the scan floors, the
   // append path is unaffected. If the statements compiled, the twin tables exist
   // (so no second runtime probe is needed). The twin's rowid = the base rowid
-  // (the same linkage insertMessageFts uses) so the 180-02 AFTER DELETE triggers
+  // (the same linkage insertMessageFts uses) so the AFTER DELETE triggers
   // mirror twin deletes by `old.rowid`.
   //
-  // WR-01: prepare EACH twin in its OWN try/catch — mirror ensureTrigramTwins's
+  // Prepare EACH twin in its OWN try/catch — mirror ensureTrigramTwins's
   // per-block DDL independence. On a partial-schema host where the message twin
   // exists but the summaries twin does NOT (e.g. the summaries CREATE failed while
   // the messages one succeeded, or a hand-edited dev DB — each DDL twin lives in
@@ -163,7 +163,7 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
   } catch {
     // Summary twin absent (trigram tokenizer missing, or this twin's DDL block
     // failed) → both handles stay null and insertSummaryTri is a clean no-op. A
-    // present message twin (above) is UNAFFECTED (WR-01).
+    // present message twin (above) is UNAFFECTED.
     insertSummaryTriStmt = null;
     selectSummaryRowid = null;
   }
@@ -176,12 +176,12 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
       if (parsedRowid.ok && parsedRowid.value) {
         insertMessageTri.run(
           parsedRowid.value.rowid,
-          // I7: normalize RAW content HERE (the single call site) so the index
-          // side folds identically to the query side (plan 180-05 imports the
+          // Normalize RAW content HERE (the single call site) so the index
+          // side folds identically to the query side (which imports the
           // same symbol). The folded text is what a script-routed MATCH reads.
           normalizeForSearch(renderMessageFtsText(parts)),
           scope.conversationId,
-          scope.agentId, // R4: agent_id UNINDEXED so the twin MATCH filters by agent (WR-02)
+          scope.agentId, // agent_id UNINDEXED so the twin MATCH filters by agent
           messageId,
         );
       }
@@ -200,10 +200,10 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
       if (parsedRowid.ok && parsedRowid.value) {
         insertSummaryTriStmt.run(
           parsedRowid.value.rowid,
-          // I7: normalize RAW summary content HERE (the single call site).
+          // Normalize RAW summary content HERE (the single call site).
           normalizeForSearch(rawContent),
           scope.conversationId,
-          scope.agentId, // R4: agent_id UNINDEXED so the twin MATCH filters by agent (WR-02)
+          scope.agentId, // agent_id UNINDEXED so the twin MATCH filters by agent
           summaryId,
         );
       }

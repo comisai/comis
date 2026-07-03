@@ -78,10 +78,10 @@ export function escapeSlackMrkdwn(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// markdownToSlackMrkdwn: DELETED
+// No markdown-to-mrkdwn conversion lives here.
 //
-// Slack markdown-to-mrkdwn conversion is now handled by the IR pipeline
+// Slack markdown-to-mrkdwn conversion is handled by the IR pipeline
 // (format-for-channel.ts -> ir-renderer.ts -> renderForSlack). The adapter
-// is a passthrough. Only escapeSlackMrkdwn remains for escaping pre-existing
-// mrkdwn content.
+// is a passthrough. Only escapeSlackMrkdwn lives in this module, for escaping
+// pre-existing mrkdwn content.
 // ---------------------------------------------------------------------------

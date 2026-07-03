@@ -32,7 +32,7 @@ import type { TurnLoopDetector } from "../turn-loop-detector.js";
  */
 export function createBeforeToolCallGuard(
   stepCounter: StepCounter,
-  // CR-01: the per-execution budget window (the shared BudgetGuard is also
+  // The per-execution budget window (the shared BudgetGuard is also
   // structurally assignable). Only checkBudget(0) is used here.
   budgetGuard: ExecutionBudgetWindow,
   circuitBreaker: CircuitBreaker,
@@ -55,7 +55,7 @@ export function createBeforeToolCallGuard(
       return { block: true, reason: "Provider circuit breaker open" };
     }
 
-    // FIX #2c -- short-circuit a repeat idempotent read (the loop-breaker seam).
+    // Short-circuit a repeat idempotent read (the loop-breaker seam).
     // The SDK's BeforeToolCallResult has only {block, reason} -- no content
     // channel -- so a short-circuit blocks the wasteful re-execution and
     // surfaces the one-line steer as the tool-result reason text the model

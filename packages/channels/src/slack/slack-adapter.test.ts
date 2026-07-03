@@ -89,8 +89,8 @@ vi.mock("./message-mapper.js", () => ({
   mapSlackToNormalized: vi.fn(),
 }));
 
-// format-slack.js no longer exports markdownToSlackMrkdwn (deleted in 498-01).
-// Adapter is now a passthrough -- text arrives pre-formatted from the pipeline.
+// format-slack.js exports no markdown conversion — the adapter is a
+// passthrough; text arrives pre-formatted from the IR pipeline.
 
 // ---------------------------------------------------------------------------
 // Imports (after mocks)
@@ -716,7 +716,7 @@ describe("createSlackAdapter", () => {
       }
     });
 
-    it("returns unresolved (NOT not_sent) when conversations.history returns ok:false (Pitfall 2)", async () => {
+    it("returns unresolved (NOT not_sent) when conversations.history returns ok:false", async () => {
       mockConversationsHistory.mockResolvedValue({ ok: false, error: "channel_not_found" });
 
       const adapter = await startedAdapter();
@@ -751,7 +751,7 @@ describe("createSlackAdapter", () => {
       }
     });
 
-    it("returns unresolved when has_more truncates the window — a partial fetch cannot prove absence (Pitfall 2)", async () => {
+    it("returns unresolved when has_more truncates the window — a partial fetch cannot prove absence", async () => {
       mockConversationsHistory.mockResolvedValue({
         ok: true,
         has_more: true, // window truncated; absence is unprovable
@@ -772,7 +772,7 @@ describe("createSlackAdapter", () => {
       }
     });
 
-    it("ignores a non-bot author whose message shares the digest (Spoofing T-216-25)", async () => {
+    it("ignores a non-bot author whose message shares the digest (spoofing guard)", async () => {
       const text = "identical body from a human";
       mockConversationsHistory.mockResolvedValue({
         ok: true,

@@ -1,38 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ACCEPT-01 scenario 1 — the §10A.6 Verified-Learning A->B reaction-gated
- * skill-reuse loop, driven FULLY UNATTENDED IN-PROCESS (Phase 208, Plan 07 —
- * THE AUTONOMY CAPSTONE, the FIRST of the three hard ACCEPT-01 scenarios).
+ * ACCEPT-01 scenario 1 — the Verified-Learning A->B reaction-gated
+ * skill-reuse loop, driven FULLY UNATTENDED IN-PROCESS (THE AUTONOMY CAPSTONE,
+ * the FIRST of the three hard ACCEPT-01 scenarios).
  *
- * This is the §10A.2 per-scenario loop applied to the flagship Verified-Learning
+ * This is the per-scenario loop applied to the flagship Verified-Learning
  * path, scored *works (verified in ground truth via the dual oracle)* OR
  * *fails-honestly* with a reason-coded finding — a FALSE SUCCESS is a HARD FAIL.
- * It builds DIRECTLY on 206-03 (the Stage-B identity-fix proof + the rig config
- * bed) and the 206-04 PRIMARY-PATH FIX (the reaction now binds on the normal
- * inbound-reply path — `recordOutboundMessage` on `deliverToChannel`'s direct ack
- * + the resolved `agentId` on the delivery ALS), so a 👍 on a normal keyless
- * agent reply produces an `outcome_events source='reaction' success` row on the
- * common path (no longer drain-only).
+ * It builds on the Stage-B identity-fix proof + the rig config bed and the
+ * PRIMARY-PATH FIX (the reaction now binds on the normal inbound-reply path —
+ * `recordOutboundMessage` on `deliverToChannel`'s direct ack + the resolved
+ * `agentId` on the delivery ALS), so a 👍 on a normal keyless agent reply
+ * produces an `outcome_events source='reaction' success` row on the common path
+ * (no longer drain-only).
  *
- * The §10A.2 loop (no human step at any point):
+ * The loop (no human step at any point):
  *   clean-slate (the rig's isolated COMIS_DATA_DIR — a fresh memory.db per run) ->
  *   set up (buildRig keyless) -> drive (a 5+-tool task in session A; the 👍 on the
  *   ATTRIBUTED botReplyId) -> dual-oracle observe (the emulator wire bytes ==
  *   delivery_mirror.text; the outcome_events row on the isolated memory.db) ->
  *   score (a reaction-success row + a learned_skills row + session-B reuse, OR an
- *   honest reason-coded finding) -> on COMIS-FAIL close test-first (the 206
- *   Defect-Watch) -> pass@k (the loop is re-runnable; each run resets the dir).
+ *   honest reason-coded finding) -> on COMIS-FAIL close test-first -> pass@k
+ *   (the loop is re-runnable; each run resets the dir).
  *
- * NO-FALSE-SUCCESS (I5, made a HARD FAIL by ACCEPT-01): a non-closing loop emits
+ * NO-FALSE-SUCCESS (a HARD FAIL): a non-closing loop emits
  * a reason-coded finding and FAILS — NEVER a faked "skill reused". A keyless
  * ABSTAIN at the synthesis capability gate (synthesized:0) is a BENIGN skip
  * (reason-coded), the documented honest-abstain — the WRITE+SELECT halves still
  * CLOSED; the ADMIT+REUSE half is gated behind a more-capable model.
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205/206 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): the
- *     §10A.2 loop SHAPE + the no-false-success scoring scaffold, deterministic:
+ *     loop SHAPE + the no-false-success scoring scaffold, deterministic:
  *     a file-backed memory.db with the REAL outcome_events DDL +
  *     createSqliteOutcomeStore: observe() a source='reaction'/success row keyed
  *     on a per-turn traceId, PROVE the landed identity-fix chain resolves it
@@ -43,7 +43,7 @@
  *     proven on a seeded mirror. The git-porcelain guard + the SEC-02 never-
  *     published re-verify re-assert ZERO packages source change.
  *
- *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) drives the full §10A.6 A->B
+ *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) drives the full A->B
  *     loop against a keyless daemon: buildRig(keyless) -> session A 5+-tool task
  *     -> waitForReply (the SYNC POINT — the outbound landed so the primary-path
  *     recordOutboundMessage bound the reply's messageId to the trajectory) -> the
@@ -87,7 +87,7 @@ const isLive = !!process.env["COMIS_LIVE"];
 const TENANT = "test";
 const AGENT = "default";
 // A per-turn traceId (the trajectory identity outcomes are keyed on — NOT a
-// sessionKey; the §3 invariant the landed identity fix restored).
+// sessionKey; the trajectory-identity invariant the landed identity fix restored).
 const TURN_TRACE_ID = "trace-accept-vl-001";
 const SESSION_ID = "telegram:chat-1:111";
 // The reactor's id (the rig grants trust >= known via elevatedReply.defaultTrustLevel:known).
@@ -184,7 +184,7 @@ function countLearnedSkills(dbPath: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// Stage-B — the §10A.2 loop SHAPE + the no-false-success scoring scaffold
+// Stage-B — the loop SHAPE + the no-false-success scoring scaffold
 // (deterministic, no daemon/model)
 // ---------------------------------------------------------------------------
 
@@ -194,7 +194,7 @@ describe("ACCEPT-01 scenario 1 Stage-B — the VL A->B loop shape + scoring scaf
     const { store, db } = openStore(dbPath);
     try {
       // OBSERVE — exactly what wireLearningReactions writes for a thumbs-up from a
-      // >= known reactor (the 206-04 primary-path bind): source='reaction',
+      // >= known reactor (the primary-path bind): source='reaction',
       // outcome='success', trajectoryId = the PER-TURN traceId, confidence 0.24.
       const obs: OutcomeObservation = {
         tenantId: TENANT,
@@ -345,9 +345,8 @@ describe("ACCEPT-01 scenario 1 Stage-B — the never-published guard re-verifies
 
   it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
     // ACCEPT-01 scenario 1 drives the already-wired reaction->outcome->synthesis->
-    // reuse chain (206-03 + the 206-04 primary-path fix) with NO product edit. If
-    // this fails, a product file was touched — STOP (a Defect-Watch must be RED-
-    // first + full validate before any product change).
+    // reuse chain with NO product edit. If this fails, a product file was touched
+    // — STOP (any product change must be test-first + pass full validate before landing).
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
     const offending = porcelain
@@ -361,10 +360,10 @@ describe("ACCEPT-01 scenario 1 Stage-B — the never-published guard re-verifies
 });
 
 // ---------------------------------------------------------------------------
-// Stage-C — the full §10A.6 A->B reaction-gated skill-reuse loop (COMIS_LIVE)
+// Stage-C — the full A->B reaction-gated skill-reuse loop (COMIS_LIVE)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reaction-gated skill-reuse loop, UNATTENDED (COMIS_LIVE)", () => {
+describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the A->B reaction-gated skill-reuse loop, UNATTENDED (COMIS_LIVE)", () => {
   let built: BuiltRig | undefined;
   let memoryDbPath: string | undefined;
 
@@ -408,8 +407,8 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reac
    * path the channel RE-RENDERS the outbound into a compact status line that
    * differs from the raw recovered text delivery_mirror recorded (so the
    * dual-oracle wire==mirror invariant only holds on a CLEAN turn). A keyless
-   * model that exhausts a turn is an HONEST finding (the 206-04 heavy-task
-   * artifact), never a faked pass — we detect it and emit a reason-coded skip
+   * model that exhausts a turn is an HONEST finding (a heavy-task artifact),
+   * never a faked pass — we detect it and emit a reason-coded skip
    * BEFORE the dual-oracle cross-check (which is happy-path-only by contract).
    */
   function isDegradedReply(text: string): boolean {
@@ -426,13 +425,13 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reac
       if (r === undefined || dbPath === undefined) return;
 
       // ── Session A: a tool-using task the agent authors a reply to, sized to
-      // COMPLETE reliably on the keyless model (the 206-04 lighter-task path that
-      // produced the reaction row 3/3 — a heavy 5+-tool task exhausts max_steps on
-      // qwen3.6:35b and the recovered-response delivery races the mirror poll). The
-      // reaction loop fires on ANY tool-using agent reply; a focused task keeps the
-      // turn clean so the loop is exercised, not the exhaustion path. waitForReply
-      // is the SYNC POINT — the outbound landed, so the 206-04 primary-path
-      // recordOutboundMessage bound the reply's messageId to the trajectory.
+      // COMPLETE reliably on the keyless model (a lighter-task path — a heavy
+      // 5+-tool task exhausts max_steps on qwen3.6:35b and the recovered-response
+      // delivery races the mirror poll). The reaction loop fires on ANY tool-using
+      // agent reply; a focused task keeps the turn clean so the loop is exercised,
+      // not the exhaustion path. waitForReply is the SYNC POINT — the outbound
+      // landed, so the primary-path recordOutboundMessage bound the reply's
+      // messageId to the trajectory.
       const inboundId = await r.send(
         "List the files in the workspace, then reply with a one-sentence summary of what you found.",
       );
@@ -452,12 +451,12 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reac
       if (isDegradedReply(reply.text ?? "")) {
         // eslint-disable-next-line no-console -- the operator-facing honest finding
         console.warn(
-          `ACCEPT-01 scenario 1 Stage-C FINDING (honest, 206-04 heavy-task artifact): the keyless model returned a DEGRADED reply ("${(reply.text ?? "").slice(0, 60)}") — the turn exhausted (max_steps) rather than completing cleanly. The VL A->B loop's happy path was not exercised this run (pass@k: re-run). NOT a faked pass.`,
+          `ACCEPT-01 scenario 1 Stage-C FINDING (honest, heavy-task artifact): the keyless model returned a DEGRADED reply ("${(reply.text ?? "").slice(0, 60)}") — the turn exhausted (max_steps) rather than completing cleanly. The VL A->B loop's happy path was not exercised this run (pass@k: re-run). NOT a faked pass.`,
         );
         return;
       }
 
-      // ── The HARD dual-oracle cross-check (S6): the emulator's recorded wire text
+      // ── The HARD dual-oracle cross-check: the emulator's recorded wire text
       // == delivery_mirror.text for the session. A disagreement is a real defect
       // (Comis-thinks-it-sent-X-but-wire-shows-Y) — a HARD throw, never a pass.
       const sessionKey = await pollForSessionKey(dbPath);
@@ -478,7 +477,7 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reac
 
       // ── Score the loop's first hop via the SAME predicate Stage-B pins (bounded
       // poll — the reaction observe is async). A 0-row outcome is the HONEST
-      // FINDING + a HARD FAIL (no-false-success, I5 made absolute by ACCEPT-01).
+      // FINDING + a HARD FAIL (no-false-success).
       let reactionRows = 0;
       const start = Date.now();
       while (reactionRows === 0 && Date.now() - start < 30_000) {
@@ -487,11 +486,11 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reac
       }
       expect(
         reactionRows,
-        "FINDING (no-false-success, HARD FAIL): no outcome_events source='reaction' success row after the 👍 — check the rig learning gotchas (costFeatures/learningOutcome) + the trust floor (defaultTrustLevel:known) + the botReplyId attribution (the 206-04 primary-path recordOutboundMessage bind). NOT a faked green.",
+        "FINDING (no-false-success, HARD FAIL): no outcome_events source='reaction' success row after the 👍 — check the rig learning gotchas (costFeatures/learningOutcome) + the trust floor (defaultTrustLevel:known) + the botReplyId attribution (the primary-path recordOutboundMessage bind). NOT a faked green.",
       ).toBeGreaterThanOrEqual(1);
       if (reactionRows === 0) return;
 
-      // ── Force synthesis over the WS path (rpcRequest, the 205-07 transport).
+      // ── Force synthesis over the WS path (rpcRequest transport).
       // Re-confirm the job name via cron.list at runtime, then run it.
       const cronList = (await rpcRequest(r.gatewayUrl, "cron.list", { agentId: "*" }, r.authToken)) as {
         jobs?: Array<{ name?: string }>;
@@ -513,7 +512,7 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reac
       if (learnedCount === 0) {
         // eslint-disable-next-line no-console -- the operator-facing honest finding
         console.warn(
-          "ACCEPT-01 scenario 1 Stage-C FINDING (benign honest-abstain): the reaction-success row + the resolvable identity are proven (the WRITE+SELECT halves of the A->B loop CLOSED), but synthesis admitted 0 learned_skills — a keyless-model ABSTAIN at the capability gate. The ADMIT+REUSE half is gated behind a more-capable model. skip != fail (I5); this is NOT a false success.",
+          "ACCEPT-01 scenario 1 Stage-C FINDING (benign honest-abstain): the reaction-success row + the resolvable identity are proven (the WRITE+SELECT halves of the A->B loop CLOSED), but synthesis admitted 0 learned_skills — a keyless-model ABSTAIN at the capability gate. The ADMIT+REUSE half is gated behind a more-capable model. skip != fail; this is NOT a false success.",
         );
         return;
       }
@@ -525,8 +524,8 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reac
       ).toBeGreaterThanOrEqual(1);
 
       // ── Session B reuse (the loop closes). The surfaced skill rides the NEXT
-      // session's prompt-skills freeze (reflect:admitted -> refresh; renamed Phase 226). The
-      // durable learned_skills row is the deterministic ground truth for reuse.
+      // session's prompt-skills freeze (reflect:admitted -> refresh). The durable
+      // learned_skills row is the deterministic ground truth for reuse.
       const inboundB = await r.send(
         "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",
       );

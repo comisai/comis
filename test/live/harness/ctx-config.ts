@@ -10,8 +10,7 @@
  * Base config: test/config/config.test.yaml
  *
  * Extracted from the four CTX scenario files (dag-invariants, summarization,
- * expansion, pipeline) which previously copy-pasted this function verbatim
- * (IN-02 from Phase 138 code review).
+ * expansion, pipeline) which previously copy-pasted this function verbatim.
  *
  * @module
  */
@@ -58,10 +57,10 @@ export function buildCtxConfig(opts: {
 
   // Patch contextThreshold UNDER contextEngine — it is a ContextEngineConfigSchema key
   // (schema-agent-context.ts:255, attached at schema-agent-runtime.ts:371
-  // `contextEngine: ContextEngineConfigSchema`), NOT a top-level agents.default key. The prior
-  // version injected it at agents.default top-level → CTX-02/05 Stage-C "Bootstrap failed: Config
-  // validation failed: agents.default: Unrecognized key contextThreshold" (rig-test path bug found
-  // 2026-06-22). It must nest alongside contextEngine.version (6-space indent).
+  // `contextEngine: ContextEngineConfigSchema`), NOT a top-level agents.default key. Injecting
+  // it at agents.default top-level instead fails CTX-02/05 Stage-C boot with "Bootstrap failed:
+  // Config validation failed: agents.default: Unrecognized key contextThreshold". It must nest
+  // alongside contextEngine.version (6-space indent).
   if (opts.contextThreshold !== undefined) {
     if (/contextThreshold:\s*[\d.]+/.test(content)) {
       content = content.replace(

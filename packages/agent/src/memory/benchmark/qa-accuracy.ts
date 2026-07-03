@@ -4,8 +4,8 @@
  * verdicts into the apples-to-apples accuracy numbers the benchmark report
  * carries.
  *
- * THE LOAD-BEARING DENOMINATOR (verified VERBATIM
- * against Hindsight benchmark_runner.py:840-866):
+ * THE LOAD-BEARING DENOMINATOR (identical to the denominator Hindsight's
+ * published benchmark runner applies, keeping the numbers comparable):
  *
  *     correct    = count of valid verdicts graded correct
  *     invalid    = count of verdicts the judge could not be parsed for

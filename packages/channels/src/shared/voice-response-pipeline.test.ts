@@ -13,7 +13,7 @@ import {
 // redactErrorMessage is mocked with the REAL relocated semantics (URL→[URL],
 // Bearer/Authorization strip, 20+-char token→[REDACTED]) so the redaction
 // asserts below exercise the actual scrubber the pipeline imports from
-// @comis/core (NOT a pass-through stub) — the SEC-01 voice-out floor.
+// @comis/core (NOT a pass-through stub) — the voice-out redaction floor.
 // ---------------------------------------------------------------------------
 vi.mock("@comis/core", () => ({
   safePath: vi.fn((...segments: string[]) => segments.join("/")),
@@ -82,8 +82,8 @@ function createMockDeps(
       maxTextLength: 4096,
       outputFormats: undefined,
       providerFormatKey: "openai",
-      // OBS-01 voice-identity fields (Phase 196) — the resolved STT/TTS provider
-      // identity the wiring point threads into the pipeline for the §2.7 INFO line.
+      // Voice-identity fields — the resolved STT/TTS provider identity the
+      // wiring point threads into the pipeline for the completion INFO line.
       provider: "edge",
       keyless: true,
       model: "edge-tts",
@@ -479,9 +479,9 @@ describe("executeVoiceResponse", () => {
   });
 
   // -------------------------------------------------------------------
-  // OBS-01 §2.7 — extended voice-out completion INFO (Phase 196)
+  // Extended voice-out completion INFO — voice-identity fields
   // -------------------------------------------------------------------
-  it("logs the §17 voice fields (provider/keyless/model/costUsd) on the 'Voice response sent' INFO", async () => {
+  it("logs the voice-identity fields (provider/keyless/model/costUsd) on the 'Voice response sent' INFO", async () => {
     const deps = createMockDeps(); // ttsConfig: provider:edge, keyless:true, model:edge-tts
     const ctx = createMockCtx();
 
@@ -497,17 +497,17 @@ describe("executeVoiceResponse", () => {
         channelType: "telegram",
         durationMs: expect.any(Number),
         durationSecs: 5,
-        // OBS-01 extension
+        // voice-identity extension
         provider: "edge",
         keyless: true,
         model: "edge-tts",
-        costUsd: 0, // keyless records 0 EXPLICITLY (FLAG 4 — "free" is visible, not absent)
+        costUsd: 0, // keyless records 0 EXPLICITLY — "free" is visible, not absent
       }),
       "Voice response sent",
     );
   });
 
-  it("omits costUsd on a keyed provider (no per-call cost source; FLAG 4)", async () => {
+  it("omits costUsd on a keyed provider (no per-call cost source)", async () => {
     const deps = createMockDeps({
       ttsConfig: {
         autoMode: "inbound",
@@ -540,8 +540,8 @@ describe("executeVoiceResponse", () => {
   });
 
   // -------------------------------------------------------------------
-  // SEC-01 — the voice-OUT WARN branches redact credential-bearing errors
-  // (the Phase-196 carry-forward; invariant I8: no secret logged at any level).
+  // The voice-OUT WARN branches redact credential-bearing errors
+  // (invariant: no secret is logged at any level).
   // Each of the 3 failure branches (:263 synth, :321 payload, :347 send) must
   // route its err: field through redactErrorMessage (relocated to @comis/core).
   // -------------------------------------------------------------------

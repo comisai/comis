@@ -21,7 +21,7 @@ import { redactString, substitutePathsInString } from "@comis/observability";
  *   leaks into the trajectory via the prompting field.
  *
  * Currently no live config path populates `userPromptPrefixText` into the
- * executor (verified 2026-05-25). The scaffold is in place so future writers
+ * executor. The scaffold is in place so future writers
  * cannot bypass the redactor. When wired, pass the raw value via the
  * `userPromptPrefixText` field and the optional `pathOpts` for path
  * substitution context.

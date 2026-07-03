@@ -171,10 +171,10 @@ describe("Typed Graph Approval-Gate Integration", () => {
         // 1. Submit graph with an approval-gate node. Use the daemon's direct
         //    rpcCall (the in-process agent leg), NOT the gateway WS: an
         //    approval-gate graph must carry the caller channel context, and the
-        //    gateway STRIPS forged `_caller*` fields (ORIGIN-02 anti-forgery), so
+        //    gateway STRIPS forged `_caller*` fields (anti-forgery), so
         //    a gateway trigger has no announcement channel. The direct leg also
         //    carries `_capabilities` (orch:graph) the way createAgentRpcCall does
-        //    in production — the M1 (#236) cap gate now requires it.
+        //    in production — the capability gate (#236) now requires it.
         const execResult = (await handle.daemon.rpcCall("graph.execute", {
           nodes: [
             {

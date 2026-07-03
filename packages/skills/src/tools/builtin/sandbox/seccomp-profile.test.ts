@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the seccomp BPF-blob loader (JAIL-01).
+ * Unit tests for the seccomp BPF-blob loader.
  *
  * `loadSeccompProfileFd()` opens a PRECOMPILED raw-BPF blob (generated offline on
  * Linux via libseccomp `scmp_export_bpf` — bwrap `--seccomp` takes an open FD to
  * raw bytecode, NOT a JSON profile path) and returns an INHERITABLE fd, or `null`
- * when the blob is absent (degrade: buildArgs omits --seccomp; the other §4.7
- * controls hold). These cross-platform tests assert the honest absent-path
+ * when the blob is absent (degrade: buildArgs omits --seccomp; the other
+ * hardening controls hold). These cross-platform tests assert the honest absent-path
  * contract (null, never a throw); the real "the blob blocks a dangerous syscall"
  * assertion is the bwrap-hardening.linux.test.ts proof gate on the VPS.
  *
@@ -24,7 +24,7 @@ import {
   seccompBlobPath,
 } from "./seccomp-profile.js";
 
-describe("loadSeccompProfileFd (JAIL-01)", () => {
+describe("loadSeccompProfileFd — inheritable-fd loader contract", () => {
   it("returns null (never throws) when the BPF blob is absent", () => {
     // No blob ships in the macOS dev checkout (it is generated offline on
     // Linux), so the loader must degrade to null — buildArgs then omits
@@ -59,13 +59,13 @@ describe("loadSeccompProfileFd (JAIL-01)", () => {
   });
 
   it("closeSeccompProfileFd actually releases the descriptor (no fd leak)", () => {
-    // WR-04: the parent keeps its OWN copy of the (non-O_CLOEXEC) fd after the
+    // The parent keeps its OWN copy of the (non-O_CLOEXEC) fd after the
     // bwrap child forks, so the required `finally { closeSeccompProfileFd(fd) }`
     // discipline depends on close ACTUALLY releasing the descriptor — not merely
     // not-throwing. Prove the fd is genuinely closed: fstatSync on it after the
     // close must fail with EBADF (a leaked fd would still fstat cleanly). This is
-    // the property every 212 jailed spawn relies on to avoid exhausting the fd
-    // table over a long-running daemon.
+    // the property every jailed-spawn call site relies on to avoid exhausting
+    // the fd table over a long-running daemon.
     const dir = mkdtempSync(join(tmpdir(), "comis-seccomp-leak-"));
     try {
       const fd = openSync(join(dir, "blob"), "w");

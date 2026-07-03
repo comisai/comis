@@ -7,8 +7,8 @@
  * endpoints (/json/list, /json/version). These do NOT use WebSocket
  * for protocol messages -- Playwright handles that via connectOverCDP.
  *
- * Ported from Comis browser/cdp.ts + cdp.helpers.ts, stripped of
- * WebSocket CDP messaging, extension relay auth, and complex helpers.
+ * Scope is deliberately limited to HTTP CDP queries: no WebSocket CDP
+ * messaging, extension relay auth, or higher-level helpers.
  *
  * @module
  */

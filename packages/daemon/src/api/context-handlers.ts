@@ -3,14 +3,14 @@
 /**
  * Context (LCD lossless-store) operator-browse RPC handler module.
  *
- * Backs the web Context DAG browser (`packages/web/src/views/context-dag-browser.ts`),
- * which previously called `context.conversations` / `context.tree` via untyped
- * `.call()` against UNREGISTERED handlers — every call returned JSON-RPC -32601
- * and the view was 100% dead. This module registers the two methods (computed-key
- * `[Contract.method]:` form, so the bidirectional 1:1 architecture test resolves
- * them through `packages/core/src/api-contracts/context.ts`).
+ * Backs the web Context DAG browser (`packages/web/src/views/context-dag-browser.ts`):
+ * without this module its `context.conversations` / `context.tree` calls would hit
+ * unregistered methods and fail with JSON-RPC -32601, leaving the view dead. This
+ * module registers the two methods (computed-key `[Contract.method]:` form, so the
+ * bidirectional 1:1 architecture test resolves them through
+ * `packages/core/src/api-contracts/context.ts`).
  *
- * **Scope (R4 / WR-02).** Both methods are AGENT+TENANT scoped exactly like the
+ * **Scope.** Both methods are AGENT+TENANT scoped exactly like the
  * `rpc`-scoped memory reads: `agentId` comes from the dispatcher-injected
  * `_agentId` (falling back to `deps.defaultAgentId`), `tenantId` from
  * `deps.tenantId`. The caller cannot pass agentId/tenantId — they ride the
@@ -22,8 +22,8 @@
  * `contentPreview` per summary node and the per-node `taint` flag — surfaced for
  * a HUMAN operator dashboard (Lit text-escapes it), NEVER re-fed to a model. Full
  * per-node content recovery (the taint-sensitive `context.inspect`) and in-
- * conversation FTS (`context.searchByConversation`) are intentionally out of this
- * pass and remain unregistered.
+ * conversation FTS (`context.searchByConversation`) are intentionally
+ * unregistered.
  *
  * The dispatcher-injected `_X` internal fields are stripped via
  * `stripInternalFields` BEFORE `contract.request.parse(...)`; `_agentId` is read
@@ -70,7 +70,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
     // context.conversations — distinct conversations for THIS agent+tenant.
     // -----------------------------------------------------------------------
     [ContextConversationsContract.method]: async (rawParams) => {
-      // R4: agent from the dispatcher (never caller-supplied); tenant from deps.
+      // Agent from the dispatcher (never caller-supplied); tenant from deps.
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const userParams = stripInternalFields(rawParams);
       const params = ContextConversationsContract.request.parse(userParams);
@@ -127,7 +127,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
         return empty;
       }
 
-      // R4 read scope. sessionKey == conversationId in the current single-
+      // Agent+tenant read scope. sessionKey == conversationId in the current single-
       // session-per-conversation model; the LCD read filters on
       // (conversation_id, agent_id, tenant_id), so sessionKey is unused for
       // these reads but is required by the ContextStoreScope shape.

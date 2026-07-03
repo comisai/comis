@@ -106,7 +106,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 // ENV GATES -- read process.env ONLY at the test boundary (allowed in a .test.ts;
-// the globals rule scopes to src/**). Names pinned by the env-gating plan.
+// the globals rule scopes to src/**). Names shared verbatim with the sibling harnesses.
 const COMIS_BENCH = process.env.COMIS_BENCH; // the full ingest+recall+answer+judge run
 const LLAMA_MODEL_PATH = process.env.LLAMA_MODEL_PATH; // vector lane (embeddings)
 const LLAMA_RERANKER_MODEL_PATH = process.env.LLAMA_RERANKER_MODEL_PATH; // rerank lift
@@ -136,7 +136,7 @@ const HARNESS_VERSION = "phase-89-v1";
 /**
  * The control label — the explicit, immutable identifier under
  * which the Letta-style filesystem-baseline control row is recorded in the
- * manifest. Pinned as a constant so the run + gap report cite it
+ * manifest. Pinned as a constant so every run report cites it
  * verbatim and it can NEVER be confused with Comis's recall score.
  */
 const CONTROL_LABEL = "filesystem-baseline-full-context-control";
@@ -295,7 +295,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
   let datasetItemCount = 0;
   let embeddingEnabled = false;
 
-  // Provider-backed run nests on the answer/judge model env (the env-gating plan).
+  // Provider-backed run nests on the answer/judge model env (the two-tier gate above).
   const haveAnswer = !!ANSWER_PROVIDER && !!ANSWER_MODEL && !!ANSWER_API_KEY;
   const haveJudge = !!JUDGE_PROVIDER && !!JUDGE_MODEL && !!JUDGE_API_KEY;
 
@@ -811,7 +811,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     // each (worst case) still fits, while the per-call LLM_TIMEOUT_MS=120_000
     // AbortController (above) keeps bounding any single hung call — only the aggregate
     // serial loop is bounded by this ceiling. (Sharding by dataset across separate
-    // retrieval/qa invocations is the run plan's alternative; raising this `it` ceiling
+    // retrieval/qa invocations would also work; raising this `it` ceiling
     // is the minimal change that lets one `pnpm bench:memory qa` complete.)
     7_200_000,
   );

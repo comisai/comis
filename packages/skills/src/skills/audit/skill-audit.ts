@@ -47,7 +47,7 @@ export function emitSkillAudit(eventBus: TypedEventBus, opts: SkillAuditOptions)
   const classification = classifyAction(opts.action);
 
   // Emit the generic audit:event. Skill-audit records are the generic
-  // `audit` family (AUDIT-03 / E4) and keep a meaningful access-class
+  // `audit` family and keep a meaningful access-class
   // classification (read|mutate|destructive from classifyAction).
   const auditEvent = createAuditEvent({
     agentId: opts.agentId,

@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first coverage for `createDenialBreaker` (Phase 217-02, BREAK-01/BREAK-02).
+ * Coverage for `createDenialBreaker`.
  *
  * The breaker is a PURE per-`rootRunId` consecutive-floor-block counter (no
  * ClockPort, no throws, no side effects beyond its own content-free trip log):
  *   - `recordDenial(rootRunId)` increments and returns `{ tripped, consecutive }`,
  *     tripping EXACTLY on the crossing of `denialBreakerN` (`===`, never `>=` —
- *     the tool-retry-breaker.ts:559 trip-once discipline, so a later deny does
- *     not re-trip),
+ *     the same trip-once discipline as `tool-retry-breaker.ts`, so a later deny
+ *     does not re-trip),
  *   - `recordAllow(rootRunId)` resets the counter (a real allowed step happened),
- *   - `evict(rootRunId)` drops the counter (run-end/evict/kill — the WR-05
+ *   - `evict(rootRunId)` drops the counter (run-end/evict/kill — the
  *     per-root cleanup discipline so the map cannot grow unbounded).
  *
- * The chokepoint (Plan 05) is the SOLE driver: it calls recordDenial ONLY on a
+ * The chokepoint is the SOLE driver: it calls recordDenial ONLY on a
  * `CapabilityDeniedError` floor-block, recordAllow on the allow branch, and
  * evict at run termination — so the breaker holds no untrusted input and counts
  * only genuine floor-blocks.

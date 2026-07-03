@@ -8,7 +8,7 @@
  * browser-service; this tool is a thin RPC delegation layer.
  *
  * Security: Navigate and open actions validate URLs through the SSRF guard
- * before delegating to rpcCall (improvement over Comis).
+ * before delegating to rpcCall.
  *
  * @module
  */
@@ -22,7 +22,7 @@ import { BrowserToolSchema } from "./browser-tool-schema.js";
 import type { SanitizedImage } from "../../tools/integrations/image-sanitizer.js";
 import type { MediaPersistenceService } from "../../tools/media/media-persistence.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name. A
+// Activity label spec. Descriptor name == emitted name. A
 // tool-level label covers the gate; the browser action enum lives in
 // browser-tool-schema.ts and is not surfaced per-action here.
 registerActivityLabelSpec("browser", {

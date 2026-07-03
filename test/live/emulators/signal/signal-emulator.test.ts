@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Stage-A unit tests for the Signal wire backend `SignalEmulator`
- * (`signal-emulator.ts`, CHAN2-01, Phase 209).
+ * (`signal-emulator.ts`).
  *
  * Pure in-process HTTP/SSE/typed-verb tests — no daemon, no key, no real
  * network (the only "network" is loopback `fetch` against the emulator's own
  * `127.0.0.1:<port>`). The `SignalEmulator` is the fake signal-cli daemon the
- * REAL production Signal adapter hits over loopback HTTP; the rig (Plan 05/06)
+ * REAL production Signal adapter hits over loopback HTTP; the rig
  * boots the daemon pointed at it via `channels.signal.baseUrl`. These tests
  * assert the signal-cli wire surface the adapter consumes:
  *
@@ -16,7 +16,7 @@
  *     messageId,text}` oracle + returns `{ result:{ timestamp } }` the adapter
  *     reads as `messageId`), `sendReaction` (records the outbound reaction),
  *     `listAccounts` (the boot account list).
- *   - GET  /api/v1/events — the SSE inbound stream (Task 2 — the Signal analog
+ *   - GET  /api/v1/events — the SSE inbound stream (the Signal analog
  *     of Telegram's getUpdates long-poll).
  *
  * The structural twin of `tg-emulator.test.ts`: where Telegram mints a
@@ -82,7 +82,7 @@ async function rpc(
   return (await res.json()) as { jsonrpc?: string; id?: number; result?: unknown; error?: unknown };
 }
 
-describe("SignalEmulator — signal-cli wire surface on the http-backend base (CHAN2-01)", () => {
+describe("SignalEmulator — signal-cli wire surface on the http-backend base", () => {
   let emu: SignalEmulator;
   let apiRoot: string;
 
@@ -111,7 +111,7 @@ describe("SignalEmulator — signal-cli wire surface on the http-backend base (C
       expect(emu.caps.protocol).toBe("http");
       // The honest-degrade trigger — Signal has no inline buttons.
       expect(emu.caps.outbound.buttons).toBe(false);
-      // The WS1-relevant verb Signal DOES support.
+      // The verb Signal DOES support.
       expect(emu.caps.outbound.reactions).toBe(true);
     });
   });
@@ -242,7 +242,7 @@ describe("SignalEmulator — signal-cli wire surface on the http-backend base (C
 describe("SignalEmulator — built ON the http-backend base (SEC-01 source contract)", () => {
   it("imports the shared http-backend base and spins up NO bespoke node:http server", () => {
     const src = readFileSync(EMULATOR_SOURCE, "utf8");
-    // Built ON the base (success-criterion #5: composes createHttpBackend, not a
+    // Built ON the base (composes createHttpBackend, not a
     // bespoke server).
     expect(src).toMatch(/backends\/http-backend/);
     expect(src).not.toMatch(/createServer/);
@@ -261,7 +261,7 @@ describe("SignalEmulator — built ON the http-backend base (SEC-01 source contr
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — the SSE inbound (/api/v1/events) + injectMessage/injectReaction.
+// The SSE inbound (/api/v1/events) + injectMessage/injectReaction.
 //
 // The Signal analog of Telegram's getUpdates long-poll: the adapter pulls
 // inbound autonomously via a kept-open `GET /api/v1/events` SSE stream
@@ -325,7 +325,7 @@ async function openEvents(
   return { reader, decoder, pending };
 }
 
-describe("SignalEmulator — SSE inbound /api/v1/events + injectMessage (CHAN2-01 Task 2)", () => {
+describe("SignalEmulator — SSE inbound /api/v1/events + injectMessage", () => {
   let emu: SignalEmulator;
   let apiRoot: string;
 
@@ -359,9 +359,9 @@ describe("SignalEmulator — SSE inbound /api/v1/events + injectMessage (CHAN2-0
     expect(normalized?.channelType).toBe("signal");
     expect(normalized?.chatType).toBe("dm");
     // For a DM the mapper resolves channelId = senderId = sourceUuid ??
-    // sourceNumber ?? source — the uuid WINS (message-mapper.ts:31,34; the
-    // established 209-03 contract). The builder's default sourceUuid is the
-    // all-zero placeholder, so the DM channelId is that uuid, not the recipient.
+    // sourceNumber ?? source — the uuid WINS (message-mapper.ts:31,34). The
+    // builder's default sourceUuid is the all-zero placeholder, so the DM
+    // channelId is that uuid, not the recipient.
     expect(normalized?.senderId).toBe(envelope.sourceUuid);
     expect(normalized?.channelId).toBe(envelope.sourceUuid);
 
@@ -431,7 +431,7 @@ describe("SignalEmulator — SSE inbound /api/v1/events + injectMessage (CHAN2-0
     expect(envelope.dataMessage?.reaction?.emoji).toBe("👍");
     expect(envelope.dataMessage?.reaction?.targetSentTimestamp).toBe(targetTs);
 
-    // The REAL mapper classifies it as a reaction (the WS1-relevant react FLOW).
+    // The REAL mapper classifies it as a reaction (the react FLOW).
     const normalized = mapSignalToNormalized(envelope, BASE_URL);
     expect(normalized?.metadata.signalReaction).toBe(true);
     expect(normalized?.metadata.signalReactionEmoji).toBe("👍");
@@ -457,7 +457,7 @@ describe("SignalEmulator — SSE inbound /api/v1/events + injectMessage (CHAN2-0
   });
 });
 
-describe("SignalEmulator — stop() drains the SSE stream (CHAN2-01 / T-209-09)", () => {
+describe("SignalEmulator — stop() drains the SSE stream", () => {
   it("stop() ends an open /api/v1/events client so stop() resolves and does not hang", async () => {
     const emu = createSignalEmulator();
     const { apiRoot } = await emu.start();
@@ -482,7 +482,7 @@ describe("SignalEmulator — stop() drains the SSE stream (CHAN2-01 / T-209-09)"
 });
 
 // A compile-time use of the imported `SignalEnvelope` type + the mapper so the
-// I4 wire-type import is exercised at the module top (the SSE tests above also
+// wire-type import is exercised at the module top (the SSE tests above also
 // consume both at runtime).
 const _typeWitness: (e: SignalEnvelope) => ReturnType<typeof mapSignalToNormalized> = (e) =>
   mapSignalToNormalized(e, BASE_URL);

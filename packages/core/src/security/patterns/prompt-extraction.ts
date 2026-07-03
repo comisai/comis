@@ -3,7 +3,7 @@
  * Prompt extraction detection patterns.
  *
  * Detects attempts by the LLM to reveal its system prompt or original
- * instructions in its output. Originally from output-guard.ts.
+ * instructions in its output. Consumed by output-guard.ts.
  *
  * @module prompt-extraction
  */

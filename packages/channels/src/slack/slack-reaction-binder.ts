@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slack reaction-add binder (REACT-01, Verified Learning WS1).
+ * Slack reaction-add binder.
  *
  * Co-located out of slack-adapter.ts (which keeps only the `reactionHandlers`
  * array + the bind call + the `onReaction` registration). Registers
@@ -11,13 +11,13 @@
  * SHORT-NAME vs UNICODE: Slack delivers `event.reaction` as a short name
  * (e.g. "thumbsup"), NOT the Unicode `👍` that the default `reactionMap` holds.
  * The binder passes the RAW short name through unchanged — the daemon-side
- * reactionMap match (Plan 04) owns reconciling Slack short names against the
- * map (DECISION deferred to Plan 04 where the map lives). Do not normalize here.
+ * reactionMap match owns reconciling Slack short names against the map
+ * (normalization belongs where the map lives). Do not normalize here.
  *
  * The reactorId is UNTRUSTED inbound; no trust is assigned here. Fanout is
  * fire-and-forget so one throwing handler cannot crash the Bolt event loop.
  *
- * OPERATOR SETUP (DOC-01): Slack delivers nothing unless the app holds the
+ * OPERATOR SETUP: Slack delivers nothing unless the app holds the
  * `reactions:read` scope + a `reaction_added` event subscription (silent like
  * Telegram's allowed_updates) — documented as operator setup, not a code gate.
  *
@@ -34,7 +34,7 @@ import type { ComisLogger, NormalizedReaction, ReactionHandler } from "@comis/co
 export interface SlackReactionAddedEvent {
   /** The reacting user's Slack id (Uxxxx). */
   user: string;
-  /** The reaction SHORT NAME (e.g. "thumbsup") — NOT Unicode (mapped at Plan 04). */
+  /** The reaction SHORT NAME (e.g. "thumbsup") — NOT Unicode (the daemon-side reactionMap reconciles it). */
   reaction: string;
   /** The reacted-to item: a message identified by its ts + channel. */
   item: { ts: string; channel: string };
@@ -90,7 +90,7 @@ export function bindSlackReactions(
     const normalized: NormalizedReaction = {
       messageId: event.item.ts,
       reactorId: event.user,
-      // RAW Slack short name — the daemon reactionMap match (Plan 04) reconciles it.
+      // RAW Slack short name — the daemon-side reactionMap match reconciles it.
       emoji: event.reaction,
       channelType: "slack",
       channelId: event.item.channel,

@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `standalone-rig.test.ts` — the CLI-01 discover-or-spawn launcher
- * (`startStandaloneRig`, Phase 205, Plan 04).
+ * (`startStandaloneRig`).
  *
- * Two tiers, the 204 `isLive` split:
+ * Two tiers, split by `isLive`:
  *
  *   • DETERMINISTIC (always runs, no daemon, no network): the discover-or-spawn
  *     DECISION via injected `probeFn` / `spawnFn` seams —
  *       - a recorded handle whose `/health` probes TRUE → `{ reused: true }`,
- *         the spawn function NEVER called (no second daemon over a healthy one —
- *         T-205-12);
+ *         the spawn function NEVER called (no second daemon over a healthy one);
  *       - no handle (or a dead one whose probe is FALSE) → SPAWNS, and the 0600
  *         handle file is written (`writeHandle`).
  *
@@ -144,7 +143,7 @@ describe("startStandaloneRig (deterministic) — discover-or-spawn decision", ()
   });
 
   // -------------------------------------------------------------------------
-  // DETACHED MODE (Option A, Plan 208-08) — the cold-shell cross-process rig.
+  // DETACHED MODE — the cold-shell cross-process rig.
   //
   // When `detached: true`, the launcher spawns a DETACHED subprocess
   // (`rig-daemon.ts`) that OUTLIVES the launching process, and records a handle

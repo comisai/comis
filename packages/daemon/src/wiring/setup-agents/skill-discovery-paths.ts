@@ -14,8 +14,8 @@
  * `discoveryPaths` (e.g. `["/srv/team-skills"]`) REPLACES that default, silently dropping the
  * daemon's own bundled prompt skills: they're seeded on disk but never discovered, so a
  * description-matched skill like `claude-code` never surfaces into `<available_skills>` and the agent
- * can't follow it (webhook-claude-cli-tdd-20260630-rerun: a leftover `discoveryPaths:[<sim-dir>]`
- * from a prior run hid claude-code/codex/gsd-builder/skill-creator entirely). Force-including the
+ * can't follow it (a leftover `discoveryPaths:[<custom-dir>]` from a prior run can
+ * hide claude-code/codex/gsd-builder/skill-creator entirely). Force-including the
  * install target makes the bundled skills robust to any `discoveryPaths` override, mirroring how the
  * per-agent workspace dir is always prepended.
  *

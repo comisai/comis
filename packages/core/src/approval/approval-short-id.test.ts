@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { mintApprovalShortId } from "./approval-short-id.js";
 
-// §6.4.1: the approval-gate mints a 12-char base62 callback-safe id
+// The approval-gate mints a 12-char base62 callback-safe id
 // drawn from a CSPRNG. These assertions pin shape, charset, length, and
 // non-trivial entropy (collision-freedom across a small sample).
 

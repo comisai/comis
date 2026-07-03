@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A unit tests for the Phase 145 (SEC) shared harness `sec-config.ts`.
+ * Stage-A unit tests for the SEC shared harness `sec-config.ts`.
  *
  * Proves each fixture has its INTENDED effect against the REAL product primitives
  * (validateMemoryWrite, detectSuspiciousPatterns) + the rig's secret scanner
- * (assertNoSecrets) — so the Wave-2 SEC scenarios can rely on "this fixture WILL
+ * (assertNoSecrets) — so the SEC scenarios can rely on "this fixture WILL
  * fire the callback / WILL classify critical" without re-deriving it.
  *
  * Pure: no daemon, no key, no network.

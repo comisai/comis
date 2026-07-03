@@ -10,7 +10,7 @@
  * control returns the whole "filesystem". If a full-dump baseline ties/beats
  * Comis's ranked recall on a benchmark, the *benchmark* is weak (exactly how
  * Letta showed a filesystem agent scored 74.0% on LoCoMo, above Mem0's
- * self-reported 68.5%; .planning/MEMORY_BENCHMARK_CREDIBILITY.md TL;DR).
+ * self-reported 68.5%).
  *
  * UNGATED, default-CI: pure deterministic string construction (no clock, no I/O,
  * no provider). Imports `filesystem-baseline.ts` so it is never a 0%-coverage

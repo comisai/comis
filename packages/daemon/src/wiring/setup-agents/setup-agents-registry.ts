@@ -111,11 +111,11 @@ export interface AgentsResult {
   /** Daemon-level OAuthCredentialStore handle. Threaded into RpcDispatchDeps so agents.update
    * can validate oauthProfiles patches via has(). */
   oauthCredentialStore: OAuthCredentialStorePort;
-  /** Per-agent OAuthTokenManager instances (184) — the SAME managers the executors use (no 2nd
+  /** Per-agent OAuthTokenManager instances — the SAME managers the executors use (no 2nd
    * instance). daemon.ts threads the DEFAULT agent's into buildImageGenBundle → the Codex image
-   * adapter (CDX-01). Only OAuth-configured agents appear (setupSingleAgent's `oauth` is undefined). */
+   * adapter. Only OAuth-configured agents appear (setupSingleAgent's `oauth` is undefined). */
   oauthManagers: Map<string, OAuthTokenManager>;
-  /** FLAG-3: per-agent pi AuthStorage (piAuthStorage) → the memory.ask dialectic OAuth resolver's
+  /** Per-agent pi AuthStorage (piAuthStorage) → the memory.ask dialectic OAuth resolver's
    *  runtime-override target. Mirrors oauthManagers (every agent has one). */
   authStorages: Map<string, AuthStorage>;
   /** Session-scoped trajectory recorder registry. Daemon shutdown MUST call `closeAll()` to
@@ -170,17 +170,17 @@ export async function setupAgents(deps: {
   /** Entity-associative store. Threaded into each per-agent createPiExecutor
    *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
   entityStore?: import("@comis/core").MemoryEntityStore;
-  /** LCD lossless context store (Phase 128). Threaded into each per-agent
+  /** LCD lossless context store. Threaded into each per-agent
    *  createPiExecutor like entityStore — as `contextStore` (the dag-mode assembly
    *  read path -> context-engine.ts `dag` branch). Built in setup-memory on the
    *  shared db (`createLcdStore(db)`); injected as the core `ContextStorePort` TYPE
    *  (agent↛memory cut). Opt-in (`contextEngine.version: "dag"`); default pipeline. */
   lcdStore?: import("@comis/core").ContextStorePort;
-  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker; threaded
+  /** The daemon-owned per-tenant summarizer spend+breaker; threaded
    *  into each per-agent createPiExecutor -> setupContextEngine (the getSummarizerDeps
    *  leaf-seam gate). ONE daemon instance, partitions by tenantId. */
-  summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker; spendAccumulator?: import("@comis/agent").SpendAccumulator; // spendAccumulator = Phase 177 kill-switch: the ONE daemon-wide accumulator (setupObservability), threaded per-agent so every bridge holds the SAME reference.
-  /** Phase 213-08 (BUDGET-01/02): the late-bound per-root budget holder + rootRunId
+  summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker; spendAccumulator?: import("@comis/agent").SpendAccumulator; // spendAccumulator = the daemon-wide spend kill-switch: the ONE accumulator (setupObservability), threaded per-agent so every bridge holds the SAME reference.
+  /** The late-bound per-root budget holder + rootRunId
    *  resolver, forwarded into each SingleAgentDeps (every bridge holds the SAME
    *  holder, populated by the cap layer); absent ⇒ the per-root reserve is a no-op. */
   boundedAutonomyBudget?: import("@comis/agent").BoundedAutonomyBudgetHolder;
@@ -200,15 +200,13 @@ export async function setupAgents(deps: {
   /** Pinned-memory store (the `MemoryPinnedStore` face of `memoryAdapter`). Threaded into
    *  each per-agent createPiExecutor so the recall pipeline's Step-0 pinned-first lane can fire.
    *  Without this the lane gate is always false and pinned memories are silently absent from every
-   *  agent response (R6 blocker). The same `SqliteMemoryAdapter` already passed as `memoryPort`
+   *  agent response (a blocking defect). The same `SqliteMemoryAdapter` already passed as `memoryPort`
    *  implements `MemoryPinnedStore`; the daemon supplies it here as the segregated port TYPE.
    *  Built in setup-memory on the shared db. */
   pinnedStore?: import("@comis/core").MemoryPinnedStore;
-  provenanceStore?: import("@comis/core").LcdProvenanceReadStore; // LCD provenance READ store (Phase 173, DIST-03) → createPiExecutor → createMemoryRecall down-weighting (built-but-not-wired fix); built in setup-memory; core TYPE only (agent↛memory cut)
-  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
-  //  social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
-  learnedSkillStore?: import("@comis/core").MentalModelStorePort; // v2.26 SURFACE-01/03: forwarded into each SingleAgentDeps -> the getPromptSkillsXml surface seam; segregated port TYPE (agent↛memory cut); default-OFF
-  learnedSkillSurfaceRegistry?: import("./learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // WR-01: shared per-agent surface registry; each agent registers its refresh closure so the promote/demote loop re-refreshes it (next-session pickup)
+  provenanceStore?: import("@comis/core").LcdProvenanceReadStore; // LCD provenance READ store → createPiExecutor → createMemoryRecall down-weighting; built in setup-memory; core TYPE only (agent↛memory cut)
+  learnedSkillStore?: import("@comis/core").MentalModelStorePort; // forwarded into each SingleAgentDeps -> the getPromptSkillsXml surface seam; segregated port TYPE (agent↛memory cut); default-OFF
+  learnedSkillSurfaceRegistry?: import("./learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // shared per-agent surface registry; each agent registers its refresh closure so the promote/demote loop re-refreshes it (next-session pickup)
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -251,15 +249,15 @@ export async function setupAgents(deps: {
    * block is a no-op.
    */
   obsStore?: import("@comis/memory").ObservabilityStore;
-  /** Ollama served context-window probe result from bootAgents (CWF-03).
+  /** Ollama served context-window probe result from bootAgents.
    *  Map from provider config key (e.g. "qwen36-local") to discovered num_ctx.
    *  Absent → probe not run or all failed; executors fall back to configured window. */
   servedWindowByProvider?: Map<string, number>;
-  /** KNOB-01/03: daemon-owned collector — one served-vs-configured comparison per
+  /** Daemon-owned collector — one served-vs-configured comparison per
    *  provider; daemon.ts derives servedBelowConfiguredCount from it at the posture
    *  write (one comparison, two surfaces — no drift). */
   servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
-  /** FLOOR-01: daemon-owned collector of per-agent boot window info (registry-mirrored
+  /** Daemon-owned collector of per-agent boot window info (registry-mirrored
    *  configured window + reconciled effective window + profile) — consumed by the
    *  daemon's viable-floor loop after setupTools. */
   agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
@@ -329,9 +327,9 @@ export async function setupAgents(deps: {
   // into ChannelsDeps.executionPlanPort. Same reference across ACP + chat
   // (Pitfall 1 single-shared-holder invariant).
   const executionPlanPorts = new Map<string, import("@comis/core").ExecutionPlanPort>();
-  // Per-agent OAuthTokenManager map (184) — see AgentsResult.oauthManagers.
+  // Per-agent OAuthTokenManager map — see AgentsResult.oauthManagers.
   const oauthManagers = new Map<string, OAuthTokenManager>();
-  // FLAG-3: per-agent pi AuthStorage map — see AgentsResult.authStorages.
+  // Per-agent pi AuthStorage map — see AgentsResult.authStorages.
   const authStorages = new Map<string, AuthStorage>();
 
   // Resolve sub-agent tool names from config for delegation awareness
@@ -443,7 +441,7 @@ export async function setupAgents(deps: {
     entityStore: deps.entityStore,
     lcdStore: deps.lcdStore,
     summarizerSpendBreaker: deps.summarizerSpendBreaker, spendAccumulator: deps.spendAccumulator,
-    // Phase 213-08 (BUDGET-01/02): forward the per-root budget holder + resolver per-agent (daemon-wide REF; absent ⇒ no-op).
+    // Forward the per-root budget holder + resolver per-agent (daemon-wide REF; absent ⇒ no-op).
     ...(deps.boundedAutonomyBudget ? { boundedAutonomyBudget: deps.boundedAutonomyBudget } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
     temporalStore: deps.temporalStore,
@@ -481,9 +479,9 @@ export async function setupAgents(deps: {
     // Session-scoped trajectory recorder registry — threaded into every
     // per-agent executor so the same registry is shared across agents.
     trajectoryRegistry,
-    // CWF-03: Ollama served-window probe result from bootAgents.
+    // Ollama served-window probe result from bootAgents.
     servedWindowByProvider: deps.servedWindowByProvider,
-    // KNOB-01/03 + FLOOR-01: the daemon-owned boot-honesty collector maps —
+    // The daemon-owned boot-honesty collector maps —
     // populated per-agent in setupSingleAgent beside the pi ModelRegistry.
     servedWindowComparisons: deps.servedWindowComparisons,
     agentBootWindowInfo: deps.agentBootWindowInfo,
@@ -511,8 +509,8 @@ export async function setupAgents(deps: {
     skillRegistries.set(agentId, result.skillRegistry);
     toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
     executionPlanPorts.set(agentId, result.executionPlanPort);
-    if (result.oauth) oauthManagers.set(agentId, result.oauth); // 184: per-agent OAuth manager (when present)
-    if (result.authStorage) authStorages.set(agentId, result.authStorage); // FLAG-3: per-agent pi AuthStorage
+    if (result.oauth) oauthManagers.set(agentId, result.oauth); // per-agent OAuth manager (when present)
+    if (result.authStorage) authStorages.set(agentId, result.authStorage); // per-agent pi AuthStorage
   }
 
   const defaultAgentId = routingConfig.defaultAgentId;
@@ -578,8 +576,8 @@ export async function setupAgents(deps: {
     // daemon threads the DEFAULT agent's holder into ChannelsDeps so the
     // chat plan-stream reads from the SAME object SEP publishes into.
     executionPlanPorts,
-    oauthManagers, // 184: per-agent OAuth managers → buildImageGenBundle (Codex image adapter)
-    authStorages, // FLAG-3: per-agent pi AuthStorage → memory.ask dialectic OAuth resolver
+    oauthManagers, // per-agent OAuth managers → buildImageGenBundle (Codex image adapter)
+    authStorages, // per-agent pi AuthStorage → memory.ask dialectic OAuth resolver
   };
 }
 

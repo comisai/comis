@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the v2.31 Reflection delta-ops (`@comis/core` reflection-port):
+ * Unit tests for the Reflection delta-ops (`@comis/core` reflection-port):
  * `applyDeltaOps` (the PURE add/replace/remove apply over the `structuredBody`
  * section-AST) + `renderStructuredBody` (the AST → markdown body projection).
  *
- * THE LOAD-BEARING ASSERTION (REFLECT-04, Hindsight's drift-killer): a section
+ * THE LOAD-BEARING ASSERTION (the drift-killer): a section
  * NOT targeted by an op is copied BYTE-IDENTICAL — i.e. the SAME object reference
  * survives into the result (`result.sections[i] === prev.sections[i]`). Reference
  * identity IS the byte-identity proof: a reflect refresh that touches one section
@@ -36,7 +36,7 @@ function makePrev(): StructuredBody {
   };
 }
 
-describe("applyDeltaOps — byte-identity (reference) of untargeted sections (REFLECT-04)", () => {
+describe("applyDeltaOps — byte-identity (reference) of untargeted sections", () => {
   it("replace touches ONLY the target; s1 and s3 are the SAME object references as prev (the drift-killer)", () => {
     const prev = makePrev();
     const ops: DeltaOp[] = [

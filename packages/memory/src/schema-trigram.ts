@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trigram twin DDL — FTS-01's table half (Phase 180).
+ * Trigram twin DDL — the trigram-search table half.
  *
  * Three SELF-CONTAINED FTS5 trigram twins that mirror the lossless base tables,
  * plus the base-table delete-mirror triggers and the WHEN-guarded memories
@@ -10,8 +10,8 @@
  *   - `lcd_summaries_fts_tri`  ← lcd_summaries  (conversation_id/agent_id/summary_id UNINDEXED)
  *   - `memory_fts_tri`         ← memories       (no scope columns — the rowid-JOIN lane)
  *
- * The twins are the substrate every wave-2 search/write plan targets: appends
- * write `normalizeForSearch(content)` into them (TS-side, plans 180-05/06) so a
+ * The twins are the substrate the search/write paths target: appends
+ * write `normalizeForSearch(content)` into them (TS-side) so a
  * script-routed `MATCH` can read Hebrew/Arabic/Cyrillic/CJK; the base-table
  * triggers below close the ~5 delete/update bypass sites BY CONSTRUCTION — a
  * delete needs no normalizer, and a missed TS write site can never leave
@@ -22,11 +22,11 @@
  *
  * These twins store their OWN `content` (no `content=`/`content_rowid=` option).
  * An external-content twin would expose the FTS5 `'rebuild'` command, which
- * re-reads the RAW base-table text — silently UNDOING the FTS-02 normalization
- * the twins exist to hold. The doctor backfill (plan 180-08) instead feeds
+ * re-reads the RAW base-table text — silently UNDOING the normalization
+ * the twins exist to hold. The doctor backfill instead feeds
  * normalized text explicitly. These twins are NOT content-free shadow tables —
- * storing their own content is exactly the G10 mechanism (orphaned rows stay
- * matchable until a SCOPED DELETE removes them — plan 180-05's wipe-list close).
+ * storing their own content is exactly the mechanism that keeps orphaned rows
+ * matchable until a SCOPED DELETE removes them (the scoped-wipe path).
  *
  * ## Per-block boot safety (each twin CREATE + its trigger(s) are ONE block)
  *
@@ -35,11 +35,10 @@
  * trigger(s): a base-table existence guard + the CREATE-then-triggers in a single
  * `db.exec` means a failed twin CREATE (trigram absent) skips that twin's
  * triggers — no orphan trigger can ever reference a missing twin and break a
- * base-table DELETE (T-180-02-02/04). Search probes availability at query time
- * (`isTriAvailable`, plan 180-05) and degrades to the scan floors; it never
+ * base-table DELETE. Search probes availability at query time
+ * (`isTriAvailable`) and degrades to the scan floors; it never
  * hard-fails. Forward-only: every CREATE is guarded re-run-safe, no DROP /
- * down-migration (design §9). Static SQL, no interpolated identifiers
- * (T-131-02-01).
+ * down-migration. Static SQL, no interpolated identifiers.
  *
  * @module
  */
@@ -48,7 +47,7 @@ import type Database from "better-sqlite3";
 
 /** True iff a base table `name` exists — so a twin block is skipped wholesale on
  *  a partial-schema host (the table + its triggers stay paired; no orphan twin
- *  table and no orphan trigger). Static SQL, bound param (T-131-02-01). */
+ *  table and no orphan trigger). Static SQL, bound param. */
 function tableExists(db: Database.Database, name: string): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -78,7 +77,7 @@ export function ensureTrigramTwins(db: Database.Database): void {
         CREATE VIRTUAL TABLE IF NOT EXISTS lcd_messages_fts_tri USING fts5(
           content,
           conversation_id UNINDEXED,
-          agent_id UNINDEXED,          -- R4: per-agent read isolation (WR-02); MATCH … AND agent_id = ?
+          agent_id UNINDEXED,          -- per-agent read isolation; MATCH … AND agent_id = ?
           message_id UNINDEXED,
           tokenize='trigram'
         );
@@ -102,7 +101,7 @@ export function ensureTrigramTwins(db: Database.Database): void {
         CREATE VIRTUAL TABLE IF NOT EXISTS lcd_summaries_fts_tri USING fts5(
           content,
           conversation_id UNINDEXED,
-          agent_id UNINDEXED,          -- R4: per-agent read isolation (WR-02); MATCH … AND agent_id = ?
+          agent_id UNINDEXED,          -- per-agent read isolation; MATCH … AND agent_id = ?
           summary_id UNINDEXED,
           tokenize='trigram'
         );
@@ -121,14 +120,14 @@ export function ensureTrigramTwins(db: Database.Database): void {
 
   // ── Block 3: memories twin + delete-mirror trigger + WHEN-guarded update ─────
   // The memory twin carries NO scope columns — the LTM lane scopes via a
-  // rowid-JOIN to `memories` plus the existing post-fusion tenant/agent filters
-  // (plans 180-05/06). It also carries TWO triggers (delete + update); the
+  // rowid-JOIN to `memories` plus the existing post-fusion tenant/agent filters.
+  // It also carries TWO triggers (delete + update); the
   // WHEN-guarded update is mandatory: a plain `AFTER UPDATE OF content` fires on
   // the consolidation proof-only fold `content = COALESCE(NULL, content)`
-  // (probe-verified, RESEARCH correction #3), which would silently de-index a
+  // (probe-verified), which would silently de-index a
   // memory on every consolidation. The WHEN guard below de-indexes ONLY when the
   // content column value actually changed; the normalized re-insert is
-  // TS-side (plan 180-06), and its failure leaves the row de-indexed (the
+  // TS-side, and its failure leaves the row de-indexed (the
   // fail-safe direction), never stale-indexed.
   if (tableExists(db, "memories")) {
     try {

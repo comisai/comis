@@ -39,7 +39,7 @@ vi.mock("../client/rpc-client.js", async (importOriginal) => {
 });
 
 // Mock withSpinner to pass-through (no ora spinner in tests).
-// W14: mock the offline assembler so fallback tests run without a data dir.
+// Mock the offline assembler so fallback tests run without a data dir.
 vi.mock("../util/offline-obs.js", () => ({
   assembleFleetHealthReportOffline: vi.fn(),
   resolveOfflineDataDir: vi.fn(() => "/fake/.comis"),
@@ -64,7 +64,7 @@ const FAKE_REPORT = {
   schemaVersion: 1 as const,
   windowHours: 12,
   sessions: { total: 40, degraded: 22, degradedRate: 0.55 },
-  // QT2/QT3 — the fleet degradation detector. Required on FleetHealthReportSchema
+  // The fleet degradation detector. Required on FleetHealthReportSchema
   // (the real callTyped parses the response), so every fixture must carry it.
   // Intentionally NOT pre-sorted (output_starved < context_exhausted by count) so
   // the render test proves the renderer sorts count-desc, not insertion-order.
@@ -276,7 +276,7 @@ describe("comis fleet with an RPC error prints error and exits with code 1", () 
   });
 });
 
-describe("comis fleet table view does not render a misleading '$X · 0 tok' line when A3 degrades (WR-03)", () => {
+describe("comis fleet table view does not render a misleading '$X · 0 tok' line when the token read degrades", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -291,10 +291,11 @@ describe("comis fleet table view does not render a misleading '$X · 0 tok' line
     exitSpy.restore();
   });
 
-  it("omits the contradictory '· 0 tok' when costUsd is non-zero but the A3 token read degraded", async () => {
-    // WR-03: cost.costUsd is A1-sourced (session-summary store), cost.totalTokens
-    // is A3-sourced (session-index files). When A3 degrades (daysMissing > 0) but
-    // A1 survives, the report carries a real costUsd alongside totalTokens: 0 —
+  it("omits the contradictory '· 0 tok' when costUsd is non-zero but the token read degraded", async () => {
+    // cost.costUsd is sourced from the session-summary store; cost.totalTokens
+    // comes from the session-index files. When the session-index read degrades
+    // (daysMissing > 0) but the session-summary store survives, the report
+    // carries a real costUsd alongside totalTokens: 0 —
     // the prior render printed "$4.2 · 0 tok", which reads as a data bug. The
     // coverage block is the honest signal. After the fix the render must NOT emit
     // the "· 0 tok" contradiction and must surface the degraded-coverage note.
@@ -320,7 +321,7 @@ describe("comis fleet table view does not render a misleading '$X · 0 tok' line
     await program.parseAsync(["node", "test", "fleet"]);
 
     const output = getSpyOutput(consoleSpy.log);
-    // The surviving A1 cost is still shown.
+    // The surviving session-summary cost is still shown.
     expect(output).toContain("$4.2");
     // The misleading "0 tok" contradiction must NOT be rendered.
     expect(output).not.toContain("0 tok");
@@ -328,7 +329,7 @@ describe("comis fleet table view does not render a misleading '$X · 0 tok' line
     expect(output.toLowerCase()).toContain("tokens unavailable");
   });
 
-  it("still renders the normal '$X · N tok' line when the A3 token read is healthy", async () => {
+  it("still renders the normal '$X · N tok' line when the session-index token read is healthy", async () => {
     // Coverage clean (or absent) + a real token total → the normal combined line.
     const client: RpcClient = {
       call: () => Promise.resolve(FAKE_REPORT), // totalTokens 735800, no coverage
@@ -347,7 +348,7 @@ describe("comis fleet table view does not render a misleading '$X · 0 tok' line
   });
 });
 
-describe("comis fleet table view renders the degraded-by-cause breakdown (QT2/QT3) and omits it when empty", () => {
+describe("comis fleet table view renders the degraded-by-cause breakdown and omits it when empty", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -365,8 +366,8 @@ describe("comis fleet table view renders the degraded-by-cause breakdown (QT2/QT
   it("renders 'Degraded by cause:' sorted count-desc (then name-asc) when degradedByCause is non-empty", async () => {
     // FAKE_REPORT.degradedByCause is { output_starved: 9, context_exhausted: 13 }
     // — insertion order puts output_starved first, but the render must sort by
-    // count DESC so context_exhausted (13) leads. Pre-fix the renderer emitted no
-    // degraded-by-cause line at all, so this FAILS on the pre-patch code (RED).
+    // count DESC so context_exhausted (13) leads. A renderer that skipped the
+    // degraded-by-cause line entirely would also fail this test.
     const { client } = captureClient();
     vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
 
@@ -404,7 +405,7 @@ describe("comis fleet table view renders the degraded-by-cause breakdown (QT2/QT
   });
 });
 
-describe("comis fleet table view renders the autonomy block (FLEET-01/02/04) and omits it when absent", () => {
+describe("comis fleet table view renders the autonomy block and omits it when absent", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -419,7 +420,7 @@ describe("comis fleet table view renders the autonomy block (FLEET-01/02/04) and
     exitSpy.restore();
   });
 
-  // The autonomy block (Plan 03's FleetHealthReportSchema.autonomy?) — counts +
+  // The autonomy block (FleetHealthReportSchema.autonomy?) — counts +
   // the worst run's id ONLY. Populated so the render's Autonomy line + the
   // copy-pasteable `comis explain <worstRootRunId>` drill-down line both fire.
   const REPORT_WITH_AUTONOMY = {
@@ -431,7 +432,7 @@ describe("comis fleet table view renders the autonomy block (FLEET-01/02/04) and
       revoked: 1,
       killed: 0,
       breakerTrips: 1,
-      // FLEET-02 (Phase 220-05): the capability-denial breaker trip count, separable
+      // The capability-denial breaker trip count, separable
       // from the tool-failure `breakerTrips` above.
       denialBreakerTrips: 2,
       budgetBreaches: 0,
@@ -441,8 +442,8 @@ describe("comis fleet table view renders the autonomy block (FLEET-01/02/04) and
   };
 
   it("renders the 'Autonomy:' line + the copy-pasteable 'comis explain <worstRootRunId>' drill-down when the block is present", async () => {
-    // Pre-fix the renderer emitted NO autonomy line at all (the block was only on
-    // --format json), so this FAILS on the pre-patch code (RED).
+    // The autonomy block must reach the TABLE view, not only --format json —
+    // a renderer that emits no Autonomy line fails this test.
     const client: RpcClient = {
       call: () => Promise.resolve(REPORT_WITH_AUTONOMY),
       close: () => {},
@@ -464,11 +465,11 @@ describe("comis fleet table view renders the autonomy block (FLEET-01/02/04) and
     expect(output).toContain("revoked=1");
     expect(output).toContain("killed=0");
     expect(output).toContain("breaker=1");
-    // FLEET-02 (Phase 220-05): the capability-denial breaker count renders SEPARATELY
+    // The capability-denial breaker count renders SEPARATELY
     // from the tool-failure breaker (so a denial-breaker-aborted run is fleet-visible).
     expect(output).toContain("denialBreaker=2");
     expect(output).toContain("budgetBreaches=0");
-    // FLEET-04: the worst-run drill-down line names `comis explain <rootRunId>`.
+    // The worst-run drill-down line names `comis explain <rootRunId>`.
     expect(output).toContain("comis explain root-2f9c1a");
     // Content-free: the worst run is named by its id only — no body/reason leaks
     // (the block carries no free-text field to leak in the first place).
@@ -569,10 +570,10 @@ describe("registerFleetCommand registers a command named 'fleet', DISTINCT from 
 });
 
 // ---------------------------------------------------------------------------
-// W14 (obs-llm-troubleshooting): offline fallback wiring.
+// Offline fallback wiring.
 // ---------------------------------------------------------------------------
 
-describe("comis fleet offline fallback (W14)", () => {
+describe("comis fleet offline fallback", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 

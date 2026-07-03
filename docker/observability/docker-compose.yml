@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# One-command Prometheus + Grafana stand-up for Comis's opt-in /metrics surface
-# (PROM-03; design §6 WS7). Brings up Prometheus (scraping a Comis daemon's
+# One-command Prometheus + Grafana stand-up for Comis's opt-in /metrics surface.
+# Brings up Prometheus (scraping a Comis daemon's
 # /metrics on the docker host) + Grafana (auto-provisioned with the Comis
 # datasource + the 5 dashboards-as-code).
 #
@@ -15,7 +15,7 @@
 # host.docker.internal:9464 — it deliberately does NOT start the daemon (the
 # daemon's lifecycle, data dir, and secrets are the operator's, not this stack's).
 #
-# DEFERRED (honestly): the LIVE `docker compose up` end-to-end (real Prometheus
+# NOT CI-COVERED: the LIVE `docker compose up` end-to-end (real Prometheus
 # scraping a real daemon, real Grafana render, the exemplar→`comis explain`
 # click-through) is operator/Linux-verified — it needs a live daemon emitting
 # /metrics. The in-repo test (test/architecture/grafana-dashboard-metrics.test.ts

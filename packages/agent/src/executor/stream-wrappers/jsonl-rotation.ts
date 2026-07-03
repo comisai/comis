@@ -2,9 +2,9 @@
 /**
  * Shared JSONL append + rotation helper.
  *
- * The legacy api-payload-trace writer relies on this rotation logic
+ * The api-payload-trace writer relies on this rotation logic
  * — kept in this module so both the api-payload trace and any future
- * legacy-style JSONL trace can share the size/rotation handling.
+ * sync-fs JSONL trace can share the size/rotation handling.
  *
  * Use `@comis/observability/cache-trace/*` for new artifacts. This helper
  * is intentionally a thin wrapper around sync fs primitives — the

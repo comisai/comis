@@ -93,7 +93,7 @@ describe("ORCH-04 Stage-B — per-agent isolation (daemon + 2 agents, no LLM)", 
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // sendTurn may be called in this block — "JSON-RPC method error" is expected
@@ -102,7 +102,7 @@ describe("ORCH-04 Stage-B — per-agent isolation (daemon + 2 agents, no LLM)", 
     // billing subsystem emits an error for an agent with no usage data.
     await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
 
-    // FND-11 persistence oracle — only run if memory.db was created.
+    // Persistence oracle — only run if memory.db was created.
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -122,7 +122,7 @@ describe("ORCH-04 Stage-B — per-agent isolation (daemon + 2 agents, no LLM)", 
     try {
       await driver.sendTurn("hello from agent-a");
     } catch {
-      // expected: LLM fails on dummy keys (T-136-01 contract: sendTurn throws on error)
+      // expected: LLM fails on dummy keys (sendTurn throws on error)
     }
     const events = driver.capturedEvents();
     // The turn was processed by the daemon — at minimum one event is emitted

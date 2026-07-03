@@ -30,8 +30,8 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | tokenTracker | optional | obs cache-stats RPC for token-tracker counters returns null; provider-token cache observability is disabled | packages/daemon/src/api/types.ts:456 |
 | dataDir | optional | obs.trace.* handlers default to $HOME/.comis at handler-construction time; session-index scan path falls back to the home directory convention | packages/daemon/src/api/types.ts:470 |
 | exportTrajectoryBundle | optional | obs.trace.export throws "exportTrajectoryBundle DI not configured" — the export RPC is unavailable until production wiring injects the bundle pipeline | packages/daemon/src/api/types.ts:477 |
-| spendSnapshot | optional | obs.spend.snapshot returns `enabled:false` (no live daemon-wide spend reader wired); the WEBUI-02 live-spend headroom (ceiling − spend) is unavailable and the UI shows spend governance as off | packages/daemon/src/api/types.ts:714 |
-| durableRuns | optional | the obs.fleet.health autonomy block is OMITTED (FLEET-01/02/04 orphaned/resumed/revoked/killed counts, breaker/budget breaches, and the worst-run `comis explain <rootRunId>` pointer are unavailable); absent on offline-CLI and non-durability boots — honest degradation, byte-identical with the durability-off path | packages/daemon/src/api/types.ts:751 |
+| spendSnapshot | optional | obs.spend.snapshot returns `enabled:false` (no live daemon-wide spend reader wired); the live-spend headroom (ceiling − spend) is unavailable and the UI shows spend governance as off | packages/daemon/src/api/types.ts:714 |
+| durableRuns | optional | the obs.fleet.health autonomy block is OMITTED (orphaned/resumed/revoked/killed counts, breaker/budget breaches, and the worst-run `comis explain <rootRunId>` pointer are unavailable); absent on offline-CLI and non-durability boots — honest degradation, byte-identical with the durability-off path | packages/daemon/src/api/types.ts:751 |
 
 ## Removed Fields (stale-fallback — deleted)
 

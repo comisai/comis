@@ -10,7 +10,7 @@
  * `terminal-interaction-roundtrip.linux.test.ts` fails `created.ok:false` for
  * exactly this (the jailed `cat` cannot spawn with the HOME cwd under uid 65534).
  *
- * These macOS tests prove two things RED-first:
+ * These macOS tests prove two things:
  *   1. {@link allocateSessionWorkspace} creates a REAL dir that EXISTS and is
  *      mode-accessible to a net-new uid (world rwx — the jail child runs as 65534,
  *      not the daemon uid, so it must be able to chdir + create files), keyed to the
@@ -128,9 +128,8 @@ describe("allocateSessionWorkspace — a real per-session jail workspace (gap 2)
 });
 
 describe("prepareAgentTerminalWorkspace — the PERSISTENT, agent-scoped workspace (daemon allocator)", () => {
-  // PROJECTS-MOVE (live VPS 2026-06-17): the persistent bind-root is `<agentWorkspaceDir>/projects`
-  // (was `<agentWorkspaceDir>/terminal`) so a driven project lands at `<agentWorkspaceDir>/projects/
-  // <slug>` — operator-legible, with NO redundant `terminal/projects` nesting. The sibling `sessions/`
+  // The persistent bind-root is `<agentWorkspaceDir>/projects` so a driven project lands at
+  // `<agentWorkspaceDir>/projects/<slug>` — operator-legible. The sibling `sessions/`
   // (conversation trajectories) is outside this subtree → stays masked by the jail's ~/.comis tmpfs.
   it("returns <agentWorkspaceDir>/projects and creates it world-rwx + recursive (reusable across sessions)", () => {
     const calls: { mkdir: string[]; chmod: Array<[string, number]> } = { mkdir: [], chmod: [] };
@@ -192,10 +191,10 @@ describe("resolveCreateWorkspace — cwd ~ expansion + clamp-to-workspace", () =
 });
 
 describe("resolveCreateWorkspace — project param (per-project folder under the agent workspace)", () => {
-  // PROJECTS-MOVE (live VPS 2026-06-17): the injected workspace IS the agent's projects root
+  // The injected workspace IS the agent's projects root
   // (`<agentWorkspaceDir>/projects` — the jail's bind-root). A `project` SLUG lands DIRECTLY in it
   // (`<workspace>/<slug>`), so the on-disk path is `<agentWorkspaceDir>/projects/<slug>` — operator-
-  // legible, with NO redundant `terminal/projects` nesting and NO double `projects/projects/`. The
+  // legible, with NO double `projects/projects/`. The
   // agent just names the project; the driver owns the path so the jail-escape clamp never rejects it.
   const AGENT_WS = "/home/comis/.comis/workspace";
   const WS = `${AGENT_WS}/projects`; // what the daemon injects as the session workspace

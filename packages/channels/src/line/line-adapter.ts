@@ -76,7 +76,7 @@ export interface LineAdapterHandle extends ChannelPort {
 export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
   // E2E seam: when deps.apiRoot is set, point both LINE SDK clients at the
   // override base URL instead of api.line.me. Production omits the field
-  // entirely (byte-identical to the prior single-key shape).
+  // entirely, so the client config carries only the token key.
   const baseUrlOverride = deps.apiRoot ? { baseURL: deps.apiRoot } : {};
   const client = new messagingApi.MessagingApiClient({
     channelAccessToken: deps.channelAccessToken,

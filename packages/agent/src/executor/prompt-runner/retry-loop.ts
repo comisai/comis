@@ -51,8 +51,8 @@ export interface RetryOutcome {
  * Execute the model retry pipeline + silent-failure detection.
  *
  * When `skipPrompt` is true the function returns `{ promptSucceeded: true,
- * stuckSessionDetected: false }` without invoking the model — matching the
- * pre-split bypass for standalone /commands.
+ * stuckSessionDetected: false }` without invoking the model — the bypass for
+ * standalone /commands.
  */
 export async function runRetryLoop(
   params: RunPromptParams,
@@ -90,8 +90,8 @@ export async function runRetryLoop(
       );
     }
 
-    // WR-01 (175-REVIEW): grammar-400s can also surface on the THROWN path —
-    // session.prompt() throws and runWithModelRetry's GBNF-02 ladder guard
+    // Grammar-400s can also surface on the THROWN path —
+    // session.prompt() throws and runWithModelRetry's grammar-ladder guard
     // returns { succeeded: false, error } immediately. Without this dispatch
     // the failure went straight to output-escalation, where the canned
     // tool_schema_unsupported userMessage PROMISED an automatic retry that
@@ -152,9 +152,9 @@ export async function runRetryLoop(
         // Single-entry by construction: detectSilentFailure is called at most
         // once per runPrompt invocation (the surrounding `if (promptSucceeded
         // && !skipPrompt)` cannot re-enter this branch). The
-        // `silentRetryAttempted` parameter on detectSilentFailure is the
-        // pre-split file's gate-close shape — preserved for the defensive
-        // invariant the helper documents, threaded in as `false` here.
+        // `silentRetryAttempted` parameter on detectSilentFailure is a
+        // gate-close guard kept for the defensive invariant the helper
+        // documents, threaded in as `false` here.
         await detectSilentFailure(
           params, messageText, promptImages, earlyBridgeResult, retryState,
           invokeRetry, false,
@@ -205,10 +205,10 @@ async function invokeModelRetry(
     timeoutConfig: {
       promptTimeoutMs: effectiveTimeout.promptTimeoutMs,
       retryPromptTimeoutMs: effectiveTimeout.retryPromptTimeoutMs,
-      // LAT-02 (177-03): makespan ceiling derivation input — threaded
-      // UNCONDITIONALLY (R-1; gate_scope all-providers per 177-01 DECISION).
+      // Makespan ceiling derivation input — threaded
+      // UNCONDITIONALLY (stall semantics apply to all providers).
       stallCeilingMultiplier: effectiveTimeout.stallCeilingMultiplier,
-      // LAT-01 binding provenance for the prompt_timeout emit attribution.
+      // Binding provenance for the prompt_timeout emit attribution.
       source: effectiveTimeout.source,
       operationType: effectiveTimeout.operationType,
     },
@@ -237,7 +237,7 @@ async function invokeModelRetry(
  *   2. classify the bridge's recorded LLM error → branch:
  *        a. client_request_signed_replay  → scrub + retry (signed-replay self-heal)
  *        b. tool_schema_unsupported       → strip pattern/format + retry once
- *                                           per session (GBNF-02 self-heal)
+ *                                           per session (grammar self-heal)
  *        c. rate_limited                  → short-circuit (window can't roll)
  *        d. client_request                → short-circuit (deterministic failure)
  *        e. default                       → strip empty turns + retry + LKW fallback

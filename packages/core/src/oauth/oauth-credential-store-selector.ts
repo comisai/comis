@@ -9,7 +9,7 @@
  * branch consumes a daemon-injected `OAuthCredentialStorePort` instead
  * of constructing one via memory's factory.
  *
- * Daemon composition (`packages/daemon/src/wiring/setup-agents.ts`) is now
+ * Daemon composition (`packages/daemon/src/wiring/setup-agents.ts`) is
  * the sole site that imports `createOAuthProfileStoreEncrypted` — it owns
  * `secretsDb` + `secretsCrypto` and constructs the encrypted store at the
  * call site, then passes it into this selector via `encryptedStore`.
@@ -53,8 +53,8 @@ export interface SelectOAuthCredentialStoreInput {
   /**
    * Daemon-supplied encrypted store. REQUIRED when `storage === "encrypted"`.
    * Constructed inline by `daemon/src/wiring/setup-agents.ts` using
-   * `createOAuthProfileStoreEncrypted` (the memory value-import lives there
-   * now — not here).
+   * `createOAuthProfileStoreEncrypted` (the memory value-import lives
+   * there — not here).
    *
    * Undefined when `storage === "file"` (the file factory is used instead).
    */

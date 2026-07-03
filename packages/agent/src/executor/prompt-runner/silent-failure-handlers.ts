@@ -5,7 +5,7 @@
  * throwing but emitted a content-less assistant turn:
  *
  *   1. signed-replay self-heal (scrub thinking state + retry once with 1s settle)
- *   2. tool-schema strip-retry (GBNF-02: strip pattern/format once per
+ *   2. tool-schema strip-retry (strip pattern/format once per
  *      session + retry; body lives in tool-schema-unsupported-handler.ts —
  *      500-line directory cap — and is re-exported below)
  *   3. rate-limit short-circuit (window can't roll; declare terminal failure)
@@ -30,7 +30,7 @@ import { getVisibleAssistantText } from "../phase-filter.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
-// GBNF-02 strip-retry handler (cascade member #2). Extracted to a sibling
+// Tool-schema strip-retry handler (cascade member #2). Extracted to a sibling
 // module for the prompt-runner 500-line file cap; re-exported here so the
 // retry-loop dispatch imports the whole silent-failure cascade from one
 // module. Behavioral coverage: tool-schema-unsupported-handler.test.ts.

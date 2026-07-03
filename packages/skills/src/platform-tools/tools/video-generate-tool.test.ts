@@ -3,7 +3,7 @@
  * Tests for video_generate tool.
  *
  * Verifies tool metadata, parameter schema, and RPC dispatch behavior. The
- * tool dispatches to the daemon-side video.generate RPC handler (lands Plan 04).
+ * tool dispatches to the daemon-side video.generate RPC handler.
  *
  * @module
  */
@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { VideoGenerationPort } from "@comis/core";
 import { createVideoGenerateTool } from "./video-generate-tool.js";
 
-/** A minimal structural port — only `.id` is read by the IN-03 description build. */
+/** A minimal structural port — only `.id` is read by the runtime description build. */
 function fakePort(id: string): Pick<VideoGenerationPort, "id"> {
   return { id };
 }
@@ -74,8 +74,8 @@ describe("createVideoGenerateTool", () => {
     expect(desc).toMatch(/ssrf|guard/);
   });
 
-  // ─── CFG-02 (191): description-only — NO new param, and specifically NO
-  //     reference_images param (the LOCKED multi-ref deferral). ───────────────
+  // ─── Description-only — NO new param, and specifically NO
+  //     reference_images param (multi-ref is deferred). ───────────────────────
 
   it("does NOT declare a reference_images param (multi-ref is the LOCKED deferral)", () => {
     const rpcCall = vi.fn();
@@ -86,7 +86,7 @@ describe("createVideoGenerateTool", () => {
     expect(Object.keys(schema.properties)).not.toContain("reference_images");
   });
 
-  // ─── IN-03 (191): the description is built at RUNTIME from the ACTIVE
+  // ─── The description is built at RUNTIME from the ACTIVE
   //     backend's VIDEO_MODELS matrix — the active provider's real options,
   //     not a static superset. ────────────────────────────────────────────────
 
@@ -137,13 +137,13 @@ describe("createVideoGenerateTool", () => {
     expect(tool.description.toLowerCase()).toContain("image-to-video");
   });
 
-  it("a poisoned backend id (__proto__) does not throw and falls back to STATIC_FALLBACK (SEC-04)", () => {
+  it("a poisoned backend id (__proto__) does not throw and falls back to STATIC_FALLBACK", () => {
     const rpcCall = vi.fn();
     let tool!: ReturnType<typeof createVideoGenerateTool>;
     expect(() => {
       tool = createVideoGenerateTool(rpcCall, fakePort("__proto__"));
     }).not.toThrow();
-    // The SEC-04 guard in listVideoModelCaps returns undefined → STATIC_FALLBACK.
+    // The blocked-object-key guard in listVideoModelCaps returns undefined → STATIC_FALLBACK.
     expect(tool.description).toContain("Generate a video from a text prompt");
   });
 

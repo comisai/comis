@@ -1,5 +1,5 @@
 {
-  "__comis_note": "Comis dashboards-as-code (PROM-03; design §6 WS7). Every panel expr references a metric the Comis OTel PrometheusExporter emits (the single METRIC_CATALOG); test/architecture/grafana-dashboard-metrics.test.ts is the CI drift guard. E7 drill-down: PROMETHEUS_EXEMPLARS_SUPPORTED===false (the /metrics pull surface renders no OpenMetrics exemplars on exporter-prometheus@0.219.0), so each panel's data link keys on the comis.trace_id span attribute (carried on the OTLP path) templated into a `comis explain` reference — see docs/operations/prometheus-grafana.mdx.",
+  "__comis_note": "Comis dashboards-as-code. Every panel expr references a metric the Comis OTel PrometheusExporter emits (the single METRIC_CATALOG); test/architecture/grafana-dashboard-metrics.test.ts is the CI drift guard. Trace drill-down: PROMETHEUS_EXEMPLARS_SUPPORTED===false (the /metrics pull surface renders no OpenMetrics exemplars on exporter-prometheus@0.219.0), so each panel's data link keys on the comis.trace_id span attribute (carried on the OTLP path) templated into a `comis explain` reference — see docs/operations/prometheus-grafana.mdx.",
   "uid": "comis-cost-and-spend",
   "title": "Comis — Cost & Spend",
   "tags": ["comis", "cost", "spend"],

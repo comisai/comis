@@ -2,16 +2,16 @@
 /**
  * Test-support: inject the held `_capabilities` a gated orchestration handler
  * requires, mirroring what `createAgentRpcCall` does in production
- * (`setup-tools.ts`, CAP-03).
+ * (`setup-tools.ts`).
  *
- * Phase 210 puts a `requireCapability(rawParams._capabilities, <cap>)` gate at
- * the top of every gated orchestration handler (session.spawn, the graph.* /
+ * Every gated orchestration handler carries a `requireCapability(rawParams._capabilities, <cap>)`
+ * gate at its top (session.spawn, the graph.* /
  * cron.* / message.* / skills.* mutating families). Existing handler unit tests
  * call those handlers directly with a bare params object and therefore never
  * carry `_capabilities` — in production the in-process injector always supplies
  * it. This wrapper grants the held set the gated method needs (resolved from
  * `HANDLER_CAPABILITY_MAP`) so those tests exercise the handler BODY, not the
- * gate. The gate itself is proven RED-first in the dedicated CAP-05 tests.
+ * gate. The gate itself is proven RED-first in the dedicated capability-gate tests.
  *
  * @module
  */

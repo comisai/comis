@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Capability-gated reliability defaults resolver (Phase 158).
+ * Capability-gated reliability defaults resolver.
  *
- * SD1/SD2/SD3: for small/nano models, resolves capability defaults
+ * For small/nano models, resolves capability defaults
  * for GoalAnchor, rag.baseFloor, and verification critic.
- * frontier/mid: returns all OFF (behavior-neutral, byte-identical to v2.14).
+ * frontier/mid: returns all OFF (behavior-neutral — identical to running
+ * without this resolver).
  *
  * Precedence (load-bearing): explicit per-agent config > capability default > off.
  * Implementation: `resolved = explicit ?? capabilityDefault(class)`.
@@ -23,9 +24,9 @@ import { resolveOperationModel, resolveProviderFamily } from "../model/operation
 // ---------------------------------------------------------------------------
 
 /**
- * Conservative base-score floor for small/nano models (SD2).
+ * Conservative base-score floor for small/nano models.
  *
- * Proven by Phase-153 poison fixture: blocks recall entries with base≤0.12
+ * Proven by the poison-recall fixture: blocks recall entries with base≤0.12
  * (CASE A in memory-recall-floor.test.ts: base=0.12 < 0.15 → dropped by
  * passesBaseFloor gate). Keeps entries with base≥0.15 (legit recall).
  *
@@ -37,19 +38,19 @@ import { resolveOperationModel, resolveProviderFamily } from "../model/operation
 const SMALL_NANO_DEFAULT_BASE_FLOOR = 0.15 as const;
 
 /**
- * Keyless providers where the verification critic can auto-enable (SD3 cost-gate).
+ * Keyless providers where the verification critic can auto-enable (cost-gate).
  *
  * Mirrors KEYLESS_CRITIC_PROVIDERS in verification-gate.ts — kept separate to
- * avoid a circular import between scaffold-defaults and verification-gate.
- * // Parity with verification-gate.ts KEYLESS_CRITIC_PROVIDERS is asserted in Plan 02 (cross-file).
+ * avoid a circular import between scaffold-defaults and verification-gate;
+ * parity between the two sets is asserted by a cross-file test.
  *
- * WR-02: a cloud-keyed provider (anthropic, openai) can never trigger the
- * auto-critic default — the KEYLESS_CRITIC_PROVIDERS check is the primary barrier.
- * SD3 Test 11 proves frontier→false regardless.
+ * A cloud-keyed provider (anthropic, openai) can never trigger the
+ * auto-critic default — the KEYLESS_CRITIC_PROVIDERS check is the primary barrier,
+ * and the capability gate independently forces frontier→false.
  */
 const KEYLESS_CRITIC_PROVIDERS = new Set<string>(["ollama", "lm-studio"]);
 
-/** SD6: per-file bootstrap.maxChars default for small/nano.
+/** Per-file bootstrap.maxChars default for small/nano.
  *  At 3_500, AGENTS.md (6,780 chars) truncates to head(2,450)+tail(700);
  *  all other workspace files (≤2,844 chars) are included whole.
  *  Rationale: tames the observed 495% bootstrap-budget warning without truncating
@@ -61,31 +62,31 @@ const SMALL_NANO_DEFAULT_BOOTSTRAP_MAX_CHARS = 3_500 as const;
  *  receives exactly 20_000 from the parsed PerAgentConfig.
  *  Detection: configuredMaxChars === BOOTSTRAP_MAX_CHARS_SENTINEL → apply capability default.
  *  NOTE: an operator who explicitly sets bootstrap.maxChars:20000 also triggers the sentinel;
- *  document in D2 that to force 20_000 on a small model, use capabilityClassOverride:"frontier". */
+ *  to force 20_000 on a small model, use capabilityClassOverride:"frontier". */
 const BOOTSTRAP_MAX_CHARS_SENTINEL = 20_000 as const;
 
-/** SD7/F1: active-tool ceiling for the `small` capability class.
+/** Active-tool ceiling for the `small` capability class.
  *  Keeps CORE_TOOLS (~15) + recently-used head-room + warm tools active;
  *  defers cold long-tail behind discover_tools (no capability removal).
- *  Retuned F1 from 40→24: 15 CORE_TOOLS + 9 discretionary slots.
+ *  24 = 15 CORE_TOOLS + 9 discretionary slots.
  *  At 24 tools × ~300 chars avg ≈ 7K chars (vs 12K at 40) — ~750–1250 tokens saved. */
 const SMALL_DEFAULT_ACTIVE_TOOL_CEILING = 24 as const;
 
-/** SD9/F2: total bootstrap budget for small/nano. Caps the SUM of all bootstrap file chars.
+/** Total bootstrap budget for small/nano. Caps the SUM of all bootstrap file chars.
  *  Per-file cap (3_500) still applies as an upper bound per file; this cap is the aggregate.
  *  Rationale: only AGENTS.md (6780) exceeds 3500 so per-file trimming only trims that one
  *  file — total bootstrap stays ~12.9K. A total cap of 5_000 forces proportional reduction. */
 const SMALL_NANO_DEFAULT_BOOTSTRAP_TOTAL_CHARS = 5_000 as const;
 
-/** v2.19: per-tool-result char cap for the `small` class.
+/** Per-tool-result char cap for the `small` class.
  *  The schema default (50_000 chars ≈ 12.5K tokens) lets ONE tool result eat ~40% of a
- *  32K-token window — two exhaust it. Live, NVDA analysts hit context_exhausted at
+ *  32K-token window — two exhaust it. Observed live: sessions hit context_exhausted at
  *  assembled ~33-35K because web_search/read results were 20-35K chars each. 12_000 chars
  *  (~3K tokens) lets a small model hold ~7 results in its working space; the offload
  *  guard keeps the full content on disk so nothing is permanently lost. */
 const SMALL_DEFAULT_MAX_TOOL_RESULT_CHARS = 12_000 as const;
 
-/** v2.19: tighter per-tool-result char cap for `nano` (16K window) — ~2K tokens. */
+/** Tighter per-tool-result char cap for `nano` (16K window) — ~2K tokens. */
 const NANO_DEFAULT_MAX_TOOL_RESULT_CHARS = 8_000 as const;
 
 /** The schema .default() for maxToolResultChars (50_000). Doubles as the "unset" sentinel,
@@ -104,18 +105,18 @@ const MAX_TOOL_RESULT_CHARS_SENTINEL = 50_000 as const;
  */
 export interface ScaffoldDefaults {
   /**
-   * SD1: effective GoalAnchor enabled flag.
+   * Effective GoalAnchor enabled flag.
    *
    * small/nano unset → true (capability default ON).
-   * frontier/mid unset → false (byte-identical to v2.14).
+   * frontier/mid unset → false (byte-identical to running without this resolver).
    * Explicit config.goalAnchor.enabled always wins (boolean).
    */
   goalAnchorEnabled: boolean;
   /**
-   * SD2: effective rag.baseFloor (0 = no floor).
+   * Effective rag.baseFloor (0 = no floor).
    *
    * small/nano with baseFloor=0 (schema default/"unset") → SMALL_NANO_DEFAULT_BASE_FLOOR (0.15).
-   * frontier/mid with baseFloor=0 → 0 (byte-identical to v2.14).
+   * frontier/mid with baseFloor=0 → 0 (byte-identical to running without this resolver).
    * Explicit config.rag.baseFloor > 0 always wins.
    *
    * Note: 0 is both the schema default and an explicit "disable floor" sentinel.
@@ -123,7 +124,7 @@ export interface ScaffoldDefaults {
    */
   baseFloor: number;
   /**
-   * SD3: effective verification critic enabled flag (cost-gated).
+   * Effective verification critic enabled flag (cost-gated).
    *
    * Auto-ON only when: small/nano + keyless provider (ollama/lm-studio) +
    * a distinct cheaper model is configured (operationModels.verification resolves
@@ -132,7 +133,7 @@ export interface ScaffoldDefaults {
    */
   verificationEnabled: boolean;
   /**
-   * SD3 / WR-01: the model the verification critic MUST run on when it runs —
+   * The model the verification critic MUST run on when it runs —
    * the resolved DISTINCT CHEAP verification operation model the cost-gate gated
    * on (or the operator's configured verification model in the explicit force-on
    * path), NEVER silently the agent's primary. The cost-gate's whole rationale
@@ -146,7 +147,7 @@ export interface ScaffoldDefaults {
    */
   criticModel?: { provider: string; modelId: string };
   /**
-   * SD6: effective bootstrap.maxChars per-file budget.
+   * Effective bootstrap.maxChars per-file budget.
    *
    * small/nano with default 20_000 → SMALL_NANO_DEFAULT_BOOTSTRAP_MAX_CHARS (3_500).
    * frontier/mid: always 20_000.
@@ -154,11 +155,12 @@ export interface ScaffoldDefaults {
    *
    * Note: 20_000 is BOTH the schema default AND the "unset" sentinel (bootstrap uses
    * .default() not .optional()). An operator who explicitly sets maxChars:20000 on a
-   * small model still receives the capability default — document this in D2.
+   * small model still receives the capability default — force 20_000 via
+   * capabilityClassOverride:"frontier".
    */
   bootstrapMaxChars: number;
   /**
-   * SD7/F1: effective active-tool ceiling (max tool schemas in the prompt request).
+   * Effective active-tool ceiling (max tool schemas in the prompt request).
    *
    * small: SMALL_DEFAULT_ACTIVE_TOOL_CEILING (24). nano/frontier/mid: undefined.
    * nano already has its own aggressive deferral path (CORE_TOOLS-only, ~15 active);
@@ -167,15 +169,15 @@ export interface ScaffoldDefaults {
    */
   activeToolCeiling: number | undefined;
   /**
-   * SD9/F2: effective total bootstrap budget (sum of all file chars after per-file truncation).
+   * Effective total bootstrap budget (sum of all file chars after per-file truncation).
    *
    * small/nano: SMALL_NANO_DEFAULT_BOOTSTRAP_TOTAL_CHARS (5_000).
-   * frontier/mid: undefined (no total cap — byte-identical to v2.14).
+   * frontier/mid: undefined (no total cap — byte-identical to running without this resolver).
    * Applied in buildBootstrapContextFiles as an additional constraint after per-file truncation.
    */
   bootstrapTotalMaxChars: number | undefined;
   /**
-   * v2.19: effective per-tool-result char cap (truncation threshold).
+   * Effective per-tool-result char cap (truncation threshold).
    *
    * small → SMALL_DEFAULT_MAX_TOOL_RESULT_CHARS (12_000).
    * nano  → NANO_DEFAULT_MAX_TOOL_RESULT_CHARS (8_000).
@@ -188,25 +190,23 @@ export interface ScaffoldDefaults {
    */
   maxToolResultChars: number | undefined;
   /**
-   * RETR-04 / WR-02 (Phase 173): the unified-arbiter-active signal.
+   * The unified-arbiter-active signal.
    *
-   * `true` when the relevance-first arbiter (Plan 03) ranks LTM T3/T4 candidates
-   * against history — small/nano on a non-caching model (design §14.1: the
+   * `true` when the relevance-first arbiter ranks LTM T3/T4 candidates
+   * against history — small/nano on a non-caching model (the
    * relevance-first vs recency-first choice gates on supportsPromptCache, NOT tier;
    * a local model that doesn't cache reorders for free, a caching model pays a
    * cache-break so it stays recency-first below the fence).
    *
    * frontier/mid (recency-first): `false` — the arbiter does NOT run, recall/assembly
-   * stay byte-identical to v2.14 (LOCKED #2).
+   * stay byte-identical to running without this resolver.
    *
    * Explicit config.contextEngine.relevance.firstByDefault always wins (both ways).
    *
-   * LOAD-BEARING for the WR-02 closure: when `true`, the recall baseFloor gate
+   * LOAD-BEARING: when `true`, the recall baseFloor gate
    * (memory-recall.ts) enforces the resolved {@link ScaffoldDefaults.baseFloor}
    * (0.15 for small/nano) instead of silently skipping an unconfigured (0) floor —
-   * an arbiter that ranks LTM against history needs the floor actually enforced
-   * (design §17 S6). NOTE: the full contextEngine.relevance.* schema block + the
-   * RETR-03 policy gating land in Plan 03; THIS plan resolves only the minimal signal.
+   * an arbiter that ranks LTM against history needs the floor actually enforced.
    */
   relevanceFirst: boolean;
 }
@@ -220,9 +220,9 @@ export interface ScaffoldDefaults {
  *
  * Pure — no I/O, no side effects, deterministic for equal inputs.
  *
- * @param modelProfile - Immutable profile resolved once per execution (Phase 151).
+ * @param modelProfile - Immutable profile resolved once per execution.
  * @param config - Per-agent config (post top-level parse; sub-blocks may be undefined).
- * @param criticContext - Optional cost-gate inputs for SD3 (provider, agentModel, operationModels).
+ * @param criticContext - Optional cost-gate inputs for the verification critic (provider, agentModel, operationModels).
  *   Pass undefined when the critic wiring is not available at the call site.
  */
 export function resolveScaffoldDefaults(
@@ -238,24 +238,24 @@ export function resolveScaffoldDefaults(
   const isSmallNano = modelProfile.scaffoldLevel === "max";
 
   // -------------------------------------------------------------------------
-  // SD1: GoalAnchor — explicit ?? capability default
+  // GoalAnchor — explicit ?? capability default
   //
   // config.goalAnchor?.enabled is `boolean | undefined` (the block is .optional()
   // at agent level — an unconfigured agent yields config.goalAnchor === undefined).
   // Do NOT re-parse through GoalAnchorConfigSchema — that collapses undefined→false
-  // (Pitfall 1: the schema .default(false) fires and kills the ?? gate).
+  // (the schema-re-parse trap: the schema .default(false) fires and kills the ?? gate).
   // The ?? expression fires only when the left side is `undefined` — explicit `false`
   // is preserved (the load-bearing force-off operator path).
   // -------------------------------------------------------------------------
   const goalAnchorEnabled = config.goalAnchor?.enabled ?? isSmallNano;
 
   // -------------------------------------------------------------------------
-  // SD2: rag.baseFloor — explicit (non-zero) wins; 0 is the "unset" sentinel
+  // rag.baseFloor — explicit (non-zero) wins; 0 is the "unset" sentinel
   //
   // config.rag is always a fully-defaulted RagConfig (schema .default({})),
   // so config.rag.baseFloor is always `number`. The schema default is 0.
   // `> 0` treats both the schema default (0) and an explicit `rag.baseFloor: 0`
-  // as "unset" — documented in D1.
+  // as "unset".
   // Defensive: tests may pass a cast PerAgentConfig without a fully-parsed rag block.
   // In production the top-level parse always provides config.rag (schema .default({})).
   // -------------------------------------------------------------------------
@@ -265,23 +265,23 @@ export function resolveScaffoldDefaults(
       ? configuredBaseFloor
       : isSmallNano
         ? SMALL_NANO_DEFAULT_BASE_FLOOR  // LOAD-BEARING under the arbiter (relevanceFirst): the
-        : 0;                             // recall gate enforces THIS floor, not a silent 0 (WR-02).
+        : 0;                             // recall gate enforces THIS floor, not a silent 0.
 
   // -------------------------------------------------------------------------
-  // RETR-03 / RETR-04 / WR-02 (Phase 173): relevanceFirst — the full policy gate
+  // relevanceFirst — the full policy gate
   // (the unified-arbiter-active signal AND the relevance-first vs recency-first policy).
   //
-  // Copies the SD1 capability-gate shape EXACTLY: explicit config wins (both ways),
-  // else the capability default. The gate axis is supportsPromptCache (design §14.1),
+  // Copies the GoalAnchor capability-gate shape EXACTLY: explicit config wins (both ways),
+  // else the capability default. The gate axis is supportsPromptCache,
   // NOT a provider-string predicate: small/nano on a non-caching model (typical Ollama)
   // reorders relevance-first for free; a caching model pays a cache-break so it stays
   // recency-first (false) below the fence — frontier (Anthropic, caches) → false; mid
-  // (caching) → false. Frontier/mid recency-first is BYTE-IDENTICAL (LOCKED #2): the
-  // arbiter does not run for them. The small/nano DEFAULT-ON flip stays MEASUREMENT-GATED
-  // (the Phase-171 harness) — this resolves the mechanism; the live flip is an operator step.
+  // (caching) → false. Frontier/mid recency-first is BYTE-IDENTICAL to running without
+  // this resolver: the arbiter does not run for them. The small/nano default-ON flip
+  // stays measurement-gated — this resolves the mechanism; the live flip is an operator step.
   //
-  // Pitfall 1 (the schema re-parse trap): read the relevance.firstByDefault field DIRECTLY
-  // via the optional chain below — the schema field (173-03) is OPTIONAL with NO `.default()`,
+  // The schema-re-parse trap: read the relevance.firstByDefault field DIRECTLY
+  // via the optional chain below — the schema field is OPTIONAL with NO `.default()`,
   // so an omitted field stays `undefined` and the `??` falls through to the capability gate.
   // Do NOT re-parse the sub-block through its schema (a `.default()` would collapse
   // undefined→false and silently kill the capability gate). An explicit boolean (true OR
@@ -292,15 +292,15 @@ export function resolveScaffoldDefaults(
     (isSmallNano && !modelProfile.supportsPromptCache);
 
   // -------------------------------------------------------------------------
-  // SD3: verification — explicit wins; otherwise cost-gated capability default
+  // verification — explicit wins; otherwise cost-gated capability default
   //
   // config.verification?.enabled is `boolean | undefined` (block is .optional()).
   // Do NOT re-parse through VerificationConfigSchema.
   //
-  // WR-01: resolve the verification operation model ONCE. It drives BOTH the
+  // Resolve the verification operation model ONCE. It drives BOTH the
   // cost-gate distinctness decision AND the model the critic actually runs on
   // (criticModel below) — so the critic can never auto-enable on a cheap model's
-  // existence yet silently run the primary (the bug WR-01 fixed).
+  // existence yet silently run the primary.
   // Uses the real 5-level priority chain from resolveOperationModel — no mocking.
   // -------------------------------------------------------------------------
   const verificationResolution = criticContext
@@ -332,11 +332,11 @@ export function resolveScaffoldDefaults(
       verificationResolution.source === "explicit_config" &&
       verificationResolution.modelId !== criticContext.agentModel;
   } else {
-    // frontier/mid → always off (SD5); or no criticContext → no cost-gate check → off
+    // frontier/mid → always off; or no criticContext → no cost-gate check → off
     verificationEnabled = false;
   }
 
-  // WR-01: when the critic runs, it MUST run on the resolved verification model
+  // When the critic runs, it MUST run on the resolved verification model
   // (the distinct cheap model the cost-gate gated on, or the operator's configured
   // verification model in the explicit force-on path) — NEVER silently the agent
   // primary. The synthetic critic deps run keyless (apiKey:""), so expose the
@@ -351,10 +351,10 @@ export function resolveScaffoldDefaults(
       : undefined;
 
   // -------------------------------------------------------------------------
-  // SD6: bootstrap.maxChars capability default.
+  // bootstrap.maxChars capability default.
   // bootstrap uses .default() not .optional() — config.bootstrap.maxChars is always a number.
   // The "unset" detection is === BOOTSTRAP_MAX_CHARS_SENTINEL (not ?? undefined).
-  // See RESEARCH.md Pitfall 1 and the SD2 === 0 sentinel analog in this file.
+  // Same shape as the rag.baseFloor === 0 sentinel above.
   // -------------------------------------------------------------------------
   const configuredMaxChars = config.bootstrap?.maxChars ?? BOOTSTRAP_MAX_CHARS_SENTINEL;
   const bootstrapMaxChars =
@@ -365,7 +365,7 @@ export function resolveScaffoldDefaults(
         : BOOTSTRAP_MAX_CHARS_SENTINEL;                 // frontier/mid: 20_000 (unchanged)
 
   // -------------------------------------------------------------------------
-  // SD7/F1: active-tool ceiling — ONLY for small class.
+  // Active-tool ceiling — ONLY for small class.
   // nano is excluded: it already has aggressive CORE_TOOLS-only deferral at applyToolDeferral:413.
   // Adding a ceiling of 24 on top of nano's ~15-active output would be a no-op, and confusing.
   // frontier/mid: no ceiling (behavior-neutral).
@@ -376,16 +376,16 @@ export function resolveScaffoldDefaults(
       : undefined;
 
   // -------------------------------------------------------------------------
-  // SD9/F2: total bootstrap budget — small/nano only.
+  // Total bootstrap budget — small/nano only.
   // Applied in buildBootstrapContextFiles as a second pass after per-file truncation.
-  // frontier/mid: undefined (no total cap — byte-identical to v2.14).
+  // frontier/mid: undefined (no total cap — behavior-neutral).
   // -------------------------------------------------------------------------
   const bootstrapTotalMaxChars: number | undefined = isSmallNano
     ? SMALL_NANO_DEFAULT_BOOTSTRAP_TOTAL_CHARS
     : undefined;
 
   // -------------------------------------------------------------------------
-  // v2.19: per-tool-result char cap — small/nano only, when unset (=== 50_000 sentinel).
+  // Per-tool-result char cap — small/nano only, when unset (=== 50_000 sentinel).
   // Returns a number ONLY when the scaffold wants to override; undefined means "use
   // config.maxToolResultChars as-is" (frontier/mid, or an explicit operator value).
   // -------------------------------------------------------------------------

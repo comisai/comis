@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the DUR-01 recover-on-boot scan orchestrator (165-06 Task 1).
+ * Unit tests for the recover-on-boot scan orchestrator.
  *
- * `terminal-session-reattach.ts` is the SIBLING that keeps the 772-line registry
+ * `terminal-session-reattach.ts` is the SIBLING that keeps the registry
  * lean: it owns the recover-on-boot scan loop (the registry only CALLS it) and the
- * injected descriptor-store port. It consumes 165-01's pure `reattachDecision` —
+ * injected descriptor-store port. It consumes the pure `reattachDecision` —
  * NOT a second copy of the decision — and yields a typed list the registry switches
  * on (reattach → rehydrate a running handle; failed → the genuinely-gone path the
  * registry maps to the EXISTING terminal:session_state(state:"lost"), NOT a
  * non-existent `failed` event).
  *
  * Fully injected (a fake store port + a fake `isTmuxAlive`), so it is provable
- * WITHOUT a live tmux server and WITHOUT any fs. Pins the plan behaviors:
- *   - a live tmux name → a reattach action carrying the descriptor VERBATIM (I5)
+ * WITHOUT a live tmux server and WITHOUT any fs. Pins the behaviors:
+ *   - a live tmux name → a reattach action carrying the descriptor VERBATIM
  *   - a gone tmux name → a failed action (the registry preserves the journal; this
  *     module never touches it) + the content-free `tmux_session_gone` reason
  *   - a non-durable descriptor → SKIPPED (fallback_nondurable → today's lost floor)
  *   - TOTAL / never-throws: a corrupt descriptor or a throwing probe never crashes
  *     the scan (skip + continue)
  *   - rehydrateHandleFromDescriptor rebuilds a `running` handle with the SAME
- *     allowId/owner/scope/cols/rows (I5 — WHERE not WHAT)
+ *     allowId/owner/scope/cols/rows (WHERE not WHAT)
  *
  * @module
  */
@@ -54,8 +54,8 @@ function fakeStore(recovered: SessionDescriptor[]): SessionDescriptorStorePort {
   };
 }
 
-describe("recoverSessionDescriptors — the recover-on-boot scan (DUR-01)", () => {
-  it("a live tmux name → a reattach action carrying the descriptor VERBATIM (I5)", () => {
+describe("recoverSessionDescriptors — the recover-on-boot scan", () => {
+  it("a live tmux name → a reattach action carrying the descriptor VERBATIM", () => {
     const store = fakeStore([DESC]);
     const results = recoverSessionDescriptors({ store, isTmuxAlive: (n) => n === "comis-abc" });
     expect(results).toHaveLength(1);
@@ -137,12 +137,12 @@ describe("recoverSessionDescriptors — the recover-on-boot scan (DUR-01)", () =
   });
 });
 
-describe("rehydrateHandleFromDescriptor — rebuild a running handle (I5 verbatim identity)", () => {
+describe("rehydrateHandleFromDescriptor — rebuild a running handle (verbatim identity)", () => {
   it("rebuilds a status:'running' handle carrying allowId/owner/cols/rows VERBATIM + the durable/tmuxName fields", () => {
     const handle = rehydrateHandleFromDescriptor(DESC, 1_700_000_009_999);
     expect(handle.sessionId).toBe("abc");
     expect(handle.status).toBe("running"); // a recovered live session is running, not lost
-    expect(handle.allowId).toBe("claude-drive"); // I5 — the SAME allow-entry
+    expect(handle.allowId).toBe("claude-drive"); // the SAME allow-entry
     expect(handle.owner).toEqual({ agentId: "default", sessionKey: "" });
     expect(handle.cols).toBe(80);
     expect(handle.rows).toBe(24);
@@ -162,9 +162,9 @@ describe("rehydrateHandleFromDescriptor — rebuild a running handle (I5 verbati
   });
 });
 
-describe("barrel exports (skills→daemon surface for 165-07)", () => {
-  it("re-exports the DUR-01 re-attach decision + the recover-on-boot seam from index.ts", () => {
-    // The daemon (165-07) consumes reattachDecision/SessionDescriptor + the descriptor-store
+describe("barrel exports (skills→daemon surface)", () => {
+  it("re-exports the re-attach decision + the recover-on-boot seam from index.ts", () => {
+    // The daemon consumes reattachDecision/SessionDescriptor + the descriptor-store
     // port + the recover/persist helpers through the package barrel. RED on pre-patch (index.ts
     // does not yet re-export terminal-reattach-match.js / terminal-session-reattach.js).
     expect(typeof (terminalBarrel as Record<string, unknown>).reattachDecision).toBe("function");

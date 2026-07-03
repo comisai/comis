@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * INTERACT-01/02 — callback + edit round-trips through the REAL grammy adapter,
- * plus the IN-04 inline-keyboard contract leg + the SEC-02 re-verify (Phase 207,
- * Plan 06 — the scenario that DRIVES the callback/edit pipelines on the surfaces
- * the chat-API structurally cannot reach: there are no inline-button taps or
- * edited messages in /v1/chat/completions).
+ * plus the inline-keyboard contract leg + the SEC-02 re-verify (the scenario
+ * that DRIVES the callback/edit pipelines on the surfaces the chat-API
+ * structurally cannot reach: there are no inline-button taps or edited messages
+ * in /v1/chat/completions).
  *
  * A button TAP becomes a `callback_query` update: the adapter answers it FIRST +
  * UNCONDITIONALLY (`ctx.answerCallbackQuery()`, telegram-inbound.ts:168) — the
@@ -12,11 +12,11 @@
  * `isButtonCallback:true` message carrying the tapped reply's `messageId`. An EDIT
  * becomes an `edited_message` update the adapter re-ingests through the SAME
  * `handleInboundMessage` (telegram-inbound.ts:117). The inline keyboard a
- * `sendMessage` carries rides grammy's JSON transport (CF-1) — the emulator's JSON
+ * `sendMessage` carries rides grammy's JSON transport — the emulator's JSON
  * `parseBody` branch decodes `reply_markup` (the `&`-split form parser is NEVER hit
  * for callbacks; no parser change).
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205/206 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO model, NO bytes): the
  *     FULL round-trips, deterministic. The REAL bare grammy adapter
@@ -24,7 +24,7 @@
  *     onMessage (NOT the agent); injectCallback → the RECORDED answerCallbackQuery
  *     ack (the channel oracle) + an isButtonCallback:true synthetic message
  *     reaches onMessage carrying the tapped reply's messageId; injectEdit → the
- *     edit handler re-ingests the message through onMessage. The IN-04 contract
+ *     edit handler re-ingests the message through onMessage. The contract
  *     leg has the real adapter sendMessage an inline keyboard + asserts the
  *     emulator's JSON parseBody decoded reply_markup. The SEC-02 never-published
  *     guard re-runs green; the zero-product-change git-porcelain guard re-asserts.
@@ -32,7 +32,7 @@
  *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) boots an isolated daemon and
  *     drives the callback tap against the REAL agent (the synthetic message
  *     reaches the agent + the ack is recorded), then a same round-trip via the
- *     full daemon. NO-FALSE-SUCCESS (I5): a structural round-trip that can't be
+ *     full daemon. NO-FALSE-SUCCESS: a structural round-trip that can't be
  *     confirmed is an honest reason-coded finding. SKIPPED (skip != fail) without
  *     COMIS_LIVE.
  *
@@ -162,8 +162,8 @@ describe("INTERACT-01 Stage-B — the callback tap round-trip (recorded ack + is
     expect(synthetic, "an isButtonCallback synthetic message reached the handler").toBeDefined();
     expect(synthetic!.text).toBe("action=confirm");
     expect(synthetic!.metadata["callbackData"]).toBe("action=confirm");
-    // The synthetic message carries the TAPPED bot reply's messageId (Defect Watch:
-    // a wrong/absent messageId here is a packages/channels/src defect — close it test-first).
+    // The synthetic message carries the TAPPED bot reply's messageId (a
+    // wrong/absent messageId here is a packages/channels/src defect — close it test-first).
     expect(synthetic!.metadata["messageId"]).toBe(String(botReplyId));
   });
 });
@@ -212,10 +212,10 @@ describe("INTERACT-02 Stage-B — the edited_message round-trip (the edit handle
 });
 
 // ---------------------------------------------------------------------------
-// Stage-B — the IN-04 inline-keyboard contract leg (CF-1: grammy sends JSON)
+// Stage-B — the inline-keyboard contract leg (grammy sends JSON)
 // ---------------------------------------------------------------------------
 
-describe("IN-04 Stage-B — the inline-keyboard contract: reply_markup rides the JSON parseBody branch (no form-parser change)", () => {
+describe("Stage-B — the inline-keyboard contract: reply_markup rides the JSON parseBody branch (no form-parser change)", () => {
   let emu: TgEmulator | undefined;
   let adapter: ChannelPort | undefined;
 
@@ -248,11 +248,11 @@ describe("IN-04 Stage-B — the inline-keyboard contract: reply_markup rides the
     expect(recorded!.method).toBe("sendMessage");
     // The emulator decoded reply_markup via the JSON parseBody branch — it is a
     // structured object (NOT a `&`-mangled string), and the callback_data with a
-    // literal `&` survived verbatim (the IN-04 contract: CF-1, no parser change).
+    // literal `&` survived verbatim (the inline-keyboard contract: no parser change).
     const markup = recorded!.replyMarkup as { inline_keyboard?: Array<Array<{ callback_data?: string }>> } | undefined;
     // The emulator decoded reply_markup via the JSON parseBody branch — a
     // STRUCTURED object (NOT a `&`-mangled string), and the callback_data with a
-    // literal `&` survived verbatim (CF-1: grammy's JSON transport, no parser change).
+    // literal `&` survived verbatim (grammy's JSON transport, no parser change).
     expect(markup, "reply_markup decoded via the JSON parseBody branch").toBeDefined();
     expect(markup!.inline_keyboard?.[0]?.[0]?.callback_data).toBe("page=2&sort=asc");
   });
@@ -303,8 +303,7 @@ describe("SEC-02 Stage-B — the never-published guard re-verifies + the phase d
   it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
     // The callback/edit/inline-keyboard pipelines are already wired in
     // packages/channels/src and verified at HEAD — the harness EMITS what they
-    // consume. If this fails, a product file was touched (the 206 Defect Watch may
-    // have fired — see the SUMMARY) — STOP.
+    // consume. If this fails, a product file was touched — STOP.
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
     const offending = porcelain
@@ -335,7 +334,7 @@ describe.skipIf(!isLive)("INTERACT-01 Stage-C — the callback tap reaches the r
   });
 
   it(
-    "send → the agent replies → tap the reply → the answerCallbackQuery ack is recorded + the synthetic callback reaches the daemon (honest finding if not, I5)",
+    "send → the agent replies → tap the reply → the answerCallbackQuery ack is recorded + the synthetic callback reaches the daemon (honest finding if not)",
     async () => {
       const r = built;
       expect(r, "rig booted").toBeDefined();
@@ -367,7 +366,7 @@ describe.skipIf(!isLive)("INTERACT-01 Stage-C — the callback tap reaches the r
       const acks = r.emulator.outbound({ chatId: 0 }).filter((o) => o.method === "answerCallbackQuery");
       expect(
         acks.length,
-        "FINDING: no answerCallbackQuery ack recorded after the tap — the callback did not reach the adapter (check the apiRoot seam / allowed_updates). NOT a faked green (I5).",
+        "FINDING: no answerCallbackQuery ack recorded after the tap — the callback did not reach the adapter (check the apiRoot seam / allowed_updates). NOT a faked green.",
       ).toBeGreaterThanOrEqual(1);
     },
     1_800_000,

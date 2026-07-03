@@ -2,10 +2,10 @@
 /**
  * US-06 / J6 — Scheduled / proactive.
  *
- * §7.7 flow: cron/heartbeat fires → agent does real work → proactive delivery.
+ * Flow: cron/heartbeat fires → agent does real work → proactive delivery.
  * Subsystems composed: A core-loop, B LLM, R scheduler, F tools, S proactive delivery.
  *
- * Gated behind PLAT Stage-C cert (146, the real-LLM-turn-from-cron). The scheduled
+ * Gated behind PLAT Stage-C cert (the real-LLM-turn-from-cron). The scheduled
  * fire is daemon-orchestrated, so the SHAPE describes the proactive delivery
  * (expect_delivered) rather than a synthetic scheduler step verb (no such verb is
  * invented). In sandbox: shape validated + requires-skip; the real cron fire is Stage-D.

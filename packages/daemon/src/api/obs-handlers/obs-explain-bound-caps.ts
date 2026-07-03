@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * X2 report-level bounding caps for `obs.explain` (the numeric constants behind
+ * Report-level bounding caps for `obs.explain` (the numeric constants behind
  * {@link boundIncidentReport}). Extracted from `obs-explain-bound.ts` to keep
- * that module under the obs-handlers per-subdirectory file-size cap (the 176-05
+ * that module under the obs-handlers per-subdirectory file-size cap (the
  * cacheBreaks cap pushed it over) — a pure constants module, no behavior change
  * (the file-size-cap-driven extraction precedent: obs-orchestration-rows.ts,
  * obs-audit-sink.ts).
@@ -56,7 +56,7 @@ export const FULL_MAX_OFFLOADS = 200;
  */
 export const MAX_INLINE_STRING = 256;
 /**
- * cacheBreaks cap (PERSIST-01 / GBIII I2): the section is keyed by the closed
+ * cacheBreaks cap: the section is keyed by the closed
  * CacheBreakReason set (~15), so this rarely fires — but it keeps the byte budget
  * airtight and records the drop in `truncations[]`. Relaxed at full depth (the
  * whole closed reason set fits).
@@ -64,7 +64,7 @@ export const MAX_INLINE_STRING = 256;
 export const SUMMARY_MAX_CACHE_BREAKS = 10;
 export const FULL_MAX_CACHE_BREAKS = 20;
 /**
- * spawnTree cap (TREE-01/02 / CR-01): an autonomous run mints one lease per
+ * spawnTree cap: an autonomous run mints one lease per
  * spawned child, so `spawnTree` (one node per leaseId) is reachable at scale —
  * a deep fan-out exceeds the structural backstop's 64-item cap and would
  * otherwise be replaced WHOLESALE with a `{__bounded__}` sentinel (schema-invalid
@@ -76,10 +76,10 @@ export const FULL_MAX_CACHE_BREAKS = 20;
 export const SUMMARY_MAX_SPAWN_NODES = 40;
 export const FULL_MAX_SPAWN_NODES = 200;
 /**
- * toolStats cap (OBS-TOOLSTATS-SENTINEL). UNLIKE spawnTree/failures (arrays exempt
+ * toolStats cap. UNLIKE spawnTree/failures (arrays exempt
  * from the structural backstop via REPORT_ARRAY_FIELDS), `toolStats` is a RECORD —
  * so the backstop's plain-object KEY cap applies, and a >64-tool session (a long
- * session touching many tools, or an accumulated multi-workload trajectory) had its
+ * session touching many tools, or an accumulated multi-workload trajectory) would have its
  * WHOLE toolStats replaced with a `{__bounded__, originalKeyCount}` sentinel whose
  * values are NOT `{ok,failed}` objects → schema-invalid → `comis explain` parse
  * throws/degrades on exactly the heavy session it exists to diagnose. The

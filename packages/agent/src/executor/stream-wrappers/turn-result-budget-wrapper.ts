@@ -38,14 +38,14 @@ export interface TurnResultBudgetWrapperResult {
  * Create a wrapper that enforces a per-turn aggregate character budget across
  * all tool results before passing context to the LLM.
  *
- * Uses the pure `applyTurnResultBudget` function from .
+ * Uses the pure `applyTurnResultBudget` function from safety/turn-result-budget.ts.
  * When the budget is exceeded, tool results are proportionally truncated
  * with each tool guaranteed at least `minCharsPerTool` characters.
  *
  * @param maxTurnChars - Maximum aggregate text chars across all tool results per turn
  * @param minCharsPerTool - Minimum chars each tool result is guaranteed
  * @param logger - Logger for WARN output when budget is exceeded
- * @param onTruncation - Optional callback for per-tool truncation metadata ( audit)
+ * @param onTruncation - Optional callback for per-tool truncation metadata (feeds audit event metadata)
  * @returns Object with wrapper and getTurnBudgetSummary getter
  */
 export function createTurnResultBudgetWrapper(

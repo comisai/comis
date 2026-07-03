@@ -14,7 +14,7 @@ import type { GenerationPass } from "../text/generation-quality.js";
 import type { AuditKind } from "../security/audit.js";
 
 /**
- * SPEND-05 (Phase 177-01): the closed scope enum that rides the
+ * The closed scope enum that rides the
  * `observability:spend_*` wire (mirrors how {@link AuditKind} rides
  * `audit:event`). The daemon-wide spend accumulator (`@comis/agent`
  * `budget/spend-accumulator.ts`) and the abort wiring import it so the scope of a
@@ -76,30 +76,30 @@ export interface AgentEvents {
     /** Human-readable activity label for exec commands. */
     description?: string;
     /** Action-discriminator for action-keyed tools (e.g. mcp_manage action="set").
-     *  Drives typed activity labels. Sanitised/derived at the emit site (§16.1). */
+     *  Drives typed activity labels. Sanitised/derived at the emit site. */
     action?: string;
     /** Sanitised tool params for activity rendering. MUST be redacted via
-     *  redactValue() at the emit site before emit (§10.1) — the type carries
+     *  redactValue() at the emit site before emit — the type carries
      *  no redaction guarantee; the emit-site redaction + CI grep gate enforce it. */
     params?: Record<string, unknown>;
   };
 
   /** Tool invocation completed (builtin, platform, or skill-based) */
-  // @optional-field-count: tool:executed carries failure-classification provenance (P1/D1);
-  //   the new fields are conditional on the failure branch — see AGENT_NATIVE_OBSERVABILITY_DESIGN §5 D1.
+  // @optional-field-count: tool:executed carries failure-classification provenance;
+  //   the optional fields are conditional on the failure branch.
   "tool:executed": {
     toolName: string;
     durationMs: number;
     success: boolean;
     timestamp: number;
-    /** Correlates start↔end for a stable activityId (§16.11). */
+    /** Correlates start↔end for a stable activityId. */
     toolCallId: string;
     userId?: string;
     traceId?: string;
     agentId?: string;
     sessionKey?: string;
     /** Sanitised tool params for activity rendering. MUST be redacted via
-     *  redactValue() at the emit site before emit (§10.1). */
+     *  redactValue() at the emit site before emit. */
     params?: Record<string, unknown>;
     /** Truncated error message when success=false (max 1500 chars). */
     errorMessage?: string;
@@ -114,26 +114,26 @@ export interface AgentEvents {
     fullChars?: number;
     /** Character count after truncation. Only present when truncated=true. */
     returnedChars?: number;
-    /** Which of the 4 sources classified this failure (P1/D1). */
+    /** Which of the 4 sources classified this failure. */
     classifiedFailureBy?: "sdk_iserror" | "exit_code" | "failure_detector" | "mcp_classifier";
     /** False ONLY when the SDK/transport itself errored; true for content/exit/detector failures. */
     transportOk?: boolean;
     /** HTTP status for web tools (result.status). */
     httpStatus?: number;
-    /** The detector rule that matched (P2/D2). */
+    /** The detector rule that matched. */
     matchedRule?: string;
-    /** The token that matched, e.g. a status code (P2/D2). */
+    /** The token that matched, e.g. a status code. */
     matchedToken?: string;
-    /** Size in bytes of the full serialized result (D4) — never the body. */
+    /** Size in bytes of the full serialized result — never the body. */
     resultBytes?: number;
-    /** 12-hex digest of the full result payload (D4) — never the body. */
+    /** 12-hex digest of the full result payload — never the body. */
     resultDigest?: string;
-    /** F-OBS-2 (30uc-20260624): CONTENT-FREE grounding summary for web_search /
+    /** CONTENT-FREE grounding summary for web_search /
      *  web_fetch — the number of results returned (1 for a single fetch). Lets a
      *  "grounded in fetched results" predicate be verified from the trajectory
      *  without a DEBUG daemon-log grep. Never titles/snippets/bodies. */
     resultCount?: number;
-    /** F-OBS-2: the source HOSTS the web result came from (e.g. ["example.com"]) —
+    /** The source HOSTS the web result came from (e.g. ["example.com"]) —
      *  hosts ONLY, never full URLs with paths/queries, never bodies. */
     domains?: string[];
   };
@@ -150,9 +150,9 @@ export interface AgentEvents {
 
   /**
    * Circuit breaker opened for a tool (tool-level total OR error-pattern
-   * threshold crossed). D3 — fired by the bridge exactly at the counter
+   * threshold crossed). Fired by the bridge exactly at the counter
    * crossing (`recordResult` returns the verdict; the breaker stays
-   * emitter-free). Phase 153's `obs.explain` renders a breakerTimeline from
+   * emitter-free). `obs.explain` renders a breakerTimeline from
    * these; the payload carries the breaker's already-normalized `errorTag`
    * (extractErrorTag — first-80-char normalized), NEVER raw error text (§2.7).
    */
@@ -170,7 +170,7 @@ export interface AgentEvents {
 
   /**
    * Circuit breaker reset for a tool (a success that recovered a non-zero
-   * failure counter). D3. Lifecycle `reset()` does NOT emit this (A2).
+   * failure counter). Lifecycle `reset()` does NOT emit this.
    */
   "tool:breaker_reset": {
     toolName: string;
@@ -182,18 +182,18 @@ export interface AgentEvents {
 
   /**
    * Tool result offloaded to disk (exceeded the inline threshold or the hard
-   * cap). D7 — emitted by the executor's microcompaction offload callback
-   * (the guard stays emitter-free, T-151-07). Phase 153's `obs.explain`
+   * cap). Emitted by the executor's microcompaction offload callback
+   * (the guard stays emitter-free). `obs.explain`
    * renders `IncidentReport.offloads[]` from these. The payload carries a
    * count (`originalChars`) and a WORKSPACE-RELATIVE pointer — never the
-   * offloaded result body and never the absolute host path (§2.7 / T-151-05/06).
+   * offloaded result body and never the absolute host path (§2.7).
    */
   "tool:result_offloaded": {
     toolName: string;
     toolCallId: string;
     /** Character count of the original (pre-offload) result. */
     originalChars: number;
-    /** Workspace-relative path (sessionDir-relative): `tool-results/<toolCallId>.json`. Phase 153 drill-down target. */
+    /** Workspace-relative path (sessionDir-relative): `tool-results/<toolCallId>.json`. `obs.explain` drill-down target. */
     diskPathRel: string;
     timestamp: number;
   };
@@ -246,9 +246,9 @@ export interface AgentEvents {
     agentId: string;
     tenantId: string;
     actionType: string;
-    /** Event family (AUDIT-03 / E4) — the closed {@link AuditKind} union rides the wire to Plan 03's sink (which derives kind from actionType only as a fallback). Optional for un-migrated emits; all 6 in-repo sites set it. */
+    /** Event family — the closed {@link AuditKind} union rides the wire to the audit sink (which derives kind from actionType only as a fallback). Optional on the wire; all 6 in-repo emit sites set it. */
     kind?: AuditKind;
-    /** Risk class — loosely typed here; AuditEventSchema's closed read|mutate|destructive is the source of truth. The bogus "security"/"write"/"neutral" strings moved to `kind` and are no longer sent. */
+    /** Risk class — loosely typed here; AuditEventSchema's closed read|mutate|destructive is the source of truth. Event-family strings ("security"/"write"/"neutral") belong on `kind`, never here. */
     classification?: string;
     outcome: "success" | "failure" | "denied";
     metadata?: Record<string, unknown>;
@@ -316,19 +316,19 @@ export interface AgentEvents {
      */
     pendingCacheInvestmentUsd: number;
     /** SDK per-turn stop signal (e.g. "stop"|"length"|"tool_use"|"refusal").
-     *  Current at the per-turn emit (m.lastStopReason captured at :1231 same case). D8. */
+     *  Current at the per-turn emit (m.lastStopReason is captured in the same executor case). */
     stopReason?: string;
     /** Execution-level finish disposition (e.g. "stop"|"loop_detected"|"budget_exceeded").
-     *  Best-effort at the per-turn emit — m.finishReason settles LATER than turn_end
-     *  (set at :1005/:1018/:1625/:1672/:2113); treat as init-default "stop" until Phase 152
-     *  flight-recorder surfaces effectiveFinishReason. D8. */
+     *  Best-effort at the per-turn emit — m.finishReason settles LATER than turn_end,
+     *  so treat this as the init-default "stop"; the flight-recorder's
+     *  effectiveFinishReason is the settled value. */
     finishReason?: string;
     /**
-     * COST-01: the DISTINCT tool names that fired during this turn (content-free
+     * The DISTINCT tool names that fired during this turn (content-free
      * ids only — never args/output). OMITTED when no tool fired (absence = the
      * byte-identical no-tool payload, not an empty array). Persisted on the
      * `tool_tag` column. The per-tool token/$ attribution a consumer derives from
-     * this is best-effort/labeled (N3): an even split across these tools that
+     * this is best-effort/labeled: an even split across these tools that
      * conserves the turn total — exact per-tool accounting is out of scope.
      */
     toolTag?: string[];
@@ -375,7 +375,7 @@ export interface AgentEvents {
     effortValue?: string;
   };
 
-  /** SPEND-05 (Phase 177-01): spend approaching a ceiling (fired at
+  /** Spend approaching a ceiling (fired at
    *  `warnAtFraction`, default 0.8, BEFORE the kill-switch trips). Content-free
    *  (§2.7): dollar amounts as NUMBERS, scope as the closed {@link SpendScopeKind}
    *  enum, ids only — NEVER a message/prompt/query body. */
@@ -389,7 +389,7 @@ export interface AgentEvents {
     fraction: number;
   };
 
-  /** SPEND-05 (Phase 177-01): a spend ceiling was exceeded — the dollars
+  /** A spend ceiling was exceeded — the dollars
    *  kill-switch tripped for this scope. Content-free (§2.7): `estUsd` is the
    *  reservation that breached; amounts are NUMBERS, scope is a closed enum, ids
    *  only — NEVER a message/prompt/query body. */
@@ -403,8 +403,8 @@ export interface AgentEvents {
     estUsd: number;
   };
 
-  /** SPEND-05 (Phase 177-01): a remote model burned tokens with UNKNOWN pricing
-   *  (fail-loud, not fail-open — the ffe11736 danger). Content-free (§2.7):
+  /** A remote model burned tokens with UNKNOWN pricing
+   *  (fail-loud, not fail-open — unpriced spend must surface, never silently read as $0). Content-free (§2.7):
    *  provider/model are config ids/enums (a model id is a config value, NOT user
    *  content) + turn ids — NEVER a message/prompt/query body. */
   "observability:spend_unpriceable": {
@@ -440,11 +440,11 @@ export interface AgentEvents {
   };
 
   /**
-   * SSRF-AUDIT (hermes-usecases obs-loop 2026-06-25): an outbound URL was BLOCKED by
+   * An outbound URL was BLOCKED by
    * the SSRF guard (`validateUrl`). A forensics signal so `comis security audit-log`
    * records an agent/injected-instruction attempt to reach a cloud-metadata IP /
-   * RFC1918 / loopback / non-http target — previously such blocks were SILENT (no
-   * audit row), unlike the destructive-command floor (`command:blocked`).
+   * RFC1918 / loopback / non-http target — without this event such blocks would be
+   * SILENT (no audit row), unlike the destructive-command floor (`command:blocked`).
    * CONTENT-FREE BY CONSTRUCTION: `origin` is the URL's `origin` (scheme+host+port)
    * ONLY — `new URL().origin` strips the path, query, fragment AND userinfo, so no
    * secret-bearing query string or embedded `user:pass@` credential can ride it.
@@ -463,7 +463,7 @@ export interface AgentEvents {
 
   /**
    * Critic isolation: canary token detected in the critic's verdict output
-   * (prompt-extraction attempt). 100% capture per AI-SPEC §7 (S2, Phase 154).
+   * (prompt-extraction attempt). Every detection emits — 100% capture.
    */
   "critic.isolation.canary_leak": {
     timestamp: number;
@@ -476,7 +476,7 @@ export interface AgentEvents {
 
   /**
    * Critic isolation: implied tool call detected in the critic's verdict
-   * (scope-widening attempt). 100% capture per AI-SPEC §7 (S2, Phase 154).
+   * (scope-widening attempt). Every detection emits — 100% capture.
    */
   "critic.isolation.implied_tool_call": {
     timestamp: number;
@@ -509,14 +509,14 @@ export interface AgentEvents {
 
   /**
    * Fail-closed sub-agent spawn refusal: the child's resolved sandbox posture
-   * was LESS confined than its spawner's on ≥1 dimension (SANDBOX-02/03). Fires
+   * was LESS confined than its spawner's on ≥1 dimension. Fires
    * at the spawn chokepoint BEFORE any run/session is created.
    *
-   * §2.7 / D-EVENT: enum-tuple payload ONLY — both postures as closed-union
+   * §2.7: enum-tuple payload ONLY — both postures as closed-union
    * LABELS + the violated dimension labels + the two agent ids + a timestamp.
    * NEVER the underlying paths/hosts/uid-numbers/credential values that would
    * leak the operator's sandbox topology. Pino auto-redaction is a net, not a
-   * license (T-172-01f).
+   * license.
    */
   "security:sandbox_downgrade_refused": {
     timestamp: number;
@@ -694,8 +694,8 @@ export interface AgentEvents {
   };
 
   /**
-   * OUTCOME-08: a finished trajectory's resolved net task-outcome (WS1). Emitted daemon-side after
-   * `OutcomeSignalPort.resolve`, `learningOutcome.enabled`-gated (default OFF), bridged for `comis explain` (OBS-02). Counts/ids/closed-enums ONLY — no bodies/alpha (SEC-01 §7); adding one is a compile error.
+   * A finished trajectory's resolved net task-outcome. Emitted daemon-side after
+   * `OutcomeSignalPort.resolve`, `learningOutcome.enabled`-gated (default OFF), bridged for `comis explain`. Counts/ids/closed-enums ONLY — no bodies/free text (§2.7); adding one is a compile error.
    */
   "learning:outcome_observed": {
     agentId: string;
@@ -709,21 +709,21 @@ export interface AgentEvents {
   };
 
   /**
-   * FORGET-06 (v2.26 WS4): the lifecycle sweep demoted (`learning:memory_demoted`) /
+   * The lifecycle sweep demoted (`learning:memory_demoted`) /
    * SOFT-evicted (`learning:memory_evicted`, set `evicted_at`, never DELETE) N memories
    * this run. Emitted DAEMON-SIDE (the lifecycle store has no bus) from the real sweep
-   * report `demoted`/`evicted` counts. Counts ONLY — never an id-list or body (§2.7 /
-   * SEC-01). Bridged for `comis explain` (OBS-02).
+   * report `demoted`/`evicted` counts. Counts ONLY — never an id-list or body (§2.7).
+   * Bridged for `comis explain`.
    */
   "learning:memory_demoted": { agentId: string; count: number; timestamp: number };
   "learning:memory_evicted": { agentId: string; count: number; timestamp: number };
   /**
-   * OBS-2b (reflect-obs-20260627): the once-per-run lifecycle/forget sweep SUMMARY — the parity
+   * The once-per-run lifecycle/forget sweep SUMMARY — the parity
    * event for the forget half of learning (reflection has `reflect:funnel`; the forget sweep had
    * only the per-category demoted/evicted counts above, invisible to `cron.runs`/fleet/`explain`).
    * Carries the run breakdown so `cron.runs jobName "Memory lifecycle"` answers "what did the sweep
    * do" (scanned/evicted/demoted) in one call instead of a `db.mjs` `evicted_at` poll, and the fleet
-   * lens rolls a `memory_lifecycle` finding. Counts ONLY — never an id-list/body (§2.7 / SEC-01).
+   * lens rolls a `memory_lifecycle` finding. Counts ONLY — never an id-list/body (§2.7).
    */
   "learning:lifecycle_swept": {
     agentId: string;
@@ -734,22 +734,22 @@ export interface AgentEvents {
     timestamp: number;
   };
   /**
-   * OBS-4b (reflect-obs-20260627): N memories accrued a CORROBORATED failure (failure_count++) this
+   * N memories accrued a CORROBORATED failure (failure_count++) this
    * resolve — the eviction-causation PRECURSOR. Eviction needs `failure_count >= failureEvictionFloor`,
-   * but the accrual itself was previously invisible (only the DB column changed over time + a DEBUG
-   * line), so "why did/didn't this memory evict" had no event trail (you had to SEED failure_count to
-   * test eviction). This event makes the corroborated-failure accrual diagnosable from `comis explain`
+   * and without this event the accrual would be invisible (only the DB column changing over time + a
+   * DEBUG line), leaving "why did/didn't this memory evict" with no event trail. This event makes the
+   * corroborated-failure accrual diagnosable from `comis explain`
    * (bridged) so the path toward eviction is reconstructable. Count ONLY — never a memory id-list/body
-   * (§2.7 / SEC-01); the accrual is already FORGET-03 corroboration-gated (≥2 independent sessions).
+   * (§2.7); the accrual is already corroboration-gated (≥2 independent sessions).
    */
   "learning:memory_failure_attributed": { agentId: string; count: number; timestamp: number };
 
   /**
-   * GENQ-01: a memory-generation pass produced output whose quality diverged from its
-   * source (the F-ML1 class — a weak local model silently translating non-Latin source
+   * A memory-generation pass produced output whose quality diverged from its
+   * source (the failure class where a weak local model silently translates non-Latin source
    * memories into Latin output; the generalization of `context:summary_language_mismatch`
    * to the consolidation/reasoning/user-representation passes). VISIBILITY ONLY, never
-   * gated (I8). Emitted only on an issue (`languageMismatch || emptyOutput ||
+   * gated. Emitted only on an issue (`languageMismatch || emptyOutput ||
    * formatViolation`). Bridged to `memory.generation_quality` + persisted as a
    * `health_signal`. Closed `GenerationPass` + `ScriptClass` enums + booleans + ids ONLY
    * — NEVER the source or generated body (§2.7); the classifier reads text locally.
@@ -782,8 +782,8 @@ export interface AgentEvents {
     timestamp: number;
   };
 
-  // Phase 172 (DIST-01..04): LCD→LTM distillation observability events. Content-free:
-  // ids/counts/reasons only — NEVER summary/memory text (T-130-09 + §2.7). Emitted by
+  // LCD→LTM distillation observability events. Content-free:
+  // ids/counts/reasons only — NEVER summary/memory text (§2.7). Emitted by
   // the distillation runner (lcd-distillation-runner.ts).
 
   /**

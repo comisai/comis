@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A unit tests for buildMediaConfig (Phase 142 — MEDIA infrastructure).
+ * Stage-A unit tests for buildMediaConfig (MEDIA infrastructure).
  *
  * Verifies the per-combo media config builder writes a temp YAML with the REAL
  * integrations.media.* schema keys for any tts/stt/vision/imageGen combo:

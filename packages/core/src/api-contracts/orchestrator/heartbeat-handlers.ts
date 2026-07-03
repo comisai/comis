@@ -3,9 +3,10 @@
  * Heartbeat-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/heartbeat-handlers.ts` (4 methods —
- * heartbeat.*). Spread order in `HEARTBEAT_HANDLERS_CONTRACTS` matches
- * the legacy `ORCHESTRATOR_CONTRACTS` array byte for byte to keep
- * `contracts.generated.*` artifacts byte-identical.
+ * heartbeat.*). Spread order in `HEARTBEAT_HANDLERS_CONTRACTS` is
+ * determinism-critical: it fixes this slice's position within
+ * `ORCHESTRATOR_CONTRACTS`, keeping `contracts.generated.*` artifacts
+ * byte-identical across builds.
  *
  * @module
  */

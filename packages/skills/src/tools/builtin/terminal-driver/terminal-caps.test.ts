@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the per-session usage-cap primitive (terminal-caps.ts).
+ * Unit tests for the per-session usage-cap primitive (terminal-caps.ts).
  *
  * `createSessionCaps(limits, nowMs)` is a pure, fully-injected factory closing over
  * a CLOSURE-local `Map<sessionId, CapState>` (no module-global mutable state) and an

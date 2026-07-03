@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Reasoning-aware output headroom primitives (Fix 3 / Phase 166 CWF-02).
+ * Reasoning-aware output headroom primitives.
  *
  * Pure functions; no runtime deps, no I/O.
  * Consumers: lcd-assembler.ts (pre-flight fit check),
  *            config-resolver.ts (dynamic max_tokens clamp),
  *            executor-stream-setup.ts (thinking-effort governor).
- * Design ref: design/small-model-context-fidelity.md §4 Fix 3 + §3 corollaries.
  */
 
 import { MIN_VISIBLE_OUTPUT_TOKENS } from "./constants.js";
@@ -21,7 +20,7 @@ export { MIN_VISIBLE_OUTPUT_TOKENS };
  * "native" style = empirically sized per qwen3.6:35b observed blocks.
  *
  * Sizing rationale — sized to qwen3.6:35b observed high-thinking block
- * (the NVDA incident: in 32477 + out 291 = 32768, stopReason 'length',
+ * (observed live: in 32477 + out 291 = 32768, stopReason 'length',
  * 0 tool calls — high-effort thinking consumed essentially the entire 32K window).
  * native/high=8192 is a defensible middle ground: large enough that a high-thinking
  * block is not silently truncated on a 32K window (leaves ~23K for history),
@@ -47,7 +46,7 @@ export const THINKING_RESERVE_TOKENS: Readonly<
  * @param reasoningStyle      - Model's reasoning style: "none" (standard) or "native" (thinking block).
  * @param thinkingLevel       - Configured thinking effort level.
  * @param visibleOutputFloor  - Minimum visible output tokens (defaults to MIN_VISIBLE_OUTPUT_TOKENS).
- *                              WR-02: pass contextEngine.budget.minVisibleOutputTokens here when
+ *                              Pass contextEngine.budget.minVisibleOutputTokens here when
  *                              the config value differs from the compile-time constant.
  * @returns Total output headroom tokens to reserve from the context window.
  */
@@ -62,7 +61,7 @@ export function computeOutputHeadroom(
 /**
  * The FLOOR output headroom — the minimum the thinking-effort governor can reach.
  *
- * ISSUE #3b (2026-06-22): the SINGLE source for "how much headroom is reserved at the
+ * The SINGLE source for "how much headroom is reserved at the
  * floor", used by BOTH the pre-flight (the bound it ultimately throws against, after the
  * governor down-shifts as far as it can) AND the fresh-tail residual
  * (boundFreshTailTotalToResidual via lcd-assembler) so the two can NEVER diverge.
@@ -71,8 +70,9 @@ export function computeOutputHeadroom(
  * …→medium→low→undefined) and at "off" for a non-reasoning model. So the floor reserve is
  * the native "low" thinking reserve (1024) for native, 0 for none — PLUS the visible
  * output floor. A native model that omits this reserve under-counts by ~1024+ and ships a
- * fresh tail the pre-flight then exhausts on (the live gpt-5-nano t6: Fix C used the none
- * floor 768, the pre-flight reserved the native floor 1792 → an ~873 gap → overflow).
+ * fresh tail the pre-flight then exhausts on (observed live on gpt-5-nano: the fresh-tail
+ * bound used the none floor 768, the pre-flight reserved the native floor 1792 → an ~873
+ * gap → overflow).
  *
  * @param reasoningStyle - the model's ACTUAL reasoning style ("none" | "native").
  * @param visibleOutputFloor - minVisibleOutputTokens (defaults to MIN_VISIBLE_OUTPUT_TOKENS).

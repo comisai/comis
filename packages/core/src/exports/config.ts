@@ -140,27 +140,27 @@ export {
   checkApprovalsConfig,
   // Broker binding config schema
   BrokerBindingConfigSchema,
-  // Orchestration authoring gate (Phase 174 / v2.27 P2) — top-level, default-OFF.
-  // Public so downstream packages (Plans 02-05) read the gate from @comis/core.
+  // Orchestration authoring gate — top-level, default-OFF.
+  // Public so downstream packages read the gate from @comis/core.
   OrchestrationConfigSchema,
   OrchestrationAuthoringConfigSchema,
-  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8). Public so the
-  // daemon (Plan 04 cap injection, Plan 06 boot logging) + the PROFILE-02
+  // Agent autonomy named-profile resolver. Public so the
+  // daemon (cap injection, boot logging) + the autonomy
   // arch-test read the resolver + the resolved cap/guard table from @comis/core.
   AutonomyConfigSchema,
   AutonomyMessageConfigSchema,
   AUTONOMY_PROFILES,
   STANDARD_FLOOR_CAPABILITIES,
   resolveAutonomy,
-  // Phase 217: the EVICT-02 fail-closed mode resolver — the Wave-2 dispatch
+  // The fail-closed mode resolver — the dispatch
   // chokepoint runs the run's effective mode through this (absent/forged/unknown →
   // "default"). A VALUE export (runtime function), so the daemon can import it.
   resolveEffectiveMode,
-  // Phase 216: the autonomy.durability sub-block schema — the daemon reads it for
+  // The autonomy.durability sub-block schema — the daemon reads it for
   // the boot-time durability resolution (setupDurableResume gate + thresholds).
   DurabilityConfigSchema,
-  // Honest legible degrade (Phase 210 / PROFILE-03) — consumed by the daemon
-  // boot log + the preflight doctor (Plan 06).
+  // Honest legible degrade — consumed by the daemon
+  // boot log + the preflight doctor.
   degradeAutonomy,
 } from "../config/index.js";
 
@@ -300,19 +300,19 @@ export type {
   BrokerBindingConfig,
   // Pre-read storage mode (pre-Zod boot gate)
   StorageModePreRead,
-  // Orchestration authoring gate (Phase 174 / v2.27 P2)
+  // Orchestration authoring gate
   OrchestrationConfig,
   OrchestrationAuthoringConfig,
-  // Spend kill-switch config (Phase 177)
+  // Spend kill-switch config
   SpendConfig,
-  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8)
+  // Agent autonomy named-profile resolver
   AutonomyConfig,
   AutonomyMessageConfig,
   AutonomyProfileName,
   AutonomyMode,
   ResolvedAutonomy,
   ResolvedCapability,
-  // Honest legible degrade (Phase 210 / PROFILE-03)
+  // Honest legible degrade
   AutonomyDownshift,
   AutonomyPreflightResult,
 } from "../config/index.js";

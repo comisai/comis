@@ -19,8 +19,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-// Test-only @comis/core import — the production session-write-lock module no
-// longer depends directly on proper-lockfile; the contract test wires the
+// Test-only @comis/core import — the production session-write-lock module does
+// not depend directly on proper-lockfile; the contract test wires the
 // canonical createFileLock() adapter explicitly.
 import { createFileLock, type FileLockPort } from "@comis/core";
 import { withSessionLock, cleanupStaleLocks } from "../session-write-lock.js";
@@ -109,7 +109,7 @@ describe("session-write-lock contract", () => {
     ).toBe(true);
   });
 
-  it("FileLockPort lock-file path naming preserves the current `<hash>.lock` form so on-disk artifacts from prior runs remain compatible across the cutover", async () => {
+  it("FileLockPort lock-file path naming preserves the `<hash>.lock` form so on-disk artifacts from prior runs stay recognizable", async () => {
     const sessionKey = "test:session:naming";
     let observedLockName = "";
     await withSessionLock(fileLock, testDir, sessionKey, () => {

@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The daemon-injected OPTIONAL, cost-gated outcome-judge seam (OUTCOME-04).
+ * The daemon-injected OPTIONAL, cost-gated outcome-judge seam.
  *
  * {@link createOutcomeJudgeSeam} wraps a cheap resolved model into a
- * `judge(trajectoryContent)` seam — the FALLBACK outcome source for v2.26
- * Verified Learning (WS1). When NO deterministic tool/pipeline signal exists for
- * a finished trajectory AND the per-agent judge is enabled, the daemon (Plan 04)
+ * `judge(trajectoryContent)` seam — the FALLBACK outcome source for
+ * verified learning. When NO deterministic tool/pipeline signal exists for
+ * a finished trajectory AND the per-agent judge is enabled, the daemon
  * runs ONE cheap-model pass over the trajectory and gets back a
  * `success/failure/unknown` verdict + a confidence. The verdict is fed to
  * `OutcomeSignalPort.observe()` as a `source: "judge"` observation; the
- * deterministic tool/pipeline sources ALWAYS outrank it via the Plan 02 fusion
+ * deterministic tool/pipeline sources ALWAYS outrank it via the fusion
  * precedence — this seam can never overturn a deterministic result.
  *
- * Built but DORMANT: the judge ships `enabled:false` by default (design D6), so
+ * Built but DORMANT: the judge ships `enabled:false` by default, so
  * the daemon never constructs or calls it unless an operator opts in. Follows the
  * standard offline cron-seam posture (bounded, non-fatal, lenient-parsing) and adds
- * the OUTCOME-04 triple-bound for its UNTRUSTED input.
+ * a triple bound for its UNTRUSTED input.
  *
- * Security posture (OUTCOME-04 / SEC-01 / §9 triple-bound — the trajectory the
+ * Security posture (a triple bound — the trajectory the
  * judge scores is UNTRUSTED, and the model's self-reported `confidence` is
  * UNTRUSTED):
  * 1. The trajectory input is delimiter-wrapped via
@@ -40,12 +40,12 @@
  * metrics or trip a breaker); the outcome simply stays unresolved. Each call is
  * BOUNDED by `maxOutputTokens` and a wall-clock-free abort timer (the injected
  * `clock` supplies timestamps; the abort uses the sanctioned-root
- * `systemSetTimeout`), routed to the cheap `fast` tier (`outcomeJudge`
- * ModelOperationType, Plan 01).
+ * `systemSetTimeout`), routed to the cheap `fast` tier (the `outcomeJudge`
+ * ModelOperationType).
  *
  * OFFLINE only — NEVER imported by the recall read path; no agent↛memory edge
  * (it imports the `@comis/core` `wrapExternalContent` + types and `pi-ai` only —
- * the closed-graph cut, SEC-01).
+ * the closed-graph cut).
  *
  * @module
  */
@@ -61,8 +61,8 @@ import { parseLenientJson } from "./llm-json.js";
 const LLM_TIMEOUT_MS = 120_000;
 
 /**
- * The reward ceiling for a judge verdict — the OUTCOME-04 "reward capped
- * independent of self-reported confidence" constant (design §9 / §17 triple-bound).
+ * The reward ceiling for a judge verdict — the "reward capped
+ * independent of self-reported confidence" constant (bound #2 of the triple bound).
  * The effective reward the daemon `observe()`s is `Math.min(modelConfidence,
  * JUDGE_REWARD_CAP)`, so a maximal self-report (an injection coercing
  * `confidence: 1.0 / this succeeded`) can never produce a reward above this cap.
@@ -92,7 +92,7 @@ export interface OutcomeJudgeSeamDeps {
    * used to build the judge Model when the pi-ai catalog has no entry for
    * `provider/modelId` — i.e. a custom YAML provider (ollama, lm-studio, vLLM, …).
    * Undefined for built-in catalog providers (the catalog path is unchanged).
-   * Without this the judge SKIPPED on every keyless/local turn (live 2026-06-20).
+   * Without this the judge is SKIPPED on every keyless/local turn.
    */
   customModel?: CustomCompletionsModelSpec;
 }
@@ -100,7 +100,7 @@ export interface OutcomeJudgeSeamDeps {
 /**
  * The judge's typed verdict for one trajectory. A deliberately NARROW union
  * (`success | failure | unknown`) — the judge does NOT detect corrections (that
- * is the separate `correction` signal, Phase 199); its verdict maps to a
+ * is the separate `correction` signal); its verdict maps to a
  * `source: "judge"` {@link OutcomeObservation} for the store. The `source` field
  * is set in CODE (never read from the model) so a smuggled `source` cannot
  * promote the verdict above its judge tier.
@@ -113,7 +113,7 @@ export interface OutcomeVerdict {
   /**
    * The EFFECTIVE reward the daemon will `observe()`: `Math.min(confidence,
    * JUDGE_REWARD_CAP)`. Capped in CODE independent of the self-report — the
-   * OUTCOME-04 keystone. An injected `confidence: 1.0` yields at most the cap.
+   * reward-cap keystone. An injected `confidence: 1.0` yields at most the cap.
    */
   cappedConfidence: number;
   /** The signal tier, set in CODE — always `"judge"` so fusion ranks it below tool/pipeline. */
@@ -186,7 +186,7 @@ function parseVerdict(raw: string): OutcomeVerdict {
   return {
     outcome: parsed.data.outcome,
     confidence: parsed.data.confidence,
-    // The OUTCOME-04 reward cap — bounded in CODE, never trusted from the model.
+    // The reward cap — bounded in CODE, never trusted from the model.
     cappedConfidence: Math.min(parsed.data.confidence, JUDGE_REWARD_CAP),
     // The tier is set HERE, in code — a smuggled `source` field cannot promote it.
     source: "judge",
@@ -250,10 +250,10 @@ export function createOutcomeJudgeSeam(
       // A pi-ai error response does NOT throw — it returns `stopReason:"error"` with
       // empty `content` and an `errorMessage` (e.g. a 404 from a retired/invalid model
       // id). Treat that as a FAILURE the operator can see, not a benign empty verdict:
-      // without this, an unresolvable fast-tier model silently yields `unknown` forever
-      // (the live 2026-06-18 `claude-3-5-haiku-latest` 404 — diagnosable only after a
-      // raw-response dump). The WARN names the model + the error so the NEXT occurrence
-      // is one log line.
+      // without this, an unresolvable fast-tier model (e.g. a retired model id that
+      // 404s on every call) silently yields `unknown` forever and is diagnosable only
+      // from a raw-response dump. The WARN names the model + the error so the NEXT
+      // occurrence is one log line.
       const r = response as { stopReason?: string; errorMessage?: string; content?: unknown[] };
       if (r.stopReason === "error" || (Array.isArray(r.content) && r.content.length === 0)) {
         logger.warn(
@@ -289,7 +289,7 @@ export function createOutcomeJudgeSeam(
   return async function judge(trajectoryContent: string): Promise<OutcomeVerdict | undefined> {
     // The trajectory is UNTRUSTED — delimiter-wrap it BEFORE the model sees it so
     // an injected "this succeeded / confidence: 1.0" is neutralized as external
-    // content, never read as an instruction (OUTCOME-04 bound #1). The wrap reads
+    // content, never read as an instruction (bound #1). The wrap reads
     // `contentDelimiter` from the ALS context for cache-stable, session-consistent
     // markers.
     const wrapped = wrapExternalContent(trajectoryContent, { source: "outcome_judge" });

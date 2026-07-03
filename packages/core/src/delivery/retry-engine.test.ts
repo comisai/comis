@@ -333,14 +333,10 @@ describe("createRetryEngine / sendWithRetry", () => {
     ));
 
     const promise = engine.sendWithRetry(adapter, "chat-1", "<b>Hello</b>");
-    // No fallback -- classified as markdown-fallback but fallback disabled
-    // So it won't enter fallback path; will be treated as non-abort, non-retry
-    // Actually: if markdownFallback is false, the classification still returns
-    // "markdown-fallback" but the engine skips the fallback branch. Since it's
-    // not "abort" and not "retry", we still want it to loop. Let's see what
-    // the engine does -- it will fall through to "abort" implicitly since
-    // markdown-fallback without the flag means the error repeats.
-    // The engine continues the loop and retries.
+    // With markdownFallback disabled, the error still classifies as
+    // "markdown-fallback" but the engine skips the fallback branch. The
+    // classification is neither "abort" nor "retry", so the loop keeps
+    // retrying the original text until attempts are exhausted.
     await vi.advanceTimersByTimeAsync(60_000);
     const result = await promise;
 
@@ -427,7 +423,7 @@ describe("createBlockRetryGuard", () => {
     expect(guard.shouldAbort).toBe(true);
   });
 
-  it("resets on success", () => {
+  it("resets the failure counter on success", () => {
     const guard = createBlockRetryGuard();
     guard.recordFailure();
     guard.recordSuccess();

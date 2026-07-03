@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED — `cwd` must be validated against the scope's bound paths.
+ * `cwd` is validated against the scope's bound paths.
  *
- * THE GAP. `terminal_session_create` accepts an agent-supplied `cwd` (the jail
- * `--chdir` target). It flows verbatim — tool params -> `resolveCreateWorkspace`
+ * `terminal_session_create` accepts an agent-supplied `cwd` (the jail
+ * `--chdir` target). It flows tool params -> `resolveCreateWorkspace`
  * (`cwd: req.cwd ?? workspace`) -> `planSpawnFromCreateFrame` -> `buildSpawnPlan`
- * -> `buildScopeArgs` -> `--chdir <cwd>` — with NO check that `cwd` actually lands
- * inside a path the scope binds into the jail. The only places a valid cwd can sit
- * are: the always-bound `workspace`, plus whatever `scope.filesystem` adds
+ * -> `buildScopeArgs` -> `--chdir <cwd>`, and `buildSpawnPlan` checks that `cwd`
+ * actually lands inside a path the scope binds into the jail. The only places a
+ * valid cwd can sit are: the always-bound `workspace`, plus whatever
+ * `scope.filesystem` adds
  * (`listed-paths` -> `scope.paths`; `home` -> `home`; `full` -> everything).
  *
- * Today, a `cwd` OUTSIDE those binds is composed straight into the bwrap argv and
- * the jail dies with an opaque `bwrap: Can't chdir to <p>: No such file or
- * directory` — surfaced as a generic spawn failure, NOT the typed
- * `permission_denied` + `errorKind`/`hint` the spec mandates on every governance
- * failure branch (§4.8 fail-closed). `cwd` is an agent-supplied, prompt-injectable
+ * Without the check, a `cwd` OUTSIDE those binds is composed straight into the
+ * bwrap argv and the jail dies with an opaque `bwrap: Can't chdir to <p>: No such
+ * file or directory` — surfaced as a generic spawn failure, NOT the typed
+ * `permission_denied` + `errorKind`/`hint` mandated on every governance
+ * failure branch (fail-closed). `cwd` is an agent-supplied, prompt-injectable
  * input governed by the OPERATOR's scope, so a mismatch must fail CLEAN and EARLY
  * — a typed rejection at the composition seam, before any bwrap spawn.
  *
@@ -22,14 +23,11 @@
  * scope disposes. It is NOT a sandbox escape (bwrap contains chdir within the new
  * mount namespace) — it is a fail-clean / observability requirement.
  *
- * EXPECTED BEHAVIOR (drives the fix): `buildSpawnPlan` REJECTS with a typed error
+ * PINNED BEHAVIOR: `buildSpawnPlan` REJECTS with a typed error
  * carrying `errorKind: "permission_denied"` and a message naming `cwd` when the
  * resolved `cwd` is not contained by `workspace ∪ <scope binds>`. Pure function,
- * no bwrap — macOS-runnable (the live chdir proof is the VPS scope matrix).
- *
- * STATUS: RED against current code — `buildSpawnPlan` currently RESOLVES for every
- * cell below (it composes `--chdir <out-of-bounds>` instead of rejecting). The
- * positive controls already pass and guard the fix against over-rejecting.
+ * no bwrap — macOS-runnable (the live chdir proof is the VPS scope matrix). The
+ * positive controls guard the check against over-rejecting.
  */
 import { describe, it, expect } from "vitest";
 

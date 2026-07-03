@@ -38,31 +38,19 @@ export type { VerbosityConfig, VerbosityLevel, VerbosityOverride } from "./schem
 export { MemoryReviewConfigSchema } from "./schema-memory-review.js";
 export type { MemoryReviewConfig } from "./schema-memory-review.js";
 
-// (The social-modeling schema was DELETED in Phase 226 SIMPLIFY-03 — the entire
-// social-modeling subsystem (the __SOCIAL_MODELING__ cron, the RelationshipStore port,
-// the sqlite adapter, the relationship table, the relationship-block prompt injection)
-// is gone; no re-export alias, I1.)
-
-// (The offline usefulness-judge schema was DELETED in Phase 226 SIMPLIFY-03 — the dormant
-// usefulness-judge cron is gone; no re-export alias, I1.)
-
-// Outcome-signal (Verified Learning WS1) schema — per-agent, default-ON (opt-out)
+// Outcome-signal schema — per-agent, default-ON (opt-out)
 export { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
 export type { LearningOutcomeConfig } from "./schema-learning-outcome.js";
 
-// The collapsed learning-layer schema (Phase 226 / SIMPLIFY-01/05) — per-agent, default-ON.
-// Replaces the per-loop schema-learning-skills/-tuning/-forgetting (deleted; no re-export aliases, I1).
+// The unified learning-layer schema — per-agent, default-ON.
 export { LearningConfigSchema } from "./schema-learning.js";
 export type { LearningConfig } from "./schema-learning.js";
 
-// (The memory triple-extraction schema was DELETED in Phase 226 SIMPLIFY-03 — the dormant
-// no-op extraction cron is gone; the TripleStorePort recall lane survives. No alias, I1.)
-
-// SCAFFOLD-DORMANT memory-lifecycle sweep schema (default-OFF, KEYLESS cron)
+// Memory-lifecycle sweep schema (dormant scaffolding — default-OFF, keyless cron)
 export { MemoryLifecycleConfigSchema } from "./schema-memory-lifecycle.js";
 export type { MemoryLifecycleConfig } from "./schema-memory-lifecycle.js";
 
-// Dialectic schema: the memory_ask opt-in cost gate
+// Dialectic schema: the memory_ask cost gate
 export { DialecticConfigSchema } from "./schema-dialectic.js";
 export type { DialecticConfig } from "./schema-dialectic.js";
 
@@ -107,20 +95,20 @@ export {
   SourceGateConfigSchema,
   ToolLifecycleConfigSchema,
   TracingConfigSchema,
-  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8)
+  // Agent autonomy named-profile resolver
   AutonomyConfigSchema,
   AutonomyMessageConfigSchema,
   AUTONOMY_PROFILES,
   STANDARD_FLOOR_CAPABILITIES,
   resolveAutonomy,
-  // Phase 217: the EVICT-02 fail-closed mode resolver primitive — the Wave-2
-  // dispatch chokepoint runs the run's mode through this (absent/forged/unknown →
-  // "default", never broader). A VALUE export (it is a runtime function).
+  // The fail-closed mode resolver primitive — the dispatch chokepoint runs the
+  // run's mode through this (absent/forged/unknown → "default", never broader).
+  // A VALUE export (it is a runtime function).
   resolveEffectiveMode,
-  // Phase 216: the autonomy.durability sub-block schema (the daemon reads it for
+  // The autonomy.durability sub-block schema (the daemon reads it for
   // the boot-time durability resolution).
   DurabilityConfigSchema,
-  // Honest legible degrade (Phase 210 / PROFILE-03)
+  // Honest legible degrade
   degradeAutonomy,
 } from "./schema-agent/index.js";
 export { ChannelConfigSchema, ChannelEntrySchema, AckReactionConfigSchema, MediaProcessingSchema, ChannelHealthCheckSchema, EmailChannelEntrySchema } from "./schema-channel.js";
@@ -191,7 +179,7 @@ export {
 export { MonitoringConfigSchema } from "./schema-observability.js";
 export { ObservabilityConfigSchema, SpendConfigSchema } from "./schema-observability.js";
 export type { ObservabilityConfig, ObservabilityPersistenceConfig, TrajectoryObservabilityConfig, SpendConfig } from "./schema-observability.js";
-// Orchestration authoring gate (Phase 174 / v2.27 P2) — top-level, default-OFF
+// Orchestration authoring gate — top-level, default-OFF
 export { OrchestrationConfigSchema, OrchestrationAuthoringConfigSchema } from "./schema-orchestration.js";
 export type { OrchestrationConfig, OrchestrationAuthoringConfig } from "./schema-orchestration.js";
 export { PluginsConfigSchema, PluginEntrySchema } from "./schema-plugins.js";
@@ -285,14 +273,14 @@ export type {
   SourceGateConfig,
   ToolLifecycleConfig,
   TracingConfig,
-  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8)
+  // Agent autonomy named-profile resolver
   AutonomyConfig,
   AutonomyMessageConfig,
   AutonomyProfileName,
   AutonomyMode,
   ResolvedAutonomy,
   ResolvedCapability,
-  // Honest legible degrade (Phase 210 / PROFILE-03)
+  // Honest legible degrade
   AutonomyDownshift,
   AutonomyPreflightResult,
 } from "./schema-agent/index.js";
@@ -431,7 +419,7 @@ export {
 
 // Capability default-activation framework.
 // Resolves each capability's effective default-OFF→ON state; the activation set
-// is EMPTY (measurement found no winner) so every capability resolves OFF.
+// is EMPTY (no capability has earned default-ON) so every capability resolves OFF.
 export {
   V2_9_CAPABILITIES,
   ACTIVATED_CAPABILITIES,

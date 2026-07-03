@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Transcript repair (A2) — the `tool_use`<->`tool_result` pairing invariant.
+ * Transcript repair — the `tool_use`<->`tool_result` pairing invariant.
  *
  * A self-contained, pure transform over the canonical pi-ai `Message[]`
  * (`AgentMessage[]` at the boundary). It runs as the FINAL step of LCD
@@ -11,8 +11,8 @@
  * Providers HARD-REJECT a transcript where an assistant `tool_use` block is
  * not immediately followed by its matching `tool_result`, where a `tool_result`
  * has no preceding call, or where a turn is left with a dangling unpaired call.
- * The deleted DAG assembler had no such pass — emitting a flattened, unpaired
- * array is exactly what produced the prior tool-call loop. This module
+ * An assembler without such a pass can emit a flattened, unpaired array —
+ * exactly what produces a provider-rejection tool-call loop. This module
  * guarantees a provider-valid pairing on ANY input:
  *
  *  - REORDER  — an out-of-order `tool_result` is re-placed immediately after
@@ -22,7 +22,7 @@
  *  - DROP ORPHAN — a `tool_result` whose `toolCallId` matches no call is dropped.
  *  - DROP DUPLICATE — a second `tool_result` for an already-resolved id is dropped.
  *  - STRIP ABORTED — an assistant turn with `stopReason "error" | "aborted"` has
- *    its dangling `tool_use` blocks removed (text/thinking preserved, A5), so no
+ *    its dangling `tool_use` blocks removed (text/thinking preserved), so no
  *    unpaired call survives and no result is synthesized for the aborted call.
  *
  * Reasoning (`ThinkingContent`) is never re-introduced, reordered, or dropped:
@@ -41,7 +41,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
-/** The literal marker carried by every synthesized placeholder result (T-128-01). */
+/** The literal marker carried by every synthesized placeholder result. */
 const SYNTHESIZED_RESULT_MARKER = "[tool result missing — synthesized placeholder]";
 
 const ABORTED_STOP_REASONS = new Set(["error", "aborted"]);
@@ -143,10 +143,10 @@ function isAbortedAssistant(m: AssistantLike): boolean {
  * matching `tool_result`. Providers reject an unpaired call, so the invariant
  * fills the gap rather than dropping the call.
  *
- * SECURITY (T-128-01): the placeholder is marked `isError: true` AND its only
+ * SECURITY: the placeholder is marked `isError: true` AND its only
  * content is the explicit literal {@link SYNTHESIZED_RESULT_MARKER}, so the
  * model can never read it as a genuine tool output. Both markers are asserted
- * by Test 2.
+ * by the synthesize-missing test.
  */
 function makeMissingToolResult(
   toolCallId: string,
@@ -165,8 +165,8 @@ function makeMissingToolResult(
 
 /**
  * Return a NEW assistant message with all `toolCall` blocks removed from its
- * content, preserving text/thinking and every other field (A5:
- * strip-dangling-blocks-keep-text). Used for aborted/errored turns whose calls
+ * content, preserving text/thinking and every other field
+ * (strip-dangling-blocks-keep-text). Used for aborted/errored turns whose calls
  * never completed — leaving the calls would put an unpaired `tool_use` in front
  * of the provider. Never mutates the input.
  */
@@ -180,10 +180,10 @@ function stripDanglingToolUseBlocks(m: AgentMessage, a: AssistantLike): AgentMes
 // ---------------------------------------------------------------------------
 
 /**
- * Transcript repair (A2): guarantee a provider-valid `tool_use`<->`tool_result`
+ * Transcript repair: guarantee a provider-valid `tool_use`<->`tool_result`
  * pairing on the assembled array. The FINAL assembly step (`lcd-assembler.ts`).
  *
- * Three passes (RESEARCH §"Transcript Repair"):
+ * Three passes:
  *  - **Pass A** — index every assistant `toolCall.id` into `toolUseSeen`.
  *  - **Pass B** — collect `tool_result` messages by `toolCallId`; DROP an orphan
  *    (id not in `toolUseSeen`) and DROP a duplicate (id already collected).
@@ -207,8 +207,8 @@ export function sanitizeToolUseResultPairing(
   // A non-array input degrades to a PASS-THROUGH, never an empty array: the SDK
   // transformContext contract is "return the original messages or another safe
   // fallback" (context-engine.ts's "never no-op the whole context" stance), so
-  // nuking a malformed shape to [] would silently drop the entire conversation
-  // (WR-02). An EMPTY well-formed array is a genuine no-op and returns [].
+  // nuking a malformed shape to [] would silently drop the entire conversation.
+  // An EMPTY well-formed array is a genuine no-op and returns [].
   if (!Array.isArray(messages)) return messages;
   if (messages.length === 0) return [];
 

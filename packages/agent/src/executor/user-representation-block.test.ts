@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for buildProfileBlock — the PURE deterministic per-user-profile formatter
- * (the v2.31 FOLD-01 read path). The read-path analog of buildTemporalGuidanceBlock
+ * (the profile read path). The read-path analog of buildTemporalGuidanceBlock
  * (rag/temporal-guidance.ts): a pure function over a kind:"profile" MentalModel that
  * returns a FIXED-shape <user_profile> system-prompt block string, or `undefined`
  * when there is nothing to inject (no usable sections → no block → the caller pushes
  * nothing → byte-identity).
  *
- * v2.31 Phase 225-05: the legacy `buildUserRepresentationBlock(UserRepresentationEntry[])`
- * formatter + the `UserRepresentationEntry` type + the `userRepresentationStore` it read
- * from were DELETED (the standalone user-representation subsystem). The FOLD-03 equivalence
- * oracle below now asserts `buildProfileBlock` against an INLINED byte-exact pre-fold target
- * (a literal string), which is a stronger guard than re-deriving it from the deleted formatter.
+ * The equivalence oracle below asserts `buildProfileBlock` against an INLINED
+ * byte-exact target envelope (a literal string), which is a stronger guard than
+ * re-deriving the expected block from the formatter under test.
  */
 
 import type { MentalModel } from "@comis/core";
@@ -19,30 +17,27 @@ import { describe, it, expect } from "vitest";
 import { buildProfileBlock } from "./user-representation-block.js";
 
 // ---------------------------------------------------------------------------
-// FOLD-03 EQUIVALENCE ORACLE (Phase 225 Plan 02). The fold replaced the
-// userRepresentationStore.read → buildUserRepresentationBlock(UserRepresentationEntry[])
-// read path with a mentalModelStore.list(scope,"profile") → buildProfileBlock(MentalModel)
-// path. This is the no-regression guard: the PRE-fold <user_profile> block for a fixture
-// covering all 4 prefix-types is the EQUIVALENCE TARGET (inlined as a byte-exact literal
-// after Plan 05 deleted the legacy formatter), and the NEW buildProfileBlock (given a
-// kind:profile MentalModel whose structuredBody.sections carry the SAME 4 facts) must render
-// EQUIVALENT-OR-BETTER: the same <user_profile> wrapper, the same facts, the same fixed group
-// order. The RED fires if a fact is DROPPED (we assert against the captured PRE-fold target,
-// NOT a snapshot of the new output — snapshotting the new output would false-green a regression).
+// EQUIVALENCE ORACLE. The <user_profile> block for a fixture covering all 4
+// prefix-types is the EQUIVALENCE TARGET, inlined as a byte-exact literal.
+// buildProfileBlock (given a kind:profile MentalModel whose structuredBody.sections
+// carry the SAME 4 facts) must render the same <user_profile> wrapper, the same
+// facts, and the same fixed group order. We assert against the captured target,
+// NOT a snapshot of the current output — snapshotting the current output would
+// false-green a regression that drops a fact.
 // ---------------------------------------------------------------------------
-describe("buildProfileBlock — FOLD-03 equivalence with the pre-fold <user_profile> block", () => {
-  // The four facts, one per prefix-type, shared by BOTH the pre-fold target and
-  // the post-fold MentalModel — so the two render paths see the SAME facts.
+describe("buildProfileBlock — byte-exact equivalence with the captured <user_profile> target block", () => {
+  // The four facts, one per prefix-type, shared by BOTH the target literal and
+  // the MentalModel fixture — so the assertion compares the SAME facts.
   const FACT_IDENTITY = "name is Sam";
   const FACT_PREFERENCE = "likes terse replies";
   const FACT_RELATIONSHIP = "manages a team of five";
   const FACT_INSTRUCTION = "always reply in English";
 
   /**
-   * The captured PRE-fold equivalence TARGET (the block the legacy
-   * buildUserRepresentationBlock produced for the 4-fact fixture, one fact per group, in the
-   * fixed identity → preference → relationship → instruction order). Inlined byte-exact since
-   * the legacy formatter was deleted in Plan 05 — the fold must reproduce THIS envelope + facts.
+   * The captured equivalence TARGET: the expected block for the 4-fact fixture,
+   * one fact per group, in the fixed identity → preference → relationship →
+   * instruction order. Inlined byte-exact — the formatter must reproduce THIS
+   * envelope + facts.
    */
   const ORACLE_PREFOLD_BLOCK = [
     "<user_profile>",
@@ -95,16 +90,16 @@ describe("buildProfileBlock — FOLD-03 equivalence with the pre-fold <user_prof
     expect(block).not.toBeUndefined();
     expect(block).toContain("<user_profile>");
     expect(block).toContain("</user_profile>");
-    // The oracle (pre-fold) had the wrapper too — equivalence on the envelope.
+    // The oracle target has the wrapper too — equivalence on the envelope.
     expect(ORACLE_PREFOLD_BLOCK).toContain("<user_profile>");
   });
 
-  it("preserves EVERY fact the pre-fold block carried (no fact dropped — the RED guard)", () => {
+  it("preserves EVERY fact the target block carries (a dropped fact fails here)", () => {
     const block = buildProfileBlock(makeProfileModel())!;
     for (const fact of [FACT_IDENTITY, FACT_PREFERENCE, FACT_RELATIONSHIP, FACT_INSTRUCTION]) {
-      // The oracle carried it…
+      // The oracle carries it…
       expect(ORACLE_PREFOLD_BLOCK).toContain(fact);
-      // …and the fold must too (equivalent-or-better: a dropped fact fails here).
+      // …and the rendered block must too (a dropped fact fails here).
       expect(block).toContain(fact);
     }
   });
@@ -122,8 +117,8 @@ describe("buildProfileBlock — FOLD-03 equivalence with the pre-fold <user_prof
     expect(idxRelationship).toBeLessThan(idxInstruction);
   });
 
-  it("renders the byte-exact pre-fold envelope (equivalent-or-better — same wrapper, headings, bullets, order)", () => {
-    // The fold's output for the 4-fact fixture is byte-identical to the captured pre-fold target.
+  it("renders the byte-exact captured target envelope (same wrapper, headings, bullets, order)", () => {
+    // The output for the 4-fact fixture is byte-identical to the captured target.
     expect(buildProfileBlock(makeProfileModel())).toBe(ORACLE_PREFOLD_BLOCK);
   });
 

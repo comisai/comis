@@ -172,6 +172,6 @@ export type { UnreachableToolEntry } from "./sub-agent-tool-denylist.js";
 // RPC typed-refusal classification — the single source of truth the daemon
 // rpc-dispatch classifier AND the @comis/gateway method-router classifier both
 // delegate to, so intentional policy/security refusals classify consistently
-// (warn, never internal/ERROR) at every log layer (OBS-RPC-REFUSAL-CLASS).
+// (warn, never internal/ERROR) at every log layer.
 export { classifyTypedRpcError } from "./rpc-error-classification.js";
 export type { TypedRpcErrorKind, TypedRpcErrorClassification } from "./rpc-error-classification.js";

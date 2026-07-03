@@ -136,7 +136,7 @@ describe("createContextEngine", () => {
 
   it("c2) version 'dag' (the default) without a contextStore warns with errorKind config and runs the pipeline (the storeless safety net)", async () => {
     // The storeless safety net that makes dag the default non-breaking: with
-    // version: "dag" (now the default since Phase 133) selected but NO
+    // version: "dag" (the default) selected but NO
     // ContextStorePort/conversationId wired, the factory must NOT instantiate
     // the LCD engine. It WARN-logs (errorKind: "config") and falls through to
     // the pipeline assembly. The deps here deliberately omit any
@@ -1678,7 +1678,7 @@ describe("STRESS: Compaction and rehydration under context pressure", () => {
   // Test F: stale fence is replaced after compaction
   // -------------------------------------------------------------------------
 
-  it("f) a stale pre-compaction fence is replaced by the conservative 1/3 fence after compaction (WR-05)", async () => {
+  it("f) a stale pre-compaction fence is replaced by the conservative 1/3 fence after compaction", async () => {
     const logger = createStressMockLogger();
     const mockSessionManager = { fileEntries: [] as unknown[], _rewriteFile: vi.fn() };
 
@@ -1724,10 +1724,10 @@ describe("STRESS: Compaction and rehydration under context pressure", () => {
     // Compaction replaces the entire message array, so the seeded fence (50)
     // is meaningless in the new array and must be REPLACED — by the
     // documented conservative fence at 1/3 of the compacted message array,
-    // NOT by a reset to -1 (the -1 this test previously asserted was the
-    // WR-05 dead-code outcome: Array.isArray on the compaction stats OBJECT
-    // never fired, so every compaction silently dropped all prefix
-    // protection while the docs promised the 1/3 fence).
+    // NOT by a reset to -1 (a reset to -1 — e.g. from gating the fence update
+    // on Array.isArray of the compaction stats OBJECT, which never fires —
+    // would silently drop all prefix protection while the docs promise the
+    // 1/3 fence).
     expect(engine.lastBreakpointIndex).not.toBe(50);
     expect(engine.lastBreakpointIndex).toBe(Math.floor(result.length / 3));
     expect(engine.lastTrimOffset).toBe(0);
@@ -1757,7 +1757,7 @@ describe("STRESS: Compaction and rehydration under context pressure", () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Transcript repair (A2) wired into the PIPELINE path.
+// Transcript repair wired into the PIPELINE path.
 //
 // Production bug (codex/Responses API): a persisted transcript whose
 // `toolResult` carries a `toolCallId` with NO matching `toolCall` (the
@@ -2055,7 +2055,7 @@ describe("token anchor estimation", () => {
     expect(onAnchorReset).not.toHaveBeenCalled();
   });
 
-  it("engages the documented post-compaction fence at 1/3 of the compacted message array instead of -1 (WR-05)", async () => {
+  it("engages the documented post-compaction fence at 1/3 of the compacted message array instead of -1", async () => {
     const logger = createMockLogger();
     const mockSessionManager = { fileEntries: [] as unknown[], _rewriteFile: vi.fn() };
 

@@ -12,10 +12,10 @@
  *     'undefined entries'`. Any non-array `entries` value must render an
  *     honest `?` instead of the misleading literal `undefined`.
  *
- *   - Phase 164-03 (RR4): sessions reset-lcd subcommand wiring:
- *     CLI1 — subcommand is registered; accepts sessionKey + --memory + --yes
- *     CLI2 — calls session.reset_conversation with { session_key } when --yes is passed
- *     CLI3 — --memory flag threads memory: true to the RPC request
+ *   - sessions reset subcommand wiring: the subcommand is registered and
+ *     accepts sessionKey + --memory + --yes; it calls
+ *     session.reset_conversation with { session_key } when --yes is passed;
+ *     the --memory flag threads memory: true to the RPC request.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -268,15 +268,15 @@ describe("renderSystemPromptReport — Tools/Skills lines never render 'undefine
 });
 
 // ---------------------------------------------------------------------------
-// Phase 164-06 (gap-closure): sessions reset — complete cross-mode conversation reset
-// Replaces Phase 164-03 sessions reset-lcd (LCD-only).
+// sessions reset — complete cross-mode conversation reset.
 //
-// CLI1: subcommand `sessions reset` is registered (NOT `sessions reset-lcd`)
-// CLI2: sends session.reset_conversation with { session_key } when --yes is passed
-// CLI3: --memory flag threads memory: true to the request
-// CLI4: --memory with memoriesDeleted===undefined → ⚠ warning to stderr
-// CLI4b: --memory with memoriesDeleted defined (future impl) → RAG line to stdout
-// CLI5: output includes both lcdRowsDeleted and sessionMessagesCleared counts
+// Covered below:
+// - subcommand `sessions reset` is registered (there is no `sessions reset-lcd`)
+// - sends session.reset_conversation with { session_key } when --yes is passed
+// - --memory flag threads memory: true to the request
+// - --memory with memoriesDeleted===undefined → ⚠ warning to stderr
+// - --memory with memoriesDeleted defined → RAG line to stdout
+// - output includes both lcdRowsDeleted and sessionMessagesCleared counts
 //
 // Uses vi.mock for withClient (same pattern as trace.test.ts).
 // ---------------------------------------------------------------------------
@@ -302,7 +302,7 @@ vi.mock("@clack/prompts", () => ({
 const { withClient: mockedWithClient } = await import("../client/rpc-client.js");
 
 /** Minimal session.reset_conversation success response — memoriesDeleted OMITTED.
- *  Post-DIST-05 the handler omits memoriesDeleted ONLY when no MemoryPort is wired
+ *  The handler omits memoriesDeleted ONLY when no MemoryPort is wired
  *  (deployment does not support the --memory clear); when wired it returns a count. */
 const RESET_CONVERSATION_RESPONSE = {
   sessionKey: "tenant1:user1:chan1",
@@ -310,25 +310,25 @@ const RESET_CONVERSATION_RESPONSE = {
   sessionMessagesCleared: 4,
 };
 
-describe("CLI1: sessions reset subcommand registration (Phase 164-06)", () => {
-  it("CLI1: registerSessionsCommand registers sessions reset subcommand (not reset-lcd)", () => {
+describe("sessions reset subcommand registration", () => {
+  it("registerSessionsCommand registers the sessions reset subcommand (not reset-lcd)", () => {
     const program = new Command();
     registerSessionsCommand(program);
 
     const sessionsCmd = program.commands.find((c) => c.name() === "sessions");
     expect(sessionsCmd).toBeDefined();
 
-    // New name is 'reset' (Phase 164-06 rename)
+    // The subcommand name is 'reset'
     const resetCmd = sessionsCmd!.commands.find((c) => c.name() === "reset");
     expect(resetCmd).toBeDefined();
     expect(resetCmd!.description()).toMatch(/conversation|session|clear|reset/i);
 
-    // Old name 'reset-lcd' must NOT exist (renamed in Phase 164-06)
+    // A 'reset-lcd' subcommand must NOT exist
     const oldResetLcdCmd = sessionsCmd!.commands.find((c) => c.name() === "reset-lcd");
     expect(oldResetLcdCmd).toBeUndefined();
   });
 
-  it("CLI1b: reset subcommand has --memory, --purge-derived and --yes options", () => {
+  it("reset subcommand has --memory, --purge-derived and --yes options", () => {
     const program = new Command();
     registerSessionsCommand(program);
 
@@ -342,7 +342,7 @@ describe("CLI1: sessions reset subcommand registration (Phase 164-06)", () => {
   });
 });
 
-describe("CLI2: sessions reset calls session.reset_conversation via callTyped (Phase 164-06)", () => {
+describe("sessions reset calls session.reset_conversation via callTyped", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -357,7 +357,7 @@ describe("CLI2: sessions reset calls session.reset_conversation via callTyped (P
     exitSpy.restore();
   });
 
-  it("CLI2: sends session.reset_conversation with session_key when --yes is passed", async () => {
+  it("sends session.reset_conversation with session_key when --yes is passed", async () => {
     const capturedMethods: string[] = [];
     const capturedParams: unknown[] = [];
 
@@ -388,7 +388,7 @@ describe("CLI2: sessions reset calls session.reset_conversation via callTyped (P
     expect(params["session_key"]).toBe("tenant1:user1:chan1");
   });
 
-  it("CLI2b: output includes both lcdRowsDeleted and sessionMessagesCleared counts on success", async () => {
+  it("output includes both lcdRowsDeleted and sessionMessagesCleared counts on success", async () => {
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("session.reset_conversation", RESET_CONVERSATION_RESPONSE)
@@ -411,7 +411,7 @@ describe("CLI2: sessions reset calls session.reset_conversation via callTyped (P
   });
 });
 
-describe("CLI3: sessions reset --memory threads memory: true (Phase 164-06)", () => {
+describe("sessions reset --memory threads memory: true", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -426,7 +426,7 @@ describe("CLI3: sessions reset --memory threads memory: true (Phase 164-06)", ()
     exitSpy.restore();
   });
 
-  it("CLI3: --memory threads memory: true to the RPC request", async () => {
+  it("--memory threads memory: true to the RPC request", async () => {
     const capturedParams: unknown[] = [];
 
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
@@ -455,7 +455,7 @@ describe("CLI3: sessions reset --memory threads memory: true (Phase 164-06)", ()
     expect(params["memory"]).toBe(true);
   });
 
-  it("CLI3b: without --memory, memory param is false or falsy", async () => {
+  it("without --memory, the memory param stays falsy in the request", async () => {
     const capturedParams: unknown[] = [];
 
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
@@ -483,7 +483,7 @@ describe("CLI3: sessions reset --memory threads memory: true (Phase 164-06)", ()
     expect(params["memory"]).toBeFalsy();
   });
 
-  it("CLI3c (DIST-05): --purge-derived threads purge_derived: true to the request", async () => {
+  it("--purge-derived threads purge_derived: true to the request", async () => {
     const capturedParams: unknown[] = [];
 
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
@@ -516,10 +516,10 @@ describe("CLI3: sessions reset --memory threads memory: true (Phase 164-06)", ()
 });
 
 // ---------------------------------------------------------------------------
-// CLI4: --memory not-wired warning output (Phase 164-06 / DIST-05)
+// sessions reset --memory not-wired warning output
 // ---------------------------------------------------------------------------
 
-describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)", () => {
+describe("sessions reset --memory not-implemented warning", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
   let stderrSpy: ReturnType<typeof vi.fn>;
@@ -537,7 +537,7 @@ describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)",
     stderrSpy.mockRestore();
   });
 
-  it("CLI4: --memory + memoriesDeleted===undefined prints not-wired warning to stderr", async () => {
+  it("--memory + memoriesDeleted===undefined prints not-wired warning to stderr", async () => {
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
       const mockClient = {
         call: vi.fn().mockResolvedValue(RESET_CONVERSATION_RESPONSE), // no memoriesDeleted field
@@ -565,7 +565,7 @@ describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)",
     expect(stdoutOutput).not.toMatch(/RAG memories cleared/i);
   });
 
-  it("CLI4b: --memory + memoriesDeleted defined → RAG line printed to stdout, no stderr warning", async () => {
+  it("--memory + memoriesDeleted defined → RAG line printed to stdout, no stderr warning", async () => {
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
       const mockClient = {
         call: vi.fn().mockResolvedValue({ ...RESET_CONVERSATION_RESPONSE, memoriesDeleted: 3 }),
@@ -595,12 +595,13 @@ describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)",
 });
 
 // ---------------------------------------------------------------------------
-// DOC-02: sessions backup — SQLite Online Backup API (Phase 170-04)
+// sessions backup — SQLite Online Backup API.
 //
-// DOC-02-T-1: backup creates a timestamped copy of memory.db
-// DOC-02-T-2: backup file reopens as a valid SQLite DB with matching row count
-// DOC-02-T-3: backup file has permissions 0600
-// DOC-02-T-4: missing memory.db exits with non-zero code and error message
+// Covered below:
+// - backup creates a timestamped copy of memory.db
+// - backup file reopens as a valid SQLite DB with matching row count
+// - backup file has permissions 0600
+// - missing memory.db exits with non-zero code and error message
 // ---------------------------------------------------------------------------
 
 import Database from "better-sqlite3";
@@ -608,7 +609,7 @@ import { mkdirSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-describe("DOC-02: sessions backup subcommand (Phase 170-04)", () => {
+describe("sessions backup subcommand", () => {
   let tmpDir: string;
   let dbPath: string;
 
@@ -636,7 +637,7 @@ describe("DOC-02: sessions backup subcommand (Phase 170-04)", () => {
     }
   });
 
-  it("DOC-02-T-1: backup creates a file named memory.db.backup.{timestamp} in the same directory", async () => {
+  it("backup creates a file named memory.db.backup.{timestamp} in the same directory", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
@@ -656,7 +657,7 @@ describe("DOC-02: sessions backup subcommand (Phase 170-04)", () => {
     expect(backupFiles[0]).toMatch(/^memory\.db\.backup\.\d{4}-\d{2}-\d{2}T\d{9}Z$/);
   });
 
-  it("DOC-02-T-2: backup file reopens as a valid SQLite DB with matching row count", async () => {
+  it("backup file reopens as a valid SQLite DB with matching row count", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
@@ -678,7 +679,7 @@ describe("DOC-02: sessions backup subcommand (Phase 170-04)", () => {
     expect(row.cnt).toBe(2);
   });
 
-  it("DOC-02-T-3: backup file has permissions 0600 (owner-read/write only)", async () => {
+  it("backup file has permissions 0600 (owner-read/write only)", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
@@ -698,7 +699,7 @@ describe("DOC-02: sessions backup subcommand (Phase 170-04)", () => {
     expect(mode).toBe(0o600);
   });
 
-  it("DOC-02-T-4: missing memory.db exits with non-zero code and a clear error message", async () => {
+  it("missing memory.db exits with non-zero code and a clear error message", async () => {
     const consoleSpy = createConsoleSpy();
     const exitSpy = createProcessExitSpy();
 

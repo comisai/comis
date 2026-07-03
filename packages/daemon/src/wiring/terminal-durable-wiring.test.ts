@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LO-03 (165-REVIEW) regression: the LIVE-01 liveness check's `lastActivity` refresh.
+ * The liveness check's `lastActivity` refresh.
  *
  * `checkLiveness` (the daemon-bound single liveness probe) round-trips `registry.status`,
  * which ALREADY stamps `handle.lastActivity = nowMs()` as a side effect (the registry's
  * status method). So the per-session `lastActivity` is refreshed by the liveness check
- * itself — making the holder's separate explicit `refreshLastActivity` dep REDUNDANT
- * (165-REVIEW LO-03). This file pins the load-bearing behavior so the removal of that
- * redundant dep is safe: a `checkLiveness` round-trip advances `lastActivity` (the ENDURE-01
- * idle-reaper unify, I9 — a quiet-but-busy compile's lastActivity stays fresh so the idle
+ * itself — making the holder's separate explicit `refreshLastActivity` dep REDUNDANT.
+ * This file pins the load-bearing behavior so the removal of that
+ * redundant dep is safe: a `checkLiveness` round-trip advances `lastActivity` (the
+ * idle-reaper unify — a quiet-but-busy compile's lastActivity stays fresh so the idle
  * sweep never evicts it), via the `status` stamp, with NO separate refresh hook.
  *
  * @module
@@ -26,8 +26,8 @@ function makeLogger() {
   return { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn(function (this: unknown) { return this; }) };
 }
 
-describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivity via the status round-trip", () => {
-  it("a checkLiveness round-trip advances the handle's lastActivity (the status stamp IS the I9 reaper-unify — no separate refresh needed)", async () => {
+describe("buildWakeDurabilityDeps — checkLiveness refreshes lastActivity via the status round-trip", () => {
+  it("a checkLiveness round-trip advances the handle's lastActivity (the status stamp IS the reaper-unify — no separate refresh needed)", async () => {
     let now = 1_000;
     // A live handle whose lastActivity is stale (an old quiet-but-busy compile).
     const handle = { sessionId: "s-1", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
@@ -51,19 +51,19 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     now = 50_000; // time advances before the liveness check
     const signal = await deps.checkLiveness("s-1", "a");
 
-    // The liveness check ran the status round-trip (the worker classifier perception, I2 — no screen).
+    // The liveness check ran the status round-trip (the worker classifier perception — no screen).
     expect(registry.status).toHaveBeenCalledTimes(1);
     expect(signal, "a working classifier → a busy signal (alive, recent progress)").toBeDefined();
-    // The status round-trip advanced lastActivity to now — the I9 reaper-unify, with NO separate
-    // refreshLastActivity dep (LO-03: the explicit refresh was redundant given this side effect).
-    expect(handle.lastActivity, "checkLiveness's status round-trip refreshes lastActivity (the I9 unify)").toBe(50_000);
+    // The status round-trip advanced lastActivity to now — the reaper-unify, with NO separate
+    // refreshLastActivity dep (the explicit refresh was redundant given this side effect).
+    expect(handle.lastActivity, "checkLiveness's status round-trip refreshes lastActivity (the reaper-unify)").toBe(50_000);
   });
 
-  it("ISSUE-3: a channel/API-stamped session's liveness check resolves the LIVE session (getOwner), NOT skipped as gone cross-owner", async () => {
-    // Live VPS finding 2026-06-16: a chat-API/Telegram drive is stamped under (userId, sessionKey).
-    // Pre-fix checkLiveness used driveOwner=(agentId,"") → registry.get cross-owner → undefined → the
-    // LIVE-01 backstop SKIPPED the live session (a hung channel drive would never be detected; a busy
-    // one never refreshed → the ENDURE-01 reaper could evict it as idle). The fix recovers the stamped
+  it("a channel/API-stamped session's liveness check resolves the LIVE session (getOwner), NOT skipped as gone cross-owner", async () => {
+    // A chat-API/Telegram drive is stamped under (userId, sessionKey).
+    // A checkLiveness that used driveOwner=(agentId,"") → registry.get cross-owner → undefined → the
+    // liveness backstop SKIPPED the live session (a hung channel drive would never be detected; a busy
+    // one never refreshed → the idle reaper could evict it as idle). The fix recovers the stamped
     // owner via the registry's getOwner seam.
     const STAMPED = { agentId: "openai-api", sessionKey: "default:openai-api:openai" };
     const handle = { sessionId: "s-1", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
@@ -86,7 +86,7 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     expect(registry.status.mock.calls[0]?.[1], "the liveness status round-trip must use the recovered STAMPED owner").toMatchObject(STAMPED);
   });
 
-  it("DELIVER-01 (#2): an awaiting-input classifier verdict surfaces awaitingInput:true (a finished, idle backgrounded drive) — still busy, NOT hung", async () => {
+  it("an awaiting-input classifier verdict surfaces awaitingInput:true (a finished, idle backgrounded drive) — still busy, NOT hung", async () => {
     // The completion signal the daemon backstop reads to fire a one-time 'drive finished —
     // waiting for input' notification. An awaiting-input drive is alive + busy (the busy/hung
     // predicate is unchanged); awaitingInput is a PURELY ADDITIVE field on the probe.
@@ -108,14 +108,14 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
 
     const signal = await deps.checkLiveness("s-1", "a");
     expect(signal, "an awaiting-input drive is alive + busy (not hung)").toMatchObject({ alive: true });
-    expect(signal?.awaitingInput, "awaiting-input surfaces the DELIVER-01 completion signal").toBe(true);
+    expect(signal?.awaitingInput, "awaiting-input surfaces the completion signal").toBe(true);
   });
 
-  it("LINGER-01: a settled (awaiting-input) UNATTENDED drive does NOT get lastActivity refreshed by the passive probe (so the ENDURE-01 idle reaper can finally evict it)", async () => {
-    // webhook-claude-cli-tdd-20260701-backstop: a backgrounded UNATTENDED (webhook/cron, owner
-    // sessionKey "") drive that cleanly SETTLES (awaiting-input) is classified BUSY, so the LIVE-01
+  it("a settled (awaiting-input) UNATTENDED drive does NOT get lastActivity refreshed by the passive probe (so the idle reaper can finally evict it)", async () => {
+    // A backgrounded UNATTENDED (webhook/cron, owner
+    // sessionKey "") drive that cleanly SETTLES (awaiting-input) is classified BUSY, so the liveness
     // backstop keeps probing it every ~90s and each `registry.status` round-trip stamps lastActivity
-    // = now → the ENDURE-01 idle reaper's `now - lastActivity > idleTtlMs` cap can NEVER fire → the
+    // = now → the idle reaper's `now - lastActivity > idleTtlMs` cap can NEVER fire → the
     // finished drive lingers until clean-restart. The fix: the PASSIVE liveness probe must not
     // refresh a settled unattended drive's idle clock (it made no progress), so the reaper's
     // idleTtlMs measures from its last REAL activity and evicts it.
@@ -134,12 +134,12 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     now = 50_000; // time advances; the drive has been settled since its last real activity
     const signal = await deps.checkLiveness("s-1", "a");
 
-    expect(signal?.awaitingInput, "the DELIVER-01 completion signal still surfaces (the fix touches only the idle clock)").toBe(true);
+    expect(signal?.awaitingInput, "the completion signal still surfaces (the fix touches only the idle clock)").toBe(true);
     // The passive probe restored lastActivity to its pre-probe (last-REAL-activity) value — NOT `now`.
     expect(handle.lastActivity, "a settled UNATTENDED drive's idle clock is frozen so the reaper's idleTtlMs can evict it").toBe(1);
   });
 
-  it("LINGER-01: an awaiting-input INTERACTIVE drive (owner sessionKey set) IS still refreshed — a human owns its lifecycle, the idle reaper does not touch it", async () => {
+  it("an awaiting-input INTERACTIVE drive (owner sessionKey set) IS still refreshed — a human owns its lifecycle, the idle reaper does not touch it", async () => {
     let now = 1_000;
     const handle = { sessionId: "s-2", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
     const registry = {
@@ -156,14 +156,14 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     await deps.checkLiveness("s-2", "a");
 
     // An interactive drive is left warm — reaping it would surprise the human who may reply later.
-    expect(handle.lastActivity, "an interactive settled drive keeps the LO-03 refresh (human-owned lifecycle)").toBe(50_000);
+    expect(handle.lastActivity, "an interactive settled drive keeps the refresh (human-owned lifecycle)").toBe(50_000);
   });
 
-  it("PRODUCING-01: a still-PRODUCING awaiting-input UNATTENDED drive (screen advancing across probes) is NOT frozen — the reaper must not evict a working autonomous drive (webhook-claude-gsd-snake-20260702)", async () => {
-    // The GSD-milestone finding: Claude Code parks its cursor at the `❯` composer WHILE autonomously
-    // working (subagents running, a `/gsd-autonomous` phase building, the status timer/token counter
-    // advancing), so the classifier reports awaiting-input. The unconditional LINGER-01 freeze then
-    // let the ENDURE-01 idle reaper EVICT a still-producing drive at idleTtlMs, mid-work. The fix: a
+  it("a still-PRODUCING awaiting-input UNATTENDED drive (screen advancing across probes) is NOT frozen — the reaper must not evict a working autonomous drive", async () => {
+    // Claude Code parks its cursor at the `❯` composer WHILE autonomously
+    // working (subagents running, a multi-phase run building, the status timer/token counter
+    // advancing), so the classifier reports awaiting-input. An unconditional freeze then
+    // lets the idle reaper EVICT a still-producing drive at idleTtlMs, mid-work. The fix: a
     // CHANGING on-screen render (real progress) keeps lastActivity fresh so the reaper never evicts it.
     let now = 1_000;
     let frame = 0;
@@ -188,7 +188,7 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     expect(handle.lastActivity, "a still-PRODUCING unattended drive keeps its fresh lastActivity — the reaper must NOT evict it mid-work").toBe(50_000);
   });
 
-  it("PRODUCING-01: a TRULY-IDLE awaiting-input UNATTENDED drive (screen UNCHANGED across probes) is still frozen — LINGER-01 preserved (a finished/idle drive still evicts)", async () => {
+  it("a TRULY-IDLE awaiting-input UNATTENDED drive (screen UNCHANGED across probes) is still frozen — a finished/idle drive still evicts", async () => {
     let now = 1_000;
     const handle = { sessionId: "s-4", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
     const registry = {
@@ -206,23 +206,23 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     now = 50_000;
     await deps.checkLiveness("s-4", "a"); // same screen → NOT producing → freeze
 
-    expect(handle.lastActivity, "a truly-idle unattended drive (static screen) is frozen so idleTtlMs evicts it (LINGER-01)").toBe(1);
+    expect(handle.lastActivity, "a truly-idle unattended drive (static screen) is frozen so idleTtlMs evicts it").toBe(1);
   });
 
-  it("the wake-durability bundle no longer exposes a redundant refreshLastActivity dep (LO-03 removed)", () => {
+  it("the wake-durability bundle no longer exposes a redundant refreshLastActivity dep", () => {
     const deps = buildWakeDurabilityDeps({
       dataDir: "/tmp/nonexistent-comis-lo03",
       registries: new Map() as never,
       workerStuckMs: 0,
       nowMs: () => 1,
     });
-    // LO-03: the redundant explicit refresh hook is gone — checkLiveness's status round-trip
+    // The redundant explicit refresh hook is gone — checkLiveness's status round-trip
     // refreshes lastActivity, so the bundle is {driveJournalStore, checkLiveness} only.
     expect(Object.keys(deps).sort()).toEqual(["checkLiveness", "driveJournalStore"]);
   });
 });
 
-describe("buildIsTmuxAlive — DUR-01: the daemon liveness probe targets the worker's -S data-dir socket", () => {
+describe("buildIsTmuxAlive — the daemon liveness probe targets the worker's -S data-dir socket", () => {
   const socketPath = "/home/comis/.comis/terminal-worker/tmux.sock";
 
   it("probes `tmux -S <dataDir socket> has-session -t comis-<id>` — NOT tmux's default /tmp socket", () => {
@@ -246,12 +246,12 @@ describe("buildIsTmuxAlive — DUR-01: the daemon liveness probe targets the wor
     expect(isAlive("comis-gone")).toBe(false);
   });
 
-  it("absent tmuxPath ⇒ always-false (durable falls back to the lost floor, I1)", () => {
+  it("absent tmuxPath ⇒ always-false (durable falls back to the lost floor)", () => {
     expect(buildIsTmuxAlive(undefined, socketPath)("comis-abc")).toBe(false);
   });
 });
 
-describe("buildKillTmux — deterministic durable-evict kill-session by name (webhook-claude-cli-tdd-20260701)", () => {
+describe("buildKillTmux — deterministic durable-evict kill-session by name", () => {
   const socketPath = "/home/comis/.comis/terminal-worker/tmux.sock";
 
   it("kills `tmux -S <session socket> kill-session -t comis-<id>` — the path proven to reap a durable never-tasked drive", () => {
@@ -284,15 +284,15 @@ describe("buildKillTmux — deterministic durable-evict kill-session by name (we
   });
 });
 
-// RECUR-02 (live VPS 2026-06-17): a durable tmux server that SURVIVES a daemon restart
+// A durable tmux server that SURVIVES a daemon restart
 // (KillMode=process) is STRANDED in the prior daemon generation's mount namespace — systemd
 // PrivateTmp/ProtectHome give every daemon START a fresh mount ns, so the surviving server
 // (forked by the OLD daemon) sits in a now-dismantled ns. Its EXISTING sessions keep running
 // (their bwrap was set up when the ns was healthy) but EVERY NEW `bwrap` session it forks dies
-// ~2.5s (exit 1 — mount setup runs in the torn-down ns). PROVEN: server mnt ns 4026532294 ≠
+// ~2.5s (exit 1 — mount setup runs in the torn-down ns). Observed: server mnt ns 4026532294 ≠
 // restarted daemon mnt ns 4026532302; a new claude AND a plain `sh` new-session both die while
 // the re-attached durable one survives. The fix recreates the stranded server on boot.
-describe("isTmuxServerStranded — the stranded-mount-namespace detector (RECUR-02)", () => {
+describe("isTmuxServerStranded — the stranded-mount-namespace detector", () => {
   it("STRANDED when the surviving server's mnt ns differs from this daemon's (the post-restart strand)", () => {
     expect(isTmuxServerStranded("mnt:[4026532294]", "mnt:[4026532302]")).toBe(true);
   });
@@ -311,7 +311,7 @@ describe("isTmuxServerStranded — the stranded-mount-namespace detector (RECUR-
   });
 });
 
-describe("recreateStrandedTmuxServerOnBoot — kill the stranded server so new sessions get a fresh one (RECUR-02)", () => {
+describe("recreateStrandedTmuxServerOnBoot — kill the stranded server so new sessions get a fresh one", () => {
   const base = (over: Record<string, unknown> = {}) => ({
     socketPath: "/data/x/terminal-worker/tmux.sock",
     tmuxPath: "/usr/bin/tmux",

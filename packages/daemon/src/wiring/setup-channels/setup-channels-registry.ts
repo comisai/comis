@@ -89,7 +89,7 @@ export interface ChannelsDeps {
   /** System clock (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer gates its delete on outcome.delivery.deliveredAtMs. */
   clock: ClockPort;
-  /** Per-agent OAuth access-token resolver (LEARN-01) — forwarded to the cron
+  /** Per-agent OAuth access-token resolver — forwarded to the cron
    *  event listeners so background memory/learning jobs run on an OAuth main
    *  provider (openai-codex) instead of skipping for "no API key". */
   resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
@@ -183,15 +183,15 @@ export interface ChannelsDeps {
   /** Memory adapter for storing media file references. */
   memoryAdapter?: MemoryPort;
   /** LCD store + browse — the memory-review session source reads DAG
-   *  transcripts from them (live finding 2026-06-11: the daemon session store
-   *  is near-empty in DAG mode, so the nightly extraction was a silent
-   *  no-op). Absent ⇒ daemon-store-only review (pipeline byte-identical). */
+   *  transcripts from them (the daemon session store
+   *  is near-empty in DAG mode, so the nightly extraction would be a silent
+   *  no-op without them). Absent ⇒ daemon-store-only review (pipeline byte-identical). */
   lcdStore?: import("@comis/core").ContextStorePort;
   contextBrowse?: import("@comis/core").ContextBrowsePort;
   /** Memory read API — the __REFLECT__ / __MEMORY_REVIEW__ crons scope the
    *  per-(tenant, agent, user) high-trust source read over `inspect` (the
-   *  __USER_REPRESENTATION__ sentinel that formerly drove this was DELETED in
-   *  Phase 225 when that subsystem folded into the reflection engine). Built in
+   *  __USER_REPRESENTATION__ sentinel that formerly drove this was DELETED
+   *  when that subsystem folded into the reflection engine). Built in
    *  setup-memory; daemon-side (the agent imports no memory package). */
   memoryApi?: MemoryApi;
   /** Entity-associative store — forwarded to registerCronEventListeners so
@@ -203,29 +203,29 @@ export interface ChannelsDeps {
    *  successful store. Built in setup-memory on the shared db handle; injected as the port
    *  TYPE (agent↛memory cut). */
   causalStore?: MemoryCausalStore;
-  /** Consolidation store — ORPHANED in Phase 225-05 (the runMemoryConsolidation job +
-   *  the __MEMORY_CONSOLIDATION__ sentinel were deleted); the port is retired in Phase 226.
+  /** Consolidation store — ORPHANED (the runMemoryConsolidation job +
+   *  the __MEMORY_CONSOLIDATION__ sentinel were deleted); the port is retired.
    *  Still forwarded (no live writer). Built in setup-memory on the shared db handle; injected
    *  as the port TYPE (agent↛memory cut). */
   consolidationStore?: MemoryConsolidationStore;
-  // (The cron-path `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
+  // (The cron-path `tripleStore` field was DELETED — its sole reader was the
   //  deleted triple-extraction sentinel. The graphSpread recall lane consumes tripleStore via
   //  the SEPARATE setupAgents deps chain, not this cron forward; the port + lane survive.)
   // (The cron-path `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
-  //  upsert write path — was DELETED in Phase 226-04 with the rest of the social-modeling subsystem.)
+  //  upsert write path — was DELETED with the rest of the social-modeling subsystem.)
   /** Memory-lifecycle sweep store — forwarded to the cron path so
    *  the opt-in KEYLESS __MEMORY_LIFECYCLE__ sentinel runs the DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
    *  the full daemon → registry → credentials chain — a missing thread silently disables the sweep
    *  (the field-plumbing lesson). Absent => off-by-default, never reached. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  // (The cron-path `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
-  //  the deleted usefulness-judge sentinel. The FORGET-02 recordUsage reward write rides
+  // (The cron-path `usefulnessStore` field was DELETED — its sole reader was
+  //  the deleted usefulness-judge sentinel. The recordUsage reward write rides
   //  setup-learning.ts, not this cron forward; the store survives.)
-  /** Outcome-signal store (WS1) — forwarded to the __REFLECT__ cron path (runReflection
+  /** Outcome-signal store — forwarded to the __REFLECT__ cron path (runReflection
    *  fail-closed success gate). Built in setup-memory; port TYPE only (agent↛memory cut). */
   outcomeStore?: OutcomeSignalPort;
-  /** Mental-model store (WS2/skills) — forwarded to the __REFLECT__ cron path (runReflection get/admit).
+  /** Mental-model store (skills) — forwarded to the __REFLECT__ cron path (runReflection get/admit).
    *  Built in setup-memory on the shared db; port TYPE only (the agent↛memory closed-graph cut). */
   learnedSkillStore?: MentalModelStorePort;
   /** Default tenant ID for memory storage. */
@@ -241,13 +241,13 @@ export interface ChannelsDeps {
   /** Delivery queue for crash-safe persistence */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
   /**
-   * REACT-04 (Verified Learning, Phase 206-04): the SAME outbound → trajectory
+   * Verified Learning: the SAME outbound → trajectory
    * binding threaded into the delivery-queue drain (setup-delivery.ts). Wired
    * into createDeliveryService so the PRIMARY inbound-reply path (which sends via
    * the direct ack, not the drain) also binds the minted reply id → trajectory —
-   * else a reaction on a normal agent reply map-misses (the 206-03 live finding).
+   * else a reaction on a normal agent reply map-misses.
    * `undefined` when learning-outcome is off for all agents (byte-identity).
-   * `participantId` (FLAG-2) carries the conversation participant (the inbound
+   * `participantId` carries the conversation participant (the inbound
    * sender) so a reaction from an unmapped group bystander resolves to "external"
    * (inert) and cannot spoof reaction-learning.
    */
@@ -283,8 +283,8 @@ export interface ChannelsDeps {
     destroySession(key: SessionKey): Promise<void>;
   }>;
   /** Complete three-layer conversation forget for slash /new + /reset
-   *  (createConversationReset — live finding 2026-06-11: runtime-only destroy
-   *  left the LCD context the DAG re-presented on the next turn). */
+   *  (createConversationReset — runtime-only destroy
+   *  leaves the LCD context the DAG re-presents on the next turn). */
   destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
   /** Per-agent cost trackers for /usage and /status cost data. */
   costTrackers?: Map<string, {
@@ -345,7 +345,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     hookRunner: container.hookRunner,
     deliveryQueue: deps.deliveryQueue ?? createNoOpDeliveryQueue(),
     eventBus: container.eventBus,
-    // REACT-04 (206-04): bind the minted reply id → trajectory on the DIRECT ack
+    // Bind the minted reply id → trajectory on the DIRECT ack
     // path too (the primary inbound-reply path sends here, not via the drain).
     // Same callback instance the drain receives (foundation.recordOutboundMessage);
     // undefined when learning-outcome is off for all agents (byte-identity).
@@ -391,7 +391,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     sessionStore: deps.sessionStore,
     logger,
     clock: deps.clock,
-    resolveAccessToken: deps.resolveAccessToken, // LEARN-01: OAuth-provider background jobs
+    resolveAccessToken: deps.resolveAccessToken, // OAuth-provider background jobs
     adaptersByType,
     deliveryService,
     assembleToolsForAgent: deps.assembleToolsForAgent,
@@ -404,7 +404,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     causalStore: deps.causalStore,
     consolidationStore: deps.consolidationStore,
     memoryLifecycleStore: deps.memoryLifecycleStore,
-    // v2.31 Reflection: the outcome gate + mental-model store ride the SAME cron-deps chain →
+    // Reflection: the outcome gate + mental-model store ride the SAME cron-deps chain →
     // the __REFLECT__ sentinel assembles the closed-graph reflection bundle (no embedder — the
     // reflection job groups by topicKey, not clustering embeddings).
     outcomeStore: deps.outcomeStore,

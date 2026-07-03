@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for suggestClosestTool (F-13, live 2026-06-12) — the small-model
+ * Tests for suggestClosestTool (live incident 2026-06-12) — the small-model
  * tool-name-hallucination recovery hint.
  * @module
  */

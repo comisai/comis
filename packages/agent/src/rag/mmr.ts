@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { MemorySearchResult } from "@comis/core";
-import { cosine } from "./cosine.js"; // reuse — pure, no-NaN (relocated rag-local util, v2.31 D-04)
+import { cosine } from "./cosine.js"; // reuse — pure, no-NaN rag-local util
 
 /**
  * Greedy Maximal Marginal Relevance (MMR) re-rank. Diversifies a relevance-ranked

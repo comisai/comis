@@ -14,7 +14,7 @@
  *     @comis/gateway, @comis/cli, @comis/daemon, @comis/infra.
  *
  * Each it() destructures `{ violations, checkedFiles }` from
- * `findForbiddenImports` and adds a Pattern E sanity check on
+ * `findForbiddenImports` and adds a walked-at-least-one-file sanity check on
  * `checkedFiles` so a misconfigured rootDir cannot silently report zero
  * violations against zero files.
  *

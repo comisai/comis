@@ -39,7 +39,7 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: false,
     fetchHistory: false,
     attachments: true,
-    // §17.2: LINE AppendOnly + Quick Reply — typing, no threads, quick-reply buttons.
+    // LINE renders activity via AppendOnly + Quick Reply: typing, no threads, quick-reply buttons.
     typing: true,
     threads: false,
     buttons: "quickreply",

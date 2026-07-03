@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Reactive 2-keyword tool-schema strip — GBNF-02's repair payload.
+ * Reactive 2-keyword tool-schema strip — the repair payload for
+ * `tool_schema_unsupported` rejections.
  *
  * REACTIVE-ONLY: the proactive gbnf normalize profile (clean-for-gbnf.ts)
  * deliberately does NOT strip `pattern`/`format` — llama.cpp largely
  * supports them. This module is the once-per-session remedy applied AFTER a
  * provider has already rejected the toolset at grammar-compile/unmarshal
- * time (`tool_schema_unsupported` classification), mirroring the Hermes
- * precedent. Deliberately a 2-keyword subset of clean-for-xai's
+ * time (`tool_schema_unsupported` classification): schemas are only ever
+ * degraded in reaction to a real rejection, never up front.
+ * Deliberately a 2-keyword subset of clean-for-xai's
  * XAI_REJECTED; defined here to keep this module self-contained.
  *
- * IN-PLACE MUTATION RATIONALE (A5, proven by the real-SDK decider in
+ * IN-PLACE MUTATION RATIONALE (proven by the real-SDK decider in
  * tool-schema-strip.test.ts): the AgentSession holds REFERENCES to the
  * exact ToolDefinition objects passed as `customTools` (pi-executor.ts:580;
  * the post-creation `tool.execute` mutation at pi-executor.ts:1517-1526 is
@@ -22,17 +24,17 @@
  *   - mutating the CONTENTS of the existing parameters object propagates to
  *     BOTH the SDK registry (`getToolDefinition`) and the wire;
  *   - replacing `tool.parameters` with a new object would update the
- *     registry but ORPHAN the wrapped tools the wire reads — the silent
- *     no-propagation failure RESEARCH Pitfall 6 warns about.
+ *     registry but ORPHAN the wrapped tools the wire reads — a silent
+ *     no-propagation failure.
  * `applyReactiveSchemaStripInPlace` accordingly write-backs CONTENT into the
  * same parameters object (identity preserved — test-pinned).
  *
- * SECURITY (I6 / T-175-15): strictly REMOVAL — the strip never adds or
+ * SECURITY: strictly REMOVAL — the strip never adds or
  * tightens constraints. The stripped schema becomes the validation schema
  * for the retry turn, i.e. strictly FEWER constraints than the
  * operator-registered schema. Accepted: tool handlers already treat
  * arguments as untrusted input (existing posture), and no policy gate reads
- * `pattern`/`format` (research-verified).
+ * `pattern`/`format`.
  *
  * @module
  */
@@ -45,7 +47,7 @@
 export const REACTIVE_STRIP_KEYWORDS: ReadonlySet<string> = new Set(["pattern", "format"]);
 
 /**
- * Stack-depth cap for the recursive strip walk (175-REVIEW WR-03).
+ * Stack-depth cap for the recursive strip walk.
  * Third-party MCP schemas are attacker-controlled: a chain deep enough to
  * overflow the un-capped walk still parses cleanly through JSON.parse at the
  * transport boundary — and this walk runs on the REPAIR path the schema
@@ -59,7 +61,7 @@ const MAX_STRIP_WALK_DEPTH = 64;
 
 /**
  * Pure deep strip: returns a NEW schema with the given keywords removed at
- * every nesting depth REACHABLE THROUGH the recursion key set (WR-06):
+ * every nesting depth REACHABLE THROUGH the recursion key set:
  * schema maps (`properties`/`$defs`/`definitions`/`patternProperties` —
  * map keys are names, values are schemas), `items`/`prefixItems` (single or
  * tuple array), `allOf`/`anyOf`/`oneOf`, and `additionalProperties`-as-schema.
@@ -72,7 +74,7 @@ const MAX_STRIP_WALK_DEPTH = 64;
  * Map KEYS (property names, definition names, patternProperties key regexes)
  * are never treated as keywords — a property literally named "pattern"
  * survives, and a patternProperties key regex is preserved verbatim.
- * Non-object inputs pass through unchanged; subtrees beyond the WR-03 depth
+ * Non-object inputs pass through unchanged; subtrees beyond the depth
  * cap pass through un-walked (`depthLimited: true`).
  */
 export function stripSchemaKeywordsDeep(
@@ -90,7 +92,7 @@ export function stripSchemaKeywordsDeep(
 }
 
 /** Recursive worker for {@link stripSchemaKeywordsDeep}. Pure — new objects
- *  out. Depth-capped (WR-03): an object node at the cap is returned
+ *  out. Depth-capped: an object node at the cap is returned
  *  UN-WALKED and `limited.hit` is set — pass-through, never a throw. */
 function walkAndStrip(
   schema: unknown,
@@ -102,7 +104,7 @@ function walkAndStrip(
   if (schema === null || schema === undefined) return schema;
   if (typeof schema !== "object" || Array.isArray(schema)) return schema;
 
-  // WR-03: cap BEFORE stripping at this node so the entire subtree passes
+  // Cap BEFORE stripping at this node so the entire subtree passes
   // through byte-identical (a half-stripped cut node would be confusing).
   if (depth >= MAX_STRIP_WALK_DEPTH) {
     limited.hit = true;
@@ -120,7 +122,7 @@ function walkAndStrip(
     }
 
     // Recurse into schema MAPS: properties / $defs / definitions /
-    // patternProperties (WR-06). Each VALUE is a schema; map KEYS (property
+    // patternProperties. Each VALUE is a schema; map KEYS (property
     // names, definition names, key regexes) are NOT keyword-checked — a
     // patternProperties key regex is preserved verbatim.
     if (
@@ -141,7 +143,7 @@ function walkAndStrip(
     }
 
     // Recurse into items (single schema or tuple array of schemas) and
-    // prefixItems (the draft-2020 tuple form — WR-06).
+    // prefixItems (the draft-2020 tuple form).
     if (key === "items" || key === "prefixItems") {
       cleaned[key] = Array.isArray(value)
         ? value.map((item) => walkAndStrip(item, keywords, found, depth + 1, limited))
@@ -174,7 +176,7 @@ function walkAndStrip(
  * holds references to these exact objects — and the SDK's wrapped
  * AgentTools hold the exact parameters object — so identity-preserving
  * content mutation is THE propagation mechanism; see the module JSDoc and
- * the A5 decider test). Returns the names of tools whose schemas changed
+ * the real-SDK decider test). Returns the names of tools whose schemas changed
  * plus the union of stripped keywords.
  *
  * Tools without an object `parameters` value are skipped (nothing to strip,
@@ -201,7 +203,7 @@ export function applyReactiveSchemaStripInPlace(
     if (stripped.length === 0) continue;
 
     // CONTENT-level write-back into the SAME parameters object (identity
-    // preserved). Removal-only at every depth (I6) means the only top-level
+    // preserved). Removal-only at every depth means the only top-level
     // keys that can disappear are the two strip keywords themselves —
     // delete them statically, then copy the rebuilt subtrees over.
     const target = params as Record<string, unknown>;

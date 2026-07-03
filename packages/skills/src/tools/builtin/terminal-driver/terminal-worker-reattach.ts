@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * terminal-worker-reattach -- the worker's `reattach` frame handler (BL-01,
- * 165-REVIEW), extracted from `terminal-worker-entry.ts` so that file keeps headroom
- * under the 800-line architecture cap.
+ * terminal-worker-reattach -- the worker's `reattach` frame handler, extracted from
+ * `terminal-worker-entry.ts` so that file keeps headroom under the 800-line architecture cap.
  *
  * THE BUG IT FIXES (the recover-on-boot ZOMBIE). The registry rehydrates a recovered
  * durable session `running`, but the freshly-spawned worker has an EMPTY `sessions`
@@ -11,7 +10,7 @@
  * read. This handler is the missing seam: the `reattach` frame the registry sends for a
  * recovered session.
  *
- * THE CONTRACT (I10 — never double-drive). It attaches to an EXISTING detached tmux
+ * THE CONTRACT (never double-drive). It attaches to an EXISTING detached tmux
  * session BY NAME (`attachBackend({ attachOnly:true })` → `loadTmux.reattach`, which is
  * `has-session`-gated). A LIVE session is REGISTERED `running` and the handler replies
  * `ok:true` (the next `read` returns the live pane). A GONE session (reattach →
@@ -48,7 +47,7 @@ export interface ReattachWorkerArgs {
   /** The worker's closure-local per-session map (the re-attached session is registered here). */
   sessions: Map<string, SessionState>;
   /** The worker's @xterm emulator factory. `transformSnapshot` is the selected platform profile's
-   *  read-side render hook (RENDER-01) — passed through verbatim so a recovered durable session
+   *  read-side render hook — passed through verbatim so a recovered durable session
    *  keeps its ghost-strip after a daemon restart. */
   createEmulator: (opts: {
     cols: number;
@@ -60,7 +59,7 @@ export interface ReattachWorkerArgs {
   writeFd3?: (b: Buffer) => void;
   /** The worker's injected clock. */
   nowMs: () => number;
-  /** The operator stuck threshold (OPS-04). */
+  /** The operator stuck threshold. */
   stuckMs: number;
   /** The worker's structural logger. */
   logger: WorkerLogger;
@@ -77,7 +76,7 @@ export interface ReattachWorkerArgs {
 }
 
 /**
- * Handle a `reattach` frame (BL-01). Returns `{ ok, backend }`; the entry maps `ok:false`
+ * Handle a `reattach` frame. Returns `{ ok, backend }`; the entry maps `ok:false`
  * straight onto the reply's `ok` channel (the registry flips `lost`). Total/never-throws
  * (the dispatch try/catch is the boundary, but this path has no throw site).
  */
@@ -87,13 +86,13 @@ export async function reattachWorkerSession(args: ReattachWorkerArgs): Promise<{
   const sessionId = String(p["sessionId"] ?? frame.sessionId);
   const cols = typeof p["cols"] === "number" ? p["cols"] : 80;
   const rows = typeof p["rows"] === "number" ? p["rows"] : 24;
-  // RECUR-03: the surviving session's OWN per-boot socket (the daemon threads it from the
+  // The surviving session's OWN per-boot socket (the daemon threads it from the
   // descriptor onto the reattach frame) — re-attach targets THAT server, not this boot's fresh one.
   const tmuxSocket = typeof p["tmuxSocket"] === "string" ? (p["tmuxSocket"] as string) : undefined;
-  // v2.26: the operator-declared allowId rides the reattach frame (threaded from the recovered
+  // The operator-declared allowId rides the reattach frame (threaded from the recovered
   // descriptor) so a recovered durable session RE-RESOLVES its platform profile — without this, a
-  // recovered claude drive reverts to the agnostic render/classify after a restart, reviving FINDING-3
-  // (the ghost-strip) and dropping perception. Selection is by allowId only (§5/INV-3).
+  // recovered claude drive reverts to the agnostic render/classify after a restart, reviving the
+  // ghost-strip and dropping perception. Selection is by allowId only.
   const allowId = typeof p["allowId"] === "string" ? (p["allowId"] as string) : undefined;
   const profile = allowId !== undefined ? getPlatformProfile(allowId) : undefined;
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure classifier for Google Veo video-generation failures (VEO-02).
+ * Pure classifier for Google Veo video-generation failures.
  *
- * Veo signals failure two ways (RESEARCH §Veo operation → normalized status):
+ * Veo signals failure two ways:
  *   1. a long-running `operation.error` (a `Record<string,unknown>`, NOT an
  *      Error) on a `.done` operation, or
  *   2. a thrown SDK error from `generateVideos`/`getVideosOperation` (HTTP 4xx/5xx),

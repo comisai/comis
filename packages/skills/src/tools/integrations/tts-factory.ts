@@ -14,7 +14,7 @@ import { createLocalTtsAdapter } from "./local-tts-adapter.js";
  * - "openai": OpenAI TTS API (requires OPENAI_API_KEY)
  * - "elevenlabs": ElevenLabs TTS (requires ELEVENLABS_API_KEY)
  * - "edge": Microsoft Edge TTS (free, no API key needed)
- * - "local"/"piper": keyless in-process transformers.js text-to-audio (TTS-02).
+ * - "local"/"piper": keyless in-process transformers.js text-to-audio.
  *     Auto-downloads a small single-speaker ONNX voice model into the scoped
  *     `<dataDir>/models/tts/` cache, then synthesizes offline (no key, no
  *     network after the first load). `local` and `piper` are aliases for the
@@ -58,7 +58,7 @@ export function createTTSProvider(
         }),
       );
 
-    // TTS-02: keyless in-process transformers.js text-to-audio. `piper` is a
+    // Keyless in-process transformers.js text-to-audio. `piper` is a
     // resolver-rung alias for the same in-process adapter (both are in
     // VOICE_KEYLESS) — it reaches here via the resolver's chosen provider; the
     // schema enum carries `local`, so the cast covers the `piper` alias.

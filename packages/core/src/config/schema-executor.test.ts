@@ -2,13 +2,10 @@
 /**
  * executor.broker config schema tests.
  *
- * RED phase: schema-executor.ts does not exist yet.
- * - The accept/reject cases FAIL because AppConfigSchema rejects the `executor` key.
- * - The omitted-key case may pass (omitting unknown keys is fine for strict mode).
- * - The export check FAILS because the exports do not exist yet.
- *
- * GREEN phase: after schema-executor.ts is created and wired into AppConfigSchema
- * and index.ts, all five pass.
+ * Pins the `executor` config section: AppConfigSchema accepts a valid
+ * executor.broker binding, tolerates the key being omitted entirely, rejects
+ * unknown keys at every strict level, and the schemas are exported from the
+ * config barrel.
  */
 import { describe, it, expect } from "vitest";
 import { AppConfigSchema } from "./schema.js";

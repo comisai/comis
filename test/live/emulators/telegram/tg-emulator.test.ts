@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Stage-A unit tests for the Telegram wire backend `TgEmulator`
- * (`tg-emulator.ts`, EMU-01..05 + SEC-01, Phase 204).
+ * (`tg-emulator.ts`) — the Bot-API method table + the SEC-01 loopback bind.
  *
  * Pure in-process HTTP/typed-verb tests — no daemon, no key, no real network
  * (the only "network" is loopback `fetch` against the emulator's own
  * `127.0.0.1:<port>`). The `TgEmulator` is the fake `api.telegram.org` the real
- * grammy adapter hits over loopback HTTP; the rig (Plan 05) boots the daemon
- * pointed at it. These tests assert the Tier-1 Bot-API method table + the §9
+ * grammy adapter hits over loopback HTTP; the rig boots the daemon
+ * pointed at it. These tests assert the Tier-1 Bot-API method table + the
  * "trickiest bit" (the TRUE long-poll: offset/limit/timeout/ack with no dropped
- * or duplicated updates) + the EMU-03 `RecordedOutbound` channel oracle.
+ * or duplicated updates) + the `RecordedOutbound` channel oracle.
  *
  * Coverage:
- *   - EMU-01 getMe (boot envelope, blocks adapter boot) + setMyCommands
+ *   - getMe (boot envelope, blocks adapter boot) + setMyCommands
  *     (fire-and-forget envelope).
- *   - EMU-03 sendMessage mints a `message_id` AND records a full
+ *   - sendMessage mints a `message_id` AND records a full
  *     `RecordedOutbound` to `outbound(chat)` (the oracle the driver reads).
- *   - EMU-02 long-poll: immediate / block-then-resolve / ack-offset
+ *   - long-poll: immediate / block-then-resolve / ack-offset
  *     (no-dup-no-drop) + strictly-monotonic `update_id`.
- *   - EMU-04 setMessageReaction set+clear (recorded, surfaced via
+ *   - setMessageReaction set+clear (recorded, surfaced via
  *     `reactionsOn`).
- *   - EMU-05 getFile + `GET /file/bot<token>/<path>` route SHAPE (HTTP 200, no
- *     404 at boot — byte serving is Phase 207).
+ *   - getFile + `GET /file/bot<token>/<path>` route SHAPE (HTTP 200, no
+ *     404 at boot).
  *   - SEC-01 loopback bind (`apiRoot === http://127.0.0.1:<port>`; the source
  *     never contains a wildcard host).
  *   - FOUNDATION wiring: `TgEmulator extends ChannelEmulator` + built ON the
@@ -75,7 +75,7 @@ async function callMethod(
   return (await res.json()) as { ok: boolean; result?: unknown; error_code?: number };
 }
 
-describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", () => {
+describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
   let emu: TgEmulator;
   let apiRoot: string;
   let port: number;
@@ -93,9 +93,9 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // EMU-01 — getMe (blocks boot) + setMyCommands (fire-and-forget)
+  // getMe (blocks boot) + setMyCommands (fire-and-forget)
   // -------------------------------------------------------------------------
-  describe("getMe / setMyCommands (EMU-01 boot envelopes)", () => {
+  describe("getMe / setMyCommands (boot envelopes)", () => {
     it("getMe returns the boot identity envelope the adapter awaits", async () => {
       const env = await callMethod(apiRoot, "getMe", {});
       expect(env.ok).toBe(true);
@@ -118,9 +118,9 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // EMU-03 — sendMessage mints message_id + records a full RecordedOutbound
+  // sendMessage mints message_id + records a full RecordedOutbound
   // -------------------------------------------------------------------------
-  describe("sendMessage (EMU-03 mint message_id + RecordedOutbound oracle)", () => {
+  describe("sendMessage (mint message_id + RecordedOutbound oracle)", () => {
     it("mints a message_id, returns the result envelope, and records a full RecordedOutbound", async () => {
       const env = await callMethod(apiRoot, "sendMessage", {
         chat_id: CHAT_ID,
@@ -144,7 +144,7 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
       expect(ro.messageId).toBe(messageId);
       expect(ro.text).toBe("hello from the agent");
       expect(ro.parseMode).toBe("HTML");
-      // The FULL request body is preserved for later-phase assertions.
+      // The FULL request body is preserved for downstream assertions.
       expect(ro.raw).toBeDefined();
       expect((ro.raw as Record<string, unknown>)["chat_id"]).toBe(CHAT_ID);
     });
@@ -166,13 +166,13 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // Media OUTBOUND delivery — sendPhoto / sendAudio / sendVideo (regression for
-  // the openclaw-usecases 2026-06-25 finding: image-gen + TTS produced real
-  // artifacts but delivery was UNOBSERVABLE because only sendVoice/sendDocument
-  // were dispatched → sendPhoto/sendAudio fell to the default `okEnvelope({})`,
-  // minting NO message_id (`messageId:"undefined"` in the adapter log) and
-  // recording nothing on the chat oracle. Each media method must now mint an id
-  // + record a RecordedOutbound carrying its `mediaKind`.)
+  // Media OUTBOUND delivery — sendPhoto / sendAudio / sendVideo (regression
+  // guard: image-gen + TTS produced real artifacts but delivery was
+  // UNOBSERVABLE because only sendVoice/sendDocument were dispatched →
+  // sendPhoto/sendAudio fell to the default `okEnvelope({})`, minting NO
+  // message_id (`messageId:"undefined"` in the adapter log) and recording
+  // nothing on the chat oracle. Each media method must now mint an id + record
+  // a RecordedOutbound carrying its `mediaKind`.)
   // -------------------------------------------------------------------------
   describe("media sends (sendPhoto/sendAudio/sendVideo mint id + record mediaKind)", () => {
     it.each([
@@ -202,9 +202,9 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // EMU-02 — the TRUE long-poll (the §9 trickiest bit)
+  // the TRUE long-poll (the trickiest bit)
   // -------------------------------------------------------------------------
-  describe("long-poll (EMU-02 offset / timeout / ack — no dup, no drop)", () => {
+  describe("long-poll (offset / timeout / ack — no dup, no drop)", () => {
     it("IMMEDIATE: with one update queued, getUpdates returns it at once", async () => {
       const msgId = emu.injectMessage(
         { chatId: CHAT_ID },
@@ -298,12 +298,12 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
     });
 
     // -----------------------------------------------------------------------
-    // WR-01 — MULTI-WAITER / divergent-offset: a non-head waiter's ack must
+    // MULTI-WAITER / divergent-offset: a non-head waiter's ack must
     // NOT corrupt the shared queue or starve another entitled waiter.
     //
     // The live grammy runner long-polls sequentially (waiters.length ≤ 1), so
     // this is defensive-code correctness, not a live bug. But `tg-emulator.ts`
-    // is the channel-agnostic FOUNDATION Phase 209 reuses, and the unit tests
+    // is the channel-agnostic FOUNDATION the Signal emulator reuses, and the unit tests
     // already issue manual concurrent `getUpdates` — so the documented "no dup
     // / no drop" guarantee must hold when ≥2 waiters carry divergent offsets.
     // -----------------------------------------------------------------------
@@ -386,9 +386,9 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // EMU-04 — setMessageReaction (set + clear), recorded
+  // setMessageReaction (set + clear), recorded
   // -------------------------------------------------------------------------
-  describe("setMessageReaction (EMU-04 set + clear, recorded)", () => {
+  describe("setMessageReaction (set + clear, recorded)", () => {
     it("set records the emoji + returns ok; clear empties it + returns ok", async () => {
       // Mint a bot message to react to.
       const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "react to me" }))
@@ -425,13 +425,13 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // REACT-01 — injectReaction (the INBOUND half: queue a reaction-ADD on an
+  // injectReaction (the INBOUND half: queue a reaction-ADD on an
   // EXISTING bot reply for the next getUpdates poll). The OUTBOUND half
-  // (setMessageReaction / reactionsOn) shipped in 204 above. The emitted
+  // (setMessageReaction / reactionsOn) is above. The emitted
   // message_reaction Update is what the already-wired adapter handler
   // (telegram-inbound.ts:266) consumes.
   // -------------------------------------------------------------------------
-  describe("injectReaction (REACT-01 — getUpdates serves an inbound reaction-ADD)", () => {
+  describe("injectReaction (getUpdates serves an inbound reaction-ADD)", () => {
     it("getUpdates serves the injected reaction on an EXISTING bot reply (message_id, emoji, reactor preserved)", async () => {
       // Send a bot reply to react TO (the id recordOutboundMessage keys on).
       const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "bot reply" }))
@@ -527,13 +527,12 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
       expect(updates[1]!["message_reaction"]).toBeDefined();
     });
 
-    // WR-02 (206-05 review fix): resetChat must drop a QUEUED reaction for the
-    // reset chat from the bot-global pending queue. The prior filter keyed only
-    // on `u.message`, so a `message_reaction` update (no `.message`) survived a
-    // reset regardless of chat and could bleed into a later test that reuses
-    // resetChat (207/208/209). RED on pre-fix: the reaction is still served
-    // after the reset.
-    it("resetChat clears a QUEUED reaction for that chat (no cross-test bleed — WR-02)", async () => {
+    // resetChat must drop a QUEUED reaction for the
+    // reset chat from the bot-global pending queue. A filter keyed only
+    // on `u.message` would let a `message_reaction` update (no `.message`) survive a
+    // reset regardless of chat and bleed into a later test that reuses
+    // resetChat.
+    it("resetChat clears a QUEUED reaction for that chat (no cross-test bleed)", async () => {
       const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "to react then reset" }))
         .result as Record<string, unknown>;
       const botReplyId = sent["message_id"] as number;
@@ -551,7 +550,7 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
       expect(reactionUpdates).toEqual([]);
     });
 
-    it("resetChat is chat-scoped: a queued reaction for a DIFFERENT chat survives the reset (WR-02)", async () => {
+    it("resetChat is chat-scoped: a queued reaction for a DIFFERENT chat survives the reset", async () => {
       const OTHER_CHAT = CHAT_ID + 1;
       const sentReset = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "reset-chat reply" }))
         .result as Record<string, unknown>;
@@ -578,14 +577,13 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // MEDIA-01/02 (Phase 207) — the REAL file_id store backs getFile + the route
-  // serves the stored RAW bytes. This REPLACES the 204 EMU-05 stub (hardcoded
-  // file_size:1024 + a route that 200s a JSON note). getFile is now keyed by
+  // The REAL file_id store backs getFile + the route
+  // serves the stored RAW bytes. getFile is keyed by
   // file_id (the request body); the route is keyed by file_path (the URL
-  // segment) — Pitfall 3 (TWO indexes, same bytes). A `../`-laden / unknown
-  // path is a Map MISS → 404, NEVER a disk read (T-207-04, V12 File Resources).
+  // segment) — TWO indexes, same bytes. A `../`-laden / unknown
+  // path is a Map MISS → 404, NEVER a disk read.
   // -------------------------------------------------------------------------
-  describe("file_id store: getFile (real metadata) + GET /file route (raw bytes) — MEDIA-01/02", () => {
+  describe("file_id store: getFile (real metadata) + GET /file route (raw bytes)", () => {
     it("storeFile → getFile returns the REAL file_size (=bytes.length) + the stored file_path (NOT the 1024 stub)", async () => {
       const bytes = Buffer.from("hello-document-bytes-of-known-length", "utf8");
       const handle = emu.storeFile("document", bytes, { fileName: "report.pdf", mimeType: "application/pdf" });
@@ -647,7 +645,7 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
       expect(res.status).toBe(404);
     });
 
-    it("SECURITY (T-207-04): a `..`-laden traversal path is a Map MISS → 404, NOT a filesystem read", async () => {
+    it("SECURITY: a `..`-laden traversal path is a Map MISS → 404, NOT a filesystem read", async () => {
       // A crafted file_path attempting to escape the store. The route resolves
       // ONLY against the in-memory filesByPath Map — there is no fs access — so
       // this is a plain miss. (URL-encoded so the path segment reaches the route
@@ -675,12 +673,12 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // MEDIA-01 / MEDIA-03 — injectMedia / injectLocation queue the right inbound
+  // injectMedia / injectLocation queue the right inbound
   // `message` update + mint/return a message_id (mirroring injectMessage). The
   // media update carries the SAME file_id storeFile minted, so getFile + the
   // route + the adapter's tg-file://{file_id} resolution all agree.
   // -------------------------------------------------------------------------
-  describe("injectMedia / injectLocation (MEDIA-01 — queue a media/place message + mint a message_id)", () => {
+  describe("injectMedia / injectLocation (queue a media/place message + mint a message_id)", () => {
     it("injectMedia stores the bytes, queues a media `message` carrying the stored file_id, and RETURNS the minted message_id", async () => {
       const bytes = Buffer.from("a-voice-clip", "utf8");
       const msgId = emu.injectMedia(
@@ -761,13 +759,13 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // INTERACT-01 / INTERACT-02 — injectCallback / injectEdit queue the
+  // injectCallback / injectEdit queue the
   // callback_query / edited_message updates the adapter handlers consume
   // (telegram-inbound.ts:165 / :117). The callback references an EXISTING bot
   // reply (mints NO message_id, like injectReaction); the edit references the
   // existing message_id.
   // -------------------------------------------------------------------------
-  describe("injectCallback / injectEdit (INTERACT-01/02 — queue callback_query / edited_message)", () => {
+  describe("injectCallback / injectEdit (queue callback_query / edited_message)", () => {
     it("injectCallback queues a callback_query update referencing the EXISTING bot reply (data + tapper preserved), mints NO message_id", async () => {
       // A bot reply with an inline button to tap.
       const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "tap me" }))
@@ -822,17 +820,17 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // INTERACT-01 — answerCallbackQuery / editMessageText RECORD a
-  // RecordedOutbound (Pattern 5). The adapter calls answerCallbackQuery
+  // answerCallbackQuery / editMessageText RECORD a
+  // RecordedOutbound. The adapter calls answerCallbackQuery
   // UNCONDITIONALLY + FIRST (telegram-inbound.ts:168); recording it makes the
   // ack provable on the channel oracle (the silent default: would answer but be
   // invisible). The ack body carries NO chat_id (only callback_query_id), so it
   // records on the chat-0 oracle.
   // -------------------------------------------------------------------------
-  describe("answerCallbackQuery / editMessageText record cases (INTERACT-01 — Pattern 5)", () => {
+  describe("answerCallbackQuery / editMessageText record cases", () => {
     it("answerCallbackQuery returns { ok:true, result:true } AND records a RecordedOutbound (method:answerCallbackQuery)", async () => {
       const env = await callMethod(apiRoot, "answerCallbackQuery", { callback_query_id: "cbq_123" });
-      // The adapter awaits ctx.answerCallbackQuery() → expects result:true (A5).
+      // The adapter awaits ctx.answerCallbackQuery() → expects result:true.
       expect(env.ok).toBe(true);
       expect(env.result).toBe(true);
 
@@ -866,13 +864,13 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
-  // resetChat clears ALL FOUR new update kinds (no cross-test bleed — the
-  // WR-02 206-05 precedent extended). A media/edit `message`/`edited_message`
+  // resetChat clears ALL FOUR new update kinds (no cross-test bleed). A
+  // media/edit `message`/`edited_message`
   // is chat-id-matched; a callback_query is bot-global (kept by the `: true`
   // tail) — but a callback whose tapped `message` is in the reset chat must
   // also be dropped, so the filter matches the callback's message chat.id.
   // -------------------------------------------------------------------------
-  describe("resetChat clears the new inbound kinds (no leak — WR-02 extended)", () => {
+  describe("resetChat clears the new inbound kinds (no leak)", () => {
     it("resetChat clears a QUEUED media `message`, location `message`, edited_message AND callback_query for that chat", async () => {
       const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "reply" }))
         .result as Record<string, unknown>;
@@ -941,7 +939,7 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
       expect(src).not.toMatch(/queuedUpdates\.length\s*=\s*0/);
     });
 
-    it("documents GOTCHA B at the resetChat site (a message_reaction update has no .message → kept by the `: true` branch)", () => {
+    it("documents the resetChat caveat: a message_reaction update has no .message → kept by the `: true` branch", () => {
       const src = readFileSync(EMULATOR_SOURCE, "utf8");
       // The resetChat pending-filter keys on `u.message`; a reaction update has
       // no `.message`, so it survives a reset. The site must flag this so a
@@ -952,13 +950,13 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
 });
 
 // ===========================================================================
-// GROUP-01/02 — createGroupChat / createForumTopic + InjectOpts-aware
-// injectMessage (Phase 208). The emulator must mint group/supergroup/forum
+// createGroupChat / createForumTopic + InjectOpts-aware
+// injectMessage. The emulator must mint group/supergroup/forum
 // chats, forum topics, and addressing-bearing message updates so the rig can
 // drive the group surface the chat API can't reach.
 // ===========================================================================
 
-describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", () => {
+describe("TgEmulator — group/forum chats + addressing inject", () => {
   let emu: TgEmulator;
   let apiRoot: string;
 
@@ -1059,7 +1057,7 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
     });
 
     it("the existing single-arg DM injectMessage(chat, from, text) still works (back-compat — the DM path is unbroken)", async () => {
-      // A plain ChatRef (the DM form) with NO InjectOpts — exactly the pre-208 call.
+      // A plain ChatRef (the DM form) with NO InjectOpts — the plain DM call.
       emu.injectMessage({ chatId: 424242 }, { id: 100, firstName: "Tester" }, "dm hello");
       const updates = await pollUpdates();
       expect(updates.length).toBe(1);
@@ -1081,7 +1079,7 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
   });
 
   // -------------------------------------------------------------------------
-  // FAULT-01 — the fail()/clearFaults() fault-injection seam (Plan 02). The
+  // The fail()/clearFaults() fault-injection seam. The
   // emulator can make any Bot-API method return a Telegram error envelope
   // `{ ok:false, error_code, description, parameters? }` on demand so the REAL
   // adapter hits the error and runs its fallback. `once:true` lets the SECOND
@@ -1146,10 +1144,10 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
   });
 
   // -------------------------------------------------------------------------
-  // COVER-01 — the Tier-3 group-admin Bot-API methods (on demand) + the honest
-  // unimplemented-log guard (HARD constraint 3: log it, NEVER a silent stub).
+  // The Tier-3 group-admin Bot-API methods (on demand) + the honest
+  // unimplemented-log guard (log it, NEVER a silent stub).
   // -------------------------------------------------------------------------
-  describe("Tier-3 Bot-API methods (COVER-01 — round-trip against a seeded group)", () => {
+  describe("Tier-3 Bot-API methods (round-trip against a seeded group)", () => {
     /** Seed a group via createGroupChat and return its negative chat id. */
     function seedGroup(admins: Array<{ id: number; firstName: string; username?: string }>): number {
       const ref = emu.createGroupChat({
@@ -1161,7 +1159,7 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
       return ref.chatId;
     }
 
-    it("getChatAdministrators reports the createGroupChat admins[] seed (the COVER-01 round-trip keystone)", async () => {
+    it("getChatAdministrators reports the createGroupChat admins[] seed (the round-trip keystone)", async () => {
       const chatId = seedGroup([
         { id: 111, firstName: "owner", username: "owner" },
         { id: 222, firstName: "mod", username: "mod" },
@@ -1235,12 +1233,12 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
       expect(env.result as number).toBeGreaterThanOrEqual(2);
     });
 
-    it("an UNIMPLEMENTED Tier-3 method logs an honest line + is surfaced via unimplementedCalls() — NEVER a silent no-op (HARD constraint 3)", async () => {
-      // banChatMember is a real Tier-3 method NOT wired on demand for any COVER
-      // UC. It MUST route through the honest fallback: a `[tg-emulator]
+    it("an UNIMPLEMENTED Tier-3 method logs an honest line + is surfaced via unimplementedCalls() — NEVER a silent no-op", async () => {
+      // banChatMember is a real Tier-3 method NOT wired on demand for any
+      // scenario. It MUST route through the honest fallback: a `[tg-emulator]
       // unimplemented Bot-API method: <name>` log + a detectable record. A silent
       // okEnvelope({}) here would FALSELY report coverage (the no-false-success
-      // principle applied to coverage — T-208-10).
+      // principle applied to coverage).
       const before = emu.unimplementedCalls().length;
       await callMethod(apiRoot, "banChatMember", { chat_id: -100999, user_id: 222 });
       const calls = emu.unimplementedCalls();
@@ -1256,10 +1254,10 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
   });
 
   // -------------------------------------------------------------------------
-  // COVER-02 — injectServiceMessage (the forum-service negative; the adapter
+  // injectServiceMessage (the forum-service negative; the adapter
   // FILTERS these, so the harness must be able to mint + queue one).
   // -------------------------------------------------------------------------
-  describe("injectServiceMessage (COVER-02 — the forum-service message the adapter filters)", () => {
+  describe("injectServiceMessage (the forum-service message the adapter filters)", () => {
     it("queues a forum-service `message` update for the next getUpdates poll", async () => {
       const group = emu.createGroupChat({
         members: [{ id: 111, firstName: "owner" }],
@@ -1293,13 +1291,13 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
 });
 
 // ---------------------------------------------------------------------------
-// AUTO-05 (Phase 208) — the webhook-POST mode + the HARNESS-SIDE secret-token
+// The webhook-POST mode + the HARNESS-SIDE secret-token
 // gate. Instead of queuing for getUpdates, postWebhookMessage POSTs the built
 // grammy Update to a configured webhook target carrying
 // X-Telegram-Bot-Api-Secret-Token; a tiny loopback receiver enforces the gate
 // (correct token → accepted, wrong/absent → rejected).
 //
-// ⚠ HONEST GAP (the AUTO-05 finding, re-verified at HEAD): Comis has NO Telegram
+// ⚠ HONEST GAP: Comis has NO Telegram
 // webhook INGESTION route — shouldUseRunner merely skips polling when webhookUrl
 // is set, with nothing replacing it; no product code checks this header. So this
 // gate is the HARNESS-side one; it never asserts "a webhook update reached the
@@ -1307,7 +1305,7 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
 // webhook-receiver.ts + the telegram-webhook.test.ts scenario.
 // ---------------------------------------------------------------------------
 
-describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate (AUTO-05)", () => {
+describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate", () => {
   const WEBHOOK_SECRET = "s3cr3t-webhook-token-aaaaaaaaaaaaaaaa";
   const FROM = { id: 777, firstName: "Webhooker", username: "webhooker" } as const;
   const WEBHOOK_CHAT = { chatId: 424242 } as const;
@@ -1343,7 +1341,7 @@ describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate 
     const accepted = receiver.accepted();
     expect(accepted.length).toBe(1);
     // The delivered Update is the SAME grammy `message` shape the polled path
-    // would have queued (identical shape — §4.2 scope guard, no new kind).
+    // would have queued (identical shape — a scope guard, no new kind).
     // (Cast through `unknown` — grammy's `Message` is a structured type, not a
     // string-index record; exactOptionalPropertyTypes/strict rejects the direct
     // cast.)
@@ -1364,9 +1362,9 @@ describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate 
     // (incl. empty) as a reject — a forged Update without the shared secret is
     // untrusted.
     const absentStatus = await emu.postWebhookMessage(WEBHOOK_CHAT, FROM, "forged update", "");
-    // GREEN: the ABSENT-token POST is REJECTED (401) by the harness gate — a
+    // The ABSENT-token POST is REJECTED (401) by the harness gate — a
     // forged Update without the shared secret is blocked (the secret-token gate
-    // proven on the harness side; the product has no such route — AUTO-05 gap).
+    // proven on the harness side; the product has no such route).
     expect(absentStatus).toBe(401);
 
     // Neither forged POST was recorded as delivered; both were counted rejected.

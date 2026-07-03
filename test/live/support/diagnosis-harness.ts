@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure diagnosis-harness scorers (Phase 149 — PROVE: LLM-diagnosis baseline).
+ * Pure diagnosis-harness scorers.
  *
- * The deterministic substrate that makes the Plan-03 baseline numbers trustworthy.
+ * The deterministic substrate that makes the baseline numbers trustworthy.
  * Everything here is PURE except `readFileSync` (loadFixture + the read_source impl):
  * no daemon, no network, no env reads, no key — so it runs keyless in the Stage-A
  * tier (mirroring test/live/support/mock-mcp-server.ts) and never imports a product
  * package. The metric logic is RED→GREEN unit-tested in diagnosis-harness.test.ts
- * BEFORE any live token is spent (the `--selftest` discipline,
- * scripts/bench-small-model/run.mjs:120-182).
+ * BEFORE any live token is spent (the `--selftest` discipline).
  *
- * Exports four scorers + the contract types Plan 02 (fixtures) and Plan 03 (scenario)
- * both consume:
+ * Exports four scorers + the contract types the fixtures and scenario layers both
+ * consume:
  *   - loadFixture(dir)        — read a frozen fixture directory into a FixtureBundle
- *   - recordMetrics(turns)    — M2: tokens + distinct tool/RPC calls + distinct source reads
+ *   - recordMetrics(turns)    — tokens + distinct tool/RPC calls + distinct source reads
  *   - compareToAnswerKey(...) — structural pre-check that an answer hits the causal MECHANISM
- *   - makeReadSourceTool(...) — a COUNTED read_source(path) tool so metric M2c is observable
+ *   - makeReadSourceTool(...) — a COUNTED read_source(path) tool so distinct source reads are observable
  *
  * The secret-sweep used by the DiagnosisVerdictRow serialize-and-write path lives in
  * test/live/cost.ts (`assertNoSecrets`) and is imported there — never re-implemented here.
@@ -27,14 +26,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
-// Contract types — Plan 02 (fixtures) + Plan 03 (scenario) import these.
+// Contract types — the fixtures and scenario layers import these.
 // ---------------------------------------------------------------------------
 
 /**
  * The gold answer for a fixture, written at causal-MECHANISM granularity (the
  * specific field/rule that misclassified), NOT symptom granularity — so today's
- * baseline correctly FAILS and Phase 156/G1 has a real bar to beat (RESEARCH.md
- * Pitfall 4).
+ * baseline correctly FAILS and a new obs surface has a real bar to beat.
  */
 export interface AnswerKey {
   /** Causal mechanism at field/rule granularity (NOT the symptom). */
@@ -42,7 +40,7 @@ export interface AnswerKey {
   expectedDegraded: boolean;
   /** What the logs SHOW (tool failed N times, costUsd). */
   visibleSymptoms: string[];
-  /** What the logs DON'T SHOW — the GA1/GA2 gap. */
+  /** What the logs DON'T SHOW — the observability gap. */
   hiddenMechanism: string;
   /** Surfaces an agent can reach today (no obs.explain). */
   surfaceCeiling: string[];
@@ -54,7 +52,7 @@ export interface AnswerKey {
  * One turn of an agent transcript. Distinct `toolCalls[].name` values feed
  * `distinctToolCalls`; distinct `read_source` path arguments feed
  * `distinctSourceReads`. The usage shape mirrors the bench harness
- * (scripts/bench-small-model/harness.mjs:89) token-sum idiom.
+ * (scripts/bench-small-model/harness.mjs) token-sum idiom.
  */
 export interface AgentTurn {
   role: "assistant" | "tool" | "user" | "system";
@@ -63,18 +61,18 @@ export interface AgentTurn {
   usage?: { totalTokens?: number; promptTokens?: number; completionTokens?: number };
 }
 
-/** The three M2 metrics counted from an agent transcript. */
+/** The three metrics counted from an agent transcript. */
 export interface DiagnosisMetrics {
   totalTokens: number;
-  /** M2b — count of DISTINCT tool/RPC names invoked. */
+  /** Count of DISTINCT tool/RPC names invoked. */
   distinctToolCalls: number;
-  /** M2c — count of DISTINCT read_source paths. */
+  /** Count of DISTINCT read_source paths. */
   distinctSourceReads: number;
 }
 
 /**
  * Closed failure-class union (the as-const-union + exhaustive-default style of
- * test/live/harness/sec-config.ts:122) — never a bare `string` discriminator.
+ * test/live/harness/sec-config.ts) — never a bare `string` discriminator.
  */
 export type DiagnosisFailureClass =
   | "503-breaker"
@@ -84,9 +82,9 @@ export type DiagnosisFailureClass =
   | "historical-c53ab0f";
 
 /**
- * One row of the Plan-03 gating report. Carries only counts/ids/typed verdicts —
+ * One row of the gating report. Carries only counts/ids/typed verdicts —
  * no raw bodies, no answer text — so JSON.stringify(row) passes assertNoSecrets
- * before any write (T-149-01-02).
+ * before any write.
  */
 export interface DiagnosisVerdictRow {
   fixtureId: string;
@@ -111,7 +109,7 @@ export interface FixtureBundle {
 /**
  * A COUNTED read_source tool. `impl({path})` reads the file AND records the path;
  * `readPaths` is the live distinct-path set the scenario reads `.size` from after
- * the run (the M2c instrumentation point, RESEARCH.md OQ2).
+ * the run (the distinct-source-reads instrumentation point).
  */
 export interface ReadSourceTool {
   name: "read_source";
@@ -127,8 +125,8 @@ export interface ReadSourceTool {
 
 /**
  * Parse a `{file}` under `dir` as JSON, rethrowing with the PATH ONLY (never the
- * offending content) on failure — the residency rule (T-149-01-01), mirroring
- * cost.ts:64 / the judge path-only throw.
+ * offending content) on failure — the residency rule, mirroring
+ * cost.ts / the judge path-only throw.
  */
 function parseJsonFile(dir: string, file: string): unknown {
   const full = resolve(dir, file);
@@ -146,7 +144,7 @@ function parseJsonFile(dir: string, file: string): unknown {
  * `answer-key.json`) into a {@link FixtureBundle}.
  *
  * A malformed `trajectory.jsonl` line THROWS — a fixture is a committed artifact and
- * MUST be well-formed. This is the deliberate divergence from cassette.ts:121-133,
+ * MUST be well-formed. This is the deliberate divergence from cassette.ts,
  * which SKIPS malformed lines because a cassette is a replay log, not a frozen corpus.
  */
 export function loadFixture(dir: string): FixtureBundle {
@@ -170,7 +168,7 @@ export function loadFixture(dir: string): FixtureBundle {
 
 /**
  * Validate that a parsed `answer-key.json` has the load-bearing AnswerKey shape,
- * throwing PATH ONLY on violation (WR-05).
+ * throwing PATH ONLY on violation.
  *
  * `loadFixture` already catches *parse* failures early on the principle that "a
  * committed fixture is an artifact and MUST be well-formed". But a JSON-valid
@@ -178,7 +176,7 @@ export function loadFixture(dir: string): FixtureBundle {
  * `loadFixture` cleanly and then detonate downstream in `compareToAnswerKey` as an
  * opaque `Cannot read properties of undefined (reading 'filter')` with no fixture
  * path — exactly the failure mode the early-throw philosophy exists to prevent. An
- * empty `mechanismTokens` is rejected here too (it is the root of the WR-06 vacuous
+ * empty `mechanismTokens` is rejected here too (it is the root of the vacuous
  * pass), so it is impossible to construct a zero-token bundle.
  */
 function assertAnswerKey(parsed: unknown): AnswerKey {
@@ -206,14 +204,14 @@ function assertAnswerKey(parsed: unknown): AnswerKey {
  *   otherwise the `promptTokens + completionTokens` component sum (the bench
  *   harness idiom, scripts/bench-small-model/harness.mjs:89). A zero/absent
  *   total is treated as "no usable total" so a provider that emits
- *   `total_tokens: 0` with populated components does not under-count (WR-01).
- * - distinctToolCalls (M2b): size of the set of every NON-EMPTY `toolCalls[].name`
+ *   `total_tokens: 0` with populated components does not under-count.
+ * - distinctToolCalls: size of the set of every NON-EMPTY `toolCalls[].name`
  *   (calling obs_query twice = 1). A nameless tool call is skipped — it is not a
- *   distinct tool and must not inflate the count (WR-02).
- * - distinctSourceReads (M2c): size of the set of the `path` argument of every
+ *   distinct tool and must not inflate the count.
+ * - distinctSourceReads: size of the set of the `path` argument of every
  *   `read_source` call. A malformed `arguments` JSON is SKIPPED, not thrown — a
  *   benchmark transcript is lightly-trusted captured data and throwing would let a
- *   bad fixture abort the whole baseline (T-149-01-03).
+ *   bad fixture abort the whole baseline.
  */
 export function recordMetrics(transcript: AgentTurn[]): DiagnosisMetrics {
   let totalTokens = 0;
@@ -223,9 +221,9 @@ export function recordMetrics(transcript: AgentTurn[]): DiagnosisMetrics {
   for (const turn of transcript) {
     const usage = turn.usage;
     if (usage) {
-      // WR-01: `??` only falls back on null/undefined, so a real `total_tokens: 0`
+      // `??` only falls back on null/undefined, so a real `total_tokens: 0`
       // (streaming-off Ollama / some OpenAI-compatible proxies emit this while still
-      // reporting prompt/completion) was kept and under-counted M2a. Treat a
+      // reporting prompt/completion) was kept and under-counted the token total. Treat a
       // zero/absent total as "no usable total" and prefer the component sum.
       const total = usage.totalTokens;
       totalTokens +=
@@ -235,9 +233,9 @@ export function recordMetrics(transcript: AgentTurn[]): DiagnosisMetrics {
     }
 
     for (const call of turn.toolCalls ?? []) {
-      // WR-02: a nameless tool call (model emitted no function.name — common with
+      // A nameless tool call (model emitted no function.name — common with
       // small local models) must NOT join the distinct-tool set as "" and inflate
-      // M2b, which can flip a TRIM-candidate (distinctToolCalls <= 1) into a false
+      // the distinct-tool count, which can flip a TRIM-candidate (distinctToolCalls <= 1) into a false
       // BUILD recommendation. A nameless call is not a distinct tool.
       if (!call.name) continue;
       toolNames.add(call.name);
@@ -267,24 +265,24 @@ export function recordMetrics(transcript: AgentTurn[]): DiagnosisMetrics {
  * Structural pre-check that an answer hits the causal MECHANISM, not just the
  * symptom: `reached` is true ONLY if the answer (case-insensitively) contains
  * EVERY token in `answerKey.mechanismTokens`. The semantic judge (judgeAnswer)
- * runs in Plan 03; this guarantees the baseline only counts "reached" when the
- * mechanism tokens are present (RESEARCH.md Pitfall 4).
+ * runs in a later stage; this guarantees the baseline only counts "reached" when the
+ * mechanism tokens are present.
  *
  * `detail` lists the token names that were missing (token names only — no secret
  * content).
  *
- * THROWS on an empty `answerKey.mechanismTokens` (WR-06) — an empty list would make
+ * THROWS on an empty `answerKey.mechanismTokens` — an empty list would make
  * `reached` vacuously true for every answer, which is a programmer error, not a pass.
  */
 export function compareToAnswerKey(
   answer: string,
   answerKey: AnswerKey,
 ): { reached: boolean; detail: string } {
-  // WR-06: `[].filter(...)` is `[]`, so an empty mechanismTokens list would make
+  // `[].filter(...)` is `[]`, so an empty mechanismTokens list would make
   // `reached` vacuously true for EVERY answer (even ""), defeating the measure-first
   // lever. A zero-token key is a programmer error in the scorer (loadFixture's
   // assertAnswerKey blocks zero-token fixtures, but this reusable contract — imported
-  // by Plans 02/03 — must guard independently), not a clean pass.
+  // by the fixtures and scenario layers — must guard independently), not a clean pass.
   if (answerKey.mechanismTokens.length === 0) {
     throw new Error("compareToAnswerKey: answerKey.mechanismTokens is empty — cannot score");
   }
@@ -298,19 +296,19 @@ export function compareToAnswerKey(
 }
 
 // ---------------------------------------------------------------------------
-// makeReadSourceTool — a COUNTED read_source(path) tool (metric M2c).
+// makeReadSourceTool — a COUNTED read_source(path) tool (the distinct-source-reads metric).
 // ---------------------------------------------------------------------------
 
 /**
  * Build a COUNTED `read_source(path)` tool whose `impl` reads the file AND records
  * the repo-relative path in a live `readPaths` set (so `distinctSourceReads` is
- * observable, RESEARCH.md OQ2).
+ * observable).
  *
  * NOTE: `resolve` here is acceptable — the `safePath`/no-path.join rule is scoped to
  * product source under packages (AGENTS.md §2.2); this file is in `test/`. `read_source`
  * reads arbitrary repo-relative paths BY DESIGN (the metric IS "how many source files
  * must the agent read"); it is a test harness at operator trust, never wired into a
- * product package (T-149-01-04).
+ * product package.
  */
 export function makeReadSourceTool(repoRoot: string): ReadSourceTool {
   const readPaths = new Set<string>();

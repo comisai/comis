@@ -75,16 +75,16 @@ export interface GraphCoordinator {
    *  Bypasses event bus for reliability during session cleanup. Idempotent. */
   notifyNodeFailed(graphId: string, nodeId: string, runId: string, error: string): void;
   /**
-   * Phase 216 DUR-01/DUR-02 (Plan 11): resume a DAG run from its durable
+   * Resume a DAG run from its durable
    * checkpoint after a daemon restart. Re-enters ONLY the nodes that were NOT
    * terminal at crash time (`incompleteNodes(record.spawnTree)`) and DRIVES them
    * to execution via the node-lifecycle path (`spawnReadyNodes` → `spawnNode`),
    * so the re-entered node's sub-agent spawn actually fires — it does not merely
    * re-mark the node ready. Completed/skipped/failed nodes are NOT re-run; a
-   * re-run node's outward sends are deduped by the ONCE ledger (Plans 05/07), so
+   * re-run node's outward sends are deduped by the ONCE ledger, so
    * node-boundary resume is exactly-once-safe without persisting intra-node
-   * state. The durable resume engine (Plan 04) routes a DAG-shaped record here;
-   * Plan 12 wires this into the engine's resume dispatch (NEW-2).
+   * state. The durable resume engine routes a DAG-shaped record here via its
+   * resume dispatch.
    */
   resumeGraph(record: DurableRunRecord): Promise<Result<void, Error>>;
 }
@@ -114,10 +114,10 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   };
 
   /**
-   * Phase 216 DUR-01/DUR-02 (Plan 11): checkpoint the graph's per-node
+   * Checkpoint the graph's per-node
    * completion state to the durable run store at a NODE boundary. Persists the
    * GraphExecutionSnapshot → `spawn_tree` keyed on the graph's tree-stable
-   * `rootRunId` (CR-01). A no-op when no store is wired or the run has no stable
+   * `rootRunId`. A no-op when no store is wired or the run has no stable
    * root (the durable key). On a terminal graph it flips the record to
    * `completed` so resume skips it. Store errors are logged (WARN, hint +
    * errorKind) but NEVER crash the graph — durability is best-effort overlay on
@@ -139,11 +139,11 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       });
       return;
     }
-    // Source the run context the same way Plan 07 does for flat runs. The graph
-    // run carries no per-node lease/caps record here (those are minted per node),
-    // so the checkpoint persists the node-completion snapshot + the stable root;
-    // the caps/leaseIds the resumed run rehydrates come from the run record the
-    // outward-send path already wrote (NEW-1 outward_step is owned by
+    // Source the run context the same way the flat-run checkpoint path does. The
+    // graph run carries no per-node lease/caps record here (those are minted per
+    // node), so the checkpoint persists the node-completion snapshot + the stable
+    // root; the caps/leaseIds the resumed run rehydrates come from the run record
+    // the outward-send path already wrote (outward_step is owned by
     // allocateOutwardStep — this upsert deliberately never touches it).
     const record: DurableRunRecord = {
       rootRunId,
@@ -167,7 +167,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   }
 
   // Callback wiring: bind module functions with closed-over state/deps/config.
-  // Phase 216 (Plan 11): the node-transition entry points (spawnNode →
+  // The node-transition entry points (spawnNode →
   // markNodeRunning; handleSubAgentCompleted → markNodeCompleted/markNodeFailed;
   // markNodeFailed) each `checkpointGraph(gs)` AFTER the transition so the
   // durable spawn_tree tracks node completion at every boundary.
@@ -267,12 +267,12 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
     const stateMachine = createGraphStateMachine(params.graph);
 
-    // Phase 213 CR-01: resolve ONE tree-stable rootRunId for the whole graph run
+    // Resolve ONE tree-stable rootRunId for the whole graph run
     // so every node spawn shares it (the tree-wide ceiling + killByRootRun see
     // one tree, not a fresh root per node). A graph submitted BY a sub-agent
     // (its session key maps to a live run) inherits that run's root; a top-level
     // submission resolves the caller session's stable root. Undefined when no
-    // resolver is wired (older path; nodes mint per-spawn — graph fan-out is
+    // resolver is wired (nodes mint per-spawn — graph fan-out is
     // still bounded by the graph concurrency gate).
     const graphParentRun = params.callerSessionKey
       ? deps.subAgentRunner.getRunBySessionKey?.(params.callerSessionKey)
@@ -299,9 +299,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       runningCount: 0,
       callerSessionKey: params.callerSessionKey,
       callerAgentId: params.callerAgentId,
-      // GEN-03 (A2 fallback): graph submission carries no inbound NormalizedMessage, so resolve
+      // Graph submission carries no inbound NormalizedMessage, so resolve
       // the reply language once from the caller's RequestContext.resolvedLanguage — set by the
-      // parent executor in 181-04 — and thread it to every node envelope via buildContextEnvelope.
+      // parent executor — and thread it to every node envelope via buildContextEnvelope.
       resolvedLanguage: tryGetContext()?.resolvedLanguage,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
@@ -374,7 +374,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       "Graph run assigned traceId for sub-agent correlation",
     );
 
-    // v2.19: enforce a makespan floor on the graph timeout. A weak model routinely
+    // Enforce a makespan floor on the graph timeout. A weak model routinely
     // sets it too low for the DAG it just decomposed — observed live: a 6-node NVDA
     // pipeline given 10 min, where the 4 analysts (small-model concurrency = 2)
     // consumed the whole budget and the debate + head-trader were starved. The floor
@@ -610,15 +610,15 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   }
 
   /**
-   * Phase 216 DUR-01/DUR-02 (Plan 11): resume a DAG run from its durable
+   * Resume a DAG run from its durable
    * checkpoint after a restart. Re-enters ONLY the incomplete nodes and DRIVES
    * them via the node-lifecycle path so each re-entered node's sub-agent spawn
-   * actually fires (LOW-1 — not a bare re-mark-ready). Completed nodes are not
+   * actually fires — not a bare re-mark-ready. Completed nodes are not
    * re-run; a re-run node's outward sends dedupe via the ONCE ledger.
    *
    * The durable record carries node-completion STATE (`spawn_tree`) but not the
-   * original graph topology/tasks (out of scope for 216 — full mid-node DAG
-   * state persistence is deferred). So resume reconstructs a reduced graph from
+   * original graph topology/tasks (full mid-node DAG
+   * state persistence is deliberately not attempted). So resume reconstructs a reduced graph from
    * the incomplete frontier: each incomplete node becomes an independent root
    * (dependsOn=[]), immediately `ready`, and is driven to re-execute. Already-
    * terminal nodes (completed/skipped/failed) are excluded from the reconstructed
@@ -626,8 +626,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
    * unfinished frontier, not the whole DAG).
    */
   async function resumeGraph(record: DurableRunRecord): Promise<Result<void, Error>> {
-    // Cap/shape guard: a tampered or column-drifted record must not rehydrate
-    // (T-216-01). parseDurableRunRecord permits the stepIndex=-1 never-sent
+    // Cap/shape guard: a tampered or column-drifted record must not rehydrate.
+    // parseDurableRunRecord permits the stepIndex=-1 never-sent
     // sentinel, so a legitimate not-yet-sent DAG checkpoint passes.
     const parsed = parseDurableRunRecord(record);
     if (!parsed.ok) {
@@ -724,7 +724,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       timestamp: systemNowMs(),
     });
 
-    // DRIVE the incomplete nodes (LOW-1): spawnReadyNodes → spawnNode →
+    // DRIVE the incomplete nodes: spawnReadyNodes → spawnNode →
     // subAgentRunner.spawn + markNodeRunning. The re-entered node actually
     // re-executes; it is NOT merely set ready.
     callbacks.spawnReadyNodes(gs);

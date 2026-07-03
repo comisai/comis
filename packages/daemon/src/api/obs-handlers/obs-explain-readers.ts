@@ -5,7 +5,7 @@
  *
  * `obs.explain` assembles an IncidentReport from four telemetry sources. They
  * sit behind ONE interface so production reads real files while tests inject
- * fixture records (the X3 fixture-injection seam):
+ * fixture records (the fixture-injection seam):
  *
  *   1. readSessionRecords    — the per-session trajectory JSONL. The session
  *      lives in the REAL production layout the pi-agent session manager writes:
@@ -17,7 +17,7 @@
  *      same resolution `bundle-exporter.ts:readRuntimeTrajectory` performs).
  *      Returns ALL parsed lines — log shape AND event shape — WITHOUT the
  *      production bundle reader's `traceSchema === "comis-trajectory"` envelope
- *      filter, so the frozen pre-150 log fixtures pass through to
+ *      filter, so the frozen log-shape fixtures pass through to
  *      `toIncidentSignals`.
  *   2. readCacheTraceRecords — `<dataDir>/logs/cache-trace.jsonl`, filtered to
  *      the resolved session.
@@ -28,7 +28,7 @@
  *      then a SESSION-SCOPED filter by `row.sessionKey` (the F2 fallback).
  *      `DiagnosticQueryParams` has NO sessionKey filter, so `{limit:1}` would
  *      return the most-recent row across ALL sessions — the reader queries a
- *      window and filters AFTER. The window is a recency horizon (WR-01): see
+ *      window and filters AFTER. The window is a recency horizon: see
  *      `DIAGNOSTICS_QUERY_LIMIT` for why 1000 and the residual bound.
  *
  * Why the workspace base (not `<dataDir>/sessions`): the writer's source of
@@ -57,7 +57,7 @@ import type { ObservabilityStore } from "@comis/memory";
 const MAX_RECORDS = 5_000;
 
 /**
- * Window queried from obs_diagnostics before the session-scoped filter (WR-01).
+ * Window queried from obs_diagnostics before the session-scoped filter.
  *
  * `DiagnosticQueryParams` has NO sessionKey predicate, so the reader queries a
  * window (ordered `timestamp DESC`) and filters by `row.sessionKey` AFTER. The
@@ -77,11 +77,11 @@ const DIAGNOSTICS_QUERY_LIMIT = 1000;
 
 /**
  * Bounded window queried from `obs_audit_events` (tenant-scoped) before the
- * caller's traceId filter (AUDIT-05). `AuditQueryParams` has no traceId predicate,
+ * caller's traceId filter. `AuditQueryParams` has no traceId predicate,
  * so the reader scopes by tenant + this cap and the assembler narrows to the
  * session's traceId AFTER — the same recency-horizon pattern as the diagnostics
- * rollup. The store ALSO clamps `limit` to its own hard ceiling (Plan 03), so this
- * is the read-side bound (GBIII I2 — bounded reports).
+ * rollup. The store ALSO clamps `limit` to its own hard ceiling, so this
+ * is the read-side bound (reports stay bounded).
  */
 const AUDIT_QUERY_LIMIT = 1000;
 
@@ -95,8 +95,8 @@ export interface IncidentSourceReader {
   readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null>;
   readDiagnosticsRollup(sessionKey: string): Promise<Record<string, unknown> | null>;
   /**
-   * AUDIT-05 (176-05): the `obs_audit_events` rows for this session's tenant
-   * (the audit persists via SQLite, NOT a trajectory record — Plan 03 — so the
+   * The `obs_audit_events` rows for this session's tenant
+   * (the audit persists via SQLite, NOT a trajectory record — so the
    * `audit?` IncidentReport section is sourced HERE, not from the trajectory
    * stream). Tenant-scoped via `AuditQueryParams.tenant` + a bounded window; the
    * caller (`assembleIncidentReportFromSources`) filters by the resolved
@@ -106,7 +106,7 @@ export interface IncidentSourceReader {
    * OPTIONAL: the production `makeRealReader` always implements it; a fixture
    * reader that omits it simply produces no `audit?` section (the section is
    * additive + presence-conditional — the same posture as a session with no
-   * audit events). Pre-176-05 fixture readers therefore need no change.
+   * audit events). Existing audit-less fixture readers therefore need no change.
    */
   readAuditEvents?(sessionKey: string): Promise<Array<Record<string, unknown>>>;
 }
@@ -120,7 +120,7 @@ function defaultDataDir(): string {
  * The `<sessionFile>.trajectory-path.json` pointer suffix the trajectory recorder
  * writes (`pointer-file.ts`). The pointer's `sessionId` is the VERBATIM formatted
  * SessionKey the writer used — the only authoritative key→file record on disk, and
- * the basis of the lossy-key fallback below (OBS-WEBHOOK-EXPLAIN-RESOLVE).
+ * the basis of the lossy-key fallback below.
  */
 const TRAJECTORY_POINTER_SUFFIX = ".trajectory-path.json";
 
@@ -152,7 +152,7 @@ function sessionArtifactsExist(sessionFile: string): boolean {
  * `userId:"hook:devtask:<id>"`, `channelId:"webhook"` — is greedily mis-split into
  * channelId by the parser (the inverse of the writer's intent), so `sessionKeyToPath`
  * computes a path that does not exist and the readers report a false "nothing
- * happened" for a session that succeeded (OBS-WEBHOOK-EXPLAIN-RESOLVE).
+ * happened" for a session that succeeded.
  *
  * The authoritative key→file mapping lives ONLY on disk: each session's
  * `<file>.jsonl.trajectory-path.json` pointer carries the verbatim formatted key in
@@ -223,7 +223,7 @@ function findSessionFileByPointerSessionId(
  * whose computed artifacts exist on disk (telegram + any single-colon-field key);
  * (2) the FALLBACK — when the fast-path artifacts are absent, the key may have a
  * colon-bearing userId the parser mis-split (webhook sessions), so resolve via the
- * on-disk pointer whose `sessionId` matches verbatim (OBS-WEBHOOK-EXPLAIN-RESOLVE).
+ * on-disk pointer whose `sessionId` matches verbatim.
  *
  * Returns `undefined` when the key is not a parseable formatted sessionKey
  * (the reader then soft-fails to `[]`/`null`). `sessionKeyToPath` runs every
@@ -362,7 +362,7 @@ export function makeRealReader(
       // DiagnosticQueryParams has NO sessionKey filter — query a window and
       // filter by row.sessionKey AFTER (a {limit:1} would return the most-recent
       // row across ALL sessions, not this one). The window (DIAGNOSTICS_QUERY_LIMIT)
-      // is a recency horizon — widened to 1000 (WR-01) so older sessions are found.
+      // is a recency horizon — 1000 wide so older sessions are found.
       const rows = obsStore.queryDiagnostics({
         category: "session_summary",
         limit: DIAGNOSTICS_QUERY_LIMIT,

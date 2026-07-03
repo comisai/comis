@@ -11,7 +11,7 @@
  * added to the COPY list or `pnpm install` never fetches its dependencies and
  * the image build fails at `tsc` time.
  *
- * Live incident (v2.28): `@comis/observability-otel` was added but NOT added to
+ * Live incident: `@comis/observability-otel` was added but NOT added to
  * the COPY list → `error TS2307: Cannot find module '@opentelemetry/*'` — which
  * `pnpm validate` could NOT catch (it builds the FULL local workspace where the
  * deps are already installed; only the Docker image has the selective per-package

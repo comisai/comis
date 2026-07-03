@@ -13,10 +13,10 @@ describe("resolveSkillDiscoveryPaths", () => {
     expect(out).toContain(BUNDLED); // ./skills → <dataDir>/skills
   });
 
-  // OBS / skill-surfacing robustness (webhook-claude-cli-tdd-20260630-rerun): a CUSTOM discoveryPaths
+  // Skill-surfacing robustness: a CUSTOM discoveryPaths
   // that omits the default "./skills" must STILL discover the daemon's bundled skills — they are
   // seeded into <dataDir>/skills (the install target), so that dir is force-included regardless of the
-  // operator's config. Without this, a leftover `discoveryPaths:[<sim-dir>]` hid claude-code entirely.
+  // operator's config. Without this, a leftover `discoveryPaths:[<custom-dir>]` can hide claude-code entirely.
   it("ALWAYS includes the bundled-skill install target <dataDir>/skills, even for a custom discoveryPaths", () => {
     const out = resolveSkillDiscoveryPaths(["/srv/team-skills"], DATA, WS_SKILLS);
     expect(out).toContain(BUNDLED); // the daemon's bundled skills stay discoverable

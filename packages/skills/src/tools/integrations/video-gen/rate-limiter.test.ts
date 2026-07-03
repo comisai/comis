@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the per-agent video-generation rate limiter (SEC-02 count cap).
+ * Unit tests for the per-agent video-generation rate limiter (hourly count cap).
  * Mirrors the image-gen rate limiter: a fixed 1h window with an injectable clock.
  *
  * @module

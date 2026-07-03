@@ -22,10 +22,10 @@ import {
 } from "./row-schemas.js";
 
 /**
- * The named pi-ai reconstruction entry point for the LCD store (F2/F3).
+ * The named pi-ai reconstruction entry point for the LCD store.
  *
  * `getMessages` returns the faithful `LcdMessage` DTO rows; turning one back
- * into a canonical pi-ai `Message` is the consumer's step — Phase-128 assembly
+ * into a canonical pi-ai `Message` is the consumer's step — the assembly layer
  * calls this. It delegates to the core `partsToMessage` codec (the single
  * pi-ai-typed seam) rather than duplicating the per-block reconstruction in the
  * store; it is exposed here so consumers reconstruct via one named function
@@ -59,19 +59,19 @@ const CtxCountRowSchema = z.strictObject({ c: z.number() });
 export const ctxCountRowMapper = createRowMapper(CtxCountRowSchema);
 
 /**
- * `MAX(ordinal)` projection for the per-append dense-view maintenance (CRIT-2).
+ * `MAX(ordinal)` projection for the per-append dense-view maintenance.
  * `MAX` over zero rows returns SQL NULL → `maxOrdinal` is nullable; the next
  * ordinal is `(maxOrdinal ?? -1) + 1` (0 for the first row). No `as` cast.
  */
 const CtxMaxOrdinalRowSchema = z.strictObject({ maxOrdinal: z.number().nullable() });
 export const ctxMaxOrdinalRowMapper = createRowMapper(CtxMaxOrdinalRowSchema);
 
-/** Single-column message-id projection for the E1 leaf→message walk (no `as` cast). */
+/** Single-column message-id projection for the leaf→message walk (no `as` cast). */
 const SummaryMessageIdRowSchema = z.strictObject({ message_id: z.string() });
 export const summaryMessageIdRowMapper = createRowMapper(SummaryMessageIdRowSchema);
 
 /**
- * Single-column rowid projection for the contentless-FTS populate (WR-03 — the
+ * Single-column rowid projection for the contentless-FTS populate (the
  * sanctioned `createRowMapper(z.strictObject)` read replacing the raw
  * `as { rowid: number } | undefined` cast the §6.8 untyped-sqlite rule forbids).
  */
@@ -79,7 +79,7 @@ const MessageRowidRowSchema = z.strictObject({ rowid: z.number() });
 export const messageRowidRowMapper = createRowMapper(MessageRowidRowSchema);
 
 /**
- * Phase 164 (RR1): cursor row schema — two projected columns only
+ * Cursor row schema — two projected columns only
  * (`epoch_anchor` + `ingested_live_len`). Uses `z.strictObject` (drift
  * detection) and `createRowMapper` (degrade-to-undefined, never throws) —
  * the same pattern as every other row mapper in this module.
@@ -87,7 +87,7 @@ export const messageRowidRowMapper = createRowMapper(MessageRowidRowSchema);
 const CursorRowSchema = z.strictObject({ epoch_anchor: z.string(), ingested_live_len: z.number() });
 export const cursorRowMapper = createRowMapper(CursorRowSchema);
 
-/** The verbatim canonical block is opaque at the row layer (F1). */
+/** The verbatim canonical block is opaque at the row layer. */
 const LcdPartMetadataSchema = z.looseObject({
   raw: z.unknown(),
   rawType: z.string().optional(),
@@ -97,8 +97,8 @@ const LcdPartMetadataSchema = z.looseObject({
 });
 
 /**
- * Parse the JSON `metadata` column with graceful degradation (T-127-10 /
- * ASVS V5): a corrupt/poisoned persisted block degrades `raw` to undefined and
+ * Parse the JSON `metadata` column with graceful degradation (ASVS V5):
+ * a corrupt/poisoned persisted block degrades `raw` to undefined and
  * NEVER throws — a malformed row can not crash reconstruction.
  */
 export function parseMetadata(raw: string): LcdPartMetadata {

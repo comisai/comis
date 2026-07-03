@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `CLI_SUBCOMMAND_MAP` — the `comis-agent` subcommand→call-target
- * source-of-truth (CLI-01, v8 §7). The in-jail `comis-agent` CLI is Surface 3
+ * source-of-truth. The in-jail `comis-agent` CLI is the third call surface
  * (typed tool / orchestrate script / this CLI all converge on the SAME handlers
- * + the SAME `requireCapability` gate). Its value is shell fluency + Hermes
- * parity, NOT new authority — so this table NEVER restates a capability: each
+ * + the SAME `requireCapability` gate). Its value is shell fluency,
+ * NOT new authority — so this table NEVER restates a capability: each
  * entry is a `{kind:"tool", tool}` (rides `tool.invoke`) or a `{kind:"method",
  * method}` (a direct orchestration / self-scoped-read method), and the CAP is
  * DERIVED from the existing {@link TOOL_CAPABILITY_MAP} / {@link
  * HANDLER_CAPABILITY_MAP} (there is deliberately no `cap` field here). The wire
- * the CLI sends each call over is the lease cap socket (CLI-04), never the
+ * the CLI sends each call over is the lease cap socket, never the
  * loopback gateway WebSocket.
  *
  * The `skill` family is INTENTIONALLY OMITTED — it is NOT a gap. Every
@@ -20,9 +20,9 @@
  * method is reachable over the cap socket. The orchestrate SCRIPT surface hits
  * the SAME closed door. Offering a `skill` subcommand would advertise a path
  * that is always denied — so it is excluded by design (the substrate denylist is
- * NOT relaxed; un-denylisting would contradict the mitigation and sit outside
- * this phase's "no new capability" boundary). The admin verbs
- * (`secrets`/`config`/`tokens`/`gateway`/…) are likewise absent (CLI-03): the
+ * NOT relaxed; un-denylisting would contradict the mitigation and grant a
+ * capability this table must never grant). The admin verbs
+ * (`secrets`/`config`/`tokens`/`gateway`/…) are likewise absent: the
  * real `comis` is not on the jail PATH, the lease holds no admin cap, and admin
  * handlers deny-by-origin.
  *
@@ -32,7 +32,7 @@
  * future re-added `skill`-like entry pointing at a non-orch/denied target aborts
  * module load rather than silently shipping a weaker/false-affordance path. The
  * denylist cross-check itself (the proof that no target is in
- * `DENYLISTED_RPC_METHODS`) is Plan 05's arch-test, which imports the daemon's
+ * `DENYLISTED_RPC_METHODS`) is the companion arch-test, which imports the daemon's
  * exported denylist — kept OUT of here so `@comis/core` never imports
  * `@comis/daemon` (a package cycle).
  *
@@ -65,14 +65,14 @@ export type CliCallTarget =
   | { readonly kind: "method"; readonly method: GatedMethodName };
 
 /**
- * The FINAL `comis-agent` subcommand→target table (v8 §7 lines 384-392, minus
+ * The FINAL `comis-agent` subcommand→target table (minus
  * the denylisted `skill`). `as const satisfies Record<string, CliCallTarget>`
  * keeps the literal tool/method strings exact at the type level (a typo'd target
  * fails the build) while typing the whole table.
  *
  * `list` is its OWN top-level key (→ `session.list`) and `status` is its own (→
- * `session.status`) so BOTH are flat enumerable entries the same-gate predicate
- * (Plan 05) iterates; the two-token `status list` is a PARSER-level alias to the
+ * `session.status`) so BOTH are flat enumerable entries the same-gate arch-test
+ * predicate iterates; the two-token `status list` is a PARSER-level alias to the
  * `list` entry (handled in `comis-agent-cli.ts`), NOT a nested value shape that
  * would hide a target from the flat enumeration.
  */
@@ -89,7 +89,7 @@ export const CLI_SUBCOMMAND_MAP = {
   grep: { kind: "tool", tool: "grep" }, // orch:read
   find: { kind: "tool", tool: "find" }, // orch:read
   ls: { kind: "tool", tool: "ls" }, // orch:read
-  // ── self-scoped reads (Plan 02 audience exception; any valid lease reaches) ──
+  // ── self-scoped reads (the cap-socket audience exception; any valid lease reaches) ──
   whoami: { kind: "method", method: "capabilities.introspect" },
   status: { kind: "method", method: "session.status" },
   list: { kind: "method", method: "session.list" }, // parser aliases `status list` → here
@@ -99,20 +99,20 @@ export const CLI_SUBCOMMAND_MAP = {
 export type CliSubcommand = keyof typeof CLI_SUBCOMMAND_MAP;
 
 // ---------------------------------------------------------------------------
-// Module-load soundness assertion (CLI-01 fail-loud).
+// Module-load soundness assertion (fail-loud).
 // Mirrors tool-capability-map.ts + handler-capability-map.ts: assert-at-load so
 // a mis-targeted entry (a non-cap-map tool/method, or a method that is neither
 // orch:* nor a self-scoped read, or a deny-by-origin method) fails LOUD at
 // import — this is what would catch a re-added `skill`-like entry IF it pointed
 // at a non-orch/denied target. The denylist cross-check (no target ∈
-// DENYLISTED_RPC_METHODS) is Plan 05's arch-test (it imports the daemon export;
+// DENYLISTED_RPC_METHODS) is the companion arch-test (it imports the daemon export;
 // @comis/core must NOT import @comis/daemon — a package cycle).
 // ---------------------------------------------------------------------------
 
 const SELF_SCOPED_READ_SET: ReadonlySet<string> = new Set<string>(SELF_SCOPED_AGENT_READS);
 
 /**
- * Assert the CLI table ↔ cap-map soundness invariants (CLI-01). Pure: takes the
+ * Assert the CLI table ↔ cap-map soundness invariants. Pure: takes the
  * three tables explicitly so the invariant is independently unit-testable over a
  * poisoned copy (the throw branches are the security fail-loud paths). Throws a
  * descriptive `Error` on the first violation.

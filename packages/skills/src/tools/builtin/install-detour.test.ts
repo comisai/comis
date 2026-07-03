@@ -88,9 +88,9 @@ describe("parseInstallDetour — positive matrix", () => {
     ["pip install pandas_ml",                                 "pip",  ["pandas-ml"]],
     ["pip install foo.bar",                                   "pip",  ["foo-bar"]],
     ["source .venv/bin/activate && pip install matplotlib",   "pip",  ["matplotlib"]],
-    // `&` is a POSIX top-level separator (background-and-continue). These previously
-    // returned null because `&` was excluded from the single-char operator set in
-    // splitTopLevelSegments.
+    // `&` is a POSIX top-level separator (background-and-continue), so an install
+    // command after `&` is still detected — `&` is in the single-char operator
+    // set splitTopLevelSegments splits on.
     ["echo hi & pip install matplotlib",                      "pip",  ["matplotlib"]],
     ["pip install foo & echo bg",                             "pip",  ["foo"]],
     ["echo a & echo b & npm install lodash",                  "npm",  ["lodash"]],

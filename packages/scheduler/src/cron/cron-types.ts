@@ -11,7 +11,7 @@ import { z } from "zod";
  *   Exists so "remind me in 2 minutes" resolves deterministically as now+N —
  *   small models reliably botch the absolute "at" + IANA-tz conversion (a
  *   keyless qwen3.6:35b scheduled "in 2 minutes" ~7h off by pairing the injected
- *   UTC hour with the user's display timezone; CRON-IN-01, live 2026-06-20).
+ *   UTC hour with the user's display timezone).
  */
 export const CronScheduleSchema = z.discriminatedUnion("kind", [
   z.strictObject({

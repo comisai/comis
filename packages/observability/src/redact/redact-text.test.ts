@@ -2,7 +2,7 @@
 /**
  * `redactSecretsInText` tests.
  *
- * Design §5.5 + plan task-5 behavior:
+ * Behavior:
  *   - Applies the default pattern set via `replacePatternBounded`.
  *   - Each match is replaced with the edge-keeping mask of the captured
  *     secret substring (callers see correlation across the same input)

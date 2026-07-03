@@ -93,7 +93,7 @@ describe("extractAnthropicPromptState", () => {
 
   it("handles server-side tools (tool_search_tool_regex) without crashing", () => {
     // tool_search_tool_regex has type + name but no input_schema.
-    // Previously crashed: computeHash(undefined) → djb2(JSON.stringify(undefined)) → str.length on undefined.
+    // Guards the crash path: computeHash(undefined) → djb2(JSON.stringify(undefined)) → str.length on undefined.
     const paramsWithServerTool = {
       ...fixtureParams,
       tools: [
@@ -241,7 +241,7 @@ describe("extractAnthropicPromptState lazy buildDiffableContent", () => {
     expect((result as Record<string, unknown>).serializedTools).toBeUndefined();
   });
 
-  it("lazy getter produces same output as previous eager serialization", () => {
+  it("lazy getter serializes joined system text and cache_control-stripped tools JSON", () => {
     const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
     const content = result.buildDiffableContent!();
 

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Content-free translator unit tests for the AUDIT-01/TREE `capability:audited`
- * spawn-tree producer event (Phase 215 Plan 01 Task 1, RED-first).
+ * Content-free translator unit tests for the `capability:audited`
+ * spawn-tree producer event.
  *
  * The `capability:audited` translator is the chokepoint that decides which
  * payload fields cross into the persisted trajectory. It MUST forward ONLY the
  * content-free per-node tuple — capability + tool NAME + decision + the
  * lease/root ids — and MUST strip the envelope (agentId/timestamp) plus any
  * tool args, message body, file path, or secret-shaped value that a careless
- * emit might have attached (T-215-01 / Pitfall 5). The `subagent:steered` /
+ * emit might have attached. The `subagent:steered` /
  * `subagent:budget_exceeded` arms are the exact precedent.
  * @module
  */
@@ -18,7 +18,7 @@ import {
   type OrchestrationBridgedEventName,
 } from "./translate-orchestration-payload.js";
 
-describe("translateOrchestrationPayload — capability:audited (AUDIT-01/TREE, content-free)", () => {
+describe("translateOrchestrationPayload — capability:audited (content-free)", () => {
   it("forwards ONLY {capability, tool, decision, leaseId, parentLeaseId, rootRunId} for an allow record (socket full tuple)", () => {
     const data = translateOrchestrationPayload(
       "capability:audited" as OrchestrationBridgedEventName,
@@ -116,7 +116,7 @@ describe("translateOrchestrationPayload — capability:audited (AUDIT-01/TREE, c
   });
 });
 
-describe("translateOrchestrationPayload — graph:node_spawned (TREE-01 finding D, content-free)", () => {
+describe("translateOrchestrationPayload — graph:node_spawned (content-free)", () => {
   it("forwards ONLY {graphId, nodeId, nodeAgentId, rootRunId, tokenBudget} — child agent rides nodeAgentId, not the correlation key agentId", () => {
     const data = translateOrchestrationPayload(
       "graph:node_spawned" as OrchestrationBridgedEventName,

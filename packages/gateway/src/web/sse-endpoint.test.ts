@@ -68,8 +68,8 @@ describe("createSseEndpoint", () => {
   });
 
   describe("scope enforcement", () => {
-    // Security regression for the v2.20 review finding: the SSE middleware
-    // only verified the token, never its scope — unlike REST (`rpc`) and the
+    // Security regression: the SSE middleware only verified the token, never
+    // its scope — unlike REST (`rpc`) and the
     // MCP endpoint (`mcp-client`). A sole-scope `mcp-client` token (the most
     // contained external credential) was therefore accepted on the
     // cross-session event firehose (/api/events) and could drive agent turns

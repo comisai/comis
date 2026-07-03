@@ -25,8 +25,8 @@ export const RetentionConfigSchema = z.strictObject({
 /**
  * Recall keepers (the load-bearing $0 on-device recall substrate).
  *
- * Phase 226 nests the three formerly-flat recall knobs under `memory.recall`
- * (design §5). These select the embedding + reranker models the recall path uses;
+ * The three recall knobs nest under `memory.recall`.
+ * These select the embedding + reranker models the recall path uses;
  * they cost no API budget and are NOT gated by the master `memory.enabled` switch.
  */
 export const MemoryRecallConfigSchema = z.strictObject({
@@ -42,8 +42,8 @@ export const MemoryRecallConfigSchema = z.strictObject({
 
 export const MemoryConfigSchema = z.strictObject({
     /**
-     * Master kill-switch over EVERY LLM cost-bearing memory + learning feature (v1
-     * opt-out posture; renamed from `memory.costFeatures.enabled` in Phase 226). A
+     * Master kill-switch over EVERY LLM cost-bearing memory + learning feature
+     * (opt-out posture). A
      * single top-level gate over the offline crons (memoryReview, the __REFLECT__
      * reflection cron, …), the per-agent learning layer (`learning.enabled`), and the
      * query-time dialectic tool (`memory_ask`). When `false`, ALL of them are
@@ -51,8 +51,7 @@ export const MemoryConfigSchema = z.strictObject({
      * the operator's single escape hatch from any LLM/API spend the memory stack would
      * otherwise incur. Default `true` (opt-out): the gate is ON but gates nothing until a
      * per-agent feature is itself enabled. NOT in scope: the $0 on-device recall features
-     * (memory.recall / rerank / lanes / forget / mmr). (The `socialModeling` cost+privacy
-     * feature was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
+     * (memory.recall / rerank / lanes / forget / mmr).
      */
     enabled: z.boolean().default(true),
     /** Path to the SQLite database file (resolved relative to dataDir if not absolute) */

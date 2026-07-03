@@ -13,7 +13,7 @@ before each AI call, dropping and masking old content as it goes —
 the simpler engine. Either way, your agent never runs out of room to think.
 
 <Note>
-The lossless **DAG** (LCD) engine (the v2.12 "Lossless Context DAG" release) is
+The lossless **DAG** (LCD) engine is
 the **default** engine — `contextEngine.version` defaults to `"dag"` (set
 `"pipeline"` to opt into the simpler engine). DAG
 stores every message losslessly and **automatically summarizes** the oldest
@@ -24,7 +24,7 @@ into a leaf summary via the same three-level escalation as pipeline mode
 (normal → aggressive → a deterministic count-only floor that always fits), then
 assembles the context under the model's token budget — always keeping the
 verbatim fresh tail and never deleting anything from the store. The multi-tier
-*condensed* summary hierarchy is **now part of DAG** too: when enough same-depth
+*condensed* summary hierarchy is part of DAG too: when enough same-depth
 summaries accumulate (≥`condensedMinFanout`, default 4) they fold into one deeper
 condensed summary, and every summary is rendered honestly
 (`depth`/`descendant_count`/time-range/`trust=untrusted` markers + an expand
@@ -301,25 +301,25 @@ Oversized results are saved to disk as JSON files with compact inline references
 ## DAG mode (the default engine)
 
 <Warning>
-The DAG (LCD) engine is the **default** engine (the v2.12 "Lossless Context
-DAG" release) — `contextEngine.version` defaults to `"dag"` (set `"pipeline"` to
+The DAG (LCD) engine is the **default** engine —
+`contextEngine.version` defaults to `"dag"` (set `"pipeline"` to
 opt into the simpler engine). It stores every message losslessly and assembles
 the context **under the model's token budget**: it resolves the ordered context
 view (raw messages plus
 any leaf summaries) and **evicts the oldest out-of-tail history** when the budget
-is exceeded — always keeping the verbatim fresh tail. **Automatic leaf
-summarization is now live**: when context utilization crosses `contextThreshold`
+is exceeded — always keeping the verbatim fresh tail. **Leaf
+summarization is automatic**: when context utilization crosses `contextThreshold`
 (default 0.75 × the turn's effective budget window) at the end of a turn, the oldest out-of-tail
 chunk is summarized into a leaf summary and slotted back into the context view in
 its original position. The multi-tier **condensed** summary hierarchy (summaries
-of summaries) is **now live too** — when enough same-depth summaries accumulate
+of summaries) builds on top: when enough same-depth summaries accumulate
 (≥`condensedMinFanout`, default 4) they fold into one deeper condensed summary,
 and every summary is rendered with honest lossiness markers (see
-[Honest presentation](#honest-presentation-of-summaries) below). Only the
-on-demand `ctx_*` recall tools described later in this section still land in a
-**later phase**. Nothing is ever deleted from the store — both eviction and
+[Honest presentation](#honest-presentation-of-summaries) below). Nothing is ever
+deleted from the store — both eviction and
 summarization operate on the assembled context only, so the underlying messages
-remain recoverable when recall lands.
+remain recoverable via the on-demand `ctx_*` recall tools described later in
+this section.
 </Warning>
 
 ### What is DAG mode
@@ -339,10 +339,9 @@ When enough same-depth summaries accumulate (≥`condensedMinFanout`, default 4)
 the DAG rolls them up into one deeper **condensed** summary — a zoomable
 leaf→condensed hierarchy where each level covers a broader span. Every summary is
 rendered into context with honest lossiness markers (see
-[Honest presentation of summaries](#honest-presentation-of-summaries)). Only the
-on-demand `ctx_*` recall tools (the design described below) still land in a later
-phase; the current release does leaf summarization, multi-tier condensation, and
-budget-bounded assembly.
+[Honest presentation of summaries](#honest-presentation-of-summaries)), and the
+on-demand `ctx_*` recall tools (described below) let the agent drill back into
+any compressed region.
 
 ### How DAG compaction works
 
@@ -394,7 +393,7 @@ happened to tip the budget.
 
 This is controlled by `contextEngine.deferCompaction` (default `true`). Setting it
 to `false` runs the leaf and condense passes **inline** at the end of the turn
-(the pre-v2.12 behaviour) — deterministic and useful for tests, at the cost of
+— deterministic and useful for tests, at the cost of
 adding the summarization time to that turn's latency. The serializer interlock
 (one compaction per conversation at a time) holds in both modes, so the lossless
 store is never written by two passes at once.
@@ -468,15 +467,6 @@ for that turn rather than risk a cross-agent leak (the verbatim fresh tail still
 ships, so the live turn is never broken), and logs a warning so the
 misconfiguration is visible.
 
-<Note>
-The cross-agent isolation adds an `agent_id` column to the DAG full-text search
-index. Because the search index is created once on a fresh database (there is no
-migration — sessions start fresh on the LCD engine by design), a **pre-existing
-development `~/.comis` database created before this release may need to be wiped**
-to pick up the isolated index. This affects only local dev databases that predate
-the LCD engine; a fresh install needs nothing.
-</Note>
-
 ## Configuration
 
 All context engine settings live under `agents.*.contextEngine` in your config
@@ -500,17 +490,17 @@ change anything.
 | `contextEngine.outputEscalation.escalatedMaxTokens` | number | `32768` | Maximum output tokens after escalation (4096-128000) |
 | `contextEngine.observationDeactivationChars` | number | `80000` | Character threshold to deactivate observation masking (20K-500K) |
 | `contextEngine.ephemeralKeepWindow` | number | `10` | Recent ephemeral tool results to preserve from masking (1-50) |
-| `contextEngine.contextThreshold` | number | `0.75` | **DAG mode (live):** context-utilization fraction (of the turn's effective budget window — the reconciled context window under any capability-class cap) that triggers a leaf-summarization pass at the end of a turn (0.1-0.95) |
-| `contextEngine.freshTailTurns` | number | `8` | **DAG mode (live):** most-recent steps (assistant + tool round-trips) always kept verbatim and never summarized/evicted (1-50) |
-| `contextEngine.leafChunkTokens` | number | `20000` | **DAG mode (live):** token cap for the oldest out-of-tail chunk summarized into one leaf summary (1K-100K); clamped at runtime to the resolved summarizer model's window — the smaller of its configured window and the probed served window when the summarizer runs on the served-bound provider — minus the summary target, template overhead, and previous-summary size, so a small compaction summarizer or a served-bound primary is never fed an over-window chunk; a single message larger than the clamped cap is replaced by a bounded deterministic extraction (no LLM call) |
-| `contextEngine.leafTargetTokens` | number | `1200` | **DAG mode (live):** target token size for a leaf summary (96-5000) |
-| `contextEngine.deferCompaction` | boolean | `true` | **DAG mode (live):** run the afterTurn leaf + condense passes in the background on the per-conversation serializer (never blocking the turn). `false` runs them inline (deterministic, for tests) |
-| `contextEngine.summarizerSpend.maxTokensPerTenantPerHour` | number | `500000` | **DAG mode (live):** per-tenant rolling-hour ceiling on summarizer (input+output) tokens; over the cap the summarizer is bypassed and assembly degrades to truncation-only. `0` disables the hourly cap |
-| `contextEngine.summarizerSpend.maxTokensPerTenantPerDay` | number | `5000000` | **DAG mode (live):** per-tenant rolling-day summarizer token ceiling. `0` disables the daily cap |
-| `contextEngine.summarizerBreaker.failureThreshold` | number | `5` | **DAG mode (live):** consecutive summarizer failures before the circuit breaker opens → truncation-only assembly |
-| `contextEngine.summarizerBreaker.resetTimeoutMs` | number | `60000` | **DAG mode (live):** how long the summarizer breaker stays open before a half-open trial |
-| `contextEngine.summarizerBreaker.halfOpenTimeoutMs` | number | `30000` | **DAG mode (live):** half-open trial window for the summarizer breaker |
-| `contextEngine.compaction.summarizerFallbackProviders` | string[] | `[]` | **DAG mode (live):** ordered list of fallback summarizer provider/model ids tried in turn when the primary summarizer fails (SUM-03); the per-tenant breaker + spend caps still bind, and only an all-providers-exhausted failure trips the breaker. `[]` (default) = no failover — primary only, byte-identical to prior behavior |
+| `contextEngine.contextThreshold` | number | `0.75` | **DAG mode:** context-utilization fraction (of the turn's effective budget window — the reconciled context window under any capability-class cap) that triggers a leaf-summarization pass at the end of a turn (0.1-0.95) |
+| `contextEngine.freshTailTurns` | number | `8` | **DAG mode:** most-recent steps (assistant + tool round-trips) always kept verbatim and never summarized/evicted (1-50) |
+| `contextEngine.leafChunkTokens` | number | `20000` | **DAG mode:** token cap for the oldest out-of-tail chunk summarized into one leaf summary (1K-100K); clamped at runtime to the resolved summarizer model's window — the smaller of its configured window and the probed served window when the summarizer runs on the served-bound provider — minus the summary target, template overhead, and previous-summary size, so a small compaction summarizer or a served-bound primary is never fed an over-window chunk; a single message larger than the clamped cap is replaced by a bounded deterministic extraction (no LLM call) |
+| `contextEngine.leafTargetTokens` | number | `1200` | **DAG mode:** target token size for a leaf summary (96-5000) |
+| `contextEngine.deferCompaction` | boolean | `true` | **DAG mode:** run the afterTurn leaf + condense passes in the background on the per-conversation serializer (never blocking the turn). `false` runs them inline (deterministic, for tests) |
+| `contextEngine.summarizerSpend.maxTokensPerTenantPerHour` | number | `500000` | **DAG mode:** per-tenant rolling-hour ceiling on summarizer (input+output) tokens; over the cap the summarizer is bypassed and assembly degrades to truncation-only. `0` disables the hourly cap |
+| `contextEngine.summarizerSpend.maxTokensPerTenantPerDay` | number | `5000000` | **DAG mode:** per-tenant rolling-day summarizer token ceiling. `0` disables the daily cap |
+| `contextEngine.summarizerBreaker.failureThreshold` | number | `5` | **DAG mode:** consecutive summarizer failures before the circuit breaker opens → truncation-only assembly |
+| `contextEngine.summarizerBreaker.resetTimeoutMs` | number | `60000` | **DAG mode:** how long the summarizer breaker stays open before a half-open trial |
+| `contextEngine.summarizerBreaker.halfOpenTimeoutMs` | number | `30000` | **DAG mode:** half-open trial window for the summarizer breaker |
+| `contextEngine.compaction.summarizerFallbackProviders` | string[] | `[]` | **DAG mode:** ordered list of fallback summarizer provider/model ids tried in turn when the primary summarizer fails; the per-tenant breaker + spend caps still bind, and only an all-providers-exhausted failure trips the breaker. `[]` (default) = no failover — the primary summarizer is the only one tried |
 
 ```yaml title="~/.comis/config.yaml"
 agents:

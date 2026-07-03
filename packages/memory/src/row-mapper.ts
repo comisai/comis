@@ -116,7 +116,7 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
     // throws on read). pattern_type spreads only when non-null.
     observationKind: (row.observation_kind ?? "merge") as MemoryEntry["observationKind"],
     ...(row.pattern_type !== null ? { patternType: row.pattern_type as MemoryEntry["patternType"] } : {}),
-    // CR-03: map the pinned column to the domain field.
+    // Map the pinned column to the domain field.
     // pinned===1 → entry.pinned=true (always-inject marker for prompt-assembly split).
     // pinned===0 or absent → field is absent (undefined) from the domain object,
     // matching the MemoryEntrySchema z.boolean().optional() contract.
@@ -171,8 +171,8 @@ export function insertMemoryRow(
     entry.patternType ?? null,
   );
 
-  // FTS-01 (plan 180-06): write the NORMALIZED memory_fts_tri twin row beside
-  // the base insert (same transaction context as store() / the v1.7 import path
+  // Write the NORMALIZED memory_fts_tri twin row beside
+  // the base insert (same transaction context as store() / the memory-import path
   // — insertMemoryRow is the single insert chokepoint). The twin shares the base
   // rowid (resolved by id select, never last_insert_rowid() — robust under any
   // transaction shape). normalizeForSearch is imported from @comis/core (the

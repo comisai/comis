@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `rig-lifecycle.ts` — the PURE daemon-respawn + teardown DECISION logic, extracted
- * from `rig-daemon.ts` (Phase 208, Plan 08 — the cold-shell detached-subprocess rig)
+ * from `rig-daemon.ts` (the cold-shell detached-subprocess rig)
  * so the race/flake-sensitive lifecycle transitions are DETERMINISTICALLY testable
  * WITHOUT spawning a real daemon grandchild.
  *
@@ -15,9 +15,9 @@
  * `@comis/*` imports + ZERO node side effects, so it imports cleanly under BOTH the
  * vitest live-config AND the bare-`tsx` detached subprocess.
  *
- * THE TWO BUGS THIS CLOSES (Phase 208 review WR-01/WR-02):
+ * THE TWO BUGS THIS CLOSES:
  *
- *   WR-01 (orphan-reap leak race): `teardown` reaps `state.daemon` by value, but
+ *   Bug 1 — the orphan-reap leak race: `teardown` reaps `state.daemon` by value, but
  *     `/reset` + `restartDaemon` reassign `state.daemon = spawn(...)` WITHOUT checking
  *     `tearingDown`. On the un-backstopped ORPHAN-REAP path (handle removed out-of-band
  *     → `teardown → process.exit`, NO parent group-kill), a daemon respawned by a
@@ -26,7 +26,7 @@
  *     CURRENT `state.daemon` after each await so a respawn that snuck in before the
  *     latch took effect is still reaped.
  *
- *   WR-02 (EADDRINUSE respawn flake): the in-proc `/reset`/`/restart` respawn onto the
+ *   Bug 2 — the EADDRINUSE respawn flake: the in-proc `/reset`/`/restart` respawn onto the
  *     SAME gateway port immediately after a `reapDaemon` that may have TIMED OUT
  *     returning `false` (the production daemon's graceful shutdown "can be slow"). Fix:
  *     the respawn HONORS the reap result — if reap returned false OR the port is not
@@ -50,7 +50,7 @@ import type { ChildProcess } from "node:child_process";
 export interface LifecycleState {
   /** The current daemon grandchild (swapped on `/restart` + `/reconfigure` + `/reset`). */
   daemon: ChildProcess | undefined;
-  /** Set once teardown begins — the AUTHORITATIVE latch a respawn must honor (WR-01). */
+  /** Set once teardown begins — the AUTHORITATIVE latch a respawn must honor. */
   tearingDown: boolean;
 }
 
@@ -72,7 +72,7 @@ export interface RespawnDeps {
   readonly gatewayPort: number;
   /** Reap the current daemon grandchild → true ONLY when confirmed dead AND the port is free. */
   readonly reap: (child: ChildProcess | undefined, gatewayPort: number) => Promise<boolean>;
-  /** Probe whether `gatewayPort` is bindable (true = FREE) — the WR-02 pre-rebind gate. */
+  /** Probe whether `gatewayPort` is bindable (true = FREE) — the pre-rebind gate. */
   readonly isPortFree: (gatewayPort: number) => Promise<boolean>;
   /** Spawn a fresh daemon grandchild on the (current) config. Records nothing — the caller assigns. */
   readonly spawn: () => ChildProcess;
@@ -93,11 +93,11 @@ export interface RespawnDeps {
  * seam (the `/reset` db/logs/sessions wipe) runs between the confirmed reap and the
  * fresh spawn, so it cannot race a live daemon and is skipped on a refusal.
  *
- * AUTHORITATIVE-TEARDOWN (WR-01): if `state.tearingDown` is already set, REFUSE — never
+ * AUTHORITATIVE-TEARDOWN: if `state.tearingDown` is already set, REFUSE — never
  * create a new daemon once teardown has begun (on the orphan-reap path `process.exit`
  * would not signal it, so it would leak). Returns `{ ok: false, refusal: "tearing_down" }`.
  *
- * REAP-AWARE REBIND (WR-02): only re-spawn once the prior daemon is CONFIRMED gone AND the
+ * REAP-AWARE REBIND: only re-spawn once the prior daemon is CONFIRMED gone AND the
  * gateway port is actually free. If `reap` returned false (the SIGKILL grace overran) OR
  * the port is still held, REFUSE with `{ ok: false, refusal: "port_busy" }` rather than
  * racing a fresh daemon onto an occupied port (the EADDRINUSE flake). The reap result is
@@ -105,18 +105,18 @@ export interface RespawnDeps {
  * began DURING the reap also wins (no respawn into a teardown).
  */
 export async function respawnDaemon(state: LifecycleState, deps: RespawnDeps): Promise<RespawnOutcome> {
-  // WR-01: refuse a respawn the instant teardown has begun — checked BEFORE the reap.
+  // Refuse a respawn the instant teardown has begun — checked BEFORE the reap.
   if (state.tearingDown) return { ok: false, refusal: "tearing_down" };
 
   const reaped = await deps.reap(state.daemon, deps.gatewayPort);
 
-  // WR-01: teardown may have begun DURING the reap's awaits — re-check the latch and
+  // Teardown may have begun DURING the reap's awaits — re-check the latch and
   // bail rather than spawn a daemon teardown can no longer see (it already passed its
   // own reap of state.daemon). Teardown's post-await re-reap is the backstop if we lose
   // this race by a hair, but refusing here keeps the common case from ever creating D2.
   if (state.tearingDown) return { ok: false, refusal: "tearing_down" };
 
-  // WR-02: honor the reap result + confirm the port is free before rebinding. A reap
+  // Honor the reap result + confirm the port is free before rebinding. A reap
   // that timed out (false) or a port still held → an honest refusal, never an
   // EADDRINUSE race onto an occupied gateway port.
   if (!reaped || !(await deps.isPortFree(deps.gatewayPort))) {
@@ -150,7 +150,7 @@ export interface TeardownReapDeps {
 }
 
 /**
- * The AUTHORITATIVE teardown reap (WR-01). Sets the `tearingDown` latch, reaps the
+ * The AUTHORITATIVE teardown reap. Sets the `tearingDown` latch, reaps the
  * current daemon, then RE-READS `state.daemon` and reaps AGAIN: a `/reset`/`/restart`
  * that raced in before the latch took effect may have swapped `state.daemon` to a fresh
  * D2 between the latch and the first reap — re-reaping the now-current handle guarantees
@@ -192,7 +192,7 @@ export type IsPortFreeFn = (port: number) => Promise<boolean>;
 
 /**
  * Poll until `port` is FREE (bindable) or the bounded budget is exhausted — the
- * deterministic replacement for a fixed real-clock settle sleep (review INFO-3). A
+ * deterministic replacement for a fixed real-clock settle sleep. A
  * gateway port can linger briefly in TIME_WAIT/LAST_ACK after the daemon process exits,
  * so the no-leak assertion polls rather than guessing a fixed delay. Returns true the
  * instant the port frees, false if it is still held after `attempts × intervalMs`.

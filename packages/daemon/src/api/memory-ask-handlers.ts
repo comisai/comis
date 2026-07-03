@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The memory.ask (dialectic) RPC handler — extracted from memory-handlers.ts
- * to keep that module under the 800-line production cap after the 2026-06-11
- * live-fix wave (reason-coded abstains, real SessionKey recall scope, dated
- * grounding lines).
+ * The memory.ask (dialectic) RPC handler — kept separate from
+ * memory-handlers.ts so that module stays under the 800-line production cap.
  *
  * @module
  */
@@ -38,7 +36,7 @@ const ABSTAIN_SENTINEL = { answer: "", citations: [] as string[], abstained: tru
 // `deps.memoryApi.search`, which bypasses the TRUST FILTER (the documented trap).
 // Recall trust-FILTERS but returns RAW `entry.content`; redaction/sanitization is
 // THIS handler's job (mirroring rag-retriever, never inside recall). Empty recall
-// ⇒ abstain in CODE WITHOUT the seam (Pitfall 5). Else: order trust-first
+// ⇒ abstain in CODE WITHOUT the seam. Else: order trust-first
 // (orderByTrust) → the SAME neutralization rag-retriever uses (sanitizeToolOutput
 // + wrapExternalContent) → clamp to the per-agent dialectic.maxRecall DoS bound →
 // the ONE injected query-time seam → assembleSynthesis (abstain-in-code + citations
@@ -53,10 +51,10 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
       // Scope is read PRE-strip (mirrors search_files + context.recall): the
       // dispatcher injects `_agentId` + `_callerSessionKey` on the agent tool
       // path; an external RPC caller (CLI / web dashboard / operator WS) has
-      // no `_agentId`, so it falls back to the DEFAULT agent — live finding
-      // 2026-06-11: without the fallback every external memory.ask call
-      // silently returned the bare abstain sentinel while the chat path
-      // recalled the same fact fine. No widening beyond existing token
+      // no `_agentId`, so it falls back to the DEFAULT agent — without the
+      // fallback every external memory.ask call would silently return the
+      // bare abstain sentinel while the chat path recalls the same fact
+      // fine. No widening beyond existing token
       // authority: memory.search serves the same rpc scope tenant-wide.
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const callerSessionKey = rawParams._callerSessionKey as string | undefined;
@@ -67,9 +65,9 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
       // Graceful abstain when the dialectic is not wired (no key / seam not
       // applied) or no agent scope is resolvable — never throws. Each branch
       // carries a distinct `reason` + an INFO log so an infrastructure absence
-      // is never disguised as a semantic "no data" abstain (live finding
-      // 2026-06-11: all branches returned the identical bare sentinel with
-      // ZERO log lines — undiagnosable without reading the wiring).
+      // is never disguised as a semantic "no data" abstain (otherwise all
+      // branches would return the identical bare sentinel with ZERO log
+      // lines — undiagnosable without reading the wiring).
       if (deps.dialecticSeam === undefined || deps.buildDialecticRecall === undefined || agentId === undefined) {
         const reason = agentId === undefined ? "no_agent_scope" : "dialectic_unavailable";
         deps.logger?.info(
@@ -97,11 +95,11 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
       // sanitizes + wraps it below, NOT recall) — NOT memoryApi.search. The factory builds
       // a per-agent orchestrator with the daemon's store set + the agent's RagConfig.
       //
-      // The recall scope MUST be a real SessionKey OBJECT (live finding
-      // 2026-06-11): the previous `(callerSessionKey ?? "") as unknown as
-      // SessionKey` smuggled a STRING, so `sessionKey.tenantId` was undefined
-      // and the adapter's tenant-scoped hydration matched NOTHING — every
-      // memory.ask, on every caller path, abstained with an empty recall.
+      // The recall scope MUST be a real SessionKey OBJECT: a
+      // `(callerSessionKey ?? "") as unknown as SessionKey` cast would
+      // smuggle a STRING, leaving `sessionKey.tenantId` undefined so the
+      // adapter's tenant-scoped hydration matches NOTHING — every
+      // memory.ask, on every caller path, would abstain with an empty recall.
       // Parse the dispatcher-injected formatted key when present; otherwise a
       // synthetic key carrying the daemon tenant (the only field search scopes by).
       const recallScope: SessionKey =
@@ -114,7 +112,7 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
       const recalled = await recall.recall(question, recallScope, agentId);
 
       // Empty / failed recall ⇒ abstain in CODE, WITHOUT calling the seam
-      // (Pitfall 5 — no grounding ⇒ no LLM call, no fabricated answer).
+      // (no grounding ⇒ no LLM call, no fabricated answer).
       if (!recalled.ok || recalled.value.length === 0) {
         deps.logger?.info(
           { agentId, step: "dialectic" as const, durationMs: systemNowMs() - askStart, abstained: true, reason: "empty_recall", citationCount: 0 },
@@ -183,10 +181,10 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
                     : {}),
                 });
           // The recorded date rides OUTSIDE the untrusted fence (code-derived
-          // from entry.createdAt, not memory content). Live finding
-          // 2026-06-11: without it, same-trust conflicts gave the model no
-          // recency signal and it resolved a date correction the WRONG way
-          // (answered the stale June 20 over the updated June 25).
+          // from entry.createdAt, not memory content). Without it, same-trust
+          // conflicts give the model no recency signal and it can resolve a
+          // date correction the WRONG way (answering the stale date over the
+          // updated one).
           const recorded = systemDateFrom(r.entry.createdAt).toISOString().slice(0, 10);
           return `[${r.entry.id}] (recorded ${recorded}) ${safe}`;
         })
@@ -211,12 +209,12 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
       // used) are HIGH-signal "used" attribution. Emit on the SAME event the usefulness-feedback
       // subscriber already consumes (wireMemoryUsefulness → recordUsage) — NO new event, NO new
       // subscriber. usedIds = the citations; ignoredIds = recalled ∖ citations. Guarded on
-      // !result.abstained so an abstained (no grounded answer) turn never attributes a "used"
-      // (Pitfall 4); the emit is fire-and-forget by the bus contract and the subscriber is
+      // !result.abstained so an abstained (no grounded answer) turn never attributes a
+      // "used"; the emit is fire-and-forget by the bus contract and the subscriber is
       // already non-fatal, so a usefulness-write failure can NEVER break the answer. ids/counts
       // ONLY — never the question, recalled content, or answer (AGENTS.md §2.7).
       //
-      // `intent` is OMITTED here (Pitfall 2): classifyIntent is NOT exported from @comis/agent
+      // `intent` is OMITTED here: classifyIntent is NOT exported from @comis/agent
       // — importing it would force a public-export-consumer + a daemon→agent-internal edge, and
       // the handler does not re-classify. Omitting it makes the subscriber record the GLOBAL
       // bucket; the per-intent write rides the turn-end emit (in-package).

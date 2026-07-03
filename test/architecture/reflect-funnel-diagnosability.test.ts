@@ -1,39 +1,40 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per D-03 (ACCEPT-01 obs residual): a standing guard that the reflect:funnel
- * admissionOutcome keeps each reason distinct, so frictions 1 (dead-loop reason)
- * + 4 (rejected_name_length vs rejected_validation) stay diagnosable in ONE
- * `comis explain` call. A future collapse of two reasons is a failing test.
+ * A standing guard that the reflect:funnel admissionOutcome keeps each reason
+ * distinct, so the dead-loop reason and the rejected_name_length vs
+ * rejected_validation distinction stay diagnosable in ONE `comis explain` call.
+ * A future collapse of two reasons is a failing test.
  *
- * ## Why this guard exists (the v2.31 obs retro residual)
+ * ## Why this guard exists
  *
- * Two milestone frictions both resolve to the `reflect:funnel.admissionOutcome`
- * closed enum (`ReflectAdmissionOutcome`, @comis/core):
+ * Two distinct diagnosability concerns both resolve to the
+ * `reflect:funnel.admissionOutcome` closed enum (`ReflectAdmissionOutcome`,
+ * @comis/core):
  *
- *   - Friction 1 — the `promoteByName topicKey:''` dead-loop (fixed 57512529 /
- *     67ff5616): the dead promote loop is read off `comis explain` as `admitted:N`
- *     with `skill_promoted:0`; the funnel's reason verdict (`no_successes` /
- *     `untrusted_origin` / `uncorroborated`) names WHY nothing was admitted. The D5
- *     salvage `untrusted_origin` must stay DISTINCT from `no_successes` /
- *     `uncorroborated` or "all dropped for an untrusted origin" again hides behind a
- *     generic "no successes" verdict.
- *   - Friction 4 — WR-01 profile-name overflow → false `rejected_validation` (fixed
- *     by adding the DISTINCT `rejected_name_length` member): a name-length rejection
- *     must NEVER again masquerade as the poison-scan `rejected_validation` verdict.
+ *   - The `promoteByName topicKey:''` dead-loop: the dead promote loop is read
+ *     off `comis explain` as `admitted:N` with `skill_promoted:0`; the funnel's
+ *     reason verdict (`no_successes` / `untrusted_origin` / `uncorroborated`)
+ *     names WHY nothing was admitted. The `untrusted_origin` reason must stay
+ *     DISTINCT from `no_successes` / `uncorroborated` or "all dropped for an
+ *     untrusted origin" again hides behind a generic "no successes" verdict.
+ *   - The profile-name overflow → false `rejected_validation`: a name-length
+ *     rejection (`rejected_name_length`) must NEVER masquerade as the poison-scan
+ *     `rejected_validation` verdict — they are DISTINCT members.
  *
  * Both rely on (a) the enum keeping each reason distinct, and (b) the
  * `translate-payload` fold continuing to surface `admissionOutcome` on
  * `comis explain`. A future change that collapses two reasons into one, or drops
- * `admissionOutcome` from the fold, silently re-hides a friction class — exactly the
- * WR-01 regression or the dead-loop ambiguity. This guard makes either a RED test.
+ * `admissionOutcome` from the fold, silently re-hides a diagnosability class —
+ * the name-length regression or the dead-loop ambiguity. This guard makes either
+ * a RED test.
  *
  * ## What it asserts (each its own `it`)
  *
  *   1. The built `ReflectAdmissionOutcome` closed union declares all 7 distinct
  *      reasons, INCLUDING `rejected_name_length` AND `rejected_validation` as SEPARATE
- *      members (friction 4 — they must never collapse into one).
+ *      members (they must never collapse into one).
  *   2. `untrusted_origin` is present and distinct from `no_successes` /
- *      `uncorroborated` (friction 1 / the D5 salvage).
+ *      `uncorroborated`.
  *   3. (non-vacuity) the `reflect:funnel` fold in `translate-payload.js` actually
  *      returns `admissionOutcome` — so the enum REACHES `comis explain`. A regression
  *      that drops the field from the fold fails here.
@@ -84,7 +85,7 @@ const DIST = {
  * closed-enum string-literal members and the fold's object keys survive the scan, but
  * a token mentioned in PROSE / a doc-comment cannot self-trip the gate. Mirrors
  * `reflection-inv-belts-dist.test.ts` / `reflection-no-exec-guard.test.ts`
- * `stripCommentsOnly` (the §2.10 self-invalidating-grep discipline).
+ * `stripCommentsOnly` (so the scan cannot self-trip on its own doc-comment tokens).
  */
 function stripCommentsOnly(src: string): string {
   let out = "";
@@ -138,7 +139,7 @@ const REQUIRED_REASONS = [
   "no_successes",
 ] as const;
 
-describe("reflect:funnel admissionOutcome keeps each reason distinct (D-03 obs residual — frictions 1 + 4)", () => {
+describe("reflect:funnel admissionOutcome keeps each reason distinct", () => {
   // Non-vacuity anchors (RED if the artifact moved but resolved to some other file):
   // the closed union must actually be DECLARED in the scanned .d.ts, and the
   // reflect:funnel case must actually be PRESENT in the scanned fold.
@@ -176,12 +177,12 @@ describe("reflect:funnel admissionOutcome keeps each reason distinct (D-03 obs r
         `the reflect reason "${reason}" is missing from the ReflectAdmissionOutcome union — a friction class lost its distinct verdict`,
       ).toBe(true);
     }
-    // The headline friction-4 distinctness: rejected_name_length and rejected_validation
+    // The headline distinctness: rejected_name_length and rejected_validation
     // are SEPARATE members. If a future change merges them, a name-length rejection again
-    // masquerades as the poison-scan verdict (the WR-01 regression) — this fails.
+    // masquerades as the poison-scan verdict — this fails.
     expect(
       /["']rejected_name_length["']/.test(rhs) && /["']rejected_validation["']/.test(rhs),
-      "rejected_name_length and rejected_validation must BOTH be distinct members — a collapse re-hides a name over-cap behind the poison verdict (WR-01)",
+      "rejected_name_length and rejected_validation must BOTH be distinct members — a collapse re-hides a name over-cap behind the poison verdict",
     ).toBe(true);
     // The union is exactly the 7 reasons — no member silently dropped, none added
     // un-reviewed (the closed-set discipline). Count distinct string literals on the RHS.
@@ -193,10 +194,10 @@ describe("reflect:funnel admissionOutcome keeps each reason distinct (D-03 obs r
     ).toBe(REQUIRED_REASONS.length);
   });
 
-  it("includes untrusted_origin as a member distinct from no_successes / uncorroborated (friction 1 / the D5 salvage)", () => {
+  it("includes untrusted_origin as a member distinct from no_successes / uncorroborated", () => {
     const unionMatch = /ReflectAdmissionOutcome\s*=\s*([^;]+);/.exec(eventsLearningDts);
     const rhs = unionMatch![1];
-    // The D5 salvage: an "all successes dropped for an untrusted origin" run reads as
+    // An "all successes dropped for an untrusted origin" run reads as
     // `untrusted_origin`, NOT a generic `no_successes`/`uncorroborated` — so `comis
     // explain` names the real reason. All three must coexist as distinct members.
     expect(/["']untrusted_origin["']/.test(rhs), "untrusted_origin missing").toBe(true);
@@ -208,7 +209,7 @@ describe("reflect:funnel admissionOutcome keeps each reason distinct (D-03 obs r
     // Find the reflect:funnel case body and assert it folds admissionOutcome through.
     // The fold is `case "reflect:funnel": ... return { ... admissionOutcome: payload.admissionOutcome };`
     // A regression that drops the field from the fold (so `comis explain` no longer
-    // names the reason) fails here — the obs residual the v2.31 retro converts.
+    // names the reason) fails here.
     expect(
       /admissionOutcome/.test(translatePayload),
       "the translate-payload fold no longer mentions admissionOutcome — the reflect reason no longer reaches comis explain",

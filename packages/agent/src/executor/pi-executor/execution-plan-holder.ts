@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Holder-backed `ExecutionPlanPort` implementation (spec §16.7 / §17.1).
+ * Holder-backed `ExecutionPlanPort` implementation.
  *
  * The Silent Execution Planner (SEP) stores the live plan for the active turn
  * in a mutable `executionPlanRef` created per-execute in `session-bootstrap.ts`

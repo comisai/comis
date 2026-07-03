@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OUTCOME-04 conversational-breadth LLM-judge fallback — the LEAF for the v2.26
+ * Conversational-breadth LLM-judge fallback — the LEAF for the
  * Verified Learning outcome judge.
  *
  * Extracted to its own leaf (like `setup-learning-corroboration.ts`) so neither
@@ -114,10 +114,10 @@ interface JudgeAgentConfig {
 export interface OutcomeJudgeWiringContainer {
   config: {
     agents?: Record<string, JudgeAgentConfig | undefined>;
-    // H-1 (Phase 226): the REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
-    // so tsc ENFORCES the `costFeatures.enabled`→`enabled` master-gate rename. A loose optional type let
-    // the deleted key read as `undefined !== false === true` → SILENTLY force-ENABLED (the kill-switch
-    // inverts); the real type makes a missed rename a compile error, not a fail-open.
+    // The REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
+    // so tsc ENFORCES that the master gate reads `memory.enabled`. A loose optional type would let
+    // a wrong/absent key read as `undefined !== false === true` → SILENTLY force-ENABLED (the kill-switch
+    // inverts); the real type makes a missed field a compile error, not a fail-open.
     memory?: Pick<MemoryConfig, "enabled">;
     providers?: {
       entries?: Record<
@@ -177,7 +177,7 @@ function resolveOutcomeJudge(
   const apiKey =
     container.secretManager.get(apiKeyName) ??
     // Keyless by TYPE, not config NAME — a user-named ollama entry must resolve keyless, else the
-    // outcome judge is a silent no-op on a local keyless daemon (package-delivery-20260628). Mirrors
+    // outcome judge is a silent no-op on a local keyless daemon. Mirrors
     // setup-dialectic + the completion path. Guarded by test/architecture/keyless-provider-by-type.
     (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
   if (!apiKey) return undefined; // no key → no-op judge (Defer != Retry)
@@ -204,7 +204,7 @@ function resolveOutcomeJudge(
 }
 
 /**
- * Construct the OUTCOME-04 conversational-breadth judge fallback daemon-side, behind the
+ * Construct the conversational-breadth judge fallback daemon-side, behind the
  * byte-identity gate. Mirrors `buildReactionWiringDeps`'s "build only when needed" posture
  * and keeps the bulk OUT of setup-memory.ts.
  *
@@ -232,8 +232,7 @@ export function buildOutcomeJudgeWiring(
   // always MATERIALIZE the nested `judge` default for an explicitly-present-but-partial
   // `learningOutcome` block (e.g. `{enabled:true, correction:{enabled:true}}` leaves `judge`
   // undefined) — so a defaulted/absent `judge.enabled` (the common case) MUST read as ON.
-  // The master `memory.enabled` kill-switch (renamed from costFeatures.enabled in Phase 226)
-  // still gates everything.
+  // The master `memory.enabled` kill-switch still gates everything.
   const learningOutcomeJudgeEnabled = (agentId: string): boolean =>
     costFeaturesEnabled &&
     agents[agentId]?.learningOutcome?.enabled !== false &&
@@ -322,7 +321,7 @@ export interface JudgeUpgradeDeps {
 }
 
 /**
- * OUTCOME-04 conversational-breadth upgrade — the LLM-judge fallback for an `unknown`
+ * Conversational-breadth upgrade — the LLM-judge fallback for an `unknown`
  * deterministic verdict. Returns the (possibly UPGRADED) verdict the rest of the consume
  * chain runs on. Entered ONLY when:
  *  - the deterministic resolve fused to `unknown` (a resolved tool/pipeline turn skips the

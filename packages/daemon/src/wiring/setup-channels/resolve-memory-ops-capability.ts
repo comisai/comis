@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * R6 capability resolution for the memory-job daemon wiring (CR-01).
+ * Capability resolution for the memory-job daemon wiring.
  *
  * The LLM-backed memory jobs (`runMemoryReview`, `runMemoryConsolidation`, the
  * `createDialecticSeam` synthesis) gate their LLM call on
  * `resolveMemoryOpsStrategy(capabilityClass, hasCapableModelOverride)` so a
- * small/nano model never fabricates citations/triples into trusted storage
- * (T-153-fabricate). Those two fields were declared OPTIONAL on each job's deps
- * and DEFAULTED to "frontier"/false — but NO daemon call site ever passed them,
- * so every consumer hit the default and the abstain branch was unreachable in
- * production (R6 dead). This helper single-sources the derivation so all three
+ * small/nano model never fabricates citations/triples into trusted storage.
+ * Those two fields are declared OPTIONAL on each job's deps
+ * and DEFAULT to "frontier"/false — but a daemon call site that never passed them
+ * would hit the default and leave the abstain branch unreachable in
+ * production. This helper single-sources the derivation so all three
  * sites thread the SAME, correct values.
  *
- * R6 KEYS ON THE MEMORY MODEL, NOT THE AGENT'S PRIMARY. Each job already resolves
+ * THE CAPABILITY GATE KEYS ON THE MEMORY MODEL, NOT THE AGENT'S PRIMARY. Each job already resolves
  * the cheap "cron"/cheap operation model via `resolveOperationModel` and makes its
  * LLM call with THAT model — so the capability that matters is that model's, not
  * the agent's interactive model. (A frontier agent with a nano cron model must
@@ -38,7 +38,7 @@
 import { resolveModelProfile, type CapabilityClass } from "@comis/agent";
 import type { ProviderCapabilities } from "@comis/core";
 
-/** The R6 routing inputs threaded into each memory-job deps object. */
+/** The capability-gating routing inputs threaded into each memory-job deps object. */
 export interface MemoryOpsCapability {
   /** The capability class of the cron/memory model (drives the abstain gate). */
   capabilityClass: CapabilityClass;
@@ -47,7 +47,7 @@ export interface MemoryOpsCapability {
 }
 
 /**
- * Derive the R6 `{ capabilityClass, hasCapableModelOverride }` for a memory job
+ * Derive the `{ capabilityClass, hasCapableModelOverride }` for a memory job
  * from the resolved cron/memory model + that provider's capabilities.
  *
  * @param model - The resolved cron/memory model parts (`resolveOperationModel`

@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Judge wrapper — thin abstraction over the bench-memory QA judge for Phase-139 MEM Stage-C.
+ * Judge wrapper — thin abstraction over the bench-memory QA judge for MEM Stage-C.
  *
  * Reads COMIS_LIVE_JUDGE_PROVIDER, COMIS_LIVE_JUDGE_MODEL, COMIS_LIVE_JUDGE_API_KEY
  * from env (mirroring bench-memory.sh require_answer_judge_env guard).
  * Returns {verdict:"skip"} when env is absent — never throws on missing env.
- * Cross-judge ≥2 required for any published readiness claim (§7.5 discipline).
+ * Cross-judge ≥2 required for any published readiness claim.
  *
  * sweepSecrets: replicates bench-memory.sh sweep_dir in TypeScript.
  * Scans all files under dirPath for credential shapes:
  *   sk-[A-Za-z0-9_-]{16,} | Bearer [A-Za-z0-9._-]+ | apiKey<sep><quoted-value>
  * Throws on any match (belt-and-suspenders over in-test omission gates).
  *
- * T-139-01-01: sweep throws with path only — matched content is NEVER included
+ * Sweep throws with path only — matched content is NEVER included
  * in the error message (Information Disclosure mitigation).
- * T-139-01-02: COMIS_LIVE_JUDGE_API_KEY is read once and never returned or logged.
+ * COMIS_LIVE_JUDGE_API_KEY is read once and never returned or logged.
  *
  * @module
  */
@@ -62,11 +62,11 @@ export interface JudgeDeps {
 
 // ---------------------------------------------------------------------------
 // Secret pattern (mirrors bench-memory.sh sweep_dir line 123)
-// IN-01 fix: \bapiKey\b matched variable names (false positive). Replaced with
+// A bare \bapiKey\b matches variable names (false positive), so this uses
 // a value-requiring pattern: apiKey["':= ]+"<value>". This matches YAML/JSON
 // credential assignments (apiKey: "sk-...", "apiKey": "realvalue") but NOT
 // bare identifiers or declarations like `const apiKey = ...`.
-// Mirrors the Phase-134 cost.ts fix for the same hazard.
+// Mirrors the same fix applied in cost.ts for this hazard.
 // ---------------------------------------------------------------------------
 const SECRET_PATTERN =
   /sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|(?:"apiKey"|apiKey)\s*[=:]\s*["'][^"']{4,}/;
@@ -82,8 +82,8 @@ const SECRET_PATTERN =
  * COMIS_LIVE_JUDGE_PROVIDER or COMIS_LIVE_JUDGE_API_KEY is absent from env.
  * Never throws on missing credentials — skip ≠ fail.
  *
- * When the judge env IS present, this now invokes the REAL qa-judge (the
- * `260606-judge-qa-harness-wiring` fix): build the category-rubric-first prompt
+ * When the judge env IS present, this invokes the REAL qa-judge: build the
+ * category-rubric-first prompt
  * (mirrors bench-memory `buildJudgePrompt`), call the judge model at
  * temperature 0 via pi-ai `completeSimple` (lazy-imported; a DI `deps.complete`
  * stub bypasses it in tests), extract the text, and parse the verdict (the
@@ -94,11 +94,11 @@ const SECRET_PATTERN =
  *
  * CROSS-JUDGE: this wires the SINGLE-judge invocation; cross-judge ≥2 (a second
  * judge model + agreement) for any PUBLISHED readiness claim is the operator
- * step (§7.5). The unit test exercises the non-skip path with a STUB.
+ * step. The unit test exercises the non-skip path with a STUB.
  *
- * T-139-01-02: the API key is read for presence + forwarded to the pi-ai option
+ * The API key is read for presence + forwarded to the pi-ai option
  * field only; it is NEVER included in the returned JudgeResult, the judgeId, the
- * reason, or any log. The judge prompt/output are never logged (the §5.1
+ * reason, or any log. The judge prompt/output are never logged (the
  * residency rule — the prompt may carry the answer).
  */
 export async function judgeAnswer(
@@ -311,7 +311,7 @@ async function makeRealJudgeComplete(
  *                                        (matches apiKey: "realvalue" but NOT
  *                                        bare `const apiKey = ...` identifiers)
  *
- * T-139-01-01: Throws with the FILE PATH only — matched content is never
+ * Throws with the FILE PATH only — matched content is never
  * included in the error message (Information Disclosure mitigation).
  *
  * No-op when dirPath does not exist (mirrors bench-memory.sh guard).
@@ -327,7 +327,7 @@ export function sweepSecrets(dirPath: string): void {
 function _sweepDir(dir: string): void {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    // WR-05 fix: use lstatSync (does NOT follow symlinks) to avoid infinite
+    // Use lstatSync (does NOT follow symlinks) to avoid infinite
     // recursion on symlinks-to-parents. Then filter by isFile() before reading
     // to skip sockets, FIFOs, device nodes, and symlinks — readFileSync on a
     // socket or FIFO hangs indefinitely, blocking the entire test process.
@@ -339,7 +339,7 @@ function _sweepDir(dir: string): void {
     if (!st.isFile()) continue; // skip sockets, FIFOs, device nodes, symlinks
     const text = readFileSync(full, "utf-8");
     if (SECRET_PATTERN.test(text)) {
-      // T-139-01-01: include path only — never the matched content
+      // Include path only — never the matched content.
       throw new Error(`SECRET LEAK detected in ${full} — failing the run.`);
     }
   }

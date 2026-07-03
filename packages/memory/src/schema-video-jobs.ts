@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `video_jobs` table DDL — the durable async job store the Phase-189
- * background poller resumes against across a daemon restart (JOB-01/JOB-03).
- * A job row survives the agent turn AND a daemon restart because it lives on
- * disk in the shared `memory.db`, not in memory.
+ * The `video_jobs` table DDL — the durable async job store the background poller
+ * resumes against across a daemon restart. A job row survives the agent turn
+ * AND a daemon restart because it lives on disk in the shared `memory.db`, not
+ * in memory.
  *
  * Forward-only, re-run-safe: create-if-not-exists only, no destructive or
- * reverse DDL (design §9). Extracted from `schema.ts` (which is at the
+ * reverse DDL. Extracted from `schema.ts` (which is at the
  * 800-line cap) — `initSchema` CALLS this so the table exists on every boot.
  *
- * SECURITY (T-189-02): columns are the opaque provider jobId + routing + state +
+ * SECURITY: columns are the opaque provider jobId + routing + state +
  * cost + path + a `deliver_attempts` redelivery counter ONLY — no credential
  * column. Columns MUST match `VideoJobDbRowSchema` (video-job-row-schema.ts)
  * exactly — the strictObject rejects any drift.
  *
- * CR-01 (Phase-189 code review): `deliver_attempts` bounds the poller's
+ * `deliver_attempts` bounds the poller's
  * redelivery loop. A row whose channel delivery keeps failing is re-driven by
  * the sweeper every `pollIntervalMs`; without a persisted counter that re-poll +
  * re-download (up to 200 MB) repeats forever. The poller increments this column
@@ -24,7 +24,7 @@
  *
  * `better-sqlite3` durability is WAL + path-based chmod (never fd-based file
  * sync), so this DDL is permission-model-safe by construction — no fd-fs guard
- * is needed (Pitfall 2 / [[node-permission-model-disables-fsync]]).
+ * is needed ([[node-permission-model-disables-fsync]]).
  *
  * @module
  */
@@ -61,9 +61,9 @@ export function ensureVideoJobTable(db: Database.Database): void {
       updated_at_ms      INTEGER NOT NULL
     )
   `);
-  // OBS-04 (Phase 192): forward-only, re-run-safe migration for the
+  // Forward-only, re-run-safe migration for the
   // `session_key` column. `CREATE TABLE IF NOT EXISTS` is a no-op on a table that
-  // a PRIOR v2.24 build (without this column) already created, so a fresh db gets
+  // a PRIOR build (without this column) already created, so a fresh db gets
   // the column from the CREATE above while an upgraded db needs this ALTER. Guard
   // it with a `PRAGMA table_info` column-exists check so the ALTER runs at most
   // once and re-running ensureVideoJobTable never throws (a duplicate ADD COLUMN
@@ -79,10 +79,10 @@ export function ensureVideoJobTable(db: Database.Database): void {
   if (!cols.has("session_key")) {
     db.exec(`ALTER TABLE video_jobs ADD COLUMN session_key TEXT`);
   }
-  // Partial index for the poller's listPending() boot-resume scan (JOB-03).
+  // Partial index for the poller's listPending() boot-resume scan.
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_video_jobs_pending ON video_jobs (state) WHERE state = 'pending'`,
   );
-  // Index for the agent-scoped get (JOB-04 / TARGET-01).
+  // Index for the agent-scoped get.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_video_jobs_agent ON video_jobs (agent_id)`);
 }

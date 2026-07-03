@@ -23,15 +23,15 @@ export const MUTABLE_CONFIG_OVERRIDES: readonly string[] = [
   "agents.*.skills.watchDebounceMs",
   "agents.*.skills.discoveryPaths",
   "agents.*.maxSteps",
-  // Bug A: removed dead "agents.*.persona" entry. PerAgentConfigSchema
-  // is z.strictObject and has no `persona` field, so the override could never
-  // produce a successful patch -- it only leaked a misleading capability hint
-  // to LLMs (formatRedirectHint emitted "you can also patch agents.<id>.persona")
-  // which the LLM echoed back as `persona:` in agents_manage.create config,
+  // Deliberately NO "agents.*.persona" entry. PerAgentConfigSchema
+  // is z.strictObject and has no `persona` field, so such an override could never
+  // produce a successful patch -- it would only leak a misleading capability hint
+  // to LLMs (formatRedirectHint would emit "you can also patch agents.<id>.persona")
+  // which the LLM echoes back as `persona:` in agents_manage.create config,
   // triggering Zod unrecognized_keys rejection.
   "agents.*.promptTimeout.promptTimeoutMs",      // Allow runtime tuning
   "agents.*.promptTimeout.retryPromptTimeoutMs",  // Allow runtime tuning
-  "agents.*.promptTimeout.stallCeilingMultiplier", // Allow runtime tuning (LAT-02; same family as the two keys above)
+  "agents.*.promptTimeout.stallCeilingMultiplier", // Allow runtime tuning (same family as the two keys above)
   "agents.*.operationModels",                     // Allow runtime model tiering tuning
   "agents.*.model",                               // Allow runtime model switching
   "agents.*.provider",                            // Allow runtime provider switching
@@ -106,7 +106,7 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // capability map or detour policy.
   "tooling",
 
-  // D16 §8.1: broker anti-exfiltration guard — executor section is
+  // Broker anti-exfiltration guard — executor section is
   // operator-only. An agent must NOT be able to self-configure
   // executor.broker.bindings to route credentials to an attacker-controlled
   // host. "executor" as the prefix catches all three write paths:

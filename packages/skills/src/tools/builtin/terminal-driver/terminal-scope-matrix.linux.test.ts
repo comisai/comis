@@ -496,7 +496,7 @@ describe.skipIf(!linuxBwrap)(
         // scrubChildEnv's CLAUDE_CODE_* prefix glob.
         expect(hasKey("CLAUDE_CODE_ENTRYPOINT"), "CLAUDE_CODE_ENTRYPOINT MUST be scrubbed").toBe(false);
         // The ONE deliberate exception: CLAUDE_CODE_BUBBLEWRAP=1 is re-injected POST-scrub
-        // (EROFS-01, terminal-spawn-plan.ts) — it tells a sandbox-aware CLI it is ALREADY
+        // (terminal-spawn-plan.ts) — it tells a sandbox-aware CLI it is ALREADY
         // bubblewrapped so it does not nest a second jail (which would remount $HOME ro and
         // EROFS on `mkdir ~/.claude/session-env`). It is the SOLE CLAUDE_CODE_* key that may
         // survive into the jail; every other CLAUDE_CODE_* must be gone.

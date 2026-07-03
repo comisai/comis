@@ -140,11 +140,11 @@ describe("DmScopeConfigSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  // The `agentPrefix` field was removed because session-key emission no
-  // longer includes the prefix. strictObject ensures operators with
+  // There is no `agentPrefix` field — session-key emission does not include
+  // an agent prefix. strictObject ensures operators with
   // `agentPrefix: true` in their YAML get a loud validation error at
   // config load.
-  it("rejects the removed agentPrefix field", () => {
+  it("rejects an agentPrefix field (no such key — strictObject fails loudly)", () => {
     const result = DmScopeConfigSchema.safeParse({
       mode: "per-peer",
       agentPrefix: true,

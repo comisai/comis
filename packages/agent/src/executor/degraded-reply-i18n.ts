@@ -2,26 +2,26 @@
 /**
  * degraded-reply-i18n — the en/he/ar/ru phrase table + tag-driven string
  * selectors for the deterministic degraded replies a failed turn shows the end
- * user (GEN-02).
+ * user.
  *
  * This is a THIN platform-strings catalog — NEVER agent prose. It mirrors the
- * LIVE `degraded-reply.ts` composition exactly (the design's documented entry
- * shape is stale): a context-exhausted base + a 3-key cause lead + a 2-variant
+ * LIVE `degraded-reply.ts` composition exactly: a context-exhausted base + a
+ * 3-key cause lead + a 2-variant
  * cap-knob advice (history vs default) + a 2-variant no-knob advice + the
  * output-starved annotation + the loop-detected reply.
  *
  * Invariants:
  *  - PURE: no I/O, no logging, no clock — same (lang, opts) → same string.
- *  - en byte-identical (I1): the `en` row IS today's English literals — the
+ *  - en byte-identical: the `en` row IS today's English literals — the
  *    single source from which `degraded-reply.ts` composes. No drift, no alias.
  *  - Fallback (never throws): an unknown language (or a missing entry) maps to
  *    the `en` row — `TABLE[normalizeKey(lang)] ?? TABLE.en`.
- *  - I5 (verbatim across languages): the knob path
+ *  - Verbatim across languages: the knob path
  *    (`contextEngine.budget.effectiveContextCap{Small,Nano}`), the
  *    `(0 = uncapped)` operator hint, the `(incident <traceId>)` ref, and the
  *    warning marker (U+26A0 U+FE0F) are interpolated VERBATIM — never translated
  *    — so the operator's remedy knob is correct in every language.
- *  - I2 (no Trojan-Source): NO phrase-table string carries a bidi control
+ *  - No Trojan-Source: NO phrase-table string carries a bidi control
  *    codepoint. RTL strings (he/ar) are authored with the technical tokens
  *    (`{knob}`, `{traceId}`) on clause boundaries and NO inline directional
  *    controls. This source NEVER contains a raw bidi glyph.
@@ -32,25 +32,25 @@
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
 
 /**
- * W4 (obs-llm-troubleshooting): small/nano classes name the EXACT cap knob the
+ * small/nano classes name the EXACT cap knob the
  * operator must raise; other classes get the generic advice (no class cap
  * applies). The SINGLE home for this map — `degraded-reply.ts` imports it back
- * (no copy, no alias; no-BC §2.9). Interpolated VERBATIM into every language (I5).
+ * (no copy, no alias). Interpolated VERBATIM into every language.
  */
 export const CAP_KNOB_BY_CLASS: Record<string, string> = {
   small: "contextEngine.budget.effectiveContextCapSmall",
   nano: "contextEngine.budget.effectiveContextCapNano",
 };
 
-/** The closed set of reply-language table keys (mirrors DET-02's ReplyLanguage). */
+/** The closed set of reply-language table keys (mirrors resolveReplyLanguage's ReplyLanguage). */
 export const LANG_KEYS = ["en", "he", "ar", "ru"] as const;
 export type LangKey = (typeof LANG_KEYS)[number];
 
 /**
  * One language's strings, mirroring the LIVE `degraded-reply.ts` composition.
- * Every value is a plain string (keeps the I2 walk simple). The two advice
+ * Every value is a plain string (keeps the bidi-scan walk simple). The two advice
  * templates carry a literal `{knob}` placeholder the selector interpolates with
- * the resolved `CAP_KNOB_BY_CLASS` value (VERBATIM, I5).
+ * the resolved `CAP_KNOB_BY_CLASS` value (VERBATIM).
  */
 export interface DegradedReplyStrings {
   /** Lead sentence for the context-exhausted reply. */
@@ -65,7 +65,7 @@ export interface DegradedReplyStrings {
    *  overflow, so "narrowing the ask" is meaningless — the remedy is the window /
    *  tool footprint / a larger model. NEVER suggests shortening the message. */
   capKnobAdviceFixedOverhead: string;
-  /** No-knob advice, default form (the historical generic advice). */
+  /** No-knob advice, default form (the generic advice when no class cap applies). */
   genericAdviceDefault: string;
   /** No-knob advice, oversized-history form. */
   genericAdviceHistory: string;
@@ -78,8 +78,8 @@ export interface DegradedReplyStrings {
 }
 
 // ---------------------------------------------------------------------------
-// en — the single source of the English literals (I1 byte-identical). COPIED
-// verbatim from degraded-reply.ts. The "⚠️" below is the warning emoji
+// en — the single source of the English literals (the byte-identical contract):
+// the `degraded-reply.ts` builders compose from this row. The "⚠️" below is the warning emoji
 // (U+26A0 U+FE0F) — ALLOWED (not in the bidi set) and preserved across languages.
 // ---------------------------------------------------------------------------
 const EN: DegradedReplyStrings = {
@@ -121,7 +121,7 @@ const EN: DegradedReplyStrings = {
 // ---------------------------------------------------------------------------
 // he — Hebrew. Authored translations; technical tokens ({knob}/{traceId}) on
 // clause boundaries; the warning emoji + (0 = uncapped) verbatim. NO inline
-// bidi controls (I2).
+// bidi controls.
 // ---------------------------------------------------------------------------
 const HE: DegradedReplyStrings = {
   contextExhaustedBase: "לא הצלחתי לעבד את הבקשה שלך — חלון ההקשר מוצה לפני שהמודל הספיק לרוץ. ",
@@ -150,7 +150,7 @@ const HE: DegradedReplyStrings = {
 
 // ---------------------------------------------------------------------------
 // ar — Arabic. Authored translations; technical tokens on clause boundaries;
-// warning emoji + (0 = uncapped) verbatim. NO inline bidi controls (I2).
+// warning emoji + (0 = uncapped) verbatim. NO inline bidi controls.
 // ---------------------------------------------------------------------------
 const AR: DegradedReplyStrings = {
   contextExhaustedBase: "تعذّر عليّ معالجة طلبك — استُنفدت نافذة السياق قبل أن يتمكن النموذج من العمل. ",
@@ -216,7 +216,7 @@ export const DEGRADED_REPLY_TABLE: Record<LangKey, DegradedReplyStrings> = {
 
 /**
  * Normalize a (possibly arbitrary) language tag to a closed table key. The
- * caller (DET-02 `resolveReplyLanguage`) already emits the closed en|he|ar|ru
+ * caller (`resolveReplyLanguage`) already emits the closed en|he|ar|ru
  * set, so this is a defensive second gate: lowercase + primary subtag; anything
  * outside the four supported languages falls back to "en". NEVER throws.
  */
@@ -241,14 +241,14 @@ function strings(lang: string): DegradedReplyStrings {
   return DEGRADED_REPLY_TABLE[normalizeKey(lang)] ?? DEGRADED_REPLY_TABLE.en;
 }
 
-/** Build the `(incident <traceId>)` ref VERBATIM across languages (I5), or "". */
+/** Build the `(incident <traceId>)` ref VERBATIM across languages, or "". */
 function incidentRef(traceId?: string): string {
   return traceId !== undefined && traceId.length > 0 ? ` (incident ${traceId})` : "";
 }
 
 /**
  * The output-starved annotation to APPEND to truncated partial text, in the
- * requested language (en fallback). Carries the warning marker verbatim (I5).
+ * requested language (en fallback). Carries the warning marker verbatim.
  */
 export function selectOutputStarvedAnnotation(lang: string): string {
   return strings(lang).outputStarvedAnnotation;
@@ -265,7 +265,7 @@ export interface SelectContextExhaustedOpts {
  * The synthesized context-exhausted reply in the requested language (en
  * fallback). Composes via the SAME nested cause x knob branching as the live
  * builder: base + causeLead[cause] + advice + incidentRef. The knob value, the
- * `(0 = uncapped)` hint, and the incident ref are interpolated VERBATIM (I5).
+ * `(0 = uncapped)` hint, and the incident ref are interpolated VERBATIM.
  */
 export function selectContextExhaustedReply(
   lang: string,
@@ -275,9 +275,9 @@ export function selectContextExhaustedReply(
   const cause: ContextExhaustionCause = opts.cause ?? "aggregate";
   const knob =
     opts.capabilityClass !== undefined ? CAP_KNOB_BY_CLASS[opts.capabilityClass] : undefined;
-  // Issue-6: "narrowing the ask" only belongs when the ask/aggregate is the
+  // "narrowing the ask" only belongs when the ask/aggregate is the
   // problem — for an oversized history message it is the misleading clause.
-  // Root-cause fix (2026-06-22): for fixed_overhead_exceeds_window the message
+  // For fixed_overhead_exceeds_window the message
   // size is irrelevant entirely, so the advice points at the window / tool
   // footprint / a larger model — never "shorten your message" or "narrow the ask".
   let advice: string;
@@ -307,7 +307,7 @@ export interface SelectLoopDetectedOpts {
 
 /**
  * The honest loop-detected reply in the requested language (en fallback), with
- * the incident ref appended verbatim (I5).
+ * the incident ref appended verbatim.
  */
 export function selectLoopDetectedReply(lang: string, opts: SelectLoopDetectedOpts): string {
   return strings(lang).loopDetected + incidentRef(opts.traceId);

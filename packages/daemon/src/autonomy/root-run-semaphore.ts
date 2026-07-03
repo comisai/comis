@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The unified per-`rootRunId` spawn semaphore (Phase 213-04, CEIL-01) — the
- * structural runaway-bound of the bounded-autonomy floor.
+ * The unified per-`rootRunId` spawn semaphore — the structural runaway-bound of
+ * the bounded-autonomy floor.
  *
- * A `for(;;) spawn()` fork-bomb (the Claude Code #68619 4M-token precedent) is
- * bounded TREE-WIDE here: the active sub-agent count is keyed on `rootRunId` (the
- * tree root), NOT per caller, so every descendant of one root shares a single
- * counter and a self-spawning loop trips the concurrency cap instead of running
- * unbounded. This is an ADDITIONAL gate the chokepoints consult at the spawn
- * convergence point (Plan 07) — it does NOT replace the graph `gatedSpawn` FIFO
- * (`graph/graph-concurrency.ts`, whose `globalCompletionHandler` explicitly
- * ignores `sessions_spawn` runs — that IS the CEIL-01 gap); the two counters stay
- * independent.
+ * A `for(;;) spawn()` fork-bomb — an agent that recursively spawns until it burns
+ * millions of tokens — is bounded TREE-WIDE here: the active sub-agent count is
+ * keyed on `rootRunId` (the tree root), NOT per caller, so every descendant of
+ * one root shares a single counter and a self-spawning loop trips the concurrency
+ * cap instead of running unbounded. This is an ADDITIONAL gate the chokepoints
+ * consult at the spawn convergence point — it does NOT replace the graph
+ * `gatedSpawn` FIFO (`graph/graph-concurrency.ts`, whose `globalCompletionHandler`
+ * explicitly ignores `sessions_spawn` runs — that IS the gap this closes); the
+ * two counters stay independent.
  *
  * The admit-or-deny shape mirrors `gatedSpawn` (`graph-concurrency.ts:20`); the
  * reserve mirrors the `spend-accumulator.ts:228` discipline — a SYNCHRONOUS body
@@ -22,7 +22,7 @@
  *
  * Discipline (the daemon arch gates): returns a discriminated union, NEVER throws
  * (`raw-throw.test.ts` — the chokepoint converts `{ok:false}` to a deny + a
- * `session:sub_agent_spawn_rejected` event in Plan 07); touches no wall
+ * `session:sub_agent_spawn_rejected` event); touches no wall
  * clock / timer (`globals.test.ts`). It is a pure in-memory limiter — content-free
  * (it operates on COUNTS keyed by an opaque `rootRunId` only).
  *
@@ -60,13 +60,13 @@ export interface RootRunSemaphore {
    * Release one concurrency slot for `rootRunId`, paired one-to-one with a prior
    * successful `tryAcquireSpawn`. Floors at 0 — a double-release never drives the
    * active count negative (which would corrupt the cap into "free forever"). When
-   * the count reaches 0 the root's map entry is EVICTED (WR-05) so a storm of
+   * the count reaches 0 the root's map entry is EVICTED so a storm of
    * per-spawn roots that all complete does not grow the map without bound.
    */
   releaseSpawn(rootRunId: string): void;
   /** The live sub-agent count for `rootRunId` (0 for an untouched OR evicted root) — for the composite/audit + tests. */
   activeCount(rootRunId: string): number;
-  /** Number of distinct roots currently held (WR-05 leak-guard seam / tests). */
+  /** Number of distinct roots currently held (leak-guard seam / tests). */
   size(): number;
 }
 
@@ -82,8 +82,8 @@ export function createRootRunSemaphore(cfg: {
   maxChildrenPerAgent: number;
 }): RootRunSemaphore {
   // In-memory per-tree active counts, keyed on rootRunId (ONE entry per tree —
-  // never one per spawn; the warning sign of a mis-scoped counter, RESEARCH
-  // Pitfall 1).
+  // never one per spawn; one entry per spawn would be the warning sign of a
+  // mis-scoped counter).
   const roots = new Map<string, RootSpawnState>();
 
   return {
@@ -107,7 +107,7 @@ export function createRootRunSemaphore(cfg: {
       const s = roots.get(rootRunId);
       if (!s) return;
       s.active = Math.max(0, s.active - 1);
-      // WR-05: evict the entry once the tree has no live spawns, so a storm of
+      // Evict the entry once the tree has no live spawns, so a storm of
       // per-spawn / per-cron-fire roots that all complete does not accumulate
       // 0-active husks forever (the unbounded-key DoS vector). A later spawn for
       // the same id simply re-creates the entry at active=1 (the cap is unchanged).

@@ -79,13 +79,13 @@ describe("wrapToolResultWithGuide", () => {
   });
 
   it("does NOT mark tool as delivered on error results (so a retry can still fire)", () => {
-    // Previously this function consumed the delivery slot even on error,
-    // which silently swallowed guides for any tool whose first call failed
-    // (validation errors, approval-required, etc.). The NVDA team-agent
-    // session hit this: first agents_manage call validation-errored on a
-    // stringified config, consumed the slot, subsequent successful creates
-    // never got the Workspace Customization Guide. Fix: leave deliveredGuides
-    // untouched on error so the next call has another chance.
+    // Consuming the delivery slot on an error result silently swallows guides
+    // for any tool whose first call fails (validation errors,
+    // approval-required, etc.). Observed live: a first agents_manage call
+    // validation-errored on a stringified config, consumed the slot, and
+    // subsequent successful creates never got the Workspace Customization
+    // Guide. The contract: leave deliveredGuides untouched on error so the
+    // next call has another chance.
     const logger = createMockLogger();
     const delivered = new Set<string>();
     const result = makeToolResult("Agent creation failed", true);
@@ -149,7 +149,7 @@ describe("wrapToolResultWithGuide", () => {
 
     const wrapped = wrapToolResultWithGuide("grep", result, delivered, logger);
 
-    // grep now has a TOOL_GUIDES entry ( file tool adoptions)
+    // grep has a TOOL_GUIDES entry
     expect(wrapped.content).toHaveLength(2);
     expect((wrapped.content[1] as { text: string }).text).toContain("Grep Guide");
     expect(delivered.has("grep")).toBe(true);
@@ -162,7 +162,7 @@ describe("wrapToolResultWithGuide", () => {
 
     const wrapped = wrapToolResultWithGuide("edit", result, delivered, logger);
 
-    // edit now has a TOOL_GUIDES entry ( file tool adoptions)
+    // edit has a TOOL_GUIDES entry
     expect(wrapped.content).toHaveLength(2);
     expect((wrapped.content[1] as { text: string }).text).toContain("Edit Guide");
     expect(delivered.has("edit")).toBe(true);
@@ -507,8 +507,9 @@ describe("wrapToolResultWithGuide -- output schema injection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Regression coverage for the two bugs identified by the NVDA team-agent run
-// (COMIS-JIT-GUIDE-DEFERRED-TOOLS-BUG.md).
+// Regression coverage for two live-observed guide-delivery bugs: an error
+// result consuming the one-shot delivery slot (so a later success never got
+// its guide), and mid-turn discovered tools bypassing the guide wrapper.
 // ---------------------------------------------------------------------------
 
 describe("regression: isError does not consume the delivery slot", () => {
@@ -593,7 +594,7 @@ describe("regression: isError does not consume the delivery slot", () => {
   });
 });
 
-describe("regression: mid-turn discovered tool path (Bug 1)", () => {
+describe("regression: mid-turn discovered tool path routes through the guide wrapper", () => {
   // This mirrors pi-executor.ts's mid-turn tool injection: when discover_tools
   // returns a new tool, pi-executor pushes it into the live contextTools array
   // and must route its execute() result through wrapToolResultWithGuide so the

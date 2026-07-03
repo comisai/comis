@@ -119,7 +119,7 @@ describe("IcSessionDetail", () => {
     expect(api.getSessionDetail).toHaveBeenCalledWith("default:user123:telegram");
   });
 
-  it("has an incident drill control that navigates to the Incident view keyed on the sessionKey (179-08)", async () => {
+  it("has an incident drill control that navigates to the Incident view keyed on the sessionKey", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
@@ -134,8 +134,8 @@ describe("IcSessionDetail", () => {
     );
     expect(drill).toBeTruthy();
 
-    // Clicking it navigates to the incident route carrying a VALID obs.explain
-    // ref (the sessionKey) — §11 "drill-down resolves to a valid obs.explain ref".
+    // Clicking it navigates to the incident route carrying a valid obs.explain
+    // ref (the sessionKey), so the drill-down resolves to a real IncidentReport.
     window.location.hash = "#/sessions/default:user123:telegram";
     drill!.click();
     await el.updateComplete;

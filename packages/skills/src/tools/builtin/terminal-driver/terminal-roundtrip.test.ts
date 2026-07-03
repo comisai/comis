@@ -15,7 +15,7 @@
  * Backend: this box's node-pty prebuild cannot `posix_spawnp` (the macOS
  * spawn-helper is non-functional here), so the worker is wired with a `loadPty`
  * that throws → the DEGRADED pipe backend (a real `child_process.spawn` of bash).
- * Per the plan that still yields a stable sessionId + a (text) grid; the pty-grid
+ * That still yields a stable sessionId + a (text) grid; the pty-grid
  * richness is asserted on the VPS where forkpty works.
  *
  * @module
@@ -43,7 +43,7 @@ import { createTerminalWorker } from "./terminal-worker-entry.js";
 import { encodeFrame, createFrameDecoder, type TerminalRequestFrame } from "./terminal-ipc.js";
 import type { AllowEntryLike } from "./allowlist-matcher.js";
 
-// Barrel re-export check (Test 2): the 9 factories + the registry must be
+// Barrel re-export check: the 9 factories + the registry must be
 // importable from the terminal-driver barrel (re-exported onward by the
 // `./tools` subpath; the daemon wiring is the public-export consumer).
 import * as barrel from "./index.js";
@@ -74,7 +74,7 @@ function realShell(): string {
  * This replaces the OS pipe so the full daemon-side path runs on macOS.
  */
 /**
- * macOS jail-unwrapping pipe spawner: the worker now spawns
+ * macOS jail-unwrapping pipe spawner: the worker spawns
  * `bwrap [scopeArgs] -- bin ...argv` for BOTH backends. There is no real bwrap on
  * the macOS author box, so this in-process bridge UNWRAPS the jail — it spawns the
  * child that appears AFTER the `--` separator directly. This keeps the deterministic

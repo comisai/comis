@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED (124-07 Task 1): the durable per-session wake-state substrate
+ * The durable per-session wake-state substrate
  * (`persistWakeStateSync` / `recoverWakeStates` / `removeWakeStateFile`),
  * modeled VERBATIM on `background-task-persistence.ts` — atomic confined
  * write (0o700 dir / 0o600 file via `@comis/observability`), a boot-time
@@ -8,7 +8,7 @@
  * swallowed-error contract (a persist failure must never throw to the
  * caller; a corrupt file is skipped on recover).
  *
- * This is the OPS-09 "survives daemon restart" substrate the recurring
+ * This is the "survives daemon restart" substrate the recurring
  * wake-dispatch FSM persists its dispatch state through.
  *
  * @module
@@ -122,10 +122,10 @@ describe("terminal-wake-persistence (durable per-session wake-state)", () => {
     expect(() => removeWakeStateFile(dataDir, "never-there")).not.toThrow();
   });
 
-  // 124-09: recovery is best-effort + runs in the FSM CONSTRUCTOR (124-07) — the keystone
-  // wiring calls createTerminalWakeDispatcher at boot. A degenerate dataDir (e.g. a relative
-  // "." in a test/bootstrap config) makes safePath throw PathTraversalError; recoverWakeStates
-  // must SWALLOW that (return []) so it never crashes daemon boot. RED on pre-fix: the
+  // Recovery is best-effort + runs in the FSM CONSTRUCTOR — the keystone wiring calls
+  // createTerminalWakeDispatcher at boot. A degenerate dataDir (e.g. a relative "." in a
+  // test/bootstrap config) makes safePath throw PathTraversalError; recoverWakeStates
+  // must SWALLOW that (return []) so it never crashes daemon boot. Without the guard the
   // unguarded wakeDir(".") call throws PathTraversalError out of the constructor.
   it("returns an empty array (never throws) for a degenerate relative dataDir like '.'", () => {
     expect(() => recoverWakeStates(".")).not.toThrow();

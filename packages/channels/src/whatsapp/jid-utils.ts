@@ -2,8 +2,7 @@
 /**
  * WhatsApp JID (Jabber ID) normalization utilities.
  *
- * Ported from legacy src/whatsapp/normalize.ts with clearer naming
- * and self-contained implementation (no external utility imports).
+ * Self-contained implementation (no external utility imports).
  *
  * WhatsApp JID formats:
  * - User: "41796666864:0@s.whatsapp.net" (phone with device suffix)

@@ -43,7 +43,7 @@ export const MemoryEntrySchema = z.strictObject({
     createdAt: z.number().int().positive(),
     /** Event time in epoch ms; distinct from createdAt (record time). Absent when the event time is unknown. */
     occurredAt: z.number().int().positive().optional(),
-    /** Evidence count. NULL/absent = raw memory; >=1 = observation. Design §4.3. */
+    /** Evidence count. NULL/absent = raw memory; >=1 = observation. */
     proofCount: z.number().int().positive().optional(),
     /** Contributing source memory ids. */
     sourceIds: z.array(z.guid()).optional(),
@@ -70,22 +70,22 @@ export const MemoryEntrySchema = z.strictObject({
      */
     memoryType: z.enum(["working", "episodic", "semantic", "procedural"]).optional(),
     /**
-     * Reasoning-observation kind. Absent/NULL = "merge" (the default for all
-     * rows predating this field; the @comis/memory adapter applies the
-     * `?? "merge"` fallback on read). Additive `.optional()` — an omitting write
+     * Reasoning-observation kind. Absent/NULL = "merge" (the @comis/memory
+     * adapter applies the `?? "merge"` fallback on read). Additive
+     * `.optional()` — an omitting write
      * is unaffected; the enum is enforced HERE + the lenient LLM parser,
-     * NOT a SQLite CHECK (the occurred_at/proof_count ALTER-ADD-COLUMN no-CHECK
-     * precedent — a post-hoc enum CHECK is unreliable across existing rows).
-     * "generalization" is the GENERAL-01 (v2.26 Phase 203) higher-order synthesis
+     * NOT a SQLite CHECK (an enum CHECK added to an already-populated column
+     * is unreliable across pre-existing rows).
+     * "generalization" is the higher-order synthesis
      * kind — a `semantic` memory abstracting a cross-context cluster ("user prefers
-     * X in general"), written by `runMemoryConsolidation` (Plan 03) with
+     * X in general"), written by `runMemoryConsolidation` with
      * `proofCount = |cluster|` and `sourceIds` retained. The enum stays CLOSED
-     * (widened, not `z.string()`); the SQLite `observation_kind` column remains
-     * unchecked nullable TEXT, so this is a pure domain-layer widen with NO migration.
+     * (never `z.string()`); the SQLite `observation_kind` column is
+     * unchecked nullable TEXT, so the closed set is enforced purely at the domain layer.
      */
     observationKind: z.enum(["merge", "deductive", "inductive", "generalization"]).optional(),
     /**
-     * Inductive pattern class (Honcho-derived). Only set when
+     * Inductive pattern class. Only set when
      * observationKind="inductive". Additive `.optional()` closed enum.
      */
     patternType: z.enum(["preference", "behavior", "personality", "tendency", "correlation"]).optional(),
@@ -122,7 +122,7 @@ export type MemorySource = z.infer<typeof MemorySourceSchema>;
 // strings with zod-validated structured memories `{ content, entities[], occurredAt }`.
 // These schemas are the validation boundary the job parses LLM output against.
 //
-// STRICT vs LENIENT (design §6.1 / RESEARCH Pitfall 5):
+// STRICT vs LENIENT:
 //   - LLM-OUTPUT schemas (StructuredMemorySchema, MemoryExtractionResultSchema) are
 //     LENIENT `z.object` so a benign extra LLM key (e.g. `confidence`) is STRIPPED,
 //     not rejected — a valid memory must not be discarded over an unrequested field.
@@ -134,15 +134,15 @@ export type MemorySource = z.infer<typeof MemorySourceSchema>;
  * One entity mention emitted by extraction. The extraction job EMITS these
  * (carrying the source memory's inherited trust + source provenance); a later
  * pass persists and resolves them. Minimal shape — just the mention name
- * (design §4.2's entity table is `canonical_name`-only, so there is
+ * (the entity table is `canonical_name`-only, so there is
  * intentionally no `type` field).
  */
-/** LENIENT (live finding 2026-06-11): the extraction LLM naturally emits
- *  `{ name, type: "person" }`; a strictObject rejected the element, which
- *  failed the memory, which failed the WHOLE extraction envelope — a single
- *  typed entity discarded every fact in the batch. Unknown keys are
+/** LENIENT: the extraction LLM naturally emits
+ *  `{ name, type: "person" }`; a strictObject would reject the element, which
+ *  would fail the memory, which would fail the WHOLE extraction envelope — a
+ *  single typed entity discarding every fact in the batch. Unknown keys are
  *  stripped; `name` stays required + non-empty (there is still no `type`
- *  field in the domain — design §4.2 canonical_name-only). */
+ *  field in the domain — the entity table is canonical_name-only). */
 export const ExtractedEntitySchema = z.object({
   name: z.string().min(1),
 });
@@ -155,16 +155,16 @@ export type ExtractedEntity = z.infer<typeof ExtractedEntitySchema>;
  * converted to absolute in-prompt); the job resolves it to epoch ms
  * post-parse before storing it on {@link MemoryEntrySchema}'s `occurredAt`.
  *
- * LENIENT (`z.object`): unknown keys are stripped, not rejected (Pitfall 5).
+ * LENIENT (`z.object`): unknown keys are stripped, not rejected.
  */
 export const StructuredMemorySchema = z.object({
   content: z.string().min(1),
   occurredAt: z.string().optional(),
-  // Accept BOTH entity shapes (live finding 2026-06-11): the extraction LLM
+  // Accept BOTH entity shapes: the extraction LLM
   // naturally emits plain strings ("entities": ["user", "Biscuit"]) — the
-  // shape the prompt's prose implied — while the domain wants { name }.
+  // shape the prompt's prose implies — while the domain wants { name }.
   // Strings normalize to { name }; objects pass through the lenient schema.
-  // Every memory in every live batch failed on this field before the union.
+  // Without the union, a batch using the string shape fails on this field.
   entities: z
     .array(
       z.union([
@@ -177,18 +177,18 @@ export const StructuredMemorySchema = z.object({
   /**
    * Causal cause→effect relations emitted by extraction. The
    * fact stated in `content` is the CAUSE; each entry's `effect` is a consequence
-   * stated as a concise fact (A2 — the cause is the memory's own content, so the
+   * stated as a concise fact (the cause is the memory's own content, so the
    * just-stored memory id is the resolved edge source). ADDITIVE: `.default([])`
    * — an extraction that omits it is unaffected, and the LENIENT `z.object`
    * envelope (above) still STRIPS a benign extra key rather than rejecting it.
-   * The per-cause object is `z.strictObject` with a typed `effect: string.min(1)`
-   * so garbage is still rejected (an empty/non-string/extra-key entry fails) —
+   * The per-cause object keeps a typed `effect: string.min(1)`
+   * so garbage is still rejected (an empty or non-string `effect` fails) —
    * injection-safe: untrusted conversation content cannot forge a malformed edge.
    * The edge links MEMORY ids; the `effect` text is resolved to a stored memory
    * id by the @comis/memory adapter (scoped FTS top-1) on the agent-side write.
    */
-  // LENIENT per-cause object (live finding 2026-06-11 — same class as the
-  // entity fix above): extra keys stripped, `effect` still required +
+  // LENIENT per-cause object (the same lenient contract as `entities`
+  // above): extra keys stripped, `effect` still required +
   // non-empty so garbage is rejected without discarding the batch.
   causes: z.array(z.object({ effect: z.string().min(1) })).default([]),
 });
@@ -204,7 +204,7 @@ export const MemoryExtractionResultSchema = z.object({
 export type MemoryExtractionResult = z.infer<typeof MemoryExtractionResultSchema>;
 
 /**
- * MemoryEntity (design §4.3) — the resolved entity persisted into the
+ * MemoryEntity — the resolved entity persisted into the
  * `memory_entities` table by the entity-resolution pass. Defined here so that
  * pass can import it; the extraction job does NOT persist it (entities are
  * emit-only at extraction time).

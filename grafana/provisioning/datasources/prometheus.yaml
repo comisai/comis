@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Grafana datasource provisioning (PROM-03; design §6 WS7). Auto-loaded by
+# Grafana datasource provisioning. Auto-loaded by
 # docker/observability/docker-compose.yml so `docker compose up` brings Grafana
 # online with the Prometheus datasource already wired (no click-ops).
 apiVersion: 1

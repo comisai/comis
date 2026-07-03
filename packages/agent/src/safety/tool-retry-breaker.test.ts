@@ -349,11 +349,10 @@ describe("tool retry breaker", () => {
     });
 
     // --------------------------------------------------------------------
-    // Envelope unwrapping — regression for session 678314278 lines 40-51
-    // where two "spawn sandbox-exec ENOENT" failures + an unrelated
-    // python3 --version probe all collapsed under the same generic tag
-    // because the breaker only saw the outer {"content":[{text:...}]}
-    // envelope.
+    // Envelope unwrapping — without it, two "spawn sandbox-exec ENOENT"
+    // failures and an unrelated python3 --version probe all collapse
+    // under the same generic tag because the breaker only sees the outer
+    // {"content":[{text:...}]} envelope.
     // --------------------------------------------------------------------
 
     it("unwraps a serialized tool-result envelope and extracts the inner bracketed tag", () => {
@@ -418,7 +417,7 @@ describe("tool retry breaker", () => {
       expect(extractErrorTag("plain error message")).toBe("plain_error_message");
     });
 
-    it("regression: session 678314278 — structurally-identical envelopes with different stderrs do NOT share an error-pattern bucket", () => {
+    it("structurally-identical envelopes with different stderrs do NOT share an error-pattern bucket", () => {
       // Before the unwrap fix, EVERY exec failure normalized to the same
       // tag `content_type_text_text_n_exitcode_1_n_stdout_n` because the
       // extractor only saw the outer JSON envelope. Two unrelated failures
@@ -590,10 +589,10 @@ describe("tool retry breaker", () => {
   });
 
   // ----------------------------------------------------------------------
-  // Parameter-validation tags are NOT counted as tool failures
-  // Regression: Cloudflare Pages deploy attempt (session 678314278) where
-  // 5 consecutive [invalid_value] parameter rejections triggered the
-  // tool-total block and collapsed exec entirely.
+  // Parameter-validation tags are NOT counted as tool failures.
+  // Counting them lets a run of consecutive [invalid_value] parameter
+  // rejections (an agent iterating on command shapes) trigger the
+  // tool-total block and collapse exec entirely.
   // ----------------------------------------------------------------------
 
   describe("parameter-validation tags do not count as failures", () => {
@@ -739,16 +738,15 @@ describe("tool retry breaker", () => {
   // ---------------------------------------------------------------------------
   // Non-zero COMMAND exits are corrective feedback, not tool unavailability.
   //
-  // Regression: Telegram session 678314278 (daemon.1.log, 2026-06-06 20:27).
-  // The agent ran `npm run build` on a TypeScript project it was actively
-  // editing. `tsc` exited 2 (legit compile errors). pi-event-bridge.ts:593-602
-  // flips toolSuccess=false for ANY result whose `details.exitCode` is a
-  // non-zero number, and pi-event-bridge.ts:719 then feeds that "failure" to
-  // recordResult(). The exec wrapper's serialized envelope tags as the fallback
-  // `exitcode_2_stdout_...` (NOT a PARAMETER_VALIDATION_TAG), so after two
-  // same-tag exits the breaker declared exec "unavailable. DO NOT retry this
-  // tool" (20:27:19) — killing the edit→build→fix loop mid-task and forcing the
-  // agent to bluff "Done — game is built and ready" without being able to
+  // The failure mode being guarded: an agent runs `npm run build` on a
+  // TypeScript project it is actively editing and `tsc` exits 2 (legit compile
+  // errors). pi-event-bridge.ts:593-602 flips toolSuccess=false for ANY result
+  // whose `details.exitCode` is a non-zero number, and pi-event-bridge.ts:719
+  // then feeds that "failure" to recordResult(). The exec wrapper's serialized
+  // envelope tags as the fallback `exitcode_2_stdout_...` (NOT a
+  // PARAMETER_VALIDATION_TAG), so after two same-tag exits the breaker declares
+  // exec "unavailable. DO NOT retry this tool" — killing the edit→build→fix
+  // loop mid-task and forcing the agent to bluff a completion it cannot
   // verify (endReason: completed_with_tool_errors).
   //
   // A command that RAN TO COMPLETION and exited non-zero (tsc errors, failing
@@ -768,9 +766,9 @@ describe("tool retry breaker", () => {
 
     // Faithful reproduction of the errorText the breaker receives. The bridge
     // hands it extractErrorText(result) (bridge-event-handlers.ts:63), which
-    // JSON.stringify's the full exec envelope — verified against the live WARN
-    // payload in daemon.1.log. The inner `text` is the pretty-printed command
-    // result; `details.exitCode` carries the numeric exit code.
+    // JSON.stringify's the full exec envelope — the same payload the daemon
+    // logs at WARN on an exec failure. The inner `text` is the pretty-printed
+    // command result; `details.exitCode` carries the numeric exit code.
     function execExitEnvelope(exitCode: number, stdout: string, stderr = ""): string {
       const inner = JSON.stringify({ exitCode, stdout, stderr }, null, 2);
       return JSON.stringify({
@@ -911,11 +909,11 @@ describe("tool retry breaker", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R10b — buildBlockReason must produce repair-not-abandon message for
+  // buildBlockReason must produce a repair-not-abandon message for
   // parameter-validation tags (exported direct call — the recordResult
-  // accumulation path is unreachable for validation tags per lines 402-404).
+  // accumulation path is unreachable for validation tags, which early-return).
   // -------------------------------------------------------------------------
-  describe("buildBlockReason (R10b: validation-tag repair-not-abandon)", () => {
+  describe("buildBlockReason (validation-tag repair-not-abandon)", () => {
     it("produces 'Fix the arguments' and NOT 'appears to be unavailable' for a parameter-validation tag", () => {
       const reason = buildBlockReason(
         "mcp_manage",
@@ -943,8 +941,8 @@ describe("tool retry breaker", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Bug 2 (session 678314278, second-order): the breaker's RENDERED block
-  // message must not recursively nest. When a prior block message is fed back
+  // Second-order failure mode: the breaker's RENDERED block message must not
+  // recursively nest. When a prior block message is fed back
   // as the next errorText, peelEnvelope already collapses it for TAG
   // extraction — but the human-readable errorClause embedded the RAW lastError
   // verbatim, so the model saw Russian-doll nesting:
@@ -952,7 +950,7 @@ describe("tool retry breaker", () => {
   //    "…failed 6 total times with the same error: \"…\""`.
   // The rendered clause must show the INNERMOST real error instead.
   // -------------------------------------------------------------------------
-  describe("buildBlockReason (Bug 2: re-fed block message must not nest)", () => {
+  describe("buildBlockReason (re-fed block message must not nest)", () => {
     it("collapses a prior block message to its innermost error — no nested 'has failed … same error' clause", () => {
       // A realistic prior block message (the breaker's own output), itself
       // wrapping a serialized tool-result envelope as its lastError.
@@ -1004,15 +1002,15 @@ describe("tool retry breaker", () => {
   });
 
   // -------------------------------------------------------------------------
-  // B1 (D3): recordResult returns a transition verdict at the counter-crossing
+  // recordResult returns a transition verdict at the counter-crossing
   // edges so the bridge can emit tool:breaker_opened / tool:breaker_reset
   // EXACTLY at the threshold edge (once per open), keeping the breaker itself
   // eventBus-free. The transition uses EXACT equality (=== threshold), not the
   // idempotent >= the Set.add block uses — a >= verdict would re-fire `opened`
-  // on every subsequent failure and inflate Phase 153's breakerTimeline.
-  // See 151-PATTERNS.md / 151-RESEARCH.md Pattern 1 + Pitfall 1, Assumptions A1/A2.
+  // on every subsequent failure and inflate the incident report's
+  // breakerTimeline.
   // -------------------------------------------------------------------------
-  describe("recordResult returns a transition verdict (B1)", () => {
+  describe("recordResult returns a transition verdict at threshold edges", () => {
     it("returns transition opened with reason tool_failure_threshold EXACTLY at the tool-level crossing; undefined after", () => {
       const breaker = createBreaker(); // maxToolFailures: 5
       const tool = "exec";
@@ -1073,12 +1071,12 @@ describe("tool retry breaker", () => {
     });
 
     it("reports the tool-WIDE total as consecutiveFailures on a tool_failure_threshold open (not the per-signature 1)", () => {
-      // WR-151-02: the canonical tool-level trip is N failures across N DISTINCT
+      // The canonical tool-level trip is N failures across N DISTINCT
       // args. Each signature's own consecutiveFailures is 1, but the open was
       // caused by the tool-wide total crossing maxToolFailures. The event field
       // named `consecutiveFailures` must report the counter that actually crossed
-      // (toolState.count === 5), so Phase 153's breakerTimeline renders "opened
-      // after 5 failures", not a misleading "opened after 1".
+      // (toolState.count === 5), so the incident report's breakerTimeline renders
+      // "opened after 5 failures", not a misleading "opened after 1".
       const breaker = createBreaker(); // maxToolFailures: 5
       const tool = "exec";
       for (let i = 0; i < 4; i++) {
@@ -1090,7 +1088,7 @@ describe("tool retry breaker", () => {
     });
 
     it("reports the error-pattern consecutive count as consecutiveFailures on an error_pattern open", () => {
-      // WR-151-02: an error-pattern open crosses the per-pattern consecutive
+      // An error-pattern open crosses the per-pattern consecutive
       // counter (patternState.consecutiveFailures === maxConsecutiveErrorPatterns).
       // The event must report THAT counter, not the calling signature's count.
       const breaker = createToolRetryBreaker({
@@ -1123,7 +1121,7 @@ describe("tool retry breaker", () => {
     });
 
     it("does NOT emit reset when the tool is still hard-blocked at tool level (event must reflect availability)", () => {
-      // WR-151-03: a success clears the signature counter but NEVER clears
+      // A success clears the signature counter but NEVER clears
       // blockedTools or the tool-level total. If the tool already crossed
       // maxToolFailures, a success on a still-failing signature must NOT emit
       // tool:breaker_reset — beforeToolCall would STILL block, so the trajectory
@@ -1150,7 +1148,7 @@ describe("tool retry breaker", () => {
     });
 
     it("DOES emit reset when the success restores a tool that was never tool-level blocked", () => {
-      // WR-151-03 complement: a signature that crossed only the signature-level
+      // The complementary case: a signature that crossed only the signature-level
       // counter (not the tool-wide total) is genuinely recovered by a success —
       // the tool is usable again, so reset is truthful and must still fire.
       const breaker = createBreaker(); // maxConsecutiveFailures: 3, maxToolFailures: 5
@@ -1176,7 +1174,7 @@ describe("tool retry breaker", () => {
       expect(reset).toBeUndefined();
     });
 
-    it("returns undefined (no transition) on the lifecycle reset() full-clear (A2)", () => {
+    it("returns undefined (no transition) on the lifecycle reset() full-clear", () => {
       const breaker = createBreaker();
       breaker.recordResult("exec", { a: 1 }, false, "error");
       // reset() is between-execution lifecycle teardown — it returns void and

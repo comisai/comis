@@ -7,17 +7,16 @@
  * propagation, suppressError preservation, closure capture).
  *
  * The second top-level `describe` block ("DeliveryService — full pipeline
- * behavior") is the migrated 55-callsite suite from
- * `packages/channels/src/shared/deliver-to-channel.test.ts`. Every
- * free-standing `deliverToChannel(adapter, ..., deps)` call has been
- * rewritten to `service.deliverToChannel(adapter, ..., options)` where
+ * behavior") covers the complete outbound pipeline (chunking, formatting,
+ * queueing, retries, events). Each test calls
+ * `service.deliverToChannel(adapter, ..., options)` where
  * `service: DeliveryService` is constructed via `makeDeliveryService(...)`
  * from `test/support/factories.ts`.
  *
- * The internal helpers `resolveChunkLimit`, `computeQueueBackoff`, and
- * `QUEUE_BACKOFF_SCHEDULE_MS` are file-local in `delivery-service.ts` (not
- * exported); their behaviour is exercised implicitly via the pipeline tests
- * below (chunk-limit defaults, backoff scheduling on transient failures).
+ * The value-level helpers `resolveChunkLimit`, `computeQueueBackoff`, and
+ * `QUEUE_BACKOFF_SCHEDULE_MS` live in `queue-backoff.ts`; their behaviour is
+ * exercised implicitly via the pipeline tests below (chunk-limit defaults,
+ * backoff scheduling on transient failures).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -91,12 +90,12 @@ function makeDeps(
 }
 
 describe("createDeliveryService — factory contract (smoke-level)", () => {
-  it("Test 1: returns a DeliveryService with a deliverToChannel method", () => {
+  it("returns a DeliveryService with a deliverToChannel method", () => {
     const service: DeliveryService = createDeliveryService(makeDeps());
     expect(typeof service.deliverToChannel).toBe("function");
   });
 
-  it("Test 2: returned shape matches the deliverToChannel + drainInFlight interface", () => {
+  it("returned shape matches the deliverToChannel + drainInFlight interface", () => {
     const service = createDeliveryService(makeDeps());
     // The service exposes both `deliverToChannel` (per-call outbound
     // delivery) and `drainInFlight` (shutdown drain). Ordering is
@@ -105,7 +104,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(new Set(Object.keys(service))).toEqual(new Set(["deliverToChannel", "drainInFlight"]));
   });
 
-  it("Test 3: constructing the service does NOT call tryGetContext()", () => {
+  it("constructing the service does NOT call tryGetContext()", () => {
     // If construction touched AsyncLocalStorage outside a runWithContext frame,
     // tryGetContext() would return undefined (it's the non-throwing variant),
     // but a per-construction lookup would still surface as a side-effect we
@@ -115,7 +114,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(() => createDeliveryService(makeDeps())).not.toThrow();
   });
 
-  it("Test 4: empty text short-circuits with ok({ totalChunks: 0 }) and does NOT invoke runBeforeDelivery", async () => {
+  it("empty text short-circuits with ok({ totalChunks: 0 }) and does NOT invoke runBeforeDelivery", async () => {
     const runBeforeDelivery = vi.fn().mockResolvedValue({});
     const hookRunner = makeNoopHookRunner({ runBeforeDelivery });
     const service = createDeliveryService(makeDeps({ hookRunner }));
@@ -132,12 +131,12 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
         totalChars: 0,
       });
     }
-    // Empty-text branch runs BEFORE the hook block — preserved from
-    // current deliver-to-channel.ts:263-273 ordering.
+    // The empty-text branch runs BEFORE the hook block, so before_delivery
+    // hooks never observe empty deliveries.
     expect(runBeforeDelivery).not.toHaveBeenCalled();
   });
 
-  it("Test 5: invokes runBeforeDelivery exactly once per call with non-empty text", async () => {
+  it("invokes runBeforeDelivery exactly once per call with non-empty text", async () => {
     const runBeforeDelivery = vi.fn().mockResolvedValue({});
     const hookRunner = makeNoopHookRunner({ runBeforeDelivery });
     const service = createDeliveryService(makeDeps({ hookRunner }));
@@ -146,7 +145,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(runBeforeDelivery).toHaveBeenCalledTimes(1);
   });
 
-  it("Test 6: cancel:true from runBeforeDelivery short-circuits — no send, no runAfterDelivery", async () => {
+  it("cancel:true from runBeforeDelivery short-circuits — no send, no runAfterDelivery", async () => {
     const runBeforeDelivery = vi
       .fn()
       .mockResolvedValue({ cancel: true, cancelReason: "blocked-by-test" });
@@ -167,7 +166,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     }
   });
 
-  it("Test 7: runAfterDelivery rejection does NOT corrupt the request (suppressError wrap preserved)", async () => {
+  it("runAfterDelivery rejection does NOT corrupt the request (suppressError wrap preserved)", async () => {
     const runAfterDelivery = vi
       .fn()
       .mockRejectedValue(new Error("hook bug"));
@@ -182,7 +181,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("Test 8: traceId from tryGetContext() is passed to both hook contexts", async () => {
+  it("traceId from tryGetContext() is passed to both hook contexts", async () => {
     const runBeforeDelivery = vi.fn().mockResolvedValue({});
     const runAfterDelivery = vi.fn().mockResolvedValue(undefined);
     const hookRunner = makeNoopHookRunner({
@@ -222,7 +221,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     });
   });
 
-  it("Test 9: deps captured in closure — subsequent calls reuse the same hookRunner reference", async () => {
+  it("deps captured in closure — subsequent calls reuse the same hookRunner reference", async () => {
     const deps = makeDeps();
     const service = createDeliveryService(deps);
     const adapter = makeAdapter();
@@ -236,19 +235,17 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
 // Full pipeline behaviour
 // =============================================================================
 //
-// Migrated from packages/channels/src/shared/deliver-to-channel.test.ts (55
-// callsites). Every `await deliverToChannel(adapter, channelId, text, options,
-// deps)` was rewritten to `await service.deliverToChannel(adapter, channelId,
-// text, options)` where `service` is constructed via `makeDeliveryService(...)`
-// in describe-level `beforeEach` (DRY) or inline for special-case factory-deps
-// tests. The 5th-arg `{deliveryQueue, eventBus, retryEngine, ...}` payload
-// moved into the `makeDeliveryService({...})` call at construction. `abortSignal`
-// rides on the per-call options channel (intersection type on the method
-// signature — see DeliveryService in delivery-service.ts).
+// Each test calls `await service.deliverToChannel(adapter, channelId, text,
+// options)` where `service` is constructed via `makeDeliveryService(...)` in a
+// describe-level `beforeEach` (DRY) or inline for special-case factory-deps
+// tests. Construction-time deps (`{deliveryQueue, eventBus, retryEngine, ...}`)
+// go into the `makeDeliveryService({...})` call. `abortSignal` rides on the
+// per-call options channel (intersection type on the method signature — see
+// DeliveryService in delivery-service.ts).
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// Migration helpers (local to this file's pipeline-behaviour describe)
+// Test helpers (local to this file's pipeline-behaviour describe)
 // ---------------------------------------------------------------------------
 
 function createMockAdapter(channelType = "telegram"): DeliveryAdapter & { sendMessage: ReturnType<typeof vi.fn> } {
@@ -385,7 +382,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       await service.deliverToChannel(adapter, "chat-1", "**bold text**");
 
       const sentText = adapter.sendMessage.mock.calls[0][1] as string;
-      // Slack now goes through formatForChannel -> IR renderer -> mrkdwn
+      // Slack goes through formatForChannel -> IR renderer -> mrkdwn
       // Bold: **bold text** -> *bold text*
       expect(sentText).toContain("*bold text*");
       expect(sentText).not.toContain("**bold text**");
@@ -940,7 +937,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(queue.fail).not.toHaveBeenCalled();
     });
 
-    it("REACT-02 (CR-01): persists the request-context agentId into the enqueued optionsJson (so the drain attributes the reaction to the REAL agent, not the tenant)", async () => {
+    it("persists the request-context agentId into the enqueued optionsJson (so the drain attributes the reaction to the REAL agent, not the tenant)", async () => {
       const adapter = createMockAdapter("telegram");
       // Construct via the SOURCE factory so the SUT reads the SAME source
       // AsyncLocalStorage module the test's runWithContext writes to (the dist-
@@ -972,7 +969,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(persistedOptions.agentId).toBe("mldag");
     });
 
-    it("REACT-02 (CR-01): does NOT leak agentId into the SendMessageOptions handed to the channel adapter (persistence-only metadata)", async () => {
+    it("does NOT leak agentId into the SendMessageOptions handed to the channel adapter (persistence-only metadata)", async () => {
       const adapter = createMockAdapter("telegram");
       const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
 
@@ -1094,10 +1091,10 @@ describe("DeliveryService — full pipeline behavior", () => {
       // delivery:enqueued — SqliteDeliveryQueueAdapter is the sole source of
       // that signal, and the no-op variant has nothing persistent to enqueue).
       //
-      // deliveryQueue is REQUIRED in DeliveryServiceDeps, so the
-      // "deliveryQueue absent → zero queue events" semantics no longer has a
-      // representable code path. The assertion here: the no-op queue is
-      // benign — no failure/retry signals leak through.
+      // deliveryQueue is REQUIRED in DeliveryServiceDeps, so
+      // "deliveryQueue absent → zero queue events" has no representable
+      // code path. The assertion here: the no-op queue is benign — no
+      // failure/retry signals leak through.
       const service = makeDeliveryService({ eventBus });
 
       const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
@@ -1120,7 +1117,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "pipeline" });
 
-      // delivery:enqueued is no longer emitted by the delivery pipeline; the
+      // delivery:enqueued is not emitted by the delivery pipeline; the
       // SqliteDeliveryQueueAdapter emits it inside enqueueInFlight (single
       // source of truth). Our mock queue does not emit,
       // so eventBus sees zero delivery:enqueued events.
@@ -1197,24 +1194,24 @@ describe("DeliveryService — full pipeline behavior", () => {
   });
 
   // -------------------------------------------------------------------------
-  // REACT-04 (206-04): outbound → trajectory binding on the DIRECT ack path
+  // Outbound → trajectory binding on the DIRECT ack path
   // -------------------------------------------------------------------------
   //
-  // The reaction→trajectory binding (recordOutboundMessage) was wired ONLY into
+  // The reaction→trajectory binding (recordOutboundMessage) is also wired into
   // the recurring delivery-queue DRAIN (setup-delivery.ts:drainDeliveryQueue).
   // But the PRIMARY inbound-reply path — setup-and-route → executeAndDeliver →
   // execution-deliver → deliveryService.deliverToChannel — sends via THIS direct
-  // ack path (enqueue in_flight → adapter.sendMessage → ack), which never bound
-  // the minted reply id to the trajectory. So a 👍 on a normal agent reply
-  // map-missed (no ReactionTrajectoryMap entry) and reactions never drove
-  // learning on the common path (the 206-03 Stage-C live finding). These tests
+  // ack path (enqueue in_flight → adapter.sendMessage → ack). If the direct ack
+  // did not bind the minted reply id to the trajectory, a 👍 on a normal agent
+  // reply would map-miss (no ReactionTrajectoryMap entry) and reactions would
+  // never drive learning on the common path. These tests
   // assert the binding fires HERE, on the direct ack, with the SAME fail-closed
   // scope discipline the drain uses (agentId = the REAL agent, never tenantId;
-  // a null traceId/agentId → no binding). Mirrors the REACT-02 queue-integration
+  // a null traceId/agentId → no binding). Mirrors the queue-integration
   // pattern above: createDeliveryService(makeDeps(...)) from SOURCE so the SUT's
   // tryGetContext() reads the SAME source ALS the test's runWithContext writes.
 
-  describe("REACT-04: outbound → trajectory binding on the direct ack path", () => {
+  describe("outbound → trajectory binding on the direct ack path", () => {
     let queue: ReturnType<typeof createMockDeliveryQueue>;
     let eventBus: ReturnType<typeof createMockEventBus>;
     beforeEach(() => {
@@ -1232,7 +1229,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       // The agent's reply is produced INSIDE the agent's request context; the
       // ALS carries the resolved agentId/traceId/tenantId. This is the common
-      // single-user-DM reply that previously map-missed.
+      // single-user-DM reply the direct-ack bind exists for.
       await runWithContext(
         {
           traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -1247,7 +1244,8 @@ describe("DeliveryService — full pipeline behavior", () => {
         },
       );
 
-      // The binding MUST fire on the direct ack path (this is the 206-03 gap).
+      // The binding MUST fire on the direct ack path (the drain alone never sees
+      // a direct-ack reply, so this is where the common path binds).
       expect(recordOutboundMessage).toHaveBeenCalledTimes(1);
       const [boundMessageId, boundScope] = recordOutboundMessage.mock.calls[0];
       // The minted PLATFORM reply id (the same value the ack persisted) is the key.
@@ -1343,21 +1341,21 @@ describe("DeliveryService — full pipeline behavior", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01 (206-05 review fix): the primary-path bind must be OBSERVABLE.
+  // The primary-path bind must be OBSERVABLE.
   // -------------------------------------------------------------------------
   //
-  // The REACT-04 bind above is SILENT — recordOutboundMessage is called but
-  // nothing on the eventBus proves the bind fired. So when a reaction map-misses
-  // again (the 206-03 class), an operator cannot distinguish "bind never fired"
+  // The direct-ack bind above is SILENT — recordOutboundMessage is called but
+  // nothing on the eventBus proves the bind fired. So when a reaction map-misses,
+  // an operator cannot distinguish "bind never fired"
   // from "bound but the trajectory-map entry evicted" in one obs call. The
   // delivery service is logger-free (observability rides the eventBus), so the
   // bind emits a POSITIVE, counts-only `delivery:reply_bound` signal right after
   // the bind, in the SAME fail-closed branch (result.ok && traceId !== null &&
   // agentId !== null). The payload is ids/closed-scalars ONLY — never a body or a
-  // secret (§2.7 / SEC-01 redaction discipline): { messageId, channelType,
+  // secret (redaction discipline): { messageId, channelType,
   // channelId, traceId, agentId, timestamp }.
 
-  describe("WR-01: delivery:reply_bound observability event on the primary-path bind", () => {
+  describe("delivery:reply_bound observability event on the primary-path bind", () => {
     let queue: ReturnType<typeof createMockDeliveryQueue>;
     let eventBus: ReturnType<typeof createMockEventBus>;
     beforeEach(() => {
@@ -1855,7 +1853,8 @@ describe("DeliveryService — full pipeline behavior", () => {
       // early, measuring 99ms. The invariant we assert is "the drain took
       // ~the deadline" (it raced the timer, not the instant all-settled path),
       // not an exact wall-clock value, so we tolerate scheduler jitter: 100ms
-      // ± ~10ms under load. (Was `>= 100` — a known full-suite load-flake.)
+      // ± ~10ms under load. (An exact `>= 100` assertion flakes under
+      // full-suite load — do not tighten it back.)
       expect(drainResult.durationMs).toBeGreaterThanOrEqual(90);
 
       // Cleanup so the hung promise eventually resolves (don't leak).
@@ -1882,7 +1881,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(final.remaining).toBe(0);
     });
 
-    it("createDeliveryService no longer accepts an inFlightSends deps field", () => {
+    it("createDeliveryService rejects an inFlightSends deps field at compile time", () => {
       // Type-level assertion via @ts-expect-error: DeliveryServiceDeps
       // does NOT declare inFlightSends. Tests that try to pass one must
       // fail at compile time. The runtime call still succeeds (extra
@@ -1894,7 +1893,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       };
       const _service = createDeliveryService({
         ...deps,
-        // @ts-expect-error — inFlightSends is no longer a valid DeliveryServiceDeps field
+        // @ts-expect-error — inFlightSends is not a valid DeliveryServiceDeps field
         inFlightSends: new Set<Promise<unknown>>(),
       });
       expect(_service).toBeDefined();

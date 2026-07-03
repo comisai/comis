@@ -4,13 +4,13 @@
  * expansion-loop `ctx_*` AgentTools (`ctx_search` / `ctx_inspect` /
  * `ctx_expand`).
  *
- * These tools are modeled on the v2.11 terminal-driver blueprint — they are
+ * These tools follow the terminal-driver pattern — they are
  * DIRECT-INJECTION, never-export, owner-scoped tools that read the injected
  * core `ContextStorePort` (the agent-to-store cut TYPE). They are NOT the RPC
  * recall path (session-search / memory-search): there is no RPC call, no recall
- * dispatch, and no cross-package memory import anywhere in this directory (the
- * E2/I2 boundary — in-session lossless-store recovery is structurally distinct
- * from cross-session recall).
+ * dispatch, and no cross-package memory import anywhere in this directory —
+ * in-session lossless-store recovery is structurally distinct from
+ * cross-session recall.
  *
  * Architecture: the skills package CANNOT import the memory package, so the
  * store arrives as the core `ContextStorePort` TYPE only — the daemon
@@ -51,18 +51,18 @@ export interface ContextToolDeps {
   /** Inline-output cap before `ctx_expand` spills to a file (from `ContextEngineConfig`, default 4000). */
   readonly maxExpandTokens: number;
   /**
-   * DEPTH-02: tier-gated max BFS hop depth for the `ctx_expand` multi-hop walk
+   * Tier-gated max BFS hop depth for the `ctx_expand` multi-hop walk
    * (nano1/small2/mid3/frontier4). Resolved at the wiring site from the agent's
    * `ModelProfile` (`RequestContext` carries no `capabilityClass`). A capacity
-   * knob, NOT a scope — wiring-time resolution is correct (R4 scope still comes
-   * per-call from `requireCtxScope()`; A3 / Pitfall 3). Absent ⇒ a conservative
-   * depth of 1 (single-hop — the pre-DEPTH-02 behavior).
+   * knob, NOT a scope — wiring-time resolution is correct because the per-call
+   * scope still comes from `requireCtxScope()`. Absent ⇒ a conservative
+   * depth of 1 (single-hop).
    */
   readonly maxExpandDepth?: number;
   /** Per-call session tool-results dir resolver (the exec-tool precedent). `undefined` ⇒ no live session dir. */
   readonly getToolResultsDir: () => string | undefined;
   /**
-   * Optional structural event bus for emitting expansion-hit metrics (O1).
+   * Optional structural event bus for emitting expansion-hit metrics.
    * STRUCTURAL only — skills must NOT import @comis/infra or a concrete
    * TypedEventBus (the agent↛infra cut). The daemon (composition root) passes
    * its real bus, structurally assignable. Absent ⇒ a silent no-op (the `?.`).
@@ -72,12 +72,12 @@ export interface ContextToolDeps {
 
 /**
  * Build the per-call `ContextStoreScope` for a ctx_* tool from the LIVE request
- * context (R4 132-03 — the WR-02 close). Reads `tryGetContext()` EVERY call (NOT
+ * context. Reads `tryGetContext()` EVERY call (NOT
  * a wiring-time closure): one wired tool can serve multiple agents per channel,
- * so the agent/tenant scope MUST come from the live turn, never a cached id (the
- * exact WR-02 cross-agent threat, Pitfall 4).
+ * so the agent/tenant scope MUST come from the live turn, never a cached id —
+ * a cached id would leak another agent's history within a shared conversation.
  *
- * FAIL CLOSED (T-132-03-04): throws `permission_denied` when there is no live
+ * FAIL CLOSED: throws `permission_denied` when there is no live
  * session OR the agentId/tenantId is absent — a tool running outside a fully
  * scoped session REFUSES rather than reading conversation-wide (which would leak
  * another agent's history within a shared conversation_id). `conversationId` is
@@ -101,17 +101,17 @@ export function requireCtxScope(): ContextStoreScope {
 }
 
 /**
- * Cheap token estimate (chars/4 heuristic) — the exact threshold is tunable
- * (RESEARCH A4); the budget guard only needs a stable monotonic proxy so an
- * oversized recovered region spills to a file instead of thrashing the H budget.
+ * Cheap token estimate (chars/4 heuristic) — the exact threshold is tunable;
+ * the budget guard only needs a stable monotonic proxy so an oversized
+ * recovered region spills to a file instead of thrashing the context budget.
  */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
 /**
- * Emit the O1 content-free `context:dag_expanded` expansion-hit metric, GUARDED
- * so a throwing subscriber can NEVER fail the already-completed recovery (WR-02).
+ * Emit the content-free `context:dag_expanded` expansion-hit metric, GUARDED
+ * so a throwing subscriber can NEVER fail the already-completed recovery.
  *
  * `TypedEventBus.emit` delegates to Node's `EventEmitter.emit`, which invokes
  * every subscriber synchronously and propagates the FIRST subscriber exception
@@ -149,7 +149,7 @@ export function emitExpansionMetric(
 }
 
 /**
- * Emit the OBS-01 `context:script_zero_hit` signal (a clean non-Latin search
+ * Emit the `context:script_zero_hit` signal (a clean non-Latin search
  * that returned zero hits), GUARDED so a throwing subscriber can NEVER fail the
  * already-completed search — the exact non-fatal contract of
  * {@link emitExpansionMetric} (a trajectory writer / metrics sink that throws
@@ -157,7 +157,7 @@ export function emitExpansionMetric(
  * ran cleanly (`!matchErrored`) and the store classified the query as non-Latin
  * (`result.scriptZeroHit` set) — the errored-MATCH branch WARNs instead, so a
  * `safeAll`-swallowed FTS5 syntax error never pollutes the lane-gap signal
- * (signal purity, RESEARCH Pitfall 9).
+ * (signal purity).
  *
  * `data` is the already-assembled, content-free payload (ids + the closed
  * `scriptClass`/`lane` enums + timestamp ONLY — NEVER the query text); this

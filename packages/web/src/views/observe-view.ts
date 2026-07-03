@@ -48,16 +48,16 @@ const TAB_DEFS: TabDef[] = [
   { id: "delivery", label: "Delivery" },
   { id: "channels", label: "Channels" },
   { id: "diagnostics", label: "Diagnostics" },
-  // 179-07: nav-only tabs that route to the standalone Cache Health / Spend &
-  // Governance views via app.ts (NOT inline render bodies — observe-view is
-  // over-cap; see _onTabChange's navigate dispatch).
+  // Nav-only tabs that route to the standalone Cache Health / Spend & Governance
+  // views via app.ts rather than rendering inline here (this file is already at
+  // its size cap; see _onTabChange's navigate dispatch).
   { id: "cache", label: "Cache" },
   { id: "spend", label: "Spend" },
-  // 179-08: nav-only Incident tab -> the obs.explain drill-down view (E7 native).
+  // Nav-only Incident tab that routes to the standalone obs.explain drill-down view.
   { id: "incident", label: "Incident" },
 ];
 
-/** 179-07/08: nav-only observe tabs -> the route path of their standalone view. */
+/** Nav-only observe tabs mapped to the route path of their standalone view. */
 const NAV_ONLY_TAB_ROUTES: Record<string, string> = {
   cache: "observe/cache",
   spend: "observe/spend",
@@ -850,9 +850,9 @@ export class IcObserveView extends LitElement {
   /* ---- Tab handling ---- */
 
   private _onTabChange(e: CustomEvent<string>): void {
-    // 179-07: nav-only tabs route to a standalone view (Cache Health / Spend &
-    // Governance) rather than rendering inline — keeps this over-cap file from
-    // growing a render body. app.ts's <main @navigate> consumes the event.
+    // Nav-only tabs route to a standalone view (Cache Health / Spend &
+    // Governance) rather than rendering inline — this keeps this size-capped file
+    // from growing a render body. app.ts's <main @navigate> consumes the event.
     const route = NAV_ONLY_TAB_ROUTES[e.detail];
     if (route !== undefined) {
       this.dispatchEvent(new CustomEvent("navigate", { detail: route, bubbles: true, composed: true }));

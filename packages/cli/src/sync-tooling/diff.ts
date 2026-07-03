@@ -6,9 +6,9 @@
  * callback), return a string. NO console.log calls, NO fs I/O, NO Commander.
  * The caller emits via the existing `format.ts` helpers.
  *
- * "stdout contains `tooling:`" is satisfied because `payload.wouldWrite` (the
- * post-mutation `doc.toString()` output) is appended verbatim into the
- * "Would write:" preview section.
+ * The rendered output always contains the literal `tooling:` block because
+ * `payload.wouldWrite` (the post-mutation `doc.toString()` output) is
+ * appended verbatim into the "Would write:" preview section.
  *
  * @module
  */

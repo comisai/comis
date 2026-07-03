@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The transition-only in-worker attention emitter (spec §2.3; TR-11, OPS-04).
+ * The transition-only in-worker attention emitter.
  *
  * `createAttentionEmitter({ sessionId, writeFd3 })` is the WORKER half of the
  * no-poll attention mechanism. The worker calls `observe(classification)` after each
@@ -8,13 +8,13 @@
  * {@link TerminalEventFrame} to the injected `writeFd3` ONLY when the classified
  * state TRANSITIONS (e.g. `working → awaiting-input`). It is EDGE-TRIGGERED: an
  * unchanged state writes nothing, and there is NO timer anywhere — the mechanism is
- * a push driven entirely by `observe`. This is the load-bearing TR-11 invariant
+ * a push driven entirely by `observe`. This is the load-bearing no-poll invariant
  * ("the agent is woken by the event, never spins"): a polling loop is the explicit
  * anti-pattern, so this module schedules no work and reads no clock.
  *
- * The fd3 push channel is SEPARATE from the busy stdout reply stream (spec §2.3) so
+ * The fd3 push channel is SEPARATE from the busy stdout reply stream so
  * a busy session can never delay an attention event. The registry reads `child.stdio[3]`
- * with the HR-02 crash-guard (124-05 Task 3) and re-publishes onto the daemon's
+ * with a crash-guard and re-publishes onto the daemon's
  * TypedEventBus.
  *
  * State → event-frame mapping (the worker-known fields ONLY; the daemon adds
@@ -27,12 +27,12 @@
  *   - `working`        → no frame (not an attention state) — but the last-state still
  *                        advances so a later return to a prompt re-fires.
  *
- * REDACTION-SAFE BY CONSTRUCTION (T-124-14): every payload carries state / reason /
+ * REDACTION-SAFE BY CONSTRUCTION: every payload carries state / reason /
  * counts ONLY — never a `screen`/`text`/`snapshot`/`cursor` field, so an emit site
  * cannot leak screen contents even by mistake. The screen that drove the
  * classification rides the structured LOG, never the bus.
  *
- * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors
+ * Architecture invariants (binding — AGENTS.md; mirrors
  * `terminal-loop-guard.ts` / `terminal-classifier.ts`):
  *   - NO module-global mutable state: the last emitted state is CLOSURE-local inside
  *     the factory — two emitter instances never share it (one per session).
@@ -60,19 +60,19 @@ export interface ObserveOptions {
    */
   noProgressMs?: number;
   /**
-   * LIVE-04 (#4): SUPPRESS the fd3 write for this observe while still ADVANCING `lastState`
+   * SUPPRESS the fd3 write for this observe while still ADVANCING `lastState`
    * (so the transition is recorded and never re-fires on a later settle). The worker sets it
    * when the settle was the agent's explicit foreground `terminal_session_wait`: that wait's
    * REPLY is the agent's attention signal (it unblocks and drives), so a fd3 woken turn would
    * be REDUNDANT and RACE it (at launch claude's welcome screen settles DURING the wait → an
    * awaiting-input transition → a spurious "waiting for input" before the agent sends its first
-   * keystroke — real-VPS 2026-06-16). A backgrounded drive is attended by the daemon backstop,
-   * not this fd3, so suppressing the wait-settle emit never strands it.
+   * keystroke — observed in live testing). A backgrounded drive is attended by the daemon
+   * backstop, not this fd3, so suppressing the wait-settle emit never strands it.
    */
   suppressEmit?: boolean;
 }
 
-/** The emitter's surface — exactly what the worker (124-05 Task 2) drives. */
+/** The emitter's surface — exactly what the worker drives. */
 export interface AttentionEmitter {
   /**
    * Observe the classification of the latest settled frame. Writes a redaction-safe
@@ -89,7 +89,7 @@ export interface AttentionEmitterDeps {
   sessionId: string;
   /**
    * Write a length-prefixed frame to fd3 (the push channel). Production wraps
-   * `fs.writeSync(3, …)` or a fd-3 socket; tests inject a capturing fake (RESEARCH A1).
+   * `fs.writeSync(3, …)` or a fd-3 socket; tests inject a capturing fake.
    * Injected so the worker stays fd-posture-agnostic and the logic is provable on macOS.
    */
   writeFd3: (b: Buffer) => void;
@@ -107,17 +107,17 @@ function frameForState(
 ): TerminalEventFrame | undefined {
   switch (c.state) {
     case "awaiting-input":
-      // The attention wake — a real prompt the agent must answer (TR-11). Carries the
-      // classifier verdict's confidence (CLASS-02) — a content-free enum, not screen text.
+      // The attention wake — a real prompt the agent must answer. Carries the
+      // classifier verdict's confidence — a content-free enum, not screen text.
       return {
         sessionId,
         event: "terminal:input_needed",
         payload: { state: "awaiting-input", reason: c.reason, confidence: c.confidence },
       };
     case "stuck":
-      // Settled, no affordance, no progress past the stuck window (OPS-04) — a
+      // Settled, no affordance, no progress past the stuck window — a
       // duration signal, never screen content. Carries the verdict reason + confidence
-      // (CLASS-02, observability symmetry) — both content-free machine tags/enums.
+      // (observability symmetry) — both content-free machine tags/enums.
       return {
         sessionId,
         event: "terminal:stuck",
@@ -141,7 +141,7 @@ function frameForState(
 /**
  * Create a transition-only attention emitter. The last emitted state is CLOSURE-local
  * (no module-global); `observe` is the SOLE entry and writes to fd3 only on a change.
- * No timer, no clock — purely event-driven (the TR-11 no-poll guarantee).
+ * No timer, no clock — purely event-driven (the no-poll guarantee).
  *
  * @param deps - The bound `sessionId` + the injected fd3-writer.
  * @returns The {@link AttentionEmitter} surface.
@@ -159,7 +159,7 @@ export function createAttentionEmitter(deps: AttentionEmitterDeps): AttentionEmi
       if (c.state === lastState) return;
       lastState = c.state;
 
-      // LIVE-04 (#4): a foreground `wait` settle ADVANCES lastState (above) — so the transition is
+      // A foreground `wait` settle ADVANCES lastState (above) — so the transition is
       // recorded and never re-fires on a later settle — but writes NO fd3 frame. The agent's wait
       // REPLY is its attention signal (it unblocks and drives); a fd3 woken turn here would race it
       // (the launch escalation). A backgrounded drive is attended by the daemon backstop, not fd3.

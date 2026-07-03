@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture test: COORD-01 / SUMREF-03 — `autonomy.role: coordinator`
+ * Architecture test: `autonomy.role: coordinator`
  * narrows the TOOL surface to the orchestration set, and NEVER changes the
- * resolved capability set (no escalation). Phase 218, design §23.10.
+ * resolved capability set (no escalation).
  *
  * Asserts the invariants the coordinator role rests on:
  *   (1) `resolveAutonomy({ role: "coordinator" })` resolves `role:"coordinator"`
@@ -13,11 +13,11 @@
  *   (3) THE SECURITY KEYSTONE (no escalation): the resolved `capabilities` set
  *       is DEEP-EQUAL with and without `role: coordinator` for the same profile.
  *       `role` narrows the tool SURFACE only — it can never widen (or change) a
- *       capability (§22.3 over-grant guard, T-218-19).
+ *       capability (the over-grant guard).
  *   (4) The `coordinator` TOOL_PROFILE EXCLUDES the heavy-work tools
  *       (`exec`/`edit`/`write`/`browser`) — a coordinator cannot do inline heavy
- *       work (COORD-02), it must delegate.
- *   (5) SUMREF-03 reachability: the surface INCLUDES the orch:read drill-in
+ *       work, it must delegate.
+ *   (5) Drill-in reachability: the surface INCLUDES the orch:read drill-in
  *       tools (`read`/`grep`) so the lead can drill into a child ResultRef
  *       WITHOUT ingesting it into its window.
  *   (6) The surface includes the orchestration tools (`sessions_spawn`,
@@ -29,8 +29,7 @@
  * the runtime profile, not their AST — so a future resolver/profile change that
  * un-narrows the coordinator or grants it a heavy-work tool flips this RED (the
  * `autonomy-profile-floor.test.ts` template; the architecture project aliases
- * both packages to dist/ for exactly this reason). This is why the plan is Wave
- * 2: it needs `pnpm build` of Plan 01's changes.
+ * both packages to dist/ for exactly this reason).
  *
  * Discriminating power (the one-line edits that flip each assertion to RED):
  *   - (1)/(2): making `resolveCoordinatorToolGroups` return the groups for a
@@ -39,7 +38,7 @@
  *     deep-equality no-escalation check (the keystone).
  *   - (4): adding `"exec"` (or edit/write/browser) to the `coordinator`
  *     TOOL_PROFILE fails the heavy-work-exclusion check.
- *   - (5): removing `"read"`/`"grep"` from the profile fails the SUMREF-03
+ *   - (5): removing `"read"`/`"grep"` from the profile fails the
  *     drill-in reachability check.
  *
  * @module
@@ -49,16 +48,15 @@ import { resolveAutonomy } from "@comis/core";
 import { TOOL_PROFILES } from "@comis/skills";
 import { formatViolations, type ViolationCitation } from "../support/architecture-helpers.js";
 
-const DESIGN_REF = "v8 §23.10 (long-running coordinator) / §22.3 (no over-grant) / Phase 218 COORD-01+SUMREF-03";
+const DESIGN_REF = "role:coordinator narrows the tool surface without escalating capabilities";
 
 /** The coordinator surface (compiled). Read once off `@comis/skills` dist. */
 const COORDINATOR_PROFILE: readonly string[] = TOOL_PROFILES.coordinator;
 
-/** Tools a coordinator must NOT carry — heavy work is delegated, never inline
- *  (COORD-02, T-218-19). */
+/** Tools a coordinator must NOT carry — heavy work is delegated, never inline. */
 const HEAVY_WORK_TOOLS = ["exec", "edit", "write", "browser"] as const;
 /** The orch:read drill-in tools the lead needs to inspect a child ResultRef
- *  WITHOUT ingesting it (SUMREF-03). */
+ *  WITHOUT ingesting it. */
 const DRILL_IN_TOOLS = ["read", "grep"] as const;
 /** The orchestration + observability tools the coordinator must reach. */
 const ORCHESTRATION_TOOLS = ["sessions_spawn", "pipeline", "cron", "message", "obs_query"] as const;
@@ -79,7 +77,7 @@ function membershipViolations(
     }));
 }
 
-describe("COORD-01 — role:coordinator narrows to the orchestration surface (no escalation)", () => {
+describe("role:coordinator narrows to the orchestration surface (no escalation)", () => {
   it("maps role:coordinator to the coordinator tool-group allowlist", () => {
     const r = resolveAutonomy({ profile: "unattended", role: "coordinator" });
     expect(r.role).toBe("coordinator");
@@ -95,7 +93,7 @@ describe("COORD-01 — role:coordinator narrows to the orchestration surface (no
   });
 
   it("narrows the tool surface only — role never changes the resolved capability set (no escalation)", () => {
-    // THE SECURITY KEYSTONE (T-218-19): the resolved caps are role-invariant.
+    // THE SECURITY KEYSTONE: the resolved caps are role-invariant.
     // `role` is a tool-surface narrowing, never a capability grant — so adding
     // `role: coordinator` must leave the cap set byte-identical.
     const base = resolveAutonomy({ profile: "unattended" }).capabilities;
@@ -103,7 +101,7 @@ describe("COORD-01 — role:coordinator narrows to the orchestration surface (no
     expect(withRole).toEqual(base);
   });
 
-  it("excludes the heavy-work tools from the coordinator surface (COORD-02: delegate, never inline)", () => {
+  it("excludes the heavy-work tools from the coordinator surface (delegate, never inline)", () => {
     const violations = membershipViolations(HEAVY_WORK_TOOLS, false);
     expect(
       violations,
@@ -118,7 +116,7 @@ describe("COORD-01 — role:coordinator narrows to the orchestration surface (no
     ).toEqual([]);
   });
 
-  it("includes the orch:read drill-in tools (SUMREF-03: drill into a child ResultRef without ingesting it)", () => {
+  it("includes the orch:read drill-in tools (drill into a child ResultRef without ingesting it)", () => {
     const violations = membershipViolations(DRILL_IN_TOOLS, true);
     expect(
       violations,

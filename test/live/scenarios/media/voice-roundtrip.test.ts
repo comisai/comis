@@ -2,7 +2,7 @@
 /**
  * MEDIA-01 — voice round-trip certification.
  *
- * The design's load-bearing Stage-B behavior is keyless and deterministic:
+ * The load-bearing Stage-B behavior is keyless and deterministic:
  * `executeVoiceResponse` (from @comis/channels) is a pure pipeline over injected
  * structural deps. Feeding it a fake ttsAdapter (returns a non-OGG mime, like
  * Edge's mp3) + `audioConverter: undefined` reproduces the sandbox's ffmpeg-absent

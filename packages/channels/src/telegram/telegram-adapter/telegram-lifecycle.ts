@@ -103,7 +103,7 @@ export async function startLifecycle(
   bindInboundHandlers(state, deps);
 
   // Start polling (webhook mode deferred).
-  // REACT-01 (Pitfall 1): once allowed_updates is set it must enumerate EVERY
+  // Once allowed_updates is set it must enumerate EVERY
   // update bindInboundHandlers consumes (message, edited_message,
   // callback_query, poll) PLUS message_reaction — omitting an existing one
   // silently stops its delivery. Telegram excludes message_reaction from the

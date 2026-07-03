@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 //
-// The golden-frame fixture-recording helper (§11).
+// The golden-frame fixture-recording helper.
 //
 // Two modes:
 //
@@ -12,8 +12,8 @@
 //
 //   2. (default)    — spawn a real command through node-pty, pipe its raw output
 //      bytes to --out for a bounded --duration, optionally feeding scripted
-//      --keys, then exit. This is the REAL-PTY recording the orchestrator runs on
-//      the VPS `comisvps` to capture `fixtures/vim.stream.txt` (macOS node-pty
+//      --keys, then exit. This is the REAL-PTY recording mode, run on a Linux
+//      host to capture `fixtures/vim.stream.txt` (macOS node-pty
 //      cannot posix_spawnp in-harness). node-pty is loaded
 //      via `createRequire` (the SAME guarded lazy-load the worker uses), so this
 //      script imports it only in PTY mode and never at module top-level.
@@ -148,12 +148,12 @@ function syntheticAltScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Plan 124-03: the 8-scenario CLASSIFIER corpus (spec §10.4). These streams pin
-// `terminal-classifier.ts` — each replays through the emulator and the test asserts
-// the §4.3 state. They are HAND-AUTHORED to the documented `claude` 2.1.161 byte
+// The 8-scenario CLASSIFIER corpus. These streams pin `terminal-classifier.ts` —
+// each replays through the emulator and the test asserts the classified state.
+// They are HAND-AUTHORED to the documented `claude` 2.1.161 byte
 // patterns (deterministic + reviewable, like the spinner/altscreen goldens); a live
 // PTY recording of `claude` is non-deterministic + auth-gated, so these are
-// synthetic by design. REFRESH on each `claude` version bump (spec §10.4).
+// synthetic by design. REFRESH on each `claude` version bump.
 //
 // The LOAD-BEARING distinction is the CURSOR POSITION at capture end:
 //   - a real PROMPT parks the cursor at/near the LAST non-blank row (a prompt line);
@@ -271,19 +271,19 @@ function corpusAuthExpired() {
   s += "\r\n";
   s += "Press Enter to open the browser for authentication… ";
   // The cursor trails the prompt on the last non-blank row (row 5) — parked. The
-  // 124-04 auto-answer plan asserts an auth/login prompt ESCALATES (never auto-answered).
+  // auto-answer tests assert an auth/login prompt ESCALATES (never auto-answered).
   return s;
 }
 
 // ---------------------------------------------------------------------------
-// Plan 163-02 (CLASS-02): the per-CLI corpus extension — claude RED dialogs +
+// The per-CLI corpus extension — the once-misclassified claude dialogs +
 // codex/aider × six states {idle-working, awaiting-text-input, full-screen menu,
-// permission dialog, completed, hung}. CONTENT-FREE UI CHROME ONLY (I3): generic
+// permission dialog, completed, hung}. CONTENT-FREE UI CHROME ONLY: generic
 // prompt text ("Do you want to proceed?"), numbered options, the `(y/n)` selector,
 // ASCII box-drawing — NO host paths, NO tokens, NO secrets, NO real keystrokes.
 // Hand-authored synthetic byte streams (a live capture of any of these CLIs is
 // non-deterministic + auth-gated + cannot posix_spawnp in-harness on macOS), exactly
-// like the 124-03 claude corpus above.
+// like the claude corpus above.
 //
 // ENCODING NOTE (load-bearing): the test reads each fixture `latin1` (the golden-frame
 // round-trip contract). A multi-byte UTF-8 glyph (`╭`, `❯`) is therefore decoded as 3
@@ -293,15 +293,16 @@ function corpusAuthExpired() {
 //   - an ASCII border row  `+----+` / `| … |`  (detectsFullScreenDialog ASCII_BORDER), OR
 //   - a `(y/n)` confirmation token            (SELECTOR), OR
 //   - ≥2 line-start `1.` / `2.` option rows   (ENUMERATOR, ≥2 required).
-// (The 124-03 claude fixtures use `╭`/`❯` safely because they assert via isCursorParked —
+// (The original claude fixtures use `╭`/`❯` safely because they assert via isCursorParked —
 // a parked cursor — never via the structural dialog predicate, so the glyph width is moot.)
 //
-// The LOAD-BEARING shape (the documented claude-2.1.x misread, RESEARCH Pitfall 1):
+// The LOAD-BEARING shape (the documented claude-2.1.x misread):
 // the prompt block (box / enumerated menu / selector) renders ABOVE, and the cursor
 // is parked on a BLANK input line WELL BELOW the last non-blank row — so isCursorParked
-// (correctly) returns false and the classifier reaches the CLASS-01 dialog_detected
-// branch (→ awaiting-input / medium). This is the RED shape Plan 01 closed; do NOT
-// copy corpusTrustDialog (its cursor parks ON the affordance row → high, GREEN already).
+// (correctly) returns false and the classifier reaches the dialog_detected
+// branch (→ awaiting-input / medium). This is the once-misclassified shape; do NOT
+// copy corpusTrustDialog (its cursor parks ON the affordance row → high, which was
+// never the failing shape).
 //
 // The HUNG shape carries NO box / NO menu / NO selector and leaves the cursor
 // mid-screen above stale content → the dialog branch must NOT steal it, so it falls
@@ -310,10 +311,10 @@ function corpusAuthExpired() {
 // non-blank prompt row → awaiting-input / high).
 // ---------------------------------------------------------------------------
 
-// --- claude: the RED misread shapes (structure above, cursor on a blank row below) ---
+// --- claude: the misread shapes (structure above, cursor on a blank row below) ---
 
 /**
- * Claude permission dialog (the RED misread): an ASCII-bordered permission prompt with
+ * Claude permission dialog (the historical misread): an ASCII-bordered permission prompt with
  * two numbered option rows at the TOP, then the cursor parked on the EMPTY bottom grid
  * row (row 24) — well below the box's last non-blank row. isCursorParked returns false
  * (cursor far below content); the dialog branch reads the ASCII border → awaiting-input.
@@ -489,16 +490,16 @@ function corpusAiderHung() {
   return s;
 }
 
-// --- the NEGATIVE-SPACE regression lock (MR-01 / LR-02): generation OUTPUT that
+// --- the NEGATIVE-SPACE regression lock: generation OUTPUT that
 //     STRUCTURALLY resembles a dialog but is NOT one — must classify working/stuck,
 //     NEVER awaiting-input. A coding CLI routinely ends a *completed* response with a
-//     markdown table or a numbered list; the over-broad pre-fix predicate read those
+//     markdown table or a numbered list; an over-broad predicate would read those
 //     as `dialog_detected` → a spurious wake. The frame is settled+diff∅ with the
 //     cursor MID-SCREEN (output rendered BELOW it, so isCursorParked is false) — the
-//     exact gate that reaches the dialog branch. CONTENT-FREE chrome only (I3). ---
+//     exact gate that reaches the dialog branch. CONTENT-FREE chrome only. ---
 
 /**
- * Claude completion ending in a MARKDOWN TABLE (the MR-01 false-positive shape): a
+ * Claude completion ending in a MARKDOWN TABLE (the known false-positive shape): a
  * `| col | col |` table is generation output, NOT dialog chrome. The table's pipe rows
  * have NO `+---+` border, so the tightened ASCII_BORDER must not fire; the cursor is
  * moved UP into the prose region with the table rendered BELOW it (NOT parked), so the
@@ -524,7 +525,7 @@ function corpusClaudeCompletionTable() {
 const SYNTHETIC = {
   spinner: syntheticSpinner,
   altscreen: syntheticAltScreen,
-  // The 124-03 classifier corpus (spec §10.4) — refresh on a `claude` version bump.
+  // The claude classifier corpus — refresh on a `claude` version bump.
   startup: corpusStartup,
   "trust-dialog": corpusTrustDialog,
   "ask-user-question": corpusAskUserQuestion,
@@ -533,7 +534,7 @@ const SYNTHETIC = {
   "thinking-pause": corpusThinkingPause,
   completion: corpusCompletion,
   "auth-expired": corpusAuthExpired,
-  // The 163-02 (CLASS-02) per-CLI corpus extension — claude RED dialogs + codex/aider
+  // The per-CLI corpus extension — the misread claude dialogs + codex/aider
   // × six states. Refresh on a claude/codex/aider version bump (see fixtures/README.md).
   "claude-permission-dialog": corpusClaudePermissionDialog,
   "claude-menu": corpusClaudeMenu,
@@ -549,7 +550,7 @@ const SYNTHETIC = {
   "aider-permission-dialog": corpusAiderPermissionDialog,
   "aider-completed": corpusAiderCompleted,
   "aider-hung": corpusAiderHung,
-  // The MR-01 / LR-02 negative-space regression lock — generation output (a markdown
+  // The negative-space regression lock — generation output (a markdown
   // table) that structurally resembles a dialog but is NOT one (must be working).
   "claude-completion-table": corpusClaudeCompletionTable,
 };
@@ -561,8 +562,8 @@ const SYNTHETIC = {
 /**
  * Replay `streamBytes` through the project emulator and return the committed
  * `serialize({format:'ansi'})` golden. Imports `terminal-render.js` from the
- * BUILT `dist/` (the script runs after `pnpm build`); falls back to the source
- * via tsx-less dynamic import is NOT attempted — the orchestrator builds first.
+ * BUILT `dist/` (the script runs after `pnpm build`); no source-tree fallback
+ * is attempted — run `pnpm build` first.
  */
 async function generateGolden(streamBytes) {
   // Resolve the emulator from the built dist (a sibling of this src tree). The

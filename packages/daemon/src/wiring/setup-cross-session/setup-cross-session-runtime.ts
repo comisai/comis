@@ -126,17 +126,17 @@ export function setupCrossSession(deps: {
   /** Timer scheduling. */
   timers: TimerPort;
   /**
-   * WT-01: the lifecycle GitExec the composition root binds (the real
+   * The lifecycle GitExec the composition root binds (the real
    * execFile-backed `createExecGit` adapted to `{ stdout, exitCode }` via
    * `toLifecycleGitExec`). Threaded into executeSubAgent so a `worktree:true`
    * child runs in an isolated git worktree. Paired with {@link worktreeRegistry}.
    * Absent ⇒ the worktree request is honestly skipped (WARN, not silent no-op).
    */
   worktreeGitExec?: import("@comis/skills/tools").GitExec;
-  /** WT-02: the shared registry the boot/periodic orphan sweep reads (paired with {@link worktreeGitExec}). */
+  /** The shared registry the boot/periodic orphan sweep reads (paired with {@link worktreeGitExec}). */
   worktreeRegistry?: import("../setup-worktree-sweep.js").WorktreeRegistry;
   /**
-   * Phase 213 (CEIL-01): the tree-wide spawn ceiling consult, threaded into the
+   * The tree-wide spawn ceiling consult, threaded into the
    * sub-agent runner's `checkSpawnCeiling` so every spawn (session.spawn AND
    * graph.* AND the in-process loop) is bounded at the convergence point. Bound
    * to `boundedAutonomy.tryAcquireSpawn` by the daemon; absent when no agent is
@@ -148,7 +148,7 @@ export function setupCrossSession(deps: {
     fanout: number,
   ) => { ok: true } | { ok: false; reason: string };
   /**
-   * Phase 213 (CR-02): the symmetric release of a slot reserved by
+   * The symmetric release of a slot reserved by
    * {@link checkSpawnCeiling}, threaded into the runner's `releaseSpawnCeiling`
    * so a completed run frees its tree-wide slot (paired 1:1 with the acquire).
    * Bound to `boundedAutonomy.releaseSpawn` by the daemon; absent ⇒ the runner's
@@ -156,7 +156,7 @@ export function setupCrossSession(deps: {
    */
   releaseSpawnCeiling?: (rootRunId: string) => void;
   /**
-   * Phase 216 (DUR-01 / HB-01): the durable-run store + its keep-alive thresholds
+   * The durable-run store + its keep-alive thresholds
    * + the leaseId/budget facts resolver, threaded into the sub-agent runner so it
    * writes a per-root checkpoint at the spawn boundary + a heartbeat on the
    * injected timer. All optional; absent ⇒ the runner's durable path is inert (the
@@ -169,14 +169,14 @@ export function setupCrossSession(deps: {
     agentId: string,
   ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
   /**
-   * Phase 216 (HIGH-2 / ONCE-01..04): the three-state outward-send ledger + the
+   * The three-state outward-send ledger + the
    * announce-origin rootRunId resolver, threaded into BOTH `createCrossSessionSender`
-   * (the announce() ledger wrap, Plan 10 Task 1) AND the announcement dead-letter
-   * queue (the drain committed-skip, Plan 10 Task 2) so the completion-announcement
+   * (the announce() ledger wrap) AND the announcement dead-letter
+   * queue (the drain committed-skip) so the completion-announcement
    * outward path is ledgered exactly-once (no restart double-notify). All optional;
    * absent ⇒ both paths are pure pass-throughs (the byte-identical default). The
-   * daemon (Plan 12, the sole daemon.ts editor) wires them ONLY when durability is on,
-   * reusing the SAME store instances Plan 07 built (one ledger, one durable store).
+   * daemon wires them ONLY when durability is on, reusing the SAME store
+   * instances built at composition (one ledger, one durable store).
    */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: (sessionKey: SessionKey) => string;
@@ -249,7 +249,7 @@ export function setupCrossSession(deps: {
     getExecutor,
     fileLock: deps.fileLock,
     logger: deps.logger,
-    // WT-01: thread the git-worktree seam + registry so a `worktree:true` child
+    // Thread the git-worktree seam + registry so a `worktree:true` child
     // runs in an isolated worktree (auto-clean-if-unchanged). Both absent ⇒ the
     // request is honestly skipped (no git seam) — byte-identical default.
     ...(deps.worktreeGitExec ? { worktreeGitExec: deps.worktreeGitExec } : {}),
@@ -267,7 +267,7 @@ export function setupCrossSession(deps: {
     sendToChannel,
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
-    // Phase 216 HIGH-2 (ONCE-01/02): the announce() send is routed through the
+    // The announce() send is routed through the
     // SAME three-state exactly-once ledger as message.send when the durable
     // store + a resolvable rootRunId are wired — a restart-driven re-announce of
     // an already-committed announcement is then a no-op. Absent ⇒ pass-through.
@@ -345,17 +345,17 @@ export function setupCrossSession(deps: {
     maxEntries: 100,
     eventBus: container.eventBus,
     logger: deps.logger?.child({ submodule: "dead-letter-queue" }),
-    // Phase 216 HIGH-2 (ONCE-03/04): the SAME ledger instance — drain consults it
+    // The SAME ledger instance — drain consults it
     // BEFORE re-delivering, so a committed announcement is SKIPPED across a restart
     // (the in-memory deliveredKeys set rebuilds empty on boot; the durable ledger
-    // is the authoritative no-double-notify signal). Absent ⇒ legacy at-least-once.
+    // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
   });
 
-  // WR-02/WR-03: ONE bounded delivered-key store shared across every
+  // ONE bounded delivered-key store shared across every
   // completion-delivery surface — the batcher success path, the no-batcher
   // success branches in deliverAnnouncement, the failure path
-  // (deliverFailureNotification), and DLQ recovery (WR-01). A single instance is
+  // (deliverFailureNotification), and DLQ recovery. A single instance is
   // what makes cross-path dedup hold whether or not the batcher is on the path;
   // it is bounded (FIFO) so it never leaks for the daemon lifetime.
   const deliveryDedup = createDeliveryDedup();
@@ -367,7 +367,7 @@ export function setupCrossSession(deps: {
     logger: deps.logger?.child({ submodule: "announcement-batcher" }),
     deadLetterQueue,
     deliveryDedup,
-    // DELIVERY-02: inject the transient/permanent classifier + backoff so the
+    // Inject the transient/permanent classifier + backoff so the
     // batcher self-heals transient fallback failures (retry-with-backoff) and
     // fast-paths permanent ones to the DLQ. computeRetryBackoff is an
     // intra-package import (daemon owns it); classifyErrorContext comes from
@@ -419,11 +419,11 @@ export function setupCrossSession(deps: {
     tagPrefix: subagentCtxConfigForCondenser?.resultTagPrefix ?? "Subagent Result",
   });
 
-  // Phase 218 (SUMREF-02): the full-output ResultRef store. The runner stays
+  // The full-output ResultRef store. The runner stays
   // @comis/skills-free (DI) — the daemon owns the store + the child-workspace
   // target selection. The callback resolves the CHILD's OWN jailed workspace
   // from ctx.agentId (mirroring setup-cross-session-graph.ts:358-361), NEVER the
-  // lead's (T-218-08); createResultRefStore is additionally safePath-confined to
+  // lead's; createResultRefStore is additionally safePath-confined to
   // that root, so a traversal returns a MaterializeError the runner degrades on.
   // The store's 3-way union (ResultRef | MaterializeError | undefined) is returned
   // UNCHANGED — the runner's dep contract IS that union, so no mapping is forced.
@@ -471,7 +471,7 @@ export function setupCrossSession(deps: {
     announceToParent,
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
-    // Sandbox no-downgrade posture resolver (SANDBOX-02). The runner is a
+    // Sandbox no-downgrade posture resolver. The runner is a
     // @comis/agent leaf with no full-config import, so it CANNOT reach
     // container.config.agents — we inject a closure that resolves each agent's
     // posture from its per-agent skills config. The two-arg form mirrors the
@@ -497,21 +497,21 @@ export function setupCrossSession(deps: {
     condenserModel: condenserApiKey ? { id: condensationResolution.modelId, provider: condensationResolution.provider } as unknown : undefined,
     condenserApiKey: condenserApiKey || undefined,
     narrativeCaster,
-    // SUMREF-02: the full-output ResultRef materialize, targeting the CHILD's
+    // The full-output ResultRef materialize, targeting the CHILD's
     // own jailed workspace (resolved from ctx.agentId), returning the store's
-    // 3-way union unchanged. Absent of a wired store IS the no-op (no BC shim).
+    // 3-way union unchanged. An absent wired store IS the no-op (no shim layer).
     materializeFullOutput,
     lifecycleHooks,
     deadLetterQueue,
     deliveryDedup,
     clock: deps.clock,
     timers: deps.timers,
-    // Phase 213 CEIL-01: the tree-wide spawn ceiling (bound to
+    // The tree-wide spawn ceiling (bound to
     // boundedAutonomy.tryAcquireSpawn by the daemon). Inert when absent.
     ...(deps.checkSpawnCeiling ? { checkSpawnCeiling: deps.checkSpawnCeiling } : {}),
-    // Phase 213 CR-02: the symmetric release (boundedAutonomy.releaseSpawn).
+    // The symmetric release (boundedAutonomy.releaseSpawn).
     ...(deps.releaseSpawnCeiling ? { releaseSpawnCeiling: deps.releaseSpawnCeiling } : {}),
-    // Phase 216 DUR-01/HB-01: the durable checkpoint store + thresholds + facts
+    // The durable checkpoint store + thresholds + facts
     // resolver (the runner writes a per-root checkpoint + heartbeat). Inert when
     // absent (the byte-identical default; the daemon wires these only when on).
     ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),

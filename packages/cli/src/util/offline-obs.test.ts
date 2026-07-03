@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * W14 (obs-llm-troubleshooting): real-layout tests for the OFFLINE obs
+ * Real-layout tests for the OFFLINE obs
  * assemblers — `comis explain --offline` / `comis fleet --offline` and the
  * automatic unreachable-gateway fallback both ride these.
  *
@@ -8,11 +8,11 @@
  * PRODUCTION nested tree (`workspace/sessions/<tenant>/<channel>/<file>.jsonl`
  * + the co-located `.trajectory-path.json` pointer + `_session-metadata.json`)
  * under a temp dir — NEVER `~/.comis` — and drives the real reader stack
- * end-to-end with no daemon and no memory.db. It doubles as the cross-feature
- * E2E for this change-set: the trajectory carries a `context.budget` record
- * (W2), so the report must surface `contextBudget` (W3), the numbers-backed
- * `context_exhausted` verdict naming the cap knob (W3), and the
- * signals-derived agentId/channel (W8) — all from disk alone.
+ * end-to-end with no daemon and no memory.db. It doubles as a cross-feature
+ * E2E: the trajectory carries a `context.budget` record,
+ * so the report must surface `contextBudget`, the numbers-backed
+ * `context_exhausted` verdict naming the cap knob, and the
+ * signals-derived agentId/channel — all from disk alone.
  *
  * `path.join` is test-only here (the no-path.join rule scopes to non-test src);
  * the SUT resolves paths via the production helpers.
@@ -31,13 +31,14 @@ import {
   resolveOfflineDataDir,
 } from "./offline-obs.js";
 
-// OBS-OFFLINE-DATADIR (webhook-claude-cli-tdd-20260630-rerun): `comis explain --offline` /
-// `comis fleet --offline` resolved the data dir from `os.homedir()` ALONE, ignoring
-// `COMIS_DATA_DIR`. Running the CLI as a different user than the daemon (the live-test rig runs
-// the daemon as `comis` but invokes the CLI as `root`) then read an EMPTY `<root-home>/.comis`
-// and reported `endReason=unknown, $0, 0 turns` for a session that SUCCEEDED — the exact false
-// "nothing happened" the obs lens exists to prevent. The daemon + the wizard (04-oauth-helpers)
-// both honor `COMIS_DATA_DIR`; the offline obs reader must match.
+// Regression guard: if `comis explain --offline` / `comis fleet --offline`
+// resolved the data dir from `os.homedir()` ALONE, ignoring `COMIS_DATA_DIR`,
+// then running the CLI as a different user than the daemon (e.g. the daemon as
+// `comis` but the CLI as `root`) would read an EMPTY `<root-home>/.comis` and
+// report `endReason=unknown, $0, 0 turns` for a session that SUCCEEDED — the
+// exact false "nothing happened" the obs lens exists to prevent. The daemon +
+// the wizard (04-oauth-helpers) both honor `COMIS_DATA_DIR`; the offline obs
+// reader must match.
 describe("resolveOfflineDataDir", () => {
   const prev = process.env.COMIS_DATA_DIR;
   afterEach(() => {
@@ -54,7 +55,7 @@ describe("resolveOfflineDataDir", () => {
   });
 });
 
-// The live incident's session key — maps to tenant "default", channel
+// A production-shaped session key — maps to tenant "default", channel
 // "678314278", file "678314278~peer~678314278.jsonl" (verified against the
 // production ~/.comis layout).
 const SESSION_KEY = "default:678314278:678314278:peer:678314278";
@@ -99,7 +100,7 @@ function buildLiveShapedSession(dataDir: string): string {
       agentId: "default",
       data: { toolName: "ctx_search", toolCallId: "call_wezdp01b", success: true },
     },
-    // W2: the terminal budget equation — the exhausted fit check.
+    // The terminal budget equation — the exhausted fit check.
     {
       traceSchema: "comis-trajectory",
       schemaVersion: 1,
@@ -150,7 +151,7 @@ function buildLiveShapedSession(dataDir: string): string {
 
 describe("assembleIncidentReportOffline — real nested layout, no daemon, no memory.db", () => {
   // Generous timeout: the FIRST offline call lazy-loads the whole @comis/daemon
-  // graph (the deliberate W14 trade — CLI startup stays light; the offline
+  // graph (a deliberate trade — CLI startup stays light; the offline
   // path pays once). Under vitest's transform that load can take ~10s cold.
   it("assembles the numbers-backed context_exhausted post-mortem from disk alone", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
@@ -161,7 +162,7 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
       depth: "summary",
     });
 
-    // Identity (W8): agentId from the record envelopes; channel from session.started.
+    // Identity: agentId from the record envelopes; channel from session.started.
     expect(report.sessionKey).toBe(SESSION_KEY);
     expect(report.agentId).toBe("default");
     expect(report.channel).toEqual({ type: "telegram", id: "678314278" });
@@ -170,12 +171,12 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
     expect(report.outcome.endReason).toBe("context_exhausted");
     expect(report.outcome.degraded).toBe(true);
 
-    // W3: the budget equation rode the trajectory onto the report.
+    // The budget equation rode the trajectory onto the report.
     expect(report.contextBudget?.verdict).toBe("exhausted");
     expect(report.contextBudget?.assembledInputTokens).toBe(31_572);
     expect(report.contextBudget?.windowCapSource).toBe("effectiveContextCapSmall");
 
-    // W3: the verdict is numbers-backed and names the exact knob.
+    // The verdict is numbers-backed and names the exact knob.
     expect(report.likelyRootCause?.code).toBe("context_exhausted");
     expect(report.likelyRootCause?.detail).toContain("31572");
     expect(report.likelyRootCause?.detail).toContain("131072");
@@ -183,7 +184,7 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
       "contextEngine.budget.effectiveContextCapSmall",
     );
 
-    // W8: one ctx_search call counts exactly once.
+    // One ctx_search call counts exactly once.
     expect(report.toolStats.ctx_search).toEqual({ ok: 1, failed: 0 });
 
     // Coverage honesty: the trajectory was actually read.
@@ -211,7 +212,7 @@ describe("assembleFleetHealthReportOffline — local day files, no daemon, no me
     const dataDir = tmpDataDir();
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
-    // Today's session-index day file (the A3 activity source reads real day-keys).
+    // Today's session-index day file (the fleet activity source reads real day-keys).
     const today = new Date().toISOString().slice(0, 10);
     const rows = [
       {
@@ -246,7 +247,7 @@ describe("assembleFleetHealthReportOffline — local day files, no daemon, no me
     const report = await assembleFleetHealthReportOffline(dataDir, 24);
 
     expect(report.windowHours).toBe(24);
-    // A3 activity came from the local day file.
+    // Activity came from the local day file.
     expect(report.activity.activeAgents).toContain("default");
     // The session-summary store (memory.db) is absent — coverage says so
     // honestly instead of masquerading as a clean zero-session fleet.

@@ -152,7 +152,7 @@ export function createOutputGuard(opts?: { knownSecrets?: readonly string[] }): 
       return ok({ safe, blocked, findings, sanitized });
     },
 
-    // ENDPOINT-03 (Phase 211): register a runtime secret (the minted lease
+    // Register a runtime secret (the minted lease
     // bearer) so the NEXT scan redacts it. scan() reads `boundKnownSecrets`
     // live each call, so pushing here is read immediately. The same
     // KNOWN_SECRET_MIN_LENGTH floor + longest-first ordering the constructor

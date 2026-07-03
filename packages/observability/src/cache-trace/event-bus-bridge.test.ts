@@ -357,7 +357,7 @@ describe("attachCacheTraceToEventBus multi-event mapping", () => {
     unsubscribe();
   });
 
-  it("forwards_D1_provenance_into_the_tool_after_stage", () => {
+  it("forwards provenance fields into the tool:after stage", () => {
     const recordStageSpy = vi.fn(() => "queued" as const);
     const trace = makeFakeTrace({ recordStage: recordStageSpy });
     const bus = new TypedEventBus();
@@ -369,8 +369,7 @@ describe("attachCacheTraceToEventBus multi-event mapping", () => {
       durationMs: 42,
       success: false,
       timestamp: Date.now(),
-      // D1 provenance fields (Plan 03 payload — Phase 152 flight-recorder
-      // reads the cache-trace stream).
+      // Provenance fields — the flight-recorder reads the cache-trace stream.
       classifiedFailureBy: "failure_detector",
       transportOk: true,
       httpStatus: 200,
@@ -381,7 +380,7 @@ describe("attachCacheTraceToEventBus multi-event mapping", () => {
     });
 
     // All 7 provenance fields must reach the tool:after stage — without
-    // this forwarding, Phase 152's flight-recorder is blind (Pitfall 2).
+    // this forwarding, the flight-recorder is blind.
     expect(recordStageSpy).toHaveBeenCalledWith(
       "tool:after",
       expect.objectContaining({

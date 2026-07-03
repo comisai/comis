@@ -108,7 +108,7 @@ describe.skipIf(!isLive)(
       async () => {
         // Stage-B: seed a conversation with known facts, query, assert score ≥ 0.6
         // Implementation: use ConversationDriver with mkdtempSync isolation
-        // TODO Phase-173 wire-in: ConversationDriver + buildCtxConfig + seed + query
+        // TODO wire-in: ConversationDriver + buildCtxConfig + seed + query
         // For now: structural stub — verifies harness is importable and Stage-B is gated
         expect(isLive).toBe(true);
       },
@@ -116,7 +116,7 @@ describe.skipIf(!isLive)(
   },
 );
 
-// Stage-B skeleton preserved for Phase-173 wire-in:
+// Stage-B skeleton preserved for wire-in:
 // import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 // import { buildCtxConfig } from "../../harness/ctx-config.js";
 // import { mkdtempSync } from "node:fs";

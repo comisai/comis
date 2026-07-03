@@ -4,7 +4,7 @@
  *
  * The contract test file (reranker-provider-local.test.ts) is gated behind a
  * real LLAMA_RERANKER_MODEL_PATH (~606 MB GGUF) and runs only when that env var
- * points at a model, so the GREEN body — getLlama -> resolveModelFile ->
+ * points at a model, so the full success path — getLlama -> resolveModelFile ->
  * loadModel -> createRankingContext (singleton) -> rankAll -> dispose — is
  * entirely uncovered in the unit-tier root run, and the ungated invalid-path
  * test only reaches the outer catch. This file uses vi.mock to swap

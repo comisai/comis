@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 216 (Plan 07 Task 2): the durable-resume subsystem wiring.
+ * The durable-resume subsystem wiring.
  *
- * These cases fail on the pre-patch tree (`./setup-durable-resume.js` does not
- * exist) — RED proof. They assert the two-phase STRUCTURE mirrored from
+ * These cases assert the two-phase STRUCTURE mirrored from
  * setup-delivery.ts:
  *   (a) disabled ⇒ resumeAndStart is a no-op + NO watchdog interval is registered
  *       + no stores constructed (the byte-identical default install);
@@ -103,7 +102,7 @@ function baseDeps(db: unknown, over: Partial<SetupDurableResumeDeps> = {}): Setu
   };
 }
 
-describe("setupDurableResume (Phase 216 — stores + resume engine + watchdog)", () => {
+describe("setupDurableResume (stores + resume engine + watchdog)", () => {
   beforeEach(() => { createdHandles.length = 0; vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
@@ -196,16 +195,15 @@ describe("setupDurableResume (Phase 216 — stores + resume engine + watchdog)",
 });
 
 // ---------------------------------------------------------------------------
-// Phase 216 Plan 12 (DUR-01/DUR-02, LOW-2): buildDurableResume wires the
+// buildDurableResume wires the
 // resumeGraph closure into the resume engine's resumeRun dispatch. A DAG-shaped
 // run record (spawn_tree entries are OBJECTS with a `status` field) must route to
 // coordinator.resumeGraph (node re-entry); a FLAT run record (string[] spawn_tree)
 // must take the existing flat re-anchor (BoundedAutonomy.registerRoot) and can
-// NEVER mis-route to resumeGraph. These cases fail on the pre-patch wiring
-// (buildDurableResume has no resumeGraph dep + resumeRun always re-anchors flat).
+// NEVER mis-route to resumeGraph.
 // ---------------------------------------------------------------------------
 
-describe("buildDurableResume resumeGraph dispatch (Phase 216 Plan 12, DUR-02/LOW-2)", () => {
+describe("buildDurableResume resumeGraph dispatch", () => {
   beforeEach(() => { vi.useRealTimers(); });
 
   /** Seed a resumable `running` checkpoint with the given spawnTree shape. */
@@ -255,7 +253,7 @@ describe("buildDurableResume resumeGraph dispatch (Phase 216 Plan 12, DUR-02/LOW
     });
 
     // A DAG record: spawn_tree entries are {nodeId,status} objects with one
-    // incomplete (running) node ⇒ the LOW-2 DAG discriminator is true.
+    // incomplete (running) node ⇒ the DAG discriminator is true.
     await seed(wiring.durableResume.durableRunStore!, "root-dag", [
       { nodeId: "A", status: "completed" },
       { nodeId: "B", status: "running", runId: "rb" },
@@ -270,7 +268,7 @@ describe("buildDurableResume resumeGraph dispatch (Phase 216 Plan 12, DUR-02/LOW
     expect(boundedAutonomy.registerRoot).not.toHaveBeenCalled();
   });
 
-  it("routes a FLAT record (string[] spawn_tree) to the flat re-anchor, NEVER to resumeGraph (LOW-2: no mis-route)", async () => {
+  it("routes a FLAT record (string[] spawn_tree) to the flat re-anchor, NEVER to resumeGraph (no mis-route)", async () => {
     const db = await makeDb();
     const boundedAutonomy = makeBoundedAutonomy();
     const resumeGraph = vi.fn(async (_record: DRR) => ok(undefined));

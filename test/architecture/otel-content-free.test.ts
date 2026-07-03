@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-03 / E3 — the content-free invariant for the OTLP/Prometheus exporter.
+ * The content-free invariant for the OTLP/Prometheus exporter.
  *
  * The exporter is a NEW secret-egress surface: a careless (or hostile) attribute
  * addition, or the `captureContent`/`genaiSemconv` content path, could smuggle a
@@ -12,7 +12,7 @@
  *
  * It is an ARCHITECTURE-tier test (a cross-cutting content-free invariant) placed
  * in test/architecture/ so the full-workspace gate catches it — per-package runs
- * hide cross-cutting gates (Pitfall 8 / feedback_full_workspace_gates_per_phase).
+ * hide cross-cutting gates.
  *
  * The system-under-test boundary is the REAL compiled extension dist
  * (`redactAttributes` + `emitTurnSpan` from `packages/observability-otel/dist`),
@@ -54,7 +54,7 @@ type MakeSpanFixture = () => SpanFixture;
 
 const PLANTED = ["sk-PLANTEDSECRET", "PLANTED2", "PLANTED3", "SECRET-PROMPT-BODY"];
 
-describe("OTEL-03 / E3 — the exporter emits no secret/content even with genaiSemconv:true", () => {
+describe("the exporter emits no secret/content even with genaiSemconv:true", () => {
   let redactAttributes: RedactAttributes;
   let emitTurnSpan: EmitTurnSpan;
   let makeSpanFixture: MakeSpanFixture;
@@ -65,7 +65,7 @@ describe("OTEL-03 / E3 — the exporter emits no secret/content even with genaiS
     makeSpanFixture = ((await import(harnessUrl)) as { makeSpanFixture: MakeSpanFixture }).makeSpanFixture;
   });
 
-  it("Test 1: a planted secret at >=2 nesting levels never survives redactAttributes (the metric-label boundary)", () => {
+  it("a planted secret at >=2 nesting levels never survives redactAttributes (the metric-label boundary)", () => {
     const planted = {
       apiKey: "sk-PLANTEDSECRET",
       provider: "anthropic",
@@ -80,7 +80,7 @@ describe("OTEL-03 / E3 — the exporter emits no secret/content even with genaiS
     expect(out["provider"]).toBe("anthropic");
   });
 
-  it("Test 2: with genaiSemconv:true + captureContent:true, NO message body / secret reaches a span attribute", async () => {
+  it("with genaiSemconv:true + captureContent:true, NO message body / secret reaches a span attribute", async () => {
     const fx = makeSpanFixture();
     try {
       const tracer = fx.provider.getTracer("comis");

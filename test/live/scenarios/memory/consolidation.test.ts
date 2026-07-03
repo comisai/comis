@@ -6,11 +6,11 @@
  * (mirrors sqlite-memory-consolidation-store.ts internals — avoids constructing
  * a full MemoryEntry for the high-level applyConsolidation API).
  *
- * BLOCKER-2 note: ConsolidationPlan = { observation: MemoryEntry, markConsolidated: string[],
+ * ConsolidationPlan = { observation: MemoryEntry, markConsolidated: string[],
  * tenantId: string, now: number }. Constructing a full MemoryEntry requires deep domain
  * plumbing. The Stage-A test instead replicates the SQL that applyConsolidation runs:
  *   UPDATE memories SET consolidated_at=? WHERE id=? AND tenant_id=?  (line 184 of the store)
- * plus a direct INSERT for the observation row. This tests the v2.12 non-destruction invariant
+ * plus a direct INSERT for the observation row. This tests the non-destruction invariant
  * at the substrate level — more deterministic than the high-level API.
  *
  * DDL constraints (packages/memory/src/schema.ts lines 488-506):
@@ -19,7 +19,7 @@
  *     use 'semantic'. An observation row is identified by proof_count IS NOT NULL, not memory_type.
  *   created_at INTEGER NOT NULL (no default) — must be bound in every INSERT.
  *
- * WARNING-3: strength column IS present (row-schemas.ts line 68). No silent catch.
+ * The strength column IS present (row-schemas.ts line 68). No silent catch.
  * PRAGMA table_info asserts the column exists first; assertions run unconditionally.
  *
  * @module
@@ -48,7 +48,7 @@ const REQUIRED_VALS =
   "?, 'tenant-1', 'agent-a', 'user-1', ?, 'learned', 'semantic', 'user', '[]', 0, ?";
 
 describe("MEM-06 Stage-A — FOLD atomicity + pinned immunity + FadeMem (no COMIS_LIVE)", () => {
-  it("FOLD non-destruction: consolidated_at UPDATE never deletes source rows (direct SQL, v2.12 invariant)", () => {
+  it("FOLD non-destruction: consolidated_at UPDATE never deletes source rows (direct SQL)", () => {
     const db = new Database(":memory:");
     db.pragma("foreign_keys = ON");
     initSchema(db, 1536);
@@ -79,7 +79,7 @@ describe("MEM-06 Stage-A — FOLD atomicity + pinned immunity + FadeMem (no COMI
     });
     tx();
 
-    // v2.12 invariant: source rows NOT deleted (3 sources + 1 observation = 4)
+    // Invariant: source rows NOT deleted (3 sources + 1 observation = 4)
     const afterCount = (db.prepare("SELECT COUNT(*) AS c FROM memories").get() as { c: number }).c;
     expect(afterCount).toBe(4);
 

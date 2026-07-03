@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Zod row schema for the `mental_models` `get()`/`list()` projection — the v2.31
- * Mental Model doc store (generalized from the v2.26 Verified Learning WS2 /
- * SKILL-01 procedural store). Consumed by the `createRowMapper` in
+ * Zod row schema for the `mental_models` `get()`/`list()` projection — the
+ * Mental Model doc store. Consumed by the `createRowMapper` in
  * `sqlite-mental-model-store.ts` (the sanctioned read path — no `as Foo[]` casts,
  * enforced by `untyped-sqlite.test.ts`).
  *
@@ -20,7 +19,7 @@
  * params_schema, mutating, pinned, proof_count, confidence, strength,
  * source_traj_ids, validation_result, evicted_at, created_at, updated_at FROM
  * mental_models WHERE tenant_id=? AND agent_id=? …` read. `tenant_id`/`agent_id`
- * are NOT projected — the WHERE pins them, the load-bearing SEC-01 isolation
+ * are NOT projected — the WHERE pins them, the load-bearing isolation
  * boundary. `trust_level`/`state`/`kind` are NOT NULL (the DDL CHECK pins the
  * closed enums). The JSON TEXT columns (`structured_body`, `history`,
  * `required_tools`, `params_schema`, `source_traj_ids`, `validation_result`) are
@@ -45,14 +44,14 @@ export const MentalModelRowSchema = z.strictObject({
   kind: z.string(),
   /** The topic key a 'topic' doc clusters under; '' for a skill/profile (NOT NULL DEFAULT ''). */
   topic_key: z.string(),
-  /** Closed union pinned by the DDL CHECK — ALWAYS 'learned' (the SEC-01 keystone). */
+  /** Closed union pinned by the DDL CHECK — ALWAYS 'learned' (the isolation keystone). */
   trust_level: z.string(),
   /** Closed union pinned by the DDL CHECK: candidate|active|stale|archived. */
   state: z.string(),
   body: z.string(),
-  /** JSON AST for Phase 223 delta-ops; NULL until populated (DB-only this phase). */
+  /** JSON AST for delta-ops; NULL until populated (stored but not yet consumed). */
   structured_body: z.string().nullable(),
-  /** JSON array of prior bodies; NULL until first supersede (DB-only this phase). */
+  /** JSON array of prior bodies; NULL until first supersede (stored but not yet consumed). */
   history: z.string().nullable(),
   /** JSON-encoded required-tool ids; NULL when none. */
   required_tools: z.string().nullable(),

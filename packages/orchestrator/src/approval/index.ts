@@ -2,7 +2,7 @@
 /**
  * Orchestrator approval surface: the server-side InteractiveCallbackRouter
  * (parse → lookup → cross-session → expiry → verify → dispatch). Channels never
- * import this — they reach signing via the `@comis/core` primitive (Pitfall 5).
+ * import this — they reach signing via the `@comis/core` primitive.
  *
  * @module
  */

@@ -4,10 +4,10 @@
  * (the LCD lossless store). Mirrors session-store.test.ts (in-memory db +
  * initSchema) and the entity-store scoping-isolation pattern.
  *
- * Drives F1 (faithful persistence of every block field) + F2 (faithful
- * reconstruction through the @comis/core codec seam) + F3 (reasoning rides as a
- * marked part, token_count survives) at the STORE level: a message appended
- * then read back through SQLite round-trips losslessly.
+ * Drives the three round-trip contracts at the STORE level: faithful persistence
+ * of every block field; faithful reconstruction through the @comis/core codec
+ * seam; reasoning rides as a marked part with token_count preserved. A message
+ * appended then read back through SQLite round-trips losslessly.
  */
 import {
   type AppendCondensedSummaryInput,
@@ -41,7 +41,7 @@ const SCOPE_B: ContextStoreScope = {
   sessionKey: "sess-b",
 };
 
-// ── WR-02 (R4) cross-agent fixtures: the REAL shared-(tenant,user,channel) case ──
+// ── Cross-agent fixtures: the REAL shared-(tenant,user,channel) case ──
 // `formatSessionKey` omits agentId, so two agents legitimately share ONE
 // conversation_id + tenantId + sessionKey, distinguished ONLY by agentId. Reads
 // must filter on agent_id (and tenant_id) so agent A can never recover agent B's
@@ -115,7 +115,7 @@ describe("createLcdStore", () => {
 
   beforeEach(() => {
     db = new Database(":memory:");
-    db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase (sqlite-adapter-base.ts:52)
+    db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase (sqlite-adapter-base.ts)
     initSchema(db, 1536);
     store = createLcdStore(db);
   });
@@ -263,7 +263,7 @@ describe("createLcdStore", () => {
     expect(toolResult!.isError).toBe(true);
   });
 
-  it("per-row degrade (WR-02) — one corrupt PART row keeps the message's good sibling parts, not []", () => {
+  it("per-row degrade — one corrupt PART row keeps the message's good sibling parts, not []", () => {
     // An assistant message with three parts (tool_use, reasoning, text); corrupt
     // exactly ONE part row on disk so it fails schema validation. The message
     // must come back with its TWO good parts, NOT an empty body — nulling the
@@ -290,7 +290,7 @@ describe("createLcdStore", () => {
     expect(kinds).toEqual(["tool_use", "text"]);
   });
 
-  it("per-row degrade (WR-02) — one corrupt MESSAGE row keeps the conversation's good messages, not []", () => {
+  it("per-row degrade — one corrupt MESSAGE row keeps the conversation's good messages, not []", () => {
     // Three messages in the same conversation; corrupt ONE message row so it
     // fails validation. getMessages must return the OTHER TWO, not [] for the
     // whole conversation (total context loss on a single bad sibling row).
@@ -309,7 +309,7 @@ describe("createLcdStore", () => {
     expect(messages.map((m) => m.seq)).toEqual([1, 3]);
   });
 
-  it("DDL CHECK (IN-01) — an out-of-enum role is rejected by the lcd_messages constraint", () => {
+  it("DDL CHECK — an out-of-enum role is rejected by the lcd_messages constraint", () => {
     // Defense-in-depth: the read path casts `row.role as LcdRole` unchecked, so
     // an out-of-set on-disk role (e.g. "system") would flow through
     // partsToMessage as a non-toolResult message. A CHECK (role IN (...))
@@ -333,7 +333,7 @@ describe("createLcdStore", () => {
     expect(insertGoodRole).not.toThrow();
   });
 
-  it("DDL CHECK (IN-01) — an out-of-enum part kind is rejected by the lcd_message_parts constraint", () => {
+  it("DDL CHECK — an out-of-enum part kind is rejected by the lcd_message_parts constraint", () => {
     // Seed a valid parent message so the FK is satisfiable.
     db.prepare(
       "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -373,7 +373,7 @@ describe("createLcdStore", () => {
 });
 
 // =====================================================================
-// createLcdStore — appendLeafSummary + getContextItems (Phase 129, C3)
+// createLcdStore — appendLeafSummary + getContextItems
 //
 // context_items is the ordered model-facing view: lazily seeded 1:1 from
 // lcd_messages on first read, then range-replaced by appendLeafSummary —
@@ -572,7 +572,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     expect(summaries).toHaveLength(1);
     const s = summaries[0]!;
     // The full DTO the assembler keys by summaryId to resolve a summary-ref into
-    // a user-role text message + its token authority (Pitfall 2).
+    // a user-role text message + its token authority.
     expect(s.summaryId).toBe(summaryId);
     expect(s.conversationId).toBe("conv-a");
     expect(s.kind).toBe("leaf");
@@ -690,7 +690,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     expect(row!.summary_id).toBe(summaryId);
   });
 
-  it("getContextItems degrades per-row (WR-02) — a corrupt context_items row is skipped, its siblings survive and never throw", () => {
+  it("getContextItems degrades per-row — a corrupt context_items row is skipped, its siblings survive and never throw", () => {
     seedMessages(3);
     store.getContextItems(SCOPE_A); // seed 3 message-refs (ordinals 0,1,2)
 
@@ -728,13 +728,13 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     expect(() => store.appendLeafSummary(input)).not.toThrow();
   });
 
-  // ── DAG-CRIT-2 (260605-m82): the resolved view must TRACK appends, not just
+  // ── The resolved view must TRACK appends, not just
   //    capture the first-read seed. Production interleaves reads and appends —
   //    the seed-once guard froze context_items at the first read while
   //    lcd_messages kept growing, so the trigger's utilization stayed pinned and
   //    the assembler read a stale partial history. The fix maintains the dense
   //    view incrementally inside appendTxn.
-  it("INVARIANT (CRIT-2): getContextItems tracks appends — interleaved reads between appends keep context_items dense 1:1 with lcd_messages", () => {
+  it("INVARIANT: getContextItems tracks appends — interleaved reads between appends keep context_items dense 1:1 with lcd_messages", () => {
     // Append one message at a time, reading getContextItems BETWEEN each append
     // (the exact production interleave the in-memory stubs never reproduced). The
     // first interleaved read used to seed only message 0; every later append then
@@ -764,7 +764,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     }
   });
 
-  it("CRIT-2: summary range-replace still works AFTER per-append seeding (no double-seed, delete/shift intact)", () => {
+  it("summary range-replace still works AFTER per-append seeding (no double-seed, delete/shift intact)", () => {
     // Append 5 messages, interleaving a read so the (now no-op) seed path is
     // exercised on an already-maintained view, then collapse [1,3].
     for (let seq = 0; seq < 5; seq++) {
@@ -804,7 +804,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     expect(rowCount).toBe(3);
   });
 
-  it("CRIT-2: incremental backfill seeds a LEGACY conversation (lcd_messages with zero context_items) dense 0..N-1 on first read", () => {
+  it("incremental backfill seeds a LEGACY conversation (lcd_messages with zero context_items) dense 0..N-1 on first read", () => {
     // Simulate a PRE-EXISTING conversation whose messages predate the per-append
     // context_items insert: write lcd_messages rows DIRECTLY (bypassing append),
     // so the model-facing view starts empty. This is the only path that does real
@@ -849,7 +849,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 });
 
 // =====================================================================
-// createLcdStore — appendCondensedSummary (Phase 130, C2 condensed tier)
+// createLcdStore — appendCondensedSummary (the condensed tier)
 //
 // The depth>0 condensation tier: a CONDENSED summary links its CHILD
 // SUMMARIES (via lcd_summary_parents, NOT lcd_summary_messages) and
@@ -1082,13 +1082,13 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
     expect(summaries.some((s) => s.summaryId === leaf1)).toBe(true);
   });
 
-  it("AppendCondensedSummaryInput type is the C2 condensation write-path contract", () => {
+  it("AppendCondensedSummaryInput type is the condensation write-path contract", () => {
     const { leaf0, leaf1 } = seedTwoContiguousLeaves();
     const input: AppendCondensedSummaryInput = condensedInput([leaf0, leaf1], 0, 1);
     expect(() => store.appendCondensedSummary(input)).not.toThrow();
   });
 
-  // ── WR-02: link/range cross-check (mirror the leaf T-129-22 tamper guard) ──
+  // ── Link/range cross-check (mirror the leaf tamper guard) ──
   // The condensed transaction range-replaces [start,end] AND links a child set.
   // It must NOT trust those two inputs to agree: the linked children are DERIVED
   // FROM the summary-refs actually in the replaced range (exactly as the leaf
@@ -1097,7 +1097,7 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
   // that still holds a surviving message-ref (which would collapse a raw message
   // into a "condensed" ref linking no message) is rejected.
 
-  it("derives the linked children FROM the in-range summary-refs — a mismatched childSummaryIds set never corrupts the lcd_summary_parents ledger (WR-02)", () => {
+  it("derives the linked children FROM the in-range summary-refs — a mismatched childSummaryIds set never corrupts the lcd_summary_parents ledger", () => {
     const { leaf0, leaf1 } = seedTwoContiguousLeaves(); // summary-refs at ords [0,1]
 
     // Pass a childSummaryIds set that does NOT match the range (a caller bug / a
@@ -1120,7 +1120,7 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
     expect(linkedChildIds).not.toContain("bogus-child-not-in-range");
   });
 
-  it("rejects a condensed range that still contains a surviving message-ref — never collapses a raw message into a condensed ref (WR-02)", () => {
+  it("rejects a condensed range that still contains a surviving message-ref — never collapses a raw message into a condensed ref", () => {
     seedMessages(3); // view [m0, m1, m2] at ords 0,1,2
     store.getContextItems(SCOPE_A);
     // Collapse only m1 → view [m0, leaf, m2] at ords 0,1,2. The range [0,1] now
@@ -1146,17 +1146,17 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// createLcdStore — E1 region walk + FTS5 search (Phase 131, Plan 02)
+// createLcdStore — region walk + FTS5 search
 // ───────────────────────────────────────────────────────────────────────────
-// The three E1 read methods on top of the lossless store:
+// The three region-walk read methods on top of the lossless store:
 //   - getSummaryChildren  → walks lcd_summary_parents (condensed → child edge)
 //   - getSummaryMessages  → walks lcd_summary_messages (leaf → message edge)
 //   - searchLcd           → FTS5 MATCH over lcd_summaries_fts / lcd_messages_fts
 //                           with a LIKE-scan fallback (the LIKE/boot-safety half
 //                           lives in lcd-fts.test.ts), all scoped by conversation.
-// Plus the A5 backfill: searchLcd MUST find a summary appended BEFORE the FTS
+// Plus the backfill: searchLcd MUST find a summary appended BEFORE the FTS
 // index existed (the 'rebuild' idiom over the external-content summaries table).
-describe("createLcdStore — E1 region walk + FTS5 search", () => {
+describe("createLcdStore — region walk + FTS5 search", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createLcdStore>;
 
@@ -1329,7 +1329,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
     expect(aHits.some((h) => bIds.has(h.refId))).toBe(false);
   });
 
-  it("A5: searchLcd finds a summary appended BEFORE the FTS index was created (rebuild backfill)", () => {
+  it("searchLcd finds a summary appended BEFORE the FTS index was created (rebuild backfill)", () => {
     // Open a fresh db and create ONLY the base LCD tables — NO FTS index yet.
     const bare = new Database(":memory:");
     bare.pragma("foreign_keys = ON");
@@ -1346,7 +1346,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
         token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
         taint INTEGER NOT NULL DEFAULT 0, fallback INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
       );
-      -- Phase 172: lcd_memory_provenance (created by ensureLcdTables) FKs into
+      -- lcd_memory_provenance (created by ensureLcdTables) FKs into
       -- memories(id). The LCD store shares the memory DB in production
       -- (createLcdStore(memoryAdapter.getDb())), so the FK target must exist for
       -- createLcdStore's eager INSERT-provenance prepare to resolve. Minimal stub.
@@ -1363,7 +1363,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
 
     // NOW run ensureLcdTables — it must add the FTS tables (incl. agent_id
     // UNINDEXED) AND backfill ('rebuild') the pre-existing summary row, carrying
-    // its agent_id, so an agent-scoped searchLcd finds it (R4).
+    // its agent_id, so an agent-scoped searchLcd finds it.
     ensureLcdTables(bare);
     const bareStore = createLcdStore(bare);
 
@@ -1380,7 +1380,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// createLcdStore — WR-03 contentless-FTS populate guard (gate + per-row mapper)
+// createLcdStore — contentless-FTS populate guard (gate + per-row mapper)
 // ───────────────────────────────────────────────────────────────────────────
 // The append-path lcd_messages_fts populate must (1) be GATED on
 // isFtsAvailable(db) so the EXPECTED FTS5-absent case is a clean conditional skip
@@ -1388,9 +1388,8 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
 // the just-inserted rowid through the sanctioned createRowMapper instead of a raw
 // `as { rowid: number }` cast. The gate is the testable behavior: when the FTS
 // availability probe reports UNAVAILABLE, the append must NOT attempt the
-// lcd_messages_fts INSERT at all. The pre-patch code attempted it unconditionally
-// (then swallowed any throw), so it MUST fail on the pre-patch tree.
-describe("createLcdStore — WR-03 FTS-populate guard", () => {
+// lcd_messages_fts INSERT at all.
+describe("createLcdStore — FTS-populate guard", () => {
   /**
    * Wrap a full-schema db in a Proxy that (a) forces the FTS-availability probe
    * (`SELECT rowid FROM lcd_summaries_fts … MATCH`) to THROW so isFtsAvailable()
@@ -1399,14 +1398,14 @@ describe("createLcdStore — WR-03 FTS-populate guard", () => {
    * uses the REAL prepares for every other statement, so createLcdStore builds
    * normally. Returns the proxied db plus the word-lane populate-attempt counter.
    *
-   * NOTE (Phase 180): the WORD lane is gated on `isFtsAvailable`; the trigram
+   * NOTE: the WORD lane is gated on `isFtsAvailable`; the trigram
    * TWIN lane (`lcd_messages_fts_tri`) is an INDEPENDENT lane gated on its OWN
    * guarded prep (not on isFtsAvailable). The twins genuinely exist on this db, so
    * the twin insert correctly fires here — that is NOT a word-lane-gate breach.
    * The match below therefore anchors on the word-lane column-list open paren
    * `lcd_messages_fts(` so it does NOT also catch `lcd_messages_fts_tri(...)` (the
    * twin lane's own gate is covered by lcd-store-fts-populate.test.ts + the
-   * Phase-180 trigram-less / base-write-authority cases).
+   * trigram-less / base-write-authority cases).
    */
   function ftsUnavailableProbeDb(): { db: Database.Database; ftsInsertAttempts: () => number } {
     const real = new Database(":memory:");
@@ -1478,17 +1477,15 @@ describe("createLcdStore — WR-03 FTS-populate guard", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// createLcdStore — R4 cross-agent read isolation (the Phase-131 WR-02 close)
+// createLcdStore — cross-agent read isolation
 // ───────────────────────────────────────────────────────────────────────────
 // Two agents (agent-a, agent-b) legitimately share ONE conversation_id +
-// tenantId + sessionKey (formatSessionKey omits agentId). Before R4, every read
-// filtered by conversation_id ONLY, so agent A could recover agent B's
-// compressed history across EVERY recovery surface. These tests pass the NEW
+// tenantId + sessionKey (formatSessionKey omits agentId). Every read filters by
+// conversation_id, agent_id AND tenant_id, so agent A can never recover agent B's
+// compressed history across ANY recovery surface. These tests pass the
 // scope-carrying signature (`store.getMessages(scope)` etc.) and assert agent A
-// never sees agent B's rows within the shared conversation. They MUST fail on the
-// pre-patch tree (the conversation-only signature does not even compile, and the
-// reads do not filter agent_id/tenant_id). Each surface gets its own test.
-describe("createLcdStore — R4 cross-agent read isolation (WR-02)", () => {
+// never sees agent B's rows within the shared conversation. Each surface gets its own test.
+describe("createLcdStore — cross-agent read isolation", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createLcdStore>;
 
@@ -1642,20 +1639,17 @@ describe("createLcdStore — R4 cross-agent read isolation (WR-02)", () => {
 });
 
 // =====================================================================
-// Phase 164 — cursor (RR1) + deleteConversationLcd (RR4)
+// cursor + deleteConversationLcd
 //
-// Task 1 (RED): tests are written against methods that do NOT exist yet on
-// ContextStorePort or createLcdStore. They use type-casts to compile while
-// failing at runtime (the method is undefined → TypeError). Task 2 (GREEN)
-// adds the DDL + implementations; the casts remain valid after the real
-// methods land (no cleanup needed).
+// These methods are reached through a type-cast helper (below) so the tests
+// compile against the public ContextStorePort shape.
 // =====================================================================
 
-describe("Phase 164 — cursor + deleteConversationLcd", () => {
+describe("cursor + deleteConversationLcd", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createLcdStore>;
 
-  /** Typed helpers via unknown cast — compile without the methods; fail at runtime until GREEN. */
+  /** Typed helpers via unknown cast — expose the cursor + reset methods on the port type. */
   type CursorMethods = {
     getIngestCursor(scope: ContextStoreScope): { epochAnchor: string; ingestedLiveLen: number } | null;
     upsertIngestCursor(
@@ -1797,10 +1791,10 @@ describe("Phase 164 — cursor + deleteConversationLcd", () => {
 });
 
 // ---------------------------------------------------------------------------
-// EFF-01: bounded working-set reads — getMessagesByIds / getSummariesByIds
+// Bounded working-set reads — getMessagesByIds / getSummariesByIds
 // ---------------------------------------------------------------------------
 
-describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
+describe("getMessagesByIds / getSummariesByIds", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createLcdStore>;
 
@@ -1827,7 +1821,7 @@ describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
     return store.getMessages(scope).map((m) => m.id);
   }
 
-  it("EFF-01-S-1: getMessagesByIds returns ONLY the rows whose ids are in the provided list", () => {
+  it("getMessagesByIds returns ONLY the rows whose ids are in the provided list", () => {
     const ids = appendMessages(SCOPE_A, 5);
     // Pick ids at index 0 and 2 (m1 and m3 by 0-based seq).
     const wanted = [ids[0]!, ids[2]!];
@@ -1836,13 +1830,13 @@ describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
     expect(result.map((m) => m.id).sort()).toEqual([...wanted].sort());
   });
 
-  it("EFF-01-S-2: getMessagesByIds with empty ids list returns [] without issuing any DB queries", () => {
+  it("getMessagesByIds with empty ids list returns [] without issuing any DB queries", () => {
     appendMessages(SCOPE_A, 3);
     const result = store.getMessagesByIds(SCOPE_A, []);
     expect(result).toEqual([]);
   });
 
-  it("EFF-01-S-3: getSummariesByIds returns ONLY the summaries whose summaryIds are in the list", () => {
+  it("getSummariesByIds returns ONLY the summaries whose summaryIds are in the list", () => {
     // Seed 3 messages then create 3 leaf summaries (one per message slot via successive passes).
     appendMessages(SCOPE_A, 3);
     store.getContextItems(SCOPE_A); // seed context_items
@@ -1896,7 +1890,7 @@ describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
     expect(result[0]!.summaryId).toBe(s2);
   });
 
-  it("EFF-01-S-4: getMessagesByIds respects R4 scope — messages from a different agentId are excluded", () => {
+  it("getMessagesByIds respects scope — messages from a different agentId are excluded", () => {
     // Seed messages for both agents sharing the same conversationId.
     const SCOPE_CROSS_A: ContextStoreScope = {
       conversationId: "conv-cross",
@@ -1927,11 +1921,11 @@ describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
     expect(result).toEqual([]);
   });
 
-  it("EFF-01-S-5: countMessages returns the FULL persisted scope count, distinct from the bounded getMessagesByIds subset", () => {
+  it("countMessages returns the FULL persisted scope count, distinct from the bounded getMessagesByIds subset", () => {
     const ids = appendMessages(SCOPE_A, 5);
     // countMessages reports the full persisted total — the value the dag
     // assembler's `persistedMsgCount` / fresh-tail-overlap math depends on. It is
-    // NOT the size of any bounded fetch. The EFF-01 regression used the bounded
+    // NOT the size of any bounded fetch. The regression used the bounded
     // `rows.length` (below) as persistedMsgCount, undercounting the total once the
     // oldest message-refs were folded into summary-refs — which silently broke
     // fresh-tail integrity and condensed-summary placement.
@@ -1940,7 +1934,7 @@ describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
     expect(store.getMessagesByIds(SCOPE_A, [ids[0]!, ids[1]!])).toHaveLength(2);
   });
 
-  it("EFF-01-S-6: countMessages respects R4 scope — a different agentId's messages are not counted", () => {
+  it("countMessages respects scope — a different agentId's messages are not counted", () => {
     const SCOPE_CNT_A: ContextStoreScope = {
       conversationId: "conv-cnt",
       tenantId: "tenant-cnt",
@@ -1959,20 +1953,20 @@ describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
     expect(store.countMessages(SCOPE_CNT_B)).toBe(7);
   });
 
-  it("EFF-01-S-7: countMessages returns 0 for a scope with no persisted messages", () => {
+  it("countMessages returns 0 for a scope with no persisted messages", () => {
     expect(store.countMessages({ ...SCOPE_A, conversationId: "conv-none" })).toBe(0);
   });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// createLcdStore — Phase 172 (DIST-01/DIST-03) provenance write surface
+// createLcdStore — provenance write surface
 // appendProvenance INSERTs an lcd_memory_provenance row (the distilled-memory ↔
 // LCD-summary link); markProvenanceSuperseded sets the pyramid supersession
-// pointer. Both are synchronous (better-sqlite3) and R4-scoped via the DTO.
+// pointer. Both are synchronous (better-sqlite3) and scoped via the DTO.
 // The provenance row FKs into memories(id) ON DELETE CASCADE, so we seed a real
 // memory row first.
 // ───────────────────────────────────────────────────────────────────────────
-describe("createLcdStore — DIST-05 provenance write surface", () => {
+describe("createLcdStore — provenance write surface", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createLcdStore>;
 
@@ -2076,11 +2070,10 @@ describe("createLcdStore — DIST-05 provenance write surface", () => {
     expect(count.c).toBe(0);
   });
 
-  // WR-01 (R4 fail-open write): the supersession UPDATE must be tenant+agent
+  // The supersession UPDATE must be tenant+agent
   // scoped. A summary_id collision (or a malicious/buggy caller) under a DIFFERENT
-  // tenant/agent must NOT flip another scope's provenance row. This fails on the
-  // pre-fix UPDATE that filtered on summary_id alone (no tenant_id/agent_id).
-  it("WR-01: markProvenanceSuperseded does NOT touch a row in a DIFFERENT tenant (R4 scoped UPDATE)", () => {
+  // tenant/agent must NOT flip another scope's provenance row.
+  it("markProvenanceSuperseded does NOT touch a row in a DIFFERENT tenant (scoped UPDATE)", () => {
     // Seed a memory + provenance row under tenant-p / agent-p, summary_id "sum-shared".
     const memId = "mem-tenant-p";
     seedMemoryRow(memId);
@@ -2119,29 +2112,27 @@ describe("createLcdStore — DIST-05 provenance write surface", () => {
 });
 
 // ===========================================================================
-// Phase 180 (FTS-01) — G10 forget-hole close + normalized LCD twin populate
+// Forget-hole close + normalized LCD twin populate
 //
-// RED FIRST. These tests fail on TODAY's code (the pre-180-04 tree), which:
-//   (a) DELIBERATELY ORPHANS lcd_messages_fts in deleteConversationLcdTxn — the
-//       comment at lcd-store.ts:312-314 calls the contentless shadow rows a
-//       "documented tradeoff". Because those rows are SELF-CONTAINED (they store
-//       their own content + the UNINDEXED conversation_id/agent_id scope columns),
-//       a scoped MATCH still returns them AFTER `sessions reset` → full message
-//       text stays ctx_search-matchable post-reset. That contradicts the v2.17
-//       COMPLETE-FORGET spec (`sessions reset` must leave nothing matchable in ANY
-//       FTS object). This is a LIVE PRIVACY DEFECT (ROADMAP criterion 3 / G10).
-//   (b) NEVER populates the lcd_messages_fts_tri / lcd_summaries_fts_tri trigram
-//       twins (DDL landed in 180-02; the TS-side normalized inserts land HERE), so
-//       a script-routed trigram MATCH finds nothing — the index side of the FTS-01
-//       symmetry does not exist yet.
+// These tests pin two behaviors:
+//   (a) deleteConversationLcdTxn MUST wipe lcd_messages_fts. Those contentless
+//       shadow rows are SELF-CONTAINED (they store their own content + the
+//       UNINDEXED conversation_id/agent_id scope columns), so a scoped MATCH would
+//       still return them AFTER `sessions reset` → full message text would stay
+//       ctx_search-matchable post-reset. The complete-forget contract requires
+//       `sessions reset` to leave nothing matchable in ANY FTS object (a privacy
+//       requirement).
+//   (b) The lcd_messages_fts_tri / lcd_summaries_fts_tri trigram twins are
+//       populated with normalized inserts, so a script-routed trigram MATCH finds
+//       the row — the index side of the trigram symmetry.
 //
 // The twin populate stores normalizeForSearch(text) — the SAME @comis/core symbol
-// the query side imports (the I7 contract). The discriminating assertion: a folded
+// the query side imports. The discriminating assertion: a folded
 // query token (final-mem folded) matches the stored row, while the RAW (un-folded,
 // final-mem) token does NOT — proving the stored content was normalized at index
 // time, not stored raw.
 //
-// Hebrew strings are built from String.fromCodePoint (WR-01 — never literal glyphs;
+// Hebrew strings are built from String.fromCodePoint (never literal glyphs;
 // also dodges the ASCII-quote-in-source hazard). Reference letters:
 //   he 0x05D4  samekh 0x05E1  pe 0x05E4  resh 0x05E8  yod 0x05D9
 //   final-mem 0x05DD  regular-mem 0x05DE
@@ -2150,17 +2141,17 @@ describe("createLcdStore — DIST-05 provenance write surface", () => {
 // kept — normalization folds finals, it does NOT strip prefixes).
 // ===========================================================================
 
-describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate", () => {
+describe("Forget-hole close + normalized LCD twin populate", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createLcdStore>;
 
-  // Typed cast for the explicit-reset method (mirrors the Phase 164 block above).
+  // Typed cast for the explicit-reset method (mirrors the cursor block above).
   type ResetMethod = { deleteConversationLcd(scope: ContextStoreScope): number };
   function storeWithReset(): ReturnType<typeof createLcdStore> & ResetMethod {
     return store as unknown as ReturnType<typeof createLcdStore> & ResetMethod;
   }
 
-  // ── Hebrew fixtures (codepoint-built; WR-01) ──────────────────────────────
+  // ── Hebrew fixtures (codepoint-built) ─────────────────────────────────────
   /** "הספרים" — he+samekh+pe+resh+yod+FINAL-mem (the raw stored message text). */
   const HE_HASFARIM_RAW = String.fromCodePoint(0x05d4, 0x05e1, 0x05e4, 0x05e8, 0x05d9, 0x05dd);
   /** "ספרימ" — samekh+pe+resh+yod+REGULAR-mem: the FOLDED query token (final mem
@@ -2218,12 +2209,12 @@ describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate
   beforeEach(() => {
     db = new Database(":memory:");
     db.pragma("foreign_keys = ON");
-    initSchema(db, 1536); // full schema → word lane + 180-02 trigram twins both exist
+    initSchema(db, 1536); // full schema → word lane + trigram twins both exist
     store = createLcdStore(db);
   });
 
-  // ── G10: the forget hole on the WORD lane (FAILS on today's code) ──────────
-  it("G10 word lane: after deleteConversationLcd a previously-matching lcd_messages_fts MATCH returns zero (v2.17 complete-forget)", () => {
+  // ── The forget hole on the WORD lane ──────────────────────────────────────
+  it("word lane: after deleteConversationLcd a previously-matching lcd_messages_fts MATCH returns zero (complete-forget)", () => {
     const messageId = appendText(HE_HASFARIM_RAW, 0);
     // BEFORE reset: the self-contained word-lane row is matchable (porter unicode61
     // tokenizes the whole Hebrew word; a whole-word MATCH finds it).
@@ -2235,20 +2226,19 @@ describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate
     storeWithReset().deleteConversationLcd(SCOPE_A);
 
     // AFTER reset: the base message is gone AND the FTS object must hold nothing
-    // matchable. TODAY this FAILS — the orphaned self-contained row keeps its
-    // UNINDEXED scope columns and stays matchable (lcd-store.ts:312-314).
+    // matchable. A missed wipe would leave the orphaned self-contained row (with
+    // its UNINDEXED scope columns) matchable.
     expect(store.getMessages(SCOPE_A)).toHaveLength(0);
     const after = ftsMatch("lcd_messages_fts", quoted(HE_HASFARIM_RAW), SCOPE_A);
     expect(after).toHaveLength(0);
   });
 
-  // ── Twin populate: message twin stores NORMALIZED text (FAILS today) ───────
+  // ── Twin populate: message twin stores NORMALIZED text ─────────────────────
   it("message twin: append הספרים → lcd_messages_fts_tri MATCH on the FOLDED token finds it; the RAW token does not (normalized index side)", () => {
     appendText(HE_HASFARIM_RAW, 0);
 
     // The folded query token (final mem folded) is a substring of the normalized
-    // stored content "הספרימ" → MATCH finds it. TODAY: zero twin rows exist (the
-    // populate does not write the twin), so this returns nothing → RED.
+    // stored content "הספרימ" → MATCH finds it.
     const folded = ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A);
     expect(folded.length).toBeGreaterThan(0);
 
@@ -2259,14 +2249,13 @@ describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate
     expect(raw).toHaveLength(0);
   });
 
-  // ── G10: the twins are also wiped on reset (FAIL today) ────────────────────
-  it("G10 twins: after deleteConversationLcd a previously-matching MATCH returns zero from lcd_messages_fts_tri AND lcd_summaries_fts_tri", () => {
+  // ── The twins are also wiped on reset ──────────────────────────────────────
+  it("twins: after deleteConversationLcd a previously-matching MATCH returns zero from lcd_messages_fts_tri AND lcd_summaries_fts_tri", () => {
     appendText(HE_HASFARIM_RAW, 0);
     store.getContextItems(SCOPE_A); // seed the model-facing view before the leaf pass
     store.appendLeafSummary(leafInput(0, 0, HE_HASFARIM_RAW));
 
-    // BEFORE reset the twins hold matchable normalized rows (these assertions are
-    // ALSO the populate RED — today the rows are never written, so they are 0).
+    // BEFORE reset the twins hold matchable normalized rows.
     expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A).length).toBeGreaterThan(0);
     expect(ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A).length).toBeGreaterThan(0);
 
@@ -2277,7 +2266,7 @@ describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate
     expect(ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A)).toHaveLength(0);
   });
 
-  // ── Summary twins: BOTH write sites populate normalized rows (FAIL today) ──
+  // ── Summary twins: BOTH write sites populate normalized rows ───────────────
   it("summary twins: a leaf summary and a condensed summary each write a normalized lcd_summaries_fts_tri row", () => {
     // Two messages → a leaf over each → a condensed over the two leaves; all carry
     // the Hebrew content so the folded token matches the normalized twin rows.
@@ -2287,7 +2276,7 @@ describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate
     const leaf0 = store.appendLeafSummary(leafInput(0, 0, HE_HASFARIM_RAW));
     const leaf1 = store.appendLeafSummary(leafInput(1, 1, HE_HASFARIM_RAW));
 
-    // Leaf write site populates the summary twin (RED today).
+    // Leaf write site populates the summary twin.
     const afterLeaves = ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_A);
     expect(afterLeaves.length).toBeGreaterThanOrEqual(2);
 
@@ -2316,14 +2305,14 @@ describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate
     expect(ftsMatch("lcd_summaries_fts_tri", quoted(HE_SFARIM_RAW), SCOPE_A)).toHaveLength(0);
   });
 
-  // ── R4: twin rows carry the writing agent's scope (cross-agent isolation) ──
-  it("twin R4: agent A's message-twin row is never matched under agent B within a shared conversation", () => {
+  // ── Twin rows carry the writing agent's scope (cross-agent isolation) ──────
+  it("twin scope: agent A's message-twin row is never matched under agent B within a shared conversation", () => {
     appendText(HE_HASFARIM_RAW, 0, SCOPE_AGENT_A);
 
     // Agent A finds its own normalized twin row.
     expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_AGENT_A).length).toBeGreaterThan(0);
     // Agent B (same conversation_id + tenant, different agent_id) does NOT — the
-    // twin insert stamps agent_id from the write scope (R4); the MATCH filters it.
+    // twin insert stamps agent_id from the write scope; the MATCH filters it.
     expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_AGENT_B)).toHaveLength(0);
   });
 
@@ -2374,8 +2363,8 @@ describe("Phase 180 (FTS-01) — G10 forget close + normalized LCD twin populate
  * Build the base LCD tables + the WORD-lane FTS section but DELIBERATELY skip the
  * trigram twins — the "trigram tokenizer absent" host shape. We cannot call
  * `ensureLcdTables` (it now wires `ensureTrigramTwins`), so reproduce the base +
- * word-lane DDL the store's prepares depend on, minus the twins. Mirrors the A5
- * test's hand-rolled base-table DDL.
+ * word-lane DDL the store's prepares depend on, minus the twins. Mirrors the
+ * rebuild-backfill test's hand-rolled base-table DDL.
  */
 function ensureLcdTablesWithoutTwins(db: Database.Database): void {
   db.exec(`
@@ -2388,7 +2377,7 @@ function ensureLcdTablesWithoutTwins(db: Database.Database): void {
       id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE CASCADE,
       ordinal INTEGER NOT NULL, kind TEXT NOT NULL, tool_call_id TEXT, tool_name TEXT,
       tool_input TEXT, tool_output TEXT,
-      is_error INTEGER,                       -- 0/1; NULL for non-tool_result (matches schema-lcd.ts:103)
+      is_error INTEGER,                       -- 0/1; NULL for non-tool_result (matches schema-lcd.ts)
       metadata TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE IF NOT EXISTS lcd_summaries (

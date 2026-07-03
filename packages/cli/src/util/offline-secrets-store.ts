@@ -28,13 +28,13 @@ export type { ObservabilityStore };
 
 export const offlineSecretSet = _offlineSecretSet;
 export const offlineSecretsList = _offlineSecretsList;
-// W15: daemon-free decrypted read — breaks the gateway-token chicken-and-egg
-// (`secrets get COMIS_GATEWAY_TOKEN` needed the RPC that needed the token).
+// Daemon-free decrypted read — breaks the gateway-token chicken-and-egg
+// (`secrets get COMIS_GATEWAY_TOKEN` would need the RPC that needs the token).
 export const offlineSecretGet = _offlineSecretGet;
 // OAuth profiles collected during `comis init` (encrypted mode, daemon down)
 // are sealed into secrets.db through this same L11-allowed re-open site.
 export const offlineOAuthProfileSet = _offlineOAuthProfileSet;
-// W14 (obs-llm-troubleshooting): the offline obs fallback opens the local
+// The offline obs fallback opens the local
 // memory.db (WAL — concurrent with a live daemon) to feed the daemon's pure
 // report assemblers when the gateway is unreachable. Same L11 seam: this file
 // remains the ONLY @comis/cli → @comis/memory import site.

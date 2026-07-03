@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Email DigestOnly activity renderer (§7.2 / §18.3 row
- * "DigestOnly"). Email is the largest-cap, send-only channel — it wires the
+ * Email DigestOnly activity renderer.
+ * Email is the largest-cap, send-only channel — it wires the
  * `createDigestOnlyRenderer`: buffer the trail in `apply`, send NOTHING
  * mid-turn, send NOTHING on success (the assistant reply IS the activity, so a
  * separate "done" email would be noise), and on failure emit exactly ONE
@@ -20,7 +20,7 @@
  *      adapter's OWN log call, not on the value handed back. There is no reliable
  *      structural signal to disambiguate a richer variant on the returned error,
  *      so the classifier DEFAULTS to `{kind:"internal", cause:e}` (KISS —
- *      Pitfall 4; no invented rich classifier). §19.3: the SMTP error body
+ *      no invented rich classifier). The SMTP error body
  *      is read for NOTHING user-facing — it selects the variant only and is NEVER
  *      rendered or logged as activity text. The S4 fixture proves the digest body
  *      is the `FAILED {errorKind}` header + the redacted bullet trail, not the
@@ -39,7 +39,7 @@
  *   3. `createEmailActivityRenderer` — wires the
  *      {@link createDigestOnlyRenderer}. DigestOnly is purely end-of-turn (it
  *      schedules nothing), so its deps are `{ actions }` ONLY — there is NO
- *      TimerPort / ClockPort (Pitfall 5). It does NOT re-implement the digest body:
+ *      TimerPort / ClockPort. It does NOT re-implement the digest body:
  *      the `FAILED {errorKind}` header + bullet-trail assembly lives in
  *      `digest-only.ts`. This is the signature the daemon wiring constructs.
  *
@@ -63,7 +63,7 @@
  * injected (pre-wiring) or the trail has no approval event, the digest stays the
  * byte-stable `[FAILED] {errorKind}` + bullet trail, so the 5 golden
  * fixtures are unaffected. The renderer reaches NO orchestrator/router code — it
- * only invokes the injected accessor (Pitfall 5).
+ * only invokes the injected accessor.
  *
  * The channels package depends on core + shared only (no observability substrate),
  * so no diagnostics primitive is reachable here.
@@ -106,7 +106,7 @@ export interface EmailActivityRendererDeps {
  * failure with no structured numeric code on the returned value, so this DEFAULTS
  * to `internal` carrying the cause. The error is consulted for NOTHING that
  * reaches the user — it selects the variant only and is never rendered or logged
- * as activity text (§19.3).
+ * as activity text.
  */
 export function classifyEmailError(e: unknown): ActivityRenderError {
   // The SMTP send path offers no structured code on the returned Error; there is
@@ -175,8 +175,8 @@ function buildApprovalLinkTrailer(
 /**
  * Create the Email DigestOnly activity renderer — wires the
  * {@link createDigestOnlyRenderer} with the per-channel render-actions adapter.
- * DigestOnly is purely end-of-turn, so it takes NO TimerPort / ClockPort (Pitfall
- * 5). The daemon composition root constructs this with the recipient id
+ * DigestOnly is purely end-of-turn, so it takes NO TimerPort / ClockPort.
+ * The daemon composition root constructs this with the recipient id
  * and the optional `mintApprovalLink` accessor: when present, a `[FAILED]`
  * digest whose trail carries a `kind:"approval"` event appends the minted
  * single-use link. When absent, the digest is the byte-stable failure body.

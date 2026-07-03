@@ -83,7 +83,7 @@ vi.mock("./tool-deferral.js", () => ({
   applyToolBudgetFit: mocks.applyToolBudgetFitMock,
   computeWindowFitBudget: mocks.computeWindowFitBudgetMock,
   extractRecentlyUsedToolNames: mocks.extractRecentlyUsedToolNamesMock,
-  // resolveModelTier has been deleted in Plan 151-03 (K1 requirement)
+  // tool-deferral.js has no resolveModelTier export — capabilityClass drives deferral.
   CORE_TOOLS: new Set(["bash", "file_read"]),
 }));
 
@@ -112,7 +112,7 @@ vi.mock("./executor-tool-pipeline.js", () => ({
   applyMutationSerializer: mocks.applyMutationSerializerMock,
 }));
 
-// KNOB-02: passthrough spy on the profile budget — the threading pin (KNOB-02-20)
+// Passthrough spy on the profile budget — the provenance-threading pin below
 // must observe BOTH the windowProvenance argument reaching the call site AND the
 // REAL computed budget (rawContextWindowTokens / windowCapSource). The actual
 // implementation runs unchanged for every other test in this file.
@@ -295,7 +295,7 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
   });
 
   it("reserves system-token budget for the POST-deferral active tools, not the full pre-deferral set", async () => {
-    // Live finding (2026-06-12 UC-2): cachedSystemTokensEstimate was computed at
+    // Live finding: cachedSystemTokensEstimate was computed at
     // ÷3.5 over mergedCustomTools BEFORE applyToolDeferral ran, so a small-class
     // agent that defers ~58 of 82 tools still reserved budget for all 82 — a ~16K
     // over-reservation that squeezed the history partition and falsely
@@ -328,7 +328,7 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
   });
 
   // -------------------------------------------------------------------------
-  // ROOT-CAUSE context-exhaustion guard (2026-06-22): the window-aware
+  // Context-exhaustion guard: the window-aware
   // tool-budget fit pass must run on the SHIPPING active set (active +
   // discovered + discover_tools), and when it defers more tools the assembly
   // must reflect the refined partition (smaller mergedCustomTools + smaller
@@ -364,9 +364,9 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
   });
 
   it("hands assembleExecutionPrompt a windowFitBudget so the degenerate-window compact fallback can engage", async () => {
-    // The Part-2 extension: the prompt-assembly degenerate fallback needs the
-    // effective window + headroom + floor. assembleTools must thread that budget
-    // into assembleExecutionPrompt (the prompt-fit pass mirrors the tool-fit pass).
+    // The prompt-assembly degenerate fallback needs the effective window +
+    // headroom + floor. assembleTools must thread that budget into
+    // assembleExecutionPrompt (the prompt-fit pass mirrors the tool-fit pass).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await assembleTools(makeParams({ deps: makeDeps({ customTools: [makeTool("read")] as any }) }));
     expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledTimes(1);
@@ -635,10 +635,10 @@ describe("assembleTools — system token estimate from systemPrompt length + too
 });
 
 // ---------------------------------------------------------------------------
-// I1 / WR-01: cachedFreshTailPreambleTokens — the SEPARATE WHOLE-preamble estimate
+// cachedFreshTailPreambleTokens — the SEPARATE WHOLE-preamble estimate
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — fresh-tail preamble token estimate from the WHOLE dynamicPreamble + inlineMemory block (I1 / WR-01)", () => {
+describe("assembleTools — fresh-tail preamble token estimate from the WHOLE dynamicPreamble + inlineMemory block", () => {
   // The budget-path char ratio (constants.ts CHARS_PER_TOKEN_RATIO = 3.5), NOT the
   // ctx-tools' /4 — the estimate must match the token-budget heuristic the DAG
   // subtracts it against.
@@ -670,8 +670,8 @@ describe("assembleTools — fresh-tail preamble token estimate from the WHOLE dy
     expect(r.cachedFreshTailPreambleTokens).toBe(0);
   });
 
-  it("WR-01: measures the WHOLE dynamicPreamble (skills XML / MCP / deferred tools) even with ZERO recalled memory", async () => {
-    // The load-bearing WR-01 property: the estimate tracks the ENTIRE fresh-tail
+  it("measures the WHOLE dynamicPreamble (skills XML / MCP / deferred tools) even with ZERO recalled memory", async () => {
+    // The load-bearing property: the estimate tracks the ENTIRE fresh-tail
     // preamble, not just recalled memory. A large dynamicPreamble (e.g. a heavy
     // skills-XML / many-MCP agent) with EMPTY inlineMemory (no recall at all) must
     // STILL produce a large estimate, because the whole preamble rides the
@@ -739,7 +739,7 @@ describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize,
 
   it("passes the capabilityClass from ModelProfile to applySchemasPruning (frontier → not pruned)", async () => {
     // Frontier models (anthropic) have capabilityClass="frontier"; applySchemasPruning
-    // only prunes for "nano" — so frontier passes through unchanged (behavior-neutral K1).
+    // only prunes for "nano" — so frontier passes through unchanged.
     await assembleTools(makeParams({
       resolvedModel: { id: "claude-sonnet-4", provider: "anthropic", contextWindow: 200_000, reasoning: false },
       // No modelProfile passed → assembleTools falls back to FAIL_CLOSED_PROFILE when
@@ -763,9 +763,8 @@ describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize,
     expect(pruneCallArg.capabilityClass).toBe("frontier");
   });
 
-  it("characterization: frontier-class ModelProfile threads capabilityClass='frontier' to deferralCtx (behavior-neutral — same as old modelTier='large')", async () => {
-    // Phase 151 K1 characterization: a frontier model must reach DeferralContext
-    // with capabilityClass="frontier", matching the old modelTier="large" behavior.
+  it("characterization: frontier-class ModelProfile threads capabilityClass='frontier' to deferralCtx (no aggressive deferral)", async () => {
+    // A frontier model must reach DeferralContext with capabilityClass="frontier".
     // The aggressive-deferral gate (capabilityClass==="nano") must NOT fire for frontier.
     const frontierProfile = {
       contextWindow: 200_000,
@@ -794,9 +793,9 @@ describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize,
     expect(deferralCtxPositional?.capabilityClass).toBe("frontier");
   });
 
-  it("characterization: nano-class ModelProfile threads capabilityClass='nano' to deferralCtx (behavior-neutral — same as old modelTier='small')", async () => {
-    // Phase 151 K1 characterization: a nano model must reach DeferralContext
-    // with capabilityClass="nano", matching the old modelTier="small" aggressive-deferral behavior.
+  it("characterization: nano-class ModelProfile threads capabilityClass='nano' to deferralCtx (aggressive deferral engages)", async () => {
+    // A nano model must reach DeferralContext with capabilityClass="nano",
+    // which is the class the aggressive-deferral gate keys on.
     const nanoProfile = {
       contextWindow: 8_192,
       maxOutputTokens: 4096,
@@ -1032,10 +1031,10 @@ describe("assembleTools — discovery-state restore from SpawnPacket on subagent
 // Per-message trust resolution
 //
 // The deferralCtx's `trustLevel` field gates `PRIVILEGED_TOOL_NAMES` (including
-// `mcp_manage`, `agents_manage`, `obs_query`). Previously the context used the
-// GLOBAL `defaultTrustLevel` only, so `senderTrustMap` entries never reached
-// the deferral gate — admin users mapped via `senderTrustMap` had privileged
-// tools deferred. This block asserts the new resolution:
+// `mcp_manage`, `agents_manage`, `obs_query`). The resolution must consult
+// `senderTrustMap` per message, not just the GLOBAL `defaultTrustLevel` —
+// otherwise admin users mapped via `senderTrustMap` never reach the deferral
+// gate and have privileged tools deferred. This block asserts the resolution:
 //
 //   config.elevatedReply.senderTrustMap[msg.senderId]
 //     ?? config.elevatedReply.defaultTrustLevel
@@ -1114,10 +1113,10 @@ describe("assembleTools — per-message trust resolution", () => {
 });
 
 // ---------------------------------------------------------------------------
-// C3: Preamble WARN + deferred-tools truncation (Plan 152-04)
+// Preamble WARN + deferred-tools truncation
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — C3 preamble size WARN when cachedFreshTailPreambleTokens exceeds profile cap", () => {
+describe("assembleTools — preamble size WARN when cachedFreshTailPreambleTokens exceeds profile cap", () => {
   // CHARS_PER_TOKEN_RATIO = 3.5; small threshold = 3200 tokens → 3200 * 3.5 = 11200 chars to exceed
   const CHARS_PER_TOKEN_RATIO = 3.5;
   const SMALL_WARN_THRESHOLD_TOKENS = 3_200; // tokens
@@ -1151,7 +1150,7 @@ describe("assembleTools — C3 preamble size WARN when cachedFreshTailPreambleTo
     reasoningStyle: "none" as const,
   };
 
-  it("C3: emits logger.warn with hint and errorKind=capacity when small model preamble exceeds threshold", async () => {
+  it("emits logger.warn with hint and errorKind=resource when a small model's preamble exceeds the threshold", async () => {
     const logger = createMockLogger();
     // Produce a preamble that exceeds the small-class threshold
     const bigPreamble = "P".repeat(SMALL_WARN_THRESHOLD_CHARS);
@@ -1175,7 +1174,7 @@ describe("assembleTools — C3 preamble size WARN when cachedFreshTailPreambleTo
     );
   });
 
-  it("C3: does NOT warn for frontier model even with a large preamble (Infinity threshold)", async () => {
+  it("does NOT warn for a frontier model even with a large preamble (Infinity threshold)", async () => {
     const logger = createMockLogger();
     // Even a very large preamble should NOT warn for frontier
     const bigPreamble = "P".repeat(SMALL_WARN_THRESHOLD_CHARS * 10);
@@ -1189,14 +1188,14 @@ describe("assembleTools — C3 preamble size WARN when cachedFreshTailPreambleTo
       resolvedModel: { id: "claude-frontier", provider: "anthropic", contextWindow: 200_000, reasoning: false },
       deps: makeDeps({ logger }),
     }));
-    // No warn with errorKind=resource (C3 preamble guard) should have fired
+    // No warn with errorKind=resource (the preamble guard) should have fired
     const capacityWarns = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
       (c) => (c[0] as Record<string, unknown>)?.errorKind === "resource",
     );
     expect(capacityWarns).toHaveLength(0);
   });
 
-  it("C3: small model with preamble BELOW threshold does NOT warn", async () => {
+  it("does NOT warn for a small model whose preamble stays BELOW the threshold", async () => {
     const logger = createMockLogger();
     // Preamble well below 3200 tokens
     const smallPreamble = "P".repeat(100);
@@ -1217,7 +1216,7 @@ describe("assembleTools — C3 preamble size WARN when cachedFreshTailPreambleTo
   });
 });
 
-describe("assembleTools — C3 deferred-tools list capped for small/nano via DEFERRED_TOOLS_MAX_BY_CLASS", () => {
+describe("assembleTools — deferred-tools list capped for small/nano via DEFERRED_TOOLS_MAX_BY_CLASS", () => {
   const smallProfile = {
     contextWindow: 32_768,
     maxOutputTokens: 4096,
@@ -1232,7 +1231,7 @@ describe("assembleTools — C3 deferred-tools list capped for small/nano via DEF
     reasoningStyle: "none" as const,
   };
 
-  it("C3: calls buildDeferredToolsContext with maxEntries option for small model when deferred entries exist", async () => {
+  it("calls buildDeferredToolsContext with the maxEntries option for a small model when deferred entries exist", async () => {
     // Simulate 50 deferred entries for small model
     const deferredEntries = Array.from({ length: 50 }, (_, i) => ({ name: `tool_${i}` } as never));
     mocks.applyToolDeferralMock.mockReturnValueOnce({
@@ -1254,7 +1253,7 @@ describe("assembleTools — C3 deferred-tools list capped for small/nano via DEF
     );
   });
 
-  it("C3: calls buildDeferredToolsContext WITHOUT maxEntries option for frontier model (unlimited)", async () => {
+  it("calls buildDeferredToolsContext WITHOUT the maxEntries option for a frontier model (unlimited)", async () => {
     const frontierProfile = {
       contextWindow: 200_000,
       maxOutputTokens: 4096,
@@ -1290,14 +1289,14 @@ describe("assembleTools — C3 deferred-tools list capped for small/nano via DEF
 });
 
 // ---------------------------------------------------------------------------
-// KNOB-02 (Phase 176): window-provenance threading into the profile budget.
-// Plan 176-01 made computeTokenBudgetForProfile provenance-AWARE (optional 7th
+// Window-provenance threading into the profile budget.
+// computeTokenBudgetForProfile is provenance-AWARE (optional 7th
 // arg); without the ToolAssemblyParams field + the call-site pass-through, the
-// parameter is never populated — "built-but-not-wired" (Pitfall 4). This is
+// parameter is never populated — the "built-but-not-wired" hazard. This is
 // the RED pin proving the value REACHES the budget call site.
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — KNOB-02 window provenance threading into computeTokenBudgetForProfile", () => {
+describe("assembleTools — window provenance threading into computeTokenBudgetForProfile", () => {
   // The executor-reconciled profile: contextWindow ALREADY overwritten with the
   // served value (8_192) by pi-executor's resolveModelProfile-on-reconciled-window.
   const servedBoundSmallProfile = {
@@ -1314,7 +1313,7 @@ describe("assembleTools — KNOB-02 window provenance threading into computeToke
     reasoningStyle: "none" as const,
   };
 
-  it("KNOB-02-20: threads params.windowProvenance to the budget call so a served-bound budget reports raw=configured 131072 with windowCapSource 'served'", async () => {
+  it("threads params.windowProvenance to the budget call so a served-bound budget reports raw=configured 131072 with windowCapSource 'served'", async () => {
     const budgetSpy = vi.mocked(computeTokenBudgetForProfile);
     await assembleTools(makeParams({
       modelProfile: servedBoundSmallProfile,
@@ -1339,23 +1338,23 @@ describe("assembleTools — KNOB-02 window provenance threading into computeToke
 });
 
 // ---------------------------------------------------------------------------
-// TOK-01 (Phase 179): script-aware token factors on the THREE char→token sites
+// Script-aware token factors on the THREE char→token sites
 //
 // All three executor-tool-assembly conversions divide flat chars by 3.5, blind
 // to script density — a Hebrew systemPrompt/preamble carries ~1.8× the tokens
-// the flat estimate reserves, voiding the v2.18 fit guarantee for non-Latin.
+// the flat estimate reserves, voiding the window-fit guarantee for non-Latin.
 // Pre-patch every Hebrew case below computes flat chars/3.5 → RED. The fix
 // divides each TEXT term's chars by scriptTokenFactor(text) (effective chars),
 // rides aggregate char counts (tool-def overhead — machine-Latin JSON) flat,
 // and takes ONE ceil over the sum (per-term ceils would inflate ASCII results
-// and break the I1 byte-identity pin).
+// and break the ASCII byte-identity pin below).
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — TOK-01 script-aware system/preamble token estimates", () => {
+describe("assembleTools — script-aware system/preamble token estimates", () => {
   // The budget-path char ratio (constants.ts CHARS_PER_TOKEN_RATIO).
   const RATIO = 3.5;
   // Pure-Hebrew payload (letters + neutral spaces → hebrew-letters row factor,
-  // shipped 0.50 after the TOK-02 same-commit lowering — pinned exactly in
+  // shipped as 0.50 — pinned exactly in
   // core's token-factor.test.ts): factored tokens ≈ 2× flat — comfortably
   // discriminating. Bounds here import scriptTokenFactor, so they track the
   // table value automatically.
@@ -1408,7 +1407,7 @@ describe("assembleTools — TOK-01 script-aware system/preamble token estimates"
       systemPrompt: hePrompt,
       dynamicPreamble: "",
     });
-    // Drive the DEFERRAL path: keep 4 active, defer 26 (mirrors the UC-2 fixture above).
+    // Drive the DEFERRAL path: keep 4 active, defer 26 (mirrors the deferral fixture above).
     mocks.applyToolDeferralMock.mockImplementationOnce(() => ({
       activeTools: activeSubset,
       discoveredTools: [],
@@ -1426,10 +1425,10 @@ describe("assembleTools — TOK-01 script-aware system/preamble token estimates"
     );
   });
 
-  it("I1: pure-ASCII systemPrompt and preamble estimates are byte-identical to the flat formulas (factor 1.0)", async () => {
+  it("pure-ASCII systemPrompt and preamble estimates are byte-identical to the flat formulas (factor 1.0)", async () => {
     // The Latin guarantee: scriptTokenFactor(ascii) === 1 and ONE ceil over the
-    // summed effective chars reproduces today's values EXACTLY (per-term ceil
-    // splitting would inflate these — the I1 break this pin guards against).
+    // summed effective chars reproduces the flat values EXACTLY (per-term ceil
+    // splitting would inflate these — the break this pin guards against).
     const asciiPrompt = "x".repeat(443); // odd lengths exercise the ceil boundary
     const asciiPre = "P".repeat(353);
     const asciiMem = "M".repeat(211);

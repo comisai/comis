@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit coverage for `sendJsonRpc` (test/support/ws-helpers.ts) — specifically
- * the WR-05 mid-request socket-death rejection (Phase 205 review fix).
+ * the mid-request socket-death rejection.
  *
- * Phase 205 newly routes `rpcRequest` (and therefore the `tg rpc` keystone)
+ * `rpcRequest` (and therefore the `tg rpc` keystone) routes
  * through `sendJsonRpc`, so a dropped socket mid-dispatch must surface as a
  * prompt transport error rather than stalling to the full RPC timeout. These
  * tests drive a FAKE WebSocket (an EventTarget with send/close) so the
@@ -54,7 +54,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("sendJsonRpc — mid-request socket death (WR-05)", () => {
+describe("sendJsonRpc — mid-request socket death", () => {
   it("rejects PROMPTLY when the socket closes before the response (not after the full timeout)", async () => {
     const ws = new FakeWebSocket();
     const promise = sendJsonRpc(ws as unknown as WebSocket, "obs.fleet.health", {}, 1, {

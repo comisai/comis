@@ -7,7 +7,7 @@
  * for managing encrypted secrets.
  *
  * Store-backed subcommands (set, get, list, delete, import) route through
- * daemon RPC -- the CLI no longer opens the encrypted SQLite store directly.
+ * daemon RPC -- the CLI never opens the encrypted SQLite store directly.
  * Each store-backed subcommand gates on a 200ms `requireDaemonOrExit()` probe
  * and exits with code 4 (DaemonRequired) on failure (see util/daemon-required.ts).
  *
@@ -290,7 +290,7 @@ export function registerSecretsCommand(program: Command): void {
         }
       }
 
-      // W15 (obs-llm-troubleshooting): explicit offline read. Without it,
+      // Explicit offline read. Without it,
       // `secrets get COMIS_GATEWAY_TOKEN` required the daemon RPC — which
       // required the very token being fetched. The daemon path stays the
       // default (RPC reads are audit-logged daemon-side); --offline is the

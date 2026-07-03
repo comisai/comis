@@ -60,7 +60,7 @@ function customDelay(config: DeliveryTimingConfig): number {
  *   Capped at 2.0x for blocks >= 500 chars.
  * - Position signal: earlier blocks delivered faster (0.5x at start),
  *   later blocks slower (1.0x at end).
- * - Conversation pace: stubbed as 1.0 (deferred TIMING-D01).
+ * - Conversation pace: stubbed as 1.0 (not yet implemented).
  *
  * Signals are multiplied and scaled between minMs-maxMs.
  */

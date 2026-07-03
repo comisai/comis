@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DEL-03 (Phase 192 / Plan 03) — the per-channelType video-size limit table +
- * the override-aware resolver + the link-vs-notice support map.
+ * The per-channelType video-size limit table + the override-aware resolver + the
+ * link-vs-notice support map.
  *
- * THE DEL-03 RECONCILIATION (RESEARCH Open Q3). The design forbids BOTH:
+ * THE RECONCILIATION. The design forbids BOTH:
  *   (a) one hardcoded global per-platform byte cap, AND
  *   (b) an invented per-platform byte table baked across the 9 adapter files.
  * The reconciliation is a SINGLE per-channelType table here, where each entry is
@@ -16,9 +16,9 @@
  *
  * THIS IS NOT THE SILENT-DROP PATH. `packages/channels/src/shared/media-compressor.ts`
  * `compressAttachments` REMOVES an oversized attachment and appends an
- * `[Attachment too large]` placeholder — the v2.23 anti-pattern DEL-03 exists to
- * replace (PATTERNS §5b / Pitfall 5). The delivery site consults THIS table and
- * sends a link/notice instead; an oversized clip is NEVER silently dropped.
+ * `[Attachment too large]` placeholder — the anti-pattern this table exists to
+ * replace. The delivery site consults THIS table and sends a link/notice instead;
+ * an oversized clip is NEVER silently dropped.
  *
  * @module
  */
@@ -38,7 +38,7 @@ export const DEFAULT_VIDEO_SIZE_LIMIT = 25 * MB;
 
 /**
  * Per-channelType documented bot/upload limit, in bytes. Each entry cites the
- * platform's real limit (DEL-03: per-adapter, not an invented global). These are
+ * platform's real limit (per-adapter, not an invented global). These are
  * the HONEST defaults; an operator overrides any of them via the media-compressor
  * `maxVideoBytes` config (passed as the `override` arg to `resolveVideoSizeLimit`).
  *
@@ -56,7 +56,7 @@ export const DEFAULT_VIDEO_SIZE_LIMIT = 25 * MB;
  *   - email     : common provider attachment cap ≈ 25 MB (Gmail).
  *   - echo      : the in-tree test/echo adapter — generous (no real platform cap).
  * IRC is intentionally ABSENT: it has no attachment surface (no `sendAttachment`),
- * so it degrades via the DEL-02 capability gate (a notice), never a size check.
+ * so it degrades via the capability gate (a notice), never a size check.
  */
 export const VIDEO_SIZE_LIMITS: Readonly<Record<string, number>> = Object.freeze({
   telegram: 50 * MB,
@@ -71,10 +71,10 @@ export const VIDEO_SIZE_LIMITS: Readonly<Record<string, number>> = Object.freeze
 });
 
 /**
- * Channels that render a clickable URL message — DEL-03's `link` degrade policy
+ * Channels that render a clickable URL message — the `link` degrade policy
  * (send the RETAINED provider/workspace path as a message). A channel ABSENT here
  * (and IRC, which has no attachment surface at all) degrades with a `notice`
- * instead. Verified against the per-adapter audit (RESEARCH Open Q4/A4):
+ * instead. Verified against the per-adapter audit:
  * Discord/Slack/Telegram/LINE/WhatsApp/Signal/iMessage/Email render a link in a
  * text message; IRC does not (notice-only).
  */
@@ -94,15 +94,15 @@ const CHANNELS_RENDERING_VIDEO_LINK: Readonly<Record<string, true>> = Object.fre
  *
  *   `override ?? VIDEO_SIZE_LIMITS[channelType] ?? DEFAULT_VIDEO_SIZE_LIMIT`
  *
- * - `override` is the operator's media-compressor `maxVideoBytes` (it WINS — DEL-03
- *   "overridable via maxVideoBytes").
+ * - `override` is the operator's media-compressor `maxVideoBytes` (it WINS —
+ *   overridable via maxVideoBytes).
  * - an UNKNOWN channelType (or a proto-pollution key) falls back to the 25 MB
- *   default — NEVER throws, NEVER reads the prototype chain (SEC-04 guard).
+ *   default — NEVER throws, NEVER reads the prototype chain (the proto-pollution guard).
  */
 export function resolveVideoSizeLimit(channelType: string, override?: number): number {
   if (typeof override === "number" && override > 0) return override;
   if (isBlockedObjectKey(channelType)) return DEFAULT_VIDEO_SIZE_LIMIT;
-  // eslint-disable-next-line security/detect-object-injection -- channelType is a platform-internal label, guarded by isBlockedObjectKey above (SEC-04 defense-in-depth); the table is a frozen own-property map.
+  // eslint-disable-next-line security/detect-object-injection -- channelType is a platform-internal label, guarded by isBlockedObjectKey above (defense-in-depth); the table is a frozen own-property map.
   const limit = VIDEO_SIZE_LIMITS[channelType];
   return typeof limit === "number" ? limit : DEFAULT_VIDEO_SIZE_LIMIT;
 }
@@ -118,7 +118,7 @@ export function channelRendersVideoLink(channelType: string): boolean {
 }
 
 /**
- * WR-03 (Phase 192): hosts whose video `sourceUrl` is KEYED/private — fetchable
+ * Hosts whose video `sourceUrl` is KEYED/private — fetchable
  * ONLY with a secret the adapter correctly WITHHOLDS from the shared URL. Sharing
  * such a URL as a `link` hands the user a DEAD link (a 403 without the key), and a
  * keyed variant would LEAK the credential to the channel. So these are excluded
@@ -136,7 +136,7 @@ const KEYED_VIDEO_URL_HOST_SUFFIXES: readonly string[] = Object.freeze([
 ]);
 
 /**
- * WR-03: true when a provider `sourceUrl` is publicly fetchable WITHOUT a secret
+ * True when a provider `sourceUrl` is publicly fetchable WITHOUT a secret
  * (so it is safe + useful to share as a `link`). False for a keyed/private host
  * (Veo/Grok download URLs) and for a malformed/non-http URL (conservative — a URL
  * we cannot classify is not shared). The clip's workspace path is always the
@@ -170,7 +170,7 @@ export function formatVideoBytes(bytes: number): string {
   return `${(bytes / (1024 * MB)).toFixed(1)} GB`;
 }
 
-/** The DEL-03 degrade policy: `link` where the channel renders a URL and one is
+/** The degrade policy: `link` where the channel renders a URL and one is
  *  available; otherwise `notice` (the local workspace path). */
 export type VideoDegradePolicy = "link" | "notice";
 
@@ -181,13 +181,13 @@ export interface OversizedDegradeMessage {
 }
 
 /**
- * Build the DEL-03 oversized-video degrade message for the delivery site. Where
- * the channel renders links AND a retained provider URL is available AND that URL
- * is PUBLICLY FETCHABLE without a secret (WR-03), the `link` policy shares that
- * URL; otherwise the `notice` policy carries the local workspace path. EITHER WAY
+ * Build the oversized-video degrade message for the delivery site. Where the
+ * channel renders links AND a retained provider URL is available AND that URL
+ * is PUBLICLY FETCHABLE without a secret, the `link` policy shares that URL;
+ * otherwise the `notice` policy carries the local workspace path. EITHER WAY
  * the persisted `filePath` is included so the clip is recoverable, and the text
- * NEVER contains the v2.23 `[Attachment too large]` silent-drop marker (this is
- * the visible-degrade replacement for it).
+ * NEVER contains the `[Attachment too large]` silent-drop marker (this is the
+ * visible-degrade replacement for it).
  */
 export function buildOversizedDegradeMessage(args: {
   channelType: string;
@@ -199,7 +199,7 @@ export function buildOversizedDegradeMessage(args: {
   const { channelType, sizeBytes, limit, filePath, sourceUrl } = args;
   const sizeStr = formatVideoBytes(sizeBytes);
   const limitStr = formatVideoBytes(limit);
-  // WR-03: only share `sourceUrl` as a link when the channel renders links AND the
+  // Only share `sourceUrl` as a link when the channel renders links AND the
   // URL is publicly fetchable WITHOUT a secret. A keyed/private provider URL
   // (Veo/Grok) would be a DEAD link to the user (403 without the key) or LEAK the
   // key if keyed — degrade those to `notice` + the always-recoverable workspace path.

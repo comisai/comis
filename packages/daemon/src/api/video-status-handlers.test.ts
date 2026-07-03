@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the video.status RPC handler (Phase 189 Plan 03 — JOB-04).
+ * Tests for the video.status RPC handler.
  *
  * `video.status{job_id}` reads the durable VideoJobStore and reports
  * `{state, progress?, mediaPath?, costUsd?, error?}` for a job, SCOPED to the
- * calling agent. The load-bearing assertion (JOB-04 / TARGET-01 / Pitfall 6 /
- * threat T-189-10): a job belonging to a DIFFERENT agent returns not-found —
+ * calling agent. The load-bearing assertion: a job belonging to a DIFFERENT
+ * agent returns not-found —
  * NEVER the other agent's data. The handler resolves the agent explicitly
  * (`?? "default"`, never silent) and calls the agent-scoped
  * `videoJobStore.get(job_id, agentId)`.
  *
- * The store is the REAL Plan-01 :memory: `createVideoJobStore(db)` (frozen,
+ * The store is the REAL :memory: `createVideoJobStore(db)` (with the
  * agent-scoped `get`), seeded with the fixtures — no mock store, so the
  * cross-agent not-found is proven against the actual SQL predicate.
  *
@@ -23,14 +23,14 @@ import { VideoStatusContract } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createVideoStatusHandlers } from "./video-status-handlers.js";
 
-describe("video.status handler (JOB-04 — agent-scoped status read)", () => {
+describe("video.status handler (agent-scoped status read)", () => {
   let db: Database.Database;
   let store: VideoJobStore;
   let handler: (params: Record<string, unknown>) => Promise<unknown>;
 
   const submittedAt = 1_700_000_000_000;
 
-  /** Build a JOB-01 submit record (the SUBMIT-time inputs; markDone/markFailed/
+  /** Build a submit-time record (the SUBMIT-time inputs; markDone/markFailed/
    *  updateProgress mutate the terminal columns). */
   function makeRecord(overrides: Record<string, unknown> = {}) {
     return {
@@ -116,7 +116,7 @@ describe("video.status handler (JOB-04 — agent-scoped status read)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // THE MUST-DIFFER POINT — cross-agent scoping (JOB-04 / Pitfall 6 / T-189-10)
+  // THE MUST-DIFFER POINT — cross-agent scoping
   // -------------------------------------------------------------------------
   it("returns not-found for a job owned by ANOTHER agent — never the other agent's data", async () => {
     // A 'done' job for alpha with a real mediaPath + cost.
@@ -143,7 +143,7 @@ describe("video.status handler (JOB-04 — agent-scoped status read)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Explicit default (never silent) — TARGET-01
+  // Explicit default (never silent)
   // -------------------------------------------------------------------------
   it("resolves _agentId='default' explicitly when omitted (a job under 'default' is found)", async () => {
     await store.insert(makeRecord({ agentId: "default" }));

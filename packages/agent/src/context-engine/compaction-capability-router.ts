@@ -2,9 +2,9 @@
 /**
  * Capability-routed compaction strategy resolver.
  *
- * C4/C5/S4: for low-capabilityClass models (small/nano), routes to eviction
+ * For low-capabilityClass models (small/nano), routes to eviction
  * or a configured stronger summarizer rather than same-model LLM summarization.
- * frontier/mid: returns "llm" (unchanged behavior, byte-identical to today).
+ * frontier/mid: always returns "llm" (capability routing never changes their path).
  *
  * Fail-closed: unknown capabilityClass → "eviction" (the safe floor, not "llm").
  *

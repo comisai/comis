@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * COMPACT-STORE-MISS (30uc-20260624): `loadSessionAnyStore` — the lifecycle
+ * `loadSessionAnyStore` — the lifecycle
  * handlers' EITHER-store loader. A REAL on-disk-layout test (AGENTS §2.10): the
  * live bug shipped precisely because a fixture-only handler test (a mock
  * sessionStore that returns a session) proved the LOGIC but NOT that a LIVE

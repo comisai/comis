@@ -54,7 +54,7 @@ vi.mock("@comis/agent", () => ({
   createAuthRotationAdapter: vi.fn(() => ({})),
   resolveCompactionModel: vi.fn(() => ""),
   resolveOperationDefaults: vi.fn(() => ({ mid: "concrete-model" })),
-  // KNOB-01 + FLOOR-01 (176-05): the boot-honesty block runs unconditionally in
+  // The boot-honesty block runs unconditionally in
   // setupSingleAgent — stubbed inert here (this suite pins a different wire).
   compareServedWindowForProvider: vi.fn(() => undefined),
   collectAgentBootWindowInfo: vi.fn(() => ({})),
@@ -209,8 +209,8 @@ describe("setupSingleAgent rag.rerank auto-on through the real parsed-config boo
 
   it("fires the auto-enabled INFO boundary log exactly once for the unset+present case", async () => {
     // The operator must be able to see WHY rerank turned on for an agent that never set it.
-    // The guard at setup-agents-runtime.ts is DEAD on pre-patch code (unreachable), so this
-    // INFO never fires → RED. The fix makes both the flip AND its log live.
+    // The guard at setup-agents-runtime.ts must be reachable so both the flip AND its
+    // INFO log fire; if the guard were dead (unreachable), this INFO would never emit.
     const { logger } = await runAndReadEffectiveRerank(undefined, true);
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ rerankAutoEnabled: true }),

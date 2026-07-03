@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for the R1 per-tenant summarizer spend cap + circuit breaker.
+ * Behavioural contract for the per-tenant summarizer spend cap + circuit breaker.
  *
- * Pins the behaviour the 132-05 wiring depends on:
+ * Pins the behaviour the wiring site depends on:
  *   - per-tenant breaker opens after N consecutive failures and BYPASSES the inner
  *     LLM call (degrade = throw → the leaf/condense ladder floors to truncation-only;
- *     it does NOT retry the inner fn when open — the RESEARCH anti-pattern),
+ *     it does NOT retry the inner fn when open — a retry would defeat the breaker),
  *   - a per-tenant rolling-window token tracker refuses an over-cap tenant,
  *   - an under-cap tenant admits + records actual usage + success,
- *   - TWO-TENANT ISOLATION: tenant A degrading never affects tenant B (Pitfall 1),
+ *   - TWO-TENANT ISOLATION: tenant A degrading never affects tenant B,
  *   - a thrown inner call records a breaker failure for that tenant,
  *   - usage that aged past the rolling hour window no longer counts toward the cap.
  *

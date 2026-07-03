@@ -1,14 +1,13 @@
-# Token-fixture ground truth (TOK-02)
+# Token-fixture ground truth
 
-The measurement instrument for `design/multilingual-excellence.md` §4 TOK-02:
+The measurement instrument that
 counts the ~180-string multilingual corpus (`corpus.mjs` — 9 scripts ×
 >=20 strings: he/ar/ru/zh/ja/el/th/hi/en) against **>=2 real tokenizers** and
 writes the result to `packages/core/src/text/__fixtures__/token-counts.json`.
 
 That committed JSON is the durable deliverable: the offline conservativeness
-suite (`packages/agent/src/safety/token-conservativeness.test.ts`, plan
-179-05 — agent-side placement is a documented plan deviation in that file's
-header) asserts `estimate >= worst measured tokenizer count` against it
+suite (`packages/agent/src/safety/token-conservativeness.test.ts`)
+asserts `estimate >= worst measured tokenizer count` against it
 forever; core's `token-factor.test.ts` is the unit pin suite. "Factors
 asserted without measurement are the same failure class as the unverified
 3.5" (`context-engine/constants.ts`'s own history).
@@ -46,7 +45,7 @@ cp token-fixtures.env.example token-fixtures.env   # fill in; NEVER commit it (g
 After a run, commit the updated
 `packages/core/src/text/__fixtures__/token-counts.json`. If any committed
 token factor is violated by the new measurements, lower the factor **in the
-same commit** (the TOK-02 same-commit lowering rule, plan 179-05).
+same commit** (the same-commit lowering rule).
 
 ## Current fixture status — operator TODO
 

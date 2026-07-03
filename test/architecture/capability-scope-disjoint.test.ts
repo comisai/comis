@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CAP-01 / CAP-02: the orchestration-capability axis is DISJOINT from the
+ * The orchestration-capability axis is DISJOINT from the
  * gateway `Scope` axis, and no capability implies an elevated scope.
  *
  * Two invariants, proven against the LIVE runtime union imported from
  * `@comis/core` (the arch-test project resolves the package to its compiled
- * dist — so this also proves Plan 210-01 Task 2's barrel-export wiring):
+ * dist — so this also proves the capability-union barrel export is wired):
  *
- *   CAP-01: `Scope ∩ AgentCapability = ∅`. Capabilities are `orch:*`; scopes
+ *   Invariant 1: `Scope ∩ AgentCapability = ∅`. Capabilities are `orch:*`; scopes
  *           are `rpc|admin|mcp-client`. A member appearing in both axes would
  *           let a scope grant masquerade as a capability (or vice-versa).
  *
- *   CAP-02: no `AgentCapability` member equals or contains `admin` / `rpc` /
+ *   Invariant 2: no `AgentCapability` member equals or contains `admin` / `rpc` /
  *           `*` — i.e. no capability implies an elevated gateway scope or an
  *           all-authority wildcard. Reinforced by a static guard that the
  *           `checkCapability` predicate body contains NO wildcard branch
@@ -42,11 +42,11 @@ const CAPABILITY_SRC = resolve(
  * `packages/core/src/api-contracts/types.ts:19`. `Scope` is a TYPE (no runtime
  * value to import), so the list is hardcoded — the `satisfies readonly Scope[]`
  * guard makes the build FAIL if `Scope` ever changes shape, keeping this list
- * honest (CAP-01 must re-verify against any new scope).
+ * honest (the disjointness invariant must re-verify against any new scope).
  */
 const SCOPE_VALUES = ["rpc", "admin", "mcp-client"] as const satisfies readonly Scope[];
 
-describe("CAP-01 — Scope ∩ AgentCapability = ∅", () => {
+describe("Scope ∩ AgentCapability = ∅ (disjoint authority axes)", () => {
   it("no AgentCapability member is also a Scope value", () => {
     const scopeSet = new Set<string>(SCOPE_VALUES);
     const intersection = AGENT_CAPABILITIES.filter((c) => scopeSet.has(c));
@@ -62,13 +62,13 @@ describe("CAP-01 — Scope ∩ AgentCapability = ∅", () => {
         })),
         suggestedFix:
           "Rename the colliding capability so it does not equal any Scope literal (rpc|admin|mcp-client).",
-        designRef: "v8 §3.2 (CAP-01)",
+        designRef: "the capability and scope authority axes are disjoint",
       }),
     ).toEqual([]);
   });
 });
 
-describe("CAP-02 — no AgentCapability implies admin/rpc/*", () => {
+describe("no AgentCapability implies admin/rpc/*", () => {
   it("no member equals or contains 'admin', 'rpc', or '*'", () => {
     // (^|:)admin$ / (^|:)rpc$ catches a bare or namespaced scope-equivalent;
     // \* catches any wildcard. orch:* members never match.
@@ -86,7 +86,7 @@ describe("CAP-02 — no AgentCapability implies admin/rpc/*", () => {
         })),
         suggestedFix:
           "Capabilities must be orch:* surfaces with no lattice; remove any admin/rpc/wildcard-implying member.",
-        designRef: "v8 §3.2 (CAP-02)",
+        designRef: "no capability implies an elevated scope or wildcard authority",
       }),
     ).toEqual([]);
   });
@@ -108,7 +108,7 @@ describe("CAP-02 — no AgentCapability implies admin/rpc/*", () => {
         ],
         suggestedFix:
           "checkCapability must return held.includes(required) — no lattice, no wildcard.",
-        designRef: "v8 §3.7 (CAP-02)",
+        designRef: "checkCapability is a plain membership predicate",
       }),
     ).toBe(true);
     // ...with NO wildcard authority anywhere in the predicate module.
@@ -126,7 +126,7 @@ describe("CAP-02 — no AgentCapability implies admin/rpc/*", () => {
         })),
         suggestedFix:
           "Remove any '*' literal from the predicate; capabilities confer only the caps explicitly held.",
-        designRef: "v8 §3.2 (CAP-02)",
+        designRef: "no wildcard authority in the capability predicate",
       }),
     ).toEqual([]);
   });

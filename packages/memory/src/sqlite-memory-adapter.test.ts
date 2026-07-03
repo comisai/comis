@@ -13,7 +13,7 @@ const testConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false, // WAL not supported on :memory:
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall settings nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,
@@ -486,9 +486,9 @@ describe("SqliteMemoryAdapter", () => {
     });
   });
 
-  // ── deleteBySessionKey (DIST-05) ─────────────────────────────
+  // ── deleteBySessionKey ─────────────────────────────
 
-  describe("deleteBySessionKey (DIST-05)", () => {
+  describe("deleteBySessionKey", () => {
     it("deletes ALL rows for a (sessionKey, tenant, agent) scope and returns the count", async () => {
       // Two memories from the same session + a third from a different session.
       await adapter.store(makeEntry({ content: "a", source: { who: "u", channel: "c", sessionKey: "sess-1" } }));
@@ -512,7 +512,7 @@ describe("SqliteMemoryAdapter", () => {
       expect(other.c).toBe(1); // the other session is untouched
     });
 
-    it("is R4-scoped: never deletes a row from a different tenant or agent", async () => {
+    it("is tenant/agent-scoped: never deletes a row from a different tenant or agent", async () => {
       await adapter.store(
         makeEntry({ tenantId: "t-a", agentId: "ag-a", source: { who: "u", channel: "c", sessionKey: "sess-x" } }),
       );
@@ -565,9 +565,9 @@ describe("SqliteMemoryAdapter", () => {
     });
   });
 
-  // ── listMemoryIdsBySessionKey (DIST-05, WR-02) ───────────────
+  // ── listMemoryIdsBySessionKey ───────────────
 
-  describe("listMemoryIdsBySessionKey (DIST-05, WR-02)", () => {
+  describe("listMemoryIdsBySessionKey", () => {
     it("returns the ids for a (sessionKey, tenant, agent) scope WITHOUT deleting them", async () => {
       const a = makeEntry({ content: "a", source: { who: "u", channel: "c", sessionKey: "sess-list" } });
       const b = makeEntry({ content: "b", source: { who: "u", channel: "c", sessionKey: "sess-list" } });
@@ -590,7 +590,7 @@ describe("SqliteMemoryAdapter", () => {
       expect(count.c).toBe(2);
     });
 
-    it("is R4-scoped: excludes ids from a different tenant or agent (matches the delete scope)", async () => {
+    it("is tenant/agent-scoped: excludes ids from a different tenant or agent (matches the delete scope)", async () => {
       const mine = makeEntry({
         tenantId: "t-a",
         agentId: "ag-a",
@@ -1036,7 +1036,7 @@ describe("SqliteMemoryAdapter.searchLanes (un-fused split)", () => {
     await adapter.store(makeEntry({ content: "dentist appointment on Tuesday" }));
     await adapter.store(makeEntry({ content: "grocery list for the week" }));
 
-    // RED on pre-patch: searchLanes does not exist yet (undefined → call throws).
+    // searchLanes must be present on the adapter (undefined → call throws).
     expect(adapter.searchLanes).toBeDefined();
     const res = await adapter.searchLanes!(testSessionKey, "dentist");
     expect(res.ok).toBe(true);
@@ -1213,18 +1213,18 @@ describe("SqliteMemoryAdapter.searchLanes (un-fused split)", () => {
   });
 });
 
-// ── The ALWAYS-ON evicted_at IS NULL exclusion on the LIVE recall paths (CR-01) ──
+// ── The ALWAYS-ON evicted_at IS NULL exclusion on the LIVE recall paths ──
 //
-// FORGET-01's central guarantee — "a soft-evicted memory (evicted_at set) is
+// The central soft-eviction guarantee — "a soft-evicted memory (evicted_at set) is
 // EXCLUDED from EVERY recall path" — was enforced ONLY in hybridSearch (the
 // search() string-query fallback), but the agent's LIVE recall pipeline PREFERS
 // searchLanes → hydrateLane (memory-recall.ts:183), which had NO evicted_at guard,
 // and the vector-only search() per-id read (:137) was likewise unfiltered. So a
 // soft-evicted memory kept being recalled+injected on the dominant path. These
-// tests RED on the pre-patch hydrateLane / vector-only read and GREEN once the
-// `AND evicted_at IS NULL` exclusion is applied to BOTH live reads — while the
-// inspect/asOf raw read stays UNFILTERED (eviction is soft + asOf-resolvable).
-describe("SqliteMemoryAdapter recall excludes soft-evicted rows on the LIVE paths (CR-01)", () => {
+// tests pin that the `AND evicted_at IS NULL` exclusion is applied to BOTH live
+// reads (hydrateLane / vector-only read) — while the inspect/asOf raw read stays
+// UNFILTERED (eviction is soft + asOf-resolvable).
+describe("SqliteMemoryAdapter recall excludes soft-evicted rows on the LIVE paths", () => {
   let adapter: SqliteMemoryAdapter;
 
   /** Set the evicted_at soft-close marker (NULL = live). Mirrors the lifecycle sweep's softEvict. */
@@ -1326,8 +1326,8 @@ describe("SqliteMemoryAdapter recall excludes soft-evicted rows on the LIVE path
 // (recall prefers searchLanes when present, falls back to search — missing one
 // is a silent no-op on that path; the MEMORY.md mcp_field_plumbing lesson).
 // The range can only NARROW — a multi-agent range query returns
-// ONLY the caller's agent's in-window rows. RED on pre-patch (the range is
-// ignored on both paths).
+// ONLY the caller's agent's in-window rows; without the range filter it is
+// ignored on both paths.
 
 describe("SqliteMemoryAdapter occurredAtRange — narrows on search + searchLanes", () => {
   let adapter: SqliteMemoryAdapter;
@@ -1374,7 +1374,7 @@ describe("SqliteMemoryAdapter occurredAtRange — narrows on search + searchLane
     if (!ranged.ok) return;
     const ids = ranged.value.fts.map((r) => r.entry.id);
     expect(ids).toContain("in1");
-    expect(ids).not.toContain("after"); // RED on pre-patch: searchLanes ignores the range
+    expect(ids).not.toContain("after"); // searchLanes must honor the occurredAt range
 
     // Without the range, both surface in the FTS lane.
     const unranged = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
@@ -1434,8 +1434,8 @@ describe("SqliteMemoryAdapter occurredAtRange — narrows on search + searchLane
   });
 });
 
-// ── pin / unpin agent-id scoping (CR-01) ─────────────────────────────
-describe("SqliteMemoryAdapter — pin/unpin agent-id scoping (CR-01)", () => {
+// ── pin / unpin agent-id scoping ─────────────────────────────
+describe("SqliteMemoryAdapter — pin/unpin agent-id scoping", () => {
   let adapter: SqliteMemoryAdapter;
 
   beforeEach(() => {
@@ -1460,7 +1460,7 @@ describe("SqliteMemoryAdapter — pin/unpin agent-id scoping (CR-01)", () => {
     };
   }
 
-  it("CR-01: pin with agentId does NOT pin the same id owned by a different agent", async () => {
+  it("pin with agentId does NOT pin the same id owned by a different agent", async () => {
     // Two entries with the SAME id prefix but owned by different agents.
     // Pinning for agent-a must NOT pin agent-b's entry.
     const idA = "shared-id-" + crypto.randomUUID();
@@ -1488,7 +1488,7 @@ describe("SqliteMemoryAdapter — pin/unpin agent-id scoping (CR-01)", () => {
     expect(pinnedA?.pinned).toBe(1);
   });
 
-  it("CR-01: pin with wrong agentId returns ok(false) — id exists but in different agent scope", async () => {
+  it("pin with wrong agentId returns ok(false) — id exists but in different agent scope", async () => {
     // Entry owned by agent-b; trying to pin it as agent-a must return ok(false) (not found in scope).
     const id = crypto.randomUUID();
     const entry = makeEntry({ id, tenantId: "t1", agentId: "agent-b" });
@@ -1507,8 +1507,8 @@ describe("SqliteMemoryAdapter — pin/unpin agent-id scoping (CR-01)", () => {
   });
 });
 
-// ── listPinned expiry filter (CR-02) ─────────────────────────────────
-describe("SqliteMemoryAdapter — listPinned does not return expired pinned entries (CR-02)", () => {
+// ── listPinned expiry filter ─────────────────────────────────
+describe("SqliteMemoryAdapter — listPinned does not return expired pinned entries", () => {
   let adapter: SqliteMemoryAdapter;
 
   beforeEach(() => {
@@ -1519,7 +1519,7 @@ describe("SqliteMemoryAdapter — listPinned does not return expired pinned entr
     adapter.close();
   });
 
-  it("CR-02: listPinned excludes an expired pinned entry", async () => {
+  it("listPinned excludes an expired pinned entry", async () => {
     const db = adapter.getDb();
     const now = Date.now();
     // Insert a pinned entry that is already expired.
@@ -1549,21 +1549,21 @@ describe("SqliteMemoryAdapter — listPinned does not return expired pinned entr
   });
 });
 
-// ── LTM trigram lane: I4 recall + twin writes + R4 + consolidation (180-06) ──
+// ── LTM trigram lane: recall + twin writes + isolation + consolidation ──
 //
-// End-to-end through the REAL adapter with NO embedding provider (I4 by
+// End-to-end through the REAL adapter with NO embedding provider (FTS-only by
 // construction — `new SqliteMemoryAdapter(testConfig)` has no EmbeddingPort, so
-// the FTS floor alone must carry recall). RED proof on pre-patch code:
+// the FTS floor alone must carry recall). Without the twin/normalization wiring:
 //   - store() does NOT write a memory_fts_tri twin row (row-mapper writes only
 //     the base row) → the twin SELECT finds nothing;
 //   - searchByText routes ONLY the porter word lane → a non-Latin morphology
 //     query returns [] through BOTH search() and searchLanes();
 //   - foldIntoExisting() on a REAL content rewrite leaves NO normalized twin row
-//     (the 180-02 WHEN-guarded trigger deleted the old one; the TS re-insert is
-//     this plan's job) — while the proof-only fold must leave an existing twin
+//     (the WHEN-guarded trigger deleted the old one; the TS re-insert is
+//     the adapter's job) — while the proof-only fold must leave an existing twin
 //     row INTACT (the COALESCE(NULL, content) no-op + the WHEN guard).
-// All non-Latin glyphs are assembled from codepoints (WR-01).
-describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)", () => {
+// All non-Latin glyphs are assembled from codepoints.
+describe("SqliteMemoryAdapter LTM trigram lane (twin / isolation / consolidation)", () => {
   // Stored / query pairs (codepoint-assembled).
   const HE_STORED = String.fromCodePoint(0x5d4, 0x5e1, 0x5e4, 0x5e8, 0x5d9, 0x5dd); // הספרים
   const HE_QUERY = String.fromCodePoint(0x5e1, 0x5e4, 0x5e8); // ספר
@@ -1578,7 +1578,7 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
   let adapter: SqliteMemoryAdapter;
 
   beforeEach(() => {
-    // NO embedding port → I4 (vector lane absent; FTS floor must carry recall).
+    // NO embedding port (vector lane absent; FTS floor must carry recall).
     adapter = new SqliteMemoryAdapter(testConfig);
   });
 
@@ -1607,7 +1607,7 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     expect(twinContentOf(id)).toBe(HE_FOLDED);
   });
 
-  it("every store() insert path writes a twin row (the insertMemoryRow chokepoint covers v1.7 import)", async () => {
+  it("every store() insert path writes a twin row (the insertMemoryRow chokepoint covers the import path)", async () => {
     // The portability/import path inserts through adapter.store() →
     // insertMemoryRow (one chokepoint), so a stored row MUST carry a twin row.
     const id = crypto.randomUUID();
@@ -1615,9 +1615,9 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     expect(twinContentOf(id)).toBe(normalizeForSearch("docker compose notes"));
   });
 
-  // ── I4 recall through search() AND searchLanes() ─────────────────
+  // ── recall through search() AND searchLanes() ─────────────────
 
-  it("search() recalls he/ar/ru/CJK memories with embeddings disabled (I4)", async () => {
+  it("search() recalls he/ar/ru/CJK memories with embeddings disabled", async () => {
     const he = crypto.randomUUID();
     const ar = crypto.randomUUID();
     const ru = crypto.randomUUID();
@@ -1640,7 +1640,7 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     }
   });
 
-  it("searchLanes() returns he/ar/ru/CJK memories in the FTS lane with embeddings disabled (I4)", async () => {
+  it("searchLanes() returns he/ar/ru/CJK memories in the FTS lane with embeddings disabled", async () => {
     const he = crypto.randomUUID();
     const ru = crypto.randomUUID();
     await adapter.store(makeEntry({ id: he, content: HE_STORED }));
@@ -1655,9 +1655,9 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     if (rRu.ok) expect(rRu.value.fts.map((m) => m.entry.id)).toContain(ru);
   });
 
-  // ── R4 isolation on the trigram lane, both directions ────────────
+  // ── tenant/agent isolation on the trigram lane, both directions ────────────
 
-  it("R4: search() never returns another AGENT's Hebrew memory (both directions)", async () => {
+  it("search() never returns another AGENT's Hebrew memory (both directions)", async () => {
     const idA = crypto.randomUUID();
     const idB = crypto.randomUUID();
     await adapter.store(makeEntry({ id: idA, agentId: "agent-a", content: HE_STORED }));
@@ -1680,7 +1680,7 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     }
   });
 
-  it("R4: searchLanes() never returns another AGENT's Hebrew memory (hydration filter)", async () => {
+  it("searchLanes() never returns another AGENT's Hebrew memory (hydration filter)", async () => {
     const idA = crypto.randomUUID();
     const idB = crypto.randomUUID();
     await adapter.store(makeEntry({ id: idA, agentId: "agent-a", content: HE_STORED }));
@@ -1695,7 +1695,7 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     }
   });
 
-  it("R4: search() never returns another TENANT's Hebrew memory (both directions)", async () => {
+  it("search() never returns another TENANT's Hebrew memory (both directions)", async () => {
     const keyT1: SessionKey = { tenantId: "tenant-1", userId: "u", channelId: "c" };
     const keyT2: SessionKey = { tenantId: "tenant-2", userId: "u", channelId: "c" };
     const id1 = crypto.randomUUID();
@@ -1720,7 +1720,7 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     }
   });
 
-  // NOTE (Phase 226, SIMPLIFY-02): the two "consolidation rewrite re-inserts the
+  // NOTE: the two "consolidation rewrite re-inserts the
   // normalized twin" tests that exercised `MemoryConsolidationStore.foldIntoExisting`
   // were removed — `foldIntoExisting` is a dead consolidation-cron writer method,
   // cut when the port was trimmed to its live read/maintenance surface. The
@@ -1729,20 +1729,18 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
   // twin re-insert discipline).
 });
 
-// ── supersede — FORGET-04 non-destructive contradiction resolution ──────
+// ── supersede — non-destructive contradiction resolution ──────
 //
 // A user correction of an existing fact UPDATES the row's `content` to the new
 // value and APPENDS the prior state to the `memories.history` JSON array — it does
-// NOT delete the row (deletion is reserved for the FORGET-02 corroborated-poison
+// NOT delete the row (deletion is reserved for the corroborated-poison
 // security path). The existing row IS the latest, so recall naturally returns the
 // new content (no `mentioned_at`, no recall-side asOf filter). This mirrors the
 // `sqlite-user-representation-store.ts` `revise()` bi-temporal soft-close discipline
 // (db.transaction, scoped WHERE, parse-via-mapper, redaction firewall) adapted to
 // the simpler `memories` table — and the `growObservation` history-append +
 // trigram-twin re-sync precedent in sqlite-memory-consolidation-store.ts.
-//
-// RED on pre-patch: `adapter.supersede` does not exist (undefined → call throws).
-describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non-destructive)", () => {
+describe("SqliteMemoryAdapter.supersede (contradiction → revise, non-destructive)", () => {
   let adapter: SqliteMemoryAdapter;
 
   afterEach(() => {
@@ -1762,7 +1760,7 @@ describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non
       | undefined;
   }
 
-  it("RED case 1: a correction UPDATES content to the new value, APPENDS prior to history, and DELETES no row", async () => {
+  it("a correction UPDATES content to the new value, APPENDS prior to history, and DELETES no row", async () => {
     adapter = new SqliteMemoryAdapter(testConfig);
     const entry = makeEntry({ content: "user lives in Boston", createdAt: 1_000 });
     await adapter.store(entry);
@@ -1799,7 +1797,7 @@ describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non
     expect(countAfter).toBe(countBefore);
   });
 
-  it("RED case 2: recall (search) returns the LATEST content C2 after a correction, not the superseded C1", async () => {
+  it("recall (search) returns the LATEST content C2 after a correction, not the superseded C1", async () => {
     adapter = new SqliteMemoryAdapter(testConfig);
     const entry = makeEntry({ content: "favorite language is Python", createdAt: 1_000 });
     await adapter.store(entry);
@@ -1822,7 +1820,7 @@ describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non
     }
   });
 
-  it("RED case 3: the AFTER UPDATE OF content trigger re-syncs FTS — C2-only text surfaces the row, C1-only text no longer does", async () => {
+  it("the AFTER UPDATE OF content trigger re-syncs FTS — C2-only text surfaces the row, C1-only text no longer does", async () => {
     adapter = new SqliteMemoryAdapter(testConfig);
     // Distinctive, non-overlapping tokens so the FTS lane cleanly distinguishes
     // the old content from the new.
@@ -1852,7 +1850,7 @@ describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non
     }
   });
 
-  it("RED case 4: a second correction appends a SECOND history entry (C1 then C2, in order) — still no delete", async () => {
+  it("a second correction appends a SECOND history entry (C1 then C2, in order) — still no delete", async () => {
     adapter = new SqliteMemoryAdapter(testConfig);
     const entry = makeEntry({ content: "status is draft", createdAt: 1_000 });
     await adapter.store(entry);
@@ -1887,7 +1885,7 @@ describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non
     expect(count).toBe(1);
   });
 
-  it("RED case 5: tenant isolation — a correction scoped to (tenantA, agentA) does NOT touch a same-id-shaped row under (tenantB, agentB)", async () => {
+  it("tenant isolation — a correction scoped to (tenantA, agentA) does NOT touch a same-id-shaped row under (tenantB, agentB)", async () => {
     adapter = new SqliteMemoryAdapter(testConfig);
     // Two rows that SHARE an id but live under different (tenant, agent) scopes.
     // (`id` is the PRIMARY KEY, so distinct ids are required at the SQL layer; we
@@ -1943,7 +1941,7 @@ describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non
     expect(rawRow(bEntry.id, "tenant-b")!.content).toBe("B: lives in Boston");
   });
 
-  it("WR-01: a no-change correction (newContent === incumbent.content) preserves the vec embedding + the single trigram twin, and still appends history", async () => {
+  it("a no-change correction (newContent === incumbent.content) preserves the vec embedding + the single trigram twin, and still appends history", async () => {
     // Embedding port present → vecAvailable, so the (pre-patch) UNCONDITIONAL vec
     // invalidation in supersede is reachable and observable.
     adapter = new SqliteMemoryAdapter(testConfig, createMockEmbeddingPort(4));
@@ -1986,10 +1984,9 @@ describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toBe("superseded");
 
-    // RED on pre-patch: the unconditional `DELETE FROM vec_memories` +
-    // `has_embedding = 0` ran on an unchanged correction → vec row gone,
-    // has_embedding flipped to 0 (a needless re-embed forced). Post-patch both
-    // are preserved because content did not change.
+    // A no-change correction must NOT run the `DELETE FROM vec_memories` +
+    // `has_embedding = 0` invalidation (that would force a needless re-embed).
+    // Both the vec row and has_embedding are preserved because content did not change.
     expect(hasEmbedding(entry.id)).toBe(1);
     expect(vecRowCount(entry.id)).toBe(1);
     // The trigram twin remains a single row (no churn; the WHEN-guarded trigger

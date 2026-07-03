@@ -36,8 +36,8 @@ import { defineContract } from "../types.js";
  *
  * Request: `{ nodes, label?, onFailure?, timeoutMs?, budget?, edges? }`.
  *   - `nodes` is `z.array(z.record(z.string(), z.unknown()))` because the
- *     handler calls `transformNodes` (snake_case → camelCase + legacy debate
- *     migration) BEFORE parseExecutionGraph. Inner shape varies per
+ *     handler calls `transformNodes` (snake_case → camelCase + agent-node
+ *     shape normalization) BEFORE parseExecutionGraph. Inner shape varies per
  *     `typeId`/`typeConfig` driver registry.
  *   - `onFailure` / `timeoutMs` / `budget` flow into the rawGraph build.
  *

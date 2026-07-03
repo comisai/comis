@@ -42,9 +42,8 @@ const { withClient } = await import("../client/rpc-client.js");
 
 /**
  * Sample channel CONFIG section: what is configured/enabled. Live state
- * comes from channels.health, never from config (the old config-only read
- * reported a healthy live adapter as "disconnected" — 2026-06-12 C5 live
- * finding).
+ * comes from channels.health, never from config (a config-only read
+ * reports a healthy live adapter as "disconnected").
  */
 const CHANNELS_DATA = {
   telegram: { enabled: true, botUsername: "mybot" },

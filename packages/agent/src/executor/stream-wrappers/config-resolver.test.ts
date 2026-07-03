@@ -225,13 +225,13 @@ describe("createConfigResolver", () => {
 });
 
 
-describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
+describe("dynamic max_tokens clamp", () => {
   // Minimal non-Anthropic model stub for dynamic-clamp tests.
   // provider must be a valid string so isAnthropicFamily() does not throw.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- minimal test stub
   const stubModel = { provider: "openai", reasoning: false } as any;
 
-  it("CWF-02-G: clamps max_tokens to remaining room when assembled tokens provided", async () => {
+  it("clamps max_tokens to remaining room when assembled tokens provided", async () => {
     // assembledInputTokens=30000, effectiveWindow=32768, configuredMax=8192
     // remainingRoom = max(768, 32768 - 30000) = max(768, 2768) = 2768
     // dynamicMax = min(8192, 2768) = 2768
@@ -247,7 +247,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     expect(capturedOptions.maxTokens).toBe(2_768);  // EXACT pin
   });
 
-  it("CWF-02-G: max_tokens = remaining room when no configuredMax", async () => {
+  it("max_tokens equals the remaining room when no configuredMax is set", async () => {
     // assembledInputTokens=30000, effectiveWindow=32768, no configuredMax
     // dynamicMax = max(768, 32768-30000) = 2768
     const resolver = createConfigResolver({
@@ -261,7 +261,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     expect(capturedOptions.maxTokens).toBe(2_768);
   });
 
-  it("CWF-02-G: configuredMax wins when remaining room is larger", async () => {
+  it("configuredMax wins when remaining room is larger", async () => {
     // assembledInputTokens=1000, effectiveWindow=32768, configuredMax=8192
     // remainingRoom = 32768-1000=31768; dynamicMax = min(8192, 31768) = 8192
     const resolver = createConfigResolver({
@@ -276,7 +276,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     expect(capturedOptions.maxTokens).toBe(8_192);
   });
 
-  it("CWF-02-H CHARACTERIZATION: frontier/mid — max_tokens byte-identical when no dynamic info", async () => {
+  it("CHARACTERIZATION: frontier/mid — max_tokens byte-identical when no dynamic info", async () => {
     // When getAssembledInputTokens is absent → falls back to static config.maxTokens
     // Pin EXACT value: config.maxTokens = 8192 → injected.maxTokens = 8192 (unchanged)
     const resolver = createConfigResolver({ maxTokens: 8_192 }, createMockLogger());
@@ -329,7 +329,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
 });
 
 describe("resolveBreakpointStrategy", () => {
-  it("resolves 'auto' to 'multi-zone' for all providers (W11)", () => {
+  it("resolves 'auto' to 'multi-zone' for all providers", () => {
     expect(resolveBreakpointStrategy("auto", "anthropic")).toBe("multi-zone");
   });
 
@@ -346,7 +346,7 @@ describe("resolveBreakpointStrategy", () => {
   });
 
   // The default-strategy regression (default 'single' → lookback-window cache misses +
-  // O(N^2) writes, live-2026-06-18) is guarded by TWO same-package unit tests, kept apart
+  // O(N^2) writes, observed live) is guarded by TWO same-package unit tests, kept apart
   // to avoid a stale-sibling-dist dependency: schema-agent.test.ts asserts the schema
   // default is 'auto', and the 'auto' → 'multi-zone' case below proves a default install
   // gets multi-zone.

@@ -15,7 +15,7 @@
 // otherwise key+val, with val JSON-parsed when possible ("1"→1, "true"→true, '["a"]'→array)
 // and left as a string on parse failure (so bare ids/sessionKeys still work).
 //
-// ⚠ `--file` mode (codex-30uc run 2026-06-25): for MULTI-PARAM operator RPCs (message.send,
+// ⚠ `--file` mode: for MULTI-PARAM operator RPCs (message.send,
 // tokens.create, …) the inline-JSON form gets MANGLED through `ssh → su - comis -c "node revoke.mjs … {json}"`
 // (the nested quotes collapse, e.g. the key becomes `"channel_type:telegram"`). Write the params to a
 // world-readable file first (`printf '%s' '{"channel_type":"telegram","to":"…","text":"…"}' > /tmp/rpc.json`)
@@ -25,13 +25,13 @@
 //   export COMIS_CONFIG_PATHS=/home/comis/.comis/config.yaml
 //   export COMIS_GATEWAY_TOKEN=<the literal ≥32-char token from config.yaml>
 // Adjust the import path if the daemon src tree isn't at /root/comis-src.
-// --pick <dotpath> (reflect-obs-20260627): print ONLY that field of the result instead of the whole
+// --pick <dotpath>: print ONLY that field of the result instead of the whole
 // RESULT:{…} blob, so the caller stops hand-writing `node -e 'JSON.parse(...)'` extractors. A dotpath
 // indexes objects + arrays: `report.findings.0.code`, `runs.0.summary`, `triggered`. Prints `PICK:<json>`
 // (or `PICK:undefined` for a missing path). Errors still print `ERROR:…` unchanged.
 import { readFileSync } from "node:fs";
 // COMIS_SRC overrides the daemon src root (VPS default /root/comis-src; set to a local checkout for a
-// LOCAL daemon run — package-delivery-20260628). Dynamic import so the path is env-resolvable.
+// LOCAL daemon run). Dynamic import so the path is env-resolvable.
 const { withClient } = await import((process.env.COMIS_SRC || "/root/comis-src") + "/packages/cli/dist/client/rpc-client.js");
 const rawArgv = process.argv.slice(2);
 let pickPath;

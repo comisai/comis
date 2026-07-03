@@ -189,11 +189,11 @@ Under `node --permission`, the following APIs are refused with `ERR_ACCESS_DENIE
 
 Each refusal throws: `Error [ERR_ACCESS_DENIED]: ... is disabled when permission model is enabled`
 
-### Historical production impact
+### Production impact
 
-Observed on a production VPS (2026-06-02): the data-dir lock's `fsync` killed every boot attempt — every daemon start threw `ERR_ACCESS_DENIED` before the first log line. Later, `fchmod` refusals broke MCP OAuth discovery (no OAuth-protected MCP server could connect) and session-metadata writes. ([Source: `packages/shared/src/fsync-permission.ts:15-22`](https://github.com/comisai/comis))
+On a production VPS running under `--permission`, the data-dir lock's `fsync` can kill every boot attempt — every daemon start throws `ERR_ACCESS_DENIED` before the first log line. `fchmod` refusals likewise break MCP OAuth discovery (no OAuth-protected MCP server can connect) and session-metadata writes. ([Source: `packages/shared/src/fsync-permission.ts:15-22`](https://github.com/comisai/comis))
 
-Both issues were root-caused to the fd-API categorical disablement rather than missing path grants.
+Both failure modes stem from the fd-API categorical disablement rather than missing path grants.
 
 ### How Comis guards against this
 

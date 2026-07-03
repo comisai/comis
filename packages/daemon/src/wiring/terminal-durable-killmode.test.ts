@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DUR-01 survival contract — the deployed systemd unit MUST set `KillMode=process`.
+ * Survival contract — the deployed systemd unit MUST set `KillMode=process`.
  *
  * A durable terminal drive (`drive.durable:true`) runs its child inside a DETACHED
  * `tmux new-session -d -s comis-<id>` server so the session OUTLIVES a daemon restart
- * (spec §4.6 "Recovery"; the OPS-05 re-attach-by-name premise). The tmux server
+ * (so it can be re-attached by name after a restart). The tmux server
  * daemonizes (reparented to init) BUT remains a member of the daemon's systemd cgroup —
  * cgroup membership is inherited at fork and a daemonize/`setsid` does NOT change it, and
  * the daemon can't move it out (`ProtectControlGroups=yes`, non-root `comis` user, no
@@ -12,8 +12,8 @@
  *
  * So with systemd's DEFAULT `KillMode=control-group`, every `systemctl restart` (and the
  * failure-cleanup after a crash) SIGKILLs the ENTIRE cgroup — including the daemonized
- * tmux server. The durable session dies, defeating DUR-01. Root-caused live on the VPS
- * (2026-06-16): `systemctl show comis -p KillMode` → `control-group`, and the
+ * tmux server. The durable session dies. Observed on a live host:
+ * `systemctl show comis -p KillMode` → `control-group`, and the
  * `comis-<id>` tmux server was gone after a `systemctl restart comis`.
  *
  * The fix is `KillMode=process`: systemd signals ONLY the main daemon process on stop,
@@ -26,7 +26,7 @@
  * (the install.sh heredoc is what actually reaches a VPS; the template is the canonical
  * unit-of-record).
  *
- * This is the macOS-runnable half of the DUR-01 survival proof; the live half is the
+ * This is the macOS-runnable half of the survival proof; the live half is the
  * VPS reproduction (durable session → `systemctl restart` → `tmux has-session` still 0).
  */
 import { existsSync, readFileSync } from "node:fs";
@@ -47,7 +47,7 @@ function repoRoot(): string {
 
 const KILLMODE_PROCESS = /^KillMode=process\s*$/m;
 
-describe("DUR-01: durable terminal sessions survive a daemon restart (KillMode=process)", () => {
+describe("durable terminal sessions survive a daemon restart (KillMode=process)", () => {
   it("the canonical comis.service.template sets KillMode=process", () => {
     const content = readFileSync(resolve(repoRoot(), "packages/daemon/systemd/comis.service.template"), "utf8");
     expect(content).toMatch(KILLMODE_PROCESS);
@@ -65,14 +65,14 @@ describe("DUR-01: durable terminal sessions survive a daemon restart (KillMode=p
   });
 });
 
-// TERMRW-01 (live VPS 2026-06-17): the terminal driver's `filesystem: home` scope gives a driven
+// The terminal driver's `filesystem: home` scope gives a driven
 // CLI its home READ-WRITE — its binary in `~/.local`, its state/creds in `~/.claude` / `~/.codex`.
 // But the bwrap jail binds the DAEMON's view of `~/`, so the unit's `ProtectHome=read-only` leaked
 // in and read-onlyed exactly those dirs → claude/codex couldn't write their state at launch and
-// EXITED instantly (proven live: read-only `~/.claude` → ~2s exit; `ReadWritePaths=<home>` → claude
+// EXITED instantly (observed: read-only `~/.claude` → ~2s exit; `ReadWritePaths=<home>` → claude
 // builds+commits a project). The unit MUST grant the service home read-write (the bwrap jail + the
 // `~/.comis` mask are the real isolation; ProtectHome still hides /root + other users' homes).
-describe("TERMRW-01: the unit grants the service HOME read-write so driven CLIs persist state", () => {
+describe("the unit grants the service HOME read-write so driven CLIs persist state", () => {
   // The home as a STANDALONE ReadWritePaths entry (not just `<home>/.npm` subdirs) — so a driven
   // CLI's own state dirs (`~/.claude`, `~/.codex`, …) are writable. The negative lookahead `(?!/)`
   // rejects the old subdir-only form (`@SVC_HOME@/.npm`), which left `~/.claude` read-only.

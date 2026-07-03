@@ -1,22 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the pure NOTIFY-01 drive.notify gate
- * (terminal-notify-policy.ts) — design §4 Phase D, CONTEXT I4.
- *
- * RED-first: `terminal-notify-policy.ts` does not exist when this file is first
- * committed — the import fails, every case is RED. The production module turns them
- * GREEN. (Mirrors terminal-spend-ceiling.test.ts:1-9 — the "module does not exist on
- * first commit" banner.)
+ * Unit tests for the pure drive.notify gate
+ * (terminal-notify-policy.ts).
  *
  * `shouldNotifyOutcome(outcome, policy)` answers ONE question: should this terminal
  * outcome reach the USER, given the `drive.notify` policy?
  *
- *   - outcome === "needs-you" → ALWAYS true (I4 — an escalation is a security signal that
- *     notifies even under "none"; the load-bearing cell). RED-pin under EVERY policy.
+ *   - outcome === "needs-you" → ALWAYS true (an escalation is a security signal that
+ *     notifies even under "none"; the load-bearing cell). Pinned under EVERY policy.
  *   - else (done/failed)      → policy !== "none" (suppressed ONLY under "none"; fire under
  *     "terminal"/"all").
  *
- * Pitfall 1 (I4 regression): the escalation must NOT be routable through a uniform
+ * The classic regression: the escalation must NOT be routable through a uniform
  * suppression — `needs-you` under `none` is the canary cell. Pinned both ways below.
  *
  * @module
@@ -26,8 +21,8 @@ import { describe, it, expect } from "vitest";
 
 import { shouldNotifyOutcome, type NotifyPolicy } from "./terminal-notify-policy.js";
 
-describe("shouldNotifyOutcome — needs-you ALWAYS fires (I4 — even under 'none')", () => {
-  it("needs-you under 'none' → true (the load-bearing I4 cell — an escalation is never silenced)", () => {
+describe("shouldNotifyOutcome — needs-you ALWAYS fires (even under 'none')", () => {
+  it("needs-you under 'none' → true (the load-bearing cell — an escalation is never silenced)", () => {
     expect(shouldNotifyOutcome("needs-you", "none")).toBe(true);
   });
 

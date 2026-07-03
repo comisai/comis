@@ -30,7 +30,7 @@ export interface GraphAnnouncement {
 }
 
 // ---------------------------------------------------------------------------
-// COST-02: per-subagent corrected-$ subtree rollup
+// Per-subagent corrected-$ subtree rollup
 // ---------------------------------------------------------------------------
 
 /**
@@ -43,11 +43,11 @@ export interface GraphAnnouncement {
  * node lists its upstream parents in `dependsOn`, so a node's children are the
  * nodes that name it in their `dependsOn`). A child's cost therefore rolls into
  * its parent's subtree total; the recursion composes
- * (`rollup(p) === own(p) + Σ rollup(child)`), the Hermes structure but over
- * CORRECTED dollars rather than estimates (the E5 beat).
+ * (`rollup(p) === own(p) + Σ rollup(child)`) over CORRECTED dollars from
+ * provider usage reports, never estimates.
  *
- * PURE + deterministic (no IO) — unit-testable in isolation and reusable by the
- * COST-02 read RPC. (tenant,agent)-scoped: reads ONLY the per-graph `gs` (which
+ * PURE + deterministic (no IO) — unit-testable in isolation and reusable by
+ * read-side cost reporting. (tenant,agent)-scoped: reads ONLY the per-graph `gs` (which
  * IS that scope), so two graphs in different scopes never cross-contaminate.
  * A cycle-safe visited set guards against malformed graphs (sorted/validated
  * graphs are acyclic, but the rollup must never infinite-loop).
@@ -118,7 +118,7 @@ export function handleGraphCompletion(
     else if (nState.status === "failed") nodesFailed++;
     else if (nState.status === "skipped") nodesSkipped++;
   }
-  // 3.3: Compute cache rollup once -- shared by event emission and completion log
+  // Compute cache rollup once -- shared by event emission and completion log
   let graphCacheReadTokens = 0;
   let graphCacheWriteTokens = 0;
   const nodeEffectiveness: Record<string, number> = {};
@@ -141,17 +141,17 @@ export function handleGraphCompletion(
     ? { graphCacheReadTokens, graphCacheWriteTokens, graphCacheEffectiveness, nodeEffectiveness }
     : {};
 
-  // IN-01: surface the per-node token-spend breakdown (the production reader of
+  // Surface the per-node token-spend breakdown (the production reader of
   // gs.nodeTokenSpend, otherwise a dead write). Present only when at least one
-  // node recorded spend — byte-identical to today's payload otherwise.
+  // node recorded spend — the payload is unchanged otherwise.
   const nodeTokenSpendFields = gs.nodeTokenSpend.size > 0
     ? { nodeTokenSpend: Object.fromEntries(gs.nodeTokenSpend) }
     : {};
 
-  // COST-02: surface the per-node CUMULATIVE corrected-$ cost ledger (the
+  // Surface the per-node CUMULATIVE corrected-$ cost ledger (the
   // production reader of gs.nodeCost). Content-free (nodeId → number); present
-  // only when non-empty — byte-identical otherwise (the nodeTokenSpend mold).
-  // The subtree rollups derive from this via computeSubtreeCost (below).
+  // only when non-empty — the payload is unchanged otherwise (same shape rule
+  // as nodeTokenSpend). The subtree rollups derive from this via computeSubtreeCost.
   const nodeCostFields = gs.nodeCost.size > 0
     ? { nodeCost: Object.fromEntries(gs.nodeCost) }
     : {};
@@ -166,11 +166,11 @@ export function handleGraphCompletion(
     nodesSkipped,
     ...(gs.cancelReason !== undefined && { cancelReason: gs.cancelReason }),
     timestamp: systemNowMs(),
-    // 3.3: Graph-level cache aggregation
+    // Graph-level cache aggregation
     ...cacheRollupFields,
-    // IN-01: per-node token-spend breakdown
+    // Per-node token-spend breakdown
     ...nodeTokenSpendFields,
-    // COST-02: per-node cumulative corrected-$ cost ledger
+    // Per-node cumulative corrected-$ cost ledger
     ...nodeCostFields,
   });
 
@@ -271,7 +271,7 @@ export function handleGraphCompletion(
       nodesFailed,
       totalCostUsd: gs.cumulativeCost > 0 ? gs.cumulativeCost : undefined,
       totalTokens: gs.cumulativeTokens > 0 ? gs.cumulativeTokens : undefined,
-      // 3.3: Graph-level cache aggregation (computed above for event + log)
+      // Graph-level cache aggregation (computed above for event + log)
       ...cacheRollupFields,
     },
     "Graph execution complete",
@@ -505,14 +505,15 @@ export function handleBudgetExceeded(
 
   handleGraphCompletion(state, deps, gs);
 
-  // SPEND-04: the graph cumulative-budget seam (this function) interoperates with
-  // the daemon-wide spend kill-switch (Phase 177) via the OPEN `reason` param — a
+  // The graph cumulative-budget seam (this function) interoperates with the
+  // daemon-wide spend kill-switch via the OPEN `reason` param — a
   // spend-ceiling breach routes through HERE with `"spend_exceeded"`, not a parallel
   // graph kill-path. The two ceilings are DISTINCT: `graph.budget.maxTokens/maxCost`
   // is the per-graph cumulative cap (reasons `"tokens"`/`"cost"`); the spend ceiling
   // is the per-(agent|tenant|global) dollar kill-switch (`observability.spend.*`).
   // Name the right knob so an operator drilling the WARN tunes the ceiling that
-  // actually fired. Counts-only payload — never a `$` amount as a body (§2.7).
+  // actually fired. Counts-only payload — dollar amounts ride structured fields,
+  // never the log-message body.
   const hint =
     reason === "spend_exceeded"
       ? "A spend ceiling (observability.spend.{perAgentUsd,perTenantUsd,daemonGlobalUsd}) was exceeded during graph execution; raise it or set observability.spend.action"

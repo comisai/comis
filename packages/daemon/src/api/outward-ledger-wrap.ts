@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: TEST-ONLY crash-injection seam (Phase 216 Plan 08, MED-6). The two
+// @allow-throw: TEST-ONLY crash-injection seam. The two
 // `throw new Error(OUTWARD_SEND_CRASH_SENTINEL)` sites (lines ~158/162) MUST be real
-// throws — they simulate a process crash in the exact invariant-#12 window (BETWEEN
+// throws — they simulate a process crash in the exact crash window (BETWEEN
 // markUnknown and commit) so the post-restart recovery faces a genuine
 // `unknown_after_send` row written by the REAL code path. A `Result.err(...)` cannot
 // model this: the function would return normally and `commit` would NOT be skipped the
@@ -9,10 +9,10 @@
 // would never reproduce. INERT in production (__crashHook is never armed). The throws
 // unwind to the chaos test's `.rejects.toThrow(OUTWARD_SEND_CRASH_SENTINEL)` assertion.
 /**
- * wrapOutwardSend — the three-state outward-send ledger wrapper (Phase 216,
- * ONCE-01/02/04). It turns an irreversible chat-platform send into an
+ * wrapOutwardSend — the three-state outward-send ledger wrapper. It turns an
+ * irreversible chat-platform send into an
  * exactly-once side effect by keying every attempt on the `(rootRunId,
- * stepIndex)` idempotency pair (HIGH-1) the RPC chokepoint allocated.
+ * stepIndex)` idempotency pair the RPC chokepoint allocated.
  *
  * It wraps the EXISTING `deliveryService.deliverToChannel` call at
  * message.send/reply/react — it is inserted AFTER `enforceOutwardQuota`, so the
@@ -24,13 +24,13 @@
  *   begin (send_attempt_started) → markUnknown (unknown_after_send) → doSend →
  *   commit(platformMessageId).
  * The crash window is BETWEEN markUnknown and commit: a crash there leaves an
- * `unknown_after_send` row the recovery scan (Plan 04) finds and reconciles —
+ * `unknown_after_send` row the recovery scan finds and reconciles —
  * never a blind replay.
  *
- * SECURITY (T-216-03): only a sha256 `contentDigest` reaches the ledger; the raw
+ * SECURITY: only a sha256 `contentDigest` reaches the ledger; the raw
  * `text` goes to `createHash` + `doSend` only — never to any ledger method.
  *
- * HIGH-1 (NEW-1/ONCE-02): a MISSING `outwardStepIndex` is a PASS-THROUGH (an
+ * A MISSING `outwardStepIndex` is a PASS-THROUGH (an
  * interactive / non-autonomy send), NOT stepIndex 0 — defaulting to 0 would make
  * two un-indexed sends collide on the idempotency key and silently drop one.
  *
@@ -43,10 +43,10 @@ import { isPermanentError, systemNowMs, type OutwardSendLedgerPort } from "@comi
 import type { ComisLogger } from "@comis/infra";
 
 /**
- * TEST-ONLY crash-injection seam (Phase 216 Plan 08, MED-6). The exactly-once
+ * TEST-ONLY crash-injection seam. The exactly-once
  * chaos test (`test/integration/durable-resume-e2e.test.ts`) drives a REAL
  * autonomy-originated outward send through this wrap and crashes the daemon in
- * the exact window invariant #12 protects — BETWEEN `markUnknown`
+ * the exact crash window — BETWEEN `markUnknown`
  * (state=unknown_after_send) and `commit` — so the post-restart recovery faces a
  * genuine `unknown_after_send` row written by the REAL code path (not a
  * direct-DB-seed). That makes the RED state a real double-send, not a "no such
@@ -85,7 +85,7 @@ export interface WrapOutwardSendArgs {
   /** The owning run — half the idempotency key. `undefined` for an interactive send (⇒ pass-through). */
   rootRunId: string | undefined;
   /**
-   * The monotonic outward-step index the chokepoint allocated (HIGH-1). The
+   * The monotonic outward-step index the chokepoint allocated. The
    * OTHER half of the idempotency key. `undefined` ⇒ PASS-THROUGH (no ledger).
    * NEVER substitute 0 for a missing index (that would collide two sends).
    */
@@ -96,7 +96,7 @@ export interface WrapOutwardSendArgs {
   channelType: string;
   /** The channel/chat/room identifier. */
   channelId: string;
-  /** The message content — hashed for the digest + handed to `doSend`; NEVER persisted (T-216-03). */
+  /** The message content — hashed for the digest + handed to `doSend`; NEVER persisted. */
   text: string;
   /** The wrapped platform call (the existing `deliverToChannel`). */
   doSend: () => Promise<Result<{ messageId: string }, Error>>;
@@ -115,7 +115,7 @@ export async function wrapOutwardSend(
   const { ledger, rootRunId, outwardStepIndex, agentId, channelType, channelId, text, doSend, logger } =
     args;
 
-  // HIGH-1: a missing ledger / rootRunId / outwardStepIndex is a PASS-THROUGH —
+  // A missing ledger / rootRunId / outwardStepIndex is a PASS-THROUGH —
   // an interactive send, a non-autonomy daemon, or no allocated index. NEVER
   // substitute 0 for a missing index (that would make two un-indexed sends
   // collide on the idempotency key and drop one).
@@ -124,7 +124,7 @@ export async function wrapOutwardSend(
   }
   const stepIndex = outwardStepIndex; // defined past the guard
 
-  // ONCE-02 dedup read: a committed row short-circuits a replay to a no-op,
+  // Dedup read: a committed row short-circuits a replay to a no-op,
   // returning the prior platformMessageId — doSend is never reached.
   const existing = await ledger.lookup(rootRunId, stepIndex);
   if (existing.ok && existing.value?.state === "committed") {
@@ -133,10 +133,10 @@ export async function wrapOutwardSend(
   }
 
   const startedAt = systemNowMs();
-  // Content-free key (T-216-03): only the sha256 slice — never the body.
+  // Content-free key: only the sha256 slice — never the body.
   const contentDigest = createHash("sha256").update(text).digest("hex").slice(0, 16);
 
-  // ONCE-01: write send_attempt_started BEFORE the platform call. The UNIQUE
+  // Write send_attempt_started BEFORE the platform call. The UNIQUE
   // (rootRunId, stepIndex) constraint makes a duplicate begin an err the wrap
   // treats as "already in flight" — another attempt owns this send, so we do
   // NOT issue a second platform call (no double send).
@@ -158,7 +158,7 @@ export async function wrapOutwardSend(
   // crash mid-send leaves a durable row the recovery scan reconciles.
   await ledger.markUnknown(rootRunId, stepIndex);
 
-  // TEST-ONLY (MED-6): crash in the exact invariant-#12 window. "before_send"
+  // TEST-ONLY: crash in the exact crash window. "before_send"
   // crashes with the platform NOT having recorded the message (truth=not_sent);
   // "after_send" runs the real platform call (truth=sent) THEN crashes before
   // commit. Either way the row is left unknown_after_send for the post-restart
@@ -182,7 +182,7 @@ export async function wrapOutwardSend(
     return sent;
   }
 
-  // ONCE-04: a permanent failure (chat not found / blocked / forbidden) is
+  // A permanent failure (chat not found / blocked / forbidden) is
   // terminal — markFailed and return, skipping the retry budget (no loop).
   if (isPermanentError(sent.error.message)) {
     await ledger.markFailed(rootRunId, stepIndex, "permanent");
@@ -198,7 +198,7 @@ export async function wrapOutwardSend(
     return sent;
   }
 
-  // A transient failure leaves the row in unknown_after_send: recovery (Plan 04)
+  // A transient failure leaves the row in unknown_after_send: recovery
   // reconciles it against the channel's reconcileSend? — NOT committed, NOT failed.
   logger.warn(
     {

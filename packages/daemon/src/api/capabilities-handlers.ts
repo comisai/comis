@@ -1,29 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Capabilities RPC handler module (Phase 215-04, INTRO-01/INTRO-02) — the
- * read-only, agent-reachable surface behind `comis whoami`:
+ * Capabilities RPC handler module — the read-only, agent-reachable surface
+ * behind `comis whoami`:
  *
  *   - `capabilities.introspect {}` — return the CALLER's resolved orchestration
  *     capabilities + the remaining per-root budget/quota for its live run. The
  *     read is SELF-SCOPED: it reports caps/budget for the caller's `_agentId`
- *     ONLY — never an arbitrary `agentId` request param (T-215-11, the
- *     session-read.ts:43 self-scope precedent). The request is `{}`.
+ *     ONLY — never an arbitrary `agentId` request param (the session-read.ts:43
+ *     self-scope precedent). The request is `{}`.
  *
- * NO `requireCapability` (INTRO-02). The method is `scopes:["rpc"]`, classified
+ * NO `requireCapability`. The method is `scopes:["rpc"]`, classified
  * `"ungated"` in `HANDLER_CAPABILITY_MAP` — an agent reading its OWN posture
  * needs no capability. It is NOT in `ADMIN_METHODS`, so deny-by-origin does NOT
- * fire and the agent CAN reach it (correct). The Plan-01 per-cap audit does NOT
+ * fire and the agent CAN reach it (correct). The per-cap audit does NOT
  * fire for it either (the audit's filter is real-`AgentCapability`-only, and
  * `"ungated"` is excluded).
  *
  * Self-scope mechanics: read `_agentId` AND `_capabilities` BEFORE
  * `stripInternalFields` (both are dispatcher-injected, unforgeable agent-origin
- * signals — inbound copies are stripped from external callers at the gateway,
- * ORIGIN-02; forged ones are dropped before reaching here). Report the injected
+ * signals — inbound copies are stripped from external callers at the gateway;
+ * forged ones are dropped before reaching here). Report the injected
  * `_capabilities` — the EXACT `heldCapabilities` set `createAgentRpcCall`
  * resolves once at setup-tools-capabilities.ts:51-53 and `requireCapability`
- * enforces this run — so the read can NEVER diverge from enforcement (WR-04). An
+ * enforces this run — so the read can NEVER diverge from enforcement. An
  * empty `[]` is authoritative (a genuine zero-cap run), not a fallback trigger.
  * The operator/CLI origin (no in-process gate, no injected `_capabilities`) falls
  * back to re-resolving the caller's OWN `PerAgentConfig.autonomy` — with NO
@@ -75,10 +75,10 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
  */
 export interface CapabilitiesHandlerDeps {
   /**
-   * The bounded-autonomy composite — `snapshot` is the pure remaining-budget read (Plan 02).
-   * OPTIONAL (finding E, 30uc-20260624): when NO agent resolves to an autonomy-bearing profile
+   * The bounded-autonomy composite — `snapshot` is the pure remaining-budget read.
+   * OPTIONAL: when NO agent resolves to an autonomy-bearing profile
    * (e.g. all `autonomy.profile: assistant`), bounded-autonomy is not wired — but the handler is
-   * STILL registered (no more "Unknown RPC method") and returns the disabled-state ({enabled:false,
+   * STILL registered (never "Unknown RPC method") and returns the disabled-state ({enabled:false,
    * caps:[]}); the budget snapshot is simply omitted (no live root to report).
    */
   boundedAutonomy?: BoundedAutonomy;
@@ -86,7 +86,7 @@ export interface CapabilitiesHandlerDeps {
   agents: Record<string, PerAgentConfig>;
   /** The default agent the self-scope falls back to (operator/CLI origin, or an unknown agent). */
   defaultAgentId: string;
-  /** Tree-stable synthetic-root resolver (Phase 213 CR-01). Absent ⇒ no live root ⇒ budget omitted. */
+  /** Tree-stable synthetic-root resolver. Absent ⇒ no live root ⇒ budget omitted. */
   resolveRootRunId?: (sessionKey: SessionKey) => string;
   /** Structured logger for the content-free §2.7 instrumentation. */
   logger: ComisLogger;
@@ -128,21 +128,21 @@ export function createCapabilitiesHandlers(
       const userParams = stripInternalFields(rawParams);
       CapabilitiesIntrospectContract.request.parse(userParams);
 
-      // WR-04: report the injected enforced caps when present; otherwise (an
+      // Report the injected enforced caps when present; otherwise (an
       // operator/CLI origin with no in-process gate) re-resolve the caller's OWN
       // per-agent `AutonomyConfig` — NO cross-agent `defaultAgentId` fallback, so
       // the echoed `agentId` and the reported caps always describe the SAME scope
-      // (an unknown `_agentId` no longer borrows the default agent's caps — the
+      // (an unknown `_agentId` never borrows the default agent's caps — the
       // chimeric-posture class). `agentId` already resolves to `defaultAgentId`
       // for a no-`_agentId` operator origin (line above), so that path is intact.
       const resolvedAutonomy = resolveAutonomy(deps.agents[agentId]?.autonomy);
       const caps = injectedCaps ?? [...resolvedAutonomy.capabilities];
-      // Finding E: report the caller's resolved autonomy.enabled so a disabled/assistant-profile
+      // Report the caller's resolved autonomy.enabled so a disabled/assistant-profile
       // agent gets a clean {enabled:false, caps:[]} instead of an "Unknown RPC method" error.
       const enabled = resolvedAutonomy.enabled;
 
       // Budget/outwardQuota ONLY when a live rootRunId resolves (in-flight run) AND bounded-autonomy
-      // is wired (finding E: it may be absent when no autonomy agent exists). In-process pre-spawn
+      // is wired (it may be absent when no autonomy agent exists). In-process pre-spawn
       // (no caller key) or no-autonomy ⇒ both ABSENT — honest, never a fabricated zero snapshot.
       let budget: ReturnType<BoundedAutonomy["snapshot"]>["budget"] | undefined;
       let outwardQuota: ReturnType<BoundedAutonomy["snapshot"]>["outwardQuota"] | undefined;

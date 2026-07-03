@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Autonomy-handlers contract slice (213-03 — REVOKE-01/03).
+ * Autonomy-handlers contract slice.
  *
  * The two operator-facing live-control RPC methods of the bounded-autonomy
  * control plane:
@@ -14,11 +14,11 @@
  * is DERIVED from `scopes:["admin"]` contracts (rpc-dispatch.ts), so each method
  * lands in `ADMIN_METHODS` and the dispatch chokepoint's `assertNotAgentOrigin`
  * denies any agent-origin (`_agentId`-bearing) call automatically — the
- * deny-by-origin guarantee (REVOKE-01 "external to + non-bypassable by the
- * agent"), with NO manual `_agentId` check anywhere (a manual check would
+ * deny-by-origin guarantee (revocation is external to and non-bypassable by
+ * the agent), with NO manual `_agentId` check anywhere (a manual check would
  * drift). Mirrors `subagent-handlers.ts` (the admin-RPC contract template); the
- * daemon handlers driving the LeaseManager revoke fan-outs + the runner's
- * `killByRootRun` land in Plan 06.
+ * daemon handlers (daemon autonomy-handlers.ts) drive the LeaseManager revoke
+ * fan-outs + the runner's `killByRootRun`.
  *
  * Spread order in `AUTONOMY_HANDLERS_CONTRACTS` matches the orchestrator
  * contracts array byte for byte to keep `contracts.generated.*` artifacts
@@ -40,7 +40,7 @@ import { defineContract } from "../types.js";
 
 /**
  * `lease.revoke` — Revoke a capability lease (cooperative stop). Admin-scoped
- * → deny-by-origin. Handler path: autonomy-handlers.ts (Plan 06).
+ * → deny-by-origin. Handler path: autonomy-handlers.ts (daemon).
  *
  * Request: `{ leaseId?, rootRunId? }` — one-of. `leaseId` revokes a single
  *   lease; `rootRunId` revokes every lease of that spawn tree (the handler
@@ -66,7 +66,7 @@ export const LeaseRevokeContract = defineContract({
 
 /**
  * `run.kill` — Kill a whole spawn tree (hard stop). Admin-scoped →
- * deny-by-origin. Handler path: autonomy-handlers.ts (Plan 06). Drives the
+ * deny-by-origin. Handler path: autonomy-handlers.ts (daemon). Drives the
  * runner's `killByRootRun` (abort every SDK session of the tree) AND
  * `leaseManager.revokeByRootRun` (revoke its leases).
  *
@@ -89,16 +89,16 @@ export const RunKillContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `autonomy.evict` — DEMOTE an in-flight run to `default` (Phase 217-04,
- * EVICT-01). Admin-scoped → deny-by-origin (an agent cannot self-un-evict).
- * Handler path: autonomy-handlers.ts (daemon, Phase 217-04).
+ * `autonomy.evict` — DEMOTE an in-flight run to `default`.
+ * Admin-scoped → deny-by-origin (an agent cannot self-un-evict).
+ * Handler path: autonomy-handlers.ts (daemon).
  *
  * SEMANTICALLY DISTINCT from `lease.revoke` (cooperative stop) and `run.kill`
  * (hard stop): evict does NOT abort — the run CONTINUES under the `default`
  * profile (which still escalates outward, never auto-sends). The handler marks
  * the `rootRunId` in a daemon-wide evicted-set; the bounded-autonomy chokepoint
- * consults it at the NEXT gate decision (EVICT-03 — mid-run, NOT at mint/next-
- * spawn), so the demotion bites a runaway in flight.
+ * consults it at the NEXT gate decision (mid-run, NOT at mint/next-spawn),
+ * so the demotion bites a runaway in flight.
  *
  * Request: `{ rootRunId }` — the root run to demote.
  * Response: `{ evicted }` — true if the run is now demoted (whether THIS call

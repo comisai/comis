@@ -87,14 +87,15 @@ export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
  *                   last-resort raw key keeps the resolver's empty-field guard
  *                   from tripping)
  *
- * WR-01 (175-REVIEW.md): the prior formula used "sub-agent" for channelType and
- * `run.announceChannelId ?? parsed?.channelId` for channelId, which DIVERGED
- * from the registration key. For steer (steer-run.ts) that miss was FATAL
+ * PITFALL: a formula using "sub-agent" for channelType or
+ * `run.announceChannelId ?? parsed?.channelId` for channelId DIVERGES
+ * from the registration key. For steer (steer-run.ts) that miss is FATAL
  * (the inject's whole purpose is to reach the live handle); for the kill /
- * ghost-sweep / watchdog aborts below it was a silent best-effort no-op
- * (latent). Aligning the formula fixes steer AND makes those aborts actually
- * reach the handle. Keep this BYTE-IDENTICAL to steer-run.ts:deriveCompositeForRun
- * -- the 175-00 spike fails loudly on drift.
+ * ghost-sweep / watchdog aborts below it is a silent best-effort no-op
+ * (latent). Keeping the formula aligned makes steer work AND lets those aborts
+ * actually reach the handle. Keep this BYTE-IDENTICAL to
+ * steer-run.ts:deriveCompositeForRun — the resolution spike
+ * (sub-agent-runner.steer-resolve.spike.test.ts) fails loudly on drift.
  */
 function deriveCompositeForRun(run: SubAgentRun): {
   agentId: string;
@@ -116,7 +117,7 @@ function deriveCompositeForRun(run: SubAgentRun): {
 // @optional-field-count: 13 — SubAgentRun is the per-run flight-record state; its
 // optionals are independent, lifecycle-populated facets of ONE run (result/error
 // set at completion; requesterOrigin/announce* at spawn; graphId/nodeId/abortGroup
-// for graph routing; parentLeaseId/ceilingSlotAcquired for the Phase-213 ceiling/
+// for graph routing; parentLeaseId/ceilingSlotAcquired for the tree-wide ceiling/
 // cascade). They are not a cluster-split candidate — every field describes the
 // SAME run and is read by the runner's own lifecycle, not handed to a sub-service.
 export interface SubAgentRun {
@@ -141,11 +142,11 @@ export interface SubAgentRun {
   requesterOrigin?: DeliveryOrigin;
   /** Spawn depth in the chain (0 = first child, 1 = grandchild, etc.). */
   depth: number;
-  /** Tree-stable run identity (CEIL-01/REVOKE-03). Every run belongs to exactly one
+  /** Tree-stable run identity. Every run belongs to exactly one
    *  spawn tree; the root mints this id and descendants inherit it. The unified
    *  semaphore keys on it and killByRootRun enumerates a whole tree by it. */
   rootRunId: string;
-  /** Lease that authorized this spawn (REVOKE-02 cascade correlation); undefined for the root. */
+  /** Lease that authorized this spawn (revocation-cascade correlation); undefined for the root. */
   parentLeaseId?: string;
   /** Session key of the caller agent, used for active children counting. */
   callerSessionKey?: string;
@@ -159,7 +160,7 @@ export interface SubAgentRun {
   nodeId?: string;
   /** Abort/cleanup group key. Graph spawns: `graph:${graphId}`. Regular: callerSessionKey. */
   abortGroup?: string;
-  /** Phase 213 CR-02: true when this run reserved a tree-wide ceiling slot
+  /** True when this run reserved a tree-wide ceiling slot
    *  (`checkSpawnCeiling` returned ok). The slot is released EXACTLY ONCE on the
    *  run's first terminal transition (`releaseCeilingSlotOnce` clears the flag),
    *  so a kill→later-settle or a double-fired completion never double-releases
@@ -188,7 +189,7 @@ export interface SubAgentRunnerDeps {
     maxSteps?: number,
     callerAgentId?: string,
     overrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
-    /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap (BUDGET-01). */
+    /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap. */
     tokenBudget?: number,
   ) => Promise<{
     response: string;
@@ -220,7 +221,7 @@ export interface SubAgentRunnerDeps {
   tenantId: string;
   /**
    * Resolve an agent's sandbox posture from its per-agent skills config
-   * (SANDBOX-01) for the fail-closed no-downgrade gate (SANDBOX-02). Injected by
+   * for the fail-closed no-downgrade gate. Injected by
    * the daemon wiring (which holds `container.config.agents`); the runner stays a
    * `@comis/agent` leaf with no full-config import — it never reaches
    * `config.agents[...]` itself. The two-arg form mirrors the daemon's
@@ -231,12 +232,12 @@ export interface SubAgentRunnerDeps {
    */
   resolvePosture?: (agentId: string, callerAgentId?: string) => SandboxPosture;
   /**
-   * Tree-wide spawn ceiling consult (CEIL-01). Called at the spawn chokepoint —
+   * Tree-wide spawn ceiling consult. Called at the spawn chokepoint —
    * the SINGLE convergence point `session.spawn`, `graph.*`, AND the in-process
    * agent loop ALL hit (they all call `runner.spawn`) — so a `for(;;) spawn()`
    * fork-bomb is bounded tree-wide where the per-caller depth/fanout gates cannot
-   * (RESEARCH anti-pattern: "a semaphore that only sees the cap-endpoint path
-   * misses the in-process path"). Receives the run's tree-stable `rootRunId`, the
+   * (a semaphore that only sees the cap-endpoint path
+   * misses the in-process path). Receives the run's tree-stable `rootRunId`, the
    * `depth`, and the active-children `fanout`. On `{ ok:false }` the spawn is
    * rejected EXACTLY like the depth/children gates (event + WARN + no run/session
    * created). **Absent ⇒ inert** (non-daemon constructions / older test wiring);
@@ -248,12 +249,12 @@ export interface SubAgentRunnerDeps {
     fanout: number,
   ) => { ok: true } | { ok: false; reason: string };
   /**
-   * Symmetric release of a slot reserved by {@link checkSpawnCeiling} (Phase 213
-   * CR-02). Called 1:1 with every successful acquire on EVERY terminal transition
+   * Symmetric release of a slot reserved by {@link checkSpawnCeiling}.
+   * Called 1:1 with every successful acquire on EVERY terminal transition
    * of the run that reserved it — the run-completion `finally` and the queue-
    * timeout fail path. Without it the per-`rootRunId` `active` counter only ever
    * increments and a tree is bricked after `maxConcurrentSelfAgents` spawns
-   * (a permanent spawn brick, masked pre-CR-01 only because roots never shared).
+   * (a permanent spawn brick — masked only while roots never share a counter).
    * Idempotent at the sink (the semaphore floors `active` at 0). **Absent ⇒
    * inert** (older/non-daemon wiring); the daemon wires it to
    * `boundedAutonomy.releaseSpawn`.
@@ -281,7 +282,7 @@ export interface SubAgentRunnerDeps {
   /** Optional dead-letter queue for persisting failed announcement deliveries */
   deadLetterQueue?: AnnouncementDeadLetterQueue;
   /**
-   * WR-02: shared, bounded delivered-key store, forwarded to deliverAnnouncement
+   * Shared, bounded delivered-key store, forwarded to deliverAnnouncement
    * + deliverFailureNotification so the failure-path dedup is correct whether or
    * not a batcher is wired. The daemon injects the SAME instance the batcher uses.
    */
@@ -312,7 +313,7 @@ export interface SubAgentRunnerDeps {
       agentId: string;
       model?: unknown;
       apiKey?: string;
-      // Enriched metadata for offline analysis (Findings 17, 20)
+      // Enriched metadata for offline analysis
       parentTraceId?: string;
       graphId?: string;
       nodeId?: string;
@@ -354,7 +355,7 @@ export interface SubAgentRunnerDeps {
       tokensUsed: number;
       cost: number;
       sessionKey: string;
-      /** Phase 218 (SUMREF-02): the materialized full-output handle, when produced. */
+      /** The materialized full-output handle, when produced. */
       resultRef?: ResultRef;
     }): string;
   };
@@ -365,7 +366,7 @@ export interface SubAgentRunnerDeps {
   /** Timer scheduling. Sweep-interval + watchdog setTimeout + shutdown-timeout setTimeout. */
   timers: TimerPort;
   /**
-   * Phase 216 (DUR-01 / HB-01): the durable-run checkpoint store. OPTIONAL — when
+   * The durable-run checkpoint store. OPTIONAL — when
    * present (the daemon wires it ONLY when `autonomy.durability.enabled` AND an
    * autonomy agent is configured), `spawn()` writes a per-root checkpoint at the
    * spawn boundary + refreshes a keep-alive heartbeat on the injected timer, and
@@ -376,15 +377,15 @@ export interface SubAgentRunnerDeps {
    */
   durableRuns?: DurableRunPort;
   /**
-   * Phase 216 (HB-01): the keep-alive cadence + lapsed threshold (from
+   * The keep-alive cadence + lapsed threshold (from
    * `autonomy.durability`). `keepAliveMs` drives the heartbeat-refresh interval
    * (independent of step/spawn completion so a long-running child never looks
-   * stale — Pitfall 4). Optional alongside {@link durableRuns}; defaults applied
+   * stale). Optional alongside {@link durableRuns}; defaults applied
    * when absent.
    */
   durability?: { keepAliveMs: number; staleHeartbeatMs: number };
   /**
-   * Phase 216 (DUR-01): resolve the durable-checkpoint facts for a tree root —
+   * Resolve the durable-checkpoint facts for a tree root —
    * the ATTENUATED caps the run was minted with (the lease's caps), the correlated
    * `leaseIds` (BoundedAutonomy.leaseIdsForRoot), and the consumed budget (the
    * budget `snapshot`). Injected by the daemon wiring (which holds the
@@ -422,7 +423,7 @@ export interface SubAgentRunnerDeps {
     }): Promise<void>;
   };
   /**
-   * Phase 218 (SUMREF-02): materialize the child's FULL output to the CHILD's
+   * Materialize the child's FULL output to the CHILD's
    * own jailed workspace as a structured {@link ResultRef} (preview + ref +
    * bytes + kind), so the lead's announcement carries a bounded summary + a
    * HANDLE instead of the megabyte body (the longevity invariant). The daemon
@@ -437,8 +438,8 @@ export interface SubAgentRunnerDeps {
    *
    * `ctx.agentId` is the CHILD's agent id — the daemon resolves the materialize
    * target (`resolveWorkspaceDir(config[agentId], agentId, dataDir)`) from it so
-   * the write lands in the CHILD's OWN jailed workspace, NEVER the lead's
-   * (T-218-08); the store is additionally `safePath`-confined to that root.
+   * the write lands in the CHILD's OWN jailed workspace, NEVER the
+   * lead's; the store is additionally `safePath`-confined to that root.
    */
   materializeFullOutput?: (
     content: string,
@@ -455,9 +456,9 @@ export interface SpawnParams {
   announceChannelId?: string;
   model?: string;
   max_steps?: number;
-  /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap (BUDGET-01).
+  /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap.
    *  Threaded SpawnParams -> ExecuteSubAgentFn -> ExecutionOverrides -> resetExecution(cap).
-   *  When absent, the child enforces config.perExecution exactly as today. */
+   *  When absent, the child enforces config.perExecution unchanged. */
   tokenBudget?: number;
   expected_outputs?: string[];
   /** Originating channel context for default announcement routing */
@@ -466,30 +467,30 @@ export interface SpawnParams {
   depth?: number;
   /** Maximum allowed spawn depth from config. */
   maxDepth?: number;
-  /** Tree-stable run identity (CEIL-01/REVOKE-03). Established ONCE at the root spawn
-   *  (depth 0) and propagated to every descendant so the tree-wide semaphore (Plan 04)
+  /** Tree-stable run identity. Established ONCE at the root spawn
+   *  (depth 0) and propagated to every descendant so the tree-wide semaphore
    *  and kill-by-root primitive see one id per spawn tree. When absent, spawn() mints
    *  one (the root); a child MUST pass its parent's id down — a fresh id per child would
-   *  escape the parent's ceiling (RESEARCH Pitfall 1 — the silent under-count). */
+   *  escape the parent's ceiling (a silent under-count). */
   rootRunId?: string;
-  /** Lease that authorized this spawn (REVOKE-02 cascade correlation). Recorded on the
+  /** Lease that authorized this spawn (revocation-cascade correlation). Recorded on the
    *  run so a future revoke-by-root can map runs to leases; omitted for the root. */
   parentLeaseId?: string;
   /**
-   * Phase 216 (MED-4 cronOrigin): the REAL cron signal carried from the cron-fire
+   * The REAL cron signal carried from the cron-fire
    * turn metadata (`metadata.isCronAgentTurn` — see prompt-assembly.ts:676). When
    * a sub-agent is spawned during a cron-fired turn, the caller threads this from
    * the turn metadata so the durable checkpoint records a non-null `cronOrigin`
    * (the jobId). A non-cron spawn leaves it false → cronOrigin = null. There is NO
-   * `cronOrigin` string at HEAD — the runner DERIVES it from this flag + jobId.
+   * `cronOrigin` string parameter — the runner DERIVES it from this flag + jobId.
    */
   isCronAgentTurn?: boolean;
-  /** Phase 216 (MED-4): the firing cron job's id — the cronOrigin value when `isCronAgentTurn`. */
+  /** The firing cron job's id — the cronOrigin value when `isCronAgentTurn`. */
   jobId?: string;
-  /** Phase 216 (MED-4): the firing cron job's name — the cronOrigin fallback when jobId is absent. */
+  /** The firing cron job's name — the cronOrigin fallback when jobId is absent. */
   jobName?: string;
   /**
-   * Phase 216 (DUR-01): the ATTENUATED caps this run was minted with (the lease's
+   * The ATTENUATED caps this run was minted with (the lease's
    * caps). Threaded from the spawn caller (the cap layer / cron-fire mint) so the
    * durable checkpoint records the exact caps a resume must re-mint VERBATIM
    * (never re-attenuated). When absent, `durableRunFacts` (deps) is consulted; if
@@ -506,8 +507,8 @@ export interface SpawnParams {
   domainKnowledge?: string[];
   /** Tool group names for sub-agent tool filtering. */
   toolGroups?: string[];
-  /** Inherited reply language (DET-02 tag) from the parent ALS; persisted into child
-   *  session metadata as `language` so it survives the spawn round-trip (GEN-03). */
+  /** Inherited reply language from the parent ALS; persisted into child
+   *  session metadata as `language` so it survives the spawn round-trip. */
   resolvedLanguage?: string;
   /** Optional list of tool names that must be reachable by the sub-agent.
    *  Validated at spawn time against the daemon-provided reachableToolNames set.
@@ -553,14 +554,14 @@ export interface SpawnParams {
    *  because their cache prefix has no downstream consumers. */
   isLeafNode?: boolean;
   /**
-   * WT-01: run this child in an ISOLATED git worktree (its own working tree on a
+   * Run this child in an ISOLATED git worktree (its own working tree on a
    * fresh branch rooted under the child's jailed workspace) so parallel children
    * never clobber each other's files. The runner is @comis/skills-free, so it does
    * NOT create the worktree itself — it persists this flag onto the child session
    * metadata (`worktree`), and the daemon's executeSubAgent (which holds the
    * GitExec seam + the workspace resolver) reads the metadata, creates the
    * worktree, runs the child in it, and auto-cleans-if-unchanged on completion.
-   * Absent/false ⇒ the child runs in its normal jailed workspace (today's path).
+   * Absent/false ⇒ the child runs in its normal jailed workspace (the default).
    */
   worktree?: boolean;
 }
@@ -605,7 +606,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const activePromises = new Set<Promise<void>>();
 
   // -------------------------------------------------------------------------
-  // Phase 216 (DUR-01 / HB-01): durable checkpoint + keep-alive heartbeat.
+  // Durable checkpoint + keep-alive heartbeat.
   // Inert when `deps.durableRuns` is absent (the default install). The
   // heartbeat timer is tracked per runId so the terminal `finally` clears it
   // (no leaked interval). Store calls are best-effort — a write error is
@@ -615,18 +616,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const DURABLE_KEEPALIVE_MS = deps.durability?.keepAliveMs ?? 30_000;
 
   /**
-   * Derive the MED-4 `cronOrigin` from the REAL cron signal threaded onto the
+   * Derive the `cronOrigin` from the REAL cron signal threaded onto the
    * spawn params (`isCronAgentTurn` + `jobId`/`jobName`). A cron-fired turn's
    * sub-agent records the firing job's id; a non-cron spawn records null. There
-   * is NO `cronOrigin` string at HEAD — this IS the derivation.
+   * is NO `cronOrigin` string parameter — this IS the derivation.
    */
   function deriveCronOrigin(params: SpawnParams): string | null {
     return params.isCronAgentTurn === true ? (params.jobId ?? params.jobName ?? "cron") : null;
   }
 
   /**
-   * Write the initial durable checkpoint at the SPAWN BOUNDARY (DUR-01) and start
-   * the keep-alive heartbeat (HB-01). `stepIndex` starts at -1 (the never-sent
+   * Write the initial durable checkpoint at the SPAWN BOUNDARY and start
+   * the keep-alive heartbeat. `stepIndex` starts at -1 (the never-sent
    * sentinel — the outward counter is owned by allocateOutwardStep, NOT here).
    * Inert when no store is wired. Never throws.
    */
@@ -672,8 +673,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         );
       });
 
-    // HB-01: a keep-alive that fires INDEPENDENT of step/spawn completion so a
-    // long-running child never trips the watchdog's stale threshold (Pitfall 4).
+    // A keep-alive that fires INDEPENDENT of step/spawn completion so a
+    // long-running child never trips the watchdog's stale threshold.
     // One interval per run, cleared on terminal settle (no leaked timer).
     if (!heartbeatTimers.has(run.runId)) {
       const handle = timers.setInterval(() => {
@@ -697,7 +698,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   /**
-   * Terminal seam (DUR-01): mark the run completed + clear its keep-alive
+   * Terminal seam: mark the run completed + clear its keep-alive
    * heartbeat. Fires on EVERY terminal settle of a started run (completion,
    * failure, kill/ghost/watchdog — the underlying executeAgent promise still
    * settles), so the interval is reclaimed and the durable record stops being
@@ -727,7 +728,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   // -------------------------------------------------------------------------
-  // COORD-03: the ~30s read-only progress fork (coordinator-progress-fork.ts).
+  // The ~30s read-only progress fork (coordinator-progress-fork.ts).
   // One fork per running child, tracked by runId so the terminal `finally`
   // stops it (no leaked timer — the fork's interval is .unref()'d). The fork is
   // a READ-ONLY summary of the in-flight child's advance — it never re-executes,
@@ -742,7 +743,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    * is a thin read of the run's live step counter — `run.result` is only
    * populated on completion (by which point the fork is already stopped), so an
    * in-flight tick reports `stepsExecuted: 0` and the elapsed wall-clock is the
-   * advance signal (RESEARCH: a count-only advance is still NOT a re-execution).
+   * advance signal (a count-only advance is still NOT a re-execution).
    * Idempotent per runId. No model call, no tool, no spawn.
    */
   function startProgressFork(run: SubAgentRun, params: SpawnParams): void {
@@ -764,7 +765,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    * Stop + reclaim a child's progress fork on its terminal settle. Idempotent +
    * inert when none was started (e.g. a queued run that never ran). Mirrors
    * finishDurableCheckpoint's terminal-seam discipline — the fork never outlives
-   * the child (T-218-15).
+   * the child.
    */
   function stopProgressFork(run: SubAgentRun): void {
     const fork = progressForks.get(run.runId);
@@ -773,8 +774,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     progressForks.delete(run.runId);
   }
 
-  // WR-02: make the fail-OPEN observable. The sandbox no-downgrade gate (below)
-  // silently no-ops when `resolvePosture` is absent — a P0 security control that
+  // Make the fail-OPEN observable. The sandbox no-downgrade gate (below)
+  // silently no-ops when `resolvePosture` is absent — a critical security control that
   // does nothing. Production composition (setup-cross-session-runtime.ts) ALWAYS
   // injects the resolver (a daemon-wiring test pins this), but a future second
   // construction path could omit it and ship an inert gate. Emit a one-time
@@ -869,8 +870,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   // -------------------------------------------------------------------------
 
   /**
-   * Release a run's reserved tree-wide ceiling slot EXACTLY ONCE (Phase 213
-   * CR-02). Pairs 1:1 with the `checkSpawnCeiling` acquire recorded on the run.
+   * Release a run's reserved tree-wide ceiling slot EXACTLY ONCE.
+   * Pairs 1:1 with the `checkSpawnCeiling` acquire recorded on the run.
    * Clearing `ceilingSlotAcquired` first makes this idempotent across the several
    * terminal paths a single run can traverse (kill marks failed, then the
    * underlying executeAgent promise later settles and fires `execPromise.finally`
@@ -906,7 +907,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const SWEEP_INTERVAL_MS = 300_000;
   const MAX_RUNS = 1000;
 
-  // WR-01: DLQ recovery sink — when a dead-lettered announcement is finally
+  // DLQ recovery sink — when a dead-lettered announcement is finally
   // re-delivered on drain(), record its idempotency key in the shared
   // deliveredKeys set so a later failure sweep (deliverFailureNotification)
   // does not double-notify the same run. No-op when no shared dedup is wired.
@@ -1082,7 +1083,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: run.task,
           runtimeMs: runningDurationMs,
           runId,
-          callerSessionKey: run.callerSessionKey,  // DELIVERY-03: shared dedup key
+          callerSessionKey: run.callerSessionKey,  // shared dedup key
         // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
       }
@@ -1143,11 +1144,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const maxDepth = params.maxDepth ?? deps.config.subagentContext?.maxSpawnDepth ?? 3;
     const isGraphSpawn = params.callerType === "graph";
 
-    // Establish the tree-stable rootRunId (CEIL-01/REVOKE-03 foundation). The root
+    // Establish the tree-stable rootRunId. The root
     // (the first caller with no rootRunId) mints one; every descendant MUST pass its
     // parent's id down via params.rootRunId. We mint whenever it is absent — regardless
     // of depth — so a missing id never silently splits a tree into per-spawn ids that
-    // each escape the parent's ceiling (RESEARCH Pitfall 1). Uses the injected
+    // each escape the parent's ceiling. Uses the injected
     // ClockPort (never the wall-clock global — the globals.test.ts arch-gate).
     const rootRunId = params.rootRunId ?? `root-${params.agentId}-${clock.now().toString(36)}`;
 
@@ -1249,7 +1250,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     }
 
-    // Sandbox no-downgrade gate (SANDBOX-02). The single fail-closed posture
+    // Sandbox no-downgrade gate. The single fail-closed posture
     // check at the spawn chokepoint: a spawned child may never be LESS confined
     // than its spawner. Placed AFTER the required_tools gate and BEFORE the
     // children/queue branch, so ONE check fires before any `runs.set` / runId /
@@ -1261,9 +1262,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // state). Inert when `resolvePosture` is absent (older test wiring) or for a
     // top-level spawn (no parent posture to compare against). Posture is resolved
     // via the INJECTED `deps.resolvePosture` dep — the runner never reaches
-    // `config.agents[...]` (D-RESOLVEDEP).
+    // `config.agents[...]`.
     //
-    // ORDERING (IN-02, intentional): this fail-closed gate runs BEFORE the
+    // ORDERING (intentional): this fail-closed gate runs BEFORE the
     // children/queue branch and the allowlist check (line ~1051). A spawn that is
     // BOTH a downgrade AND not-allowlisted is therefore attributed to the
     // downgrade refusal. We keep this order on purpose: both branches refuse the
@@ -1283,16 +1284,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           agentId: params.agentId,
           parentAgentId: params.callerAgentId,
           childAgentId: params.agentId,
-          // Enum labels only — never posture values/paths/hosts (§2.7).
+          // Enum labels only — never posture values/paths/hosts in log fields.
           violatedDimensions: cmp.violatedDimensions,
           hint:
             `Spawn refused: child sandbox posture is less confined than its spawner on ${violated}; ` +
             "align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to disable",
           errorKind: "precondition" as const,
         }, "Sub-agent spawn refused: sandbox downgrade");
-        // Typed refusal event (SANDBOX-03): both postures as enum TUPLES + the
+        // Typed refusal event: both postures as enum TUPLES + the
         // violated dimension labels + the two agent ids — labels only, NO
-        // paths/hosts/uid-numbers/credential values (§2.7 / T-172-01f). Fires
+        // paths/hosts/uid-numbers/credential values. Fires
         // here, before the throw, at the exact point a run/session would
         // otherwise be created. comparePosture's violatedDimensions feeds it.
         deps.eventBus.emit("security:sandbox_downgrade_refused", {
@@ -1304,7 +1305,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           childPosture,
         });
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary.
-        // Typed (OBS-RPC-REFUSAL-CLASS): classifyRpcError maps SandboxDowngradeError to
+        // Typed: classifyRpcError maps SandboxDowngradeError to
         // precondition/warn — this fail-closed SECURITY refusal must NOT read as an
         // internal/error handler fault in an operator's ERROR-level health sweep.
         throw new SandboxDowngradeError(
@@ -1442,11 +1443,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // 1. Allowlist check.
-    // WR-03 (213-REVIEW): hoisted ABOVE the ceiling acquire below. The allowlist
+    // Deliberately hoisted ABOVE the ceiling acquire below. The allowlist
     // check has NO side effects and can throw; if it ran AFTER the ceiling
-    // reserve (the prior order), a not-allowlisted spawn would reserve a slot and
+    // reserve, a not-allowlisted spawn would reserve a slot and
     // then throw with no run ever created — so no completion `finally` would ever
-    // release it (a slot leak the instant CR-02's release landed). Refusing here,
+    // release it (a slot leak). Refusing here,
     // before any reserve, keeps the acquire the LAST gate before run creation so
     // every successful acquire is paired 1:1 with a run that will release it.
     if (
@@ -1464,11 +1465,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       );
     }
 
-    // Tree-wide spawn ceiling (CEIL-01). The SINGLE consult both session.spawn
+    // Tree-wide spawn ceiling. The SINGLE consult both session.spawn
     // AND graph.* AND the in-process agent loop hit (they all reach here via
     // runner.spawn), keyed on the tree-stable rootRunId — so a for(;;) spawn()
     // is bounded across the whole tree, not just one caller. Placed AFTER the
-    // per-caller depth/children/queue gates AND the allowlist (WR-03) and BEFORE
+    // per-caller depth/children/queue gates AND the allowlist and BEFORE
     // any runId/session is created, so it rejects with the SAME shape as the
     // depth/children gates (event + WARN + no run/session) and is the LAST gate
     // before run creation (every acquire pairs 1:1 with a releasing run). The
@@ -1481,7 +1482,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       const ceiling = deps.checkSpawnCeiling(rootRunId, currentDepth, ceilingFanout);
       if (ceiling.ok) {
         // The consult RESERVED a slot (tryAcquireSpawn increments on ok). Record
-        // it so the run's terminal transition releases it 1:1 (CR-02). This is the
+        // it so the run's terminal transition releases it 1:1. This is the
         // last gate before run creation, so a successful acquire is always paired
         // with a run that will release.
         ceilingSlotAcquired = true;
@@ -1639,7 +1640,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         graphToolNames: params.graphToolNames ?? [],
         graphNodeDepth: params.graphNodeDepth,
         isLeafNode: params.isLeafNode ?? false,
-        // WT-01: carry the worktree request onto the child session metadata so
+        // Carry the worktree request onto the child session metadata so
         // executeSubAgent (the only place that holds the GitExec seam + the
         // workspace resolver) can run the child in an isolated git worktree.
         // Defaults to false so the no-worktree path stays byte-identical.
@@ -1652,13 +1653,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     run.status = "running";
     run.startedAt = clock.now();
 
-    // Phase 216 (DUR-01 / HB-01): the SPAWN BOUNDARY — the run is now registered
+    // The SPAWN BOUNDARY — the run is now registered
     // + running, so write the initial durable checkpoint (stepIndex -1) + start
     // the keep-alive heartbeat. Inert when no durable store is wired. The keep-
     // alive is cleared + the record marked completed in the terminal `finally`.
     startDurableCheckpoint(run, params);
 
-    // COORD-03: start the ~30s read-only progress fork so a long-running child
+    // Start the ~30s read-only progress fork so a long-running child
     // surfaces its advance (a content-free session:sub_agent_progress) WITHOUT
     // completing. Stopped in the terminal `finally` (no leaked timer). Runs
     // independent of the durable store.
@@ -1843,18 +1844,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
-        // Phase 218 (SUMREF-02): materialize the child's FULL output to its OWN
+        // Materialize the child's FULL output to its OWN
         // jailed workspace as a structured ResultRef, so the lead's announcement
         // grows by a bounded summary + a HANDLE, never the megabyte body (the
-        // longevity invariant). The condenser (SUMREF-01 summary) and the store
-        // (SUMREF-02 handle) are complementary — both run. The drill-in line that
+        // longevity invariant). The condenser (summary) and the store
+        // (handle) are complementary — both run. The drill-in line that
         // follows the summary defaults to the condenser's diskPath: the genuine
         // "no store wired / no handle produced" path (no store to materialize
         // through, so the on-disk condensed result IS the handle — NOT a shim).
         let fullResultLine = condensedResult ? `\n\nFull result: ${condensedResult.diskPath}` : "";
         // The successful handle (when produced) — threaded into the NarrativeCaster
         // path too, so the production-default tagged announcement also carries the
-        // handle, not the diskPath (SUMREF-02 longevity invariant on every path).
+        // handle, not the diskPath (the longevity invariant on every path).
         let materializedRef: ResultRef | undefined;
         if (condensedResult && deps.materializeFullOutput) {
           const materialized = await deps.materializeFullOutput(result.response, { runId, nowMs: clock.now(), agentId: params.agentId });
@@ -2024,7 +2025,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               task: params.task,
               runtimeMs,
               runId,
-              callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
+              callerSessionKey: params.callerSessionKey,  // shared dedup key
             }, deps);
           }
         } else if (params.announceChannelType && params.announceChannelId) {
@@ -2044,7 +2045,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 tokensUsed: result.tokensUsed.total,
                 cost: result.cost.total,
                 sessionKey: formattedKey,
-                // SUMREF-02: the materialized handle (when produced) so the tagged
+                // The materialized handle (when produced) so the tagged
                 // announcement carries the drill-in handle, not the diskPath.
                 resultRef: materializedRef,
               });
@@ -2193,7 +2194,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             task: params.task,
             runtimeMs,
             runId,
-            callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
+            callerSessionKey: params.callerSessionKey,  // shared dedup key
           }, deps);
         } else {
           // Log explicit reason when failure announcement cannot be routed
@@ -2301,7 +2302,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: params.task,
           runtimeMs,
           runId,
-          callerSessionKey: params.callerSessionKey,  // DELIVERY-03: shared dedup key
+          callerSessionKey: params.callerSessionKey,  // shared dedup key
         // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
       }
@@ -2333,19 +2334,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     activePromises.add(execPromise);
     execPromise.finally(() => {
       activePromises.delete(execPromise);
-      // CR-02: release the tree-wide ceiling slot this run reserved (idempotent;
+      // Release the tree-wide ceiling slot this run reserved (idempotent;
       // a no-op for promoted queued runs, which never acquired). This fires for
       // EVERY started run on its terminal settle — completion, failure, AND a
       // kill/ghost/watchdog (those mark the run failed but the underlying
       // executeAgent promise still settles here), so a long-running tree's slots
       // are reclaimed rather than monotonically leaking.
       releaseCeilingSlotOnce(run);
-      // Phase 216 (DUR-01 / HB-01): the SAME universal terminal seam — mark the
+      // The SAME universal terminal seam — mark the
       // durable record completed + clear its keep-alive heartbeat (no leaked
       // interval). Inert + idempotent when no durable store is wired.
       finishDurableCheckpoint(run);
-      // COORD-03: stop the read-only progress fork on the same universal terminal
-      // seam so it never outlives the child (no leaked timer; T-218-15).
+      // Stop the read-only progress fork on the same universal terminal
+      // seam so it never outlives the child (no leaked timer).
       stopProgressFork(run);
       // Drain queue when a slot opens (use abortGroup for graph-scoped draining)
       const drainKey = run.abortGroup ?? run.callerSessionKey;
@@ -2392,7 +2393,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
   /**
    * Resolve the running/queued sub-agent run whose child session key equals
-   * `sessionKey` (Phase 213 CR-01). When a sub-agent itself calls
+   * `sessionKey`. When a sub-agent itself calls
    * `sessions_spawn`, the dispatcher injects ITS session key as the spawn's
    * `_callerSessionKey`; that key is exactly the spawning run's `run.sessionKey`.
    * The daemon spawn handler uses this to make a descendant INHERIT its parent
@@ -2533,15 +2534,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   /**
-   * REVOKE-03: hard-stop a whole spawn tree. Fans the per-run {@link killRun}
+   * Hard-stop a whole spawn tree. Fans the per-run {@link killRun}
    * (which marks the run failed and aborts its in-flight SDK session) over every
    * running/queued run sharing `rootRunId`, and returns the count killed.
    *
-   * Filters STRICTLY on `run.rootRunId === rootRunId` (threat T-213-01-02 — a
+   * Filters STRICTLY on `run.rootRunId === rootRunId` (a
    * different tree must be untouched) and on the same status guard killRun uses,
    * so already-terminal runs are skipped. An unknown root is a clean no-op
    * (`{ killed: 0 }`), never a throw — the count return is the contract the
-   * daemon-side `run.kill` RPC handler (the @allow-throw boundary, Plan 06)
+   * daemon-side `run.kill` RPC handler (the @allow-throw boundary)
    * drives; this helper itself raises nothing (the raw-throw.test.ts gate).
    */
   function killByRootRun(rootRunId: string): { killed: number } {
@@ -2558,17 +2559,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   /**
-   * STEER-01: inject a steer message into a RUNNING child's live SDK session
+   * Inject a steer message into a RUNNING child's live SDK session
    * (mid-flight steering), distinct from killRun. Delegates to the steer-run.ts
    * helper to keep the mechanism OUT of this (already large) file.
    *
-   * L2 — widen the resolver/registry surface at the delegation boundary: this
+   * Widen the resolver/registry surface at the delegation boundary: this
    * runner's `deps.sessionResolver`/`deps.activeRunRegistry` are typed to the
    * narrowed `{ abort(): Promise<void> }` (the kill path only needs abort, and
    * the narrow type avoids a daemon→agent import cycle in those Deps). steerRun
    * needs the FULL RunHandle (steer/followUp/isStreaming/isCompacting). The
    * RUNTIME handle is complete — pi-executor.ts:1161 builds all five and
-   * registers it under the SAME key the resolver composes (175-00 spike). So
+   * registers it under the SAME key the resolver composes (pinned by
+   * sub-agent-runner.steer-resolve.spike.test.ts). So
    * we re-type the lookups to the full RunHandle at this boundary; this is a
    * pure TS surface widening over an object that already has the methods, not
    * a behavior change.

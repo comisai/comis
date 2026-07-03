@@ -2,7 +2,7 @@
 /**
  * Tests for the PURE dialectic synthesis helpers.
  *
- * These are the genuinely-new, RED-provable-at-$0 logic of the phase: trust-first
+ * These are the genuinely-new, RED-provable-at-$0 synthesis logic: trust-first
  * contradiction ordering on the `system>learned>external` ladder, the mandatory
  * abstention DECIDED IN CODE (never the prompt), and the citation→recalled-id→sourceId
  * mapping (citations validated ⊆ recalled ids; a hallucinated/bogus id is DROPPED). No

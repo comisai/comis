@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IRC subagent inline-line tests (IRC half; §18.3 LinePerEvent).
+ * IRC subagent inline-line tests (LinePerEvent).
  *
  * IRC has no thread primitive, so a `kind:"subagent"` event renders INLINE with a
- * `↳ ` depth prefix (the depth-aware plain-text form, §18.3). The prefix is a
+ * `↳ ` depth prefix (the depth-aware plain-text form). The prefix is a
  * renderer concern applied via `subagentLine(event, { depthPrefix: "↳ " })`;
  * the `🤖`/agentId portion rides on the projection's `defaultLabel` and is painted
  * verbatim after the prefix. The renderer adds the `↳ ` — it is NOT baked into the
@@ -70,10 +70,9 @@ describe("IRC subagent inline line (↳ depth prefix)", () => {
 
     const send = fake.recorded.calls.find((c) => c.op === "send");
     if (send?.op === "send") {
-      // [Rule 1 — bug fix, quick-260528-nsv] Non-subagent tool event renders
-      // with the per-step running 🔧 marker; the no-`↳ ` invariant (this
-      // test's load-bearing point — IRC depth prefix only on subagent kind)
-      // is unchanged.
+      // A non-subagent tool event renders with the per-step running 🔧
+      // marker; the no-`↳ ` invariant (IRC depth prefix only on subagent
+      // kind) is this test's load-bearing point.
       expect(send.text).toBe("🔧 running tool");
       expect(send.text.startsWith("↳ ")).toBe(false);
     }

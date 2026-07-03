@@ -1,10 +1,10 @@
-# DIAG-reprove — Operator RE-PROVE Runbook (G1, the numeric ≤-target proof)
+# DIAG-reprove — Operator RE-PROVE Runbook (the numeric ≤-target proof)
 
-The **G1 RE-PROVE** closes v2.14: the §1.1 degraded session that Phase 149's
+The **RE-PROVE**: the degraded session that the
 baseline FAILED (it needed source reads + multi-call) is now root-caused in **one
-`obs.explain` call, zero source reads, ≤ the 149 token target**.
+`obs.explain` call, zero source reads, ≤ the baseline token target**.
 
-Two tiers, the Phase-149 Stage-A/B-vs-Stage-C discipline (verbatim):
+Two tiers, the Stage-A/B-vs-Stage-C discipline (verbatim):
 
 - **Stage-A/B** (`diagnosis-reprove.test.ts`, always-on, **keyless, in `pnpm
   validate`**) proves the deterministic STRUCTURE: the `obs.explain` tool over the
@@ -27,21 +27,21 @@ with no key (or no operator), it is `SKIPPED(no-live)`, **never a failure** —
 > (all already in `docs/reference/environment-variables.mdx`). The judge key is read
 > for presence + forwarded to the provider option field only — **never logged**.
 >
-> **NO hard-coded token target.** The "≤ the 149 token target" number is produced by
+> **NO hard-coded token target.** The "≤ the baseline token target" number is produced by
 > THIS run (the baseline + reprove ledgers from the same invocation), not asserted in
 > any `pnpm validate`-tier check. The Stage-A/B substrate proves *structure* (1 call,
-> 0 reads, the X3 report fields) keyless; the judge + the 1-call/0-reads gate are the
+> 0 reads, the report fields) keyless; the judge + the 1-call/0-reads gate are the
 > Stage-C assertions.
 
 ---
 
 ## Why obs.explain is the whole point
 
-Phase 149's baseline measured the cost of diagnosing today's surface: an agent had
+The baseline measured the cost of diagnosing today's surface: an agent had
 to read ~3 Comis source files (`pi-event-bridge.ts`, `tool-retry-breaker.ts`,
 `tool-metadata-registry.ts`) and make multiple `obs_query` calls to recover the
-mechanism the logs never recorded (the GA1/GA2 gap). v2.14 built `obs.explain` — a
-single-call, bounded, causal `IncidentReport`. G1 proves that with `obs.explain` the
+mechanism the logs never recorded. `obs.explain` provides a
+single-call, bounded, causal `IncidentReport`. The RE-PROVE proves that with `obs.explain` the
 SAME degraded session is root-caused in **1 call / 0 reads** — driving the baseline
 cost to zero.
 
@@ -58,7 +58,7 @@ if it does.
 | Fixture | Failure class | Gold mechanism (answer-key) |
 |---|---|---|
 | `session-678314278` | historical-c53ab0f | a status-200 body misclassified by a **substring** `403` scan flipped successes to failures, tripping the retry **breaker** |
-| `live-503-breaker` | 503-breaker | repeated **503** → overloaded tripped the per-tool retry **breaker** for **web_fetch** (the dark breaker, GA3) |
+| `live-503-breaker` | 503-breaker | repeated **503** → overloaded tripped the per-tool retry **breaker** for **web_fetch** (the dark breaker) |
 | `live-exec-modulenotfound` | exec-modulenotfound | an **exec** **dependency** failure (**ModuleNotFoundError**) |
 | `live-budget-exhaustion` | budget-exhaustion | rising **costUsd** crossed the **budget** ceiling → **exhausted** |
 | `live-provider-timeout` | provider-timeout | a 30000ms **timeout** classified as **prompt_timeout** |
@@ -74,7 +74,7 @@ authoritative for `rootCauseReached` in the live RUN.
 
 ## The operator RUN — ONE command (baseline + reprove together)
 
-So "≤ the 149 token target" is a **same-run comparison**, run the baseline and the
+So "≤ the baseline token target" is a **same-run comparison**, run the baseline and the
 reprove in a single invocation. The `prove` group globs **both**
 `diagnosis-baseline.test.ts` and `diagnosis-reprove.test.ts` (the runner passes the
 `test/live/scenarios/prove` directory to vitest):
@@ -88,7 +88,7 @@ COMIS_LIVE=1 \
 ```
 
 Optional: cap spend with `COMIS_LIVE_BUDGET_USD=<usd>` (default `$2.00`). A
-budget-exceeded fixture is emitted as an explicit budget-skipped row (WR-04), so the
+budget-exceeded fixture is emitted as an explicit budget-skipped row, so the
 gate always shows all 5 classes and loudly flags a partial run — it never presents a
 partial corpus as the full gate.
 
@@ -106,7 +106,7 @@ its **base URL** (e.g. `https://my-proxy.example.com` — the agent loop appends
 
 ---
 
-## After the run — read the ≤-149-target comparison
+## After the run — read the ≤-baseline-target comparison
 
 Both runs write append-only ledgers under the git-ignored
 `benchmarks/live/<date>-<sha>/`. Keep the committed corpus and `~/.comis` untouched —
@@ -116,16 +116,16 @@ reader (no daemon, no `~/.comis`); only `benchmarks/` is written.
 1. **Baseline** (the pre-milestone number to beat) → `gating-table.md`
    (`renderGatingMarkdown` output): per failure class, `Source reads` > 0,
    multi-call, high `Tokens`.
-2. **Reprove** (the G1 proof) → `reprove-table.md`: per failure class, **`Source
+2. **Reprove** (the RE-PROVE proof) → `reprove-table.md`: per failure class, **`Source
    reads` = 0**, **1 `obs.explain` call**, lower `Tokens`.
 
 Confirm, per fixture, that the **reprove tokens ≤ the baseline tokens** with
-**`#calls` = 1** and **`#reads` = 0**. That same-run delta IS the "≤ the 149 token
+**`#calls` = 1** and **`#reads` = 0**. That same-run delta IS the "≤ the baseline token
 target" proof — there is no hard-coded number to maintain; the target is whatever the
 baseline recorded in the same invocation.
 
 The Stage-C run also asserts `obsExplainCalls === 1` and `distinctSourceReads === 0`
-per fixture as the G1 GATE (both halves — a correct verdict reached via source reads or
+per fixture as the RE-PROVE GATE (both halves — a correct verdict reached via source reads or
 multi-call is NOT the RE-PROVE). With no judge key the run **skips cleanly**, writing
 nothing and failing nothing.
 
@@ -145,4 +145,4 @@ the two ledgers of the same invocation.
 | live-provider-timeout | | | | | | | |
 
 The expectation: reprove tokens ≤ baseline tokens, `obs.explain calls` = 1,
-`Source reads` = 0 for every measured class — the G1 RE-PROVE.
+`Source reads` = 0 for every measured class — the RE-PROVE.

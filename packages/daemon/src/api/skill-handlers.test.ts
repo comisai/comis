@@ -30,11 +30,11 @@ import type { AppContainer } from "@comis/core";
 import { CapabilityDeniedError } from "@comis/core";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 
-// CAP-03: the gated skills.* handlers now require an injected _capabilities
+// The gated skills.* handlers require an injected _capabilities
 // (production supplies it via createAgentRpcCall). The existing body-tests below
 // call handlers directly, so wrap the bound record to grant the held set each
 // gated method needs — exercising the handler BODY, not the gate. The dedicated
-// CAP-05 describe block uses the RAW (unwrapped) factory to prove the gate.
+// capability-gate describe block uses the RAW (unwrapped) factory to prove the gate.
 function createSkillHandlers(deps: SkillHandlerDeps): Record<string, import("./types.js").RpcHandler> {
   return withHeldCapabilities(createSkillHandlersRaw(deps));
 }
@@ -956,15 +956,15 @@ describe("skills.create handler", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CAP-05: the orch:skill capability gate on skills.create (the in-process
+// The orch:skill capability gate on skills.create (the in-process
 // bypass proof). The agent loop reaches handlers WITHOUT passing checkScope, so
 // the gate lives in the handler reading the injected _capabilities. The SAME
-// requireCapability predicate the would-be loopback socket (Phase 211) will use
+// requireCapability predicate the loopback capability socket uses
 // is exercised here — testing it once at the handler proves the socket path
-// denies too once 211 wires it.
+// denies too.
 // ---------------------------------------------------------------------------
 
-describe("skills.create capability gate (CAP-05)", () => {
+describe("skills.create orch:skill capability gate", () => {
   it("does NOT throw CapabilityDeniedError when _capabilities holds orch:skill", async () => {
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });

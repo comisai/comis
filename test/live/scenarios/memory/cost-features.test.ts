@@ -12,7 +12,7 @@
  *   ZERO consolidation-observation rows (proof_count NOT NULL) when costFeatures
  *   is disabled. The precise observation-signature invariant replaces the old
  *   raw-row count ceiling, which wrongly assumed one row per user turn
- *   (ingestion also stores agent replies + agent-extracted memories — 260611).
+ *   (ingestion also stores agent replies + agent-extracted memories).
  *
  * @module
  */
@@ -66,8 +66,8 @@ describe.skipIf(!isLive)("MEM-07 Stage-B — costFeatures.enabled=false → no c
       await flushDaemonLogs(driver);
       await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
       expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
-      // Content-anchored (260611 re-pin): both planted facts stored (catches
-      // "0 rows written" false-pass — WARNING-1).
+      // Content-anchored: both planted facts stored (catches
+      // "0 rows written" false-pass).
       expect(
         countRowsLike(dbPath, "memories", ["cost-features test fact A"]),
         "planted fact A not found in memories store",
@@ -80,7 +80,7 @@ describe.skipIf(!isLive)("MEM-07 Stage-B — costFeatures.enabled=false → no c
         const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
         const storeDelta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
         expect(storeDelta, "no memory rows written").toBeGreaterThanOrEqual(1);
-        // The PRECISE no-consolidation invariant (260611): costFeatures.enabled=
+        // The PRECISE no-consolidation invariant: costFeatures.enabled=
         // false turns the LLM-bearing consolidation cron OFF, so there must be
         // ZERO consolidation-observation rows (proof_count NOT NULL). A raw-row
         // COUNT ceiling was wrong — ingestion stores combined user+agent turns

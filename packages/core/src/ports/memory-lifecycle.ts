@@ -4,13 +4,13 @@ import type { LearningScope } from "./outcome-signal-port.js";
 
 /**
  * MemoryLifecyclePort: the SEGREGATED hexagonal boundary for the per-(tenant,
- * agent) memory LIFECYCLE sweep (Track C). A periodic,
+ * agent) memory LIFECYCLE sweep. A periodic,
  * KEYLESS maintenance pass that, in the LIVE policy, soft-evicts each non-exempt
  * candidate that is DORMANT past `maxDormantDays` OR corroborated-wrong
  * (`failure_count >= failureEvictionFloor`). Tier promote/demote moves remain a
  * deferred step (`promoted`/`demoted` stay 0).
  *
- * This is a NEW port — like MemoryUsefulnessStore /
+ * This is a SEPARATE port — like MemoryUsefulnessStore /
  * UserRepresentationStore / TripleStorePort it deliberately does NOT widen the
  * security-reviewed `MemoryPort` (store/search/delete). New capabilities arrive
  * as their own segregated port. The sole adapter is in @comis/memory (it owns the
@@ -21,11 +21,11 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * agent↛memory build cut). No new authority is granted beyond a scoped sweep
  * within the caller's own (tenant, agent).
  *
- * LIVE soft eviction (FORGET-01) — when the policy is eviction-enabled (the daemon
+ * LIVE soft eviction — when the policy is eviction-enabled (the daemon
  * threads `learningForgetting.eviction.enabled` ∧ `.enabled`), the sweep soft-evicts
  * each non-exempt candidate that is DORMANT past `maxDormantDays` OR corroborated-wrong
  * (`failure_count >= failureEvictionFloor`), where exempt = pinned ∨
- * `trust_level='system'` ∨ high-`proof_count` (FORGET-03), reporting a real `evicted`
+ * `trust_level='system'` ∨ high-`proof_count`, reporting a real `evicted`
  * count. With the eviction behavior OFF (the default) the sweep stays DORMANT — it
  * scans but applies NOTHING (`evicted`/`demoted` = 0; the byte-identity guarantee).
  * Tier demote/promote moves are still deferred (`promoted`/`demoted` stay 0). The
@@ -48,7 +48,7 @@ export type MemoryTier = "durable" | "ephemeral";
 
 /**
  * The PER-CALL eviction-behavior override the daemon threads from each agent's
- * `learningForgetting` config (FORGET-06). The lifecycle store is constructed ONCE and
+ * `learningForgetting` config. The lifecycle store is constructed ONCE and
  * shared across agents, but the eviction policy is PER-AGENT — so the behavior gate rides
  * the sweep CALL (this override), not the constructor: agent A can sweep eviction-on while
  * agent B sweeps DORMANT on the same store. Omitted → the store's constructor policy (the
@@ -59,9 +59,9 @@ export interface MemoryLifecycleEvictionOverride {
   evictionEnabled?: boolean;
   /**
    * The corroborated-`failure_count` floor at/above which a NON-EXEMPT memory is
-   * soft-evicted — the reachable wrongness-eviction path (FORGET-02, the
-   * EVI-STRENGTH-FLOOR fix). Each `failure_count` increment is corroboration-gated;
-   * the FORGET-03 exemptions (pinned / system / high-proof) still gate it, so an
+   * soft-evicted — the reachable wrongness-eviction path.
+   * Each `failure_count` increment is corroboration-gated;
+   * the exemptions (pinned / system / high-proof) still gate it, so an
    * induced-failure attacker cannot evict a well-corroborated memory. Omitted ⇒ the
    * store default.
    */
@@ -74,8 +74,8 @@ export interface MemoryLifecycleEvictionOverride {
  * SECURITY scope in a multi-agent DB, not a nicety: a sweep run under one
  * (tenant, agent) must NEVER touch (promote/demote/evict) another scope's rows.
  *
- * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} — the isolation
- * fields are NOT re-declared (the 15× per-port repetition the collapse kills).
+ * UNIFIED onto the canonical {@link LearningScope} — the isolation
+ * fields are NOT re-declared per port (no drift-prone repetition).
  * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope`, re-narrows
  * the injected clock `now` to REQUIRED (the sweep's dormancy/age math), AND
  * carries the lifecycle-specific per-call eviction `policy?` override.
@@ -90,7 +90,7 @@ export type MemoryLifecycleScope = LearningScope & {
    */
   now: number;
   /**
-   * PER-CALL eviction-behavior override (FORGET-06). The daemon threads the per-agent
+   * PER-CALL eviction-behavior override. The daemon threads the per-agent
    * `learningForgetting` eviction policy here so the shared store evicts per-agent. When
    * present its fields take precedence over the store's constructor policy for THIS sweep;
    * when omitted the constructor policy applies (DORMANT by default — byte-identical).
@@ -130,27 +130,27 @@ export interface MemoryLifecyclePort {
    *
    * LIVE soft eviction is gated on an eviction-enabled policy
    * (`learningForgetting`): when ON, the two-disjunct candidacy (dormancy OR the
-   * corroborated-failure floor), minus the FORGET-03 exemptions, is soft-evicted
+   * corroborated-failure floor), minus the pinned/system/high-proof exemptions, is soft-evicted
    * (`evicted` is real); when OFF (the default) the sweep scans but applies NOTHING
    * (`evicted`/`demoted` 0 — byte-identity). Tier moves remain deferred
    * (`promoted`/`demoted` 0). With the cron knob off it is not even registered (a
    * default agent runs no sweep → byte-identical).
    *
-   * NOTE: the SQLite adapter implements this; the daemon cron
-   * wiring land in the implementation phases that follow.
+   * NOTE: the SQLite adapter in @comis/memory implements this; the daemon
+   * cron is the sole caller.
    */
   runLifecycleSweep(scope: MemoryLifecycleScope): Promise<Result<LifecycleSweepReport, Error>>;
 
   /**
-   * REVERSAL PATH (FORGET-04). Un-evict a previously soft-evicted memory on
+   * REVERSAL PATH. Un-evict a previously soft-evicted memory on
    * renewed usefulness: clears its `evicted_at` marker (back to NULL) so the row
    * returns to recall. Soft eviction is reversible by design — the raw row was
    * never deleted, only marked. Scoped to the caller's `(tenant, agent)` ONLY:
    * an un-evict under one scope can NEVER clear another scope's marker (the same
    * load-bearing isolation boundary as the sweep). Idempotent — un-evicting a
-   * live (or absent) row is a no-op `ok(...)`. Called by the daemon reward seam
-   * when a previously-evicted memory becomes useful again (a later plan wires the
-   * caller); the store exposes the capability here.
+   * live (or absent) row is a no-op `ok(...)`. The daemon reward seam is the
+   * intended caller — invoked when a previously-evicted memory becomes useful
+   * again; the store exposes the capability here.
    */
   unevict(memoryId: string, scope: MemoryLifecycleScope): Promise<Result<void, Error>>;
 }

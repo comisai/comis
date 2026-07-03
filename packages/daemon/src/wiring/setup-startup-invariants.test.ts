@@ -5,7 +5,7 @@
  * Four behaviours verified:
  *   1. Normal clean boot → one INFO record, no WARN.
  *   2. Regression wiring (handlersPerAdapter > 1) → WARN with errorKind:"config".
- *   3. depSlotConsistency.adaptersList:true (2026-05-24 bug shape) → WARN with errorKind:"config".
+ *   3. depSlotConsistency.adaptersList:true (a stale legacy dep slot) → WARN with errorKind:"config".
  *   4. alertBudgetPolicy provided → returns unsubscribe function; omitted → returns undefined.
  *
  * @module
@@ -119,7 +119,7 @@ describe("emitStartupInvariants", () => {
     });
   });
 
-  describe("depSlotConsistency.adaptersList:true (2026-05-24 bug shape)", () => {
+  describe("depSlotConsistency.adaptersList:true signals a stale legacy dep slot", () => {
     it("emits WARN with errorKind:config and verbatim hint when adaptersList is true", () => {
       const deps = makeCleanDeps({
         depSlotConsistency: { adaptersList: true, channelRegistry: true },

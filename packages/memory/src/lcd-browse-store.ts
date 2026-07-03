@@ -7,8 +7,8 @@
  * core/src/ports/context-store.ts ContextBrowsePort doc).
  *
  * The single capability: enumerate the distinct conversations one agent owns
- * within one tenant, most-recently-updated first, paginated. R4 (132-03 / WR-02):
- * every query filters by agent_id AND tenant_id so a conversation_id shared by
+ * within one tenant, most-recently-updated first, paginated. Tenant + agent
+ * isolation: every query filters by agent_id AND tenant_id so a conversation_id shared by
  * two agents (formatSessionKey omits agentId) never leaks across agents, and one
  * tenant never sees another's. Static SQL, bound params, no interpolated
  * identifiers; reads degrade gracefully (createRowMapper, no `as` casts —
@@ -53,7 +53,7 @@ const totalRowMapper = createRowMapper(TotalRowSchema);
  * Assumes `initSchema()` has already created the `lcd_messages` table.
  */
 export function createLcdBrowseStore(db: Database.Database): ContextBrowsePort {
-  // The distinct-conversation page, most-recently-updated first. R4: filter by
+  // The distinct-conversation page, most-recently-updated first. Filter by
   // agent_id AND tenant_id (the conversation_id prefix carries the tenant; the
   // explicit tenant_id is defense-in-depth). `session_key` is grouped via
   // MIN so the GROUP BY stays keyed on the conversation alone (one session per
@@ -86,7 +86,7 @@ export function createLcdBrowseStore(db: Database.Database): ContextBrowsePort {
       scope: ContextBrowseScope,
       opts: { limit: number; offset: number },
     ): LcdConversationPage {
-      // WR-02: degrade PER ROW — a corrupt/drifted row is skipped, its siblings
+      // Degrade PER ROW — a corrupt/drifted row is skipped, its siblings
       // survive (never parseRows, which would discard every already-validated
       // row). Ordering is preserved (we iterate the ORDER BY result in order).
       const conversations: LcdConversationSummary[] = [];

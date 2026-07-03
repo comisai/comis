@@ -7,7 +7,7 @@
 > multi-phase, backgrounded drive that no human will nudge, gated by a jail, and provable only in
 > ground truth (the built files + the browser), never the chat reply.
 >
-> Born the `webhook-claude-gsd-snake-20260702` run. Its findings hardened the kit + the obs — this
+> Born of a live run (2026-07-02). Its findings hardened the kit + the obs — this
 > doc is the reusable recipe so a second run hits measurably less friction (mission non-negotiable #5).
 
 ## Scenario (the exact drive)
@@ -28,9 +28,9 @@
   fires ASYNC past the 200 (the DAG-async contract).
 - **Terminal-driver drive** — bwrap jail (daemon secrets absent from `/proc/<jailed>/environ`); tmux
   durable session; the launch/trust gate; `create` → `send_text` (task delivery) → background.
-- **Unattended-drive endurance** — a PRODUCING drive is NOT idle-reaped (PRODUCING-01); a never-tasked
+- **Unattended-drive endurance** — a PRODUCING drive is NOT idle-reaped; a never-tasked
   drive IS honest-failed (`reapNeverTaskedDrives` → `webhook_delivered:false`); an idle/lifetime reap of
-  a real drive is DIAGNOSABLE (EVICT-01 `terminal_drive_evicted` verdict).
+  a real drive is DIAGNOSABLE (the `terminal_drive_evicted` verdict).
 - **GSD milestone execution** — the drive produces a modular, test-covered build (real files + commits).
 - **Browser "it runs" oracle** — the artifact compiles, renders, and responds to input with zero console errors.
 
@@ -43,8 +43,8 @@
 | 3 | The drive delivers the task, then builds (not "opened, never tasked") | `terminal-drive-observe.mjs lifecycle` (create→send_text→promote); a no-task drive → `explain` `terminal_drive_opened_without_task` | — |
 | 4 | The GSD milestone produces real code (not a chat claim) | `terminal-drive-observe.mjs progress <project>` (git commits + code files + ROADMAP `[x]`) | — |
 | 5 | The built app COMPILES and RUNS | `browser-oracle.mjs <dir>` (compile+serve) → chrome-devtools MCP (render + `press_key` + 0 console errors) | — |
-| 6 | A PRODUCING drive is NOT idle-reaped mid-work | `explain` shows NO `terminal_drive_evicted` while producing; if it fires with `wasProducing:true` → PRODUCING-01 regression | **HARD** (idle-reap polarity) |
-| 7 | A real reap (idle/wall-clock) is diagnosable in one call | `comis explain <sessionKey>` → `likelyRootCause.code === "terminal_drive_evicted"` (EVICT-01) | — |
+| 6 | A PRODUCING drive is NOT idle-reaped mid-work | `explain` shows NO `terminal_drive_evicted` while producing; if it fires with `wasProducing:true` → the producing-drive keep-alive regressed | **HARD** (idle-reap polarity) |
+| 7 | A real reap (idle/wall-clock) is diagnosable in one call | `comis explain <sessionKey>` → `likelyRootCause.code === "terminal_drive_evicted"` | — |
 
 ## Provider/model + Stage
 
@@ -62,7 +62,7 @@ IncidentReport → `explain` verdict). Config postures to sweep: `worker.idleTtl
 
 - **Classifier mis-reads a working drive as `awaiting-input`.** `claude` parks its cursor at the `❯`
   composer WHILE autonomously working — the classifier calls it `awaiting-input`. Freezing the idle
-  clock unconditionally then let the reaper evict a still-producing drive (PRODUCING-01, now fixed:
+  clock unconditionally then let the reaper evict a still-producing drive (now fixed:
   `checkLiveness` freezes ONLY when the screen digest is unchanged across probes).
 - **Browser measurement-timing false-defect.** An auto-running game that dies into a wall in ~1.25s
   reads as a "static canvas" if you screenshot AFTER a reload→evaluate latency. Inject an `initScript`
@@ -83,24 +83,24 @@ IncidentReport → `explain` verdict). Config postures to sweep: `worker.idleTtl
 ## Observability this target's run added (and the deferred follow-ups)
 
 **Shipped (test-first, live-verifiable):**
-- **EVICT-01** — `terminal:session_evicted` is now bridged to the trajectory (`terminal.session_evicted`)
+- **The reaper-eviction verdict** — `terminal:session_evicted` is now bridged to the trajectory (`terminal.session_evicted`)
   and folds into `IncidentSignals.terminalDriveEvicted{reason,idleMs,wasProducing}`; a new
   `terminal_drive_evicted` `explain` verdict names a reaper-killed drive (fires on `idle`/`wall_clock`,
   the cut-short caps — NOT the benign `max_sessions` LRU or the deliberate `max_interactions` budget).
   `wasProducing` is DERIVED (zero new events) from a preceding `producing` `drive_promoted` — the acute
-  PRODUCING-01 regression canary. This is the obs completion of the PRODUCING-01 keep-alive fix: a reap
-  that used to be a daemon WARN only is now a one-call diagnosis.
+  producing-drive-reaped regression canary. This is the obs completion of the producing-drive keep-alive
+  fix: a reap that used to be a daemon WARN only is now a one-call diagnosis.
 
-**Deferred — STRUCTURAL, root-cause already covered (dated TODO, `webhook-claude-gsd-snake-20260702`):**
-- **`drive_progress` as a first-class event (obs #2).** There is no `terminal:drive_progress` emit in the
+**Deferred — STRUCTURAL, root-cause already covered (dated TODO, 2026-07-02):**
+- **`drive_progress` as a first-class event.** There is no `terminal:drive_progress` emit in the
   codebase; a true progress signal would need net-new terminal-driver instrumentation. Its *intent*
-  (was the drive producing?) is already captured by EVICT-01's derived `wasProducing`, so this is a
+  (was the drive producing?) is already captured by the eviction verdict's derived `wasProducing`, so this is a
   low-value net-new-event and is deferred, not built.
-- **`webhook_delivered:false` → session `explain` (obs #4/#5).** `diagnostic:webhook_delivered`
+- **`webhook_delivered:false` → session `explain`.** `diagnostic:webhook_delivered`
   (`events-infra.ts`) carries NO `sessionKey`/`traceId`, so it can't join to a session trajectory; it
   lands only in the daemon-wide diagnostic ring. Threading it onto `explain` needs NEW correlation (add
   `sessionKey` to the payload at both `setup-gateway-routes.ts` emit sites + bridge a `diagnostic:*`
   event — a new precedent — + fold + verdict). **Deferred because the dominant webhook-failure cause is
   ALREADY diagnosed** by the sibling `terminal_drive_opened_without_task` verdict (a never-tasked drive
   is exactly what flips `webhook_delivered:false`). The never-tasked honest-fail reap is correct and
-  already isolated to the webhook layer — no "benign marker" is needed on `explain` until #4 lands.
+  already isolated to the webhook layer — no "benign marker" is needed on `explain` until that correlation lands.

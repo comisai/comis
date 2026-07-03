@@ -484,23 +484,22 @@ export type {
   ActivityCounters,
 } from "./activity/activity-stream.js";
 
-// The pure, one-pass, idempotent activity-label display-shortener
-// (spec §8.4). Consumes already-redacted / already-path-compacted strings from
-// redactValue — it shortens URLs, ISO timestamps, and long mcp_ tool names
-// only, never re-redacting or re-compacting paths.
+// The pure, one-pass, idempotent activity-label display-shortener. Consumes
+// already-redacted / already-path-compacted strings from redactValue — it
+// shortens URLs, ISO timestamps, and long mcp_ tool names only, never
+// re-redacting or re-compacting paths.
 export { compressLabel } from "./activity/label-compressor.js";
 
-// Deterministic OpenClaw-style shell command summarizer (spec §6.3 /
-// §13.1). Pure, self-redacting (redactValue at shell-label-parser.ts:53),
-// length-capped at 120. Consumed by the exec/process builtin tools' transform
-// hook — the top-level barrel re-export keeps the import path
-// flat: `import { parseShellCommand } from "@comis/observability"`.
+// Deterministic shell command summarizer. Pure, self-redacting (redactValue at
+// shell-label-parser.ts:53), length-capped at 120. Consumed by the exec/process
+// builtin tools' transform hook — the top-level barrel re-export keeps the
+// import path flat: `import { parseShellCommand } from "@comis/observability"`.
 export { parseShellCommand } from "./activity/shell-label-parser.js";
 
 // SEP plan-stream — derives PlanUpdate events from sep:plan_extracted + the
-// live ExecutionPlanPort (spec §16.7). Consumed by the daemon
-// composition root (setup-channels-runtime.ts) to wire the
-// chat ActivityTurnCoordinator with a per-agent plan-state subscription.
+// live ExecutionPlanPort. Consumed by the daemon composition root
+// (setup-channels-runtime.ts) to wire the chat ActivityTurnCoordinator with a
+// per-agent plan-state subscription.
 export { createPlanStream } from "./activity/plan-stream.js";
 export type {
   CreatePlanStreamDeps,
@@ -510,11 +509,11 @@ export type {
 } from "./activity/plan-stream.js";
 
 // ---------------------------------------------------------------------------
-// Pipeline-authoring gate surface (TELEM-02).
+// Pipeline-authoring gate surface.
 // ---------------------------------------------------------------------------
 //
-// The pre-committed, PURE, deterministic decision rule that gates Phase 174
-// (P2/AUTHOR): `pipelineAuthoringGate(aggregate) -> { buildAuthor, reason }`.
+// The pre-committed, PURE, deterministic decision rule:
+// `pipelineAuthoringGate(aggregate) -> { buildAuthor, reason }`.
 // This package is the SINGLE SOURCE of `PipelineAuthoringAggregate` — the
 // daemon's fleet-findings reducer imports the type from here, and the daemon's
 // fleet-health assembler surfaces the verdict on the FleetHealthReport. Pure

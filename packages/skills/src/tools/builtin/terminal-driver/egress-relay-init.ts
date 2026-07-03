@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * egress-relay-init -- the in-jail relay-as-init for `network: listed-hosts`
- * (§3.5). It is NOT imported by any package — it is spawned as a
+ * egress-relay-init -- the in-jail relay-as-init for `network: listed-hosts`.
+ * It is NOT imported by any package — it is spawned as a
  * SUBPROCESS *inside* the bwrap jail, AFTER bwrap's `--` separator, as the jail's
  * userns-root PID-1 init (the `relayArgv` that {@link buildEgressRelayLaunch}
  * points {@link RELAY_INIT_SCRIPT_URL} at). It composes the two net-new dimensions
- * (egress relay + uid drop) into ONE launcher, in the exact order the egress
- * transport spike proved on the VPS (the `g3-relay.mjs` transport):
+ * (egress relay + uid drop) into ONE launcher, in the exact order that keeps the
+ * driven child from ever holding CAP_NET_ADMIN:
  *
  *   1. Bring loopback (`lo`) UP. The jail owns its netns (`--unshare-net`) and the
  *      init runs as userns-root, so it holds CAP_NET_ADMIN over that netns — `ip
@@ -34,7 +34,7 @@
  * Live enforcement is VPS-only (the loopback-up + TCP->unix bridge + uid drop need
  * a real `--unshare-net` userns): the `terminal-scope-matrix.linux.test.ts`
  * egress cell drives a real request through this init (allowlisted -> 200,
- * non-listed -> 403, direct `--noproxy` -> rc=7), mirroring the egress transport spike.
+ * non-listed -> 403, direct `--noproxy` -> rc=7).
  *
  * @module
  */
@@ -49,15 +49,15 @@ import { fileURLToPath } from "node:url";
  * namespace maps a single uid, so 65534 is unmapped and `setuid(65534)` throws).
  * The relay-init is a bare runtime subprocess with NO `@comis/infra` logger, so the
  * audit is a one-line JSON object written to stderr (the operator-observable signal
- * the orchestrator + the VPS smoke can grep). It deliberately mirrors the §2.7 log
- * shape (`hint`/`errorKind`) so it reads like every other structured failure line.
+ * the orchestrator + the VPS smoke can grep). It deliberately mirrors the canonical
+ * structured-log shape (`hint`/`errorKind`) so it reads like every other failure line.
  */
 export interface RelayInitAudit {
   /** Always `"egress-relay-init"` — the source tag for grep. */
   module: string;
   /** The security posture / next-failure hint (audit prose). */
   hint: string;
-  /** The §2.7 errorKind tag (`"permission"` for the unmapped-drop case). */
+  /** The canonical errorKind tag (`"permission"` for the unmapped-drop case). */
   errorKind: string;
   /** The net-new uid the drop targeted (could not reach). */
   targetUid?: number;
@@ -179,9 +179,8 @@ function defaultAudit(record: RelayInitAudit): void {
  * init attempts the uid drop here. On the root-worker VPS the bwrap user namespace
  * maps a SINGLE uid (host-root → userns-root), so 65534 is NOT a mapped target and
  * `process.setuid(65534)` throws (EPERM/EINVAL via `does_own_process_state`). The
- * egress transport spike PROVED the egress transport working as userns-root with NO uid
- * drop, so we MUST NOT throw: a throw would crash the relay-init PID-1 and kill the
- * whole listed-hosts session. Instead we emit a STRUCTURED audit WARN (the session is
+ * egress transport works as userns-root with NO uid drop, so we MUST NOT throw:
+ * a throw would crash the relay-init PID-1 and kill the whole listed-hosts session. Instead we emit a STRUCTURED audit WARN (the session is
  * running at the jail userns-uid because the drop target isn't mapped) and CONTINUE.
  * The bwrap user+pid+net+fs namespaces + the ~/.comis carve-out + the env-scrub + the
  * egress allowlist still confine the child — running at the namespace's userns-root is
@@ -256,7 +255,7 @@ function auditDropFailure(
  * pointing at the in-jail loopback relay (`http://127.0.0.1:<relayPort>`). The
  * relay-init binds the relay on `relayPort`, so it is the AUTHORITATIVE source of
  * this value — set here, NOT relied upon via bwrap env-forwarding (which does not
- * survive the relay-init→child `spawnSync` boundary, live VPS 2026-06-14). Without
+ * survive the relay-init→child `spawnSync` boundary). Without
  * it a proxy-aware child attempts a DIRECT connect that `--unshare-net` blocks
  * ("could not resolve host"). Both upper- and lower-case forms cover the common
  * clients (curl reads lower; most others honor upper).
@@ -292,7 +291,7 @@ async function main(): Promise<void> {
   bringLoopbackUp();
   await startRelay(args.socketPath, args.port);
   // Privilege drop happens AFTER the privileged netns setup (lo up) + the relay
-  // bind, but BEFORE exec — the child never holds the cap (the spike composition).
+  // bind, but BEFORE exec — the child never holds the cap.
   // Best-effort: on the root-worker VPS the net-new uid is not
   // mapped in the bwrap single-uid userns, so the drop is refused; dropPrivileges
   // logs the audit posture and continues rather than crash the relay-init PID-1.

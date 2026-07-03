@@ -10,8 +10,8 @@
 import type { BusySignal } from "@comis/skills/tools";
 
 /**
- * The liveness-probe result the LIVE-01 backstop consumes — a {@link BusySignal} (the busy/hung
- * verdict the reaper + backstop read) PLUS the DELIVER-01 (#2) completion signal `awaitingInput`:
+ * The liveness-probe result the liveness backstop consumes — a {@link BusySignal} (the busy/hung
+ * verdict the reaper + backstop read) PLUS the completion signal `awaitingInput`:
  * `true` iff the classifier reported `awaiting-input` (a settled prompt — a backgrounded drive
  * that finished its current work and is now idle at its `❯` box). `busyOrHung` IGNORES it (an
  * awaiting-input drive is `busy`, not hung), so the field is purely additive; the backstop reads

@@ -36,7 +36,7 @@ import type { TokenClient } from "@comis/gateway";
  * Dependencies for `registerMcpResourcesForClient`.
  *
  * The factory consumes the same `daemonRpcForMcpClient` trust-flag-isolated
- * indirection that the tools/call dispatcher (Plan 04) uses -- so
+ * indirection that the tools/call dispatcher uses -- so
  * `session.history` is invoked WITHOUT injecting `_trustLevel:"admin"`.
  */
 export interface RegisterMcpResourcesDeps {
@@ -53,7 +53,7 @@ export interface RegisterMcpResourcesDeps {
   /** Page size to use when fetching session.history for resources/read. The
    *  MCP resource view is a snapshot transcript -- a large limit avoids the
    *  need for cursor pagination at the MCP layer (the MCP spec supports
-   *  resource cursors but we ship a single bounded view in this plan). */
+   *  resource cursors but we ship a single bounded view). */
   readonly resourceReadLimit: number;
 }
 
@@ -138,7 +138,7 @@ export function registerMcpResourcesForClient(
       }
 
       // -------- Dispatch session.history through the trust-flag-isolated
-      //          RPC indirection (Plan 04). The dispatcher does NOT inject
+      //          RPC indirection. The dispatcher does NOT inject
       //          `_trustLevel:"admin"`; session.history is rpc-scope read.
       const history = (await deps.daemonRpcForMcpClient("session.history", {
         session_key: sessionKey,
@@ -151,9 +151,9 @@ export function registerMcpResourcesForClient(
       //
       // Strict equality, NO nullish coalesce. The MCP resources/read surface
       // is an EXTERNAL trust boundary -- absence of the field is "unknown
-      // status" and the conservative default is EXCLUDE. The prior
-      // `?? "confirmed"` fallback rendered legacy messages as if confirmed,
-      // leaking transcripts whose outbound delivery state was never tracked.
+      // status" and the conservative default is EXCLUDE. A `?? "confirmed"`
+      // fallback here would render legacy messages as if confirmed, leaking
+      // transcripts whose outbound delivery state was never tracked.
       // The web-dashboard session.history RPC consumer is unaffected (it does
       // not run this filter).
       const confirmedOnly = history.messages.filter(

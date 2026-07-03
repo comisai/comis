@@ -9,11 +9,11 @@ import type { NamedGraphStoreLike } from "./dag-templates.js";
 import { parseExecutionGraph, validateAndSortGraph } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// O2: fillDagTemplate
+// fillDagTemplate
 // ---------------------------------------------------------------------------
 
 describe("fillDagTemplate", () => {
-  it("Case 1 (fill): replaces ${TOPIC} slots in research-fanout template with provided value", () => {
+  it("replaces ${TOPIC} slots in research-fanout template with the provided value", () => {
     const result = fillDagTemplate(CANONICAL_DAG_TEMPLATES["research-fanout"], {
       TOPIC: "climate",
     });
@@ -27,7 +27,7 @@ describe("fillDagTemplate", () => {
     expect(filledJson).toContain("climate");
   });
 
-  it("Case 2 (unresolved slot): missing TOPIC var returns err with slot name", () => {
+  it("missing TOPIC var returns err naming the unresolved slot", () => {
     const result = fillDagTemplate(CANONICAL_DAG_TEMPLATES["research-fanout"], {});
 
     expect(result.ok).toBe(false);
@@ -37,10 +37,10 @@ describe("fillDagTemplate", () => {
     }
   });
 
-  it("Case 4 (CR-03 JSON metacharacters): slot value with double-quote and backslash returns ok with value intact, never throws", () => {
+  it("slot value with double-quote and backslash returns ok with value intact, never throws", () => {
     // Weak models can supply values containing JSON metacharacters. Raw
     // substitution into the serialized JSON string would corrupt structure and
-    // throw a SyntaxError out of this Result-returning function (CR-03).
+    // throw a SyntaxError out of this Result-returning function.
     const topic = 'the "best" plan \\ with a backslash';
 
     // Must NOT throw — the function returns a Result.
@@ -60,7 +60,7 @@ describe("fillDagTemplate", () => {
     expect(JSON.stringify(result.value)).not.toContain("${TOPIC}");
   });
 
-  it("Case 5 (CR-03 newline + quote): multi-line quoted slot value parses cleanly without throwing", () => {
+  it("multi-line quoted slot value parses cleanly without throwing", () => {
     const value = 'line1\n"quoted" line2';
     const result = fillDagTemplate(CANONICAL_DAG_TEMPLATES.debate, {
       TOPIC: value,
@@ -76,7 +76,7 @@ describe("fillDagTemplate", () => {
     expect(pro!.task).toContain(value);
   });
 
-  it("Case 3 (validation): all 4 canonical templates fill with minimal vars and produce valid graphs", () => {
+  it("all 4 canonical templates fill with minimal vars and produce valid graphs", () => {
     const minimalVars: Record<string, Record<string, string>> = {
       "research-fanout": { TOPIC: "test-topic" },
       debate: { TOPIC: "test-topic", PRO_AGENT: "agent-a", CON_AGENT: "agent-b" },
@@ -104,7 +104,7 @@ describe("fillDagTemplate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02: seedDefaultDagTemplates — wired into daemon boot (idempotent)
+// seedDefaultDagTemplates — wired into daemon boot (idempotent)
 // ---------------------------------------------------------------------------
 
 describe("seedDefaultDagTemplates", () => {

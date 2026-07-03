@@ -5,13 +5,13 @@
  * DETERMINISTICALLY by hashing the COMIS-BUILT `comis-agent` entry artifact
  * (`packages/skills/dist/tools/builtin/orchestrate/comis-agent-entry.js`).
  *
- * CLI-05 — the manifest is the sha256 PIN of the comis-built CLI binary. The
- * binary is bound `--ro-bind` into the orchestrate jail (Plan 06); at jail
+ * The manifest is the sha256 PIN of the comis-built CLI binary. The
+ * binary is bound `--ro-bind` into the orchestrate jail; at jail
  * construction `resolveJailAgentCli` re-hashes the bound file and REFUSES on a
- * mismatch (tamper detection, T-219-22) — so the manifest is the trust anchor
+ * mismatch (tamper detection) — so the manifest is the trust anchor
  * for the bound bytes.
  *
- * Pitfall 2 — we pin the COMIS artifact (`comis-agent-entry.js`, deterministic
+ * We pin the COMIS artifact (`comis-agent-entry.js`, deterministic
  * from source via `tsc`), NEVER the host `node` interpreter binary (whose hash
  * is build-machine-specific). The drift gate
  * (`test/architecture/comis-agent-bound-binary.test.ts`) re-hashes the freshly

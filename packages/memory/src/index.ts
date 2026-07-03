@@ -8,27 +8,27 @@ export { initSchema, isVecAvailable } from "./schema.js";
 // Session store
 export { createSessionStore } from "./session-store.js";
 
-// LCD lossless context store (ContextStorePort impl — Phase 127)
+// LCD lossless context store (ContextStorePort impl)
 export { createLcdStore, reconstructLcdMessage } from "./lcd-store.js";
 
-// LCD provenance READ adapter (LcdProvenanceReadStore impl — Phase 173, DIST-03
-// read side, the C1→C2 carry-in). The read-mirror of the write-side
-// buildProvenanceWrites; its own factory (NOT widened onto ContextStorePort) so
-// the recall import surface stays narrow. The daemon builds it on the same db
-// handle as createLcdStore and injects it as the core LcdProvenanceReadStore TYPE
-// (the agent↛memory cut) into createMemoryRecall's post-fusion provenance pass.
+// LCD provenance READ adapter (LcdProvenanceReadStore impl). The read-mirror of
+// the write-side buildProvenanceWrites; its own factory (NOT widened onto
+// ContextStorePort) so the recall import surface stays narrow. The daemon builds
+// it on the same db handle as createLcdStore and injects it as the core
+// LcdProvenanceReadStore TYPE (the agent↛memory cut) into createMemoryRecall's
+// post-fusion provenance pass.
 export { buildProvenanceReadStore } from "./lcd-store-provenance-read.js";
 
-// LCD FTS text renderer — exported for the offline doctor repair path (DOC-03,
-// Phase 171). The contentless lcd_messages_fts has no external content table so
-// the 'rebuild' idiom does not apply; the doctor repair re-derives FTS rows from
+// LCD FTS text renderer — exported for the offline doctor repair path. The
+// contentless lcd_messages_fts has no external content table so the 'rebuild'
+// idiom does not apply; the doctor repair re-derives FTS rows from
 // lcd_message_parts using this same render fn (mirror of the adapter populate path).
 export { renderMessageFtsText } from "./lcd-fts.js";
 
 // LCD read-only operator-browse adapter (ContextBrowsePort impl — context.* RPCs).
 export { createLcdBrowseStore } from "./lcd-browse-store.js";
 
-// LCD per-conversation single-flight ingest serializer (R3, Plan 132-04).
+// LCD per-conversation single-flight ingest serializer.
 // createIngestSerializer + IngestSerializer are NOT re-exported: the store
 // constructs the serializer internally (lcd-store.ts) and exposes its effect via
 // ContextStorePort.runOnConversation. No external consumer constructs one
@@ -105,12 +105,6 @@ export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
 export { createSqliteTripleStore } from "./sqlite-triple-store.js";
 export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
 
-// (The directional relationship store (createSqliteRelationshipStore +
-//  MemoryRelationshipStoreDeps) — the sole RelationshipStore adapter over the
-//  `relationship` table — was DELETED in Phase 226 SIMPLIFY-03 with the rest of the
-//  social-modeling subsystem (the __SOCIAL_MODELING__ cron, the port, the table, the
-//  relationship-block prompt injection). No alias, I1.)
-
 // Scoped embedding-read store (sole MemoryEmbeddingStore impl).
 // Owns the (tenant, agent)-scoped LEFT JOIN vec_memories bulk read that hydrates
 // the MMR diversity re-rank (returns id->vector for the caller's scope ONLY — the
@@ -138,7 +132,7 @@ export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation
 export { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store.js";
 
-// Outcome-signal store (sole OutcomeSignalPort impl — v2.26 Verified Learning WS1).
+// Outcome-signal store (sole OutcomeSignalPort impl).
 // Owns the idempotent `observe()` write (deterministic-hash id + ON CONFLICT DO
 // NOTHING on the (tenant, agent, trajectory, source, observed_at) UNIQUE tuple),
 // the scoped precedence-first-then-confidence `resolve()` fusion (fail-closed
@@ -149,17 +143,16 @@ export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store
 export { createSqliteOutcomeStore } from "./sqlite-outcome-store.js";
 export type { OutcomeStoreDeps } from "./sqlite-outcome-store.js";
 
-// Mental Model doc store (sole MentalModelStorePort impl — v2.31; generalized
-// from the v2.26 Verified Learning WS2 learned-skill store).
+// Mental Model doc store (sole MentalModelStorePort impl).
 // Owns the idempotent `admit()` upsert (deterministic-hash id of the
 // (tenant, agent, kind, topic_key, name) UNIQUE tuple + ON CONFLICT(id) DO
 // UPDATE), the scoped (tenant, agent)-isolated `get`/`list(scope, kind?)` reads,
 // and the `promote`/`demote`/`evict` lifecycle transitions (evict is SOFT — sets
 // evicted_at, never a hard DELETE). The DB CHECK (trust_level IN ('learned')) + a
-// code coercion make a learned doc structurally incapable of being `system`
-// (SEC-01). The daemon (composition root) constructs it on the memory adapter's
-// db handle (Plan 07); the MentalModelStorePort TYPE lives in @comis/core (the
-// agent↛memory cut — the synthesis job consumes the type only).
+// code coercion make a learned doc structurally incapable of being `system`.
+// The daemon (composition root) constructs it on the memory adapter's db handle;
+// the MentalModelStorePort TYPE lives in @comis/core (the agent↛memory cut — the
+// synthesis job consumes the type only).
 export { createSqliteMentalModelStore } from "./sqlite-mental-model-store.js";
 export type { MentalModelStoreDeps } from "./sqlite-mental-model-store.js";
 
@@ -228,12 +221,12 @@ export type { NamedGraphStore, NamedGraphEntry, NamedGraphSummary } from "./name
 // Delivery queue adapter
 export { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
 
-// Video job store (durable async video-job lifecycle — Phase 189, JOB-01).
+// Video job store (durable async video-job lifecycle).
 // The SQLite-backed, agent-scoped, state-machine job store the background
-// poller (Plan 02) resumes against across a daemon restart; the video_status
-// handler (Plan 03) reads an agent-scoped row. Constructed on the shared
-// memory.db handle (like createSqliteDeliveryQueue). ensureVideoJobTable is the
-// idempotent DDL initSchema already calls; exported for the offline/test path.
+// poller resumes against across a daemon restart; the video_status handler reads
+// an agent-scoped row. Constructed on the shared memory.db handle (like
+// createSqliteDeliveryQueue). ensureVideoJobTable is the idempotent DDL initSchema
+// already calls; exported for the offline/test path.
 export { createVideoJobStore } from "./video-job-store.js";
 export type {
   VideoJobStore,
@@ -244,19 +237,18 @@ export type {
 } from "./video-job-store.js";
 export { ensureVideoJobTable } from "./schema-video-jobs.js";
 
-// Durable run checkpoint store (Phase 216, DUR-01). The SQLite-backed
-// DurableRunPort the resume engine scans on boot (listResumable) and the daemon
-// wiring (Plan 07) constructs on the shared memory.db handle; ensureDurableRunTable
-// is the idempotent DDL initSchema calls — exported for the chaos/offline path.
+// Durable run checkpoint store. The SQLite-backed DurableRunPort the resume
+// engine scans on boot (listResumable) and the daemon wiring constructs on the
+// shared memory.db handle; ensureDurableRunTable is the idempotent DDL initSchema
+// calls — exported for the chaos/offline path.
 export { createSqliteDurableRunStore } from "./durable-run-store.js";
 export type { DurableRunStoreOptions } from "./durable-run-store.js";
 export { ensureDurableRunTable } from "./schema-durable-runs.js";
 
-// Outward-send exactly-once ledger (Phase 216, ONCE-01). The SQLite-backed
-// OutwardSendLedgerPort the resume engine reconciles on boot (listUnreconciled)
-// and the send-wrap site (Plan 05) consults for the dedup short-circuit;
-// ensureOutwardLedgerTable is the idempotent DDL initSchema calls — exported for
-// the chaos/offline path.
+// Outward-send exactly-once ledger. The SQLite-backed OutwardSendLedgerPort the
+// resume engine reconciles on boot (listUnreconciled) and the send-wrap site
+// consults for the dedup short-circuit; ensureOutwardLedgerTable is the idempotent
+// DDL initSchema calls — exported for the chaos/offline path.
 export { createSqliteOutwardSendLedger } from "./outward-send-ledger-store.js";
 export { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 
@@ -285,32 +277,32 @@ export type {
   SystemPromptReportRow,
 } from "./observability-store/index.js";
 
-// AUDIT-01: the security-audit sink helpers the daemon's obs-persistence-wiring
-// consumes (the 0600 rotated JSONL writer + the default log basename). The
-// DEFAULT/MAX query-limit constants stay internal to the observability-store
-// barrel (impl detail — not re-surfaced here). `AuditQueryParams` is
-// ahead-of-consumer for Plan 05's obs.audit.query (policy-documented).
+// The security-audit sink helpers the daemon's obs-persistence-wiring consumes
+// (the 0600 rotated JSONL writer + the default log basename). The DEFAULT/MAX
+// query-limit constants stay internal to the observability-store barrel (impl
+// detail — not re-surfaced here). `AuditQueryParams` is ahead-of-consumer for the
+// obs.audit.query surface (policy-documented).
 export {
   appendAuditJsonl,
   SECURITY_AUDIT_LOG_BASENAME,
 } from "./observability-store/index.js";
 export type { AuditQueryParams } from "./observability-store/index.js";
 
-// PERSIST-01 (Phase 176 Plan 04): the cache-break row-builder + the rate-by-reason
-// analytics query the daemon's obs-persistence-wiring (the cache_break subscriber)
-// and the fleet/explain surfaces consume.
+// The cache-break row-builder + the rate-by-reason analytics query the daemon's
+// obs-persistence-wiring (the cache_break subscriber) and the fleet/explain
+// surfaces consume.
 export {
   cacheBreakEventToRow,
   queryCacheBreakRateByReason,
 } from "./observability-store/index.js";
 export type { CacheBreakReasonRate } from "./observability-store/index.js";
 
-// Fleet window-rollup reducer (A2, v2.15 Phase 159). reduceFleetWindow is the
-// PURE cross-session reduce over the A1 SessionSummaryRollup[] (synthetic
-// excluded on the real `source` field). Barrel-surfaced AHEAD of its in-repo
-// consumer: the Phase-161 obs.fleet.health handler imports it, but no production
-// module references it yet — tracked in public-api-policy.ts as a planned orphan
-// (mirror FleetHealthReportSchema/FleetHealthReport from 159-04).
+// Fleet window-rollup reducer. reduceFleetWindow is the PURE cross-session reduce
+// over the SessionSummaryRollup[] (synthetic excluded on the real `source`
+// field). Barrel-surfaced AHEAD of its in-repo consumer: the obs.fleet.health
+// handler imports it, but no production module references it yet — tracked in
+// public-api-policy.ts as a planned orphan (mirror FleetHealthReportSchema/
+// FleetHealthReport).
 export { reduceFleetWindow } from "./observability-store/fleet-window-rollup.js";
 export type { FleetWindowRollup } from "./observability-store/fleet-window-rollup.js";
 

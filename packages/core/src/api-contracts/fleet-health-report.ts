@@ -1,27 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `obs.fleet.health` wire shape (Phase 161 RPC response) — the cross-session
+ * The `obs.fleet.health` wire shape — the cross-session
  * fleet-health digest. DISTINCT from the per-session `IncidentReport`
  * (`incident-report.ts`): this rolls up a WINDOW of sessions, not one session.
  *
- * Bounded/digest-only/deterministic (v2.15 R1): capped top-N findings + merged
+ * Bounded/digest-only/deterministic: capped top-N findings + merged
  * `errorKinds`, counts + hints ONLY (no raw WARN bodies), a deterministic
- * `likelyRootCause`-style verdict, an honest `truncations[]` ledger, and a v2.14
+ * `likelyRootCause`-style verdict, an honest `truncations[]` ledger, and a
  * `coverage` honesty block (which fleet sources were read). Same window → same
  * verdict: the report root carries NO wall-clock field (the `IncidentReport`
  * precedent has none either) — `windowHours` is the only time reference.
  *
- * Phase 159 ships the SCHEMA only. The bounding pass (mirror `obs-explain-bound.ts`)
- * and the heuristic registry (mirror `obs-explain-heuristics.ts`) that POPULATE
- * `likelyRootCause` + `truncations` land in the Phase-161 handler — the schema is
- * SHAPED (arrays-of-bounded-records + `truncations[]` + digestible scalars) so they
- * apply. This is a BARE z.object schema (it is deliberately NOT wired as an RPC
- * contract, and is NOT registered in `OBSERVABILITY_CONTRACTS`), so it does NOT
- * trip `contract-codegen-drift` / `contract-handler-parity`; the RPC/handler/CLI
- * are Phase 161. It IS barrel re-exported (via `observability.ts`)
- * so the Phase-161 handler can import it; the no-in-repo-consumer dead-export gate
- * is satisfied by a `public-api-policy.ts` entry (the `IncidentReportSchema`
- * precedent) until that handler lands.
+ * This module declares the SCHEMA + the RPC contract. The bounding pass (mirror
+ * `obs-explain-bound.ts`) and the heuristic registry (mirror
+ * `obs-explain-heuristics.ts`) that POPULATE `likelyRootCause` + `truncations`
+ * live in the daemon handler — the schema is SHAPED
+ * (arrays-of-bounded-records + `truncations[]` + digestible scalars) so they
+ * apply. Barrel re-exported via `observability.ts`, which also registers
+ * {@link ObsFleetHealthContract} in `OBSERVABILITY_CONTRACTS`.
  *
  * @module
  */
@@ -47,7 +43,7 @@ export const FleetHealthReportSchema = z.object({
   /** Merged across the window + capped top-N (counts only — no raw bodies). */
   topErrorKinds: z.array(z.object({ kind: z.string(), count: z.number() })),
   /**
-   * QT2/QT3 — the fleet-level degradation detector: degraded session COUNTS
+   * The fleet-level degradation detector: degraded session COUNTS
    * bucketed by the named `endReason` cause ("N degraded by context_exhausted, M
    * by output_starved"). ONLY degraded sessions contribute; a missing/blank cause
    * folds into `"unknown"`. Bounded (capped top-N, counts only — no raw bodies)
@@ -68,7 +64,7 @@ export const FleetHealthReportSchema = z.object({
   }),
   /**
    * Capped top-N findings — counts + short codes + hints ONLY (no raw WARN
-   * bodies). The Phase-161 bounding pass trims to top-N and records the drop in
+   * bodies). The bounding pass trims to top-N and records the drop in
    * `truncations[]`. Mirrors the `IncidentReport` digest-only discipline.
    */
   findings: z.array(
@@ -81,7 +77,7 @@ export const FleetHealthReportSchema = z.object({
   ),
   /**
    * The deterministic report-level verdict — `null` when no heuristic matches.
-   * Mirrors `IncidentReport.likelyRootCause` 1:1 (the Phase-161 heuristic
+   * Mirrors `IncidentReport.likelyRootCause` 1:1 (the heuristic
    * registry populates it; PURE, ordered first-match-wins).
    */
   likelyRootCause: z
@@ -94,7 +90,7 @@ export const FleetHealthReportSchema = z.object({
   /** Report-level guidance (independent of the per-verdict steps above). */
   suggestedNextSteps: z.array(z.string()),
   /**
-   * The honest size-drop ledger — what the (Phase-161) bounding pass shed to
+   * The honest size-drop ledger — what the bounding pass shed to
    * stay digest-only/bounded. Mirrors `IncidentReport.truncations[]`.
    */
   truncations: z.array(
@@ -106,15 +102,15 @@ export const FleetHealthReportSchema = z.object({
   ),
   /**
    * READ-coverage breadcrumb (meta-observability): which FLEET sources the
-   * (Phase-161) handler actually located + read. DISTINCT from `truncations[]`
+   * handler actually located + read. DISTINCT from `truncations[]`
    * (SIZE-drops): `coverage` records whether the INPUTS were read, so a
    * silently-empty fleet report ("0 rows / N days missing") is self-evident
-   * instead of masquerading as a clean zero-activity window. Mirrors the v2.14
+   * instead of masquerading as a clean zero-activity window. Mirrors the
    * `IncidentReport.coverage` pattern (`obs-explain-assemble.ts`). Optional
    * (schemaVersion stays 1) — additive; pre-existing constructors omit it.
    *
-   * The shape maps to the Phase-159 aggregates: `sessionSummary` (A1/A2 store
-   * rows), `sessionIndex` (A3 multi-day reader's `daysRead`/`daysMissing`),
+   * The shape maps to the fleet aggregates: `sessionSummary` (session-summary
+   * store rows), `sessionIndex` (the multi-day index reader's `daysRead`/`daysMissing`),
    * `billing` (present flag for the cost source).
    */
   coverage: z
@@ -125,25 +121,25 @@ export const FleetHealthReportSchema = z.object({
     })
     .optional(),
   /**
-   * TELEM-02: the pre-committed pipeline-authoring decision verdict (gates Phase
-   * 174). Optional (schemaVersion stays 1) — additive; pre-existing constructors
+   * The pre-committed pipeline-authoring decision verdict.
+   * Optional (schemaVersion stays 1) — additive; pre-existing constructors
    * omit it. Declared INLINE here because core depends only on shared (it cannot
    * import the observability package — that would invert the dep graph + trip the
    * cycle gate); the daemon assigns the observability `PipelineAuthoringVerdict`,
    * structurally `{buildAuthor, reason}`, into this field. Counts/boolean verdict
    * only — no body/secret. Without this field the non-strict z.object STRIPS the
-   * verdict on parse, so it never reaches the operator (T-173-12 Tampering — the
-   * round-trip test proves it).
+   * verdict on parse, so it never reaches the operator (a tampering hazard — the
+   * round-trip test proves it survives).
    */
   pipelineAuthoringGate: z
     .object({ buildAuthor: z.boolean(), reason: z.string() })
     .optional(),
   /**
-   * FLEET-01/02/04 (Phase 220): the cross-run AUTONOMY-health slice. Counts + an
+   * The cross-run AUTONOMY-health slice. Counts + an
    * id ONLY (the worst rootRunId to drill into via `comis explain`) — NO
    * body/reason/secret (the smuggled-key test proves the non-strict z.object
-   * strips any extra field; T-220-10). Optional (schemaVersion stays 1) —
-   * additive; pre-220 constructors omit it.
+   * strips any extra field). Optional (schemaVersion stays 1) —
+   * additive; pre-existing constructors omit it.
    *
    * Sourced from `DurableRunPort.countByStatus` (autonomy runs ARE durable_runs
    * by construction — no synthetic notion, no session-rollup schema change) +
@@ -153,9 +149,8 @@ export const FleetHealthReportSchema = z.object({
    *
    * `costUsd` is the window's autonomy-inclusive operator cost (the
    * synthetic-excluded `fleet.costUsd` read-back — NOT a separate re-derivation
-   * over raw rows, which would re-introduce WR-01). A stricter autonomy-only
-   * cost is a later follow-up; FLEET-01 requires an aggregate cost, satisfied
-   * here.
+   * over raw rows, which could diverge from the fleet read). A stricter
+   * autonomy-only cost is a possible follow-up; an aggregate cost suffices here.
    */
   autonomy: z
     .object({
@@ -167,18 +162,18 @@ export const FleetHealthReportSchema = z.object({
       /** The TOOL-FAILURE breaker subset of breakerTripTotal (the synthetic-excluded
        *  session-rollup `breakerTripCount` read-back). DISTINCT from `denialBreakerTrips`
        *  below — the tool-failure breaker and the capability-denial breaker are
-       *  separate Phase-217 mechanisms and must not be conflated. */
+       *  separate mechanisms and must not be conflated. */
       breakerTrips: z.number(),
       /**
-       * FLEET-02 (Phase 220-05): the CAPABILITY-DENIAL breaker trip count — N
-       * consecutive floor-blocks aborted + killed an unattended run tree (Phase
-       * 217). EVENT-SOURCED from the content-free `autonomy_denial_breaker`
+       * The CAPABILITY-DENIAL breaker trip count — N
+       * consecutive floor-blocks aborted + killed an unattended run tree.
+       * EVENT-SOURCED from the content-free `autonomy_denial_breaker`
        * health_signal rows, NOT the session-rollup `breakerTripCount`: a
        * denial-breaker abort is NEVER a session endReason and NEVER a
        * breakerTripCount, so `breakerTrips` (the tool-failure read-back) can never
        * see it — and the aborted run lands in durable status 'completed', so it is
        * 0 in orphaned/revoked/killed too. This separable count is the ONLY fleet
-       * surface for the denial breaker (the milestone-audit FLEET-02 gap). Counts
+       * surface for the denial breaker. Counts
        * only — never the engine's free-text deny reason. The assembler always
        * emits it within the (optional) autonomy block; a `denial_breaker`-aborted
        * run's id can also surface as `worstRootRunId` + an `autonomy_denial_breaker`
@@ -187,7 +182,7 @@ export const FleetHealthReportSchema = z.object({
       denialBreakerTrips: z.number(),
       budgetBreaches: z.number(),
       costUsd: z.number(),
-      /** FLEET-04: the worst autonomy run to drill into via `comis explain`. */
+      /** The worst autonomy run to drill into via `comis explain`. */
       worstRootRunId: z.string().optional(),
     })
     .optional(),
@@ -197,9 +192,9 @@ export const FleetHealthReportSchema = z.object({
 export type FleetHealthReport = z.infer<typeof FleetHealthReportSchema>;
 
 /**
- * `obs.fleet.health` — the cross-session fleet-health triage RPC (v2.15 R2,
- * Phase 161). Admin-only; the daemon handler fans the Phase-159 A-track
- * aggregation + Phase-160 I-track diagnostics into the {@link FleetHealthReport}
+ * `obs.fleet.health` — the cross-session fleet-health triage RPC.
+ * Admin-only; the daemon handler fans the cross-session
+ * aggregation + log-derived diagnostics into the {@link FleetHealthReport}
  * digest above. The SIBLING of {@link ObsExplainContract} (`incident-report.ts`):
  * `obs.explain` post-mortems ONE session; this rolls up a WINDOW.
  *

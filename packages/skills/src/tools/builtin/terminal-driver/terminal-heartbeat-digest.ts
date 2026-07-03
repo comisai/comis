@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The pure NOTIFY-02 heartbeat line (design §4 Phase D; CONTEXT I3).
+ * The pure heartbeat line for a promoted drive.
  *
  * `heartbeatLine(j)` builds the user-facing periodic progress one-liner for a PROMOTED
  * (long) drive — `"still working — elapsed Xh, last activity <digest>, N interactions,
  * ~$Y"` — assembled PURELY from the {@link DriveJournal}'s content-free fields
- * (`elapsedMs`, `lastScreenDigest`, `interactions`, `costUsd`). This is NOTIFY-02's
- * spam-free "the 40h drive is still alive" signal, distinct from LIVE-01's INTERNAL
+ * (`elapsedMs`, `lastScreenDigest`, `interactions`, `costUsd`). This is the
+ * spam-free "the 40h drive is still alive" signal, distinct from the INTERNAL
  * liveness tick (which is never a user message).
  *
- * CONTENT-FREE BY CONSTRUCTION (I3): the ONLY screen-derived text in the output is
+ * CONTENT-FREE BY CONSTRUCTION: the ONLY screen-derived text in the output is
  * `lastScreenDigest`, which the woken-turn driver ALREADY ran through `scrubSecretsFromText`
  * + bounded to `DIGEST_EXCERPT_MAX` before it landed on the journal (terminal-wake-turn.ts).
  * This function FORMATS, it does NOT redact and NEVER re-expands or re-reads the screen —
  * the same FORMAT-not-redact layer split `screenDigestLine` documents (terminal-read-digest.ts).
  * Everything else in the line is structural (counts/durations/labels).
  *
- * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors
+ * Architecture invariants (binding — AGENTS.md; mirrors
  * `terminal-read-digest.ts` `screenDigestLine` / `terminal-spend-ceiling.ts`):
  *   - PURE: a free function, NOT a factory. NO clock/timer reads (`elapsedMs` is the
  *     content-free number the CALLER derived from its own injected clock), NO module-global
@@ -39,7 +39,7 @@ function safeNonNegative(n: number): number {
 }
 
 /**
- * The content-free NOTIFY-02 heartbeat one-liner for a promoted drive (I3).
+ * The content-free heartbeat one-liner for a promoted drive.
  *
  * Pure + total: a degenerate journal yields a safe string (`0` hours/interactions/cost, an
  * empty digest → `"(no activity yet)"`); never throws. The line is content-free BY
@@ -57,7 +57,7 @@ export function heartbeatLine(
   const interactions = Math.floor(safeNonNegative(j.interactions));
   // costUsd is money: a non-finite/negative value is degenerate → 0; two-decimal money format.
   const cost = safeNonNegative(j.costUsd).toFixed(2);
-  // The (already-redacted, already-bounded) digest, VERBATIM — never re-expanded (I3 layer split).
+  // The (already-redacted, already-bounded) digest, VERBATIM — never re-expanded (the format-not-redact layer split).
   const activity =
     typeof j.lastScreenDigest === "string" && j.lastScreenDigest.length > 0
       ? j.lastScreenDigest

@@ -70,9 +70,9 @@ describe("registerRpcMethods", () => {
     registerRpcMethods(deps);
 
     const calls = registerMethod.mock.calls;
-    // NOTE: obs.diagnostics + obs.explain are now scopes:["rpc"] (OBS-SELF-DEAD,
-    // 30uc-20260624 UC-14) — agent self-observability — so they register agent-reachable,
-    // NOT admin. The DAEMON-WIDE/sensitive obs methods below stay admin.
+    // NOTE: obs.diagnostics + obs.explain are now scopes:["rpc"] — agent
+    // self-observability — so they register agent-reachable, NOT admin. The
+    // DAEMON-WIDE/sensitive obs methods below stay admin.
     const obsMethods = [
       "obs.billing.byProvider", "obs.billing.byAgent",
       "obs.billing.bySession", "obs.billing.total", "obs.billing.usage24h",
@@ -92,7 +92,7 @@ describe("registerRpcMethods", () => {
     registerRpcMethods(deps);
 
     // Use obs.billing.total (a DAEMON-WIDE admin passthrough). NB: obs.diagnostics is no
-    // longer admin (OBS-SELF-DEAD re-scope to rpc), so it's no longer an admin passthrough.
+    // longer admin (re-scoped to rpc), so it's no longer an admin passthrough.
     const calls = registerMethod.mock.calls;
     const call = calls.find(([m]: [string]) => m === "obs.billing.total");
     const handler = call![2];
@@ -168,7 +168,7 @@ describe("registerRpcMethods", () => {
     await handler(webShape);
 
     // cron.add is gated (orch:cron), so the gateway leg now injects the required
-    // cap server-side (CAP-03); the user-shape params are otherwise unchanged.
+    // cap server-side; the user-shape params are otherwise unchanged.
     expect(deps.rpcCall).toHaveBeenCalledWith("cron.add", {
       ...webShape,
       _capabilities: ["orch:cron"],
@@ -236,12 +236,12 @@ describe("registerRpcMethods", () => {
     const adminMethods = [
       "admin.approval.pending", "admin.approval.resolve", "admin.approval.clearDenialCache",
       "agents.create", "agents.get", "agents.update", "agents.delete", "agents.suspend", "agents.resume",
-      // 210-GAP MD-01: session.list/reset/compact moved to rpc (agent-self
-      // reads/lifecycle). delete/export stay admin (in-handler admin check +
-      // arbitrary-session targeting → deny-by-origin).
+      // session.list/reset/compact are rpc (agent-self reads/lifecycle).
+      // delete/export stay admin (in-handler admin check + arbitrary-session
+      // targeting → deny-by-origin).
       "session.delete", "session.export",
-      // MD-02: memory.store re-scoped admin→rpc (agent-reachable — the
-      // memory_store tool is the primary caller); asserted as rpc below.
+      // memory.store is scoped rpc (agent-reachable — the memory_store tool
+      // is the primary caller); asserted as rpc below.
       "memory.stats", "memory.browse", "memory.delete", "memory.flush", "memory.export",
       "models.list", "models.test",
       "tokens.list", "tokens.create", "tokens.revoke", "tokens.rotate",
@@ -254,7 +254,7 @@ describe("registerRpcMethods", () => {
     }
   });
 
-  it("MD-02: memory.store is registered as an rpc passthrough (agent-reachable; the memory_store tool's backing RPC)", () => {
+  it("memory.store is registered as an rpc passthrough (agent-reachable; the memory_store tool's backing RPC)", () => {
     registerRpcMethods(deps);
     const calls = registerMethod.mock.calls;
     const call = calls.find(([m]: [string]) => m === "memory.store");
@@ -262,7 +262,7 @@ describe("registerRpcMethods", () => {
     expect(call![1]).toBe("rpc");
   });
 
-  it("210-GAP MD-01: session.list/reset/compact are registered as rpc passthroughs (agent-reachable self reads/lifecycle)", () => {
+  it("session.list/reset/compact are registered as rpc passthroughs (agent-reachable self reads/lifecycle)", () => {
     registerRpcMethods(deps);
     const calls = registerMethod.mock.calls;
     for (const name of ["session.list", "session.reset", "session.compact"]) {
@@ -284,7 +284,7 @@ describe("registerRpcMethods", () => {
     expect(call![1]).toBe("rpc");
   });
 
-  it("210-GAP CR-01: skills.upload/import/delete are registered as rpc passthroughs (orch:skill surface)", () => {
+  it("skills.upload/import/delete are registered as rpc passthroughs (orch:skill surface)", () => {
     // Re-scoped admin→rpc so the deny-by-origin chokepoint no longer denies an
     // agent its own orch:skill grant. Admin gateway tokens carry rpc, so the
     // web-UI skills manager (which calls these) is unaffected.
@@ -361,13 +361,13 @@ describe("registerRpcMethods", () => {
   });
 
   // -----------------------------------------------------------------------
-  // ORIGIN-02: strip INTERNAL_FIELD_NAMES at the external WS/REST boundary
+  // Strip INTERNAL_FIELD_NAMES at the external WS/REST boundary.
   //
   // An external rpc/admin-token holder can spread an `_agentId` (or any
   // `_X` control field) into params. The dispatcher must project those
   // away BEFORE re-injecting the trusted `_trustLevel` so that `_agentId`
   // PRESENCE becomes an unforgeable agent-origin signal (the prerequisite
-  // that makes deny-by-origin sound). v8 ORIGIN-02 / section 3.1.
+  // that makes deny-by-origin sound).
   // -----------------------------------------------------------------------
 
   function handlerFor(method: string): (params: unknown) => Promise<unknown> {
@@ -378,7 +378,7 @@ describe("registerRpcMethods", () => {
   }
 
   it("admin branch strips a forged _agentId but re-injects _trustLevel and keeps user fields", async () => {
-    // obs.billing.total is a DAEMON-WIDE admin method (obs.diagnostics is now rpc — OBS-SELF-DEAD).
+    // obs.billing.total is a DAEMON-WIDE admin method (obs.diagnostics is now rpc).
     const handler = handlerFor("obs.billing.total");
 
     await handler({ _agentId: "forged", marker: "keep" });
@@ -404,16 +404,16 @@ describe("registerRpcMethods", () => {
     expect(forwarded).not.toHaveProperty("_agentId");
     // Legitimate user field survives.
     expect(forwarded.text).toBe("hello");
-    // `_capabilities` is forward-correct: stripped iff it is an internal field
-    // (it joins INTERNAL_FIELD_NAMES once Plan 01 lands). Guarded by membership
-    // so this assertion is correct whether Plan 03 runs before or after Plan 01.
+    // `_capabilities` is forward-correct: stripped iff it is an internal field.
+    // Guarded by membership so this assertion holds whether or not
+    // `_capabilities` is currently in INTERNAL_FIELD_NAMES.
     if ((INTERNAL_FIELD_NAMES as readonly string[]).includes("_capabilities")) {
       expect(forwarded).not.toHaveProperty("_capabilities");
     }
   });
 
   it("strips every INTERNAL_FIELD_NAMES entry forged by an external admin caller", async () => {
-    const handler = handlerFor("obs.billing.total"); // admin (obs.diagnostics is now rpc — OBS-SELF-DEAD)
+    const handler = handlerFor("obs.billing.total"); // admin (obs.diagnostics is now rpc)
 
     const forged: Record<string, unknown> = { marker: "keep" };
     for (const name of INTERNAL_FIELD_NAMES) {
@@ -442,12 +442,12 @@ describe("registerRpcMethods", () => {
   });
 
   // -----------------------------------------------------------------------
-  // CAP-03 (gateway leg): M1 (#236) capability-gated the orchestration RPCs on
-  // the injected `_capabilities`, but only the in-process agent leg injected it
-  // — the gateway leg did not, so every authenticated operator/dashboard call
-  // (and the integration suite) hit `Capability denied: orch:*`. The gateway
-  // must inject the method's REQUIRED orch cap server-side, after the strip
-  // (a client cannot forge `_capabilities` — it is a stripped internal field).
+  // Capability-gated orchestration RPCs check the injected `_capabilities`.
+  // Only the in-process agent leg injects that cap, so the gateway leg must
+  // inject the method's REQUIRED orch cap server-side, after the strip —
+  // otherwise every authenticated operator/dashboard call would hit
+  // `Capability denied: orch:*`. A client cannot forge `_capabilities` — it is
+  // a stripped internal field.
   // -----------------------------------------------------------------------
 
   it("injects the required orch cap for gated orchestration methods (least-privilege)", async () => {

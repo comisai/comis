@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI entry point — errors propagate to Commander error handler.
 /**
- * W14 (obs-llm-troubleshooting): OFFLINE assembly for `comis explain` and
- * `comis fleet`.
+ * OFFLINE assembly for `comis explain` and `comis fleet`.
  *
  * The session telemetry these commands read lives on LOCAL disk
  * (`<dataDir>/workspace/sessions/...`, `<dataDir>/logs/...`, `memory.db`), so a
@@ -41,7 +40,7 @@ import {
  * env check, `comis explain --offline` / `comis fleet --offline` read the INVOKING user's
  * home — so running the CLI as a different user than the daemon (or against a non-default
  * `COMIS_DATA_DIR` install) silently reads an empty dir and reports a false "nothing
- * happened" for a session that succeeded (webhook-claude-cli-tdd-20260630-rerun).
+ * happened" for a session that succeeded.
  */
 export function resolveOfflineDataDir(): string {
   return systemGetEnv("COMIS_DATA_DIR") ?? safePath(os.homedir(), ".comis");
@@ -124,7 +123,7 @@ export async function assembleFleetHealthReportOffline(
   const { store, close } = openObsStoreIfPresent(dataDir);
   try {
     return await assembleFleetHealthReport(
-      // FLEET-01/02/04 (Phase 220-03): the offline CLI is daemon-less — there is no
+      // The offline CLI is daemon-less — there is no
       // durable-run store edge here, so pass `durableRuns: undefined` explicitly. The
       // assembler soft-fails and the autonomy block is honestly OMITTED (the documented
       // coverage degradation, NOT a divergence from the RPC/MCP surfaces, which DO wire it).
@@ -136,7 +135,7 @@ export async function assembleFleetHealthReportOffline(
   }
 }
 
-/** Options for the offline cost-export read (COST-03). */
+/** Options for the offline cost-export read. */
 export interface CostExportOptions extends CostBucketFilter {
   /** Lower time bound (inclusive), epoch ms. Absent → all time. */
   sinceMs?: number;
@@ -145,11 +144,12 @@ export interface CostExportOptions extends CostBucketFilter {
 }
 
 /**
- * COST-03: read the corrected-cost buckets (with the E1 pricing-coverage column)
+ * Read the corrected-cost buckets (with the pricing-coverage column)
  * from the LOCAL ~/.comis observability store, WITHOUT contacting the daemon —
  * the telemetry lives on disk, so an export must not require a live gateway. This
  * is the `comis cost export` data source (there is no admin aggregate RPC for the
- * quarter-hour buckets yet; a dedicated export RPC is 179-04's, not invented here).
+ * quarter-hour buckets yet; a dedicated export RPC would be a separate addition,
+ * not invented here).
  *
  * The filter (agent/provider/model) + `sinceMs` are passed straight to the store's
  * `aggregateHourlyCost`/`aggregateQuarterHourly`, which bind them as parameters.

@@ -120,7 +120,7 @@ export function shouldDropSignedFields(input: DriftCheckInput): DriftCheck {
   }
 
   // Identity comparisons. pi-ai persists stream metadata on assistant turns
-  // under message.metadata.model; some legacy paths put it directly on
+  // under message.metadata.model; some producers put it directly on
   // message.metadata.{provider,api}. Probe both shapes.
   const meta = lastAssistant.message?.metadata;
   const previousModel = meta?.model?.id;

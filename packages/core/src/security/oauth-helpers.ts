@@ -3,22 +3,20 @@
  * Consolidated OAuth helpers for OpenAI Codex.
  *
  * Combines:
- *   - JWT decode + identity resolution (verbatim move from agent/src/model/oauth-identity.ts).
- *     Verbatim port of OpenClaw's openai-codex-auth-identity.ts plus the
- *     email-redaction helper.
- *   - Error catalogue / classifier (verbatim move from agent/src/model/oauth-errors.ts).
- *     Substring matchers for `refresh_token_reused` are lifted from OpenClaw's
- *     auth-profiles/oauth.ts:117-123 (battle-tested in production for ~6 months).
+ *   - JWT decode + identity resolution (including the email-redaction helper).
+ *   - Error catalogue / classifier. The `refresh_token_reused` substring
+ *     matchers cover every error phrasing OpenAI has been observed to emit
+ *     for that condition. Derived from third-party code; see NOTICE.
  *
- * CRITICAL ORDERING (preserved from oauth-errors.ts:14-16): refresh_token_reused
- * MUST be tested BEFORE invalid_grant — refresh_token_reused is a SPECIFIC kind
- * of invalid_grant; the more-specific matcher must win.
+ * CRITICAL ORDERING: refresh_token_reused MUST be tested BEFORE
+ * invalid_grant — refresh_token_reused is a SPECIFIC kind of
+ * invalid_grant; the more-specific matcher must win.
  *
  * Field convention: `code` is the OAuth domain discriminator (consumed by
  * CLI, events, tests via switch on the 6 OAuthErrorCode values).
  * `logErrorKind` is the closed-Pino-ErrorKind mirror (always "auth"); logger
  * payloads use `errorKind: "auth"` directly OR destructure `logErrorKind`. The
- * 9-member closed ErrorKind union prevents domain values from leaking into
+ * closed ErrorKind union prevents domain values from leaking into
  * Pino log streams. Consumers carrying the discriminator into downstream
  * shapes (OAuthError.errorKind, auth:refresh_failed event payload) read
  * `rewritten.code` directly.
@@ -31,7 +29,7 @@ import type { ErrorKind } from "../logging/log-fields.js";
 const PROFILE_CLAIM_NS = "https://api.openai.com/profile";
 
 // ============================================================================
-// JWT helpers (lifted verbatim from agent/src/model/oauth-identity.ts)
+// JWT helpers
 // ============================================================================
 
 function trimNonEmptyString(value: unknown): string | undefined {
@@ -202,7 +200,8 @@ export function rewriteOAuthError(err: unknown): RewrittenOAuthError {
 
   // CRITICAL ORDERING: refresh_token_reused FIRST — it is a SPECIFIC kind
   // of invalid_grant. Match the more specific pattern before the generic.
-  // Substring set verbatim from OpenClaw auth-profiles/oauth.ts:117-123.
+  // The substring set covers every phrasing OpenAI has been observed to
+  // emit for a reused refresh token — do not narrow it.
   if (
     /refresh_token_reused/i.test(message) ||
     /refresh token has already been used/i.test(message) ||

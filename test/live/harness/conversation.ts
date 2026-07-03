@@ -12,10 +12,10 @@
  *
  * Security notes:
  *   - authToken is passed only to the WebSocket URL query param (test-only JWT,
- *     scoped to isolated test daemon, never logged — T-136-01-04)
+ *     scoped to isolated test daemon, never logged)
  *   - disableRedaction:true is forwarded so log-oracle can assert on raw payloads
- *     (internal to test process, never written to shared storage — T-136-01-01)
- *   - "already exists" swallowed; "admin access required" throws loudly (T-136-01-02)
+ *     (internal to test process, never written to shared storage)
+ *   - "already exists" swallowed; "admin access required" throws loudly
  *
  * @module
  */
@@ -78,13 +78,12 @@ type RpcEnvelope = {
 /**
  * Parse an agent.execute RPC envelope into the agent's reply text.
  *
- * 260611 live-fire fix: the gateway's handleAgentRequest returns
+ * The gateway's handleAgentRequest returns
  * `{ response, tokensUsed, finishReason }` (packages/gateway/src/rpc/
- * rpc-adapters.ts) — the driver previously read `result.reply`, a field that
- * has never existed, so EVERY live turn threw "returned no reply string" even
- * when the model answered. Handler-level failures also arrive as
- * `result.error` (a string), not as a JSON-RPC error object — both shapes now
- * fail honestly.
+ * rpc-adapters.ts) — reading `result.reply` (a field that has never existed)
+ * makes EVERY live turn throw "returned no reply string" even when the model
+ * answered. Handler-level failures also arrive as `result.error` (a string),
+ * not as a JSON-RPC error object — both shapes fail honestly here.
  *
  * Exported for unit tests (conversation.test.ts) — pure, no I/O.
  *
@@ -150,12 +149,12 @@ export class ConversationDriver {
    * on the daemon's TypedEventBus (handle.daemon.container.eventBus).
    *
    * TypedEventBus has no wildcard .on("*") — we subscribe to each context:* key
-   * individually. This covers the events needed for CTX-01/CTX-03 and later phases
-   * (e.g. 141 ORCH graph:state_changed can add subscriptions here as needed).
+   * individually. This covers the events needed for CTX-01/CTX-03; additional ORCH
+   * graph:* subscriptions can be added here as needed.
    *
-   * T-138-02-01: event payloads contain only metadata (IDs, counts, durations) per
+   * Event payloads contain only metadata (IDs, counts, durations) per
    * events-messaging.ts — never message content. capturedEvents() is safe to call
-   * from live test assertions (log-oracle FND-10 covers the log stream separately).
+   * from live test assertions (the log-oracle covers the log stream separately).
    */
   private _capturedEvents: Array<{ name: string; payload: unknown }> = [];
 
@@ -200,7 +199,7 @@ export class ConversationDriver {
     // parallel vitest forks do not collide on the config-default port (4766).
     // An explicit port from options takes priority; otherwise ask the OS for
     // a free ephemeral port. The port is stored on the instance so restart()
-    // re-binds the same port (restart survival semantics — T-136-01).
+    // re-binds the same port (restart survival semantics).
     if (this._gatewayPort === undefined) {
       this._gatewayPort = this._explicitGatewayPort ?? await getFreePort();
     }
@@ -209,10 +208,10 @@ export class ConversationDriver {
     // The daemon reads its listen port from the YAML config — gatewayPort on
     // TestDaemonOptions only controls the URL the harness connects to, not the
     // actual bind port. By rewriting the config we guarantee the daemon and
-    // the harness agree on the same port (T-136-01, parallel-fork collision fix).
+    // the harness agree on the same port (the parallel-fork collision fix).
     const resolvedConfigPath = this._buildPortedConfigPath(this._gatewayPort);
 
-    // Log capture with raw payloads for log-oracle assertions (T-136-01-01)
+    // Log capture with raw payloads for log-oracle assertions.
     this._logCapture = createLogCapture();
 
     // Boot the in-process daemon with log tee + raw payloads.
@@ -243,7 +242,7 @@ export class ConversationDriver {
     // Create the agent via agents.create WS RPC (admin-scope required).
     // Swallow "already exists" (idempotent across test runs on shared DB).
     // Throw loudly on "admin access required" (test misconfigured) and any
-    // other unexpected error (T-136-01-02).
+    // other unexpected error.
     const setupWs = await openAuthenticatedWebSocket(
       this._handle.gatewayUrl,
       this._handle.authToken,
@@ -287,7 +286,7 @@ export class ConversationDriver {
    *
    * With dummy API keys (no COMIS_LIVE), the LLM provider call will fail and
    * the RPC returns an error envelope — sendTurn THROWS in that case. This is
-   * intentional: the driver never returns empty silently (T-136-01 contract).
+   * intentional: the driver never returns empty silently.
    *
    * The echo adapter's sentMessages buffer is NOT cleared after a turn — callers
    * can read getEcho().getSentMessages() after sendTurn() returns to inspect
@@ -404,8 +403,8 @@ export class ConversationDriver {
 
     // Boot fresh daemon on same dataDir (SQLite state persists).
     // Pass the same config (with the same unique port) that was used in init()
-    // so the restarted daemon binds the same port (restart survival semantics —
-    // T-136-01). Caller-supplied opts can override, but should rarely need to.
+    // so the restarted daemon binds the same port (restart survival semantics).
+    // Caller-supplied opts can override, but should rarely need to.
     const resolvedConfigPath = this._gatewayPort !== undefined
       ? this._buildPortedConfigPath(this._gatewayPort)
       : undefined;
@@ -518,8 +517,8 @@ export class ConversationDriver {
    * Returns a COPY of the internal array — mutations do not affect captured state.
    *
    * Used by assertP1HonestPresentation and assertP2UncertaintyClauses in
-   * dag-invariants.test.ts Stage-C (CTX-03). Safe: per T-138-02-01, event
-   * payloads carry only identifiers + counts + durations — never message content.
+   * dag-invariants.test.ts Stage-C (CTX-03). Safe: event payloads carry only
+   * identifiers + counts + durations — never message content.
    */
   capturedEvents(): Array<{ name: string; payload: unknown }> {
     return [...this._capturedEvents];
@@ -539,13 +538,12 @@ export class ConversationDriver {
    * `resolve(config.dataDir, config.memory.dbPath)` (absolute dbPath returned
    * unchanged). Requires init().
    *
-   * 260611 live-fire fix: scenario files previously hand-built
-   * `join(getDataDir(), "memory.db")`, which never matched the test config's
-   * `memory.dbPath: "test-memory-default.db"` — so every
-   * `if (existsSync(dbPath))`-guarded db-oracle silently skipped and ground
-   * truth was never checked (the §2.10 hand-built-path bug class). This
-   * accessor is the single source of truth: the path comes from the live
-   * daemon's resolved config, not a guess.
+   * Scenario files previously hand-built `join(getDataDir(), "memory.db")`, which
+   * never matched the test config's `memory.dbPath: "test-memory-default.db"` — so
+   * every `if (existsSync(dbPath))`-guarded db-oracle silently skipped and ground
+   * truth was never checked (the hand-built-path bug class). This accessor is the
+   * single source of truth: the path comes from the live daemon's resolved config,
+   * not a guess.
    */
   getMemoryDbPath(): string {
     const handle = this._requireHandle();
@@ -614,7 +612,7 @@ export class ConversationDriver {
    *   - context:dag_compacted (CTX-03 P1/P2 — honest presentation)
    *   - context:dag_expanded  (DAG expansion tool use)
    *   - context:dag_degraded  (DAG robustness signal)
-   *   - context:evicted       (O1 — DAG activity metrics)
+   *   - context:evicted       (DAG activity metrics)
    *   - context:masked        (observation masker applied)
    *   - context:mode_switched (engine mode change)
    *   - context:compacted     (pipeline-mode compaction)
@@ -651,12 +649,12 @@ export class ConversationDriver {
     bus.on("session:sub_agent_spawned",      capture("session:sub_agent_spawned") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("session:sub_agent_completed",    capture("session:sub_agent_completed") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("session:sub_agent_spawn_rejected", capture("session:sub_agent_spawn_rejected") as Parameters<TypedEventBus["on"]>[1]);
-    // Media events (Phase 142) — ONLY the media:* keys that exist in the @comis/core
+    // Media events — ONLY the media:* keys that exist in the @comis/core
     // TypedEventBus EventMap. media:file_extracted / media:file_persisted are the ONLY
     // media:* events (verified via `grep -rn '"media:' packages/core/src/event-bus/`).
     // There is NO tts_synthesized / voice_sent / transcription_done / image_analyzed /
     // image_generated event — bus.on() on those would be a TypeScript compile error.
-    // The Wave-2 media scenarios assert on product-function return values + structured
+    // The media scenarios assert on product-function return values + structured
     // loggers, NOT on media:* events, so no further event capture is required here.
     bus.on("media:file_extracted",   capture("media:file_extracted") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("media:file_persisted",   capture("media:file_persisted") as Parameters<TypedEventBus["on"]>[1]);
@@ -736,7 +734,7 @@ export class ConversationDriver {
  * Write a unique flush-sentinel log line to the daemon and poll until it
  * appears in the driver's captured log entries.
  *
- * Required before log-oracle snapshots (T-134-flush): Pino's async worker
+ * Required before log-oracle snapshots: Pino's async worker
  * may not have flushed the last 1–2 lines by the time an assertion runs.
  * Writing a sentinel and waiting for it ensures the buffer is drained.
  *

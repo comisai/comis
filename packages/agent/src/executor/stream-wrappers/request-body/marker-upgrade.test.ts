@@ -6,7 +6,7 @@
  * Tests cover:
  *  1. callCount gate suppresses promotion on first-turn writes (callCount=1)
  *  2. callCount gate allows promotion from turn 2 onward (callCount=2)
- *  3. callCount undefined preserves legacy behavior (promotion fires)
+ *  3. callCount undefined skips the gate (promotion fires unconditionally)
  *  4. retention != "long" never promotes regardless of callCount
  *  5. skipCacheWrite suppresses promotion regardless of callCount
  *
@@ -108,10 +108,9 @@ describe("upgradeSdkMarkers callCount gate", () => {
     expect(toolCc.ttl).toBe("1h");
   });
 
-  it("preserves legacy behavior and promotes when callCount is undefined", () => {
-    // When a caller has not been updated to thread callCount, the gate
-    // must be skipped — silently disabling all promotions would be a
-    // production regression.
+  it("skips the gate and promotes when callCount is undefined", () => {
+    // When a caller does not thread callCount, the gate must be skipped —
+    // silently disabling all promotions would be a production regression.
     const result = makeResultWithEphemeralSystemMarker();
     const logger = makeLogger();
 

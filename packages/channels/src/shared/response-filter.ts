@@ -15,7 +15,7 @@ import {
   NO_REPLY_TOKEN, HEARTBEAT_OK_TOKEN,
 } from "@comis/shared";
 
-// Preserve existing public exports for downstream @comis/channels consumers.
+// Re-exported as part of the @comis/channels public surface for downstream consumers.
 export { NO_REPLY_TOKEN, HEARTBEAT_OK_TOKEN };
 
 export interface FilterResult {
@@ -39,7 +39,7 @@ export function filterResponse(response: string): FilterResult {
   const trimmed = stripReplyTags(response);
   if (!trimmed) return { shouldDeliver: false, cleanedText: "", suppressedBy: "empty" };
 
-  // [SILENT] prefix branch — preserved verbatim from existing behavior.
+  // [SILENT] prefix branch.
   // Resolves before the helper so we can return suppressedBy: "SILENT" cleanly.
   if (trimmed.toUpperCase().startsWith("[SILENT]")) {
     return { shouldDeliver: false, cleanedText: "", suppressedBy: "SILENT" };

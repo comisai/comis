@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD→LTM distillation provenance write surface (Phase 172, DIST-01/DIST-03).
+ * LCD→LTM distillation provenance write surface.
  * Extracted from `lcd-store.ts` so the adapter stays under the 800-line
  * file-size cap (mirrors the `lcd-store-writes.ts` / `lcd-store-reads.ts`
  * extractions).
@@ -9,21 +9,21 @@
  * statements ONCE (preserving the "prepare once at createLcdStore" discipline —
  * they are prepared at store construction and returned as bound closures) and
  * returns the two synchronous ContextStorePort methods the distillation runner
- * (172-02) calls via optional chaining:
+ * calls via optional chaining:
  *
  *   - `appendProvenance(input)` — INSERT one row linking a distilled episodic
  *     memory (memoryId) to the LCD condensed summary (summaryId) it came from.
- *     R4 scope columns come straight from the DTO; the store never reads the
+ *     The scope columns come straight from the DTO; the store never reads the
  *     clock (createdAt is caller-supplied). The row FKs into `memories(id)`
  *     ON DELETE CASCADE — deleting the memory drops the provenance row.
  *   - `markProvenanceSuperseded(summaryId, supersededByMemoryId, tenantId,
  *     agentId)` — the pyramid rule: set `superseded_by` on a descendant
  *     summary's row, ONLY when not already set (`superseded_by IS NULL`), so the
- *     FIRST subsumer wins and a re-run is a harmless no-op. R4-scoped on
- *     tenant_id + agent_id (WR-01): a cross-scope summary_id collision is a
+ *     FIRST subsumer wins and a re-run is a harmless no-op. Scoped on
+ *     tenant_id + agent_id: a cross-scope summary_id collision is a
  *     fail-closed no-op.
  *
- * Static SQL, bound params, no interpolated identifiers (T-127-09). The store
+ * Static SQL, bound params, no interpolated identifiers. The store
  * NEVER logs summary/memory content (lossless store; @comis/memory is infra-free
  * per AGENTS.md §2.4).
  *
@@ -62,7 +62,7 @@ export function buildProvenanceWrites(db: Database.Database): ProvenanceWrites {
 
   // First-subsumer-wins: only set the pointer when not already set, so re-runs
   // are no-ops and a later (different) subsumer never overwrites the first.
-  // R4 (WR-01): tenant_id + agent_id are load-bearing — the UPDATE runs on a
+  // tenant_id + agent_id are load-bearing — the UPDATE runs on a
   // multi-tenant table, so a summary_id collision under a different scope is a
   // fail-closed no-op (mirrors the INSERT's scope columns + every other LCD SQL).
   const updateProvenanceSuperseded = db.prepare(

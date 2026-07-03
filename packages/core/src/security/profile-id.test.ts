@@ -67,7 +67,7 @@ describe("validateProfileId", () => {
   });
 
   it("rejects an identity containing a backslash-n escape sequence", () => {
-    // Plan spec: validateProfileId("openai-codex:user\\nname") — i.e. literal backslash + n.
+    // The input is a literal backslash followed by "n" (not a newline).
     // The backslash in the identity triggers the forbidden-character defense-in-depth check.
     const result = validateProfileId("openai-codex:user\\nname");
     expect(result.ok).toBe(false);

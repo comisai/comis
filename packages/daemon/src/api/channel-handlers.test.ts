@@ -794,9 +794,7 @@ describe("createChannelHandlers - channel management", () => {
       ).rejects.toThrow("Channel type not found: whatsapp");
     });
 
-    // Previously an "undefined channelPlugins" pinning test
-    // covered the BC shim `deps.channelPlugins?.get(...)`.
-    // channelPlugins is now a required field; the test was deleted in
-    // the same atomic commit as the optional-chain removal.
+    // channelPlugins is a required field on ChannelsApiDeps, so there is
+    // no "undefined channelPlugins" case to pin here.
   });
 });

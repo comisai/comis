@@ -130,7 +130,7 @@ export type { DmScopeMode, ScopedSessionKeyParams } from "./session-key/session-
 // the announcement batcher coalesces near-simultaneous sub-agent
 // completions; the dead-letter queue persists failed announcement
 // deliveries for later retry. ANNOUNCE_PARENT_TIMEOUT_MS and
-// SubAgentRunnerLogger (formerly daemon-relative imports) are inlined here
+// SubAgentRunnerLogger are inlined here
 // to avoid an orchestrator->daemon back-edge (forbidden per
 // @comis/orchestrator architecture invariants); daemon's
 // `SubAgentRunnerLogger` shape remains structurally compatible with the
@@ -141,7 +141,7 @@ export * from "./cross-session/cross-session-sender.js";
 export * from "./cross-session/announcement-batcher.js";
 export * from "./cross-session/announcement-dead-letter.js";
 
-// Interactive approval router (Workstream C). The single server-side authority
+// Interactive approval router. The single server-side authority
 // that parses signed button callbacks (lookup-FIRST-then-verify), rejects
 // cross-session + post-resolution replays, and dispatches to ApprovalGate.
 // Channels never import this — they reach signing via the @comis/core primitive.

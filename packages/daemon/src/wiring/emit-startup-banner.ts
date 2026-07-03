@@ -5,7 +5,7 @@ import { emitDockerRestartPolicyWarn } from "../setup-docker-restart-warn.js";
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./oauth-preflight.js";
 
 /**
- * Emit the "Comis daemon started" INFO banner (+ the PROFILE-03 resolved-autonomy
+ * Emit the "Comis daemon started" INFO banner (+ the resolved-autonomy
  * boot log, the Docker restart-policy WARN, and the boot-time OAuth TLS preflight).
  * Extracted from daemon.ts `bootGateway` to keep daemon.ts within the ≤3000-line
  * architecture cap. Pure logging — no boot mutation, void return.
@@ -28,7 +28,7 @@ export function emitStartupBanner(deps: {
   visionRegistry: BootContext["visionRegistry"];
   startupStartMs: number;
   instanceId: string;
-  /** PROFILE-03 host preflight RESULT (see emitAutonomyBootLog). Defaults true in M1; Phase 211 (JAIL-03) supplies the real value. */
+  /** Host preflight RESULT (see emitAutonomyBootLog). Defaults true when no namespace probe has run. */
   namespacePreflightOk?: boolean;
 }): void {
   const {
@@ -63,7 +63,7 @@ export function emitStartupBanner(deps: {
     logLevel: container.config.logLevel ?? "debug", nodeVersion: process.versions.node,
     manifest,
   }, "Comis daemon started");
-  // PROFILE-03 — legible resolved-autonomy boot logging (per-agent INFO + the
+  // Legible resolved-autonomy boot logging (per-agent INFO + the
   // optional namespace-downshift WARN), extracted to emit-autonomy-boot-log.ts.
   emitAutonomyBootLog({ daemonLogger, agents, namespacePreflightOk: deps.namespacePreflightOk });
   // Docker-only: surface restart-policy requirement immediately after the

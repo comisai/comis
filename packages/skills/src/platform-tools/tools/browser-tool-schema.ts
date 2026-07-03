@@ -2,8 +2,8 @@
 /**
  * TypeBox schema for the browser platform tool parameters.
  *
- * Ported from Comis's browser-tool.schema.ts. Uses a flattened object
- * schema (not nested unions) for Claude/OpenAI function calling compatibility.
+ * Uses a flattened object schema (not nested unions) for Claude/OpenAI
+ * function calling compatibility.
  *
  * @module
  */

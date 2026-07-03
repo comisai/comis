@@ -4,7 +4,7 @@
  * `typing` / `threads` / `buttons` capability flags EXPLICITLY.
  *
  * The `ChannelFeaturesSchema` defaults these three fields (`false`/`false`/
- * `"none"`) as a safety net for *future* plugins (§19.5). For the 10 in-tree
+ * `"none"`) as a safety net for *future* plugins. For the 10 in-tree
  * plugins, that default is a trap: `selectStrategy(caps)` routes each
  * channel from these flags, so a plugin that silently inherits a default
  * (e.g. Slack defaulting `threads:false`, or Telegram defaulting
@@ -12,7 +12,7 @@
  *
  * This test reads each plugin's DECLARED `CAPABILITIES.features` literal
  * straight from source and asserts the three keys are own-properties
- * (declared, not defaulted) and equal the §17.2 per-plugin value. A plugin
+ * (declared, not defaulted) and equal the pinned per-plugin value. A plugin
  * that omits any of the three FAILS — that is the regression lock.
  *
  * Why a source walk rather than constructing each plugin: the declared
@@ -35,7 +35,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 
 /**
- * The §17.2 per-plugin capability values (spec lines 1797-1806) — the ground
+ * The per-plugin capability values — the ground
  * truth this test pins. `dir` is the package sub-directory; the plugin file is
  * `<dir>/<dir>-plugin.ts`. The three asserted fields are the ones added to
  * `ChannelFeaturesSchema`.
@@ -150,7 +150,7 @@ describe("every in-tree channel plugin declares typing/threads/buttons explicitl
   });
 
   it.each(EXPECTED)(
-    "$dir plugin declares the §17.2 typing/threads/buttons values explicitly",
+    "$dir plugin declares the expected typing/threads/buttons values explicitly",
     ({ dir, typing, threads, buttons }) => {
       const features = readDeclaredFeatures(dir);
 
@@ -159,7 +159,7 @@ describe("every in-tree channel plugin declares typing/threads/buttons explicitl
       expect(Object.prototype.hasOwnProperty.call(features, "threads")).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(features, "buttons")).toBe(true);
 
-      // Values match the §17.2 ground truth for this channel.
+      // Values match the pinned ground truth for this channel.
       expect(features.typing).toBe(typing);
       expect(features.threads).toBe(threads);
       expect(features.buttons).toBe(buttons);

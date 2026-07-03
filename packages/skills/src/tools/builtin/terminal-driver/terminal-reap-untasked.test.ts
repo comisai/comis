@@ -35,7 +35,7 @@ function makeRegistry(handles: Map<string, SessionHandle | undefined>, opts?: { 
   return { registry, kills };
 }
 
-describe("reapNeverTaskedDrives — deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701)", () => {
+describe("reapNeverTaskedDrives — deterministic unattended honest-fail backstop", () => {
   it("reaps a LIVE never-tasked drive (everSentText=false) and returns its id", async () => {
     const { registry, kills } = makeRegistry(new Map([["s1", handle("s1", false)]]));
     const { reaped } = await reapNeverTaskedDrives(registry, OWNER);

@@ -293,7 +293,7 @@ export function spawnNode(
 
   // Regular node spawn wrapped in gatedSpawn for global concurrency
   gatedSpawn(state, deps, config, gs, nodeId, () => {
-    // BUDGET-01/02 (D3): per-node token cap → the child's BudgetGuard per-execution
+    // Per-node token cap → the child's BudgetGuard per-execution
     // cap. Resolved ONCE here so the spawn arg + the graph:node_spawned obs event agree.
     const nodeTokenBudget = resolveNodeBudget(gs, nodeId, config.subAgentTokenBudget);
     const runId = deps.subAgentRunner.spawn({
@@ -301,12 +301,12 @@ export function spawnNode(
       agentId: node.agentId ?? deps.defaultAgentId,
       model: node.model,
       max_steps: node.maxSteps,
-      // BUDGET-01/02 (D3): per-node token cap → the child's BudgetGuard per-execution cap (mid-run hard stop). Pairs with the post-hoc node-fail in handleSubAgentCompleted.
+      // Per-node token cap → the child's BudgetGuard per-execution cap (mid-run hard stop). Pairs with the post-hoc node-fail in handleSubAgentCompleted.
       tokenBudget: nodeTokenBudget,
       callerSessionKey: gs.callerSessionKey,
       callerAgentId: gs.callerAgentId,
       callerType: "graph",
-      ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}), // Phase 213 CR-01: nodes share the graph's tree root (killByRootRun reach)
+      ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}), // nodes share the graph's tree root (killByRootRun reach)
       graphSharedDir: gs.sharedDir,
       graphTraceId: gs.graphTraceId,
       graphId: gs.graphId,
@@ -337,7 +337,7 @@ export function spawnNode(
         status: "running" as const,
         timestamp: systemNowMs(),
       });
-      // Finding D (TREE-01): emit the spawn-tree leaf producer for this graph node.
+      // Emit the spawn-tree leaf producer for this graph node.
       // A graph node spawns in-process and never crosses the socket chokepoint that
       // emits capability:audited, so without this `comis explain` shows only the
       // root. Content-free: ids + child agentId + rootRunId + the per-node cap.
@@ -627,10 +627,10 @@ export function handleSubAgentCompleted(
     } catch { /* best-effort, don't block graph progress */ }
   }
 
-  // 5d. Per-node spend + node-first breach (BUDGET-02/03; D5 — BEFORE the step-6
+  // 5d. Per-node spend + node-first breach — BEFORE the step-6
   // state transition so a breaching SUCCESSFUL run ends `failed` not `completed`,
-  // and BEFORE the cumulative 6.6 check). Records nodeTokenSpend always (IN-01).
-  // P0-A-OBS: pass the agent-layer finishReason so a per-node budget PRE-CHECK
+  // and BEFORE the cumulative 6.6 check. Records nodeTokenSpend always.
+  // Pass the agent-layer finishReason so a per-node budget PRE-CHECK
   // abort (BudgetGuard rejected the next call before the overage → spend <= cap,
   // finishReason "budget_exceeded") still terminal-fails the node + emits
   // subagent:budget_exceeded — not just the post-hoc spend > cap overage.
@@ -715,7 +715,7 @@ export function handleSubAgentCompleted(
     }
   }
 
-  // 6.5. Budget accumulation (graph-wide) + COST-02 per-node corrected-$ ledger:
+  // 6.5. Budget accumulation (graph-wide) + per-node corrected-$ ledger:
   // event.cost is the corrected $ feeding cumulativeCost; sum it per nodeId too
   // (present-only = no dead write; accumulate = re-emits compose, like nodeTokenSpend).
   gs.cumulativeTokens += event.tokensUsed ?? 0;
@@ -743,12 +743,12 @@ export function handleSubAgentCompleted(
       nodeId,
       status: nodeCompleted ? "completed" as const : "failed" as const,
       durationMs: finalNodeState?.startedAt ? systemNowMs() - finalNodeState.startedAt : undefined,
-      // P0-A-OBS: prefer the node STATE error (markNodeFailed's authoritative
+      // Prefer the node STATE error (markNodeFailed's authoritative
       // reason — e.g. the budget-breach attribution) over the raw run.error, which
       // is empty for an agent-layer budget pre-check abort.
       error: nodeCompleted ? undefined : (finalNodeState?.error || run?.error || "Unknown error"),
-      // BUDGET-03: per-node spend on the transition event (additive; undefined when
-      // the completion omits them — byte-identical shape otherwise).
+      // Per-node spend on the transition event (additive; undefined when
+      // the completion omits them — the event shape is unchanged otherwise).
       tokensUsed: event.tokensUsed,
       cost: event.cost,
       timestamp: systemNowMs(),

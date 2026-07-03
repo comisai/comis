@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for repair-lcd.ts — DOC-03 (Phase 171-04).
+ * Unit tests for repair-lcd.ts.
  *
  * Uses an in-memory better-sqlite3 database with the real LCD schema
  * (lcd_context_items / ref_kind, lcd_summaries / summary_id, lcd_messages)
  * to verify all repair actions.
  *
- * F1 ABSOLUTE CONSTRAINT: lcd_messages is NEVER modified by any repair.
+ * ABSOLUTE CONSTRAINT: lcd_messages is NEVER modified by any repair.
  * Every test suite asserts row count + content hash unchanged after repair.
  *
  * @module
@@ -25,17 +25,16 @@ import {
 /**
  * Create a test DB that mirrors the REAL LCD schema:
  *  - lcd_messages_fts is SELF-CONTAINED (stores its own content; no content=
- *    clause) — matches schema-lcd.ts (180-02 corrected the stale "contentless"
- *    vocabulary: the table holds its own re-rendered content, which is exactly
- *    the G10 mechanism)
+ *    clause) — matches schema-lcd.ts (the table holds its own re-rendered
+ *    content rather than referencing an external content table)
  *  - lcd_summaries_fts is EXTERNAL-CONTENT (content=lcd_summaries) — matches schema-lcd.ts
  *  - lcd_message_parts holds the structured parts that repairFtsDrift reads
  *  - memories holds the LTM base rows that memory_fts_tri shadows (rowid + content)
  *
- * Pass `{ withTrigramTwins: true }` to also create the three FTS-02 trigram twins
- * (lcd_messages_fts_tri / lcd_summaries_fts_tri / memory_fts_tri) using the exact
- * DDL the real `ensureTrigramTwins` (schema-trigram.ts, plan 180-02) installs.
- * Omitting it leaves the twins absent — the pre-180 / trigram-less host shape.
+ * Pass `{ withTrigramTwins: true }` to also create the three normalized trigram
+ * twins (lcd_messages_fts_tri / lcd_summaries_fts_tri / memory_fts_tri) using the
+ * exact DDL the real `ensureTrigramTwins` (schema-trigram.ts) installs.
+ * Omitting it leaves the twins absent — the trigram-less host shape.
  */
 function createTestDb(opts: { withTrigramTwins?: boolean } = {}): Db {
   const db = new Database(":memory:");
@@ -100,9 +99,9 @@ function createTestDb(opts: { withTrigramTwins?: boolean } = {}): Db {
 
 /**
  * Create the three SELF-CONTAINED FTS5 trigram twins exactly as the real
- * `ensureTrigramTwins` (packages/memory/src/schema-trigram.ts, plan 180-02)
+ * `ensureTrigramTwins` (packages/memory/src/schema-trigram.ts)
  * installs them — same columns, same UNINDEXED scope columns, same trigram
- * tokenizer. The twin backfill the doctor learns in this plan repopulates these.
+ * tokenizer. The doctor twin backfill repopulates these.
  * (Inlined rather than imported because `ensureTrigramTwins` is not on the
  * @comis/memory barrel; the existing harness likewise hand-builds the word-lane
  * FTS DDL.)
@@ -130,7 +129,7 @@ function createTrigramTwins(db: Db): void {
   `);
 }
 
-/** Return a simple row-count fingerprint for F1 assertions (lcd_messages never written by repair) */
+/** Return a simple row-count fingerprint for asserting lcd_messages is never written by repair. */
 function lcdMessagesFingerprint(db: Db): { count: number; ids: string[] } {
   const rows = db
     .prepare("SELECT id FROM lcd_messages ORDER BY id")
@@ -183,7 +182,7 @@ describe("repairFtsDrift", () => {
     expect(ftsRow?.content).toContain("search_tool");
   });
 
-  it("repairFtsDrift never modifies lcd_messages table — F1 constraint", async () => {
+  it("repairFtsDrift never modifies the lcd_messages table — the raw store is read-only to repairs", async () => {
     db.prepare("INSERT INTO lcd_messages VALUES ('msg-f1', 'conv-1', 'tenant1', 'agent1', 0)").run();
     const before = lcdMessagesFingerprint(db);
 
@@ -234,7 +233,7 @@ describe("repairContextItems", () => {
     expect(remaining.c).toBe(0);
   });
 
-  it("repairContextItems never touches lcd_messages — F1 constraint", async () => {
+  it("repairContextItems never writes lcd_messages — the raw store is read-only to repairs", async () => {
     db.prepare("INSERT INTO lcd_messages VALUES ('msg-f1', 'conv-1', 'tenant1', 'agent1', 0)").run();
     const before = lcdMessagesFingerprint(db);
 
@@ -294,11 +293,11 @@ describe("repairContextItems", () => {
   });
 });
 
-// ── repairFtsDrift CR-02: contentless-table handling ─────────────────────────
+// ── repairFtsDrift: contentless-table handling ────────────────────────────────
 
-describe("repairFtsDrift — contentless FTS guard (CR-02)", () => {
+describe("repairFtsDrift — contentless FTS guard (no 'rebuild' on self-contained tables)", () => {
   it("repairFtsDrift does NOT use rebuild on contentless lcd_messages_fts — no error thrown", async () => {
-    // This is the key CR-02 regression test:
+    // This is the key regression test:
     // lcd_messages_fts is CONTENTLESS in production (no content= clause).
     // Calling INSERT INTO lcd_messages_fts(lcd_messages_fts) VALUES('rebuild')
     // on a contentless table throws "content= option required".
@@ -310,7 +309,7 @@ describe("repairFtsDrift — contentless FTS guard (CR-02)", () => {
       CREATE TABLE lcd_summaries (summary_id TEXT PRIMARY KEY, content TEXT NOT NULL);
       CREATE VIRTUAL TABLE lcd_messages_fts USING fts5(content, conversation_id UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED);
     `);
-    // Must NOT throw (the old 'rebuild' path would throw on a contentless table)
+    // Must NOT throw (a 'rebuild' on a contentless table would throw)
     const result = await repairFtsDrift(db);
     expect(result.ok).toBe(true);
     db.close();
@@ -335,23 +334,21 @@ describe("repairFtsDrift — contentless FTS guard (CR-02)", () => {
   });
 });
 
-// ── repairFtsDrift FTS-02: normalized trigram twin backfill (Phase 180-07) ────
+// ── repairFtsDrift: normalized trigram twin backfill ─────────────────────────
 //
-// RED-first (plan 180-07 Task 1): the doctor backfill is the designed path for
-// pre-existing history — rows written before Phase 180's TS twin writes landed.
+// The doctor backfill is the designed path for pre-existing history — rows
+// written before the twins' populate path indexed them.
 // `repairFtsDrift` must repopulate all THREE self-contained trigram twins from
 // the base rows with NORMALIZED text (`normalizeForSearch(...)`), so the repair
-// output indexes EXACTLY what the populate path indexes. These cases FAIL on the
-// pre-180-07 repair (it never touches the twins → they stay empty post-repair).
+// output indexes EXACTLY what the populate path indexes. These cases FAIL on a
+// repair that never touches the twins (they would stay empty post-repair).
 //
-// Test text helpers are assembled from String.fromCodePoint so a literal ASCII
-// `"` glyph never appears inside a Hebrew acronym in source (the WR-01 boundary
-// discipline carried from 180-01); the Hebrew fixtures themselves are plain
-// string literals (no embedded ASCII quote), so they are inlined directly.
+// The Hebrew fixtures are plain string literals with no embedded ASCII `"`
+// glyph inside a Hebrew acronym, so they are inlined directly.
 
-describe("repairFtsDrift — normalized trigram twin backfill (FTS-02, 180-07)", () => {
+describe("repairFtsDrift — normalized trigram twin backfill", () => {
   /** Seed one Hebrew message (rendered from a part), one summary, one memory — the
-   *  pre-phase-180 deployment shape: base rows present, twins EMPTY. */
+   *  un-backfilled shape: base rows present, twins EMPTY. */
   function seedHebrewBaseRows(db: Db): void {
     // lcd_messages + part — the part text is rendered via renderMessageFtsText
     db.prepare(
@@ -434,7 +431,8 @@ describe("repairFtsDrift — normalized trigram twin backfill (FTS-02, 180-07)",
 
     // Stored text 'הספרים' was normalized at backfill (final mem ם → מ folds);
     // the query token 'ספרימ' (already folded) MATCHes only because the index
-    // holds normalized text, not the raw 'הספרים'. This is the I7 doctor leg.
+    // holds normalized text, not the raw 'הספרים'. This proves the doctor
+    // backfill runs the same normalizer as the index and query sides.
     const msgHit = db
       .prepare(`SELECT message_id FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH '"ספרימ"'`)
       .all() as Array<{ message_id: string }>;
@@ -520,7 +518,7 @@ describe("repairFtsDrift — normalized trigram twin backfill (FTS-02, 180-07)",
     expect(actions.some((a) => a.includes("lcd_messages_fts_tri"))).toBe(true);
     expect(actions.some((a) => a.includes("lcd_summaries_fts_tri"))).toBe(true);
     expect(actions.some((a) => a.includes("memory_fts_tri"))).toBe(true);
-    // Counts only, never indexed text (T-180-07-03): the Hebrew content must not
+    // Counts only, never indexed text: the Hebrew content must not
     // appear in any action string.
     const joined = actions.join(" ");
     expect(joined).not.toContain("הספרים");
@@ -533,7 +531,7 @@ describe("repairFtsDrift — normalized trigram twin backfill (FTS-02, 180-07)",
     db.close();
   });
 
-  it("copies each base row's OWN scope columns — never mixes scopes across a two-agent fixture (R4)", async () => {
+  it("copies each base row's OWN scope columns — never mixes scopes across a two-agent fixture", async () => {
     const db = createTestDb({ withTrigramTwins: true });
     // Two agents, each with its own message in its own conversation
     db.prepare("INSERT INTO lcd_messages VALUES ('msg-a', 'conv-a', 'tenant1', 'agent-a', 0)").run();

@@ -40,7 +40,7 @@ vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
-// W14: mock the offline assembler so fallback tests run without a data dir.
+// Mock the offline assembler so fallback tests run without a data dir.
 vi.mock("../util/offline-obs.js", () => ({
   assembleIncidentReportOffline: vi.fn(),
   resolveOfflineDataDir: vi.fn(() => "/fake/.comis"),
@@ -173,7 +173,7 @@ describe("comis explain routes a UUID (no ':') to { traceId }", () => {
   });
 });
 
-describe("comis explain routes a root- arg (FLEET-05) to { rootRunId }", () => {
+describe("comis explain routes a root- prefixed arg to { rootRunId }", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -189,7 +189,7 @@ describe("comis explain routes a root- arg (FLEET-05) to { rootRunId }", () => {
   });
 
   it("threads { rootRunId, depth } when the arg starts with 'root-session-' (synthetic root)", async () => {
-    // FLEET-05: the `root-` prefix is the disambiguator. A synthetic in-process
+    // The `root-` prefix is the disambiguator. A synthetic in-process
     // root is `root-session-<key>` — it contains ':' but MUST route to rootRunId,
     // NOT sessionKey (the prefix check is FIRST).
     const { client, calls } = captureClient();
@@ -340,7 +340,7 @@ describe("comis explain table view tolerates a null likelyRootCause and empty ne
 });
 
 // ---------------------------------------------------------------------------
-// TREE (215-03): the spawn-tree render block — the table view lists each node's
+// The spawn-tree render block — the table view lists each node's
 // leaseId/caps/tools (and DENIED for nodes with denials); --format json emits
 // report.spawnTree for free (it rides json(report)).
 // ---------------------------------------------------------------------------
@@ -413,7 +413,7 @@ describe("comis explain renders the spawn-tree (TREE)", () => {
     expect(() => JSON.parse(output)).toThrow();
   });
 
-  it("bounds a hot node's tools render with a (+N more) suffix — no unbounded table line (WR-03)", async () => {
+  it("bounds a hot node's tools render with a (+N more) suffix — no unbounded table line", async () => {
     const HOT_REPORT = {
       ...FAKE_REPORT,
       summary: "busy root",
@@ -571,8 +571,8 @@ describe("comis explain with an RPC error prints error and exits with code 1", (
 // Obs honesty: when the session-end rollup is unresolved, the outcome line must
 // NOT present the defaulted "unknown" endReason as authoritative — it caveats
 // "rollup unresolved" so an operator does not read it as a real finding.
-// (Pre-FIX-3, a webhook session reported endReason:unknown + a real cost — a
-// self-inconsistent line; the rollup-absent caveat names the gap.)
+// (Without the caveat, a webhook session could report endReason:unknown plus a
+// real cost — a self-inconsistent line; the rollup-absent caveat names the gap.)
 // ---------------------------------------------------------------------------
 
 describe("comis explain caveats an unresolved outcome when the rollup is absent", () => {
@@ -635,10 +635,10 @@ describe("comis explain caveats an unresolved outcome when the rollup is absent"
 });
 
 // ---------------------------------------------------------------------------
-// W14 (obs-llm-troubleshooting): offline fallback wiring.
+// Offline fallback wiring.
 // ---------------------------------------------------------------------------
 
-describe("comis explain offline fallback (W14)", () => {
+describe("comis explain offline fallback", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 

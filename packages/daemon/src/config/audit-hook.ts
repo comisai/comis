@@ -38,12 +38,12 @@
  * (`process.pid` / `process.ppid` / `process.argv` / `process.cwd()` /
  * `process.execArgv`) live inside `buildBaseFromProcess` and execute
  * at function-call time, not module-init, so per-record provenance is
- * captured correctly when the daemon forks/execs (RESEARCH §A.7 #1).
+ * captured correctly when the daemon forks/execs.
  *
  * Audit-append failures NEVER abort the underlying write — the sync
- * path uses a bare try/catch (mirroring the pre-refactor LKG semantic);
- * the async path uses `suppressError` (mirroring the pre-refactor
- * config-write semantic). The JSONL log is a forensics aid; the file
+ * path uses a bare try/catch (matching the LKG write path's error
+ * handling); the async path uses `suppressError` (matching the
+ * config-write path's). The JSONL log is a forensics aid; the file
  * write itself is the load-bearing artifact.
  *
  * @module
@@ -88,7 +88,7 @@ export type ConfigAuditOutcome =
  * Per-call (not module-init) reads of `process.pid` / `process.ppid` /
  * `process.argv` / `process.cwd()` / `process.execArgv` so per-record
  * provenance is correct even if the daemon forks/execs after this
- * module loads (RESEARCH §A.7 #1).
+ * module loads.
  */
 function buildBaseFromProcess(params: {
   source: ConfigWriteSource;
@@ -145,7 +145,7 @@ export function buildConfigAuditBase(
   // so the heuristic would false-positive without this hint. The
   // current file path contains "comis" (it lives under
   // packages/daemon/src/config/) so reading import.meta.url here
-  // satisfies the heuristic identically to the pre-refactor module.
+  // satisfies the heuristic.
   return buildBaseFromProcess({
     source: callerSource,
     configPath: localPath,
@@ -219,7 +219,7 @@ export interface WithAuditHookParams {
    * Resolved entry-script path of the calling module (typically
    * `fileURLToPath(import.meta.url)`). The caller must pass it
    * explicitly because reading `import.meta.url` here would resolve
-   * to audit-hook.ts, not the caller — see RESEARCH §A.7 #2.
+   * to audit-hook.ts, not the caller.
    */
   readonly entryScript: string;
   /**

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the per-execution turn-loop detector (FIX #2b).
+ * Unit tests for the per-execution turn-loop detector.
  *
  * The detector bounds a runaway turn at the source: an identical idempotent
  * read is short-circuited to its cached result + a one-line steer; six
  * consecutive no-progress steps break the turn early (well before maxSteps);
  * a mutation is NEVER cached and invalidates the read cache; consecutive empty
  * turns are capped. Mutations short-circuited as a stale "success" would be a
- * tampering bug (T-hbe-03) — the allowlist is explicit and closed.
+ * tampering bug — the allowlist is explicit and closed.
  */
 import { describe, it, expect } from "vitest";
 
@@ -98,7 +98,7 @@ describe("createTurnLoopDetector", () => {
     expect(detector.shouldBreakEmptyTurns()).toBe(false);
   });
 
-  // F-15 / forget-exec-loop (live 2026-06-12): a small model that loops on a
+  // Observed live: a small model that loops on a
   // FAILING/blocked mutation (e.g. exec repeatedly content-gate-rejected, varying
   // the command each time) used to clear the no-progress counter on every attempt
   // (mutations counted as "progress"), so the loop guard never fired and the turn

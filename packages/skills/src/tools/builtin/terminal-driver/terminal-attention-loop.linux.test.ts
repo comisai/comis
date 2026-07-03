@@ -1,29 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TR-07 / TR-12 / OPS-05 (Linux+bwrap+real-CLI, CI-gated) — the LIVE attention-loop
- * composition. Drives a real driven program END-TO-END through the wired loop: create →
+ * The LIVE attention-loop composition (Linux+bwrap+real-CLI, CI-gated). Drives a real
+ * driven program END-TO-END through the wired loop: create →
  * the classifier reaches `awaiting-input` (the worker's fd3 `terminal:input_needed` FIRES,
  * NO poll) → a woken turn answers the dialog BY KEYSTROKE (`decideAutoAnswer` safe-only +
  * the loop-guard, sent via the registry send path) → read the result → repeat across woken
- * turns until the scripted `gsd-dialog-script.md` COMPLETES (TR-07's "submit → answer a
- * dialog by keystroke → read the result"; TR-12's "scripted GSD-like dialog across turns →
- * completes, answering each"). Plus the OPS-05 tmux survival/re-attach + the concurrent-vs-
+ * turns until the scripted `gsd-dialog-script.md` dialog COMPLETES ("submit → answer a
+ * dialog by keystroke → read the result"; "scripted dialog across turns →
+ * completes, answering each"). Plus the tmux survival/re-attach + the concurrent-vs-
  * TasksMax ceiling.
  *
  * GATING: `describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())` so it
- * COMPILES + SKIPS CLEAN on the macOS author box (this box: claude 2.1.161 + tmux 3.6a
+ * COMPILES + SKIPS CLEAN on a macOS author box (claude + tmux may be
  * present, bwrap ABSENT → the whole suite skips, not fails) and runs live on the CI/VPS
- * Linux+bwrap host via `pnpm validate:full`. Mirrors the established 119-122 `.linux.test.ts`
- * gate (terminal-roundtrip.linux.test.ts / terminal-tmux-backend.linux.test.ts). The macOS
- * verification of this phase treats a SKIP here as deferred-to-CI/human_needed by ROADMAP
- * design — NOT a verification gap (the macOS-provable bulk — 124-03/04/05/06/07/09 — is the
+ * Linux+bwrap host via `pnpm validate:full`. Mirrors the established `.linux.test.ts`
+ * gate (terminal-roundtrip.linux.test.ts / terminal-tmux-backend.linux.test.ts). A SKIP
+ * on macOS is deliberate —
+ * NOT a verification gap (the macOS-provable unit suites are the
  * load-bearing proof of the classifier/FSM/auto-answer/loop logic; THIS is the live
  * composition proof that runs on CI).
  *
  * FLAKY-TOLERANT: a live PTY + bwrap + a settling CLI dialog is inherently timing-bound, so
  * reads/settles retry with generous bounds, and a transient infra hiccup (tmux server still
  * starting) is recorded-not-hard-failed — this is the CI soak/E2E tier, not a deterministic
- * unit gate (per CONTEXT). The deterministic proof of EACH primitive is its macOS sibling.
+ * unit gate. The deterministic proof of EACH primitive is its macOS sibling.
  *
  * DRIVEN PROGRAM: a deterministic, auth-free `bash` dialog stand-in (`SCRIPTED_DIALOG`,
  * defined per `gsd-dialog-script.md`) parks on a prompt + advances on a keystroke EXACTLY
@@ -36,7 +36,7 @@
  * gate — terminal-scope-matrix.linux.test.ts:158), so this E2E composes the loop WITHIN the
  * skills layer (registry + real-PTY worker with the fd3 emitter wired + classifier +
  * decideAutoAnswer + loop-guard), driving the woken-turn answer logic directly. The
- * daemon-side wake-FSM (124-07) + the fd3 re-publish hook (124-09) are proven by their own
+ * daemon-side wake-FSM + the fd3 re-publish hook are proven by their own
  * in-process daemon tests; this tier proves the SAME loop runs live against a real PTY.
  *
  * @module
@@ -87,9 +87,9 @@ function resolveOnPath(bin: string): string | undefined {
 }
 
 /**
- * `bwrap` is the load-bearing live-dep: the worker ALWAYS jails (122-06, no unjailed path),
+ * `bwrap` is the load-bearing live-dep: the worker ALWAYS jails (no unjailed path),
  * so a real `create` needs a resolvable bwrap. Absent on the macOS author box → the suite
- * skips (NOT fails) — the deferred-to-CI half of SC-5 (ROADMAP).
+ * skips (NOT fails) — this coverage is deliberately deferred to the Linux CI host.
  */
 function bwrapAvailable(): boolean {
   return resolveOnPath("bwrap") !== undefined;
@@ -97,9 +97,9 @@ function bwrapAvailable(): boolean {
 
 /**
  * A real driven CLI must be available. We drive a scripted `bash` dialog stand-in (the
- * deterministic, auth-free analog of a `claude` GSD interaction — gsd-dialog-script.md), so
- * `bash` is the live-dep here; a live `claude` is the OPT-IN soak's concern, not this fast
- * E2E. The gate name keeps the TR-07/TR-12 "real CLI" intent explicit.
+ * deterministic, auth-free analog of an interactive `claude` dialog — gsd-dialog-script.md),
+ * so `bash` is the live-dep here; a live `claude` is the OPT-IN soak's concern, not this fast
+ * E2E. The gate name keeps the "real CLI" intent explicit.
  */
 function claudeAvailable(): boolean {
   return resolveOnPath("bash") !== undefined || resolveOnPath("sh") !== undefined;
@@ -111,12 +111,12 @@ function tmuxAvailable(): boolean {
 
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
-/** Resolve the daemon's bwrap path (the SEC-16 seam the registry threads to the worker). */
+/** Resolve the daemon's bwrap path (the seam the registry threads to the worker). */
 function resolveBwrapPath(): string {
   return execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
 }
 
-/** The operator least-privilege scope (SEC-02/03) — the bash dialog runs fine in a workspace jail. */
+/** The operator least-privilege scope — the bash dialog runs fine in a workspace jail. */
 const WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
@@ -137,7 +137,7 @@ function realShell(): string {
 }
 
 /**
- * The scripted GSD-like dialog (gsd-dialog-script.md): three sequential `read` prompts (a
+ * The scripted multi-prompt dialog (gsd-dialog-script.md): three sequential `read` prompts (a
  * trust dialog, an AskUserQuestion-like choice, a final confirm), each echoing a marker
  * after its answer, then exit. The literal program lives HERE (not in the fixture) so it is
  * regenerable + reviewable in the diff — the classifier-corpus discipline.
@@ -153,7 +153,7 @@ const SCRIPTED_DIALOG =
  * `expectDecision` is the decideAutoAnswer(safe-only) verdict the live screen must
  * produce: steps 1–2 match an operator hint pattern (no structural cue) → `answer`;
  * step 3's "Proceed with the plan?" carries the structural "proceed with" APPROVAL cue,
- * so the SEC-12 escalate-always gate WINS over the matching hint pattern
+ * so the escalate-always gate WINS over the matching hint pattern
  * (terminal-auto-answer.ts decision order) — the woken turn escalates and the AGENT
  * (played by this test) sends the answer. Both arms drive the dialog BY KEYSTROKE.
  */
@@ -173,7 +173,7 @@ const DIALOG_STEPS: ReadonlyArray<{
  * fd3 attention emitter, so the live loop's no-poll path (the worker writes a
  * `terminal:input_needed` `TerminalEventFrame` to fd3 on the working→awaiting-input
  * TRANSITION) is exercised end-to-end. `onFd3` captures each emitted event frame — this is
- * the no-poll seam the daemon re-publish hook (124-09) consumes in production; here the test
+ * the no-poll seam the daemon re-publish hook consumes in production; here the test
  * observes it directly to assert the classifier reached awaiting-input WITHOUT polling.
  */
 function makeBridgedPtyWorkerChild(onFd3: (frame: TerminalEventFrame) => void): () => FakeWorkerChild {
@@ -184,7 +184,7 @@ function makeBridgedPtyWorkerChild(onFd3: (frame: TerminalEventFrame) => void): 
       logger: noopLogger,
       // The no-poll push channel: the worker's per-session attention emitter writes here on
       // a state TRANSITION. Decode each frame and surface it to the test (the daemon's
-      // onTerminalEvent hook does this in production — 124-09).
+      // onTerminalEvent hook does this in production).
       writeFd3: (b: Buffer) => {
         for (const f of fd3Decoder.push(b)) {
           if ("event" in f) onFd3(f as TerminalEventFrame);
@@ -271,10 +271,10 @@ function makeUnrefTimers(): TimerPort {
 }
 
 // ===========================================================================
-// TR-07 / TR-12 — the scripted GSD-dialog drive across woken turns (live).
+// The scripted-dialog drive across woken turns (live).
 // ===========================================================================
 describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
-  "TR-07/TR-12 (Linux+bwrap) — the scripted GSD-dialog completes across woken turns (live)",
+  "(Linux+bwrap) the scripted multi-prompt dialog completes across woken turns (live)",
   () => {
     it("drives the scripted dialog: each step reaches awaiting-input (the foreground wait IS the no-poll wake), is answered by keystroke, and the dialog COMPLETES", async () => {
       const shell = realShell();
@@ -299,7 +299,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
       };
       const owner: SessionOwner = { agentId: "agent-gsd-e2e", sessionKey: "" };
 
-      // The woken-turn answer logic — the SAME policy the daemon-side driver runs (124-09):
+      // The woken-turn answer logic — the SAME policy the daemon-side driver runs:
       // decideAutoAnswer(safe-only) over the screen + the loop-guard. Operator hint patterns
       // = the three dialog prompts (a safe-pattern match → its canned keystroke).
       const hintPatterns = ["Trust the files", "Which option", "Proceed with the plan"];
@@ -326,7 +326,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
       for (let step = 0; step < DIALOG_STEPS.length; step++) {
         const { awaitText, answerKey, resultMarker, expectDecision } = DIALOG_STEPS[step]!;
 
-        // The no-poll mechanism (TR-11): issue a bounded `wait` — that drives the worker's
+        // The no-poll mechanism: issue a bounded `wait` — that drives the worker's
         // settle, which on the working→awaiting-input transition PUSHES a fd3
         // `terminal:input_needed` frame (collected above). The agent is woken by that pushed
         // event; it never spin-polls. The `wait` (NOT a sleep) is the no-poll driver; a real PTY
@@ -343,23 +343,23 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         }
         expect(reachedAwaiting).toBe(true); // the classifier reached awaiting-input for this prompt
 
-        // The no-poll proof (LIVE-04): a FOREGROUND `wait` IS the agent's wake — its REPLY
+        // The no-poll proof: a FOREGROUND `wait` IS the agent's wake — its REPLY
         // resolves the moment the classifier reaches awaiting-input (reachedAwaiting above), so
         // the agent unblocks and drives WITHOUT a spin-poll. That same foreground settle
         // DELIBERATELY SUPPRESSES the fd3 `terminal:input_needed` push (a fd3 woken turn here
-        // would race the wait reply — the launch-escalation regression LIVE-04 closed); the fd3
+        // would race the wait reply — the launch-escalation regression this closed); the fd3
         // push is reserved for the BACKGROUNDED drive the daemon backstop attends. And because
         // the emitter is edge-triggered, those suppressed foreground settles still advance
         // `lastState` to awaiting-input — so a later act-then-return send settle sees no fresh
         // transition to emit either. Net: NO input_needed frame fires across this foreground
         // drive. (The emit-on-transition mechanism itself is unit-proven in
-        // terminal-attention-emitter.test.ts.) Guard the LIVE-04 suppression invariant:
+        // terminal-attention-emitter.test.ts.) Guard the suppression invariant:
         expect(inputNeededEvents.length).toBe(0);
 
         // The woken-turn policy: the SAME safe-only decideAutoAnswer the daemon driver runs.
         // Steps 1–2 match an operator hint pattern (no structural cue) → answer. Step 3
         // ("Proceed with the plan?") carries the structural "proceed with" APPROVAL cue, so
-        // the SEC-12 escalate-always gate WINS over the matching hint pattern — the woken
+        // the escalate-always gate WINS over the matching hint pattern — the woken
         // turn escalates, and the AGENT (this test, playing the agent role the production
         // escalation hands the prompt to) decides + sends the answer keystroke itself.
         const screen = (await registry.read(sessionId, owner)).screen;
@@ -367,7 +367,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         if (expectDecision === "answer") {
           expect(decision.action).toBe("answer"); // the scripted prompt IS a safe match
         } else {
-          // SEC-12 LIVE: the approval prompt structurally escalates even though the
+          // Live escalate-always proof: the approval prompt structurally escalates even though the
           // operator hint pattern "Proceed with the plan" matches the same screen.
           expect(decision).toEqual({ action: "escalate", reason: "approval" });
         }
@@ -377,8 +377,8 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         const loop = loopGuard.observe(sessionId, screen);
         expect(loop.repeat).toBe(false);
 
-        // Send the answer BY KEYSTROKE (submit), through the registry send path — TR-07's
-        // "answer a dialog by keystroke." (We send the deterministic scripted key; the policy's
+        // Send the answer BY KEYSTROKE (submit), through the registry send path — the
+        // "answer a dialog by keystroke" contract. (We send the deterministic scripted key; the policy's
         // canned keys are asserted by the macOS auto-answer unit tests.)
         await registry.sendText(sessionId, owner, { text: answerKey, submit: true });
 
@@ -396,7 +396,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
       }
 
       // COMPLETION: every prompt answered, the final marker rendered, the program exits cleanly
-      // (the classifier reaches `exited`). This is the TR-12 "scripted dialog completes" assertion.
+      // (the classifier reaches `exited`). This is the "scripted dialog completes" assertion.
       let exited = false;
       for (let attempt = 0; attempt < 200 && !exited; attempt++) {
         const status = await registry.status(sessionId, owner);
@@ -417,10 +417,10 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
 );
 
 // ===========================================================================
-// OPS-05 — the tmux backend survives a worker re-spawn + is re-attachable (live).
+// The tmux backend survives a worker re-spawn + is re-attachable (live).
 // ===========================================================================
 describe.skipIf(!isLinux() || !tmuxAvailable())(
-  "OPS-05 (Linux) — a tmux named session survives a worker re-spawn and is re-attachable",
+  "(Linux) a tmux named session survives a worker re-spawn and is re-attachable",
   () => {
     const SESSION_ID = `loop-${process.pid}-${Math.floor(Math.random() * 1e6)}`;
     const NAME = tmuxSessionName(SESSION_ID);
@@ -451,7 +451,7 @@ describe.skipIf(!isLinux() || !tmuxAvailable())(
 
       // 2) Simulate a worker/daemon RESTART: the in-process worker is gone, but the tmux SERVER
       //    persists. A fresh worker probes by the DETERMINISTIC name (`comis-<id>`) and RE-ATTACHES
-      //    rather than re-creating (RESEARCH Pitfall 6 — a random name would be un-recoverable).
+      //    rather than re-creating (a random name would be un-recoverable).
       const found = runTmuxArgv(buildTmuxHasSessionArgv({ tmuxPath: TMUX, name: NAME }));
       expect(found).toBe(0); // has-session succeeds → the session SURVIVED the restart → re-attach
 
@@ -461,7 +461,7 @@ describe.skipIf(!isLinux() || !tmuxAvailable())(
 
       // 4) The reaper evict path: kill-session by name drops the SERVER-side session, then has-session fails.
       const killed = runTmuxArgv(buildTmuxKillArgv({ tmuxPath: TMUX, name: NAME }));
-      expect(killed).toBe(0); // the named session was reaped (the OPS-06 evict path)
+      expect(killed).toBe(0); // the named session was reaped (the evict path)
       const afterKill = runTmuxArgv(buildTmuxHasSessionArgv({ tmuxPath: TMUX, name: NAME }));
       expect(afterKill).not.toBe(0); // gone after the reaper kill-session
     });
@@ -469,15 +469,15 @@ describe.skipIf(!isLinux() || !tmuxAvailable())(
 );
 
 // ===========================================================================
-// OPS-05 — the concurrent-session count is BOUNDED vs the maxSessions/TasksMax ceiling.
+// The concurrent-session count is BOUNDED vs the maxSessions/TasksMax ceiling.
 // ===========================================================================
 describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
-  "OPS-05 (Linux+bwrap) — concurrent sessions bounded vs the maxSessions/TasksMax ceiling",
+  "(Linux+bwrap) concurrent sessions bounded vs the maxSessions/TasksMax ceiling",
   () => {
     it("creates N sessions up to the ceiling; the count is bounded (no unbounded fork), and eviction frees a slot", async () => {
       const shell = realShell();
       // A small ceiling so the live test is fast; the production ceiling is worker.tasksMax /
-      // maxSessions (124-08). The reaper's max-sessions overflow eviction (124-04, OPS-06) is the
+      // maxSessions. The reaper's max-sessions overflow eviction is the
       // bound; here we assert the live count never exceeds it under concurrent create pressure.
       const MAX = 3;
       const registry = createTerminalSessionRegistry({
@@ -485,7 +485,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         logger: noopLogger,
         nowMs: () => Date.now(),
         bwrapPath: resolveBwrapPath(),
-        // The reaper's max-sessions overflow eviction is the concurrent-count ceiling (OPS-06):
+        // The reaper's max-sessions overflow eviction is the concurrent-count ceiling:
         // a create beyond MAX evicts the idlest, so the live count stays bounded (never an
         // unbounded fork — the cgroup TasksMax is the OS backstop on the VPS). The registry
         // composes the reaper only when BOTH `timers` AND `maxSessions` are provided; the
@@ -512,7 +512,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
       }
 
       // The live count is BOUNDED at the ceiling (the reaper evicted the overflow) — never an
-      // unbounded fork of MAX+2 live PTYs (the OPS-05 cgroup/TasksMax intent, enforced in-registry).
+      // unbounded fork of MAX+2 live PTYs (the cgroup/TasksMax intent, enforced in-registry).
       const live = registry.list(owner).filter((s) => s.alive);
       expect(live.length).toBeLessThanOrEqual(MAX);
 

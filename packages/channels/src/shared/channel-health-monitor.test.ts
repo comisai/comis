@@ -432,16 +432,16 @@ describe("createChannelHealthMonitor", () => {
 
       const stop = monitor.start(new Map([["echo", adapter]]));
 
-      // Simulate inherited busy: record a run, then manipulate the entry
-      // by recording a run before the adapter started (impossible via normal API
-      // since start() sets adapterStartedAt = Date.now(), but we test the logic)
-      //
-      // The trick: recordRunStart sets lastRunStartedAt = Date.now() which is
-      // >= adapterStartedAt, so it would be busyInitialized = true.
-      // To test inherited busy, we need lastRunStartedAt < adapterStartedAt.
-      // We achieve this by adding the adapter late (after advancing time).
-
-      // recordRunStart records a run now
+      // "Inherited busy" means activeRuns > 0 while lastRunStartedAt predates
+      // adapterStartedAt (e.g. a restart carrying over a stale run count). That
+      // state cannot be constructed through the public API: recordRunStart
+      // stamps lastRunStartedAt = Date.now() >= adapterStartedAt, and
+      // removeAdapter + addAdapter resets the entry entirely (activeRuns back
+      // to 0). This test drives the closest reachable sequence — run start,
+      // then adapter re-registration — to exercise that reset path; the busy
+      // guard's fallthrough (busyStateInitialized = false when activeRuns > 0
+      // without a recordRunStart in this lifecycle) is asserted by the
+      // neighboring tests below.
       monitor.recordRunStart("echo");
 
       // Re-register the adapter (simulates restart), which resets adapterStartedAt to now
@@ -449,32 +449,6 @@ describe("createChannelHealthMonitor", () => {
       monitor.removeAdapter("echo");
       monitor.addAdapter("echo", adapter);
 
-      // The entry now has activeRuns = 0 (fresh entry). Record a run with
-      // lastRunStartedAt in the past (from the old lifecycle). We need to
-      // advance time so lastRunStartedAt < adapterStartedAt on next add.
-      //
-      // Actually: removeAdapter + addAdapter resets everything. The lifecycle
-      // guard test needs a different approach.
-      //
-      // Correct approach: manually trigger the condition by:
-      // 1. Start adapter (adapterStartedAt = t0)
-      // 2. recordRunStart (lastRunStartedAt = t0, activeRuns = 1)
-      // 3. Advance time so we're past stuckThresholdMs
-      // 4. Verify it goes to "stuck" (because busyInitialized = true)
-      //
-      // Then for inherited busy:
-      // 1. recordRunStart at time t0 (sets lastRunStartedAt = t0)
-      // 2. removeAdapter + addAdapter at t1 (sets adapterStartedAt = t1, but activeRuns = 0)
-      // The point is: after re-add, activeRuns is 0, so the busy branch won't trigger.
-      //
-      // The real scenario for inherited busy would be if we could set activeRuns > 0
-      // with lastRunStartedAt < adapterStartedAt. This would happen if:
-      // - Process was restarted, old run count persisted but adapter restarted
-      //
-      // Since we can't easily manipulate internal state, we test it indirectly:
-      // The state machine's busy guard checks lastRunStartedAt >= adapterStartedAt.
-      // If activeRuns > 0 but lastRunStartedAt is null (never called recordRunStart),
-      // busyInitialized = false.
       stop();
     });
 

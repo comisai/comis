@@ -18,9 +18,9 @@ import { describe, it, expect, vi } from "vitest";
 // Hoisted mocks. buildExecuteSubAgent imports concrete symbols from
 // @comis/agent at module load; mock them so the daemon test never does real
 // LLM/session work (the setup-cross-session-runtime.test.ts harness pattern).
-// mockResolveOperationModel returns timeoutSource so LAT-01-15b pins the
+// mockResolveOperationModel returns timeoutSource so the label-threading test pins the
 // producer THREADING the label — the resolver's own labeling is pinned by
-// the agent-package tests (operation-model-resolver.test.ts LAT-01-1..5).
+// the agent-package tests (operation-model-resolver.test.ts).
 // ---------------------------------------------------------------------------
 
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
@@ -126,15 +126,14 @@ describe("setup-cross-session-graph", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LAT-01-15: the spawn producer labels its promptTimeout binding. A graph
+  // The spawn producer labels its promptTimeout binding. A graph
   // spawn hardcodes GRAPH_PROMPT_TIMEOUT_MS = 600_000 — a constant NO operator
   // knob controls — so it must be labeled "graph_constant" (hints then render
-  // honest prose instead of a fake agents.* key; D-11). A non-graph subagent
+  // honest prose instead of a fake agents.* key). A non-graph subagent
   // spawn threads subagentResolution.timeoutSource (born at the resolver) —
-  // the bare { promptTimeoutMs } shape is the provenance-collapse bug
-  // (177-RESEARCH Critical Finding 1).
+  // the bare { promptTimeoutMs } shape is the provenance-collapse bug.
   // -------------------------------------------------------------------------
-  describe("LAT-01-15 promptTimeout provenance from the spawn producer", () => {
+  describe("promptTimeout provenance from the spawn producer", () => {
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
 
     function makeGraphDeps(metadata: Record<string, unknown>) {
@@ -184,7 +183,7 @@ describe("setup-cross-session-graph", () => {
       return { deps, capturedOverrides, executor };
     }
 
-    it("LAT-01-15: a graph spawn labels its hardcoded 600000ms constant source graph_constant (not a fake operator knob)", async () => {
+    it("a graph spawn labels its hardcoded 600000ms constant source graph_constant (not a fake operator knob)", async () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({ graphSharedDir: "/tmp/graph-shared" });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
@@ -197,7 +196,7 @@ describe("setup-cross-session-graph", () => {
       });
     });
 
-    it("LAT-01-15b: a non-graph subagent spawn threads subagentResolution.timeoutSource alongside its timeoutMs", async () => {
+    it("a non-graph subagent spawn threads subagentResolution.timeoutSource alongside its timeoutMs", async () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({});
       const executeSubAgent = buildExecuteSubAgent(deps);
 
@@ -211,13 +210,13 @@ describe("setup-cross-session-graph", () => {
     });
 
     // -----------------------------------------------------------------------
-    // BUDGET-01: the per-spawn tokenBudget (the 7th executeSubAgent arg) rides
+    // The per-spawn tokenBudget (the 7th executeSubAgent arg) rides
     // the existing executionOverrides channel into the child executor, where
     // pi-executor feeds it to budgetGuard.resetExecution(cap) as the child's
     // per-execution cap. Absent ⇒ no tokenBudget on the overrides (no-op,
     // byte-identical to today).
     // -----------------------------------------------------------------------
-    it("BUDGET-01: threads the 7th tokenBudget arg onto executionOverrides for the child executor", async () => {
+    it("threads the 7th tokenBudget arg onto executionOverrides for the child executor", async () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({});
       const executeSubAgent = buildExecuteSubAgent(deps);
 
@@ -235,7 +234,7 @@ describe("setup-cross-session-graph", () => {
       expect(capturedOverrides[0].tokenBudget).toBe(5_000);
     });
 
-    it("BUDGET-01: omits tokenBudget from executionOverrides when no per-spawn budget is given", async () => {
+    it("omits tokenBudget from executionOverrides when no per-spawn budget is given", async () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({});
       const executeSubAgent = buildExecuteSubAgent(deps);
 
@@ -247,14 +246,14 @@ describe("setup-cross-session-graph", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WT-01 END-TO-END: executeSubAgent runs a `worktree:true` child IN an
-  // isolated git worktree. These are the HONEST-WIRING proofs the verifier
-  // demanded — they assert the call SITE actually fires (createWorktree runs,
+  // END-TO-END: executeSubAgent runs a `worktree:true` child IN an
+  // isolated git worktree. These are the HONEST-WIRING proofs —
+  // they assert the call SITE actually fires (createWorktree runs,
   // the child's executionOverrides.workspaceDir IS the worktree dir, and the
   // worktree is auto-cleaned-if-unchanged on terminal settle), not just that
   // the lifecycle module exists.
   // -------------------------------------------------------------------------
-  describe("WT-01 executeSubAgent worktree create/run/clean wiring", () => {
+  describe("executeSubAgent worktree create/run/clean wiring", () => {
     const sessionKey = { channelId: "chan-wt", userId: "user-wt", tenantId: "t-wt" };
     const DATA_DIR = "/data";
     // workspace-agent-2 (resolveWorkspaceDir: <dataDir>/workspace-<agentId>).

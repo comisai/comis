@@ -7,8 +7,8 @@
  *   subagent.list, subagent.kill, subagent.steer
  *
  * List returns filtered runs from SubAgentRunner. Kill marks a running
- * run as failed. Steer is flag-gated on security.agentToAgent.steerInject
- * (STEER-01): OFF (default) → kill+respawn with a new task (status "steered");
+ * run as failed. Steer is flag-gated on security.agentToAgent.steerInject:
+ * OFF (default) → kill+respawn with a new task (status "steered");
  * ON → inject the message into the running child's live session at its next
  * step boundary (no kill/respawn, same runId, status "steered_inject").
  * Rate-limited at 2s per target (shared across both branches).
@@ -122,16 +122,16 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
         }
       }
 
-      // STEER-01: flag-gated branch. Flag ON → inject into the live child (no
+      // Flag-gated branch. Flag ON → inject into the live child (no
       // kill, no respawn — transcript + progress preserved, same runId). Flag
-      // OFF (default) → the historical kill+respawn, BYTE-IDENTICAL. The 2s
+      // OFF (default) → kill+respawn. The 2s
       // rate-limit above is shared by both branches.
       if (deps.securityConfig.agentToAgent?.steerInject) {
         const run = deps.subAgentRunner.getRunStatus(target);
         if (!run) {
           throw new Error(`Unknown run ID: ${target}`);
         }
-        // WR-02: mirror killRun's status guard (sub-agent-runner.ts:1910-1912).
+        // Mirror killRun's status guard (sub-agent-runner.ts:1910-1912).
         // getRunStatus returns a run for ANY status still inside the retention
         // window; a steer aimed at a completed/failed/queued run has no live
         // handle, so fail fast with an actionable status-named error instead of
@@ -143,7 +143,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
         }
         const steerResult = await deps.subAgentRunner.steerRun(target, message);
         if (!steerResult.steered) {
-          // WR-03 (§2.7): the inject-failure branch is a path an operator must
+          // The inject-failure branch is a path an operator must
           // diagnose. Log a WARN with an actionable hint + errorKind before the
           // throw (which the @allow-throw dispatcher converts to a JSON-RPC
           // error) — never the steer message body. The success branch already
@@ -190,10 +190,10 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       }
 
       // Respawn with new task — reads internal fields directly off rawParams.
-      // Phase 213 CR-01: the respawn must stay in the KILLED run's spawn tree, so
+      // The respawn must stay in the KILLED run's spawn tree, so
       // inherit its rootRunId (+ the authorizing parentLeaseId). Without this the
-      // steer-respawn minted a fresh root → a later run.kill {rootRunId} of the
-      // original tree would miss the steered continuation (a survivor — REVOKE-03).
+      // steer-respawn would mint a fresh root → a later run.kill {rootRunId} of the
+      // original tree would miss the steered continuation (a surviving orphan).
       const newRunId = deps.subAgentRunner.spawn({
         task: message,
         agentId: run.agentId,

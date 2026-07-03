@@ -31,22 +31,22 @@ export type ObservabilityMutations = Pick<
 >;
 
 /**
- * PERSIST-01: map an `observability:cache_break` event to a content-free
- * `obs_diagnostics` row under `category:"cache_break"` (Landmine L4 — a DISTINCT
+ * Map an `observability:cache_break` event to a content-free
+ * `obs_diagnostics` row under `category:"cache_break"` (a DISTINCT
  * category, NOT "health_signal", so "rate by reason" is a clean
  * `GROUP BY json_extract(details,'$.reason')` over the existing
- * `idx_obs_diag_category` — NO new table, §14). Mirrors the daemon's
+ * `idx_obs_diag_category` — NO new table). Mirrors the daemon's
  * `sandboxDowngradeRefusedEventToRow` row-builder mold.
  *
- * **est-$ is COMPUTED here (decision #1, Landmine L1).** The event carries NO
+ * **est-$ is COMPUTED here.** The event carries NO
  * dollar field, so the directly-lost cache-read saving is reconstructed as
  * `tokenDrop × resolveModelPricing(provider, model).cacheRead`: a catalog-priced
  * model yields a non-zero estimate; an unknown model yields 0 (ZERO_COST.cacheRead
  * === 0 — honest best-effort, never a fabricated cost). The companion
- * `pricing_state` column on `obs_token_usage` (PERSIST-03) surfaces the unknown so
+ * `pricing_state` column on `obs_token_usage` surfaces the unknown so
  * an operator sees coverage.
  *
- * **I3 content-free (the load-bearing constraint).** The event's `toolsAdded`/
+ * **Content-free (the load-bearing constraint).** The event's `toolsAdded`/
  * `toolsRemoved`/`toolsSchemaChanged` are tool-NAME arrays (already MCP-sanitized to
  * bare `'mcp'` at the emit, but STILL names) — they are NEVER stored. They are
  * reduced to a `changedDimsDigest` carrying only the COUNTS of changed dimensions
@@ -56,7 +56,7 @@ export type ObservabilityMutations = Pick<
 export function cacheBreakEventToRow(
   payload: EventMap["observability:cache_break"],
 ): DiagnosticRow {
-  // est-$ (decision #1, Landmine L1): the event has no $ field, so compute the
+  // est-$: the event has no $ field, so compute the
   // directly-lost cache-read saving from the catalog. The model may be absent
   // (`model?`) — fall back to "" so resolveModelPricing returns ZERO_COST (→ 0).
   const cacheReadRate = resolveModelPricing(payload.provider, payload.model ?? "").cacheRead;
@@ -100,7 +100,7 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
 
   // The column list + placeholders + .run() args MUST stay in lockstep with the
   // obs_token_usage schema (schema.ts ensureObsTokenColumns). cache_retention was
-  // DROPPED (dead); the 5 PERSIST-02 cost-correctness columns + the COST-01
+  // DROPPED (dead); the 5 cost-correctness columns + the
   // tool_tag column were added at the tail (25 cols / 25 placeholders / 25 args).
   const insertTokenUsageStmt = db.prepare(`
     INSERT INTO obs_token_usage (
@@ -166,15 +166,15 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
       entry.costCacheWrite ?? 0,
       entry.cacheSaved ?? 0,
       entry.latencyMs,
-      // PERSIST-02 cost-correctness columns (in the same order as the column list).
+      // Cost-correctness columns (in the same order as the column list).
       // SQLite has no boolean — the two flags coerce to 0/1; nulls when absent.
       entry.warmupTurn === undefined ? null : entry.warmupTurn ? 1 : 0,
       entry.cacheEligible === undefined ? null : entry.cacheEligible ? 1 : 0,
       entry.costCorrection ?? null,
       entry.pendingCacheInvestmentUsd ?? null,
       entry.pricingState ?? null,
-      // COST-01: the JSON-stringified DISTINCT tool array (content-free names);
-      // NULL when the turn fired no tool. Already de-duped at the emit (Task 2).
+      // The JSON-stringified DISTINCT tool array (content-free names);
+      // NULL when the turn fired no tool. Already de-duped at the emit.
       entry.toolTag === undefined ? null : JSON.stringify(entry.toolTag),
     );
   }

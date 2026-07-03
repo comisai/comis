@@ -5,9 +5,8 @@
  * When the LLM emits an empty final assistant turn (zero text + zero thinking +
  * zero tool calls) following a successful tool batch within the same execution
  * window, this handler fires a directive `session.followUp()` with multi-shot
- * retry. Replaces the legacy SEP one-shot `generateCompletenessNudge` (whose
- * enforcement role is now superseded; SEP plan extraction + step counting
- * remain intact for observability).
+ * retry. This handler is the completeness-enforcement path; SEP plan
+ * extraction + step counting are observability-only and do not enforce.
  *
  * @module
  */
@@ -56,8 +55,8 @@ export type ContinuationError = { kind: "followup_error"; cause: unknown };
 export interface RunPostBatchContinuationDeps {
   /** Live session — invoked via `followUp(text)` to issue the directive. */
   session: { followUp(text: string): Promise<unknown>; messages?: unknown[] };
-  /** Session messages — passed explicitly per the canonical
-   *  `(session as any).messages ?? []` pattern at executor-prompt-runner.ts:797. */
+  /** Session messages — passed explicitly via the caller's canonical
+   *  `(session as any).messages ?? []` read (see output-escalation.ts). */
   messages: unknown[];
   config: ContinuationConfig;
   logger: ComisLogger;
@@ -141,8 +140,7 @@ function buildDirective(priorToolCallCount: number, priorToolNames: string[]): s
  *   4. Fire when (2) AND (≥1 tool call from step 3); else `no_match`.
  *
  * `session.followUp` errors are caught and propagated as
- * `Result<_, ContinuationError>` (the
- * `executor-prompt-runner.ts:931` pattern).
+ * `Result<_, ContinuationError>` — never thrown.
  */
 export async function runPostBatchContinuation(
   deps: RunPostBatchContinuationDeps,

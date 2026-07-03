@@ -82,7 +82,7 @@ export const AgentConfigSchema = z.strictObject({
      * effectiveContextCap{Small,Nano} apply on ANY provider/model. Primary use:
      * forcing a small-window nano/small treatment on a large-window model
      * (e.g. gpt-5-nano = 400K) to stress the context-fit path provider-agnostically.
-     * Unset → today's heuristic (byte-identical, no regression). Takes precedence
+     * Unset → the provider-family heuristic applies unchanged. Takes precedence
      * over the provider-level providers.entries.<id>.capabilities.capabilityClass.
      * Enum mirrors provider-capabilities.ts (frontier/mid/small/nano).
      */
@@ -91,14 +91,13 @@ export const AgentConfigSchema = z.strictObject({
     maxSteps: z.number().int().positive().default(150),
     /** SDK thinking level override (off/minimal/low/medium/high/xhigh). Optional -- only overrides when set. */
     thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
-    /** Phase 166 Fix 3: thinking-effort governor config.
+    /** Thinking-effort governor config.
      *  Controls whether the governor may down-shift thinkingLevel on tight windows. */
     thinking: z.strictObject({
       /** When true (default), the thinking-effort governor may lower thinkingLevel
        *  (high→medium→low) when remaining room < thinkingReserve + MIN_VISIBLE_OUTPUT.
        *  For frontier/mid models the governor is always a no-op (large windows).
-       *  Frontier/mid: irrelevant — governor never fires on large windows regardless.
-       *  Design ref: design/small-model-context-fidelity.md §4 Fix 3 item 4. */
+       *  Design ref: design/small-model-context-fidelity.md. */
       downshiftOnTightWindow: z.boolean().default(true),
     }).default({ downshiftOnTightWindow: true }),
     /** SDK max tokens override. Optional -- only overrides when set. */
@@ -131,12 +130,12 @@ export const AgentConfigSchema = z.strictObject({
      *  When false, use static retention from cacheRetention field.
      *  Default: true -- adaptive retention saves ~$4/MTok on cold-start Opus calls. */
     adaptiveCacheRetention: z.boolean().default(true),
-    /** Cache breakpoint strategy. Default 'auto' → 'multi-zone' for ALL providers (W11):
+    /** Cache breakpoint strategy. Default 'auto' → 'multi-zone' for ALL providers:
      *  multi-zone places breakpoints across system, tools, and messages so a long tool-using
      *  turn keeps each Anthropic 20-block lookback window covered. 'single' places ONE
      *  breakpoint and can cause lookback-window cache misses + O(N^2) cache_creation
-     *  re-writes on long tool turns (the 2026-06-18 regression: the default was 'single',
-     *  billing the whole tool suffix as a fresh write every iteration). */
+     *  re-writes on long tool turns (billing the whole tool suffix as a fresh write
+     *  every iteration). */
     cacheBreakpointStrategy: z.enum(["auto", "multi-zone", "single"]).default("auto"),
     /** Advanced cache optimization options for interactive sessions. */
     advancedCacheOptimization: z.object({
@@ -191,7 +190,7 @@ export const AgentConfigSchema = z.strictObject({
     promptTimeout: PromptTimeoutConfigSchema.default(() => PromptTimeoutConfigSchema.parse({})),
     /** Per-operation model override configuration (model tiering). */
     operationModels: OperationModelsSchema,
-    /** Reply language for deterministic degraded replies (DET-02). BCP-47 ("he")
+    /** Reply language for deterministic degraded replies. BCP-47 ("he")
      *  or an English display name ("Hebrew"). Omit to auto-detect from the
      *  USER.md preferred language, then the inbound message script (he/ar/ru only). */
     language: z.string().optional(),
@@ -202,7 +201,7 @@ export type RoutingBinding = z.infer<typeof RoutingBindingSchema>;
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;
 
 /**
- * Per-agent activity-presentation config (Agent Transparency, §16.3).
+ * Per-agent activity-presentation config (Agent Transparency).
  *
  * Controls how much work-in-progress UI the agent renders. Distinct from the
  * top-level `verbosity` (response-style `VerbosityConfigSchema`) — they share
@@ -214,22 +213,22 @@ export const ActivityConfigSchema = z.strictObject({
     /** How much work-in-progress UI to render. */
     verbosity: z.enum(["silent", "quiet", "normal", "verbose"]).default("normal"),
     /** What to do with activity messages once the turn succeeds.
-     *  (onFailure is hardcoded to "keep"; not exposed — §7.3.) */
+     *  (onFailure is hardcoded to "keep"; not exposed.) */
     onSuccess: z.enum(["delete", "keep", "collapse"]).default("delete"),
     /** Visual theme for activity rendering. */
     theme: z.enum(["default", "terminal-minimal", "playful", "ascii"]).default("default"),
-    /** Agent-scoped emergency kill switch (§22.2). When true, no activity
+    /** Agent-scoped emergency kill switch. When true, no activity
      *  messages are produced for this agent on any channel; lifecycle reactions
      *  and final-message delivery are unaffected. Enforcement is handled elsewhere. */
     emergencyDisabled: z.boolean().default(false),
-    /** Renderer-scoped enable map (§22.2), keyed by TurnActivityContext.rendererKey.
+    /** Renderer-scoped enable map, keyed by TurnActivityContext.rendererKey.
      *  A missing entry follows `defaultChannelEnabled` (default true → enabled).
      *  An explicit `enabled` always wins: `true` renders, `false` opts that
      *  renderer out even under default-on (kill-switch safety). */
     channels: z
       .record(z.string(), z.strictObject({ enabled: z.boolean().default(false) }))
       .default({}),
-    /** Operator opt-out from DEFAULT-ON (§22.2): when true (the default), any
+    /** Operator opt-out from DEFAULT-ON: when true (the default), any
      *  renderer for this agent that has no explicit `channels[rendererKey]` entry
      *  renders, and the operator opts a specific renderer OUT via
      *  `channels[rendererKey].enabled: false`. Set it to `false` to restore the
@@ -240,7 +239,7 @@ export const ActivityConfigSchema = z.strictObject({
   });
 
 /**
- * Per-agent delivery config (Agent Transparency, §16.3).
+ * Per-agent delivery config (Agent Transparency).
  *
  * `visibleReplies` decides what becomes a room-visible assistant reply. It is
  * intentionally separate from `activity` (presentation): "automatic" delivers
@@ -349,7 +348,7 @@ export const PerAgentSchedulerConfigSchema = z.strictObject({
 export const PerAgentConfigSchema = AgentConfigSchema.extend({
   /** Per-agent skills configuration (toolPolicy, builtinTools, discoveryPaths) */
   skills: SkillsConfigSchema.optional(),
-  /** Per-agent autonomy posture (v8 §3.8 named profiles). NOT .optional(): §6.4 — a missing block resolves to the `standard` default (zero-config + MIG-01). Resolve via `resolveAutonomy(...)`. */
+  /** Per-agent autonomy posture (named profiles). NOT .optional(): a missing block resolves to the `standard` default (zero-config). Resolve via `resolveAutonomy(...)`. */
   autonomy: AutonomyConfigSchema.default(() => AutonomyConfigSchema.parse({})),
   /** Per-agent scheduler configuration (cron settings) */
   scheduler: PerAgentSchedulerConfigSchema.optional(),
@@ -384,18 +383,18 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   sep: SepConfigSchema.optional(),
   /** GoalAnchor: tail-injects objective + uncompleted steps into system prompt (small/nano models only; enabled=false by default) */
   goalAnchor: GoalAnchorConfigSchema.optional(),
-  /** Pre-delivery verification critic (R4, Phase 154): scores completion claims against GoalAnchor checklist. Opt-in; enabled=false by default. */
+  /** Pre-delivery verification critic: scores completion claims against GoalAnchor checklist. Opt-in; enabled=false by default. */
   verification: VerificationConfigSchema.optional(),
-  /** Honesty guardrails (R4/S2, Phase 154): bounds critic retry redirects and enforces honest unmet-list on exhaustion. */
+  /** Honesty guardrails: bounds critic retry redirects and enforces honest unmet-list on exhaustion. */
   honesty: HonestyConfigSchema.optional(),
   /** Proactive notification configuration (rate limits, primary channel, dedup) */
   notification: NotificationConfigSchema.optional(),
   /** Channel-aware response-style verbosity hints (KEPT unchanged — distinct
    *  from `activity.verbosity`, which is the work-in-progress UI level). */
   verbosity: VerbosityConfigSchema.optional(),
-  /** Per-agent activity-presentation config (Agent Transparency, §16.3). */
+  /** Per-agent activity-presentation config (Agent Transparency). */
   activity: ActivityConfigSchema.default(() => ActivityConfigSchema.parse({})),
-  /** Per-agent delivery config: final-assistant-reply visibility (§16.3). */
+  /** Per-agent delivery config: final-assistant-reply visibility. */
   delivery: DeliveryConfigSchema.default(() => DeliveryConfigSchema.parse({})),
   /** Deferred tools configuration (deferral mode + force-load/force-defer lists) */
   deferredTools: DeferredToolsConfigSchema.optional(),
@@ -405,33 +404,20 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    *  default-ON. A COST feature — force-disabled at its registration site when the
    *  master kill switch `memory.enabled` is false. */
   memoryReview: MemoryReviewConfigSchema.default(() => MemoryReviewConfigSchema.parse({})),
-  // (The `socialModeling` key was DELETED in Phase 226 SIMPLIFY-03 — the entire
-  //  social-modeling subsystem (the __SOCIAL_MODELING__ cron + the RelationshipStore port +
-  //  adapter + the `relationship` table + the relationship-block prompt injection) is gone.
-  //  z.strictObject now rejects a config carrying it, the D-01a operator-update path. No alias, I1.)
   /** memory_ask grounded-Q&A tool config — the ONE allowed query-time LLM surface.
    *  Opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
   dialectic: DialecticConfigSchema.default(() => DialecticConfigSchema.parse({})),
-  // (The `memoryUsefulnessJudge` key was DELETED in Phase 226 SIMPLIFY-03 — the dormant
-  //  usefulness-judge cron is gone. z.strictObject now rejects a config carrying it, the
-  //  D-01a operator-update path. The FORGET-02 recordUsage reward write stays in setup-learning.ts.)
-  /** Outcome-signal (Verified Learning WS1) configuration. Opt-OUT posture:
+  /** Outcome-signal (Verified Learning) configuration. Opt-OUT posture:
    *  default-ON, so `.parse({})` produces an active block; the master cost switch
    *  (`memory.enabled`) force-disables it at the registration site. */
   learningOutcome: LearningOutcomeConfigSchema.default(() => LearningOutcomeConfigSchema.parse({})),
-  /** The collapsed per-agent LEARNING layer (Phase 226 / SIMPLIFY-01/05). ONE
-   *  `learning.enabled` master gate (folds the former learningSkills.enabled +
-   *  learningTuning.enabled + learningForgetting.enabled) under the top-level
+  /** The per-agent LEARNING layer. ONE
+   *  `learning.enabled` master gate under the top-level
    *  `memory.enabled` kill-switch + the reflect/forget cost-bound knobs. Opt-OUT posture:
    *  default-ON, so `.parse({})` yields an active block; force-disabled when
-   *  `memory.enabled: false`. The RANK-01 reward / FORGET-02 accrual / SURFACE-04 promote
-   *  writes STAY wired behind this one flag. (Replaces learningSkills/learningTuning/
-   *  learningForgetting — those keys are now rejected at parse, the D-01a operator-update path.) */
+   *  `memory.enabled: false`. The reward / accrual / promote
+   *  writes are ALL wired behind this one flag. */
   learning: LearningConfigSchema.default(() => LearningConfigSchema.parse({})),
-  // (The `memoryTripleExtraction` key was DELETED in Phase 226 SIMPLIFY-03 — the dormant no-op
-  //  extraction cron is gone (its `extract` returned []). z.strictObject now rejects a config
-  //  carrying it, the D-01a operator-update path. The TripleStorePort graphSpread recall lane
-  //  survives — only the extraction JOB went, not the read lane.)
   /** SCAFFOLD-DORMANT memory-lifecycle sweep cron. Opt-OUT posture: default-ON for consistency
    *  (a KEYLESS cron) — but it still evicts/demotes NOTHING until the deferred live eviction
    *  policy lands, so default-on is a forward-consistent no-op today. */

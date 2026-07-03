@@ -69,7 +69,7 @@ export function writeMasterKeyIfAbsent(dataDir: string): MasterKeyWriteResult {
 
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const keyHex = generateMasterKey();
-  // W5: create the file with mode 0o600 atomically. openSync with flag "a"
+  // Create the file with mode 0o600 atomically. openSync with flag "a"
   // only applies the mode on file CREATION (O_CREAT path) — if the file already
   // exists (append mode), the mode argument is ignored and the existing
   // permissions are preserved. This eliminates the brief window where a newly

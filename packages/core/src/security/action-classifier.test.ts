@@ -136,7 +136,7 @@ describe("classifyAction", () => {
     }
   });
 
-  describe("v23.0 config management actions", () => {
+  describe("config management actions", () => {
     it('classifies "config.history" as read', () => {
       expect(classifyAction("config.history")).toBe("read");
     });
@@ -162,7 +162,7 @@ describe("classifyAction", () => {
     });
   });
 
-  describe("v6.5 prompt skill actions", () => {
+  describe("prompt skill actions", () => {
     it('classifies "skill.prompt.load" as read', () => {
       expect(classifyAction("skill.prompt.load")).toBe("read");
     });
@@ -172,7 +172,7 @@ describe("classifyAction", () => {
     });
   });
 
-  describe("v22.0 privileged tool actions", () => {
+  describe("privileged tool actions", () => {
     describe("read actions", () => {
       const readActions = [
         "agents.get",
@@ -264,7 +264,7 @@ describe("requiresConfirmation", () => {
   });
 });
 
-describe("requiresConfirmation - v23.0 daemon actions", () => {
+describe("requiresConfirmation - daemon and config actions", () => {
   it("returns false for daemon.setLogLevel (mutate, not destructive)", () => {
     expect(requiresConfirmation("daemon.setLogLevel")).toBe(false);
   });
@@ -278,7 +278,7 @@ describe("requiresConfirmation - v23.0 daemon actions", () => {
   });
 });
 
-describe("requiresConfirmation - v22.0 privileged actions", () => {
+describe("requiresConfirmation - privileged actions", () => {
   it("returns true for destructive privileged actions", () => {
     expect(requiresConfirmation("agents.create")).toBe(true);
     expect(requiresConfirmation("agents.delete")).toBe(true);

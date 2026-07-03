@@ -17,11 +17,9 @@ install runs them and you edit config to turn them off. The trust boundary
 </Warning>
 
 <Note>
-  **Renamed in v2.31.** The master kill-switch is now `memory.enabled` (was the old top-level
-  cost-features switch), and the three recall model knobs nest under `memory.recall.*`.
-  The whole per-agent learning layer collapsed into **one** `agents.<id>.learning` block (one
-  `learning.enabled` flag + `learning.reflect.*` + `learning.forget.*`) — see
-  [Removed in v2.31](#removed-in-v2-31) for the deleted keys and the one-line config update.
+  The master kill-switch is `memory.enabled`, and the three recall model knobs nest under
+  `memory.recall.*`. The whole per-agent learning layer is **one** `agents.<id>.learning`
+  block (one `learning.enabled` flag + `learning.reflect.*` + `learning.forget.*`).
 </Note>
 
 **Where the config lives.** Capabilities are configured **per agent** under
@@ -115,8 +113,8 @@ agents:
       enabled: true
       schedule: "0 2 * * *"
       minMessages: 5
-      maxSessionsPerRun: 50            # best-out-of-box: broader consolidation coverage per run (was 10)
-      maxReviewTokens: 16384           # best-out-of-box: richer consolidation per session (was 4096)
+      maxSessionsPerRun: 50            # best-out-of-box: broader consolidation coverage per run
+      maxReviewTokens: 16384           # best-out-of-box: richer consolidation per session
 
     memoryLifecycle:                 # the FORGET sweep cron — TRIMMED to enable + schedule
       enabled: true
@@ -128,12 +126,12 @@ agents:
     learning:
       enabled: true                  # ONE master gate for the WHOLE learning layer (opt-out; force-disabled by memory.enabled: false)
       reflect:                       # the one __REFLECT__ cron (skill + profile + topic in one pass)
-        schedule: "0 */3 * * *"      # best-out-of-box: every 3 hours (near-real-time learning; was daily 03:00)
+        schedule: "0 */3 * * *"      # best-out-of-box: every 3 hours (near-real-time learning)
         minConfidence: 0.6           # reflection-side confidence floor [0..1]
         promoteAtProofCount: 3       # verified-success count at which a doc promotes candidate → active
-        maxDocsPerRun: 100           # finite DoS bound — best-out-of-box raised (don't throttle learning; was 25)
+        maxDocsPerRun: 100           # finite DoS bound, set high so it does not throttle learning
       forget:                        # the wrongness-based soft-eviction policy (the __LIFECYCLE__ sweep reads these)
-        maxDormantDays: 365          # best-out-of-box: remember ~a year (forget pure-disuse less; was 90)
+        maxDormantDays: 365          # best-out-of-box: remember ~a year (forget pure-disuse less)
         failureEvictionFloor: 3      # corroborated failure_count at/above which a non-exempt memory is soft-evicted
         highProofFloor: 5            # high-proof exemption — a memory at/above this proof count is never failure-evicted
 ```
@@ -158,11 +156,10 @@ agents:
 | Lifecycle sweep | `memoryLifecycle.enabled` | The keyless `__LIFECYCLE__` soft-eviction sweep (thresholds in `learning.forget.*`) |
 | **LEARN** (reflection) | `learning.enabled` | The one outcome-gated reflection engine — maintains the learned **skill** docs, the per-user **profile** doc, and higher-order **topic** observations in one pass; plus the wrongness-based soft eviction (`learning.forget.*`) |
 
-## The one learning-reflection engine (v2.31)
+## The one learning-reflection engine
 
-Comis's learning layer is **one outcome-gated reflection engine**. Where earlier versions had
-five separate cron loops (skill synthesis, ranking tuning, user-representation, consolidation,
-reasoning), a single `__REFLECT__` cron now maintains named **Mental Model** docs
+Comis's learning layer is **one outcome-gated reflection engine**. A single `__REFLECT__`
+cron maintains named **Mental Model** docs
 (`kind: skill | profile | topic`) via byte-stable delta-ops, gated on a **real task outcome**
 (the `learningOutcome` signal) rather than a text-overlap proxy. The whole layer is governed by
 **one flag** — `agents.<id>.learning.enabled` — under the master `memory.enabled` switch.
@@ -212,38 +209,19 @@ Recall **ranking** itself is the **fixed `rag.scoring`** fusion (deterministic R
 cross-encoder reranker) — there is no learned recall weight.
 
 See [`learning` in config-yaml](/reference/config-yaml#learning-agents-learning) for every key
-and default, the [`mental_models`](/operations/data-directory#learned-skills-verified-learning-v2-26)
-and [`memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26)
+and default, the [`mental_models`](/operations/data-directory#learned-skills-verified-learning)
+and [`memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning)
 storage, and the **counts-only** trajectory telemetry (`reflect:admitted` / `reflect:funnel`
 for the reflection funnel; `learning:memory_demoted` / `learning:memory_evicted` for the
 forget sweep) surfaced through [`comis explain`](/reference/cli#comis-explain) and
 [`comis fleet`](/reference/cli#comis-fleet).
 
-## Removed in v2.31
+## Strict config schema
 
-The per-agent learning config collapsed into one `learning` block, and the master kill-switch
-moved to the top level. Because the schema is **strict** (`z.strictObject`), a `config.yaml`
-that still carries a removed key is **rejected at boot** with an "unrecognized key" parse error
-— the explicit operator-update path (there is no compatibility shim). If your config sets any
-of the removed blocks below, delete them and adopt the replacement:
-
-| Removed config block | Replaced by |
-|---|---|
-| the old top-level master cost switch | `memory.enabled` (the master kill-switch) |
-| the flat recall model keys on `memory` (embedding model, embedding dimensions, reranker model) | `memory.recall.embeddingModel` / `embeddingDimensions` / `rerankerModel` |
-| the per-agent skill-synthesis block | `agents.<id>.learning.enabled` + `learning.reflect.*` |
-| the per-agent ranking-tuning block | folded into `agents.<id>.learning.enabled` (the outcome-reward write stays wired) |
-| the per-agent wrongness-eviction block (incl. its eviction floor) | `agents.<id>.learning.forget.*` |
-| the per-agent usefulness-judge block | **removed** (the dormant usefulness-judge cron was deleted) |
-| the per-agent triple-extraction block | **removed** (the scaffold triple-extraction cron was deleted) |
-| the per-agent social-modeling block | **removed** (the social-modeling subsystem was deleted) |
-| the standalone user-representation / reasoning / consolidation blocks | **removed** — the work folds into the one reflection cron (`kind:"profile"` / `kind:"topic"` docs) |
-| the dormant `memoryLifecycle` FadeMem constants (`thetaPromote`, `thetaDemote`, `durableCap`, `ephemeralCap`, `epsilonPrune`, `maxDormantDays`) | `memoryLifecycle` is trimmed to `{ enabled, schedule }`; the dormancy window moved to `learning.forget.maxDormantDays` |
-
-A **bare config** (`memory:`/`agents:` with no learning keys) loads fully-defaulted — the
-removal only affects a config that still names a deleted key. The daemon's boot error names
-the exact unrecognized key, so an operator updating an old config is pointed straight at the
-line to delete.
+The config schema is **strict** (`z.strictObject`): a `config.yaml` that carries an
+unrecognized key is **rejected at boot** with a parse error naming the exact key, so a typo
+or an unsupported block is pointed straight at the line to fix. A **bare config**
+(`memory:`/`agents:` with no learning keys) loads fully-defaulted.
 
 ## Dependencies & gotchas
 
@@ -253,7 +231,7 @@ line to delete.
    - **FORGET** decay (`rag.forget`) shows up at recall; **eviction** is the `memoryLifecycle`
      sweep — live as **soft, reversible** eviction (`evicted_at`) when `learning.enabled` is on
      (it reads `learning.forget.*`), exempting pinned/system/high-proof memories. See
-     [the one learning-reflection engine](#the-one-learning-reflection-engine-v2-31).
+     [the one learning-reflection engine](#the-one-learning-reflection-engine).
    - **Reflection** needs a stream of trusted-origin **successful** outcomes to learn from — it
      gates on the `learningOutcome` signal, and abstains (a benign skip, never a failure) when a
      run finds no corroborated success.

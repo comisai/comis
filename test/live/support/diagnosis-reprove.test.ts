@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first self-test for the Phase-156 RE-PROVE substrate (G1 FOUNDATION).
+ * RED-first self-test for the RE-PROVE substrate.
  *
  * Two seams, both Tests-First:
  *
- *   1. The `@comis/daemon` barrel re-export of the FROZEN Phase-153 assembler
+ *   1. The `@comis/daemon` barrel re-export of the FROZEN assembler
  *      (`assembleIncidentReportFromSources` + `makeRealReader` + the
  *      `IncidentSourceReader` type). The import below is the RED for the daemon
  *      export — it resolves to `daemon/dist/index.js` (the
- *      `test/live/vitest.config.ts:36` alias), which does NOT carry the symbol
+ *      `test/live/vitest.config.ts` alias), which does NOT carry the symbol
  *      until the 3-line export + `pnpm build` turn it GREEN. NEVER a deep
  *      `daemon/dist/...` path.
  *
@@ -19,7 +19,7 @@
  *
  * Runs KEYLESS in `pnpm validate` — no COMIS_LIVE, no daemon, no token: the
  * field-level asserts call the assembler over a local fixture reader (the
- * `obs-explain.test.ts:56-64` shape) over the two committed fixtures.
+ * `obs-explain.test.ts` shape) over the two committed fixtures.
  *
  * @module
  */
@@ -47,7 +47,7 @@ import { loadFixture, recordMetrics, type AgentTurn } from "./diagnosis-harness.
 const FIXTURES = resolve(__dirname, "../fixtures/diagnosis");
 
 /**
- * A reader backed by a frozen fixture directory (the obs-explain.test.ts:56-64
+ * A reader backed by a frozen fixture directory (the obs-explain.test.ts
  * shape). `readSessionRecords` ignores the sessionKey (returns the fixture's
  * records for any key), so the assembler runs the REAL signals → assemble →
  * rootCause → bound pipeline over committed data, keyless.
@@ -66,22 +66,22 @@ function makeFixtureReader(fixtureName: string): IncidentSourceReader {
 async function obsExplainOverFixture(fixtureName: string): Promise<IncidentReport> {
   return assembleIncidentReportFromSources(makeFixtureReader(fixtureName), ".", {
     sessionKey: "default:x:x:peer:x", // the fixture reader ignores the key
-    depth: "summary", // ≤6 KB bounded (X2)
+    depth: "summary", // ≤6 KB bounded
   });
 }
 
-describe("DIAG-reprove substrate — @comis/daemon re-exports the obs-explain assembler (Task 1)", () => {
+describe("DIAG-reprove substrate — @comis/daemon re-exports the obs-explain assembler", () => {
   it("the barrel exposes the gate-free assembler + reader seam as callable values", () => {
     expect(typeof assembleIncidentReportFromSources).toBe("function");
     expect(typeof makeRealReader).toBe("function");
   });
 });
 
-describe("DIAG-reprove substrate — countObsExplainCalls + recordMetrics over a synthetic transcript (Task 2)", () => {
+describe("DIAG-reprove substrate — countObsExplainCalls + recordMetrics over a synthetic transcript", () => {
   it("counts exactly 1 obs_explain call and 0 source reads over a 1-call/0-reads transcript", () => {
     // A synthetic transcript: a single assistant turn that calls obs_explain
-    // ONCE and reads NO source files (the G1 proof shape). Uses the wire-safe
-    // OBS_EXPLAIN_TOOL_NAME — the SAME string the live manifest ships (CR-01).
+    // ONCE and reads NO source files (the one-call proof shape). Uses the wire-safe
+    // OBS_EXPLAIN_TOOL_NAME — the SAME string the live manifest ships.
     const transcript: AgentTurn[] = [
       {
         role: "assistant",
@@ -97,7 +97,7 @@ describe("DIAG-reprove substrate — countObsExplainCalls + recordMetrics over a
       },
     ];
     expect(countObsExplainCalls(transcript)).toBe(1);
-    // recordMetrics is reused VERBATIM — distinctSourceReads is the G1 zero-reads proof.
+    // recordMetrics is reused VERBATIM — distinctSourceReads is the zero-reads proof.
     expect(recordMetrics(transcript).distinctSourceReads).toBe(0);
   });
 
@@ -113,7 +113,7 @@ describe("DIAG-reprove substrate — countObsExplainCalls + recordMetrics over a
   });
 });
 
-describe("DIAG-reprove substrate — field-level IncidentReport asserts over the real fixtures (Task 2)", () => {
+describe("DIAG-reprove substrate — field-level IncidentReport asserts over the real fixtures", () => {
   it("678 fixture: assert678Report passes (content_heuristic_misclassification + degraded + breakerTimeline + costUsd) via the barrel assembler", async () => {
     const report = await obsExplainOverFixture("session-678314278");
     // FIELD-LEVEL (NOT compareToAnswerKey — the 678 report resolves token=status,
@@ -140,7 +140,7 @@ describe("DIAG-reprove substrate — field-level IncidentReport asserts over the
     }
   });
 
-  // WR-02: the negative case above feeds a 503 report, which trips the FIRST guard
+  // The negative case above feeds a 503 report, which trips the FIRST guard
   // (likelyRootCause.code) and returns BEFORE the other four guards — so detail /
   // degraded / breakerTimeline / costUsd were never independently proven to throw on
   // a violation (a typo in any one — a flipped comparison, a wrong field path — would
@@ -172,7 +172,7 @@ describe("DIAG-reprove substrate — field-level IncidentReport asserts over the
   it("assert678Report throws on a 678-code report with the wrong cost.costUsd", async () => {
     const r = await obsExplainOverFixture("session-678314278");
     // 9.99 is ~8.67 off the frozen 1.320669 target — fires under either the old 1e-4
-    // or the WR-03-tightened 5e-5 tolerance.
+    // or the tightened 5e-5 tolerance.
     const bad: IncidentReport = { ...r, cost: { ...r.cost, costUsd: 9.99 } };
     expect(() => assert678Report(bad)).toThrow(/cost\.costUsd/);
     // Residency: the cost-mismatch throw names the field only, never the value.

@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Child-prompt economy (STRIP-01 / STRIP-02): drop the heavy inherited context
- * blocks from a READ-ONLY spawned child's assembled system prompt, on the SPAWN
- * side, while preserving the constitutional anti-injection safety core.
+ * Child-prompt economy: drop the heavy inherited context blocks from a
+ * READ-ONLY spawned child's assembled system prompt, on the SPAWN side, while
+ * preserving the constitutional anti-injection safety core.
  *
  * A read-only child still ingests untrusted web/MCP/file content, so it remains
- * a prompt-injection target and MUST keep the safety floor (Pitfall 5 / STRIP-5).
+ * a prompt-injection target and MUST keep the safety floor.
  * The drop narrows CONTEXT only — it never widens capability.
  *
  * ===========================================================================
- * Task-0 spike findings (Q-STRIP-1) — the spawn → child-prompt path at HEAD
- * (feature/v2.30). These pin the drop points + the chosen mechanism.
+ * The spawn → child-prompt path — the drop points + the chosen mechanism.
  * ===========================================================================
  *
  * 1. The child's resolved PromptMode.
@@ -19,8 +18,7 @@
  *    `resolvePromptModeForProfile(baseMode, operationType, modelProfile,
  *    compactPrompt)` (prompt-assembly.ts:981) — typically "full" for a
  *    frontier/mid child (or "compact-secure" for a small/nano child).
- *    The RESEARCH assumption (A3/A4 — that the "minimal" mode already drops the
- *    heavy STRIP-01 blocks) is CONFIRMED WRONG: in system-prompt-assembler.ts
+ *    No mode already drops the heavy blocks: in system-prompt-assembler.ts
  *    the heavy sections use MODES_ALL (incl. "minimal"), and the `m==="minimal"`
  *    flag only shortens each builder's TEXT — it does not OMIT the section.
  *    ⇒ a real drop mechanism is required; we cannot just pick a mode.
@@ -30,12 +28,10 @@
  *    are real SECTIONS in the assembled system-prompt string
  *    (system-prompt-assembler.ts SECTIONS table, lines 278-356), each emitting a
  *    stable `## <Heading>`, joined by SECTION_SEPARATOR ("\n\n---\n\n",
- *    system-prompt-assembler.ts:58). The RESEARCH "CLAUDE.md-equivalent overlay"
- *    maps to `## Project Context` (it injects AGENTS.md/ROLE.md — the project-
- *    instruction overlay, context-sections.ts:181). The RESEARCH "usage trailer"
- *    has NO Comis analogue in the prompt — token-budget is a DEBUG log line
- *    (prompt-assembly.ts:1989), never prompt text — so there is nothing to strip
- *    for it.
+ *    system-prompt-assembler.ts:58). `## Project Context` is the project-
+ *    instruction overlay (it injects AGENTS.md/ROLE.md, context-sections.ts:181).
+ *    Token-budget usage is a DEBUG log line (prompt-assembly.ts:1989), never
+ *    prompt text — so there is nothing to strip for it.
  *
  * 3. WHERE the safety core lives — same assembled string:
  *      - `## Safety`                        (core-sections.ts:28; ALWAYS the
@@ -48,12 +44,12 @@
  *    OWN assembled `systemPrompt` — split on SECTION_SEPARATOR, drop the sections
  *    whose heading is in READ_ONLY_CHILD_DROP_HEADINGS, keep everything else
  *    (so the safety core survives by construction). Rationale:
- *      (a) cap-safe — ALL logic lives here; the two capped files
- *          (sub-agent-runner.ts 2643L, prompt-assembly.ts 2035L) take only a
- *          single call-site hook (Task 2), no section-builder edits;
+ *      (a) cap-safe — ALL logic lives here; the two length-capped files
+ *          (sub-agent-runner.ts, prompt-assembly.ts) take only a
+ *          single call-site hook, no section-builder edits;
  *      (b) testable in isolation — pure string → string;
  *      (c) per-child — operates on the child's own assembled prompt, never the
- *          shared SECTIONS state (T-221-STRIP-03), and works on BOTH assembly
+ *          shared SECTIONS state, and works on BOTH assembly
  *          paths (full assembly + the parent-cache reuse path, prompt-assembly.ts
  *          806-974) because both yield a `systemPrompt` string.
  *
@@ -69,10 +65,10 @@ import type { SystemPromptBlocks } from "../bootstrap/index.js";
 // ---------------------------------------------------------------------------
 
 /**
- * The heavy inherited section headings dropped for a read-only child (STRIP-01).
+ * The heavy inherited section headings dropped for a read-only child.
  * Each is a real `## <Heading>` emitted by the SECTIONS builders (see the
- * Task-0 spike notes above for the file:line of each). `## Project Context` is
- * the CLAUDE.md-equivalent overlay; `## Extended Thinking` / `## Reasoning
+ * module notes above for the file:line of each). `## Project Context` is
+ * the project-instruction overlay; `## Extended Thinking` / `## Reasoning
  * Format` are the two thinking-guidance variants the reasoning builder emits.
  */
 export const READ_ONLY_CHILD_DROP_HEADINGS: readonly string[] = [
@@ -85,8 +81,8 @@ export const READ_ONLY_CHILD_DROP_HEADINGS: readonly string[] = [
 ];
 
 /**
- * The constitutional anti-injection floor that MUST survive the drop
- * (STRIP-5 / Pitfall 5). Used by the safety-core assertion; kept disjoint from
+ * The constitutional anti-injection floor that MUST survive the drop.
+ * Used by the safety-core assertion; kept disjoint from
  * the drop set by an arch-style test in child-prompt-economy.test.ts.
  */
 export const READ_ONLY_CHILD_KEEP_HEADINGS: readonly string[] = [
@@ -108,7 +104,7 @@ const DROP_SET: ReadonlySet<string> = new Set(READ_ONLY_CHILD_DROP_HEADINGS);
  * read-only (every tool ⊆ the read-only set per `isReadOnlyTool`), OR it
  * carries an explicit read-only role.
  *
- * Conservative by construction (T-221-STRIP-02): a child is read-only ONLY when
+ * Conservative by construction: a child is read-only ONLY when
  * we can PROVE it. Any tool that is not provably read-only — a mutating tool
  * (`exec`/`edit`/`write`/...) OR an unknown/unregistered tool — makes the child
  * NOT read-only, and a mutating tool overrides even an explicit read-only role
@@ -154,7 +150,7 @@ function sectionHeading(section: string): string {
 /**
  * Drop the heavy inherited blocks (READ_ONLY_CHILD_DROP_HEADINGS) from an
  * assembled child system prompt, preserving every other section — including the
- * full safety core (STRIP-01 + STRIP-5).
+ * full safety core.
  *
  * Splits on SECTION_SEPARATOR (the exact joiner the assembler uses), removes the
  * sections whose leading `## Heading` is in the drop set, and re-joins the
@@ -176,7 +172,7 @@ export function economiseChildPrompt(assembledPrompt: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Spawn-side wiring (STRIP-02)
+// Spawn-side wiring
 // ---------------------------------------------------------------------------
 
 /** The economised child prompt — the input window the child boots with. */
@@ -188,11 +184,11 @@ export interface EconomisedChildPrompt {
 }
 
 /**
- * Apply the read-only-child prompt economy on the SPAWN side (STRIP-02): if the
+ * Apply the read-only-child prompt economy on the SPAWN side: if the
  * child is read-only, drop the heavy inherited blocks from BOTH the assembled
  * `systemPrompt` string AND the `systemPromptBlocks.semiStableBody`; otherwise
  * pass everything through byte-identically (a mutating or unknown-tool child
- * gets the full prompt — conservative, T-221-STRIP-02).
+ * gets the full prompt — conservative).
  *
  * Both representations must be stripped because the multi-block path
  * (request-body/breakpoint-orchestration.ts) builds the system message from

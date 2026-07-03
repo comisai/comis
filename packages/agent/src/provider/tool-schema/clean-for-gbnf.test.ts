@@ -137,11 +137,11 @@ describe("cleanSchemaForGbnf", () => {
       expect(transformedKeywords).toContain("missing_type");
     });
 
-    // WR-04 (175-REVIEW): constraint-only typeless nodes used to default to
+    // Constraint-only typeless nodes used to default to
     // "string" — `{minimum: 0}` became `{type:"string", minimum:0}` and the
     // grammar forced the model to emit a string where the tool expects a
     // number/array. Inference must read the constraint family first.
-    it('WR-04: infers type "number" from numeric constraint keys (minimum/maximum/exclusive*/multipleOf)', () => {
+    it('infers type "number" from numeric constraint keys (minimum/maximum/exclusive*/multipleOf)', () => {
       expect(cleanSchemaForGbnf({ minimum: 0 }).schema).toEqual({ minimum: 0, type: "number" });
       expect(cleanSchemaForGbnf({ maximum: 10, multipleOf: 2 }).schema).toEqual({
         maximum: 10,
@@ -158,7 +158,7 @@ describe("cleanSchemaForGbnf", () => {
       });
     });
 
-    it('WR-04: infers type "array" from array constraint keys (minItems/maxItems/uniqueItems/contains)', () => {
+    it('infers type "array" from array constraint keys (minItems/maxItems/uniqueItems/contains)', () => {
       expect(cleanSchemaForGbnf({ minItems: 1 }).schema).toEqual({ minItems: 1, type: "array" });
       expect(cleanSchemaForGbnf({ maxItems: 5, uniqueItems: true }).schema).toEqual({
         maxItems: 5,
@@ -171,7 +171,7 @@ describe("cleanSchemaForGbnf", () => {
       });
     });
 
-    it('WR-04: string constraint keys (minLength/maxLength/pattern/format) still infer type "string"', () => {
+    it('string constraint keys (minLength/maxLength/pattern/format) still infer type "string"', () => {
       expect(cleanSchemaForGbnf({ minLength: 3 }).schema).toEqual({ minLength: 3, type: "string" });
       expect(cleanSchemaForGbnf({ maxLength: 9 }).schema).toEqual({ maxLength: 9, type: "string" });
       // pattern/format survive the proactive profile — only the type is added.
@@ -209,7 +209,7 @@ describe("cleanSchemaForGbnf", () => {
     // onto it, so the wire schema contradicted the daemon driver (debate
     // wants `agents: array`, `rounds: number`) and the model oscillated
     // between "must be string" and "expected array, received string" forever
-    // (small-model e2e 2026-06-12, UC-1/UC-6). An open record's values must
+    // (observed live in a small-model e2e run). An open record's values must
     // stay grammar-valid (llama.cpp rejects truly typeless nodes) WITHOUT
     // lying about their type: the full JSON type union admits the identical
     // value set as `{}`.
@@ -321,12 +321,12 @@ describe("cleanSchemaForGbnf", () => {
       expect(transformedKeywords).toEqual(["nullable_union"]);
     });
 
-    // WR-06 (175-REVIEW): $defs/definitions bodies are referenced via $ref,
+    // $defs/definitions bodies are referenced via $ref,
     // which llama.cpp RESOLVES at grammar-compile — hostility inside a
     // definition 400s exactly like inline hostility, yet both walkers passed
     // these subtrees through untouched. patternProperties values and
     // prefixItems tuples are schemas too.
-    it("WR-06: collapses a nullable union and injects a missing type inside $defs entries ($ref resolved at grammar-compile)", () => {
+    it("collapses a nullable union and injects a missing type inside $defs entries ($ref resolved at grammar-compile)", () => {
       const input = {
         type: "object",
         properties: { item: { $ref: "#/$defs/assignee" } },
@@ -349,7 +349,7 @@ describe("cleanSchemaForGbnf", () => {
       expect(transformedKeywords).toEqual(["nullable_union", "missing_type"]);
     });
 
-    it("WR-06: walks legacy `definitions` map values the same way as $defs", () => {
+    it("walks legacy `definitions` map values the same way as $defs", () => {
       const input = {
         type: "object",
         properties: {},
@@ -363,7 +363,7 @@ describe("cleanSchemaForGbnf", () => {
       expect(transformedKeywords).toEqual(["type_array"]);
     });
 
-    it("WR-06: walks patternProperties VALUE schemas while leaving the key regexes untouched (keys are names, not nodes)", () => {
+    it("walks patternProperties VALUE schemas while leaving the key regexes untouched (keys are names, not nodes)", () => {
       const input = {
         type: "object",
         properties: {},
@@ -380,7 +380,7 @@ describe("cleanSchemaForGbnf", () => {
       expect(transformedKeywords).toEqual(["nullable_union"]);
     });
 
-    it("WR-06: walks prefixItems tuple entries like array-form items", () => {
+    it("walks prefixItems tuple entries like array-form items", () => {
       const input = {
         type: "array",
         prefixItems: [
@@ -397,7 +397,7 @@ describe("cleanSchemaForGbnf", () => {
       expect(transformedKeywords).toEqual(["type_array", "missing_type"]);
     });
 
-    it("WR-06: the new recursion positions stay idempotent (twice = once, byte-identical)", () => {
+    it("the definition/pattern/tuple recursion positions stay idempotent (twice = once, byte-identical)", () => {
       const input = {
         type: "object",
         $defs: { a: { anyOf: [{ type: "string" }, { type: "null" }] } },
@@ -414,7 +414,7 @@ describe("cleanSchemaForGbnf", () => {
     });
   });
 
-  describe("pattern/format survival (proactive gbnf does NOT strip — GBNF-02's reactive remedy owns that)", () => {
+  describe("pattern/format survival (proactive gbnf does NOT strip — the reactive grammar-400 remedy owns that)", () => {
     it("keeps pattern and format on the due property after cleaning", () => {
       const { schema } = cleanSchemaForGbnf(hostileMcpTool.parameters);
       expect(propsOf(schema).due).toEqual({
@@ -504,12 +504,12 @@ describe("cleanSchemaForGbnf", () => {
     });
   });
 
-  // WR-03 (175-REVIEW): third-party MCP schemas are attacker-controlled — a
+  // Third-party MCP schemas are attacker-controlled — a
   // properties chain ~4000 levels deep parses cleanly through JSON.parse at
   // the transport boundary but overflowed the un-capped walk, and the
   // RangeError propagated out of assembleTools, failing the WHOLE turn for
   // ALL tools on every message.
-  describe("WR-03: depth-limited recursion (attacker-controlled MCP schemas)", () => {
+  describe("depth-limited recursion (attacker-controlled MCP schemas)", () => {
     function makeDeepPropertiesChain(
       depth: number,
       leaf: Record<string, unknown>,

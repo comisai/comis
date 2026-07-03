@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LINE AppendOnly renderer tests (§18.3 LINE column).
+ * LINE AppendOnly renderer tests.
  *
  * LINE is send-only for the activity renderer — it has no in-place edit and no
  * delete, so it wires the AppendOnly strategy IDENTICALLY to iMessage:
@@ -9,18 +9,18 @@
  * and a failure posts exactly one `❌ {errorKind}` follow-up.
  *
  * Scope: only the AppendOnly RENDERING half is covered here. The LINE
- * Quick Reply approval-chip affordance lands separately (the port is
- * `send(text)`-only; no button param, no `kind:"approval"` event yet, ZERO S8
- * fixtures). The single net-new piece of logic is `classifyLineError` — the live
+ * Quick Reply approval-chip affordance is covered in
+ * `line-activity.approval.test.ts` (so there are no S8 fixtures here).
+ * The single net-new piece of logic is `classifyLineError` — the live
  * adapter wraps send failures in `new Error("Failed to send LINE message: …")`
  * with no structured numeric code, so the classifier defaults to `internal` and
  * reads the error structurally ONLY (never renders the `.message` as activity
- * text — §19.3). `makeLineRenderActions` maps `send` through it and guards
+ * text). `makeLineRenderActions` maps `send` through it and guards
  * the absent `editMessage` / `deleteMessage`; `createLineActivityRenderer` wires
  * the `createAppendOnlyRenderer` (no duplicated state machine, NO timer/clock).
  *
  * Golden fixtures assert via readFixture + toEqual (NEVER an auto-writing
- * inline/file snapshot, which self-heals a wrong fixture — Pitfall 3).
+ * inline/file snapshot, which self-heals a wrong fixture).
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityRenderFrame, ActivityEvent, TurnOutcome, FinalDeliveryReceipt } from "@comis/core";
@@ -65,7 +65,7 @@ function okReceipt(deliveredAtMs: number): FinalDeliveryReceipt {
   return { ok: true, deliveredChunks: 1, lastChunkMessageId: "msg-final", deliveredAtMs };
 }
 
-// --- Task 1: classifyLineError + makeLineRenderActions ---------------------
+// --- classifyLineError + makeLineRenderActions ------------------------------
 
 describe("classifyLineError (structural only, never the message string)", () => {
   it("maps an unknown bare Error to internal carrying the cause (LINE has no numeric code)", () => {
@@ -191,7 +191,7 @@ describe("createLineActivityRenderer (AppendOnly wiring)", () => {
   });
 });
 
-// --- Task 2: 11 golden fixtures (S1-S7, S9-S12; no S8) ---------------------
+// --- 11 golden fixtures (S1-S7, S9-S12; no S8) ------------------------------
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeLineAdapter>): unknown {
@@ -229,7 +229,7 @@ function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
 
 const okFinal = (deliveredAtMs: number): FinalDeliveryReceipt => okReceipt(deliveredAtMs);
 
-describe("LINE golden fixtures (§18.3 AppendOnly rows — readFixture + toEqual)", () => {
+describe("LINE golden fixtures (AppendOnly call-log — readFixture + toEqual)", () => {
   it("S1 trivial chat — zero renderer messages (kind:success trivial, no frame ever applied)", async () => {
     const log = await runScenario([], { kind: "success", trivial: true, delivery: okFinal(0) });
     expect(log).toEqual(readFixture("line", "S1"));

@@ -47,7 +47,7 @@ import {
 } from "./row-schemas.js";
 
 /** Dice-bigram similarity at/above which a near-duplicate name reuses an
- *  existing entity rather than minting a new one (design §6.2). */
+ *  existing entity rather than minting a new one. */
 const FUZZY_REUSE_THRESHOLD = 0.6;
 
 /** Minimal pino-compatible logger (mirrors sqlite-memory-adapter.ts). */
@@ -104,7 +104,7 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
   // isolation boundary then depends on two statements agreeing, with the agent
   // dimension enforced in only one. Re-asserting the full scope here makes the
   // hydrate self-sufficient (no fail-open if the lane query is ever refactored).
-  // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion. This is a
+  // The ALWAYS-ON `evicted_at IS NULL` recall exclusion. This is a
   // RECALL-side hydration (associativeLane → MemorySearchResult[] → createMemoryRecall →
   // the prompt), so a soft-evicted shared-entity memory MUST be omitted here exactly as on
   // the adapter's recall paths. The inspect/asOf raw reads stay UNFILTERED (eviction soft +
@@ -280,8 +280,8 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
         if (!parsed.ok) return err(new Error(parsed.error.message));
 
         // Hydrate each shared-entity memory row (scoped) into a
-        // MemorySearchResult; score = tanh(shared * 0.5) (design §5.2 intra-lane
-        // order). Rows already arrive most-shared-first.
+        // MemorySearchResult; score = tanh(shared * 0.5) sets the intra-lane
+        // order. Rows already arrive most-shared-first.
         const results: MemorySearchResult[] = [];
         for (const { memory_id, shared } of parsed.value) {
           const memParsed = memoryRowMapper.parseOptionalRow(

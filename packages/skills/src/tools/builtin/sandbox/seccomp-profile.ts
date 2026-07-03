@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Seccomp BPF-blob loader for the bwrap jail (JAIL-01, Phase 211 §4.7).
+ * Seccomp BPF-blob loader for the bwrap jail.
  *
  * bwrap `--seccomp N` takes an open FILE DESCRIPTOR to RAW BPF bytecode — NOT a
  * JSON profile name/path (that is Docker/runc). The blob is a PRECOMPILED data
@@ -13,19 +13,19 @@
  *  - `loadSeccompProfileFd()` opens the blob and returns an INHERITABLE fd (the
  *    bwrap child must inherit it, so FD_CLOEXEC is NOT set) or `null` when the
  *    blob is absent. Absence is a graceful DEGRADE — `buildArgs` omits
- *    `--seccomp` and the other §4.7 controls (`--new-session`,
+ *    `--seccomp` and the other hardening controls (`--new-session`,
  *    `--die-with-parent`, `--unshare-net`, the bind-mount validator) still hold.
  *    The `.linux.test.ts` "blocked syscall" assertion is the proof gate that the
  *    blob actually denies the dangerous surface on the VPS.
  *
- * REQUIRED fd LIFECYCLE (WR-04 — read this before wiring `seccompFd` in 212):
+ * REQUIRED fd LIFECYCLE (read this before wiring `seccompFd` at a call site):
  *
  *   Because the fd is opened WITHOUT `O_CLOEXEC` (so the bwrap child inherits
  *   it), the PARENT (daemon) process keeps its OWN copy of the descriptor open
  *   after fork. That parent copy MUST be closed once the child has been spawned,
  *   or every jailed spawn leaks one descriptor in the daemon — over a
  *   long-running daemon driving many spawns this exhausts the fd table. The
- *   ONLY correct shape at the (future, 212) call site is open → buildArgs →
+ *   ONLY correct shape at a call site is open → buildArgs →
  *   spawn → close-in-`finally`:
  *
  *     const fd = loadSeccompProfileFd();

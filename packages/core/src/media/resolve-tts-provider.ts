@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * resolveTtsProvider — the pure, I/O-free, edge-first priority resolver for TTS
- * provider selection (RES-02/05). The TTS twin of resolveTranscriptionProvider,
+ * provider selection. The TTS twin of resolveTranscriptionProvider,
  * with the same shape (injected predicates, discriminated result, no throws) and
  * one difference: the keyless rung is `edge` (the shipped keyless Edge adapter),
  * not local-whisper.
  *
- * Priority (design §5): explicit provider wins → `auto` resolves to the
+ * Priority: explicit provider wins → `auto` resolves to the
  * always-keyless `edge` rung → (defensive) optional `piper`/main-key →
  * honest-unavailable. Unlike STT, the `auto` keyless rung (`edge`) is always
  * available — Edge needs no engine and no key — so `auto` resolves to `edge`
@@ -18,8 +18,8 @@
  * predicate) and `audioKeyAvailable` (a closure over its SecretManager) + an
  * optional `onSkip`. The resolver performs no I/O, reads no env, imports no
  * secret store — trivially unit-testable. Reuses VOICE_KEYLESS /
- * MAIN_PROVIDER_AUDIO and the SttErrorKind union (design §17 / Assumption A3 —
- * the same error vocabulary serves both STT and TTS).
+ * MAIN_PROVIDER_AUDIO and the SttErrorKind union (the same error vocabulary
+ * serves both STT and TTS).
  *
  * @module
  */
@@ -29,16 +29,16 @@ import type { SttErrorKind } from "./voice-error.js";
 
 /**
  * The structural subset of the TTS selection config this resolver reads.
- * Declared LOCALLY (decoupled from Plan 02's `TtsConfig` schema, edited in the
- * same wave). Reads only the fields it needs; `voice`/`fallbackProviders` are
- * read defensively for parity with the STT resolver.
+ * Declared LOCALLY (decoupled from the runtime `TtsConfig` schema in
+ * schema-integrations.ts). Reads only the fields it needs; `voice`/
+ * `fallbackProviders` are read defensively for parity with the STT resolver.
  */
 export type TtsSelectionConfig = {
   /** "auto" | "edge" | "openai" | "elevenlabs" | "local" | "piper" */
   provider: string;
   /** Tool/config-supplied voice; carried through opaquely (not selection-relevant). */
   voice?: string;
-  /** Plan 02 lands the real field; this resolver reads it defensively. */
+  /** Defined by the runtime schema; this resolver reads it defensively. */
   fallbackProviders?: string[];
 };
 
@@ -96,7 +96,7 @@ export function resolveTtsProvider(
     return { ok: false, errorKind: "auth_required", hint: keyHint(cfg.provider) };
   }
 
-  // 2. "auto" → the always-keyless EDGE rung (RES-02). Edge needs no key and no
+  // 2. "auto" → the always-keyless EDGE rung. Edge needs no key and no
   //    engine, so in production it wins the auto default — the daemon passes
   //    `edgeAvailable: () => true` (edge is the shipped keyless adapter, and a
   //    member of VOICE_KEYLESS). The predicate is gated (not hardcoded true) so
@@ -108,7 +108,7 @@ export function resolveTtsProvider(
   }
 
   // 3. → (defensive fallthrough, unreachable while edge is keyless) follow the
-  //    main provider's audio key only if it really exists (CRED-01).
+  //    main provider's audio key only if it really exists.
   const mainAudio = MAIN_PROVIDER_AUDIO[mainProviderId];
   if (mainAudio && audioKeyAvailable(mainAudio)) {
     return { ok: true, provider: mainAudio, keyless: false, source: "follow-main-key" };

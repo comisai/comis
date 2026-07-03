@@ -12,10 +12,10 @@
  * `SttErrorKind` is mapped onto exactly one of the closed log `ErrorKind`
  * values, so observability stays parseable while the domain vocabulary stays
  * expressive. Callers log `{ errorKind: STT_ERR_TO_LOG[k], sttErrorKind: k,
- * hint }` per the §2.7 logging matrix (the full event bridge is Phase 196).
+ * hint }` per the AGENTS.md §2.7 logging matrix.
  *
- * TTS reuses `SttErrorKind` — design §17 lists the same kind-set for both STT
- * and TTS (Assumption A3). Do NOT split a separate TtsErrorKind unless `edge`
+ * TTS reuses `SttErrorKind` — the kind-set is identical for both STT
+ * and TTS. Do NOT split a separate TtsErrorKind unless `edge`
  * (or `piper`) needs a distinct kind.
  *
  * @module

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * chat-projection — pure (events, config) -> ActivityRenderFrame (spec §9).
+ * chat-projection — pure (events, config) -> ActivityRenderFrame.
  *
  * The verbosity chokepoint before any renderer: it decides what a chat surface
  * shows. `silent` -> nothing; `quiet` -> only failures + approvals; `normal` ->
@@ -23,7 +23,7 @@ export interface ProjectionConfig {
   verbosity: ActivityVerbosity;
 }
 
-/** quiet shows only the always-preserved events (failures + approvals, §9). */
+/** quiet shows only the always-preserved events (failures + approvals). */
 function isQuietVisible(e: ActivityEvent): boolean {
   return e.status === "failed" || e.kind === "approval";
 }
@@ -31,7 +31,7 @@ function isQuietVisible(e: ActivityEvent): boolean {
 /**
  * Project a canonical event stream to a chat render frame under the configured
  * verbosity. `prevFrame` (if supplied) seeds the `changeSet` diff and advances
- * `frameSeq`. `latestPlanSnapshot` (SPEC §8.3) is the SEP
+ * `frameSeq`. `latestPlanSnapshot` is the SEP
  * snapshot most recently cached by the coordinator; when present it wins over
  * `prevFrame?.planSnapshot` (a silent forward of prev would mask a
  * re-extracted plan within the same turn).

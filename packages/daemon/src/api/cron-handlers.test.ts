@@ -5,10 +5,10 @@ import type { CronHandlerDeps } from "./cron-handlers.js";
 import type { RpcHandler } from "./types.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 
-// CAP-03: the gated cron.add/update/remove/run handlers now require an injected
+// The gated cron.add/update/remove/run handlers require an injected
 // _capabilities (production supplies it via createAgentRpcCall). Wrap the bound
-// record so these body-tests reach the handler BODY, not the gate (which is
-// proven RED-first in the CAP-05 tests). Read-only cron methods pass through.
+// record so these body-tests reach the handler BODY, not the gate (which has
+// its own dedicated capability-gate tests). Read-only cron methods pass through.
 function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHandler> {
   return withHeldCapabilities(createCronHandlersRaw(deps));
 }
@@ -679,8 +679,8 @@ describe("createCronHandlers", () => {
 
   describe("cron.run", () => {
     it("names the missing parameter when neither jobId nor jobName is given, instead of 'Job not found: undefined'", async () => {
-      // Live finding (2026-06-11 memory run, deferred; fixed in the C11 pass):
-      // a caller using the wrong param key got the unmatched var echoed back.
+      // Regression guard from a live run: a caller using the wrong param key
+      // got the unmatched var echoed back as "Job not found: undefined".
       const deps = makeDeps();
       const handlers = createCronHandlers(deps);
 
@@ -792,12 +792,12 @@ describe("createCronHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // TARGET-01 — explicit agentId targeting (kill the silent connection-default)
+  // Explicit agentId targeting (kill the silent connection-default)
   // Incident: cron.run/list silently acted on the default agent, so a non-default
-  // agent's job was un-triggerable AND un-observable (hit 3x: LTM + multilingual runs).
+  // agent's job was un-triggerable AND un-observable (hit 3x in live runs).
   // -------------------------------------------------------------------------
 
-  describe("TARGET-01: explicit agentId targeting", () => {
+  describe("explicit agentId targeting", () => {
     function makeMultiAgentDeps(): CronHandlerDeps {
       const schedA = makeMockScheduler();
       const schedB = makeMockScheduler();

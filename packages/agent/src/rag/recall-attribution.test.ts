@@ -3,7 +3,7 @@
  * Tests for attributeRecallUsage() — the pure overlap heuristic that
  * partitions recalled memories into {used, ignored} from the agent's response.
  *
- * Load-bearing RED-first assertions (mirror score.test.ts determinism style):
+ * Load-bearing assertions (mirror score.test.ts determinism style):
  * - empty response → every recalled id is ignored (overlap 0)
  * - empty recalled → empty partition { usedIds: [], ignoredIds: [] }
  * - a memory whose content is echoed verbatim in the response → used
@@ -111,23 +111,24 @@ describe("attributeRecallUsage — overlap heuristic partition", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-01 / Phase 180 — de-Anglicization (RED on pre-patch code).
+// De-Anglicization: the tokenizer must be Unicode-aware.
 //
-// Pre-patch the tokenizer is `.toLowerCase().replace(/[^a-z0-9]+/g, " ")` — every
-// non-ASCII letter is stripped to whitespace, so a Hebrew/Arabic/Cyrillic memory
+// An ASCII-only tokenizer (`.toLowerCase().replace(/[^a-z0-9]+/g, " ")`) strips
+// every non-ASCII letter to whitespace, so a Hebrew/Arabic/Cyrillic memory
 // and an overlapping non-Latin response BOTH tokenize to nothing. denom === 0 →
 // the memory is forced into `ignoredIds` (the zero-denominator guard), so its
 // attribution is PERMANENTLY 0 regardless of how much real content overlaps.
-// Every non-Latin case below asserts the memory is USED — each FAILS on the
-// pre-patch tokenizer and flips GREEN once the split becomes Unicode-aware.
+// Every non-Latin case below asserts the memory is USED — each fails on an
+// ASCII-only tokenizer and passes only with the Unicode-aware split.
 //
-// The Latin byte-identity case + the Latin-gated stopword case pin I1: the fix
-// must NOT move any pure-ASCII result and must keep STOPWORDS filtering Latin
-// tokens only (a non-Latin token that transliterates near a stopword survives).
+// The Latin byte-identity case + the Latin-gated stopword case pin the ASCII
+// invariant: the Unicode-aware split must NOT move any pure-ASCII result and
+// must keep STOPWORDS filtering Latin tokens only (a non-Latin token that
+// transliterates near a stopword survives).
 // ---------------------------------------------------------------------------
 
-describe("attributeRecallUsage — de-Anglicization (non-Latin scripts, OBS-01)", () => {
-  it("scores a Hebrew memory overlapping a Hebrew response > 0 (USED) — RED: 0 pre-patch", () => {
+describe("attributeRecallUsage — de-Anglicization (non-Latin scripts)", () => {
+  it("scores a Hebrew memory overlapping a Hebrew response > 0 (USED, not tokenized to nothing)", () => {
     // Two-word Hebrew phrase shared verbatim → significant unigrams + a bigram overlap.
     const recalled = [{ id: "he", content: "הספרייה הלאומית פתוחה היום" }];
     const response = "כן, הספרייה הלאומית פתוחה היום עד שש בערב.";
@@ -136,7 +137,7 @@ describe("attributeRecallUsage — de-Anglicization (non-Latin scripts, OBS-01)"
     expect(out.ignoredIds).not.toContain("he");
   });
 
-  it("scores an Arabic memory overlapping an Arabic response > 0 (USED) — RED: 0 pre-patch", () => {
+  it("scores an Arabic memory overlapping an Arabic response > 0 (USED, not tokenized to nothing)", () => {
     const recalled = [{ id: "ar", content: "المكتبة الوطنية مفتوحة اليوم" }];
     const response = "نعم، المكتبة الوطنية مفتوحة اليوم حتى المساء.";
     const out = attributeRecallUsage(recalled, response);
@@ -144,7 +145,7 @@ describe("attributeRecallUsage — de-Anglicization (non-Latin scripts, OBS-01)"
     expect(out.ignoredIds).not.toContain("ar");
   });
 
-  it("scores a Cyrillic memory overlapping a Cyrillic response > 0 (USED) — RED: 0 pre-patch", () => {
+  it("scores a Cyrillic memory overlapping a Cyrillic response > 0 (USED, not tokenized to nothing)", () => {
     const recalled = [{ id: "ru", content: "национальная библиотека сегодня открыта" }];
     const response = "Да, национальная библиотека сегодня открыта до вечера.";
     const out = attributeRecallUsage(recalled, response);
@@ -154,8 +155,8 @@ describe("attributeRecallUsage — de-Anglicization (non-Latin scripts, OBS-01)"
 
   it("produces a bigram for a space-delimited two-word Hebrew phrase (phrase structure preserved)", () => {
     // A memory whose ONLY signal is a shared two-word phrase: the bigram axis must
-    // fire for non-Latin tokens exactly as it does for Latin ones. Pre-patch the
-    // phrase tokenizes to nothing → no bigram → ignored.
+    // fire for non-Latin tokens exactly as it does for Latin ones. Under an
+    // ASCII-only tokenizer the phrase tokenizes to nothing → no bigram → ignored.
     const recalled = [{ id: "phrase", content: "ספרייה לאומית" }];
     const response = "ביקרנו אתמול בספרייה לאומית גדולה מאוד.";
     const out = attributeRecallUsage(recalled, response);
@@ -174,9 +175,9 @@ describe("attributeRecallUsage — de-Anglicization (non-Latin scripts, OBS-01)"
   });
 });
 
-describe("attributeRecallUsage — pure-ASCII byte identity (I1)", () => {
+describe("attributeRecallUsage — pure-ASCII byte identity", () => {
   it("produces a frozen partition for a pure-ASCII corpus (the de-Anglicization is a no-op for ASCII)", () => {
-    // I1 pin: an English-only deployment must be UNCHANGED. This case is explicit
+    // Byte-identity pin: an English-only deployment must be UNCHANGED. This case is explicit
     // (not just the inherited cases above) so the de-Anglicization is provably a
     // no-op for ASCII. Mixed used/ignored exercises both buckets + the bigram axis.
     const recalled = [
@@ -187,7 +188,7 @@ describe("attributeRecallUsage — pure-ASCII byte identity (I1)", () => {
     const response =
       "Confirmed — the nightly backup job writes to the offsite bucket at midnight, and rate limiting is enforced at one hundred requests per minute.";
     const out = attributeRecallUsage(recalled, response);
-    // Exact partition (the byte-identity baseline — frozen for I1).
+    // Exact partition (the frozen byte-identity baseline).
     expect(out.usedIds).toEqual(["u1", "u2"]);
     expect(out.ignoredIds).toEqual(["i1"]);
   });

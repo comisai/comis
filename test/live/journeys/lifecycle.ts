@@ -7,7 +7,7 @@
  *   SKIPPED(<reason-tag>)), fed to `writeReadiness` for the per-story READINESS
  *   rows (E2E-05 "per-story result in READINESS.md").
  * - `activeStoriesForRun` is the run-grid filter: it excludes `deprecated`
- *   stories (lifecycle §7.5) and the `__`-prefixed test-only synthetic ids (so a
+ *   stories and the `__`-prefixed test-only synthetic ids (so a
  *   test-registered story never enters the real run grid), and INCLUDES
  *   `quarantined` stories (measured-non-blocking — the runner mode / soak treats
  *   their failures as data, not a block).
@@ -48,7 +48,7 @@ export function journeyResultToVerdict(r: JourneyResult): CategoryVerdict {
 /**
  * The run-grid filter: stories eligible for the live run grid.
  *
- * Excludes `deprecated` (removed capability — §7.5) and `__`-prefixed test-only
+ * Excludes `deprecated` (removed capability) and `__`-prefixed test-only
  * synthetic ids (registered by tests; must never enter the real grid). Includes
  * `active` and `quarantined` (the latter measured-non-blocking).
  */

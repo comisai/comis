@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The VIS-01 keystone: the daemon-side provider-following VISION bridge.
+ * The daemon-side provider-following VISION bridge.
  *
  * {@link createMainProviderVision} builds a `describeImage(buffer, prompt,
  * mimeType, agentId)` seam that routes image analysis through the agent's MAIN
  * vision-capable model via the pi-ai completion primitive, reusing the main
- * provider's credentials (no separate vision key — I7).
+ * provider's credentials (no separate vision key).
  *
  * It is a near-verbatim mirror of `createDialecticSeam`
  * (packages/agent/src/memory/memory-dialectic-seam.ts) — the ONE allowed
@@ -24,20 +24,21 @@
  * Why daemon-hosted: `completeSimple`/`getModel` are already a daemon dependency
  * (graph-coordinator.ts:16, setup-channels-media.ts:35) and the bridge sits next
  * to the handler wiring + the cred closures. Do NOT host it in `@comis/agent`;
- * do NOT add `@earendil-works/pi-ai` to `@comis/skills` (the 183 pitfall).
+ * do NOT add `@earendil-works/pi-ai` to `@comis/skills` (a dependency-layering
+ * violation).
  *
- * Security posture (the same discipline as the memory seams + 186 T-186-08):
+ * Security posture (the same discipline as the memory seams):
  * - ONE bounded `completeSimple` per call — `maxTokens` (the cost cap) + an
  *   `AbortController` armed by the sanctioned-root `systemSetTimeout` (the
  *   wall-clock-free abort; the injected `clock` supplies the message timestamp).
  * - The resolved `apiKey` rides `SimpleStreamOptions.apiKey` ONLY — never
- *   interpolated into a string, a URL, a log, or the trajectory (T-187-01).
- * - CONTENT-FREE logging (T-187-02): a failure warns `{ agentId, errorKind,
+ *   interpolated into a string, a URL, a log, or the trajectory.
+ * - CONTENT-FREE logging: a failure warns `{ agentId, errorKind,
  *   hint }` and NOTHING ELSE — the `buffer`, the base64, the `prompt`, the
  *   `content[]`, and the `response` text are NEVER in the log fields. Pino's
  *   `apiKey`/`token`/`authorization` redaction is the backstop, not the
  *   primary control.
- * - HONEST capability (T-187-03): a missing key, a model-resolution failure, or
+ * - HONEST capability: a missing key, a model-resolution failure, or
  *   a non-"stop" completion returns `err` — the bridge never silently bills a
  *   different provider.
  *
@@ -57,8 +58,8 @@ const DEFAULT_MAX_TOKENS = 1024;
 
 /**
  * An honest-unavailable vision error. Carries a domain {@link ImageErrorKind}
- * (reused, not invented) so the Plan 02 handler can read `errorKind` off the
- * `err` and emit the VIS-04 obs. The hint (the `Error.message`) names the
+ * (reused, not invented) so the consuming handler can read `errorKind` off the
+ * `err` and emit the failure observability. The hint (the `Error.message`) names the
  * actionable knob; it never carries image bytes or the prompt.
  */
 export class VisionUnavailable extends Error {
@@ -70,14 +71,14 @@ export class VisionUnavailable extends Error {
   }
 }
 
-/** A successful vision result + the optional cost axis (VIS-04). */
+/** A successful vision result + the optional cost axis. */
 export type MainProviderVisionResult = VisionResult & { costUsd?: number };
 
 /** The deps the daemon injects (the model resolver + the cred closures, by value). */
 export interface MainProviderVisionDeps {
   /**
-   * The I4 lockstep resolver — maps an agentId to its resolved main
-   * `{ provider, modelId }`. In Plan 02's wiring this is
+   * The lockstep resolver — maps an agentId to its resolved main
+   * `{ provider, modelId }`. In the daemon wiring this is
    * `resolveAgentModel(cfgFor(agentId), config.models)`. Injected so the bridge
    * stays daemon-testable without the full config.
    */
@@ -91,7 +92,7 @@ export interface MainProviderVisionDeps {
   resolveApiKey: (provider: string) => string | undefined;
   /**
    * For provider `"openai-codex"`: resolve the bearer via
-   * `oauthManager.getApiKey("openai-codex", { oauthProfiles })` (184 precedent),
+   * `oauthManager.getApiKey("openai-codex", { oauthProfiles })`,
    * unwrapped to `string | undefined`. Injected, optional.
    */
   resolveCodexKey?: (provider: string) => Promise<string | undefined>;
@@ -176,8 +177,8 @@ export function createMainProviderVision(deps: MainProviderVisionDeps): MainProv
   ): Promise<Result<MainProviderVisionResult, VisionUnavailable>> {
     const { provider, modelId } = resolveModel(agentId);
 
-    // 1. Resolve the key — reuse the main provider's creds (I7). The provider
-    //    key first; the codex bearer for "openai-codex" (184 precedent).
+    // 1. Resolve the key — reuse the main provider's creds. The provider
+    //    key first; the codex bearer for "openai-codex".
     let apiKey = resolveApiKey(provider);
     if (!apiKey && provider === "openai-codex" && resolveCodexKey) {
       apiKey = await resolveCodexKey(provider);
@@ -237,7 +238,7 @@ export function createMainProviderVision(deps: MainProviderVisionDeps): MainProv
 
     // 3. ONE bounded completeSimple with the MULTIMODAL message (the keystone).
     const controller = new AbortController();
-    // WR-02: track whether OUR timer was the abort trigger. pi-ai's completeSimple
+    // Track whether OUR timer was the abort trigger. pi-ai's completeSimple
     // RESOLVES (does not reject) on the abort event — the AssistantMessage then
     // carries stopReason:"aborted" and hits the non-"stop" branch below rather
     // than the catch. `timedOut` lets that branch classify a genuine wall-clock
@@ -267,7 +268,7 @@ export function createMainProviderVision(deps: MainProviderVisionDeps): MainProv
       );
 
       if (response.stopReason !== "stop") {
-        // WR-02: a resolved-with-"aborted" stream means our timer fired (the
+        // A resolved-with-"aborted" stream means our timer fired (the
         // ONLY abort trigger on this path) — classify it as a timeout, not the
         // generic empty_response classifyStopReason would otherwise return.
         const abortedByTimeout =
@@ -306,7 +307,7 @@ export function createMainProviderVision(deps: MainProviderVisionDeps): MainProv
         costUsd: response.usage?.cost?.total,
       });
     } catch (llmErr) {
-      // WR-02: prefer the explicit timedOut flag (our timer fired) and keep
+      // Prefer the explicit timedOut flag (our timer fired) and keep
       // controller.signal.aborted as the fallback — both indicate the bridge's
       // own abort, the only abort trigger on this path.
       const aborted = timedOut || controller.signal.aborted;

@@ -296,7 +296,7 @@ export class IcMessageCenter extends LitElement {
   @state() private _attachCaption = "";
   @state() private _showAttachForm = false;
 
-  // Chat picker state (236)
+  // Chat picker state
   @state() private _chatList: Array<{ chatId: string; label: string }> = [];
   @state() private _selectedChatId = "";
 
@@ -324,7 +324,7 @@ export class IcMessageCenter extends LitElement {
     // Sync effective channel from parent-provided channelType
     if (changedProperties.has("channelType") && this.channelType) {
       this._effectiveChannel = this.channelType;
-      // Reset chat picker state for new channel type (236)
+      // Reset chat picker state for the new channel type
       this._selectedChatId = "";
       this._chatList = [];
     }
@@ -444,7 +444,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   // -------------------------------------------------------------------------
-  // Chat picker data (236)
+  // Chat picker data
   // -------------------------------------------------------------------------
 
   /**

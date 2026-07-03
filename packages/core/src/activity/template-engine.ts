@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * template-engine — the pure, single chokepoint that turns redacted tool params
- * into a user-visible activity label (spec §10.1).
+ * into a user-visible activity label.
  *
  * `applyTemplate(spec, params)` is the projection-time enforcement of the
- * redaction rules. The pipeline (spec §10.1 lines 1219-1231):
+ * redaction rules. The pipeline:
  *
  *   raw params
  *     → allowlist filter   (accept ONLY the keys the LabelSpec declares —
@@ -13,13 +13,13 @@
  *     → redactValue()      (per surviving value: secret-key + secret-shape +
  *                           absolute-path compaction + PII masks)
  *     → static substitution of `{key}` placeholders (a plain string-replace
- *                           callback — NO dynamic code execution of any form,
- *                           §19.4); a referenced placeholder absent from the
+ *                           callback — NO dynamic code execution of any
+ *                           form); a referenced placeholder absent from the
  *                           allowlist → unknown_key
  *     → transform hook     (spec.transform(params) consumes RAW
  *                           params and produces the final label; non-empty
  *                           return wins. The transform output is piped through
- *                           redactValue defense-in-depth — Pitfall 4 — so a
+ *                           redactValue defense-in-depth, so a
  *                           transform that returns a secret shape still
  *                           renders as `<redacted>`. Skipped when spec has no
  *                           transform.)
@@ -31,7 +31,7 @@
  * `redactionsApplied` and emits the WARN; this engine never logs.
  *
  * The template engine is the ONLY path from `params` to user-visible strings —
- * raw `params` never reach a channel adapter (spec §10.1 line 1233).
+ * raw `params` never reach a channel adapter.
  *
  * @module
  */
@@ -44,27 +44,27 @@ import {
 import type { LabelSpec } from "./label-spec.js";
 
 // ---------------------------------------------------------------------------
-// Length caps — match ActivityEvent.defaultLabel/defaultDetail (spec §4.1).
+// Length caps — match ActivityEvent.defaultLabel/defaultDetail.
 // ---------------------------------------------------------------------------
 
-/** Maximum rendered `defaultLabel` length (spec §10.1; ActivityEvent cap). */
+/** Maximum rendered `defaultLabel` length (ActivityEvent cap). */
 const MAX_LABEL_LENGTH = 120;
-/** Maximum rendered `defaultDetail` length (spec §10.1; ActivityEvent cap). */
+/** Maximum rendered `defaultDetail` length (ActivityEvent cap). */
 const MAX_DETAIL_LENGTH = 280;
 
 /**
  * Placeholder token matcher: `{name}` where the name is one or more
  * word characters. A plain regex + `replace` callback — deliberately NOT a
- * template-literal that would execute its contents (§19.4). Capturing group 1
+ * template-literal that would execute its contents. Capturing group 1
  * is the placeholder key.
  */
 const PLACEHOLDER_RE = /\{([A-Za-z0-9_]+)\}/g;
 
 // ---------------------------------------------------------------------------
-// Public contract (spec §10.1 lines 1195-1214)
+// Public contract
 // ---------------------------------------------------------------------------
 
-/** The pure output of {@link applyTemplate}. Field names match spec §10.1. */
+/** The pure output of {@link applyTemplate}. */
 export interface TemplateOutput {
   /** Rendered, redacted, length-capped (≤120) label string. */
   defaultLabel: string;
@@ -144,8 +144,8 @@ export function applyTemplate(
   //     as the label text (an empty return falls through to the substituted
   //     label). The transform output is piped through `redactValue` even when
   //     the transform claims to self-redact (e.g. parseShellCommand at
-  //     shell-label-parser.ts:53) — defense-in-depth against the Pitfall 4
-  //     regression where a malicious or buggy transform leaks a secret shape.
+  //     shell-label-parser.ts:53) — defense-in-depth against a malicious
+  //     or buggy transform leaking a secret shape.
   //     The transform fires AFTER substitute() Result-checks above, so a
   //     missing-placeholder error is still surfaced as err({kind:'unknown_key'}).
   let labelText = labelResult.value;
@@ -157,7 +157,7 @@ export function applyTemplate(
     }
   }
 
-  // (5) Length cap (spec §10.1): label ≤ 120, detail ≤ 280; flag truncation.
+  // (5) Length cap: label ≤ 120, detail ≤ 280; flag truncation.
   let truncated = false;
   let defaultLabel = labelText;
   if (defaultLabel.length > MAX_LABEL_LENGTH) {

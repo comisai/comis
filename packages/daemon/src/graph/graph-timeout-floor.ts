@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Graph-timeout floor (v2.19, OR/timeout fix).
+ * Graph-timeout floor.
  *
  * A weak model routinely sets the graph-level `timeoutMs` too low for the work
  * it just decomposed — observed live: a 6-node NVDA pipeline (4 analysts →

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Built-but-not-wired SOURCE GUARD for the keyless-first audio stack (Phase 193 /
- * Plan 03). Mirrors `video-wiring-guard.test.ts` / `setup-image-provider.test.ts`'s
- * RES-01-keystone guard: a shrink-only source-grep with NO allowlist.
+ * Built-but-not-wired SOURCE GUARD for the keyless-first audio stack.
+ * Mirrors `video-wiring-guard.test.ts` / `setup-image-provider.test.ts`'s
+ * keystone guard: a shrink-only source-grep with NO allowlist.
  *
- * "Built but not wired" has been THIS program's #1 recurring blocker (caught by
- * code review every prior phase v2.14/v2.18/v2.22/v2.23/v2.24): the resolver +
+ * "Built but not wired" has been THIS program's #1 recurring blocker (repeatedly
+ * caught in code review): the resolver +
  * selector can exist, compile, and pass their own unit tests while the LIVE daemon
  * never invokes them before adapter construction — so a Codex/OAuth-only main still
- * builds the empty-bearer OpenAI STT adapter (the 401 this milestone fixes). These
+ * builds the empty-bearer OpenAI STT adapter (the 401 this wiring prevents). These
  * assertions pin the LIVE wiring — daemon.ts builds the selector + threads it into
  * setupMedia, and setup-media.ts consumes resolveStt()/resolveTts() BEFORE
  * createSTTProvider/createTTSProvider — so a future refactor cannot regress the
@@ -75,7 +75,7 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
     // /createSTTProvider/ (which matches the import line) and NOT a bare
     // /createSTTProvider\s*\(/ (which matches the createSTTProviderFactory helper's
     // internal `createSTTProvider(config, ...)` call at the top of the file, BEFORE
-    // resolveStt — a false RED). After the WR-01 review fix the gated primary construct
+    // resolveStt — a false RED). The gated primary construct
     // builds from the RESOLVER's chosen config, so it is uniquely `createSTTProvider(sttConfig, ...)`
     // (the helper uses `(config`, the fallback loop uses `(fbConfig` — neither matches `(sttConfig`).
     const resolveIdx = code.search(/resolveStt|createAudioProviderSelector|resolveTranscriptionProvider|audioSelector/);
@@ -87,7 +87,7 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
 
   it("setup-media.ts gates TTS construction on the resolver result before constructing the adapter", () => {
     const code = stripComments(readFileSync(SETUP_MEDIA_TS, "utf8"));
-    // Same resolver-before-construct ordering for TTS. After the WR-01 review fix the
+    // Same resolver-before-construct ordering for TTS. The
     // gated primary TTS construct builds from the RESOLVER's chosen config, so it is
     // uniquely `createTTSProvider(ttsConfig, ...)` (the helper uses `(config`).
     const resolveIdx = code.search(/resolveTts|audioSelector/);
@@ -97,11 +97,11 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
     expect(resolveIdx).toBeLessThan(constructIdx);
   });
 
-  it("tts-factory.ts routes the local/piper case to createLocalTtsAdapter BEFORE the default 'Unknown TTS provider' error (TTS-02 built-but-not-wired guard)", () => {
+  it("tts-factory.ts routes the local/piper case to createLocalTtsAdapter BEFORE the default 'Unknown TTS provider' error (built-but-not-wired guard)", () => {
     // The program's #1 recurring blocker is built-but-not-wired: the offline TTS
     // adapter (createLocalTtsAdapter) can exist + pass its own unit tests while
     // the factory still falls `provider:"local"` through to the raw "Unknown TTS
-    // provider: local" default — a silent stub behind a wizard option (195). This
+    // provider: local" default — a silent stub behind a wizard option. This
     // pins the live routing with the SAME indexOf-ordering construct the existing
     // TTS construct guard uses: the local/piper case must reach the adapter BEFORE
     // the default error. A refactor that drops the case turns this red. NO
@@ -117,23 +117,23 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
     expect(adapterIdx).toBeLessThan(defaultIdx);
   });
 
-  it("setup-audio-provider.ts threads the Plan-01 resolvers + the SecretManager-backed audioKeyAvailable predicate (no codex branch)", () => {
+  it("setup-audio-provider.ts threads the resolvers + the SecretManager-backed audioKeyAvailable predicate (no codex branch)", () => {
     const code = stripComments(readFileSync(SETUP_AUDIO_PROVIDER_TS, "utf8"));
     // The selector calls the pure resolvers …
     expect(code).toMatch(/resolveTranscriptionProvider\s*\(/);
     expect(code).toMatch(/resolveTtsProvider\s*\(/);
     // … with the AUDIO_ENV_KEY-backed key-presence closure over SecretManager
-    // (NOT process.env). The map must NOT carry an openai-codex entry (Pitfall 2 —
-    // codex has no audio env key; MAIN_PROVIDER_AUDIO['openai-codex'] is undefined).
+    // (NOT process.env). The map must NOT carry an openai-codex entry (codex has
+    // no audio env key; MAIN_PROVIDER_AUDIO['openai-codex'] is undefined).
     expect(code).toMatch(/AUDIO_ENV_KEY/);
     expect(code).toMatch(/secretManager\.get\(/);
     expect(code).not.toMatch(/AUDIO_ENV_KEY\s*=\s*\{[\s\S]*?["']openai-codex["']/);
   });
 
-  it("setup-audio-provider.ts threads the real localEngineAvailable boot probe, not the hardcoded () => false (Phase 194)", () => {
-    // Phase 194 (LOCAL-02/03): buildAudioResolverDeps must run the one-shot
-    // detectLocalSttEngine boot probe and thread its captured boolean — NOT the
-    // Phase-193 hardcoded `localEngineAvailable: () => false`. This pins the
+  it("setup-audio-provider.ts threads the real localEngineAvailable boot probe, not the hardcoded () => false", () => {
+    // buildAudioResolverDeps must run the one-shot
+    // detectLocalSttEngine boot probe and thread its captured boolean — NOT a
+    // hardcoded `localEngineAvailable: () => false`. This pins the
     // program's #1 recurring blocker (built-but-not-wired): a refactor that drops
     // the probe or re-hardcodes the false literal turns this red. NO allowlist add
     // (allowlists are shrink-only).
@@ -148,7 +148,7 @@ describe("keyless-first audio built-but-not-wired source guard", () => {
     expect(code).toMatch(/await\s+detectEngine\s*\(/);
     // The seam is the captured boolean from that probe.
     expect(code).toMatch(/localEngineAvailable:\s*\(\)\s*=>\s*probe\.available/);
-    // availability is logged once at boot (LOCAL-02).
+    // availability is logged once at boot.
     expect(code).toMatch(/step:\s*["']stt_local_probe["']/);
     // The hardcoded seam is GONE: no `localEngineAvailable: () => false`
     // object-property assignment anywhere. This negative is deliberately NARROW —

@@ -6,7 +6,7 @@
  * gate test (test/architecture/live-coverage-matrix.test.ts) and the live runner
  * consume this file.
  *
- * Shape: every §7.2 combination-generating dimension × mode-value cell. Each cell is:
+ * Shape: every combination-generating dimension × mode-value cell. Each cell is:
  *   - status="covered" with `reference` = repo-relative path to a passing
  *     test file that exercises this (dimension × modeValue); OR
  *   - status="skipped" with `reference` = non-empty, non-blocklisted reason
@@ -39,14 +39,14 @@ export interface CoverageCell {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 147 (E2E) — story-coverage auto-wiring VIEW.
+// Story-coverage auto-wiring VIEW.
 //
 // Journeys contribute to coverage via storyCoverageContributions() — a derived
 // VIEW that walks STORY_LIBRARY (re-exported here from journeys/registry.ts so
 // the runner / architecture gate / soak read it from one place). This satisfies
-// E2E-03's "each story's tags + dimensions contribute to the §7.2 coverage
-// matrix" WITHOUT adding rows to COVERAGE_DIMENSIONS: the §7.2 matrix below
-// enumerates CONFIG mode-values (owned + settled by the depth phases 136–146);
+// the journey requirement that each story's tags + dimensions contribute to the
+// coverage matrix WITHOUT adding rows to COVERAGE_DIMENSIONS: the matrix below
+// enumerates CONFIG mode-values (owned + settled by the depth phases);
 // journeys are a HORIZONTAL composition layer settled by their test files
 // existing (scenario-cert style, like SEC-02/03 + PLAT-01/02/04). The view
 // auto-grows the instant a story registers — zero churn to the cells below.
@@ -76,8 +76,8 @@ export const COVERAGE_DIMENSIONS = [
   "rag.pinned.enabled",
   "rag.forget.enabled",
   "rag.feedback.enabled",
-  // (rag.onlineTuning.enabled removed in v2.31 / Phase 224 — the recall-apply
-  //  tuning gate was deleted with the UCB bandit; no live surface to cover.)
+  // (rag.onlineTuning.enabled has no live surface to cover — there is no
+  //  recall-apply tuning gate.)
   "rag.includeTrustLevels",
   // Security
   "security.storage",
@@ -127,7 +127,7 @@ export const COVERAGE_DIMENSIONS = [
   "workspace.profile",
   // Bootstrap
   "bootstrap.promptMode",
-  // ORCH (Phase 141)
+  // ORCH
   "routing.bindingSpecificity",
   "routing.defaultAgentId",
   "agent.isolation",
@@ -167,7 +167,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // embedding.provider (3 cells)
   // ===========================================================================
   {
-    // WR-02: no test exercises provider="auto" at all — LOCAL_MATRIX only has
+    // No test exercises provider="auto" at all — LOCAL_MATRIX only has
     // provider="local" entries; no EMBEDDING_MATRIX row ever uses provider="auto"
     dimension: "embedding.provider",
     modeValue: "auto",
@@ -176,7 +176,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
-    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
     // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "embedding.provider",
     modeValue: "local",
@@ -185,7 +185,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
-    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive || !hasOpenAiKey) Stage-C
+    // embedding-matrix.test.ts is behind describe.skipIf(!isLive || !hasOpenAiKey) Stage-C
     // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + OPENAI_API_KEY
     dimension: "embedding.provider",
     modeValue: "openai",
@@ -198,7 +198,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // local.gpu (5 cells)
   // ===========================================================================
   {
-    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
     // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "local.gpu",
     modeValue: "auto",
@@ -228,7 +228,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
-    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
     // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "local.gpu",
     modeValue: "false",
@@ -241,7 +241,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // embeddingDimensions (3 cells)
   // ===========================================================================
   {
-    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
     // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "embeddingDimensions",
     modeValue: "768",
@@ -250,7 +250,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
-    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
     // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "embeddingDimensions",
     modeValue: "1536",
@@ -259,7 +259,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
-    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
     // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "embeddingDimensions",
     modeValue: "3072",
@@ -272,7 +272,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // memory.costFeatures.enabled (2 cells)
   // ===========================================================================
   {
-    // WR-01: cost-features.test.ts only does a Stage-A YAML structural check for
+    // cost-features.test.ts only does a Stage-A YAML structural check for
     // costFeatures.enabled=true — no live daemon test exercises this path.
     // The Stage-B daemon test is behind describe.skipIf(!isLive).
     dimension: "memory.costFeatures.enabled",
@@ -423,8 +423,8 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
-    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.forget —
-    // buildMemConfig lanes array does not include "forget"; this cell was never exercised.
+    // recall-lanes.test.ts LANE_PAIRS contains no entries for rag.forget —
+    // buildMemConfig lanes array does not include "forget"; this cell is not exercised.
     dimension: "rag.forget.enabled",
     modeValue: "true",
     status: "skipped",
@@ -432,8 +432,8 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "140",
   },
   {
-    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.forget —
-    // buildMemConfig lanes array does not include "forget"; this cell was never exercised.
+    // recall-lanes.test.ts LANE_PAIRS contains no entries for rag.forget —
+    // buildMemConfig lanes array does not include "forget"; this cell is not exercised.
     dimension: "rag.forget.enabled",
     modeValue: "false",
     status: "skipped",
@@ -441,8 +441,8 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "140",
   },
   {
-    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.feedback —
-    // buildMemConfig lanes array does not include "feedback"; this cell was never exercised.
+    // recall-lanes.test.ts LANE_PAIRS contains no entries for rag.feedback —
+    // buildMemConfig lanes array does not include "feedback"; this cell is not exercised.
     dimension: "rag.feedback.enabled",
     modeValue: "true",
     status: "skipped",
@@ -450,16 +450,16 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "140",
   },
   {
-    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.feedback —
-    // buildMemConfig lanes array does not include "feedback"; this cell was never exercised.
+    // recall-lanes.test.ts LANE_PAIRS contains no entries for rag.feedback —
+    // buildMemConfig lanes array does not include "feedback"; this cell is not exercised.
     dimension: "rag.feedback.enabled",
     modeValue: "false",
     status: "skipped",
     reference: "covered in Phase 140 (TOOL+MCP) — rag.feedback live-fire test",
     phase: "140",
   },
-  // (rag.onlineTuning.enabled true/false cells removed in v2.31 / Phase 224 — the
-  //  recall-apply tuning gate was deleted with the UCB bandit; nothing to cover.)
+  // (rag.onlineTuning.enabled has no true/false cells to cover — there is no
+  //  recall-apply tuning gate.)
   {
     dimension: "rag.includeTrustLevels",
     modeValue: "true",
@@ -468,7 +468,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
-    // WR-01: trust-safety.test.ts only sets includeTrustLevels: true (lines 133, 172);
+    // trust-safety.test.ts only sets includeTrustLevels: true (lines 133, 172);
     // includeTrustLevels=false is never configured in any test in the suite.
     dimension: "rag.includeTrustLevels",
     modeValue: "false",
@@ -564,7 +564,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "cacheRetention",
     modeValue: "none",
-    // CR-03/CR-02: "none" exercises the kill-switch path — cache-matrix.test.ts now
+    // "none" exercises the kill-switch path — cache-matrix.test.ts
     // asserts expectNoCacheWrite (cacheCreationInputTokens===0) for this combo,
     // honestly covering the kill-switch behaviour rather than a broken write assertion.
     status: "covered",
@@ -635,7 +635,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "geminiCache",
     modeValue: "true",
-    // CR-03: geminiCache is a Google Gemini CachedContent feature. The only STRATEGY_MATRIX
+    // geminiCache is a Google Gemini CachedContent feature. The only STRATEGY_MATRIX
     // row with geminiCache=true used provider:"anthropic", which does not exercise the
     // Gemini CachedContent API path. CACHE-02 (gemini-cache.test.ts) drives a real Google
     // provider turn with geminiCache enabled and asserts both cacheCreationInputTokens>0
@@ -1042,11 +1042,11 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // ===========================================================================
   // search (8 cells)
   // ===========================================================================
-  // Phase 143 (WEB-01) deepens the Phase-135 connectivity probe: search-providers.test.ts
+  // search-providers.test.ts deepens the connectivity probe: it
   // exercises each provider's config-shape + per-provider key-gating + the freshness param
   // (asserted on the PUBLIC WebSearchParams schema) at Stage-B. The real judged per-provider
   // query is Stage-C/it.skip (credential/network-gated). The sweep probe (sweep/probes.ts)
-  // still runs in `pnpm test:live sweep`; these cells now reference the deeper depth-phase test.
+  // still runs in `pnpm test:live sweep`; these cells reference the deeper test.
   {
     dimension: "search",
     modeValue: "brave",
@@ -1315,7 +1315,7 @@ export const coverageMatrix: readonly CoverageCell[] = [
   },
 
   // ===========================================================================
-  // local.qwen36 — Phase 150 daemon-routed platform-guarantee tier
+  // local.qwen36 — daemon-routed platform-guarantee tier
   // ===========================================================================
   {
     dimension: "local.qwen36",

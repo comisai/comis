@@ -17,15 +17,15 @@
  * architecture cap. State (the per-agent registry map) lives in the `setupTools`
  * closure and is threaded in here — there is NO module-global mutable state.
  *
- * Fail-closed by construction, config-gated: the WR-01 closure (124-09) IS landed —
+ * Fail-closed by construction, config-gated:
  * `buildTerminalSharedDeps` populates the allow-set from the threaded operator config
  * (`deps.config?.allow.map(mapAllowEntry)`) and the production worker-spawn posture is
  * wired, so a `terminal_session_create` matching an allowlisted binary spawns a jailed
  * worker. When an agent has NO `skills.terminal` config (or an empty `allow[]`), the
  * wired allow-set is EMPTY and every create is rejected by the allowlist gate
- * (`matchAllowEntry` returns undefined) before any worker is spawned — the pre-P5
+ * (`matchAllowEntry` returns undefined) before any worker is spawned — the
  * fail-closed posture for an unconfigured agent. The surface is always live + governed;
- * a worker spawns only for an operator-allowlisted entry. The seam is clean.
+ * a worker spawns only for an operator-allowlisted entry.
  *
  * @module
  */
@@ -169,13 +169,13 @@ export interface TerminalWiringDeps {
    */
   readonly caps?: SessionCaps;
   /**
-   * The parsed operator terminal-driver config (124-09 — the WR-01 closure). When present,
+   * The parsed operator terminal-driver config. When present,
    * `config.allow` POPULATES the per-agent allow-set (`config.allow.map(mapAllowEntry)`) so
    * the create gate matches an allowlisted binary + the per-session caps go live; the
    * mapped `scope`/`approveOnCreate`/`limits` ride the create frame, and `autoAnswer`/
    * `hintPatterns`/`backend` are consumed by the wake-FSM woken turn (auto-answer policy)
    * + the worker (backend selection). Absent ⇒ the wired allow-set is EMPTY (every create
-   * fail-closes) — the pre-P5 posture.
+   * fail-closes) — the fail-closed posture for an unconfigured agent.
    */
   readonly config?: TerminalDriverConfig;
 }
@@ -226,13 +226,13 @@ function resolveWorkerJsPath(_dataDir: string): string {
 }
 
 /**
- * RECUR-03 (option A, per-generation tmux server): this daemon generation's PER-BOOT tmux `-S`
+ * A per-generation tmux server: this daemon generation's PER-BOOT tmux `-S`
  * socket — `<dataDir>/terminal-worker/tmux-<daemonPid>.sock`. MEMOIZED so EVERY agent's registry
  * (the descriptor/handle stamp) AND the worker (`COMIS_TERMINAL_TMUX_SOCKET`) share ONE socket per
  * daemon process. Keyed on the daemon PID: stable for the daemon's life (so a worker respawn reuses
  * it), unique per restart (a new daemon PID → a new socket). So a restart's NEW sessions are created
  * on a fresh server in the LIVE mount namespace — a stranded prior-generation ns (PrivateTmp/
- * ProtectHome + KillMode=process, RECUR-02) never breaks new bwrap sessions — while a surviving
+ * ProtectHome + KillMode=process) never breaks new bwrap sessions — while a surviving
  * durable re-attaches from its OWN (prior-boot) socket recorded on its descriptor.
  */
 let cachedBootTmuxSocket: string | undefined;
@@ -248,7 +248,7 @@ function bootTmuxSocketPath(dataDir: string): string {
  * mirrors the `onSpawnFailed` template. `onEvict` closes the observability loop on
  * EVERY reaped session: it emits `terminal:session_evicted` (the audited reason) +
  * `terminal:session_state` (state→`lost`, the lifecycle transition) + a WARN
- * (`hint` + `errorKind: "resource"`, §2.7) — so a reap is reconstructable from
+ * (`hint` + `errorKind: "resource"`) — so a reap is reconstructable from
  * logs+events alone. `onCapForget` is wired to the shared `caps.forget` so the
  * per-session cap state is dropped on the reap path (no SessionCaps Map
  * leak). Exported so the audit wiring is unit-testable in isolation.
@@ -273,26 +273,26 @@ export function buildTerminalReaperHooks(
 }
 
 /**
- * Build the daemon-side fd3 attention emit hook for one agent (124-09 Task 1; TR-11 /
- * SEC-11/12 / OPS-04) — the 3rd emit-hook site, mirroring {@link buildTerminalReaperHooks}
+ * Build the daemon-side fd3 attention emit hook for one agent — the 3rd emit-hook site,
+ * mirroring {@link buildTerminalReaperHooks}
  * + the `onSpawnFailed` template. The returned `onTerminalEvent` closure is bound on the
  * registry deps (next to `onSpawnFailed`): for each decoded {@link TerminalEventFrame} the
- * worker pushes on fd3 (124-05, the no-poll attention channel), it RE-PUBLISHES the frame
+ * worker pushes on fd3 (the no-poll attention channel), it RE-PUBLISHES the frame
  * onto the daemon's `TypedEventBus` as the matching closed `terminal:*` event — injecting
  * `agentId` (the worker is owner-agnostic) + `timestamp` and copying ONLY the structural
- * fields off `frame.payload`. This is the re-publish seam the wake-FSM (Task 2) subscribes.
+ * fields off `frame.payload`. This is the re-publish seam the wake-FSM subscribes.
  *
- * REDACTION-SAFE BY CONSTRUCTION (T-124-25): the hook copies ONLY the typed structural
+ * REDACTION-SAFE BY CONSTRUCTION: the hook copies ONLY the typed structural
  * fields per event (`state`/`reason`/`noProgressMs`) — a `screen`/`text`/`payload` field
  * on the worker frame is NEVER read, so screen text physically cannot cross the bus. The
- * worker frame is already redaction-safe (124-05); this is defense-in-depth.
+ * worker frame is already redaction-safe; this is defense-in-depth.
  *
- * §2.7 observability: a wake (`input_needed`) is an INFO completion-style line (step-
+ * Observability: a wake (`input_needed`) is an INFO completion-style line (step-
  * tagged); an `escalated` frame is a WARN carrying `hint` + `errorKind` so the next
  * escalation is reconstructable from logs+events alone. An unknown/unmodeled event kind
  * is dropped (no emit, no throw) — the hook never forwards an unmodeled frame.
  *
- * Exported so the re-publish wiring is unit-testable in isolation (Task 1).
+ * Exported so the re-publish wiring is unit-testable in isolation.
  */
 export function buildTerminalEventHook(
   agentId: string,
@@ -306,13 +306,13 @@ export function buildTerminalEventHook(
       const p = (frame.payload ?? {}) as Record<string, unknown>;
       switch (frame.event) {
         case "terminal:input_needed": {
-          // The attention wake (TR-11). state ∈ {awaiting-input, stuck}; reason is the
+          // The attention wake. state ∈ {awaiting-input, stuck}; reason is the
           // classifier's structural tag (e.g. "settled_cursor_parked") — never screen text.
           const state = p.state === "stuck" ? "stuck" : "awaiting-input";
           const reason = typeof p.reason === "string" ? p.reason : "input_needed";
-          // CLASS-02: the classifier confidence rides the wake event (for the autonomous
-          // policy 164–166 + a future `comis explain`). Read DEFENSIVELY off the untrusted
-          // frame (T-163-11) — an out-of-enum value falls back to "medium", never raw.
+          // The classifier confidence rides the wake event (for the autonomous
+          // policy + a future `comis explain`). Read DEFENSIVELY off the untrusted
+          // frame — an out-of-enum value falls back to "medium", never raw.
           const confidence = p.confidence === "high" || p.confidence === "medium" ? p.confidence : "medium";
           deps.eventBus.emit("terminal:input_needed", { sessionId: frame.sessionId, agentId, state, reason, confidence, timestamp });
           deps.skillsLogger.info(
@@ -322,11 +322,11 @@ export function buildTerminalEventHook(
           break;
         }
         case "terminal:stuck": {
-          // Settled, no affordance, no progress past stuckMs (OPS-04) — a duration signal.
+          // Settled, no affordance, no progress past stuckMs — a duration signal.
           const noProgressMs = typeof p.noProgressMs === "number" ? p.noProgressMs : 0;
-          // CLASS-02: stuck now carries the classifier reason + confidence (observability
-          // symmetry with input_needed). Both read DEFENSIVELY off the untrusted frame
-          // (T-163-11), mirroring the existing noProgressMs narrow — never a raw value.
+          // stuck carries the classifier reason + confidence (observability
+          // symmetry with input_needed). Both read DEFENSIVELY off the untrusted frame,
+          // mirroring the existing noProgressMs narrow — never a raw value.
           const reason = typeof p.reason === "string" ? p.reason : "no_progress";
           const confidence = p.confidence === "high" || p.confidence === "medium" ? p.confidence : "medium";
           deps.eventBus.emit("terminal:stuck", { sessionId: frame.sessionId, agentId, noProgressMs, reason, confidence, timestamp });
@@ -343,7 +343,7 @@ export function buildTerminalEventHook(
           break;
         }
         case "terminal:escalated": {
-          // An escalation audit (SEC-11/12). Typed closed reason ONLY; the prompt rides the LOG.
+          // An escalation audit. Typed closed reason ONLY; the prompt rides the LOG.
           const reason = ESCALATION_REASONS.has(p.reason as string) ? (p.reason as EscalationReason) : "no_safe_match";
           deps.eventBus.emit("terminal:escalated", { sessionId: frame.sessionId, agentId, reason, timestamp });
           deps.skillsLogger.warn(
@@ -359,7 +359,7 @@ export function buildTerminalEventHook(
           break;
         }
         case "terminal:auto_answered": {
-          // A safe-pattern answer was sent (SEC-12): the matched index + keystroke COUNT only.
+          // A safe-pattern answer was sent: the matched index + keystroke COUNT only.
           const matchedPatternIndex = typeof p.matchedPatternIndex === "number" ? p.matchedPatternIndex : -1;
           const keystrokeCount = typeof p.keystrokeCount === "number" ? p.keystrokeCount : 0;
           deps.eventBus.emit("terminal:auto_answered", { sessionId: frame.sessionId, agentId, matchedPatternIndex, keystrokeCount, timestamp });
@@ -393,9 +393,9 @@ function getOrCreateTerminalRegistry(
     // Thread the SHARED per-agent caps instance into the reaper hooks so onCapForget
     // forgets the SAME cap-state map the tool deps consume (one instance for both).
     const reaperHooks = buildTerminalReaperHooks(agentId, { ...deps, caps });
-    // DUR-01 / ENDURE-01 (165-07): the per-agent durability wiring — the descriptor store +
-    // has-session probe + recover/unrecoverable hooks (the registry's recover-on-boot, 165-06)
-    // + the reaper isBusy idle-exclusion predicate (165-08's seam, bound to busyOrHung). The
+    // The per-agent durability wiring — the descriptor store +
+    // has-session probe + recover/unrecoverable hooks (the registry's recover-on-boot)
+    // + the reaper isBusy idle-exclusion predicate (bound to busyOrHung). The
     // isBusy reads the live handle via the registries map (resolved by agentId at sweep time);
     // it is constructed BEFORE the registry but only invoked AFTER it is in the map (the reaper
     // sweep runs on a timer post-construction), so the lazy `registries.get(agentId)` resolves.
@@ -416,7 +416,7 @@ function getOrCreateTerminalRegistry(
     const agentWs = deps.agentWorkspaceDir;
     registry = createTerminalSessionRegistry({
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir, bootTmuxSocketPath(deps.dataDir)),
-      // RECUR-03: stamp this boot's per-boot socket on durable handles/descriptors (MUST match the
+      // Stamp this boot's per-boot socket on durable handles/descriptors (MUST match the
       // worker's COMIS_TERMINAL_TMUX_SOCKET above — both from bootTmuxSocketPath).
       currentTmuxSocket: bootTmuxSocketPath(deps.dataDir),
       logger: deps.skillsLogger,
@@ -429,7 +429,7 @@ function getOrCreateTerminalRegistry(
       egressControl: deps.egressControl,
       // Agent-workspace persistence: root each session in the agent's OWN workspace
       // (`<agentWorkspaceDir>/projects`) with a NO-OP cleanup, so a driven session's
-      // work (e.g. a full GSD milestone's app) survives the session end and the agent
+      // work (e.g. a full multi-hour build) survives the session end and the agent
       // sees it under its workspace — instead of a throwaway /tmp dir rm'd on kill.
       // `buildScopeArgs` re-binds ONLY this subtree RW after the ~/.comis carve-out,
       // so the agent's secrets + its other workspace files stay masked in the jail.
@@ -455,12 +455,12 @@ function getOrCreateTerminalRegistry(
           timestamp: systemNowMs(),
         });
       },
-      // 124-09 (TR-11): re-publish each fd3 attention frame (terminal:input_needed /
+      // Re-publish each fd3 attention frame (terminal:input_needed /
       // stuck / session_state / escalated / auto_answered) onto the TypedEventBus —
-      // the no-poll seam the wake-FSM (setup-terminal-wake.ts) subscribes. The HR-02
+      // the no-poll seam the wake-FSM (setup-terminal-wake.ts) subscribes. The frame-integrity
       // guard runs BEFORE this; a corrupt frame drops the worker and never reaches it.
       onTerminalEvent: buildTerminalEventHook(agentId, deps).onTerminalEvent,
-      // P4 (TR-06/OPS-06): the reaper caps + TimerPort + the audited eviction hooks.
+      // The reaper caps + TimerPort + the audited eviction hooks.
       // worker.{maxSessions,idleTtlMs} + the entry limits.wallClockMs (0 while the
       // allow-set is empty) bound the per-agent session footprint; onCapForget wires
       // caps.forget so the cap-state map is dropped on EVERY reap path.
@@ -470,14 +470,14 @@ function getOrCreateTerminalRegistry(
       timers: deps.timers,
       onEvict: reaperHooks.onEvict,
       onCapForget: reaperHooks.onCapForget,
-      // ENDURE-01 / I9 (165-08's seam): the alive-busy idle-exclusion predicate (bound to
+      // The alive-busy idle-exclusion predicate (bound to
       // busyOrHung). A quiet-but-busy multi-hour compile is excluded from idle eviction; the
       // deliberate wall_clock/max_interactions caps still fire (a named bound, not a mystery).
       isBusy,
-      // DUR-01 (165-06/165-07): the durability seams — descriptor store + has-session probe +
+      // The durability seams — descriptor store + has-session probe +
       // the content-free re-attach / unrecoverable hooks. Recover-on-boot re-attaches a
-      // surviving detached tmux session instead of flipping it lost (I10); absent tmux ⇒ the
-      // lost floor at runtime (I1). The descriptor is persisted at create-time (Pitfall 6).
+      // surviving detached tmux session instead of flipping it lost; absent tmux ⇒ the
+      // lost floor at runtime. The descriptor is persisted at create-time.
       durability,
     });
     registries.set(agentId, registry);
@@ -556,19 +556,19 @@ export interface TerminalWiringBaseDeps {
    * The resolved per-agent workspace dir (`workspaceDirs.get(agentId) ?? default`,
    * the same dir the agent's read/write/exec tools use). When present, the registry
    * roots each session in `<agentWorkspaceDir>/projects` (PERSISTENT, no-op cleanup)
-   * instead of a throwaway `/tmp` dir — so a driven milestone's work survives the
+   * instead of a throwaway `/tmp` dir — so a driven build's work survives the
    * session and the agent can see it. Absent ⇒ the ephemeral default (test paths).
    */
   readonly agentWorkspaceDir?: string;
 }
 
 /**
- * Fold the per-agent operator terminal config onto the base wiring deps (124-09 — the
- * WR-01 closure call-site helper). Derives `workerCaps` from `config.worker.{maxSessions,
+ * Fold the per-agent operator terminal config onto the base wiring deps. Derives
+ * `workerCaps` from `config.worker.{maxSessions,
  * idleTtlMs,stuckMs}` (so the reaper composes when `timers` is present + maxSessions > 0)
  * and threads `config` (so `buildTerminalSharedDeps` populates the allow-set + per-session
  * caps). When `config` is absent the result has no `config`/`workerCaps` ⇒ the wiring
- * fail-closes (empty allow-set, no reaper) — the pre-P5 posture for an unconfigured agent.
+ * fail-closes (empty allow-set, no reaper) — the fail-closed posture for an unconfigured agent.
  *
  * `wallClockMs` is sourced as 0 at the registry/reaper level (the per-ENTRY
  * `limits.wallClockMs` is the operative wall-clock budget, enforced per-send via the caps;
@@ -618,10 +618,10 @@ export function buildTerminalSharedDeps(
   agentId: string,
   deps: TerminalWiringDeps,
 ) {
-  // SEC-01 trust source: the operator allow-set. 124-09 (WR-01 closure) POPULATES it from
+  // The trust source: the operator allow-set. POPULATES it from
   // the threaded `config.allow` via the single `mapAllowEntry` site (the per-entry scope
-  // SEC-02 + approveOnCreate SEC-06 + limits OPS-03/06 ride along, no silent drop). Absent
-  // config ⇒ EMPTY (every create fail-closes) — the pre-P5 fail-closed posture is preserved.
+  // + approveOnCreate + limits ride along, no silent drop). Absent
+  // config ⇒ EMPTY (every create fail-closes) — the fail-closed posture is preserved.
   const allowEntries: AllowEntryLike[] = deps.config?.allow.map(mapAllowEntry) ?? [];
 
   // Construct ONE shared per-agent SessionCaps instance, fed into BOTH
@@ -632,17 +632,17 @@ export function buildTerminalSharedDeps(
   // the forcing use case). The allow-set is EMPTY today, so the limits are undefined (no
   // caps tripped).
   //
-  // WIRING NOW LIVE (124-09 — the WR-01 closure; RESEARCH Open Q3 resolved). Two pieces:
-  //   1. PER-SESSION caps (consumeRequest/consumeInteraction/checkWallClock): LIVE now the
+  // Two pieces are wired live:
+  //   1. PER-SESSION caps (consumeRequest/consumeInteraction/checkWallClock): live once the
   //      allow-set is POPULATED from config — `allowEntries[0].limits` feeds
   //      createSessionCaps below (the entry's maxInteractions/maxRequestsPerSession/
   //      wallClockMs go enforceable).
-  //   2. The REAPER (idle-TTL / wall-clock-age / max-sessions overflow): LIVE now the
+  //   2. The REAPER (idle-TTL / wall-clock-age / max-sessions overflow): live once the
   //      `setup-tools.ts` call site threads `workerCaps` (+ the shared `caps` and `timers`
   //      TimerPort) — `wireRegistryReaper` composes (it needs `timers !== undefined &&
   //      maxSessions > 0`, terminal-reaper.ts). The reaper sweeps the per-agent registry.
   // Both fail-closed when config/workerCaps are absent (empty allow-set ⇒ undefined limits
-  // ⇒ no caps tripped; no workerCaps ⇒ no reaper) — the pre-P5 posture for an unconfigured agent.
+  // ⇒ no caps tripped; no workerCaps ⇒ no reaper) — the posture for an unconfigured agent.
   const entryLimits = allowEntries[0]?.limits;
   const caps: SessionCaps = deps.caps ?? createSessionCaps(entryLimits, systemNowMs);
 
@@ -664,19 +664,19 @@ export function buildTerminalSharedDeps(
     // tryGetContext().sessionKey ?? "") — derived PER CALL inside the tool (resolveOwner),
     // so the daemon needs no new owner arg. This agentId is the fallback half of that key.
     agentId,
-    // DRIVE-02 (164-04) / DELIVER-02: thread the operator's RAW promotion mode (`drive.mode`, may be
+    // Thread the operator's RAW promotion mode (`drive.mode`, may be
     // undefined). The skills wait tool resolves the EFFECTIVE mode via resolveDriveMode(mode, durable):
     // an explicit mode wins; ABSENT, a DURABLE drive (the default long backgrounded drive) defaults to
     // `detached` (it backgrounds at the first wait → the backstop tracks it → a completion notification
-    // fires when the CLI idles), a pty one-shot to `auto` (inline, I1 — byte-identical to today). The
+    // fires when the CLI idles), a pty one-shot to `auto` (inline — byte-identical to the non-detached path). The
     // skills layer reads no config (layer purity) — it only applies the pure resolver to these
     // daemon-supplied values (`driveMode` + `durable` below). Closes the un-promoted short-build gap.
     driveMode: deps.config?.drive?.mode,
-    // READ-01 (164-06): the operator-resolved read mode for the read tool's bounded digest.
-    // Same layer-purity posture as driveMode; `?? "digest"` is the schema default (plan 05's
-    // drive.readMode) + the safe pre-block posture (the bounded current screen).
+    // The operator-resolved read mode for the read tool's bounded digest.
+    // Same layer-purity posture as driveMode; `?? "digest"` is the schema default
+    // (drive.readMode) + the safe pre-block posture (the bounded current screen).
     readMode: deps.config?.drive?.readMode ?? "digest",
-    // DUR-01 (FINDING-B): drive.durable threaded to the create tool → create stamps req.durable:true → the registry derives the tmux name + selects the tmux backend (the survive-a-daemon-restart drive). DEFAULT-ON (`?? true`): the tmux backend is now both DRIVEABLE (the node-pty `attach` rework) and SURVIVE-A-RESTART (KillMode=process + the data-dir socket), so it is the default working setup. Explicit `drive.durable:false` opts out to the non-durable pty backend; a tmux-less host degrades to pty + a logged WARN (§7.1.5).
+    // drive.durable threaded to the create tool → create stamps req.durable:true → the registry derives the tmux name + selects the tmux backend (the survive-a-daemon-restart drive). DEFAULT-ON (`?? true`): the tmux backend is both DRIVEABLE (the node-pty `attach` path) and SURVIVE-A-RESTART (KillMode=process + the data-dir socket), so it is the default working setup. Explicit `drive.durable:false` opts out to the non-durable pty backend; a tmux-less host degrades to pty + a logged WARN.
     durable: deps.config?.drive?.durable ?? true,
     // The operator approval gate — consulted only when a matched entry sets
     // approveOnCreate (else the create path is unchanged); a demanding entry with no
@@ -697,7 +697,7 @@ export function buildTerminalSharedDeps(
 }
 
 /**
- * The per-agent attention config the wake-FSM woken turn reads (124-09 Task 2). Derived
+ * The per-agent attention config the wake-FSM woken turn reads. Derived
  * from the operator terminal config: the `autoAnswer`/`hintPatterns` come from the MATCHED
  * allow-entry (the forcing use case is a single entry per agent — the first entry's policy),
  * and the FSM caps from `worker.maxConcurrentAttentionTurns`. Operator-dialable ONLY (never
@@ -730,7 +730,7 @@ export function deriveTerminalAttentionConfig(
  * calls — folds the base deps + the operator config into the registry + nine tools in ONE
  * call, keeping `setup-tools.ts` under its 800-line cap. `buildTerminalWiringDeps` folds the
  * operator config (allow-set + caps + reaper + autoAnswer/backend; absent ⇒ empty set + no
- * reaper); the 165-07 durability (descriptor store + has-session probe + isBusy + recover-on-
+ * reaper); the durability (descriptor store + has-session probe + isBusy + recover-on-
  * boot hooks) is wired inside `getOrCreateTerminalRegistry`.
  */
 export function wireAgentTerminalTools(
@@ -759,7 +759,7 @@ export function wireTerminalTools(
     createTerminalSessionSendTextTool(sharedDeps),
     createTerminalSessionSendKeyTool(sharedDeps),
     createTerminalSessionWaitTool(sharedDeps),
-    createTerminalSessionStatusTool(sharedDeps), // 124-06: the stub is now a deps-taking, classifier-backed tool
+    createTerminalSessionStatusTool(sharedDeps), // a deps-taking, classifier-backed tool
     createTerminalSessionResizeTool(sharedDeps),
   );
 }

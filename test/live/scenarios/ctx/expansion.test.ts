@@ -11,7 +11,7 @@
  *   Asserts:
  *     - context:dag_expanded event fires with tool in {ctx_search, ctx_inspect, ctx_expand}
  *       and recoveredCount > 0 — via driver.capturedEvents()
- *     - lcd_summaries delta >= 1 (FND-11 — compaction pre-condition happened)
+ *     - lcd_summaries delta >= 1 (compaction pre-condition happened)
  *   lcd_messages exact delta is NOT asserted — runDbOracle enforces exact equality
  *   and a hardcoded count false-fails on tool-use/retry turns.
  *
@@ -108,7 +108,7 @@ describe.skipIf(!isLive)("Live — CTX-04 expansion loop (Stage-C)", () => {
 
         // CTX-04: context:dag_expanded must have fired — read from capturedEvents().
         // The event payload carries: tool, recoveredCount, durationMs, timestamp.
-        // T-138-03-03: ctx_expand has an internal loop-guard + hop cap per context-engine.ts
+        // ctx_expand has an internal loop-guard + hop cap per context-engine.ts
         // so this assertion should never hang.
         const events = driver.capturedEvents();
         const expandEvent = events.find(
@@ -127,10 +127,10 @@ describe.skipIf(!isLive)("Live — CTX-04 expansion loop (Stage-C)", () => {
         const recoveredCount = (expandEvent!.payload as { recoveredCount: number }).recoveredCount;
         expect(recoveredCount, "recoveredCount must be > 0").toBeGreaterThan(0);
 
-        // FND-10 log-oracle — no unexpected ERROR/FATAL in a successful live run.
+        // Log oracle — no unexpected ERROR/FATAL in a successful live run.
         await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
 
-        // FND-11: persistence oracle — structural integrity checks only
+        // Persistence oracle — structural integrity checks only
         // (integrity_check, foreign_key_check, Zod row validation).
         // lcd_messages exact delta is NOT asserted — the oracle enforces exact
         // equality and tool-use/retry turns make the count non-deterministic.
@@ -138,7 +138,7 @@ describe.skipIf(!isLive)("Live — CTX-04 expansion loop (Stage-C)", () => {
           await runDbOracle(dbPath, {});
         }
 
-        // FND-11: lcd_summaries >= 1 — manual delta check (>= semantics).
+        // lcd_summaries >= 1 — manual delta check (>= semantics).
         // Phase 1 compaction must have written at least one leaf summary row.
         if (existsSync(dbPath) && beforeCounts["lcd_summaries"] !== undefined) {
           const afterCounts = snapshotRowCounts(dbPath, ["lcd_summaries"]);
@@ -161,7 +161,7 @@ describe.skipIf(!isLive)("Live — CTX-04 expansion loop (Stage-C)", () => {
         await driver.close().catch(() => {
           // Swallow shutdown noise — the daemon may already have exited.
         });
-        // IN-01: clean up per-combo temp config to avoid tmpdir bloat.
+        // Clean up per-combo temp config to avoid tmpdir bloat.
         try { rmSync(configPath); } catch { /* ignore if already gone */ }
       }
     },

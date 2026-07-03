@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * worktree-lifecycle (WT-01/WT-02) unit tests — RED-first.
+ * worktree-lifecycle unit tests — RED-first.
  *
  * Exercises the net-new git-worktree lifecycle over an INJECTED GitExec seam
  * (no real git, fully deterministic): createWorktree, the PRECISE
  * clean-if-unchanged predicate, cleanIfUnchanged, and the conservative
- * orphan-sweep. The keystone (T-219-09): the predicate is exact — an untracked
+ * orphan-sweep. The keystone: the predicate is exact — an untracked
  * file OR a commit ahead of the base means NOT clean, so the agent's work is
  * preserved. Tests assert the DANGEROUS case: a dirty/ahead worktree is NEVER
  * removed.
  *
- * The GitExec shape mirrors the plan's contract:
+ * The injected GitExec has the shape:
  *   (args, cwd) => Promise<{ stdout: string; exitCode: number }>
  * a fake returns scripted { stdout, exitCode } per args[0]/args[1].
  *
@@ -148,7 +148,7 @@ describe("isWorktreeCleanIfUnchanged", () => {
     await expect(isWorktreeCleanIfUnchanged(git, DIR, BASE)).resolves.toBe(true);
   });
 
-  it("returns FALSE when status reports an untracked '?? newfile' line (Pitfall 5 — even with no tracked diff)", async () => {
+  it("returns FALSE when status reports an untracked '?? newfile' line (even with no tracked diff)", async () => {
     const { git } = makeFakeGit([
       { when: argEq("status", "--porcelain"), reply: { stdout: "?? newfile.ts\n", exitCode: 0 } },
       { when: (a) => argEq("rev-parse")(a) && a[1] === "HEAD", reply: { stdout: `${BASE_SHA}\n`, exitCode: 0 } },

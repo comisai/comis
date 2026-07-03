@@ -302,14 +302,14 @@ export const TEMPORAL_EVAL_FIXTURES: EvalQuery[] = [
  * Trust-first contradiction fixtures — the `"temporal"` group's TRUST
  * case, scored against the EXISTING trust lever (`score()` with `trustAlpha>0`;
  * score.ts UNCHANGED). Kept in a SEPARATE exported array from {@link TEMPORAL_EVAL_FIXTURES}
- * (Pitfall 1) so the temporal-group lift/neutral assertions over T1/T2 stay
+ * so the temporal-group lift/neutral assertions over T1/T2 stay
  * byte-untouched and green (the documented zero-regression discipline).
  *
  * THE TRUST LEAPFROG (vs Hindsight's latest-mentioned-wins). Each query pairs a NEWER
  * LOW-trust claim carrying the HIGHER fusion `score` (it would win on recency/lexical alone)
  * against an OLDER HIGHER-trust fact carrying the LOWER fusion `score`. Because single-lane
  * `fuse()` is order-preserving, the fusion-only baseline ranks the newer low-trust claim at
- * rank 1 and MISSES the higher-trust id at recall@1 (Pitfall 2 — the distractor is given the
+ * rank 1 and MISSES the higher-trust id at recall@1 (the distractor is given the
  * headroom so the trust lever has work to do). Ranking through `score(..., { trustAlpha:0.5 })`
  * (system 1.0 / learned 0.5 / external 0.0; recencyAlpha 0 so `createdAt` does NOT move the
  * order) lifts the higher-trust fact to rank 1: a newer low-trust claim does NOT supersede an
@@ -621,9 +621,9 @@ export function usefulnessByIdFor(q: EvalQuery): ReadonlyMap<string, UsefulnessS
  * scenario scored against the LIVE proof lever (`score()` with `proofAlpha>0`; the proof
  * log curve × confidence half-life — score.ts:166-198 UNCHANGED, proofAlpha is already live).
  * Kept in a SEPARATE exported array from the prior groups' fixtures so their assertions
- * stay untouched and green (the documented zero-regression discipline, Pitfall 1).
+ * stay untouched and green (the documented zero-regression discipline).
  *
- * THE PROOF-ACCRUAL PAYOFF (HINDSIGHT_VS_COMIS.md N2 PARITY). A fact corroborated across MULTIPLE
+ * THE PROOF-ACCRUAL PAYOFF. A fact corroborated across MULTIPLE
  * consolidation runs accrues proof and OUT-RANKS a one-off mention. The fold path
  * grows `proof_count` via the UNIONed source-set cardinality + refreshes `occurredAt`/`confidence`;
  * this group proves the read side rewards that accrual. Each query pairs a ONE-OFF mention (a raw,

@@ -13,28 +13,27 @@ import {
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 // ---------------------------------------------------------------------------
-// The default-activation FRAMEWORK, reconciled for the v1 OPT-OUT posture.
+// The default-activation FRAMEWORK (v1 OPT-OUT posture).
 //
 // A capability resolves ON via EITHER the v1 opt-out posture (membership in
 // V1_OPT_OUT_CAPABILITIES) OR a recorded measured-lift decision — AND, in both
 // paths, the FROZEN-TRUST invariant (trust filter / trustAlpha never move) holds.
 //
-// Phase 226-04: the SOCIAL directional-relationship capability — the only OFF,
-// privacy-gated member, and the only consumer of the descriptor's operatorGatePath
-// field — was DELETED with the entire social-modeling subsystem (the __SOCIAL_MODELING__
-// cron, the RelationshipStore port + sqlite adapter, the `relationship` table, the
-// relationship-block prompt injection, the per-agent socialModeling config key). The
-// registry is now exactly the five opt-out capabilities; every one resolves ON, and the
-// operatorGatePath field is gone. (learnRank was deleted in Phase 224; USER + REASON in
-// Phase 225-05 — all with their config keys.)
+// There is NO social-modeling subsystem: no SOCIAL directional-relationship
+// capability, no `__SOCIAL_MODELING__` cron, no RelationshipStore port, no
+// `relationship` table, no relationship-block prompt injection, no per-agent
+// socialModeling config key, and no descriptor `operatorGatePath` field. The
+// registry is exactly the five opt-out capabilities; every one resolves ON.
+// Several tests below pin that absence so the subsystem cannot silently creep
+// back in.
 // ---------------------------------------------------------------------------
 
 describe("capability registry", () => {
-  it("is exactly the five opt-out capabilities, each ON as-shipped (SOCIAL deleted in 226-04)", () => {
+  it("is exactly the five opt-out capabilities, each ON as-shipped", () => {
     const cfg = PerAgentConfigSchema.parse({});
     // Each registered capability must name a real config path; we read it off a parsed
-    // PerAgentConfig to prove the path is live (not a typo'd dead string). After the
-    // SOCIAL delete every registered capability is in the opt-out set and ships ON (true).
+    // PerAgentConfig to prove the path is live (not a typo'd dead string). Every
+    // registered capability is in the opt-out set and ships ON (true).
     expect(V2_9_CAPABILITIES.length).toBe(5);
     for (const cap of V2_9_CAPABILITIES) {
       const value = readPath(cfg as unknown as Record<string, unknown>, cap.configPath);
@@ -44,7 +43,7 @@ describe("capability registry", () => {
     }
   });
 
-  it("the opt-out set is exactly the five non-privacy capabilities (SOCIAL deleted in 226-04; learnRank in 224; user/reason in 225)", () => {
+  it("the opt-out set is exactly the five non-privacy capabilities", () => {
     expect([...V1_OPT_OUT_CAPABILITIES].sort()).toEqual(
       ["dialectic", "feed", "forget", "kg", "learnIq"].sort(),
     );
@@ -59,10 +58,10 @@ describe("capability registry", () => {
     expect(paths.size).toBe(V2_9_CAPABILITIES.length);
   });
 
-  it("DELETE (226-04): the SOCIAL capability is GONE from the registry (no `social` id, no socialModeling path)", () => {
-    // The deletion's RED: the social-modeling subsystem is gone, so the `social`
-    // capability descriptor must no longer exist and no descriptor may reference the
-    // deleted socialModeling config path.
+  it("the SOCIAL capability is absent from the registry (no `social` id, no socialModeling path)", () => {
+    // There is no social-modeling subsystem, so no `social` capability
+    // descriptor may exist and no descriptor may reference a socialModeling
+    // config path.
     expect(V2_9_CAPABILITIES.find((c) => c.id === ("social" as CapabilityId))).toBeUndefined();
     expect(V2_9_CAPABILITIES.some((c) => c.configPath.startsWith("socialModeling"))).toBe(false);
     // (Resolving the deleted `social` id throws — asserted in the resolver describe block.)
@@ -70,9 +69,9 @@ describe("capability registry", () => {
 });
 
 describe("measured-winner activation set", () => {
-  it("is EMPTY (every registered capability is in the opt-out set; the measured-lift path is now an ahead-of-need mechanism)", () => {
-    // The measured-lift path stays committed-decision-driven and is empty. After the
-    // SOCIAL delete there is no non-opt-out capability for it to govern; it remains as an
+  it("is EMPTY (every registered capability is in the opt-out set; the measured-lift path is an ahead-of-need mechanism)", () => {
+    // The measured-lift path stays committed-decision-driven and is empty. There
+    // is no non-opt-out capability for it to govern; it remains as an
     // ahead-of-need mechanism for a future non-opt-out capability.
     expect(ACTIVATED_CAPABILITIES).toEqual([]);
   });
@@ -130,19 +129,19 @@ describe("resolver (effective default-OFF→ON, v1 opt-out posture)", () => {
     }
   });
 
-  it("resolveAllCapabilityDefaults returns one ON entry per capability (no capability is OFF after the SOCIAL delete)", () => {
+  it("resolveAllCapabilityDefaults returns one ON entry per capability (no capability resolves OFF)", () => {
     const all = resolveAllCapabilityDefaults();
     expect(all.length).toBe(V2_9_CAPABILITIES.length);
     for (const r of all) {
       expect(r.effectiveDefaultOn, `${r.id} resolves ON`).toBe(true);
     }
-    // No OFF capability remains (SOCIAL was the only one, and it is deleted).
+    // No OFF capability exists.
     expect(all.filter((r) => !r.effectiveDefaultOn)).toEqual([]);
   });
 
-  it("errors for an unknown capability id (no silent success) — including the deleted `social` id", () => {
+  it("errors for an unknown capability id (no silent success) — including the unregistered `social` id", () => {
     expect(() => resolveCapabilityDefault("not-a-capability" as CapabilityId)).toThrow();
-    // The deleted SOCIAL id is now an unknown id → the closed-union guard throws.
+    // `social` is not a registered id → the closed-union guard throws.
     expect(() => resolveCapabilityDefault("social" as CapabilityId)).toThrow();
   });
 });
@@ -162,17 +161,16 @@ describe("framework/schema parity (v1 opt-out posture)", () => {
       const shipped = readPath(cfg, cap.configPath);
       const shippedOn = shipped === true; // OFF = undefined | false; ON = true
       expect(resolved.effectiveDefaultOn, `${cap.id} resolved == shipped`).toBe(shippedOn);
-      // Every registered capability ships ON (the opt-out posture, post-SOCIAL-delete).
+      // Every registered capability ships ON (the opt-out posture).
       expect(shippedOn, `${cap.id} as-shipped default`).toBe(true);
     }
   });
 
   it("a bare PerAgentConfig has the opt-out capabilities ON", () => {
     const cfg = PerAgentConfigSchema.parse({});
-    // Cost-bearing subtrees are defaulted ON (no longer `.optional()`).
-    // (memoryUserRepresentation + memoryReasoning were DELETED in Phase 225-05 with their config keys.)
+    // Cost-bearing subtrees are defaulted ON (not `.optional()`).
     expect(cfg.dialectic?.enabled).toBe(true);
-    // rag.* $0 capabilities default ON. (rag.onlineTuning was DELETED in Phase 224 — the bandit.)
+    // rag.* $0 capabilities default ON.
     expect(cfg.rag.feedback.enabled).toBe(true);
     expect(cfg.rag.queryUnderstanding.intentReweight).toBe(true);
     expect(cfg.rag.lanes.graphSpread.enabled).toBe(true);
@@ -188,23 +186,23 @@ describe("framework/schema parity (v1 opt-out posture)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE (226-04): the per-agent socialModeling config key is gone. PerAgentConfig
-// is a `z.strictObject`, so a config carrying the deleted key is now REJECTED at parse
-// (the D-01a operator-update path) — there is no socialModeling subtree to read.
+// The per-agent socialModeling config key does not exist. PerAgentConfig is a
+// `z.strictObject`, so a config carrying that key is REJECTED at parse (the
+// operator-update path) — there is no socialModeling subtree to read.
 // ---------------------------------------------------------------------------
 
-describe("social-modeling config key is deleted (226-04)", () => {
+describe("social-modeling config key does not exist", () => {
   it("a bare config has no socialModeling subtree", () => {
     const cfg = PerAgentConfigSchema.parse({}) as unknown as Record<string, unknown>;
     expect(cfg.socialModeling).toBeUndefined();
   });
 
-  it("a config carrying the deleted socialModeling key is REJECTED at parse (z.strictObject)", () => {
+  it("a config carrying a socialModeling key is REJECTED at parse (z.strictObject)", () => {
     const bad = PerAgentConfigSchema.safeParse({
       name: "Agent 1",
       socialModeling: { enabled: true, privacyReviewSignedOffBy: "privacy-reviewer" },
     });
-    expect(bad.success, "the deleted socialModeling key must be rejected by the strict object").toBe(false);
+    expect(bad.success, "an unknown socialModeling key must be rejected by the strict object").toBe(false);
   });
 });
 

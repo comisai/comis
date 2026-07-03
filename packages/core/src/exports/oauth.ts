@@ -2,8 +2,7 @@
 /**
  * OAuth helper re-exports for the @comis/core barrel.
  *
- * CLI consumers import these names from @comis/core (no longer from
- * @comis/agent; the agent-side re-exports have been removed).
+ * CLI consumers import these names from @comis/core.
  *
  * @module
  */

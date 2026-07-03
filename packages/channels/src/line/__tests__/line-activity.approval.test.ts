@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LINE Quick-Reply approval-chip tests (LINE half; §7.7 / §17.3).
+ * LINE Quick-Reply approval-chip tests.
  *
  * A `kind:"approval"` frame causes LINE's send-only AppendOnly renderer to carry
- * Quick-Reply chips (the `buttons` param) whose callback data is the signed §6.4.2
+ * Quick-Reply chips (the `buttons` param) whose callback data is the signed
  * wire string `v1.<choice>.<shortId>.<hmac>` (LINE Quick-Reply postback carries the
  * signed callback). The chips are built via `buildApprovalButtons(event,
  * signCallbackData)` over the renderer-injected `SignCallbackData`; the renderer
  * reaches the core HMAC primitive through it and never imports `@comis/orchestrator`.
  *
  * The frame stays redacted — chip labels/styles come from the choice hints, never
- * raw params. A non-approval frame stays send-only (no chips), preserving the
- * earlier AppendOnly behavior.
+ * raw params. A non-approval frame stays send-only (no chips), preserving plain
+ * AppendOnly behavior.
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityRenderFrame, ActivityEvent, ApprovalCorrelation } from "@comis/core";
@@ -25,7 +25,7 @@ const SECRET = "test-callback-signing-secret-0123456789";
 const sign = (choice: "approve" | "deny" | "details", shortId: string): string =>
   signCallbackData(SECRET, choice, shortId);
 
-/** The §6.4.2 wire shape: `v1.<choice>.<12 base62>.<16 base64url>`. */
+/** The signed-callback wire shape: `v1.<choice>.<12 base62>.<16 base64url>`. */
 const WIRE = /^v1\.(approve|deny)\.[0-9A-Za-z]{12}\.[A-Za-z0-9_-]{16}$/;
 
 function approval(overrides: Partial<ApprovalCorrelation> = {}): ApprovalCorrelation {

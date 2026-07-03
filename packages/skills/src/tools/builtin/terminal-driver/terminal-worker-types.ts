@@ -3,7 +3,7 @@
  * terminal-worker-types -- the neutral LEAF type-module for the worker's shared
  * structural contracts.
  *
- * Extracted from `terminal-worker-entry.ts` (124-01) to break the source-level import
+ * Extracted from `terminal-worker-entry.ts` to break the source-level import
  * cycle the backend-attach extraction introduced: the entry value-imports `attachBackend`
  * FROM `terminal-worker-backend-attach.ts`, while backend-attach needed
  * `PipeChildLike`/`PtyModuleLike`/`SessionState`/`WorkerLogger` back FROM the entry — a
@@ -39,7 +39,7 @@ export interface WorkerLogger {
   error(obj: Record<string, unknown>, msg: string): void;
 }
 
-/** The durable-fs ops the worker uses — injected so the fsync-thrower test runs on macOS. Moved to this neutral leaf (165-REVIEW) so the worker-defaults sibling can type the default fs port without an import cycle back through the entry. */
+/** The durable-fs ops the worker uses — injected so the fsync-thrower test runs on macOS. Moved to this neutral leaf so the worker-defaults sibling can type the default fs port without an import cycle back through the entry. */
 export interface WorkerFsPort {
   writeFileSync(path: string, data: string): void;
   renameSync(from: string, to: string): void;
@@ -79,16 +79,16 @@ export interface PipeChildLike {
 /**
  * Which backend a session is driven by:
  *   - `pty`      — node-pty (the default, full TUI);
- *   - `tmux`     — the named-session backend required for milestone-length runs
- *                  (OPS-05): the tmux server outlives the worker so a restart
- *                  RE-ATTACHES by the deterministic `comis-<id>` name (124-08);
- *   - `degraded` — the pipe fallback (TR-08), when node-pty is unavailable.
+ *   - `tmux`     — the named-session backend required for long-running jobs:
+ *                  the tmux server outlives the worker so a restart
+ *                  RE-ATTACHES by the deterministic `comis-<id>` name;
+ *   - `degraded` — the pipe fallback, when node-pty is unavailable.
  */
 export type WorkerBackend = "pty" | "tmux" | "degraded";
 
 /**
  * The tmux-backend LOADER seam — the third option behind the same backend interface as
- * `loadPty` (124-08, OPS-05). The daemon binds the session-agnostic deps (the resolved
+ * `loadPty`. The daemon binds the session-agnostic deps (the resolved
  * tmux path, the `has-session` probe, the `runTmux` spawner) and hands the worker this
  * factory; the worker calls it per session with the composed plan command + geometry and
  * gets back a {@link FakePtyLike} handle (onData→ring, onExit→markExited, write/resize/kill
@@ -105,7 +105,7 @@ export interface TmuxBackendLike {
     env: NodeJS.ProcessEnv;
   }): FakePtyLike;
   /**
-   * BL-01 (165-REVIEW): RE-ATTACH to an EXISTING tmux session by name on
+   * RE-ATTACH to an EXISTING tmux session by name on
    * recover-on-boot — the load-bearing fix for the recover zombie. The registry
    * rehydrates a recovered durable session `running`, but the freshly-spawned worker
    * has an EMPTY sessions map; without this it re-attaches a pane ONLY inside
@@ -115,7 +115,7 @@ export interface TmuxBackendLike {
    * (onData→ring, onExit→markExited) WITHOUT a `new-session`; a GONE session
    * (`hasSession` false) returns `undefined` so the worker replies `ok:false` (the
    * registry then flips `lost` + fires `onUnrecoverable` — honest death, never a
-   * fresh CLI / double-drive, I10). Distinct from {@link spawn} (which creates-OR-
+   * fresh CLI / double-drive). Distinct from {@link spawn} (which creates-OR-
    * attaches) so the no-double-create is structural, not conventional.
    */
   reattach(args: {
@@ -123,7 +123,7 @@ export interface TmuxBackendLike {
     cols: number;
     rows: number;
     env: NodeJS.ProcessEnv;
-    /** RECUR-03: the surviving session's OWN per-boot `-S` socket (from its descriptor) — re-attach
+    /** The surviving session's OWN per-boot `-S` socket (from its descriptor) — re-attach
      *  targets THIS server, not this boot's fresh one. Absent ⇒ the legacy single-socket default. */
     tmuxSocket?: string;
   }): FakePtyLike | undefined;
@@ -146,43 +146,43 @@ export interface SessionState {
   backend: WorkerBackend;
   cols: number;
   rows: number;
-  /** The accumulated stdout ring (P0: a growing string; a true ring is P2/121). */
+  /** The accumulated stdout ring (a growing string). */
   ring: string;
   alive: boolean;
   pty?: FakePtyLike;
   pipe?: PipeChildLike;
-  /** Per-session @xterm emulator (P2/121) — SOURCE OF TRUTH for `read` (grid+cursor+alt). Closure-local; fed by `appendRing`, serialized by `handleRead`, resized by `handleResize`. */
+  /** Per-session @xterm emulator — SOURCE OF TRUTH for `read` (grid+cursor+alt). Closure-local; fed by `appendRing`, serialized by `handleRead`, resized by `handleResize`. */
   emu?: SessionEmulator;
-  /** Latest emulator write-parse promise (P2/121): `appendRing` chains each `emu.write(chunk)` (serialized, @xterm-PARSE-backed); `handleRead` awaits it so a settled frame reflects every byte (§2.4). */
+  /** Latest emulator write-parse promise: `appendRing` chains each `emu.write(chunk)` (serialized, @xterm-PARSE-backed); `handleRead` awaits it so a settled frame reflects every byte. */
   writeFlush?: Promise<void>;
-  /** Previous read's emulator snapshot (TR-14): `handleRead` diffs the new one against this (per-session screen-diff) then stores it. */
+  /** Previous read's emulator snapshot: `handleRead` diffs the new one against this (per-session screen-diff) then stores it. */
   lastSnapshot?: EmulatorSnapshot;
-  /** The per-session attention emitter (124-05): the worker hands each settled frame's `Classification` to `emitter.observe`, which writes a fd3 `TerminalEventFrame` on a state TRANSITION only (TR-11, no poll). Absent when the worker was built with no `writeFd3` (the emit is best-effort). */
+  /** The per-session attention emitter: the worker hands each settled frame's `Classification` to `emitter.observe`, which writes a fd3 `TerminalEventFrame` on a state TRANSITION only (no poll). Absent when the worker was built with no `writeFd3` (the emit is best-effort). */
   emitter?: AttentionEmitter;
-  /** The exit-wake observe hook (124-05 gap-close): bound by `handleCreate` alongside {@link emitter}; `markExited` fires it so a child that exits with NO settle pending STILL pushes its `terminal:session_state(exited)` transition on fd3 (TR-11 holds for completion, not just prompts — without this an event-driven agent is never woken on exit and must poll). Fire-and-forget + never throws; the edge-triggered emitter dedups it against a concurrent settle-path observe. Absent when no emitter is wired. */
+  /** The exit-wake observe hook: bound by `handleCreate` alongside {@link emitter}; `markExited` fires it so a child that exits with NO settle pending STILL pushes its `terminal:session_state(exited)` transition on fd3 (the no-poll model holds for completion, not just prompts — without this an event-driven agent is never woken on exit and must poll). Fire-and-forget + never throws; the edge-triggered emitter dedups it against a concurrent settle-path observe. Absent when no emitter is wired. */
   observeExit?: () => void;
-  /** Previously-CLASSIFIED emulator snapshot (124-05): the attention diff anchor, kept SEPARATE from {@link lastSnapshot} (read's diff) so the two never fight over one field. */
+  /** Previously-CLASSIFIED emulator snapshot: the attention diff anchor, kept SEPARATE from {@link lastSnapshot} (read's diff) so the two never fight over one field. */
   lastClassifiedSnapshot?: EmulatorSnapshot;
-  /** Epoch ms of the last observed PROGRESS (classified screen changed) — the OPS-04 stuck-by-progress signal; `noProgressMs = nowMs - lastProgressMs`. Stamped by the classify glue against the worker's injected clock. */
+  /** Epoch ms of the last observed PROGRESS (classified screen changed) — the stuck-by-progress signal; `noProgressMs = nowMs - lastProgressMs`. Stamped by the classify glue against the worker's injected clock. */
   lastProgressMs?: number;
-  /** Per-session interaction count (124-06): incremented at the single `logInteraction` chokepoint (every send_text / send_key / wait / resize). Surfaced by the `status` frame as the spec §5 `interactions` perception. */
+  /** Per-session interaction count: incremented at the single `logInteraction` chokepoint (every send_text / send_key / wait / resize). Surfaced by the `status` frame as the `interactions` perception. */
   interactions: number;
-  /** The PTY exit code when the backend reported one (124-06): captured on the pty `onExit` payload; surfaced by the `status` frame as the spec §5 `exitCode`. Absent on the pipe close/error path (no code) and while alive. */
+  /** The PTY exit code when the backend reported one: captured on the pty `onExit` payload; surfaced by the `status` frame as the `exitCode`. Absent on the pipe close/error path (no code) and while alive. */
   exitCode?: number;
   /** Settle ring-grow subscribers (`SettleDeps.onRingChange`), closure-local; `appendRing` notifies these. */
   ringListeners: Set<() => void>;
   /** Settle exit subscribers (onExit half); the pipe close/error + live pty exit notify these. */
   exitListeners: Set<() => void>;
-  /** Operator-declared sandbox scope (SEC-02) off the create frame — materialized into the bwrap jail by the 122-06 composer. */
+  /** Operator-declared sandbox scope off the create frame — materialized into the bwrap jail by the scope composer. */
   scope?: TerminalScope;
-  /** Operator-declared allowId (create frame) — selects the read-side platform profile (RENDER-01/§5; by allowId only, never content-sniffed). Absent ⇒ the agnostic default. Consumed by the emulator's render transform + (Phase 168) the classifier's perception. */
+  /** Operator-declared allowId (create frame) — selects the read-side platform profile (by allowId only, never content-sniffed). Absent ⇒ the agnostic default. Consumed by the emulator's render transform + the classifier's perception. */
   allowId?: string;
   /** Session workspace root (create frame) — the always-bound jail workspace. */
   workspace?: string;
   /** Session working directory (create frame) — the jail `--chdir` target. */
   cwd?: string;
   /**
-   * The egress materialization for `network: listed-hosts` (122-05/06). Disposed
+   * The egress materialization for `network: listed-hosts`. Disposed
    * ONCE on session teardown (`markExited`) so the per-session socket is
    * cleaned up (no leak). Absent for `none`/`full`.
    */
@@ -190,10 +190,9 @@ export interface SessionState {
 }
 
 // ---------------------------------------------------------------------------
-// Frame result shapes — the worker's per-method reply payloads. Pure types; moved
-// here from terminal-worker-entry.ts (124-08) so that file keeps headroom under the
-// 800-line architecture cap once the tmux backend seam plumbing lands. Intra-module
-// (the entry's handlers return them); NOT re-exported by the barrel.
+// Frame result shapes — the worker's per-method reply payloads. Pure types kept
+// here so terminal-worker-entry.ts stays under the 800-line architecture cap.
+// Intra-module (the entry's handlers return them); NOT re-exported by the barrel.
 // ---------------------------------------------------------------------------
 
 /** The create-frame reply payload. */
@@ -204,22 +203,22 @@ export interface CreateResult {
   rows: number;
 }
 
-/** Post-action snapshot a mutating handler (send_text/send_key) returns (TR-03): the SETTLED `{screen,cursor}` subset; `cursor` stays `{0,0}` until the real cursor lands (P2/121). */
+/** Post-action snapshot a mutating handler (send_text/send_key) returns: the SETTLED `{screen,cursor}` subset; `cursor` stays `{0,0}` until the real cursor lands. */
 export interface SendResult {
   screen: string;
   cursor: { x: number; y: number };
 }
 
-/** The `resize` reply payload (spec §5: `{ ok }`). */
+/** The `resize` reply payload (`{ ok }`). */
 export interface ResizeResult {
   ok: boolean;
 }
 
 /**
- * The `wait` reply payload (spec §5 / TR-05). The canonical shape + its defensive
+ * The `wait` reply payload. The canonical shape + its defensive
  * worker→daemon mapping live in terminal-wait-reply so the worker and the daemon share
  * ONE type; re-exported here for the worker's reply-builder. `isComplete` is LOAD-BEARING
- * — it flows from `runSettle` VERBATIM (a timeout's `false` survives; the P5 attention
- * model RESUMES the turn, never finalizes a live session). T1.1 adds `producing` + `hint`.
+ * — it flows from `runSettle` VERBATIM (a timeout's `false` survives; the attention
+ * model RESUMES the turn, never finalizes a live session). The payload also carries `producing` + `hint`.
  */
 export type { WaitResult } from "./terminal-wait-reply.js";

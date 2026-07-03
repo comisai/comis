@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DIAG-baseline (Phase 149 — PROVE: LLM-diagnosis baseline harness, M1 + M2).
+ * DIAG-baseline — LLM-diagnosis baseline harness.
  *
- * The measure-first GATE for phases 150-155. Two tiers, the established
+ * The measure-first GATE. Two tiers, the established
  * Stage-A/B-vs-Stage-C split (mirrors obs-meta.test.ts:47/56/236):
  *
  *   Stage-A/B (ALWAYS-ON, KEYLESS — runs in `pnpm validate`): the deterministic
- *     substrate. Proves the Plan-01 scorers (loadFixture / recordMetrics /
- *     compareToAnswerKey) and the Plan-03 gating render are correct END-TO-END
- *     over the real frozen 5-fixture corpus (Plan 02). NO COMIS_LIVE, NO daemon,
- *     NO token — so the gate stays green with no API key (success criterion #4,
- *     RESEARCH.md Pitfall 2).
+ *     substrate. Proves the scorers (loadFixture / recordMetrics /
+ *     compareToAnswerKey) and the gating render are correct END-TO-END
+ *     over the real frozen 5-fixture corpus. NO COMIS_LIVE, NO daemon,
+ *     NO token — so the gate stays green with no API key.
  *
  *   Stage-C (COMIS_LIVE-gated, `it.skip`, NEVER in `pnpm validate`): the actual
  *     baseline RUN — a fresh SCRIPTED ReAct agent diagnoses each fixture on
@@ -19,7 +18,7 @@
  *     totalTokens, distinctToolCalls, distinctSourceReads). Expected to FAIL the
  *     goal today (source reads > 0, multi-call, high tokens). Writes the gating
  *     report + ledger to the git-ignored benchmarks/ dir. SKIPS cleanly with no
- *     key (skip != fail). Added in Task 3.
+ *     key (skip != fail).
  *
  * NO new env var: reuses COMIS_LIVE / COMIS_LIVE_BUDGET_USD / COMIS_LIVE_JUDGE_*
  * (all already in docs/reference/environment-variables.mdx). costTier: "dollar".
@@ -62,7 +61,7 @@ const isLive = !!process.env["COMIS_LIVE"];
 const __dirnameLocal = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirnameLocal, "../../fixtures/diagnosis");
 
-/** The 5 frozen diagnosis fixtures (Plan 02). */
+/** The 5 frozen diagnosis fixtures. */
 const FIXTURE_IDS = [
   "session-678314278",
   "live-503-breaker",
@@ -72,7 +71,7 @@ const FIXTURE_IDS = [
 ] as const;
 type FixtureId = (typeof FIXTURE_IDS)[number];
 
-/** Map each fixture id to its closed failure class (Plan 02 corpus table). */
+/** Map each fixture id to its closed failure class. */
 const FAILURE_CLASS: Record<FixtureId, DiagnosisFailureClass> = {
   "session-678314278": "historical-c53ab0f",
   "live-503-breaker": "503-breaker",
@@ -83,7 +82,7 @@ const FAILURE_CLASS: Record<FixtureId, DiagnosisFailureClass> = {
 
 /**
  * Build the explicit NEVER-MEASURED verdict row for a fixture the cost budget cut
- * off (WR-04). Emitting one of these per budget-skipped fixture (instead of a silent
+ * off. Emitting one of these per budget-skipped fixture (instead of a silent
  * `break`) is what keeps every FIXTURE_IDS class present in the gating table — the
  * gating report renders these distinctly (never a TRIM-CANDIDATE) and flags the
  * partial gate. Zeroed metrics + the BUDGET_SKIPPED_MARKER carry the "not measured"
@@ -122,7 +121,7 @@ describe("DIAG-baseline substrate — every fixture loads and is well-formed", (
   it("the historical session fixture carries the completed_with_tool_errors degraded signal", () => {
     const fx = loadFixture(join(FIXTURES_DIR, "session-678314278"));
     expect(fx.meta.endReason).toBe("completed_with_tool_errors");
-    // 534 NDJSON events extracted from daemon.1.log lines 95-628 (Plan 02).
+    // 534 NDJSON events extracted from daemon.1.log lines 95-628.
     expect(fx.events.length).toBeGreaterThan(400);
   });
 });
@@ -175,7 +174,7 @@ describe("DIAG-baseline substrate — compareToAnswerKey requires the causal mec
   });
 
   it("each gold rootCause reaches its own answer-key while a bare symptom string does not, for every fixture", () => {
-    // The measure-first lever across the WHOLE corpus (RESEARCH.md Pitfall 4):
+    // The measure-first lever across the WHOLE corpus:
     // the frozen gold rootCause must satisfy its own mechanism tokens, and a
     // mechanism-free symptom string must NOT — guaranteeing the Stage-C baseline
     // only scores "reached" when the causal mechanism is present.
@@ -210,10 +209,10 @@ describe("DIAG-baseline substrate — the verdict row + gating table serialize a
     expect(() => assertNoSecrets(md, "gating table")).not.toThrow();
   });
 
-  it("a budget-truncated run still yields a COMPLETE gating table that flags the partial gate (WR-04)", () => {
+  it("a budget-truncated run still yields a COMPLETE gating table that flags the partial gate", () => {
     // Simulate the budget cutting the run off after the first 2 fixtures: the
-    // remaining 3 classes are emitted as budget-skipped rows (the scenario's WR-04
-    // behavior), so the gate shows all 5 classes and loudly flags that 3 were not
+    // remaining 3 classes are emitted as budget-skipped rows (the scenario's
+    // budget-skip behavior), so the gate shows all 5 classes and loudly flags that 3 were not
     // measured — never presenting a 40%-complete corpus as the full gate.
     const measured: DiagnosisVerdictRow[] = FIXTURE_IDS.slice(0, 2).map((id) => ({
       fixtureId: id,
@@ -245,7 +244,7 @@ describe("DIAG-baseline substrate — the verdict row + gating table serialize a
   });
 });
 
-describe("DIAG-baseline substrate — windowTranscript retains the mechanism evidence under budget (WR-03)", () => {
+describe("DIAG-baseline substrate — windowTranscript retains the mechanism evidence under budget", () => {
   it("windowTranscript returns the full transcript untruncated when it fits the budget", () => {
     // The 4 synthetic fixtures (each <6 KB) must pass through whole.
     const fx = loadFixture(join(FIXTURES_DIR, "live-503-breaker"));
@@ -285,10 +284,10 @@ describe("DIAG-baseline substrate — windowTranscript retains the mechanism evi
 });
 
 // =========================================================================
-// === Stage-C added in Task 3 ===
+// === Stage-C ===
 //   The actual baseline RUN — gated behind COMIS_LIVE, NEVER in `pnpm validate`,
 //   NEVER needs a CI key. A fresh SCRIPTED ReAct agent diagnoses each fixture on
-//   today's obs surface and records the 4 M2 dimensions per fixture.
+//   today's obs surface and records the 4 measured dimensions per fixture.
 // =========================================================================
 
 // ---------------------------------------------------------------------------
@@ -319,7 +318,7 @@ function lastAssistantText(transcript: AgentTurn[]): string {
 function makeFixtureBackedRpc(fixtureEvents: Array<Record<string, unknown>>): RpcCall {
   return async (method: string, _params: Record<string, unknown>): Promise<unknown> => {
     // obs_query delegates to obs.* methods; return a fixture projection. The
-    // surface carries WHAT failed (counts/categories) but never WHY (the GA1/GA2
+    // surface carries WHAT failed (counts/categories) but never WHY (the
     // gap the answer-keys encode) — so a correct mechanism answer is unreachable
     // from this alone, by design.
     const toolFailures = fixtureEvents.filter(
@@ -335,7 +334,7 @@ function makeFixtureBackedRpc(fixtureEvents: Array<Record<string, unknown>>): Rp
 }
 
 /**
- * Character budget for the fixture transcript handed to the model (WR-03).
+ * Character budget for the fixture transcript handed to the model.
  *
  * The historical `session-678314278` trajectory serializes to ~301 KB across 534
  * events; the prior blind `slice(0, 12_000)` dropped ~96% of it — including the
@@ -355,7 +354,7 @@ function makeFixtureBackedRpc(fixtureEvents: Array<Record<string, unknown>>): Rp
 const TRANSCRIPT_BUDGET_CHARS = 100_000;
 
 /**
- * Event-salience pattern (WR-03): a serialized event carrying any of these signals
+ * Event-salience pattern: a serialized event carrying any of these signals
  * is part of the failure NARRATIVE (what failed / why the breaker tripped / the
  * status-200 misclassification), so it is kept preferentially when the full
  * transcript exceeds the budget. Pure structural match over the serialized line —
@@ -365,7 +364,7 @@ const SALIENT_EVENT_PATTERN =
   /tool execution failed|failuredetector|breaker|do not retry|403|forbidden|blocked|status|errorkind|completed_with_tool_errors|finishreason|success/i;
 
 /**
- * Window a fixture's events into the model's transcript budget (WR-03).
+ * Window a fixture's events into the model's transcript budget.
  *
  * Returns the serialized transcript plus a `truncated` flag so the RUN can RECORD
  * on the verdict row when truncation occurred — a truncated run must not be
@@ -460,7 +459,7 @@ async function runDiagnosisLoop(opts: {
     },
   ];
 
-  // WR-03: window the transcript into the model budget RETAINING the mechanism
+  // Window the transcript into the model budget RETAINING the mechanism
   // evidence (salient failure/status/breaker events) rather than a blind 12 KB
   // head-slice that dropped ~96% of the historical fixture. `truncated` is bubbled
   // up so the caller can record it on the verdict row.
@@ -491,9 +490,9 @@ async function runDiagnosisLoop(opts: {
     const usage = json.usage ?? {};
 
     // Record the assistant turn verbatim (so recordMetrics sees toolCalls + usage).
-    // WR-02: drop nameless tool calls at the producer too — a model emitting a
+    // Drop nameless tool calls at the producer too — a model emitting a
     // tool call without function.name (common with small local models) must not
-    // enter the transcript as `name: ""` and inflate distinctToolCalls (M2b).
+    // enter the transcript as `name: ""` and inflate distinctToolCalls.
     // recordMetrics also skips empty names defensively; this keeps the captured
     // transcript clean at the source.
     transcript.push({
@@ -563,7 +562,7 @@ describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's 
         const id = FIXTURE_IDS[i]!;
         gov.declare("dollar", `diag-${id}`);
         if (gov.check()) {
-          // WR-04: the budget cut us off. DO NOT silently `break` and render a
+          // The budget cut us off. DO NOT silently `break` and render a
           // partial corpus as if complete — emit an explicit budget-skipped row for
           // THIS fixture and every remaining one, so all FIXTURE_IDS classes always
           // appear in the gating table with a clear "not measured" reason. The
@@ -604,12 +603,12 @@ describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's 
           failureClass: FAILURE_CLASS[id],
           totalTokens: metrics.totalTokens,
           distinctToolCalls: metrics.distinctToolCalls,
-          // distinctSourceReads from the COUNTED read_source tool (metric M2c).
+          // distinctSourceReads from the COUNTED read_source tool.
           distinctSourceReads: readSource.readPaths.size,
           judgeVerdict: v.verdict,
           // skip != fail: an absent judge key → "skip" (excluded from the denominator).
           rootCauseReached: v.verdict === "skip" ? "skip" : v.verdict === "pass",
-          // WR-03: record on the row when the fixture was windowed to fit the model
+          // Record on the row when the fixture was windowed to fit the model
           // budget, so a truncated run is never silently read as a clean surface-gap
           // failure. The marker is a label only (passes assertNoSecrets).
           surfacesUsed: [
@@ -624,7 +623,7 @@ describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's 
         void pre;
       }
 
-      // --- persist: the gating report IS the deliverable (success criterion #3) ---
+      // --- persist: the gating report IS the deliverable ---
       const table = buildGatingTable(rows);
       const md = renderGatingMarkdown(table); // assertNoSecrets inside the renderer
       const report: LiveTestReport = {
@@ -643,9 +642,9 @@ describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's 
       };
       const ledgerDir = writeLedger(report, resolve(repoRoot, "benchmarks")); // assertNoSecrets inside
       writeFileSync(join(ledgerDir, "gating-table.md"), md, "utf-8"); // the reorder/trim table
-      // belt-and-suspenders sweep over rows + the rendered table (T-149-03-01).
+      // belt-and-suspenders sweep over rows + the rendered table.
       assertNoSecrets(JSON.stringify(rows) + md, "diagnosis baseline run");
-      // WR-04: EVERY class must appear in the gate — measured or budget-skipped.
+      // EVERY class must appear in the gate — measured or budget-skipped.
       // The table must never present a partial corpus as the full gate, so the row
       // count always equals the full fixture set (budget-skips fill the remainder).
       expect(rows.length).toBe(FIXTURE_IDS.length);

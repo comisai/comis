@@ -156,7 +156,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && rm -rf /var/cache/apt/archives/*.deb
 
 # Install the DuckDB CLI for the orchestrate `sql`/`jsonpath` ResultRef query
-# engine (QRY-01/02). DuckDB is a single static binary — NOT in the Debian apt
+# engine. DuckDB is a single static binary — NOT in the Debian apt
 # repos (`apt-get install duckdb` would FAIL) and NOT an npm package, so we fetch
 # the pinned release-page static binary (verified against the duckdb releases
 # page: v1.5.4 is the latest stable 1.x). `dpkg --print-architecture` yields
@@ -208,7 +208,7 @@ RUN curl -LsSf https://sh.rustup.rs \
 
 # Daemon process must see RUSTUP_HOME / CARGO_HOME as well so cargo works for
 # any agent flow that goes through the daemon (mirrors the systemd unit's
-# Environment= lines added in commit e8210af).
+# Environment= lines on the bare-metal install path).
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo
 
@@ -302,7 +302,7 @@ RUN if [ "${COMIS_WITH_BROWSER}" = "1" ] || [ "${COMIS_WITH_XVFB}" = "1" ] || [ 
 
 # Propagate the build choice to the runtime entrypoint. The shim at
 # /usr/local/bin/comis-entrypoint.sh checks this to decide whether to start
-# Xvfb. Defaulting to "0" keeps zero-arg image builds identical to before.
+# Xvfb. Defaulting to "0" means zero-arg image builds never start Xvfb.
 ENV COMIS_WITH_XVFB="${COMIS_WITH_XVFB}"
 
 # Seed a browser config block when any browser flag is set. Same shape as
@@ -360,7 +360,7 @@ USER comis
 # image's content -- so the venv IS preserved on first start. Subsequent
 # starts reuse the now-persisted venv on the user's volume. Existing
 # non-empty volumes shadow this layer; this is acceptable because the
-# on-demand `pip install` path still works for legacy volumes.
+# on-demand `pip install` path still works for pre-existing volumes.
 #
 # Non-default agents (workspace-${agentId}) pip-install on-demand on first
 # use; the pre-warm only covers the default agent's workspace. KISS:

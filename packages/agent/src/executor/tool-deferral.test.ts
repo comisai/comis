@@ -67,8 +67,7 @@ function makeContext(overrides: Partial<DeferralContext> = {}): DeferralContext 
   };
 }
 
-// resolveModelTier and resolveToolCallingTemperature have been deleted (Phase 151 K1).
-// Temperature and deferral behavior is now driven by capabilityClass from ModelProfile.
+// Temperature and deferral behavior is driven by capabilityClass from ModelProfile.
 
 // ---------------------------------------------------------------------------
 // Suite 3: applyToolDeferral - rule-based deferral
@@ -337,7 +336,7 @@ describe("applyToolDeferral -- MCP active by default for Anthropic/Google", () =
 
 describe("applyToolDeferral -- MCP active by default", () => {
   it("keeps every mcp__yfinance--* tool active for Anthropic / frontier / no alwaysDefer", () => {
-    // Item (1): the canonical happy path the plan flips.
+    // Item (1): the canonical happy path.
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
@@ -412,10 +411,10 @@ describe("applyToolDeferral -- MCP active by default", () => {
     expect(activeNames).not.toContain("mcp__yfinance--get_stock_price");
   });
 
-  it("capabilityClass 'nano' still defers MCP tools (behavior-neutral: nano = old modelTier='small')", () => {
-    // Item (4): the nano-class rule is the SECOND deferral source for MCP
+  it("capabilityClass 'nano' still defers MCP tools via the nano-class rule", () => {
+    // The nano-class rule is the SECOND deferral source for MCP
     // tools (after alwaysDefer). It pins the rule order: nano-class runs
-    // after the now-no-op MCP block. Behavior-neutral Phase 151 mapping.
+    // after the now-no-op MCP block.
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),                              // CORE -- stays active
@@ -435,7 +434,7 @@ describe("applyToolDeferral -- MCP active by default", () => {
   });
 
   it("recently-used MCP tool exemption still applies under the nano-class rule", () => {
-    // Item (5): with capabilityClass "nano" + recentlyUsedToolNames containing
+    // With capabilityClass "nano" + recentlyUsedToolNames containing
     // an MCP tool, that tool stays active. The recently-used exemption is
     // meaningful here -- without it, nano-class would defer.
     const logger = createMockLogger();
@@ -463,11 +462,11 @@ describe("applyToolDeferral -- MCP active by default", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 5: applyToolDeferral - nano-class aggressive deferral (behavior-neutral: old modelTier="small")
+// Suite 5: applyToolDeferral - nano-class aggressive deferral
 // ---------------------------------------------------------------------------
 
 describe("applyToolDeferral - nano-class aggressive deferral", () => {
-  it("defers all non-CORE_TOOLS when capabilityClass is 'nano' (behavior-neutral: old modelTier='small')", () => {
+  it("defers all non-CORE_TOOLS when capabilityClass is 'nano'", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),       // CORE
@@ -493,9 +492,10 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     expect(result.deferredNames).not.toContain("message");
   });
 
-  it("does not trigger aggressive deferral for capabilityClass 'small' (Phase 151: small-class policy deferred to Phase 152)", () => {
-    // Phase 151 behavior-neutral: capabilityClass="small" (qwen3.6 27B/256K) does NOT trigger
-    // aggressive deferral at this phase. Only "nano" triggers it. Small-class policy lands in Phase 152.
+  it("does not trigger aggressive deferral for capabilityClass 'small' (only 'nano' triggers it)", () => {
+    // capabilityClass="small" (e.g. qwen 27B/256K) does NOT trigger aggressive
+    // deferral. Only "nano" triggers it; the small class is governed by the
+    // activeToolCeiling pass instead.
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
@@ -867,7 +867,7 @@ describe("discover_tools score-floor filter", () => {
     }
   });
 
-  it("truncates an oversized query to MAX_EMBED_QUERY_CHARS before calling embed (FIX 4)", async () => {
+  it("truncates an oversized query to MAX_EMBED_QUERY_CHARS before calling embed", async () => {
     const logger = createMockLogger();
     // A real local embedding model throws "Input is longer than the context size"
     // on a ~69K-token query, collapsing vector recall to FTS5-only. The query must
@@ -901,9 +901,9 @@ describe("discover_tools score-floor filter", () => {
     expect((embeddedText as string).length).toBeLessThan(hugeQuery.length);
   });
 
-  // FIX B — the cap must fit the local 2048-token embedding context.
+  // The cap must fit the local 2048-token embedding context.
   //
-  // The prior FIX-4 cap was 8000 chars, but 8000 chars of DENSE content
+  // A cap of 8000 chars would be too large: 8000 chars of DENSE content
   // (~2.5-3 chars/token) ≈ 2700-3200 tokens > the 2048-token embedding context,
   // so a dense query at the cap STILL throws "Input is longer than the context
   // size" and collapses vector recall to FTS5-only. The recall path already uses
@@ -912,13 +912,13 @@ describe("discover_tools score-floor filter", () => {
   // dense 2.5 chars/token (4608/2.5 ≈ 1843). discover_tools must match that bound.
   const SAFE_EMBED_CTX_CHARS = 4_608; // 1536 tokens × 3 (densest-ratio cap)
 
-  it("caps the embed query to the safe 2048-token embedding bound (<=4608 chars) (FIX B)", () => {
+  it("caps the embed query to the safe 2048-token embedding bound (<=4608 chars)", () => {
     // The constant itself must not exceed the densest-ratio safe bound — a value
     // above 4608 lets a dense query overflow the 2048-token context.
     expect(MAX_EMBED_QUERY_CHARS).toBeLessThanOrEqual(SAFE_EMBED_CTX_CHARS);
   });
 
-  it("a long dense query receives <=4608 chars at the embed call (FIX B)", async () => {
+  it("a long dense query receives <=4608 chars at the embed call", async () => {
     const logger = createMockLogger();
     // Dense, low-whitespace content like the recall path sees (code/JSON/ids).
     // At 8000 chars this packs ~2700-3200 tokens and overflows a 2048 context;
@@ -2149,7 +2149,7 @@ describe("buildDeferredToolsContext -- instruction names the discovery tool", ()
   });
 
   it("output is non-empty and contains `<deferred-tools>` and `</deferred-tools>` (single-block smoke test)", () => {
-    // Item (7): smoke test that the template hasn't accidentally broken --
+    // Smoke test that the template hasn't accidentally broken --
     // the block is non-empty and well-formed.
     const entries: DeferredToolEntry[] = [
       { name: "mcp__yfinance--get_stock_price", description: "Get stock price", original: makeTool("mcp__yfinance--get_stock_price") },
@@ -2645,7 +2645,7 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
     expect(result.content[0].text).toContain("mcp_manage");
   });
 
-  it("reproduces srv1593437 08:06 scenario: active tools invisible under BM25 mode", async () => {
+  it("reproduces the production scenario: active tools invisible under BM25 mode", async () => {
     // Production state: 11 deferred tools, yfinance fully active, embedding breaker open.
     const deferredFixture = [
       makeEntry("find", "find files by pattern"),
@@ -2731,7 +2731,7 @@ describe("createAutoDiscoveryStubs", () => {
     const stub = stubs[0];
     expect(stub.name).toBe("mcp__yfinance--get_screener");
     expect(stub.description).toBe("Lean desc for mcp__yfinance--get_screener");
-    // ROOT-CAUSE context-exhaustion fix (2026-06-22): the stub carries a MINIMAL
+    // ROOT-CAUSE context-exhaustion fix: the stub carries a MINIMAL
     // schema, NOT entry.original.parameters — the stub is wire-stripped and forwards
     // params verbatim, so the full schema (~195 tok) would only bloat token estimates
     // (the VPS 13725 over-count). additionalProperties lets any forwarded args through.
@@ -2836,10 +2836,10 @@ describe("createAutoDiscoveryStubs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite C3: buildDeferredToolsContext — maxEntries truncation (Plan 152-04)
+// Suite: buildDeferredToolsContext — maxEntries truncation
 // ---------------------------------------------------------------------------
 
-describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
+describe("buildDeferredToolsContext — maxEntries truncation", () => {
   function makeEntry(name: string, isMcp = false): DeferredToolEntry {
     const toolName = isMcp ? `mcp__server--${name}` : name;
     return {
@@ -2849,7 +2849,7 @@ describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
     };
   }
 
-  it("C3: truncates list to maxEntries and appends [+N more] suffix when entries exceed cap", () => {
+  it("truncates list to maxEntries and appends [+N more] suffix when entries exceed cap", () => {
     // 20 entries with maxEntries=5 → output contains "[+15 more" suffix
     const entries: DeferredToolEntry[] = Array.from({ length: 20 }, (_, i) =>
       makeEntry(`tool_${i}`),
@@ -2859,7 +2859,7 @@ describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
     expect(result).toContain("discover_tools");
   });
 
-  it("C3: does NOT truncate when entries count is exactly at the cap", () => {
+  it("does NOT truncate when entries count is exactly at the cap", () => {
     const entries: DeferredToolEntry[] = Array.from({ length: 5 }, (_, i) =>
       makeEntry(`tool_${i}`),
     );
@@ -2871,7 +2871,7 @@ describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
     }
   });
 
-  it("C3: returns all entries unchanged when no options are passed (backward-compatible)", () => {
+  it("returns all entries unchanged when no options are passed (uncapped default)", () => {
     const entries: DeferredToolEntry[] = Array.from({ length: 20 }, (_, i) =>
       makeEntry(`tool_${i}`),
     );
@@ -2882,7 +2882,7 @@ describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
     expect(withEmptyOptions).not.toContain("[+");
   });
 
-  it("C3: truncation suffix mentions discover_tools for navigation", () => {
+  it("truncation suffix mentions discover_tools for navigation", () => {
     const entries: DeferredToolEntry[] = Array.from({ length: 10 }, (_, i) =>
       makeEntry(`tool_${i}`),
     );
@@ -2891,7 +2891,7 @@ describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
     expect(result).toContain("discover_tools");
   });
 
-  it("C3: MCP tools are grouped before truncation count; suffix is appended after all formatted lines", () => {
+  it("MCP tools are grouped before truncation count; suffix is appended after all formatted lines", () => {
     // Mix of non-MCP (individual) + MCP (grouped) entries
     const entries: DeferredToolEntry[] = [
       makeEntry("regular_tool_a"),
@@ -2907,10 +2907,10 @@ describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 5b: applyToolDeferral — SD7 active-tool ceiling for small class
+// Suite 5b: applyToolDeferral — active-tool ceiling for small class
 // ---------------------------------------------------------------------------
 
-describe("applyToolDeferral - SD7 active-tool ceiling", () => {
+describe("applyToolDeferral - active-tool ceiling", () => {
   it("small class with activeToolCeiling=3: only ≤3 active tools, cold long-tail deferred", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
@@ -2931,7 +2931,7 @@ describe("applyToolDeferral - SD7 active-tool ceiling", () => {
     expect(result.activeTools.map(t => t.name)).toContain("read");
     expect(result.activeTools.map(t => t.name)).toContain("exec");
     expect(result.activeTools.map(t => t.name)).toContain("message");
-    // CWF-04: pipeline is orchestration-exempt (SMALL_CLASS_ORCHESTRATION_TOOLS), so the
+    // pipeline is orchestration-exempt (SMALL_CLASS_ORCHESTRATION_TOOLS), so the
     // effective minimum active set is CORE_TOOLS + pipeline = 16+ tools. At ceiling=3 with
     // only [cron, browser] as cold non-exempt tools, remaining=1 deferral target goes unmet
     // → 4 active (3 CORE + pipeline). Arithmetic: ceiling=3, activeCount=6, remaining=3;
@@ -2960,7 +2960,7 @@ describe("applyToolDeferral - SD7 active-tool ceiling", () => {
     });
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
     expect(result.activeTools.map(t => t.name)).toContain("cron");
-    // CWF-04: pipeline is orchestration-exempt. At ceiling=2:
+    // pipeline is orchestration-exempt. At ceiling=2:
     // read→CORE skip; cron→recentlyUsed skip; browser→defer(remaining=1);
     // pipeline→SMALL_CLASS_ORCHESTRATION_TOOLS skip; remaining=1 unmet.
     // Final active = {read, cron(recently-used), pipeline} = 3.
@@ -3004,15 +3004,7 @@ describe("applyToolDeferral - SD7 active-tool ceiling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite CWF-04: orchestration reachability — ceiling=24 + pipeline active (SMALL-ONLY)
-//
-// Phase-0 static determination (2026-06-09): WIRING-OK — the ceiling and compact-prompt
-// ARE correctly wired in current source (post-Phase 165). The live incident's
-// activeToolCount: 83 was stale-dist. Scope = regression test (this file) +
-// orchestration-reachability change (tool-deferral.ts). WIRING-OK also confirmed
-// for compact-prompt: resolvePromptModeForProfile returns compact-secure for small
-// (WR-03 suite, prompt-assembly.test.ts:2159 — stays GREEN).
-// Live re-measure deferred to operator.
+// Suite: orchestration reachability — ceiling=24 + pipeline active (SMALL-ONLY)
 //
 // Schema-cost-vs-ceiling-saving net:
 // Net saving: 83→24 ceiling shrinks ~5057 tokens; pipeline promotion costs ~1729 tokens
@@ -3020,23 +3012,20 @@ describe("applyToolDeferral - SD7 active-tool ceiling", () => {
 // = ~5057 tokens; pipeline schema ~6052 chars ÷ 3.5 = ~1729 tokens.
 // ---------------------------------------------------------------------------
 
-describe("applyToolDeferral - CWF-04 orchestration reachability (ceiling=24 + pipeline, SMALL-ONLY)", () => {
+describe("applyToolDeferral - orchestration reachability (ceiling=24 + pipeline, SMALL-ONLY)", () => {
   it("small + ceiling=24: pipeline stays ACTIVE (orchestration reachability — SMALL-ONLY)", () => {
-    // RED test: fails today because pipeline is currently deferred by the ceiling.
-    // GREEN: SMALL_CLASS_ORCHESTRATION_TOOLS exempts pipeline inside the ceiling block.
+    // SMALL_CLASS_ORCHESTRATION_TOOLS exempts pipeline inside the ceiling block.
     //
     // Note: cachedSystemTokensEstimate (executor-tool-assembly.ts:339-346) is computed
     // BEFORE deferral using the full pre-deferral tool list — it remains stale for the
-    // current turn. This is a pre-existing known subtlety (Pitfall 4), not introduced
-    // by Phase 168. Budget algebra accurately reflects the post-ceiling manifest on
-    // the NEXT assembly. This test verifies the DEFERRAL output (activeTools.length),
-    // not the systemTokens estimate.
+    // current turn (a known subtlety). Budget algebra accurately reflects the
+    // post-ceiling manifest on the NEXT assembly. This test verifies the DEFERRAL
+    // output (activeTools.length), not the systemTokens estimate.
     //
-    // CWF-04 also requires compact-secure prompt binding (ceiling AND prompt must bind).
-    // Compact-secure binding locked by WR-03 suite at prompt-assembly.test.ts:2159 —
-    // confirm it stays GREEN after the GREEN commit.
+    // Orchestration reachability also requires compact-secure prompt binding (ceiling
+    // AND prompt must bind); that binding is pinned at prompt-assembly.test.ts:2159.
     const logger = createMockLogger();
-    // 83-tool list: 14 CORE tools + pipeline + 68 cold tools (matching the live incident count)
+    // 83-tool list: 15 CORE tools + pipeline + 67 cold tools
     const coreToolNames = [
       "read", "edit", "write", "grep", "find", "ls", "apply_patch",
       "exec", "process",
@@ -3059,7 +3048,7 @@ describe("applyToolDeferral - CWF-04 orchestration reachability (ceiling=24 + pi
 
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
-    // KEY ASSERTION (RED → GREEN): pipeline must be in activeTools for small
+    // KEY ASSERTION: pipeline must be in activeTools for small
     expect(result.activeTools.map(t => t.name)).toContain("pipeline");
     expect(result.deferredNames).not.toContain("pipeline");
     // Ceiling still holds
@@ -3071,8 +3060,9 @@ describe("applyToolDeferral - CWF-04 orchestration reachability (ceiling=24 + pi
   });
 
   it("frontier: pipeline NOT force-active — ceiling never fires, deferredCount exactly 0 (byte-identical)", () => {
-    // Characterization test: PASSES in RED state (frontier has no ceiling).
-    // EXACT pin — never toBe(> 0), per Phase 165/166/167 lesson.
+    // Characterization test: frontier has no ceiling, so nothing may be deferred.
+    // EXACT pin — assert exactly 0, never a loose bound, so any accidental
+    // deferral fails loudly.
     const logger = createMockLogger();
     const coreToolNames = [
       "read", "edit", "write", "grep", "find", "ls", "apply_patch",
@@ -3099,7 +3089,7 @@ describe("applyToolDeferral - CWF-04 orchestration reachability (ceiling=24 + pi
     expect(result.deferredCount).toBe(0);
   });
 
-  it("nano: pipeline stays DEFERRED — nano is below NL→DAG cliff, existing :485 invariant preserved", () => {
+  it("nano: pipeline stays DEFERRED — nano is below the NL→DAG comprehension cliff", () => {
     // Real assertion: SMALL_CLASS_ORCHESTRATION_TOOLS only fires inside the ceiling block
     // which is gated on capabilityClass === "small". For nano, the aggressive CORE_TOOLS-only
     // path fires first (and there is no activeToolCeiling), so the exemption never applies —
@@ -3128,7 +3118,7 @@ describe("applyToolDeferral - CWF-04 orchestration reachability (ceiling=24 + pi
 // ---------------------------------------------------------------------------
 // Suite 18: enforceToolBudgetFit — window-aware tool-budget fit-enforcement
 //
-// THE ROOT-CAUSE FIX (2026-06-22). applyToolDeferral defers by COUNT
+// THE ROOT-CAUSE guarantee. applyToolDeferral defers by COUNT
 // (activeToolCeiling / CORE_TOOLS heuristic), never against a token budget, so
 // nothing guarantees systemPrompt + activeTools + headroom + messageFloor ≤
 // effectiveWindow. On a nano model (~16K effective window) a ~10K system prompt
@@ -3266,8 +3256,8 @@ describe("enforceToolBudgetFit — window-aware tool-budget fit-enforcement", ()
       activeTools: [one, discover],
       deferredEntries: [{ name: "mcp__srv--y", description: "y", original: makeTool("mcp__srv--y") }],
       // sysOnly = ceil(56000/3.5) = 16000 == window → budget = -768 (negative).
-      // Even 0 tools cannot fit the FIXED overhead — the degenerate case Part 2
-      // makes honest. Every droppable tool (incl. discover_tools) is deferred.
+      // Even 0 tools cannot fit the FIXED overhead — the degenerate case this
+      // pass makes honest. Every droppable tool (incl. discover_tools) is deferred.
       systemPromptText: "x".repeat(56_000),
       contextWindow: 16_000,
       outputHeadroom: 768,
@@ -3437,8 +3427,8 @@ describe("computeWindowFitBudget — shared window-fit budget", () => {
     expect(b.outputHeadroom).toBe(med.outputHeadroom);
   });
 
-  // VPS DEPLOY-PROOF reproduction (2026-06-22): gpt-5.3-codex is classed FRONTIER
-  // (v2.27 provider heuristic → no nano CORE_TOOLS deferral) but has an 8K (8192)
+  // Real-deployment reproduction: gpt-5.3-codex is classed FRONTIER
+  // (provider heuristic → no nano CORE_TOOLS deferral) but has an 8K (8192)
   // EFFECTIVE/registry window. 65 tool schemas (~12.7K tok) ship, systemPrompt is
   // tiny (~828 tok), yet the turn context-exhausts (assembled 13725 > 8192) with NO
   // defer WARN. This drives the REAL computeWindowFitBudget(frontier, 8192) + REAL
@@ -3467,7 +3457,7 @@ describe("computeWindowFitBudget — shared window-fit budget", () => {
       } as import("./model-profile.js").ModelProfile,
     });
     expect(budget.effectiveWindow).toBe(8_192); // frontier → no class cap → the 8192 window
-    const sysChars = 2_898; // ~828 tok system prompt (the VPS value): 828*3.5
+    const sysChars = 2_898; // ~828 tok system prompt (the observed production value): 828*3.5
     applyToolBudgetFit(result, {
       systemPromptText: "x".repeat(sysChars),
       contextWindow: budget.effectiveWindow,

@@ -8,17 +8,17 @@
  * the existing test entry point are unchanged.
  *
  * Sentinels handled here:
- * - __MEMORY_LIFECYCLE__ (FORGET-01/06, Phase 200 Plan 06): the KEYLESS soft-eviction sweep.
+ * - __MEMORY_LIFECYCLE__: the KEYLESS soft-eviction sweep.
  *   Threads THIS agent's collapsed `learning.forget` eviction policy onto the per-call sweep
  *   scope (the shared store is constructed once; the behavior is per-agent) and emits the
  *   daemon-side learning:memory_demoted/evicted counts (the store has no bus). OFF by
  *   default → DORMANT (byte-identical). Moved here for the 600L setup-channels dir cap.
- * - __REFLECT__ (v2.31 Reflection, Phase 223): the composition root for the reflection loop
+ * - __REFLECT__: the composition root for the reflection loop
  *   — injects the @comis/memory mental-model store + the trusted-origin LCD source into
  *   runReflection and re-emits the counts-only learning:skill_* funnel daemon-side.
  *
- * (The __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ dormant crons were DELETED in
- * Phase 226-03 — their dispatch branches are gone; an unrecognized sentinel returns false.)
+ * (The __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ dormant crons were DELETED —
+ * their dispatch branches are gone; an unrecognized sentinel returns false.)
  *
  * Both re-check cfg.enabled (defence-in-depth — the scheduler already gates, a stale
  * persisted job must not run for a now-disabled agent), inject the segregated store(s)
@@ -54,18 +54,18 @@ export async function handleWireMemoryCronSentinel(
 ): Promise<boolean> {
   const { container, logger, clock, agents, tenantId, memoryLifecycleStore, reflection } = ctx;
 
-  // (The __USEFULNESS_JUDGE__ sentinel dispatch was DELETED in Phase 226 SIMPLIFY-03 (D-03).
+  // (The __USEFULNESS_JUDGE__ sentinel dispatch was DELETED.
   // It built a cheap-model usefulness-judge seam and WROTE its verdict through
-  // usefulnessStore.recordUsage — a dormant cost-gated cron. The FORGET-02 reward write
+  // usefulnessStore.recordUsage — a dormant cost-gated cron. The reward write
   // (success→recordUsage / failure→recordFailure) lives in setup-learning.ts (a separate
   // reward seam) and is untouched; the MemoryUsefulnessStore + its sqlite adapter survive.
-  // An unrecognized sentinel falls through to `return false` below — the T-226-08 benign
+  // An unrecognized sentinel falls through to `return false` below — the benign
   // no-op for any persisted stale judge job row.)
 
-  // -- Memory lifecycle sentinel intercept (FORGET-01/06) --
+  // -- Memory lifecycle sentinel intercept --
   // KEYLESS: no model/key/build seam. Re-checks memoryLifecycle.enabled (defence-in-depth, the
   // cron gate) + threads THIS agent's learningForgetting eviction policy onto the sweep CALL
-  // (the shared store is constructed once; the behavior is per-agent — resolved decision #3,
+  // (the shared store is constructed once; the behavior is per-agent —
   // learningForgetting drives eviction while memoryLifecycle is the cron gate). OFF by default →
   // no override → DORMANT sweep (byte-identical). On the result it emits the daemon-side
   // learning:memory_demoted/evicted counts (the store has no bus). Non-fatal + counts-only (§2.7).
@@ -94,11 +94,11 @@ export async function handleWireMemoryCronSentinel(
 
     const lifecycleTenantId = tenantId ?? container.config.tenantId ?? "default";
     const lifecycleStartMs = clock.now();
-    // FORGET-06 per-call policy: thread THIS agent's collapsed learning forget policy onto the
+    // Per-call policy: thread THIS agent's collapsed learning forget policy onto the
     // sweep CALL. OFF (memory.enabled / learning.enabled) → no override → DORMANT sweep (byte-identical).
-    // Phase 226 (SIMPLIFY-01) collapsed the former `learningForgetting` block into `learning.forget`:
+    // The former `learningForgetting` block collapsed into `learning.forget`:
     // the eviction store consumes only the master gate + the corroborated-failure floor (the FadeMem
-    // strength-decay disjunct + its strengthThreshold/failurePenalty knobs were deleted in Phase 224-02
+    // strength-decay disjunct + its strengthThreshold/failurePenalty knobs were removed
     // — the strength branch floored above its threshold and never fired). With the per-loop block gone,
     // `evictionEnabled` folds into the single `learning.enabled` gate; the floor reads learning.forget.failureEvictionFloor.
     const learningCfg = agentConfig?.learning;
@@ -115,9 +115,9 @@ export async function handleWireMemoryCronSentinel(
     if (!lifecycleResult.ok) {
       logger.error({ agentId, err: lifecycleResult.error, hint: "Memory lifecycle sweep failed -- will retry next cycle", errorKind: "internal" as const }, "Memory lifecycle sweep error");
     } else {
-      // FORGET-06/OBS-01: an INFO completion line (durationMs + the real counts) + the daemon-side
-      // learning:memory_* emits (counts-only convention). ids/bodies NEVER cross the bus (§2.7 /
-      // SEC-01). With eviction OFF the counts are 0 (DORMANT).
+      // An INFO completion line (durationMs + the real counts) + the daemon-side
+      // learning:memory_* emits (counts-only convention). ids/bodies NEVER cross the bus (§2.7).
+      // With eviction OFF the counts are 0 (DORMANT).
       const r = lifecycleResult.value;
       logger.child({ agentId, submodule: "memory-lifecycle" }).info(
         { agentId, scanned: r.scanned, promoted: r.promoted, demoted: r.demoted, evicted: r.evicted, durationMs: clock.now() - lifecycleStartMs },
@@ -125,24 +125,24 @@ export async function handleWireMemoryCronSentinel(
       );
       container.eventBus.emit("learning:memory_demoted", { agentId, count: r.demoted, timestamp: clock.now() });
       container.eventBus.emit("learning:memory_evicted", { agentId, count: r.evicted, timestamp: clock.now() });
-      // OBS-2b (reflect-obs-20260627): the once-per-run forget-sweep SUMMARY — parity with reflect:funnel
+      // The once-per-run forget-sweep SUMMARY — parity with reflect:funnel
       // so `cron.runs jobName "Memory lifecycle"` + the fleet lens answer "what did forget do" in one call
-      // (was a db.mjs evicted_at poll). Counts ONLY (§2.7 / SEC-01).
+      // (was a db.mjs evicted_at poll). Counts ONLY (§2.7).
       container.eventBus.emit("learning:lifecycle_swept", { agentId, scanned: r.scanned, promoted: r.promoted, demoted: r.demoted, evicted: r.evicted, timestamp: clock.now() });
     }
     payload.onComplete?.({ status: lifecycleResult.ok ? "ok" : "error", error: lifecycleResult.ok ? undefined : lifecycleResult.error?.message });
     return true;
   }
 
-  // (The __MEMORY_TRIPLE_EXTRACTION__ sentinel dispatch was DELETED in Phase 226 SIMPLIFY-03
-  // (D-03). It ran runMemoryTripleExtraction — a no-op scaffold whose `extract` returned []
+  // (The __MEMORY_TRIPLE_EXTRACTION__ sentinel dispatch was DELETED.
+  // It ran runMemoryTripleExtraction — a no-op scaffold whose `extract` returned []
   // (no triples were ever written), gated default-OFF. The TripleStorePort + its sqlite adapter
   // + the graphSpread recall lane (recall-graph-spread-lane.ts, gated rag.lanes.graphSpread)
   // SURVIVE — only the dormant extraction JOB + its cron-context `tripleStore` field went, not
   // the read lane. An unrecognized sentinel falls through to `return false` below — the
-  // T-226-08 benign no-op for any persisted stale triple-extraction job row.)
+  // benign no-op for any persisted stale triple-extraction job row.)
 
-  // -- Reflection sentinel intercept (v2.31 Reflection, Phase 223, REFLECT-01/02) --
+  // -- Reflection sentinel intercept --
   // The COMPOSITION ROOT for the reflection loop — the reflect-engine replacement for the
   // dead procedural-synthesis clustering handler: this is where the @comis/agent reflection
   // job (PORT TYPES only) meets the @comis/memory mental-model store + the trusted-origin
@@ -150,10 +150,9 @@ export async function handleWireMemoryCronSentinel(
   // bundle — the agent↛memory closed-graph cut). Re-checks learningSkills.enabled
   // (defence-in-depth — the scheduler already gates it; default OFF → clean ok no-op, ZERO
   // behavior change). Reads the LCD-merged source (NOT sessionStore.listDetailed — DAG-empty),
-  // builds the cheap-model reflect adapter (wraps the UNTRUSTED transcript, INV-5) on the MID
-  // tier, runs runReflection, and RE-EMITS the counts-only reflect:* funnel events DAEMON-SIDE
-  // (Phase 226 SIMPLIFY-04 renamed the old synthesis-funnel events to reflect:admitted/reflect:funnel
-  // so the A→B ground-truth read + `comis explain` still work). The bridge entry lands with the
+  // builds the cheap-model reflect adapter (wraps the UNTRUSTED transcript on the per-kind source label) on the MID
+  // tier, runs runReflection, and RE-EMITS the counts-only reflect:admitted/reflect:funnel events DAEMON-SIDE
+  // so the A→B ground-truth read + `comis explain` still work. The bridge entry lands with the
   // emit (no agent-side gate trip). Non-fatal + counts-only (§2.7).
   if (resultText === "__REFLECT__") {
     const { agentId } = payload;
@@ -184,7 +183,7 @@ export async function handleWireMemoryCronSentinel(
     // Resolve the cheap reflect model (the MID tier — a generalization op, not a fast classify) +
     // API key by NAME (Pino auto-redacts). NOT the agent's primary. The "skillSynthesis"
     // operationType STRING is REUSED (the MID-tier routing the dead synthesis used); the
-    // reflect:* operationType rename is Phase 226 — do not invent a new tier here.
+    // reflect:* naming is only for events — do not invent a new operationType tier here.
     const resolved = resolveOperationModel({
       operationType: "skillSynthesis",
       agentProvider: agentConfig.provider ?? "anthropic",
@@ -205,13 +204,13 @@ export async function handleWireMemoryCronSentinel(
     const reflectLogger = logger.child({ agentId, submodule: "reflection" });
     const reflectStartMs = clock.now();
 
-    // Phase 225 FOLD §3.2: ONE __REFLECT__ cron reflects ALL THREE kinds in one pass
-    // (the I1 model — ONE engine, LOOPED, not three engines). The model/cred resolution
+    // ONE __REFLECT__ cron reflects ALL THREE kinds in one pass
+    // (ONE engine, LOOPED, not three engines). The model/cred resolution
     // above runs ONCE (the same MID-tier reflect model for all kinds); per kind we vary
     // only the adapter `systemPrompt` + `source` label and the per-kind source build +
     // `groupKey`. SKILL keys on the normalized opening-request signature (the default,
     // groupKey undefined); PROFILE groups by user (groupKey `t.sender` ⇒ topicKey ===
-    // userId, which Plan 02's <user_profile> read selects on); TOPIC keys like skill.
+    // userId, which the <user_profile> read selects on); TOPIC keys like skill.
     const reflectKinds: ReadonlyArray<{
       kind: "skill" | "profile" | "topic";
       systemPrompt: string;
@@ -224,22 +223,22 @@ export async function handleWireMemoryCronSentinel(
     ];
 
     // SUMMED counts across the 3 kinds for ONE daemon-side reflect:* emit (counts
-    // only — INV-6 / §2.7; NEVER a doc body / finding crosses the bus, for ANY kind).
+    // only — §2.7; NEVER a doc body / finding crosses the bus, for ANY kind).
     let anyError = false;
     let firstError: Error | undefined;
     let sumSelected = 0;
     let sumAdmitted = 0;
     let sumSkipped = 0;
     let maxCardinality = 0;
-    // Phase 226 (D5 salvage + the 225 WR-01 gap): the 2 new funnel counts SUMMED across the
+    // The 2 new funnel counts SUMMED across the
     // kinds for the once-per-run INFO line (the per-kind verdict already encodes them — see below).
     let sumUntrustedDrops = 0;
     let sumNameLengthRejections = 0;
-    // OBS-1: content-free source telemetry summed across kinds for the funnel emit.
+    // Content-free source telemetry summed across kinds for the funnel emit.
     let sumSourceTrajectoryCount = 0;
     let sumSourceChars = 0;
-    // OBS-4b (reflect-obs-20260627): the aggregate "why 0 admitted" verdict is RE-CLASSIFIED from the
-    // SUMMED counts AFTER the loop (classifyReflectOutcome) — NOT last-kind-wins. The old fold let a
+    // The aggregate "why 0 admitted" verdict is RE-CLASSIFIED from the
+    // SUMMED counts AFTER the loop (classifyReflectOutcome) — NOT last-kind-wins. A last-kind-wins fold would let a
     // later kind's `no_successes` overwrite an earlier kind's meaningful `uncorroborated`, surfacing a
     // verdict that contradicted its own `selected` count (selected:2 alongside no_successes) and
     // misdirected the operator to "nothing to learn from" instead of "successes under-merged →
@@ -248,13 +247,13 @@ export async function handleWireMemoryCronSentinel(
     // SUMMED reflect result" intent). `emptyReflections` is summed so a corroborated-but-empty kind
     // aggregates to `empty_reflection`, not a mis-attributed `rejected_validation`.
     let sumEmptyReflections = 0;
-    // OBS-7 (reflect-obs-20260627): distinct topicKey groups across the kinds — the under-merge
+    // Distinct topicKey groups across the kinds — the under-merge
     // discriminator (selected>1 + distinctTopicKeys>1 + maxCardinality<2 = successes that didn't merge).
     let sumDistinctTopicKeys = 0;
 
     for (const { kind, systemPrompt, source, groupKey } of reflectKinds) {
       // CLOSED-GRAPH CUT: the per-kind @comis/agent reflect adapter (wraps the UNTRUSTED
-      // transcript via the per-kind `source` label, INV-5) is built HERE on the resolved
+      // transcript via the per-kind `source` label) is built HERE on the resolved
       // model; the @comis/memory store + the per-kind source come in via the daemon-assembled
       // bundle. The job consumes PORT TYPES only. The base model/key/custom-model opts are
       // identical across kinds — only systemPrompt + source vary.
@@ -274,20 +273,20 @@ export async function handleWireMemoryCronSentinel(
         agentId,
         tenantId: reflectTenantId,
         scope,
-        kind, // Phase 225 FOLD — the threaded doc family (skill default if omitted)
+        kind, // the threaded doc family (skill default if omitted)
         ...(groupKey ? { groupKey } : {}),
         config: {
           enabled: cfg.enabled,
           minConfidence: cfg.reflect.minConfidence,
-          // The per-run topic ceiling (the DoS bound — one LLM call each). Phase 226 wires this
-          // from `learning.reflect.maxDocsPerRun` (default 25; was a hardcoded 10). Each kind is
+          // The per-run topic ceiling (the DoS bound — one LLM call each). Wired
+          // from `learning.reflect.maxDocsPerRun` (default 25). Each kind is
           // bounded independently → a known 3×maxDocsPerRun per-run LLM ceiling.
           maxDocsPerRun: cfg.reflect.maxDocsPerRun,
         },
         sourceTrajectories,
         reflectionAdapter,
         outcomeSignal: reflection.outcomeSignal,
-        // FOLD-01: the store Pick now carries `supersede` — a profile/topic correction
+        // The store Pick carries `supersede` — a profile/topic correction
         // routes through it (history-append); skill stays admit-only (engine-enforced).
         mentalModelStore: reflection.learnedSkillStore,
         clock,
@@ -308,7 +307,7 @@ export async function handleWireMemoryCronSentinel(
         sumDistinctTopicKeys += v.distinctTopicKeys;
         maxCardinality = Math.max(maxCardinality, v.maxTopicCardinality);
         // Per-kind INFO completion line (the real counts) so an operator sees each kind's
-        // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7 / SEC-01).
+        // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7).
         reflectLogger.info({ agentId, reflectKind: kind, selected: v.selected, admitted: v.admitted, maxTopicCardinality: v.maxTopicCardinality, skipped: v.skipped, admissionOutcome: v.admissionOutcome }, "Reflection (kind) complete");
       } else {
         anyError = true;
@@ -317,7 +316,7 @@ export async function handleWireMemoryCronSentinel(
       }
     }
 
-    // OBS-4b: the aggregate verdict, re-classified from the SUMMED counts (consistent-by-construction
+    // The aggregate verdict, re-classified from the SUMMED counts (consistent-by-construction
     // with the counts the funnel emits below) — `admitted` if any kind admitted, else the most-acute
     // count-derived reason (uncorroborated / untrusted_origin / empty_reflection / … / no_successes).
     const admissionOutcome = classifyReflectOutcome({
@@ -329,13 +328,13 @@ export async function handleWireMemoryCronSentinel(
       nameLengthRejections: sumNameLengthRejections,
     });
 
-    // OBS-01: ONE DAEMON-SIDE telemetry emit + completion line, SUMMED across the 3 kinds.
-    // Counts ONLY — NEVER a doc body / finding (§2.7 / SEC-01). With the disabled default the
-    // whole block is unreachable (the no-op short-circuits above). The funnel events are now
-    // reflect:* (Phase 226 SIMPLIFY-04 — the synthesis-funnel rename; the forget/outcome events
-    // KEEP their learning:* names, Pitfall 6). OBS-1 (hindsight-reflection-20260626): untrustedDrops /
-    // nameLengthRejections / skipped + the source counts now ALSO ride the content-free bus payload (they
-    // are COUNTS, like admitted/synthesized — INV-6 forbids bodies, not counts), so `comis explain`
+    // ONE DAEMON-SIDE telemetry emit + completion line, SUMMED across the 3 kinds.
+    // Counts ONLY — NEVER a doc body / finding (§2.7). With the disabled default the
+    // whole block is unreachable (the no-op short-circuits above). The funnel events are
+    // reflect:* (reflect:admitted/reflect:funnel; the forget/outcome events
+    // KEEP their learning:* names). untrustedDrops /
+    // nameLengthRejections / skipped + the source counts ALSO ride the content-free bus payload (they
+    // are COUNTS, like admitted/synthesized — bodies are forbidden on the bus, not counts), so `comis explain`
     // answers "HOW MANY untrusted dropped / was the source empty" without a daemon.log grep.
     reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, distinctTopicKeys: sumDistinctTopicKeys, skipped: sumSkipped, untrustedDrops: sumUntrustedDrops, nameLengthRejections: sumNameLengthRejections, sourceTrajectoryCount: sumSourceTrajectoryCount, totalSourceChars: sumSourceChars, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
     // The `reflect:admitted.count` contract is "how many were ADMITTED this run"
@@ -347,7 +346,7 @@ export async function handleWireMemoryCronSentinel(
     // reflect result: synthesized = selected (trusted-origin successes entering reflection),
     // validated/admitted = admitted (cleared the static validateLearnedDocBody guard + the write),
     // maxClusterCardinality = maxTopicCardinality (the distinct (session,sender) corroboration
-    // size — the load-bearing field), admissionOutcome = the reflect verdict enum (D5 + the 226
+    // size — the load-bearing field), admissionOutcome = the reflect verdict enum (including the
     // untrusted_origin / rejected_name_length values).
     container.eventBus.emit("reflect:funnel", {
       agentId,
@@ -355,10 +354,10 @@ export async function handleWireMemoryCronSentinel(
       validated: sumAdmitted,
       admitted: sumAdmitted,
       maxClusterCardinality: maxCardinality,
-      // OBS-7: distinct topicKey groups — the under-merge discriminator (paired with synthesized +
+      // Distinct topicKey groups — the under-merge discriminator (paired with synthesized +
       // maxClusterCardinality: synthesized>1 & distinctTopicKeys>1 & maxClusterCardinality<2 = under-merge).
       distinctTopicKeys: sumDistinctTopicKeys,
-      // OBS-1: the funnel MAGNITUDES alongside the verdict (counts only). untrustedDrops is the
+      // The funnel MAGNITUDES alongside the verdict (counts only). untrustedDrops is the
       // count behind an `untrusted_origin` verdict; sourceTrajectoryCount/totalSourceChars
       // distinguish an empty-source wiring gap from an LLM-yield (real text in, junk doc out).
       untrustedDrops: sumUntrustedDrops,
@@ -366,7 +365,7 @@ export async function handleWireMemoryCronSentinel(
       skipped: sumSkipped,
       sourceTrajectoryCount: sumSourceTrajectoryCount,
       totalSourceChars: sumSourceChars,
-      // RC-4: the acute "why 0 admitted" verdict — one readable field on the funnel (the reflect
+      // The acute "why 0 admitted" verdict — one readable field on the funnel (the reflect
       // enum: no_successes / untrusted_origin / uncorroborated / empty_reflection /
       // rejected_name_length / rejected_validation / admitted).
       admissionOutcome,

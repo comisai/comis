@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * IMAGE_MODELS_BY_PROVIDER — the Comis-side per-provider image-model
- * enumeration (IN-02). The single source of truth for "which model ids are
+ * enumeration. The single source of truth for "which model ids are
  * valid for a given resolved main provider", used to validate an agent-supplied
  * `model` arg and to build the reject hint that LISTS the valid models.
  *
  * Why a Comis-side list (not pi-ai's catalog): pi-ai's `getImageModels(...)`
- * only knows the `openrouter` provider — `getImageModels("openai")` returns `[]`
- * (RESEARCH Pitfall 4). So enumeration for the native `openai`/`google` paths
+ * only knows the `openrouter` provider — `getImageModels("openai")` returns `[]`.
+ * So enumeration for the native `openai`/`google` paths
  * MUST come from here. (openrouter callers can still derive their list from
  * `getImageModels("openrouter").map(m => m.id)` at the call site; it is
  * deliberately NOT hardcoded here.)
  *
- * Model-id provenance (Phase 185 plan time):
+ * Model-id provenance:
  *   - openai: `gpt-image-1` (+ `gpt-image-1.5`/`gpt-image-2`/`dall-e-3`) are
  *     members of the installed `openai@6.39.1` `ImageModel` union
  *     (images.d.ts:310).
@@ -49,7 +49,7 @@ export function isValidImageModel(providerId: string, model: string): boolean {
 
 /**
  * The valid image-model ids for `providerId`, or `[]` when the provider has no
- * Comis-side list. Used to build the IN-02 reject hint (lists the models the
+ * Comis-side list. Used to build the invalid-model reject hint (lists the models the
  * agent may choose from).
  */
 export function listImageModels(providerId: string): readonly string[] {

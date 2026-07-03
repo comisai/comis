@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `toIncidentSignals` tests — the X3 dual-shape normalizer crux.
+ * `toIncidentSignals` tests — the dual-shape normalizer crux.
  *
  * `toIncidentSignals` collapses two on-disk record shapes into one
  * `IncidentSignals` view:
  *
- *   1. The FROZEN fixtures' raw Pino LOG lines (PRE Phase-150: no
+ *   1. The FROZEN fixtures' raw Pino LOG lines (no
  *      `traceSchema`, no `classifiedFailureBy`/`transportOk`; keyed on `msg`).
- *   2. Production's structured trajectory EVENTS (POST Phase-151:
+ *   2. Production's structured trajectory EVENTS (
  *      `traceSchema: "comis-trajectory"`; keyed on `type`).
  *
- * The load-bearing X3 constraint: the 678 misclassification signal derives
+ * The load-bearing constraint: the 678 misclassification signal derives
  * from LOG EVIDENCE ONLY — `success:true` web_fetch audits co-existing with
  * ≥ MISCLASS_N `"Tool execution failed"` web_fetch lines + a status/200/403
  * substring in a failure's `errorText`. ZERO `classifiedFailureBy` reads (the
@@ -104,7 +104,7 @@ function log503DoNotRetry(): Record<string, unknown> {
   };
 }
 
-// Production structured-event shapes (POST Phase-151).
+// Production structured-event shapes.
 function event(
   type: string,
   seq: number,
@@ -113,11 +113,11 @@ function event(
   return { traceSchema: "comis-trajectory", schemaVersion: 1, type, seq, data };
 }
 
-describe("toIncidentSignals — turnCount (OBS-4: flag cumulative-across-turns toolStats)", () => {
+describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStats)", () => {
   // The trajectory JSONL is append-only across session.reset_conversation severs, so one
   // file (and the whole-session toolStats) can span MANY turns — each turn a distinct
   // envelope traceId. turnCount surfaces that span so a reader does not misread a
-  // multi-turn count as this-turn (the near-miss that cost a cycle: openclaw-usecases).
+  // multi-turn count as this-turn (a near-miss that cost a live-triage cycle).
   const evt = (traceId: string, type: string, seq: number, data: Record<string, unknown>): Record<string, unknown> => ({
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
@@ -171,7 +171,7 @@ describe("toIncidentSignals — log shape (678-like)", () => {
     expect(s.misclassifiedToken).toMatch(/200|status|403/);
   });
 
-  it("derives hasMisclassificationSignal WITHOUT reading classifiedFailureBy (PRE-150 fixture)", () => {
+  it("derives hasMisclassificationSignal WITHOUT reading classifiedFailureBy (log-shape fixture)", () => {
     // The failure records carry NO classifiedFailureBy field — the signal
     // must still fire from log evidence alone.
     const s = signals678();
@@ -206,7 +206,7 @@ describe("toIncidentSignals — log shape (678-like)", () => {
     // A 200-char HEAD slice of the injection body still begins with the
     // "SECURITY NOTICE" marker — so the length cap alone is insufficient. The
     // preview of an EXTERNAL, UNTRUSTED body must collapse to a digest reference
-    // so the injection header never reaches the consumer (T-153-14, depth-
+    // so the injection header never reaches the consumer (depth-
     // independent). The full body remains addressable via resultDigest.
     const s = signals678();
     for (const f of s.failures) {
@@ -218,10 +218,10 @@ describe("toIncidentSignals — log shape (678-like)", () => {
   });
 
   it("synthesizes a breaker 'opened' timeline event for the log-shape 678 DO-NOT-retry line", () => {
-    // 678 is log-shaped (pre-151): the breaker tripped (a "DO NOT retry" line is
+    // 678 is log-shaped: the breaker tripped (a "DO NOT retry" line is
     // present) but there is no structured tool.breaker_opened event. The
     // normalizer synthesizes the open from the log evidence so breakerTimeline
-    // is non-empty (the X3 must-have).
+    // is non-empty (a frozen-fixture must-have).
     // log503DoNotRetry() is a generic web_fetch "DO NOT retry" log line — the
     // same log shape the 678 fixture carries on its breaker-trip lines.
     const s = toIncidentSignals([log678Success(), log678Failure(), log503DoNotRetry()]);
@@ -298,7 +298,8 @@ describe("toIncidentSignals — structured event shape (production)", () => {
         originalChars: 53095,
         // The real trajectory event carries the pointer as `diskPathRel`
         // (translate-payload.ts), NOT `diskPath`. Using the real field name here
-        // exercises the actual post-151 event-shape path (was a silent data-loss bug).
+        // exercises the actual event-shape path (reading `diskPath` was a silent
+        // data-loss bug).
         diskPathRel: "workspace/rel/path/call_x.json",
       }),
     ]);
@@ -313,7 +314,7 @@ describe("toIncidentSignals — structured event shape (production)", () => {
     expect(f!.httpStatus).toBe(200);
   });
 
-  // OBS gap (hermes-usecases live-test 2026-06-25): the trajectory tool.result event
+  // Live-test observability gap: the trajectory tool.result event
   // carries the failure REASON as `errorMessage` (translate-payload.ts), but the
   // event-shape normalizer read `data.errorText` (a non-existent field on that event)
   // → `errorPreview` was always empty, so `comis explain` showed NO reason and an
@@ -420,11 +421,11 @@ describe("toIncidentSignals — structured event shape (production)", () => {
   });
 });
 
-// ORCH-OBS (orchestration-observability): the subagent.budget_exceeded fold —
-// per-node token-budget breaches (BUDGET-03) reconstructed into the per-incident
+// The subagent.budget_exceeded fold —
+// per-node token-budget breaches reconstructed into the per-incident
 // nodeBudgetBreaches view (nodeId + capSource + the two token numbers) the
 // IncidentReport surfaces, so a breach is diagnosable from the report alone.
-describe("toIncidentSignals — subagent.budget_exceeded fold (ORCH-OBS)", () => {
+describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreaches)", () => {
   it("folds a budget breach into nodeBudgetBreaches with the capSource + numbers", () => {
     const s = toIncidentSignals([
       {
@@ -461,12 +462,12 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (ORCH-OBS)", () =>
   });
 });
 
-// TREE (215-03): the capability.audited fold — the per-node spawn-tree source.
+// The capability.audited fold — the per-node spawn-tree source.
 // Each gated call (allow/deny) emits a content-free capability.audited trajectory
-// record (Plan 01's producer); this fold groups them by leaseId into one spawn-tree
+// record; this fold groups them by leaseId into one spawn-tree
 // node carrying its attenuated caps (deduped), the tool NAMES it invoked, and any
-// CapabilityDeniedError cap (TREE-02). An in-process record (no lease) groups under
-// its synthetic rootRunId (G1 — leaseId is honestly the synthetic-root key, never a
+// CapabilityDeniedError cap. An in-process record (no lease) groups under
+// its synthetic rootRunId (leaseId is honestly the synthetic-root key, never a
 // fabricated lease-<id>). The producer carries {capability, tool, decision, leaseId,
 // parentLeaseId, rootRunId} on `data` and agentId on the envelope.
 function capAudited(
@@ -484,7 +485,7 @@ function capAudited(
   };
 }
 
-describe("toIncidentSignals — capability.audited fold (TREE)", () => {
+describe("toIncidentSignals — capability.audited fold (spawn-tree nodes)", () => {
   it("folds two same-lease allow records into ONE node with deduped caps + collected tools, denials empty", () => {
     const s = toIncidentSignals([
       capAudited(1, {
@@ -514,7 +515,7 @@ describe("toIncidentSignals — capability.audited fold (TREE)", () => {
     expect(node.parentLeaseId).toBeUndefined();
   });
 
-  it("pushes a denied cap into the node's denials[] (TREE-02 — CapabilityDeniedError)", () => {
+  it("pushes a denied cap into the node's denials[] (CapabilityDeniedError)", () => {
     const s = toIncidentSignals([
       capAudited(1, {
         leaseId: "L-child",
@@ -535,7 +536,7 @@ describe("toIncidentSignals — capability.audited fold (TREE)", () => {
     const s = toIncidentSignals([
       capAudited(1, { leaseId: "L-a", rootRunId: "R1", capability: "orch:read", tool: "t1", decision: "allow" }),
       capAudited(2, { leaseId: "L-b", rootRunId: "R1", capability: "orch:web", tool: "t2", decision: "allow" }),
-      // in-process: no leaseId → groups under the synthetic rootRunId key (G1).
+      // in-process: no leaseId → groups under the synthetic rootRunId key.
       capAudited(3, { rootRunId: "root-session-xyz", capability: "orch:read", tool: "t3", decision: "allow" }),
     ]);
     expect(s.spawnTree).toHaveLength(3);
@@ -556,7 +557,7 @@ describe("toIncidentSignals — capability.audited fold (TREE)", () => {
     expect(s.spawnTree).toBeUndefined();
   });
 
-  it("drops a record carrying neither a leaseId nor a rootRunId — no junk empty-key node (WR-01)", () => {
+  it("drops a record carrying neither a leaseId nor a rootRunId — no junk empty-key node", () => {
     const s = toIncidentSignals([
       capAudited(1, { leaseId: "L-a", rootRunId: "R1", capability: "orch:read", tool: "t1", decision: "allow" }),
       // corrupted/partial on-disk records: NO leaseId AND NO rootRunId → not a
@@ -571,17 +572,17 @@ describe("toIncidentSignals — capability.audited fold (TREE)", () => {
   });
 });
 
-// TREE-01 (finding D, 30uc-20260624): graph DAG nodes are spawn-tree leaves too.
+// Graph DAG nodes are spawn-tree leaves too.
 // A graph node spawn (in-process via gatedSpawn → subAgentRunner.spawn) emits NO
 // capability.audited (it never crosses the socket chokepoint), and all nodes share
-// the graph's rootRunId — so pre-fix `comis explain` spawnTree showed the root but
-// OMITTED the graph children. The graph.node_spawned record reconstructs each node
+// the graph's rootRunId — without this fold `comis explain` spawnTree shows the root
+// but OMITS the graph children. The graph.node_spawned record reconstructs each node
 // as its own leaf keyed by graphId:nodeId, nested under the root via parentLeaseId.
 function graphNodeSpawned(seq: number, data: Record<string, unknown>): Record<string, unknown> {
   return { traceSchema: "comis-trajectory", schemaVersion: 1, type: "graph.node_spawned", seq, data };
 }
 
-describe("toIncidentSignals — graph.node_spawned fold (TREE, finding D)", () => {
+describe("toIncidentSignals — graph.node_spawned fold (graph nodes as spawn-tree leaves)", () => {
   it("reconstructs each graph node as a distinct spawn-tree leaf (keyed by graphId:nodeId, nested under the root)", () => {
     const s = toIncidentSignals([
       graphNodeSpawned(1, { graphId: "G1", nodeId: "analyst-0", rootRunId: "R", nodeAgentId: "analyst", tokenBudget: 5000 }),
@@ -613,7 +614,7 @@ describe("toIncidentSignals — graph.node_spawned fold (TREE, finding D)", () =
   });
 });
 
-describe("toIncidentSignals — spend.exceeded fold (WEBUI-04, 179-04)", () => {
+describe("toIncidentSignals — spend.exceeded fold", () => {
   it("folds a spend.exceeded record into spend {scope, totalUsd, capUsd} (totalUsd <- spentUsd)", () => {
     const s = toIncidentSignals([
       {
@@ -689,8 +690,8 @@ describe("toIncidentSignals — misc", () => {
 });
 
 // ---------------------------------------------------------------------------
-// W3 (obs-llm-troubleshooting): context.budget extraction — the per-call budget
-// equation emitted by the LCD pre-flight (W2) must reach IncidentSignals so the
+// context.budget extraction — the per-call budget
+// equation emitted by the LCD pre-flight must reach IncidentSignals so the
 // heuristic can explain a context_exhausted abort with numbers.
 // ---------------------------------------------------------------------------
 
@@ -715,7 +716,7 @@ function budgetEvent(verdict: string, assembled: number, seq: number): Record<st
   };
 }
 
-describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
+describe("context.budget extraction", () => {
   it("extracts the full budget equation from a context.budget trajectory event", () => {
     const s = toIncidentSignals([budgetEvent("exhausted", 31_572, 1)]);
     expect(s.contextBudget).toBeDefined();
@@ -734,8 +735,8 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     expect(s.contextBudget?.assembledInputTokens).toBe(31_572);
   });
 
-  // E2 (obs-sweep): the per-turn CASCADE alongside the terminal fit-check.
-  it("E2: builds a contextBudgetHistory cascade (deduped on transition) showing the tightening toward exhaustion", () => {
+  // The per-turn CASCADE alongside the terminal fit-check.
+  it("builds a contextBudgetHistory cascade (deduped on transition) showing the tightening toward exhaustion", () => {
     const s = toIncidentSignals([
       budgetEvent("fits", 10_000, 1),
       budgetEvent("fits", 10_000, 2), // consecutive-identical → deduped (no transition)
@@ -750,13 +751,13 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     expect(hist.every((h) => h.windowTokens === 32_000)).toBe(true);
   });
 
-  it("E2: a single budget check yields NO contextBudgetHistory (adds nothing over contextBudget)", () => {
+  it("a single budget check yields NO contextBudgetHistory (adds nothing over contextBudget)", () => {
     const s = toIncidentSignals([budgetEvent("fits", 10_000, 1)]);
     expect(s.contextBudget).toBeDefined();
     expect(s.contextBudgetHistory).toBeUndefined();
   });
 
-  it("E2: caps the cascade at the most recent 40 transitions (no unbounded growth)", () => {
+  it("caps the cascade at the most recent 40 transitions (no unbounded growth)", () => {
     const events = Array.from({ length: 50 }, (_, i) => budgetEvent("fits", 1_000 + i * 100, i + 1));
     const s = toIncidentSignals(events);
     expect(s.contextBudgetHistory).toHaveLength(40);
@@ -770,11 +771,11 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     expect(s.contextBudget).toBeUndefined();
   });
 
-  it("KNOB-02-10: a windowCapSource 'served' record SURVIVES the safeParse gate onto contextBudget", () => {
-    // KNOB-02 (Phase 176): "served" joins the WindowCapSource closed union. If
+  it("a windowCapSource 'served' record SURVIVES the safeParse gate onto contextBudget", () => {
+    // "served" is a member of the WindowCapSource closed union. If
     // the IncidentContextBudgetSchema enum lags, safeParse silently DROPS the
     // whole budget equation from `comis explain` — the exact silent-degrade
-    // class this milestone kills. Every other field is valid per the schema, so
+    // class this fold exists to prevent. Every other field is valid per the schema, so
     // the ONLY thing that can reject this record is the enum.
     const s = toIncidentSignals([
       {
@@ -801,10 +802,10 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     expect(s.contextBudget?.rawContextWindowTokens).toBe(131_072);
   });
 
-  it("WR-01: a windowCapSource 'capabilityClass' record SURVIVES the safeParse gate onto contextBudget", () => {
-    // WR-01 (Phase 176 review): "capabilityClass" joins the WindowCapSource
-    // closed union so the capability-pin bind stops masquerading as the budget
-    // knob. Same silent-drop trap as KNOB-02-10: if the
+  it("a windowCapSource 'capabilityClass' record SURVIVES the safeParse gate onto contextBudget", () => {
+    // "capabilityClass" is a member of the WindowCapSource
+    // closed union so the capability-pin bind does not masquerade as the budget
+    // knob. Same silent-drop trap as the 'served' member: if the
     // IncidentContextBudgetSchema enum lags, safeParse silently DROPS the whole
     // budget equation from `comis explain` for every pin-bound turn. Every
     // other field is valid per the schema, so the ONLY thing that can reject
@@ -836,13 +837,13 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// W8 (obs-llm-troubleshooting): toolStats fidelity. The live explain reported
+// toolStats fidelity. A live explain reported
 // ctx_search ok:2 for ONE call — the cache-trace tool:after record (traceSchema
 // comis-cache-trace, carrying toolName + success:true) fell into the log-shape
 // handler and re-counted the trajectory's tool.result.
 // ---------------------------------------------------------------------------
 
-describe("toolStats fidelity (W8)", () => {
+describe("toolStats fidelity", () => {
   it("a comis-cache-trace tool:after record does not count as a tool success", () => {
     const s = toIncidentSignals([
       {
@@ -889,12 +890,12 @@ describe("toolStats fidelity (W8)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// W8: agentId + channel extraction — the live report printed agentId:"" and
+// agentId + channel extraction — a live report printed agentId:"" and
 // channel {type:"",id:""} although every trajectory record carries agentId and
 // session.started carries channelType/channelId.
 // ---------------------------------------------------------------------------
 
-describe("agentId + channel extraction (W8)", () => {
+describe("agentId + channel extraction", () => {
   it("extracts agentId from the record envelope and channel from session.started data", () => {
     const s = toIncidentSignals([
       {
@@ -911,14 +912,14 @@ describe("agentId + channel extraction (W8)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// GBNF-02 (Phase 175): execution.tool_schema_unsupported derivation. The
-// strip-retry self-heal record (the kind Plan 05's bridge mapping writes:
+// execution.tool_schema_unsupported derivation. The
+// strip-retry self-heal record (the kind the trajectory bridge mapping writes:
 // data = {toolNames, strippedKeywords, retried, succeeded}) must reach
 // IncidentSignals so the explain heuristic can NAME the schema failure
 // instead of "unknown".
 // ---------------------------------------------------------------------------
 
-describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
+describe("toolSchemaUnsupported derivation", () => {
   it("derives toolSchemaUnsupported from an execution.tool_schema_unsupported trajectory record", () => {
     const s = toIncidentSignals([
       event("execution.tool_schema_unsupported", 5, {
@@ -938,7 +939,7 @@ describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
     });
   });
 
-  it("WR-05: the reason discriminator survives derivation for the gate_closed terminal (last record wins)", () => {
+  it("the reason discriminator survives derivation for the gate_closed terminal (last record wins)", () => {
     const s = toIncidentSignals([
       event("execution.tool_schema_unsupported", 1, {
         toolNames: ["schedule_task"],
@@ -958,7 +959,7 @@ describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
     expect(s.toolSchemaUnsupported?.reason).toBe("gate_closed");
   });
 
-  it("WR-05: an absent or off-vocabulary reason yields undefined (historical pre-WR-05 trajectory records stay readable; payload smuggling guarded)", () => {
+  it("an absent or off-vocabulary reason yields undefined (reason-less trajectory records stay readable; payload smuggling guarded)", () => {
     const absent = toIncidentSignals([
       event("execution.tool_schema_unsupported", 1, {
         toolNames: [],
@@ -1009,7 +1010,7 @@ describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
     expect(s.toolSchemaUnsupported).toBeUndefined();
   });
 
-  it("filters non-string entries out of toolNames/strippedKeywords and coerces non-boolean flags (T-175-17 payload guard)", () => {
+  it("filters non-string entries out of toolNames/strippedKeywords and coerces non-boolean flags (payload guard)", () => {
     // Record payloads cross a trust boundary (provider/MCP-influenced events →
     // admin-facing report): only string entries survive the array reads, and
     // the booleans are exact-true checks — payload smuggling of other types
@@ -1032,15 +1033,14 @@ describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LAT-04 (Phase 177): execution.prompt_timeout derivation — the terminal
+// execution.prompt_timeout derivation — the terminal
 // prompt-timeout attribution record must land on IncidentSignals.promptTimeout
-// (the silent-drop gate: pre-patch, toIncidentSignals IGNORED these rows, so a
-// timeout-killed session carried ZERO evidence into the verdict — research
-// Critical Finding 7 point 6 / Pitfall 5, the Phase-176 safeParse-drop lesson).
+// (the silent-drop gate: if toIncidentSignals ignores these rows, a
+// timeout-killed session carries ZERO evidence into the verdict).
 // ---------------------------------------------------------------------------
 
-describe("promptTimeout derivation (LAT-04)", () => {
-  it("LAT-04-O-3: an execution.prompt_timeout record with the full field set survives onto signals.promptTimeout", () => {
+describe("promptTimeout derivation", () => {
+  it("an execution.prompt_timeout record with the full field set survives onto signals.promptTimeout", () => {
     const s = toIncidentSignals([
       event("execution.prompt_timeout", 9, {
         timeoutMs: 180_000,
@@ -1061,7 +1061,7 @@ describe("promptTimeout derivation (LAT-04)", () => {
     expect(s.promptTimeout?.makespanMs).toBe(1_800_000);
   });
 
-  it("LAT-04-O-4: the LAST execution.prompt_timeout record wins (the terminal kill explains the end state)", () => {
+  it("the LAST execution.prompt_timeout record wins (the terminal kill explains the end state)", () => {
     const s = toIncidentSignals([
       // A retry-path kill first (whole-turn semantics: no limit discriminator).
       event("execution.prompt_timeout", 4, {
@@ -1085,10 +1085,10 @@ describe("promptTimeout derivation (LAT-04)", () => {
     expect(s.promptTimeout?.bindingKnob).toBe("agents.my-agent.promptTimeout.promptTimeoutMs");
   });
 
-  it("LAT-04-O-5: a malformed record (timeoutMs not a number) is rejected WHOLESALE — promptTimeout stays undefined, no throw", () => {
-    // Forward-compatible tolerance (green pre-patch by design): the wholesale
+  it("a malformed record (timeoutMs not a number) is rejected WHOLESALE — promptTimeout stays undefined, no throw", () => {
+    // Forward-compatible tolerance: the wholesale
     // safeParse (the contextBudget discipline) drops a malformed/partial row
-    // instead of partially trusting it (T-177-17 — trajectory rows are
+    // instead of partially trusting it (trajectory rows are
     // untrusted persisted data).
     const s = toIncidentSignals([
       event("execution.prompt_timeout", 2, { timeoutMs: "garbage", limit: "stall" }),
@@ -1097,7 +1097,7 @@ describe("promptTimeout derivation (LAT-04)", () => {
   });
 });
 
-describe("toIncidentSignals — RECALL-01 memory.recalled aggregation", () => {
+describe("toIncidentSignals — memory.recalled aggregation", () => {
   function recall(
     seq: number,
     finalCount: number,
@@ -1171,7 +1171,7 @@ describe("toIncidentSignals — RECALL-01 memory.recalled aggregation", () => {
   });
 });
 
-describe("toIncidentSignals — OBS-02 learning.outcome_observed aggregation", () => {
+describe("toIncidentSignals — learning.outcome_observed aggregation", () => {
   function learn(
     seq: number,
     outcome: string,
@@ -1208,7 +1208,7 @@ describe("toIncidentSignals — OBS-02 learning.outcome_observed aggregation", (
     expect(s.learning?.outcome).toBe("unknown");
   });
 
-  it("outcomeResolved stays TRUE when an earlier turn resolved but the session ended on `unknown` (live 2026-06-18)", () => {
+  it("outcomeResolved stays TRUE when an earlier turn resolved but the session ended on `unknown`", () => {
     // A resolved success followed by a tool-less recall turn (`unknown`) must NOT be
     // flagged unresolved — the verdict means "NO signal resolved", not "last didn't".
     const s = toIncidentSignals([learn(1, "success", "tool"), learn(2, "unknown", "pipeline")]);
@@ -1257,19 +1257,19 @@ describe("toIncidentSignals — OBS-02 learning.outcome_observed aggregation", (
 });
 
 // ---------------------------------------------------------------------------
-// OBS-CANARY (Phase 226 SIMPLIFY-04 — the §2.7 must-keep-working proof). The
-// synthesis funnel was RENAMED to reflect:* (reflect:admitted + reflect:funnel)
-// and bridged as reflect.admitted / reflect.funnel. `comis explain` MUST keep
+// Observability canary. The
+// reflection funnel emits reflect:* (reflect:admitted + reflect:funnel),
+// bridged as reflect.admitted / reflect.funnel. `comis explain` MUST keep
 // folding a reflect:*-bearing trajectory into the learning block + verdict — a
-// broken rename would blind the operator surface. The frozen no-learning
-// fixtures must still return an absent block (no regression). Pitfall 6: the
+// broken event name would blind the operator surface. The frozen no-learning
+// fixtures must still return an absent block (no regression). Note: the
 // forget (learning.memory_*) + outcome (learning.outcome_observed) records are
-// NOT folded under reflect:* — only the reflection funnel was renamed.
+// NOT folded under reflect:* — only the reflection funnel uses that prefix.
 // ---------------------------------------------------------------------------
-describe("toIncidentSignals — OBS-CANARY: comis explain still folds a reflect:* trajectory (Phase 226)", () => {
-  it("a reflect.admitted + reflect.funnel + learning.outcome_observed trajectory STILL yields the learning block", () => {
+describe("toIncidentSignals — observability canary: comis explain folds a reflect:* trajectory", () => {
+  it("a reflect.admitted + reflect.funnel + learning.outcome_observed trajectory yields the learning block", () => {
     const s = toIncidentSignals([
-      // The renamed reflection-funnel records (was learning.skill_synthesized / .skill_synthesis_funnel).
+      // The reflection-funnel records.
       event("reflect.admitted", 1, { count: 1 }),
       event("reflect.funnel", 2, {
         synthesized: 2,
@@ -1278,7 +1278,7 @@ describe("toIncidentSignals — OBS-CANARY: comis explain still folds a reflect:
         maxClusterCardinality: 2,
         admissionOutcome: "admitted",
       }),
-      // The kept differentiator (NOT renamed — Pitfall 6).
+      // The differentiator: outcome records are NOT under the reflect:* prefix.
       event("learning.outcome_observed", 3, {
         trajectoryId: "traj-1",
         outcome: "success",
@@ -1287,7 +1287,7 @@ describe("toIncidentSignals — OBS-CANARY: comis explain still folds a reflect:
       }),
     ]);
     // The block is present (explain reconstructs the learning dimension) and the
-    // outcome folded — the rename did not orphan the funnel records.
+    // outcome folded — the funnel records are not orphaned.
     expect(s.learning).toBeDefined();
     expect(s.learning?.outcomeResolved).toBe(true);
     expect(s.learning?.outcome).toBe("success");
@@ -1333,7 +1333,7 @@ describe("toIncidentSignals — OBS-CANARY: comis explain still folds a reflect:
   });
 });
 
-describe("toIncidentSignals — DRIVE-02 terminal.drive_promoted (backgrounding signal)", () => {
+describe("toIncidentSignals — terminal.drive_promoted (backgrounding signal)", () => {
   it("sets terminalDrivePromoted{reason,count} from a terminal.drive_promoted record", () => {
     const s = toIncidentSignals([event("terminal.drive_promoted", 1, { reason: "mode_detached" })]);
     expect(s.terminalDrivePromoted).toEqual({ reason: "mode_detached", count: 1 });
@@ -1352,13 +1352,13 @@ describe("toIncidentSignals — DRIVE-02 terminal.drive_promoted (backgrounding 
   });
 });
 
-describe("toIncidentSignals — EVICT-01 terminal.session_evicted (idle-reap signal)", () => {
+describe("toIncidentSignals — terminal.session_evicted (idle-reap signal)", () => {
   it("sets terminalDriveEvicted{reason,idleMs,wasProducing:false} from an eviction with no prior producing promotion", () => {
     const s = toIncidentSignals([event("terminal.session_evicted", 1, { reason: "idle", durationMs: 1_800_000 })]);
     expect(s.terminalDriveEvicted).toEqual({ reason: "idle", idleMs: 1_800_000, wasProducing: false });
   });
 
-  it("derives wasProducing:true when a producing promotion preceded the eviction (zero new events — reuses the DRIVE-02 signal)", () => {
+  it("derives wasProducing:true when a producing promotion preceded the eviction (zero new events — reuses the drive-promoted signal)", () => {
     const s = toIncidentSignals([
       event("terminal.drive_promoted", 1, { reason: "producing" }),
       event("terminal.session_evicted", 2, { reason: "idle", durationMs: 900_000 }),

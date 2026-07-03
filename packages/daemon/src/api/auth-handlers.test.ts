@@ -195,7 +195,7 @@ describe("createAuthHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // auth.set (daemon-assisted OAuth login RPC — §8.1 threat-model amendment)
+  // auth.set (daemon-assisted OAuth login RPC — admin-gated, audited persistence)
   // -------------------------------------------------------------------------
 
   describe("auth.set handler", () => {

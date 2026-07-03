@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `resolveTraceToSession` tests — the X1 canonicalization seam.
+ * `resolveTraceToSession` tests — the identity-canonicalization seam.
  *
  * `obs.explain` accepts EITHER a `sessionKey` OR a `traceId`. For the
  * by-traceId path to run the SAME assembler as the by-sessionKey path
@@ -11,7 +11,7 @@
  * ONE sessionKey `default:678314278:678314278:peer:678314278`.
  *
  * These tests pin:
- *   - both 678 traceIds resolve to the one canonical sessionKey (X1 identity)
+ *   - both 678 traceIds resolve to the one canonical sessionKey (one identity)
  *   - a `sessionId`-only row (no `sessionKey`) still resolves
  *   - unknown traceId → "" (soft-fail, no throw)
  *   - missing session-index file → "" (soft-fail, no throw)
@@ -57,7 +57,7 @@ describe("resolveTraceToSession", () => {
     expect(resolved).toBe(CANONICAL_SESSION_KEY);
   });
 
-  it("resolves the 678 second-turn traceId to the SAME canonical sessionKey (X1 multi-turn identity)", async () => {
+  it("resolves the 678 second-turn traceId to the SAME canonical sessionKey (multi-turn identity)", async () => {
     // Both turns are present in the index; the second turn must converge on
     // the identical sessionKey — two traceIds, one resolution target.
     const dataDir = makeDataDirWithIndex([
@@ -67,7 +67,7 @@ describe("resolveTraceToSession", () => {
     const first = await resolveTraceToSession(dataDir, TRACE_TURN_1);
     const second = await resolveTraceToSession(dataDir, TRACE_TURN_2);
     expect(second).toBe(CANONICAL_SESSION_KEY);
-    // The X1 invariant: BOTH traceIds resolve to ONE canonical key.
+    // The identity invariant: BOTH traceIds resolve to ONE canonical key.
     expect(second).toBe(first);
   });
 
@@ -121,7 +121,7 @@ describe("resolveTraceToSession", () => {
     expect(resolved).toBe(CANONICAL_SESSION_KEY);
   });
 
-  // D9: default-exclude synthetic rows; includeSynthetic opt-in resolves them.
+  // Synthetic (test/harness) rows are excluded by default; includeSynthetic opts in.
 
   it("returns empty string when ONLY a synthetic row carries the traceId (default-exclude)", async () => {
     const dataDir = makeDataDirWithIndex([
@@ -161,7 +161,7 @@ describe("resolveTraceToSession", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FLEET-05 — resolveRootRunToSession: the THIRD canonicalization arm. A
+// resolveRootRunToSession: the THIRD canonicalization arm. A
 // `rootRunId` (an autonomy run) is canonicalized to the run's sessionKey FIRST,
 // so the fleet→explain drill-down (paste the worst run's rootRunId) shares the
 // ONE assembler path. TWO honest sources:
@@ -170,7 +170,7 @@ describe("resolveTraceToSession", () => {
 //   2. a REAL socket/spawned root — scan the day-keyed session-index for a
 //      capability.audited record (events-orchestration.ts:90-104 carries BOTH
 //      `rootRunId` + `runId`) and return its runId (≈sessionKey).
-// Soft-fail to "" on miss — NEVER fabricate a sessionKey (the G1 anti-pattern).
+// Soft-fail to "" on miss — NEVER fabricate a sessionKey.
 // ---------------------------------------------------------------------------
 
 describe("resolveRootRunToSession", () => {
@@ -203,7 +203,7 @@ describe("resolveRootRunToSession", () => {
     expect(resolved).toBe("default:u:c:42");
   });
 
-  it("soft-fails to '' for an unknown rootRunId — NEVER fabricates a sessionKey (G1)", async () => {
+  it("soft-fails to '' for an unknown rootRunId — NEVER fabricates a sessionKey", async () => {
     const dataDir = makeDataDirWithIndex([
       JSON.stringify({
         type: "capability.audited",

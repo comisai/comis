@@ -41,7 +41,7 @@ describe("withAuditHookSync", () => {
   });
 
   it("reads process.pid AT CALL TIME and writes it to the JSONL record (per-call read invariant)", () => {
-    // Pin RESEARCH §A.7 #1: buildBaseFromProcess must read process.pid
+    // buildBaseFromProcess must read process.pid
     // at function-call time, not module-init. If the helper closes over
     // process.pid at import time, a forked process's audit records
     // would carry the parent pid. This test invokes the helper from
@@ -128,7 +128,7 @@ describe("withAuditHookSync", () => {
     expect(existsSync(auditLogPath)).toBe(true);
     const line = readFileSync(auditLogPath, "utf-8").trim();
     const record = JSON.parse(line) as Record<string, unknown>;
-    // Design §9.2: source is the fixed literal "config-io"; callerSource
+    // source is the fixed literal "config-io"; callerSource
     // carries the call-site identity.
     expect(record.source).toBe("config-io");
     expect(record.callerSource).toBe("last-known-good-save");

@@ -3,7 +3,7 @@
  * OAuth login orchestrator for OpenAI Codex.
  *
  * Wraps pi-ai's loginOpenAICodex with VPS-aware handlers, manual-paste
- * fallback (15s + 1s grace mirroring OpenClaw), and error rewriting for
+ * fallback (15s delay + 1s grace), and error rewriting for
  * 2 user-friendly mappings (unsupported_region, callback_validation_failed)
  * + 1 identity-decode error path. Returns Result<LoginRunnerSuccess, LoginError>
  * — never throws at the public boundary.
@@ -122,11 +122,12 @@ export interface LoginRunnerSuccess {
 // ---------------------------------------------------------------------------
 
 const PROVIDER = "openai-codex" as const;
-const ORIGINATOR = "comis" as const; // NOT "openclaw"
+const ORIGINATOR = "comis" as const; // wire-visible client identifier sent to OpenAI — must name this product
 
 /**
- * Manual-paste fallback timing — exact mirror of OpenClaw's
- * provider-openai-codex-oauth.ts:15-16 constants.
+ * Manual-paste fallback timing: after 15s the browser redirect is assumed
+ * not to have completed and manual paste is offered; the 1s grace window
+ * avoids racing a login that is just about to settle.
  */
 const localManualFallbackDelayMs = 15_000;
 const localManualFallbackGraceMs = 1_000;
@@ -140,8 +141,9 @@ const validateRequiredInput = (value: string): string | undefined =>
   value.trim().length > 0 ? undefined : "Required";
 
 // ---------------------------------------------------------------------------
-// Internal: VPS-aware OAuth handlers (port from OpenClaw provider-oauth-flow.ts;
-// replace runtime.log with prompter.log.info)
+// Internal: VPS-aware OAuth handlers — on a remote/headless host the browser
+// cannot be opened locally, so the URL is printed for the operator's LOCAL
+// browser and the redirect URL is collected via manual paste.
 // ---------------------------------------------------------------------------
 
 function createVpsAwareOAuthHandlers(params: {
@@ -190,8 +192,8 @@ function createVpsAwareOAuthHandlers(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: Manual-paste fallback race (port from OpenClaw
-// provider-openai-codex-oauth.ts:15-131)
+// Internal: Manual-paste fallback race — resolves "delay" when the fallback
+// timer fires before the login settles, "settled" when login wins the race.
 // ---------------------------------------------------------------------------
 
 function waitForDelayOrLoginSettle(params: {

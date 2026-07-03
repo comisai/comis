@@ -92,7 +92,7 @@ export interface BillingBySession {
 export type BillingDrillLevel = "total" | "provider" | "agent" | "session";
 
 /**
- * Per-tool cost attribution (COST-01 `tool_tag`). Best-effort, labeled — a
+ * Per-tool cost attribution keyed by `tool_tag`. Best-effort, labeled — a
  * turn's cost delta is even-split across the distinct tools that fired, so
  * per-tool shares sum to the turn total (never exact). Content-free: tool
  * ids/numbers only.
@@ -105,7 +105,7 @@ export interface ToolCostBreakdown {
 }
 
 /**
- * Per-subagent cost rollup (COST-02). Over CORRECTED dollars (exact within the
+ * Per-subagent cost rollup. Over CORRECTED dollars (exact within the
  * graph) — `cost` is the node's own spend, `subtreeCost` is the node + all its
  * descendants. Content-free: node ids + dollars only.
  */

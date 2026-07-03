@@ -2,7 +2,7 @@
 # VPS (run as ROOT) — robustly (re)launch the Telegram emulator so it SURVIVES the
 # ssh session close, then print the new kernel-allocated port + wiring.
 #
-# WHY THIS EXISTS (openclaw-usecases 2026-06-25, cost ~6 cycles):
+# WHY THIS EXISTS (two traps that together cost ~6 cycles):
 #  (1) pkill SELF-MATCH — `pkill -f "vps-emu"` matches the ssh shell running THIS
 #      command (its argv contains "vps-emu.ts") → it kills itself → empty output /
 #      ssh exit 255, emulator never relaunched. MUST anchor `^node ` (the bash/ssh

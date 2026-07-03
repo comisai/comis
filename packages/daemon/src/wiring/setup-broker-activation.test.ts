@@ -3,8 +3,8 @@
  * Activation seam tests: brokerContext on ToolsDeps + conditional
  * wiring into createExecTool (network: broker-only, secureCredentialHome, brokerSpawnEnv).
  *
- * RED phase: ToolsDeps.brokerContext does not exist yet — tests fail to compile.
- * GREEN phase: add brokerContext to ToolsDeps + conditional wiring in assembleToolsForAgent.
+ * These assert brokerContext exists on ToolsDeps and drives the conditional
+ * wiring in assembleToolsForAgent.
  *
  * Tests cover:
  *   - sandboxCfg.network.mode === "broker-only" when brokerContext present
@@ -142,12 +142,12 @@ vi.mock("@comis/core", () => ({
   leaveConfigMutationFence: vi.fn(),
   tryGetContext: mockTryGetContext,
   parseFormattedSessionKey: mockParseFormattedSessionKey,
-  // CAP-03: makeCreateAgentRpcCall (via assembleToolsForAgent) resolves the
+  // makeCreateAgentRpcCall (via assembleToolsForAgent) resolves the
   // agent's held capability set with resolveAutonomy(autonomy).capabilities.
   // This wiring test never exercises the cap set, so a zero-cap resolved shape
   // is enough to let the broker activation seam under test load and run.
   resolveAutonomy: vi.fn(() => ({ capabilities: [] })),
-  // PROFILE-05/JAIL-03: buildAutonomyToolWiring degrades the resolved posture via
+  // buildAutonomyToolWiring degrades the resolved posture via
   // degradeAutonomy(resolved, {namespacePreflightOk}) before gating orchestrate.
   // This seam never passes namespacePreflightOk (→ defaults true → no-op degrade),
   // so a pass-through is faithful; the real fn is unit-tested in schema-agent-autonomy.test.ts.

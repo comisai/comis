@@ -60,7 +60,7 @@ describe("resolveLeanDescriptionsForAgent", () => {
 });
 
 describe("buildSharedConvertTools", () => {
-  it("converts tools with the pre-resolved lean description overriding the factory one (WR-03 shared closure)", () => {
+  it("converts tools with the pre-resolved lean description overriding the factory one (shared closure)", () => {
     const convertTools = buildSharedConvertTools({ alpha: "lean alpha" });
 
     const execute = async (): Promise<never> => {

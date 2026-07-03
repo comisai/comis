@@ -25,7 +25,7 @@ import { createDeliveryTracer } from "../observability/delivery-tracer.js";
 import type { DeliveryTracer } from "../observability/delivery-tracer.js";
 
 // ---------------------------------------------------------------------------
-// The OTel extension seam contract (LOCAL, structural — N2)
+// The OTel extension seam contract (LOCAL, structural)
 // ---------------------------------------------------------------------------
 
 /**
@@ -33,16 +33,17 @@ import type { DeliveryTracer } from "../observability/delivery-tracer.js";
  * extension's `registerOtelExporter`. Declared LOCALLY (structurally) rather than
  * `import type`-ed from the extension so the daemon's `tsc` build needs NEITHER
  * the extension's `dist/*.d.ts` NOR a tsconfig project-reference — core/daemon
- * `build:clean` succeed with `packages/observability-otel/dist` ABSENT (N2). It
+ * `build:clean` succeed with `packages/observability-otel/dist` ABSENT. It
  * mirrors the extension's exported `OtelExporterDeps`; structural assignability
  * does the rest at the dynamic-import call site (the extension validates the real
  * shape). The VALUE (`registerOtelExporter`) is reached ONLY via the config-gated
- * `await import()` below — never a static value-import (the N2 build gate).
+ * `await import()` below — never a static value-import (that would put the extension
+ * back in the daemon's build graph).
  */
 interface OtelExporterSeamDeps {
   eventBus: AppContainer["eventBus"];
   /**
-   * The boot clock. OPTIONAL (LOW-1): the legacy/test call shape may not thread a
+   * The boot clock. OPTIONAL: some call shapes may not thread a
    * clock, and the extension never calls wall-clock APIs — so it is forwarded ONLY
    * when present (a conditional spread), never as `undefined as ClockPort` (an
    * unsound contract lie). The extension's own `OtelExporterDeps.clock` stays
@@ -90,18 +91,18 @@ export interface ObservabilityResult {
    */
   disposeActivityStream: () => void;
   /**
-   * The single daemon-wide spend accumulator (Phase 177 — the dollars
+   * The single daemon-wide spend accumulator (the dollars
    * kill-switch enforcement state). CONSTRUCTED here beside the cross-agent
    * cost-tracker subscriber, with the live `recordSpend` subscriber registered
    * on `observability:token_usage`. The per-agent bridge guards hold a REFERENCE
-   * to this SAME instance (Pitfall 4). REHYDRATION happens at the boot
+   * to this SAME instance. REHYDRATION happens at the boot
    * composition root (daemon.ts) via {@link rehydrateSpendFromStore} once
    * `obsStore` exists. `undefined` when `clock`/`config` were not threaded
-   * (e.g. legacy/test call shapes) — the spend path is then inert.
+   * (e.g. test call shapes) — the spend path is then inert.
    */
   spendAccumulator?: SpendAccumulator;
   /**
-   * The OTLP/Prometheus exporter registration handle (Phase 178) — present ONLY
+   * The OTLP/Prometheus exporter registration handle — present ONLY
    * when `observability.otel.enabled || observability.prometheus.enabled` AND the
    * opt-in `@comis/observability-otel` extension loaded successfully. `shutdown()`
    * flushes + closes the OTel providers (and stops the `/metrics` listener); the
@@ -164,14 +165,14 @@ export async function setupObservability(deps: {
   theme?: ActivityTheme;
   /**
    * The boot {@link ClockPort} (the SAME one threaded elsewhere, e.g.
-   * daemon.ts:958/2544). Injected so the daemon-wide spend accumulator (Phase
-   * 177) is constructed here. Optional — when absent the spend accumulator is
-   * NOT constructed (legacy/test call shapes stay byte-identical).
+   * daemon.ts:958/2544). Injected so the daemon-wide spend accumulator
+   * is constructed here. Optional — when absent the spend accumulator is
+   * NOT constructed (test call shapes stay byte-identical).
    */
   clock?: ClockPort;
   /**
    * The full app config. Read here for `observability.spend.*` (the spend
-   * kill-switch ceilings) AND `observability.{otel,prometheus}` (the Phase 178
+   * kill-switch ceilings) AND `observability.{otel,prometheus}` (the
    * exporter seam below). Optional — when absent (with `clock`) the accumulator
    * is not constructed and the OTel seam is skipped.
    */
@@ -213,7 +214,7 @@ export async function setupObservability(deps: {
     );
   });
 
-  // The single daemon-wide spend accumulator (Phase 177, E2) — the dollars
+  // The single daemon-wide spend accumulator — the dollars
   // kill-switch enforcement-state owner. CONSTRUCTED here beside the cross-agent
   // cost-tracker (the established daemon-wide subscriber seam); everything it
   // needs at construction is `clock` + `config.observability.spend` + `eventBus`.
@@ -221,7 +222,7 @@ export async function setupObservability(deps: {
   // `rehydrateSpendFromStore` because the persisted rolling-spend read lives on
   // `obsStore`, which is not reachable until obsStore is built ~60-90 lines after
   // this call (and only when persistence is enabled). When `clock`/`config` are
-  // absent the accumulator is not constructed (legacy/test call shapes stay
+  // absent the accumulator is not constructed (test call shapes stay
   // byte-identical).
   let spendAccumulator: SpendAccumulator | undefined;
   // Defensive at the composition root: only construct when clock + the spend
@@ -255,21 +256,21 @@ export async function setupObservability(deps: {
     });
   }
 
-  // Phase 178 — the config-gated OTLP/Prometheus exporter seam (Landmine P1).
+  // The config-gated OTLP/Prometheus exporter seam.
   // The opt-in `@comis/observability-otel` extension is loaded ONLY when
   // `observability.otel.enabled || observability.prometheus.enabled` via a runtime
   // `await import()` (the daemon's documented optional-load pattern —
   // preflight-doctor.ts/better-sqlite3, config-export.ts/yaml). The static surface
   // is type-only (`import type { OtelExporterDeps }`), so core/daemon `build:clean`
-  // succeed with the extension's `dist/` absent (N2). The try/catch is mandatory:
+  // succeed with the extension's `dist/` absent. The try/catch is mandatory:
   // an enabled-but-unavailable/throwing extension WARNs with a hint and DEGRADES
-  // (telemetry off), NEVER crashing boot (the self-DoS guard, T-178-06).
+  // (telemetry off), NEVER crashing boot (the self-DoS guard).
   let otelHandle: { shutdown(): Promise<void> } | undefined;
   const otelCfg = deps.config?.observability?.otel;
   const promCfg = deps.config?.observability?.prometheus;
   if ((otelCfg?.enabled === true || promCfg?.enabled === true) && deps.config !== undefined) {
     const observability = deps.config.observability;
-    // MD-01: the `/metrics` pull surface has NO built-in auth (the OTel
+    // The `/metrics` pull surface has NO built-in auth (the OTel
     // PrometheusExporter serves the operational shape — metric names, labels,
     // series counts — unauthenticated; `prometheus.auth:'trusted-operator'` is
     // ADVISORY, realized by the loopback bind + the operator's reverse
@@ -311,17 +312,17 @@ export async function setupObservability(deps: {
       const mod = (await import(extensionSpecifier)) as unknown as OtelExtensionModule;
       otelHandle = mod.registerOtelExporter({
         eventBus,
-        // LOW-1: forward the boot clock ONLY when present (conditional spread) —
+        // Forward the boot clock ONLY when present (conditional spread) —
         // never `deps.clock as ClockPort` (which passes `undefined as ClockPort`
-        // on the legacy/test call shape, an unsound contract lie). The extension
+        // on a test call shape, an unsound contract lie). The extension
         // never calls wall-clock APIs, so omitting the key when absent is safe.
         ...(deps.clock !== undefined ? { clock: deps.clock } : {}),
         observability,
-        // The 177 accumulator reference (the comis_spend_* gauge source). Omitted
+        // The accumulator reference (the comis_spend_* gauge source). Omitted
         // when no accumulator was constructed (clock/config absent → the
         // exactOptionalPropertyTypes-safe conditional spread).
         ...(spendAccumulator !== undefined ? { spendAccumulator } : {}),
-        // The daemon version label for comis_build_info (CR-01).
+        // The daemon version label for comis_build_info.
         ...(deps.version !== undefined ? { version: deps.version } : {}),
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       });
@@ -425,11 +426,11 @@ export async function setupObservability(deps: {
     // the correlation index. The shutdown chain invokes this so pending per-turn
     // bounded queues drain and no placeholder is orphaned across restart.
     disposeActivityStream: () => activityStream.dispose(),
-    // The daemon-wide spend accumulator (Phase 177). Threaded out so the boot
+    // The daemon-wide spend accumulator. Threaded out so the boot
     // root rehydrates it (after obsStore exists) and the per-agent bridge guards
     // hold a reference to the SAME instance.
     spendAccumulator,
-    // The OTLP/Prometheus exporter handle (Phase 178) — undefined unless an
+    // The OTLP/Prometheus exporter handle — undefined unless an
     // enabled extension loaded; the daemon threads otelHandle.shutdown() into the
     // shutdown chain alongside disposeActivityStream.
     otelHandle,

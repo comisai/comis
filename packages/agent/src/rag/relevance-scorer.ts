@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RETR-01 — the single shared `RelevanceScorer` primitive.
+ * The single shared `RelevanceScorer` primitive.
  *
  * A PURE ranking primitive that BOTH the recall path (memory-recall.ts) and the
- * assembly path (lcd-assembler.ts, via the Plan-03 margin arbiter) call. This is NOT a
+ * assembly path (lcd-assembler.ts, via the margin arbiter) call. This is NOT a
  * path merge — recall (the `P` budget) and assembly (the `H` budget) stay SEPARATE code
- * paths and share only this primitive (design §11.4/§14.5 reject the full P/H merge).
+ * paths and share only this primitive (a full P/H merge is deliberately rejected).
  *
  * The scorer does two things:
  *
  *   1. {@link buildRelevanceQuery} — builds the relevance query from the newest-weighted
  *      rolling window of the last ~3 user turns + the GoalAnchor bias term when present
- *      (the design's ONE focus-bias mechanism, §6.1/§6.6). Tokenizes + stopwords; a turn
+ *      (GoalAnchor is the ONE focus-bias mechanism). Tokenizes + stopwords; a turn
  *      with < ~2 content terms is `degraded` (low-signal).
  *
  *   2. {@link scoreRelevance} — fuses the provided candidate lanes by RRF (it REUSES
@@ -21,7 +21,7 @@
  *      preserved). On a `degraded` (low-signal) query the scorer does NOT reorder — it
  *      returns the caller's input order (a deterministic recency-first signal) and logs
  *      `relevance_query_degraded` CONTENT-FREE (a term count + a boolean, NEVER the query
- *      text). The floor stands alone (LOCKED #3): no embeddings/reranker/KG/prompt-cache →
+ *      text). The floor stands alone: no embeddings/reranker/KG/prompt-cache →
  *      pure BM25 + RRF, deterministic recency-first fallback.
  *
  * Architecture cut (agent↛memory): like {@link fuse} and rag/score.ts, this module is the
@@ -44,8 +44,8 @@ import type { MemorySearchResult, ComisLogger } from "@comis/core";
 import { fuse, type FusionLane } from "./fuse.js";
 
 /**
- * The number of most-recent user turns the relevance query draws from (design §6.1:
- * "the newest-weighted rolling window of the last ~3 user turns"). Comis chat turns are
+ * The number of most-recent user turns the relevance query draws from (the
+ * newest-weighted rolling window). Comis chat turns are
  * short + deictic, so a small window keeps the query focused on the live intent.
  */
 const RELEVANCE_TURN_WINDOW = 3;
@@ -53,7 +53,7 @@ const RELEVANCE_TURN_WINDOW = 3;
 /**
  * The minimum number of CONTENT terms (after stopwording) for a query to carry signal.
  * Below this the turn is `degraded` (low-signal) and the scorer falls back to recency-first.
- * "<~2 content terms" (design §6.1) → the boundary is `< 2`.
+ * Fewer than two content terms carries no usable retrieval signal → the boundary is `< 2`.
  */
 const MIN_CONTENT_TERMS = 2;
 
@@ -113,18 +113,18 @@ export interface RelevanceQuery {
 }
 
 /**
- * YAGNI-EXCEPTION / ORPHAN NOTE (WR-03, Phase 174-04). `buildRelevanceQuery` has no production
+ * YAGNI-EXCEPTION / ORPHAN NOTE. `buildRelevanceQuery` has no production
  * caller today: the recall path builds its own FTS query, and the assembly arbiter REPLICATES
  * the tokenize+stopword locally in `lcd-arbiter-seam.buildAssemblyRelevanceQuery` to honor the
- * I2 context-engine ↮ rag cut (the engine must not import this module). It is RETAINED — fully
+ * context-engine ↮ rag cut (the engine must not import this module). It is RETAINED — fully
  * test-covered (relevance-scorer.test.ts) — as the query builder a future cross-tier LTM/KG
  * allocator will consume when assembly fetches cross-session candidate lanes. It is NOT on the
  * `@comis/agent` public barrel, so the public-export-consumers gate does not fire; this comment
- * is the YAGNI-exception record (the §2.3 informed-exception, the `reduceFleetWindow` precedent).
+ * is the YAGNI-exception record (the AGENTS.md §2.3 informed-exception, the `reduceFleetWindow` precedent).
  *
  * Build the relevance query from the newest-weighted rolling window of the last ~3 user
- * turns + the GoalAnchor bias term when present (design §6.1/§6.6 — GoalAnchor IS the
- * focus-bias, one mechanism).
+ * turns + the GoalAnchor bias term when present (GoalAnchor IS the
+ * focus-bias — one mechanism).
  *
  * Newest-weighting: the most-recent turn's terms come FIRST and an older turn never displaces
  * a newer one (the window is the last {@link RELEVANCE_TURN_WINDOW} turns, processed
@@ -133,7 +133,7 @@ export interface RelevanceQuery {
  * result is `degraded` when fewer than {@link MIN_CONTENT_TERMS} content terms remain.
  *
  * Pure + total: an empty / whitespace / stopword-only input simply yields `{ terms: [],
- * degraded: true }` (never throws). The caller (recall or the Plan-03 arbiter) supplies
+ * degraded: true }` (never throws). The caller (recall or the assembly arbiter) supplies
  * whatever it has — recall has the user message turns; assembly threads the GoalAnchor text.
  *
  * @param userTurns - User-role turn texts in chronological order (oldest first). Only the
@@ -226,8 +226,8 @@ export function scoreRelevance(
   opts?: ScoreRelevanceOptions,
 ): MemorySearchResult[] {
   if (query.degraded) {
-    // Content-free observability (§2.7): the FACT of the fallback only — a term COUNT + a
-    // boolean. NEVER the query text or any input turn string (the T-173-02-01 mitigation).
+    // Content-free observability (AGENTS.md §2.7): the FACT of the fallback only — a term COUNT
+    // + a boolean. NEVER the query text or any input turn string (they can carry user content).
     opts?.logger?.debug(
       {
         agentId: opts.agentId,

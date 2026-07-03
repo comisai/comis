@@ -3,7 +3,7 @@
  * acp-projection tests.
  *
  * Pure pass-through: every event visible, NO coalescing, no verbosity policy,
- * and groupedActivityIds is ALWAYS empty (IDEs want full fidelity — §9).
+ * and groupedActivityIds is ALWAYS empty (IDE surfaces want full fidelity).
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityEvent } from "../activity-event.js";

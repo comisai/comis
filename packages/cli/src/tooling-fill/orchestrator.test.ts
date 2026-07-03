@@ -330,8 +330,8 @@ describe("runToolingFill — successful single-hint flow with --yes --restart fl
   });
 });
 
-describe("runToolingFill — daemon down → exit 1 with literal SPEC string", () => {
-  it("emits the SPEC string and never calls callAgent", async () => {
+describe("runToolingFill — daemon down → exit 1 with the literal gateway-unreachable message", () => {
+  it("emits the exact gateway-unreachable message and never calls callAgent", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(isDaemonRunning).mockResolvedValue(false);
 
@@ -497,7 +497,7 @@ describe("runToolingFill — some dropped → proceed with valid + warn", () => 
 });
 
 describe("runToolingFill — validate-failure rollback", () => {
-  it("restores backup, restarts daemon, exits 1 with rollback SPEC string", async () => {
+  it("restores backup, restarts daemon, exits 1 with the rollback summary prefix", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
       ok({

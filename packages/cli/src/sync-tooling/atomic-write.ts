@@ -12,7 +12,7 @@
  * the parent-dir fsync error is swallowed so dev-on-macos works while
  * Linux production gets full durability.
  *
- * NEW pattern in this codebase — there is no reference impl to mirror.
+ * This is the only atomic-write implementation in the codebase.
  * `packages/daemon/src/config/last-known-good.ts` uses `copyFileSync`
  * with no fsync; `packages/cli/src/commands/configure.ts` uses plain
  * `writeFileSync`. Neither is atomic; do not adapt either.

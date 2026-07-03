@@ -1,38 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `control-api` — the generic, channel-agnostic `/control/*` driver surface +
- * an in-process typed client + the reply-wait primitive (RIG-03 + SEC-01,
- * Phase 204).
+ * an in-process typed client + the reply-wait primitive.
  *
- * This is THE driver surface. The rig (Plan 05) and the round-trip scenario
- * inject a message and await the reply through this one mechanism; Phase 205's
- * `chan`/`tg` CLI is a thin HTTP client over the SAME handlers, and channel #2
- * (Phase 209) reuses it unchanged. The control API is registered on the Plan-01
+ * This is THE driver surface. The rig and the round-trip scenario
+ * inject a message and await the reply through this one mechanism; the
+ * `chan`/`tg` CLI is a thin HTTP client over the SAME handlers, and a second
+ * channel reuses it unchanged. The control API is registered on the
  * `http-backend` base (via `registerControlRoute`) so it shares ONE loopback
  * port with the Bot API — namespaced under `/control/` so it can never be
- * confused with the `/bot<token>/<method>` matcher (SEC-01 / T-204-10). Loopback
+ * confused with the `/bot<token>/<method>` matcher. Loopback
  * bind (127.0.0.1 only) is inherited from the base; there is no bespoke server.
  *
- * The design (§4.6): the HTTP route is the canonical surface; the in-process TS
+ * By design: the HTTP route is the canonical surface; the in-process TS
  * path is "just a typed client that calls the same handlers without a socket".
  * So each route is factored into a HANDLER FUNCTION that the HTTP dispatch AND
  * the in-proc `ControlClient` both invoke — behavioral parity is STRUCTURAL, not
  * a duplicated re-implementation. The unit test asserts an in-process inject +
  * wait round-trips identically to the HTTP path.
  *
- * Scope (Phase 204): the MINIMAL route set —
+ * The core route set —
  *   - POST /control/chats/:id/messages   { fromUserId, text, opts? } → { messageId }
  *   - GET  /control/chats/:id/outbound    ?afterMessageId&waitMs       → RecordedOutbound[]
- * The full §4.6 table (media/location/reactions/callbacks/edits/service/reset/
- * faults) is Phases 205-208. The dispatch is a route map so adding them later is
- * additive; only these two are implemented for 204.
+ * The remaining routes (media/location/reactions/callbacks/edits/service/reset/
+ * faults) extend the same route map — the dispatch is a route map so routes are
+ * additive.
  *
- * The reply-wait primitive (GET …/outbound) is the PRIME DIRECTIVE (I5): it
+ * The reply-wait primitive (GET …/outbound) is the PRIME DIRECTIVE: it
  * blocks up to `waitMs` for a NEW outbound whose message id is `> afterMessageId`
  * and, on TIMEOUT, returns an explicit EMPTY result — an honest "no reply within
  * Nms", NEVER a fabricated success. The caller can always distinguish "no reply"
- * from "a reply". For 204 "the reply = the first outbound with message id >
- * afterMessageId" (Open-Q3 — sufficient for one text reply).
+ * from "a reply". The reply = the first outbound with message id >
+ * afterMessageId (sufficient for one text reply).
  *
  * TEST-HARNESS — lives under `test/`, never `packages`; ZERO production code
  * change. `test/` is outside every `packages` source-tree ESLint/architecture
@@ -47,15 +46,15 @@ import type {
   HttpBackend,
   RouteResult,
 } from "./backends/http-backend.js";
-// The LIFTED channel-agnostic oracle types come from the harness/ layer (the
-// foundation-fix, CHAN2-02): `RecordedOutbound` (the subset the generic control
+// The LIFTED channel-agnostic oracle types come from the harness/ layer:
+// `RecordedOutbound` (the subset the generic control
 // surface + the dual oracle consume) and `MediaKind` (already shared in
-// channel-emulator.ts). A second channel (Phase 209) feeds these with NO
+// channel-emulator.ts). A second channel feeds these with NO
 // telegram dependency.
 import type { RecordedOutbound } from "./recorded-outbound.js";
 import type { MediaKind } from "./channel-emulator.js";
 // The telegram-ONLY route shapes (media/location/fault) the control-api's
-// Phase-207/208 routes use — these are NOT part of the channel-agnostic oracle
+// media/fault routes use — these are NOT part of the channel-agnostic oracle
 // surface (the Signal send/react/explain proof does not exercise them), so they
 // stay scoped to the telegram emulator until a second channel needs them.
 import type { FailOpts, MediaMeta, PlaceInput, TgFault } from "../emulators/telegram/tg-emulator.js";
@@ -76,7 +75,7 @@ function isMediaKind(value: unknown): value is MediaKind {
  * The minimal emulator surface the control handlers drive. A structural subset
  * of `TgEmulator` (NOT the whole interface) so the control API stays
  * channel-agnostic: any emulator that can queue an inbound + expose its outbound
- * oracle can be driven by this surface (Phase 209 channel #2 implements the same
+ * oracle can be driven by this surface (a second channel implements the same
  * shape).
  */
 export interface ControlEmulator {
@@ -89,8 +88,8 @@ export interface ControlEmulator {
   /**
    * Queue an inbound reaction-ADD on an EXISTING bot reply (`botMessageId`).
    * Mints NO message id (the reacted-to message already exists) — returns
-   * `void`. Kept the minimal channel-agnostic shape so Phase-209 channel #2
-   * implements the same surface (REACT-02). The `emoji` is the closed grammy
+   * `void`. Kept the minimal channel-agnostic shape so a second channel
+   * implements the same surface. The `emoji` is the closed grammy
    * union at this typed seam; the HTTP boundary casts a request string into it.
    */
   injectReaction(
@@ -105,7 +104,7 @@ export interface ControlEmulator {
    * `message_id` (a media message IS a new message). The `kind` is the closed
    * media union at this typed seam; the HTTP boundary validates a request string
    * into it (an unknown kind → 400 before this is called). Kept the minimal
-   * channel-agnostic shape so Phase-209 channel #2 implements the same surface.
+   * channel-agnostic shape so a second channel implements the same surface.
    */
   injectMedia(
     chat: { readonly chatId: number },
@@ -149,7 +148,7 @@ export interface ControlEmulator {
   /** All recorded outbounds for a chat, in send order (the channel oracle). */
   outbound(chat: { readonly chatId: number }): readonly RecordedOutbound[];
   /**
-   * Inject a fault (FAULT-01): make the Bot-API `method` return the Telegram
+   * Inject a fault: make the Bot-API `method` return the Telegram
    * error envelope on demand so the REAL adapter runs its fallback. Honors
    * `once` (fail the next call, then auto-clear so the retry succeeds) and
    * `matchChat` (scope to one chat). The out-of-process `POST /control/faults`
@@ -248,7 +247,7 @@ export interface InjectCallbackParams {
   readonly fromUserId: number;
   /** The EXISTING bot reply's message id the tap targets (the attribution keystone). */
   readonly botMessageId: number;
-  /** The button payload (`callback_query.data` — a SCALAR string, IN-04 safe). */
+  /** The button payload (`callback_query.data` — a SCALAR string, kept scalar so it cannot smuggle structured input). */
   readonly data: string;
 }
 
@@ -282,7 +281,7 @@ export interface WaitForOutboundParams {
 
 /**
  * The in-process typed control client — calls the SAME handler functions as the
- * HTTP routes, without a socket (RIG-03: in-process == HTTP). The rig's
+ * HTTP routes, without a socket (in-process == HTTP). The rig's
  * `send`/`waitForReply` delegate here.
  */
 export interface ControlClient {
@@ -337,7 +336,7 @@ export interface ControlClient {
    */
   waitForReply(params: WaitForOutboundParams): Promise<RecordedOutbound | undefined>;
   /**
-   * Inject a fault (FAULT-01) — the in-process equivalent of
+   * Inject a fault — the in-process equivalent of
    * `POST /control/faults`. Calls the SAME `handleSetFault` the HTTP route does
    * (in-proc == HTTP parity); makes the Bot-API `method` return the Telegram
    * error envelope so the REAL adapter runs its fallback.
@@ -352,7 +351,7 @@ export interface ControlClient {
 
 /** A short poll interval (ms) for the reply-wait. Small enough that a block-then-resolve wakes promptly. */
 const POLL_INTERVAL_MS = 15;
-/** Hard ceiling on `waitMs` (ms) so a malformed huge value cannot hang the handler forever (T-204-12). */
+/** Hard ceiling on `waitMs` (ms) so a malformed huge value cannot hang the handler forever. */
 const MAX_WAIT_MS = 120_000;
 
 /** Sleep helper (raw `setTimeout` is fine under `test/`). */
@@ -366,7 +365,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Parse a control request body — JSON or form-encoded (the driver/CLI may send
  * either; mirrors the emulator's dual parse). A malformed body yields `{}` (the
- * base already guarantees the server stays up — V5).
+ * base already guarantees the server stays up).
  */
 function parseControlBody(body: string): Record<string, unknown> {
   if (body.length === 0) return {};
@@ -436,7 +435,7 @@ function resolvePlaceInput(
   };
 }
 
-/** Bound `waitMs` into `[0, MAX_WAIT_MS]` defensively (T-204-12). */
+/** Bound `waitMs` into `[0, MAX_WAIT_MS]` defensively. */
 function clampWaitMs(raw: number | undefined): number {
   if (raw === undefined || !Number.isFinite(raw) || raw <= 0) return 0;
   return Math.min(raw, MAX_WAIT_MS);
@@ -446,17 +445,17 @@ function clampWaitMs(raw: number | undefined): number {
 const CHAT_MESSAGES_PATH = /^\/control\/chats\/(-?\d+)\/messages\/?$/;
 /** The `/control/chats/:id/outbound` path → the captured chat id. */
 const CHAT_OUTBOUND_PATH = /^\/control\/chats\/(-?\d+)\/outbound\/?$/;
-/** The `/control/chats/:id/reactions` path → the captured chat id (REACT-02). */
+/** The `/control/chats/:id/reactions` path → the captured chat id (the inject-reaction route). */
 const CHAT_REACTIONS_PATH = /^\/control\/chats\/(-?\d+)\/reactions\/?$/;
-/** The `/control/chats/:id/media` path → the captured chat id (MEDIA-01/03, Phase 207). */
+/** The `/control/chats/:id/media` path → the captured chat id (the inject-media route). */
 const CHAT_MEDIA_PATH = /^\/control\/chats\/(-?\d+)\/media\/?$/;
-/** The `/control/chats/:id/location` path → the captured chat id (MEDIA-01, Phase 207). */
+/** The `/control/chats/:id/location` path → the captured chat id (the inject-location route). */
 const CHAT_LOCATION_PATH = /^\/control\/chats\/(-?\d+)\/location\/?$/;
-/** The `/control/chats/:id/callbacks` path → the captured chat id (INTERACT-01, Phase 207). */
+/** The `/control/chats/:id/callbacks` path → the captured chat id (the inject-callback route). */
 const CHAT_CALLBACKS_PATH = /^\/control\/chats\/(-?\d+)\/callbacks\/?$/;
-/** The `/control/chats/:id/edits` path → the captured chat id (INTERACT-02, Phase 207). */
+/** The `/control/chats/:id/edits` path → the captured chat id (the inject-edit route). */
 const CHAT_EDITS_PATH = /^\/control\/chats\/(-?\d+)\/edits\/?$/;
-/** The `/control/faults` path — POST sets a fault, DELETE clears all (FAULT-01, Phase 208). */
+/** The `/control/faults` path — POST sets a fault, DELETE clears all (the fault-injection route). */
 const FAULTS_PATH = /^\/control\/faults\/?$/;
 
 /**
@@ -465,8 +464,7 @@ const FAULTS_PATH = /^\/control\/faults\/?$/;
  * call the SAME handler functions (`handleInject` / `handleOutbound`), so
  * behavioral parity is structural.
  *
- * For 204 only the inject + reply-wait routes are wired; the dispatch is a route
- * map so the remaining §4.6 verbs are additive later.
+ * The dispatch is a route map so route verbs are additive.
  */
 export function registerControlApi(backend: HttpBackend, emulator: ControlEmulator): ControlClient {
   // -------------------------------------------------------------------------
@@ -493,7 +491,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
    * EXISTING bot reply. The ONE handler both the HTTP route and the in-proc
    * client invoke (structural parity, mirroring handleInject). The `emoji` is a
    * string at this trust boundary; it is cast to the closed grammy union exactly
-   * once here (the §4.6 row: `{ fromUserId, botMessageId, emoji } → { ok }`).
+   * once here (the route contract: `{ fromUserId, botMessageId, emoji } → { ok }`).
    */
   function handleInjectReaction(
     chatId: number,
@@ -517,7 +515,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
    * the existing `parseControlBody` JSON branch (AGENTS.md §2.3 stdlib-first). The
    * caller has ALREADY validated `kind` (a closed `MediaKind`) and `fileBase64`
    * (a string) at the dispatch boundary, so a bad request 400s before reaching
-   * here (§4.6 row: `{ kind, fromUserId, fileBase64, … } → { ok, messageId }`).
+   * here (the route contract: `{ kind, fromUserId, fileBase64, … } → { ok, messageId }`).
    */
   function handleInjectMedia(
     chatId: number,
@@ -560,8 +558,9 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
   /**
    * POST /control/chats/:id/callbacks — queue an inbound `callback_query` tapping
    * an EXISTING bot reply. The ONE handler both callers invoke; mints no id (the
-   * §4.6 shape `{ ok: true }`). `data` is a SCALAR string (IN-04 safe — grammy
-   * sends callbacks as JSON; the JSON parseBody branch handles it, no form parser).
+   * `{ ok: true }` shape). `data` is a SCALAR string (kept scalar so it cannot
+   * smuggle structured input — grammy sends callbacks as JSON; the JSON parseBody
+   * branch handles it, no form parser).
    */
   function handleInjectCallback(
     chatId: number,
@@ -578,8 +577,8 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
 
   /**
    * POST /control/chats/:id/edits — queue an inbound `edited_message` for an
-   * EXISTING message. The ONE handler both callers invoke; mints no id (the §4.6
-   * shape `{ ok: true }`). `fromUserId` defaults to a stable placeholder editor.
+   * EXISTING message. The ONE handler both callers invoke; mints no id (the
+   * `{ ok: true }` shape). `fromUserId` defaults to a stable placeholder editor.
    */
   function handleInjectEdit(
     chatId: number,
@@ -595,10 +594,10 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
   }
 
   /**
-   * POST /control/faults — inject a fault on a Bot-API method (FAULT-01). The
+   * POST /control/faults — inject a fault on a Bot-API method. The
    * ONE handler both the HTTP route and the in-proc client invoke (structural
    * parity, mirroring handleInject). Makes `method` return the Telegram error
-   * envelope so the REAL adapter runs its fallback (§4.6 row:
+   * envelope so the REAL adapter runs its fallback (the route contract:
    * `{ method, error, opts? } → { ok }`).
    */
   function handleSetFault(method: string, error: TgFault, opts?: FailOpts): { ok: true } {
@@ -606,7 +605,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
     return { ok: true };
   }
 
-  /** DELETE /control/faults — clear ALL injected faults (FAULT-01). */
+  /** DELETE /control/faults — clear ALL injected faults. */
   function handleClearFaults(): { ok: true } {
     emulator.clearFaults();
     return { ok: true };
@@ -616,7 +615,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
    * GET /control/chats/:id/outbound — the reply-wait. Poll the emulator's
    * outbound oracle for the first entry with `messageId > afterMessageId`,
    * blocking up to `waitMs`. On TIMEOUT return `[]` (honest no-reply, NEVER a
-   * fabricated success — the prime directive, I5).
+   * fabricated success — the prime directive).
    */
   async function handleOutbound(chatId: number, afterMessageId: number, waitMs: number): Promise<RecordedOutbound[]> {
     const deadline = Date.now() + clampWaitMs(waitMs);
@@ -633,8 +632,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
   }
 
   // -------------------------------------------------------------------------
-  // HTTP dispatch — a route map (scaffold) so the remaining §4.6 verbs are
-  // additive later; only the two 204 routes are implemented.
+  // HTTP dispatch — a route map so route verbs are additive.
   // -------------------------------------------------------------------------
 
   async function dispatchControl(ctx: ControlRouteContext): Promise<RouteResult> {
@@ -646,7 +644,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       const fromUserId = toNum(body["fromUserId"]);
       const text = toStr(body["text"]);
       if (fromUserId === undefined || text === undefined) {
-        // Bad input → 400 (defensive; never crash — T-204-12).
+        // Bad input → 400 (defensive; never crash).
         return {
           status: 400,
           body: { ok: false, error: "fromUserId (number) and text (string) are required" },
@@ -662,7 +660,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: handleInject(chatId, params) };
     }
 
-    // POST /control/chats/:id/reactions (the inject-reaction route — REACT-02)
+    // POST /control/chats/:id/reactions (the inject-reaction route)
     const reactMatch = ctx.path.match(CHAT_REACTIONS_PATH);
     if (reactMatch && ctx.httpMethod === "POST") {
       const chatId = Number(reactMatch[1]);
@@ -671,7 +669,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       const botMessageId = toNum(body["botMessageId"]);
       const emoji = toStr(body["emoji"]);
       if (fromUserId === undefined || botMessageId === undefined || emoji === undefined) {
-        // Bad input → 400 (defensive; never crash — T-204-12 parity).
+        // Bad input → 400 (defensive; never crash).
         return {
           status: 400,
           body: {
@@ -683,7 +681,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: handleInjectReaction(chatId, { fromUserId, botMessageId, emoji }) };
     }
 
-    // POST /control/chats/:id/media (inject media — MEDIA-01/03; base64 in JSON)
+    // POST /control/chats/:id/media (inject media — base64 in JSON)
     const mediaMatch = ctx.path.match(CHAT_MEDIA_PATH);
     if (mediaMatch && ctx.httpMethod === "POST") {
       const chatId = Number(mediaMatch[1]);
@@ -693,7 +691,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       const fileBase64 = toStr(body["fileBase64"]);
       // Validate required fields + the closed `kind` union (an unknown kind, a
       // missing/non-string fileBase64, or a bad fromUserId → 400, never a crash;
-      // the bytes are never base64-decoded for a bad request — T-207-08).
+      // the bytes are never base64-decoded for a bad request).
       if (fromUserId === undefined || !isMediaKind(kind) || fileBase64 === undefined) {
         return {
           status: 400,
@@ -724,14 +722,14 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       };
     }
 
-    // POST /control/chats/:id/location (inject location/venue — MEDIA-01)
+    // POST /control/chats/:id/location (inject location/venue)
     const locationMatch = ctx.path.match(CHAT_LOCATION_PATH);
     if (locationMatch && ctx.httpMethod === "POST") {
       const chatId = Number(locationMatch[1]);
       const body = parseControlBody(ctx.body);
       const fromUserId = toNum(body["fromUserId"]);
       // Resolve the discriminated PlaceInput: a `venue` object WINS; else a plain
-      // point. A body that is neither → 400 (never a crash — T-207-08).
+      // point. A body that is neither → 400 (never a crash).
       const place = resolvePlaceInput(body["venue"], body["latitude"], body["longitude"], body["horizontalAccuracy"]);
       if (fromUserId === undefined || place === undefined) {
         return {
@@ -746,7 +744,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: handleInjectLocation(chatId, { fromUserId, place }) };
     }
 
-    // POST /control/chats/:id/callbacks (inject callback — INTERACT-01)
+    // POST /control/chats/:id/callbacks (inject callback)
     const callbackMatch = ctx.path.match(CHAT_CALLBACKS_PATH);
     if (callbackMatch && ctx.httpMethod === "POST") {
       const chatId = Number(callbackMatch[1]);
@@ -766,7 +764,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: handleInjectCallback(chatId, { fromUserId, botMessageId, data }) };
     }
 
-    // POST /control/chats/:id/edits (inject edit — INTERACT-02)
+    // POST /control/chats/:id/edits (inject edit)
     const editMatch = ctx.path.match(CHAT_EDITS_PATH);
     if (editMatch && ctx.httpMethod === "POST") {
       const chatId = Number(editMatch[1]);
@@ -784,7 +782,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: handleInjectEdit(chatId, { messageId, newText, fromUserId }) };
     }
 
-    // POST /control/faults (inject a fault — FAULT-01) / DELETE (clear all)
+    // POST /control/faults (inject a fault) / DELETE (clear all)
     const faultsMatch = ctx.path.match(FAULTS_PATH);
     if (faultsMatch && ctx.httpMethod === "POST") {
       const body = parseControlBody(ctx.body);
@@ -798,7 +796,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       const errorCode = error !== undefined ? toNum(error["error_code"]) : undefined;
       const description = error !== undefined ? toStr(error["description"]) : undefined;
       if (method === undefined || error === undefined || errorCode === undefined || description === undefined) {
-        // Bad input → 400 (defensive; never crash — T-204-12 parity).
+        // Bad input → 400 (defensive; never crash).
         return {
           status: 400,
           body: {
@@ -845,7 +843,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: outbounds };
     }
 
-    // Unknown /control/* route — 404 (the full §4.6 table is Phases 205-208).
+    // Unknown /control/* route — 404.
     return { status: 404, body: { ok: false, error: "unknown /control route" } };
   }
 

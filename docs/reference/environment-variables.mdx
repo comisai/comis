@@ -397,7 +397,7 @@ documents them) and are never logged or committed.
 | **Format** | `1` to enable, unset to skip |
 | **Default** | (unset → the suite is skipped) |
 
-Master gate for the v2.12 "Lossless Context DAG" real-LLM regression driver. When
+Master gate for the Lossless Context DAG real-LLM regression driver. When
 unset, the entire suite is skipped (no provider call, no network). When set, the
 driver runs a tool-free baseline probe + a single-read probe and records the
 `stream:context` cache-trace.
@@ -544,7 +544,7 @@ Some providers reuse a parent key for sub-services: OpenAI Whisper STT and nativ
 
 With a **Codex (ChatGPT-login) main provider** and `provider: auto` (or explicit `provider: openai-codex`), `image_generate` reuses the agent's **OAuth bearer** — bootstrapped from [`OAUTH_OPENAI_CODEX`](#oauth-openai-codex) or `comis auth login --provider openai-codex` — so **no image-specific key** is needed; the token refreshes automatically per call. The bearer is an OAuth credential, never an `OPENAI_API_KEY`.
 
-**`FAL_KEY` also enables video generation.** The `video_generate` tool (v2.24) uses the same `FAL_KEY` for the explicit `provider: fal` path (FAL queue API, `fal-ai/veo3.1/fast`). With the default `integrations.media.videoGeneration.provider: auto`, video generation **follows the agent's main provider and reuses its key**, mirroring image generation: a `google` main generates via **Veo** (default `veo-3.0-fast-generate-001`) reusing `GOOGLE_API_KEY`, and an `xai` main generates via **Grok Imagine** (`grok-imagine-video`) reusing `XAI_API_KEY` (or a SuperGrok login) — so in the common case **no video-specific key** is needed. (The native-Veo path also has a FAL-hosted fallback: `provider: fal` + `model: fal-ai/veo3.1`, which needs `FAL_KEY`, a second credential.) There is **no video-specific env var** beyond reusing these provider keys.
+**`FAL_KEY` also enables video generation.** The `video_generate` tool uses the same `FAL_KEY` for the explicit `provider: fal` path (FAL queue API, `fal-ai/veo3.1/fast`). With the default `integrations.media.videoGeneration.provider: auto`, video generation **follows the agent's main provider and reuses its key**, mirroring image generation: a `google` main generates via **Veo** (default `veo-3.0-fast-generate-001`) reusing `GOOGLE_API_KEY`, and an `xai` main generates via **Grok Imagine** (`grok-imagine-video`) reusing `XAI_API_KEY` (or a SuperGrok login) — so in the common case **no video-specific key** is needed. (The native-Veo path also has a FAL-hosted fallback: `provider: fal` + `model: fal-ai/veo3.1`, which needs `FAL_KEY`, a second credential.) There is **no video-specific env var** beyond reusing these provider keys.
 
 **Vision (`image_analyze`) reuses the main provider's key too.** When the agent's main model is vision-capable (Claude / GPT-4o / Gemini and other image-accepting models), `image_analyze` routes through that main model and reuses **its** credentials — `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_API_KEY` for a key-auth main, or the **OAuth bearer** for a Codex main — so **no separate vision key is needed** in that case. There is **no new vision env var**: if you fall back to the independent vision registry (when the main model can't see images, or you set an explicit `integrations.media.vision.defaultProvider`), it uses the same `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY`. `describe_video` (raw video) is Gemini-only and uses `GOOGLE_API_KEY`.
 
@@ -697,9 +697,7 @@ BENCH_MODELS=qwen3.6:35b-mlx,qwen3.6:35b \
 ```
 
 The report shows average latency per model section. MLX should be faster on Apple
-Silicon; GGUF should be faster or equivalent on Linux. Performance numbers for the
-full qwen3.6 matrix are recorded in `.planning/phases/157-re-prove-ga/` after the
-Phase 157 live re-prove.
+Silicon; GGUF should be faster or equivalent on Linux.
 </Tip>
 
 ## Related

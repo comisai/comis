@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slack approval-UI tests (rich-channel half; §7.7 / §17.3).
+ * Slack approval-UI tests (rich-channel half).
  *
  * The Slack renderer turns its deferred Block Kit `actions` shell into a
  * real signed approval UI: a `kind:"approval"` frame paints the choices as
- * `RichButton` rows whose `callback_data` is the signed §6.4.2 wire string
+ * `RichButton` rows whose `callback_data` is the signed wire string
  * `v1.<choice>.<shortId>.<hmac>` (from `buildApprovalButtons` over the
  * renderer-injected `SignCallbackData`). The Slack adapter maps each row to a
  * Block Kit `actions` element whose `value` IS that signed callback (the value is
@@ -97,7 +97,7 @@ describe("Slack Block Kit approval actions (signed callback value)", () => {
   it("renders the approval prompt text alongside the actions", async () => {
     const timer = createFakeTimers();
     const fake = createFakeSlackAdapter();
-    // Drop clock so the §8.5 elapsed fallback is skipped — the test asserts
+    // Drop clock so the elapsed-time fallback is skipped — the test asserts
     // send.text byte-stably.
     const r = createSlackActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 

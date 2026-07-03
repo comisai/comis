@@ -5,8 +5,8 @@
  * `withDedup` wraps a {@link ComisLogger} so repeated messages keyed by the
  * same dedup key fire the underlying logger ONCE. The key is
  * `fingerprint(`${level}:${k}`)`, where `k` is the caller-supplied `dedupKey`
- * object field if present, else the message string (D10/D4 — the shared
- * `fingerprint` is the key). The first occurrence passes through unchanged;
+ * object field if present, else the message string (the shared
+ * `fingerprint` digest is the key). The first occurrence passes through unchanged;
  * repeats are suppressed and their count tracked (a collapsed signal, never a
  * silently dropped one).
  *
@@ -18,11 +18,10 @@
  * (`architecture-graph.test.ts` locks `agent ↛ infra`). This is the same
  * decision the project already made for `fingerprint`.
  *
- * TTL: `opts.ttlMs` defaults to `undefined` = process-lifetime, matching the
- * unbounded hand-rolled Sets this replaces (behavior-preserving). A
+ * TTL: `opts.ttlMs` defaults to `undefined` = process-lifetime dedup. A
  * security-relevant repeated WARN is therefore collapsed-with-count within the
- * process but its FIRST occurrence always fires — it is never suppressed beyond
- * process lifetime (security-threat-model directive 3). When a TTL IS supplied,
+ * process but its FIRST occurrence always fires — a security signal is
+ * collapsed, never fully suppressed. When a TTL IS supplied,
  * a key whose first emission is older than `ttlMs` is treated as a fresh entry
  * and re-emitted.
  *
@@ -36,13 +35,13 @@ import { systemNowMs } from "../runtime/system-time.js";
 export interface WithDedupOptions {
   /**
    * Re-emit window in milliseconds. `undefined` (default) = process-lifetime
-   * dedup (matches the unbounded Sets this replaces). When set, a repeat is
+   * dedup. When set, a repeat is
    * re-emitted once `ttlMs` has elapsed since the key's first emission.
    */
   ttlMs?: number;
   /**
    * Reserved hard-cap on the number of tracked keys (future eviction hook).
-   * Accepted but currently a no-op — parity with the unbounded Sets; do not
+   * Accepted but currently a no-op — do not
    * rely on it for eviction until a test pins the behavior.
    */
   max?: number;

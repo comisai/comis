@@ -6,12 +6,12 @@ icon: "language"
 
 Comis is English-shaped in exactly five mechanical places — token arithmetic, search
 tokenization, generated-text language, deterministic reply strings, and per-script
-observability — and v2.22 fixes all five with one script-class data table, one pure
+observability — and covers all five with one script-class data table, one pure
 normalization function, one trigram search lane, one shared prompt line, and one phrase
-table, with zero new runtime dependencies. The result: a Hebrew, Arabic, Russian, or CJK
+table, with zero extra runtime dependencies. The result: a Hebrew, Arabic, Russian, or CJK
 conversation gets honest token math, search that survives morphology, summaries and replies
-in its own language, and fleet-visible script health — while a **Latin-script deployment is
-byte-identical to before** (token factor 1.0, the same search SQL, the same English strings).
+in its own language, and fleet-visible script health — while for a **Latin-script deployment
+the multilingual layer is inert** (token factor 1.0, the same search SQL, the same English strings).
 
 This page tells an operator which scripts Comis serves, which knobs exist, and why. Comis
 **never translates** user content (see [Security stance](#security-stance)); search recall
@@ -33,8 +33,8 @@ recall without a lemmatizer. The table below is what the floor covers per script
 
 | Script | Search-floor coverage | Notes |
 |--------|-----------------------|-------|
-| Latin (English) | Word lane (porter unicode61), unchanged | Byte-identical to before — same SQL, same case-folding |
-| Latin with diacritics (Spanish, French, German, Portuguese…) | Word lane — **already served** | `unicode61` defaults to `remove_diacritics=1`, so `café` and `cafe` co-match; served at the floor before this milestone — only the token factor (mild) and reply-language strings are new |
+| Latin (English) | Word lane (porter unicode61), unchanged | The multilingual layer leaves the word lane untouched — same SQL, same case-folding |
+| Latin with diacritics (Spanish, French, German, Portuguese…) | Word lane — **already served** | `unicode61` defaults to `remove_diacritics=1`, so `café` and `cafe` co-match; the word lane already serves these scripts — only the token factor (mild) and reply-language strings differ from plain Latin |
 | Hebrew | Trigram lane + per-script normalization | Niqqud stripped, final forms folded, geresh/gershayim folded; `ספר` matches inside `הספרים` (attached particles) |
 | Arabic (incl. Persian, Urdu) | Trigram lane + per-script normalization | Harakat/tanween stripped, tatweel deleted, alef/yeh/teh-marbuta folded, Arabic-Indic digits folded to ASCII |
 | Russian / Cyrillic | Trigram lane + per-script normalization | `ё` folded to `е` (never `й`→`и`); `книга` matches `книги` (case/number suffixes) |
@@ -76,7 +76,7 @@ Routing is token-wise, never rank-merging (BM25 scores are not comparable across
   hits, no ranking); long-term memory stays on its word + vector lanes.
 
 A `comis doctor` repair backfills the trigram twins with normalized text for conversation
-history that predates the lane (twins index new writes from day one; the backfill is operator-run).
+history the twins do not yet index (twins index new writes from day one; the backfill is operator-run).
 
 ### Degradation matrix
 
@@ -93,17 +93,17 @@ Every non-Latin capability has a working, visible, lower-fidelity floor — noth
 | Small or local summarizer silently ignores the language instruction (Hebrew in → English out) | The recall hole would reopen invisibly → the `summary_language_mismatch` fleet signal makes it a count; the remedy is `strongerSummarizerModel` (language-capable), no gating |
 | No phrase-table entry for the resolved reply language | English degraded-reply strings (never throws) |
 | Ambiguous or mixed-script inbound for reply-language resolution | Config → USER.md → English; the script default fires only on a strict majority of non-neutral codepoints, and only for `he`/`ar`/`ru` |
-| Conversation history predating the trigram twins | Reachable via the word lane exactly as before; the `comis doctor` twin-backfill (normalized) makes it trigram-searchable, operator-run |
-| Conversation rows with pre-v2.22 token under-counts | The pre-flight is corrected immediately via the assembler's read-time `max(stored, factored-live)`; trigger sums self-heal as new rows dominate (a late condense is non-destructive) |
+| Conversation history not yet indexed by the trigram twins | Reachable via the word lane exactly as before; the `comis doctor` twin-backfill (normalized) makes it trigram-searchable, operator-run |
+| Conversation rows with stored token under-counts | The pre-flight is corrected immediately via the assembler's read-time `max(stored, factored-live)`; trigger sums self-heal as new rows dominate (a late condense is non-destructive) |
 | Trigram-lane snippets | Show the *normalized* stored text (niqqud-stripped, finals-folded) — cosmetic only, behavioral parity with the existing message-lane snippet SQL |
 | Distillation dedup under a non-multilingual embedder | Near-duplicate non-Latin memories may under-score and accumulate (bounded by the dedup cap); the `embeddingMultilingual` advisory names the cause; fixed by configuring a multilingual embedder, not by code |
 
 ## Token-factor provenance
 
 Modern BPE tokenizers spend more tokens per character on dense scripts than on English, so an
-English-calibrated character-to-token ratio under-counts non-Latin text — which used to admit
+English-calibrated character-to-token ratio under-counts non-Latin text — admitting
 prompts that actually overflow the model window (silent truncation for non-Latin users) and
-arm the compaction triggers late. Comis applies a per-script multiplicative factor (always in
+arming the compaction triggers late. Comis applies a per-script multiplicative factor (always in
 the conservative direction — an estimate is never *lower* than the old English-calibrated one)
 so the window math is honest. Latin is exactly 1.0, so English math is unchanged.
 
@@ -130,7 +130,7 @@ Mixed-script text combines factors **harmonically** (per-class token shares sum)
 arithmetic mean, so the estimate matches what the tokenizer actually does.
 
 **Old conversation rows self-heal at read time.** There is no data migration: a stored
-pre-v2.22 token count is corrected where it is load-bearing (at pre-flight budget-item
+token under-count is corrected where it is load-bearing (at pre-flight budget-item
 construction) by taking `max(storedCount, factored-live-estimate)`. This is conservative, fixes
 the window guarantee for pre-existing non-Latin conversations immediately, and is a no-op for
 Latin rows (the same estimator over the same text yields `max = stored`).
@@ -173,7 +173,7 @@ never match.
 The summarizer that must obey this is, on small and local deployments, whatever
 `contextEngine.compaction.strongerSummarizerModel` resolves to — and that model must itself be
 language-capable (a qwen-class model, not a weaker model that ignores the instruction). The same
-knob is the gate (GATE-6) for distillation on small and nano models: distillation does not run on
+knob is the gate for distillation on small and nano models: distillation does not run on
 those tiers *unless* `strongerSummarizerModel` is configured, so getting language-preserving
 distilled memories on a pure-local non-Latin deployment requires setting it to a language-capable
 model. A
@@ -211,8 +211,8 @@ beside `embeddingAvailable` — see [the three fleet checks](#local-and-small-mo
 
 ## Security stance
 
-The bidi-and-security boundary is decided and deliberately unchanged by this milestone. The two
-points an operator (and the next security review) needs to understand:
+The bidi-and-security boundary is a deliberate decision. The two
+points an operator (and any security review) needs to understand:
 
 **What is stripped, where — and why inbound user text is not.** Trojan-Source (CVE-2021-42574)
 weaponizes bidi *control* codepoints (embeddings and overrides, and the directional isolates) to
@@ -231,11 +231,11 @@ external-content suspicion patterns, the typoglycemia word list) matches **Engli
 non-English-language injection sails past *this tier* by construction. This is accepted, not a bug
 to fix. That tier is defense-in-depth *scoring* layered on top of the load-bearing defenses, which
 are **structural and language-agnostic**: per-session random untrusted-content delimiters,
-sender-trust display, tool-policy gates, the GATE-7 memory-write firewall, and OutputGuard egress
+sender-trust display, tool-policy gates, the memory-write firewall, and OutputGuard egress
 redaction — plus the model's own multilingual refusal behavior (measured at 100% injection
 resistance on the recommended local model). Translating regex patterns into N languages is a
 maintenance treadmill with near-zero marginal coverage. This stance is documented here so it is
-not rediscovered as a finding.
+not mistaken for an oversight.
 
 **No-translation principle.** Comis never translates user content. Summaries, memories, and
 deterministic replies stay in the conversation's language, and code identifiers, file paths, tool
@@ -272,7 +272,7 @@ local multilingual stack actually working?" without a log dive:
 | Fleet check | What it tells you | Remedy |
 |-------------|-------------------|--------|
 | `summary_language_mismatch` | The local summarizer is writing English summaries of non-Latin conversations (the recall hole reopening) | Set `contextEngine.compaction.strongerSummarizerModel` to a language-capable (qwen-class) model |
-| `generation_quality` | A **memory-generation** pass (consolidation / reasoning / user-representation) translated non-Latin source memories into Latin output, or produced empty / unparseable output — the recall hole reopening on the *memory* side (GENQ-01; the F-ML1 class) | Use a language-capable memory model — pin `providers.entries.<id>.capabilities.capabilityClass` to `frontier`/`mid` for the memory pipeline (the R6 memory-ops override) |
+| `generation_quality` | A **memory-generation** pass (consolidation / reasoning / user-representation) translated non-Latin source memories into Latin output, or produced empty / unparseable output — the recall hole reopening on the *memory* side | Use a language-capable memory model — pin `providers.entries.<id>.capabilities.capabilityClass` to `frontier`/`mid` for the memory pipeline (the memory-ops capability override) |
 | `script_zero_hit` | Non-Latin searches are returning zero hits (with the lane: `word` / `tri` / `scan`) — is the trigram lane carrying recall? | Verify the trigram tokenizer is present; run the `comis doctor` twin-backfill for old history |
 | `embeddingMultilingual` / `rerankerMultilingual` | The embedder or reranker is English-only (or unknown) — non-Latin semantic recall / ordering is degraded | Configure a multilingual embedder (`bge-m3` / `multilingual-e5`) and reranker (`bge-reranker-v2-m3`); recall still works on the FTS floor regardless |
 

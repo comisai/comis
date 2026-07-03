@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the LCD-merged review session source (live finding
- * 2026-06-11): in DAG mode the daemon session store is near-empty, so the
+ * Unit tests for the LCD-merged review session source: in DAG mode
+ * the daemon session store is near-empty, so the
  * nightly memory-review extraction was a silent no-op — zero entities /
  * causal edges on a live daemon with days of conversations. The adapter
  * presents the union of the daemon store and the LCD store through the view

@@ -50,12 +50,12 @@ export function setToolNormalizationLogger(l: ComisLogger): void {
 }
 
 /**
- * Once-per-boot-per-provider INFO latch (GBNF-03). A boot-time SNAPSHOT
+ * Once-per-boot-per-provider INFO latch. A boot-time SNAPSHOT
  * summary, not a recurring event: the daemon process IS the boot, so a
  * module-level latch gives once-per-boot semantics with zero new wiring
  * (the logger is latched at boot via setToolNormalizationLogger, wired in
- * setup-agents-registry.ts). Counts + names only — never schema bodies
- * (I7). Per-turn detail stays at trace.
+ * setup-agents-registry.ts). Counts + names only — never schema bodies.
+ * Per-turn detail stays at trace.
  */
 const gbnfSummaryLoggedForProvider = new Set<string>();
 
@@ -78,14 +78,14 @@ export interface ToolNormalizationContext {
   modelId: string;
   compat?: ModelCompatConfig;
   /**
-   * AUTHOR-03 (best-effort, Phase 174-05): when true, the raw pipeline tool
+   * Best-effort authoring gate: when true, the raw pipeline tool
    * schema receives the GBNF Layer 3.5 structural transform to harden the raw
    * escape hatch on GBNF-eligible (local/default-family) providers EVEN WHEN
    * they are not pinned to the explicit `compat.toolSchemaProfile === "gbnf"`
    * profile. Default/absent = false = unchanged behavior (the transform is
    * driven solely by the gbnf profile). Removal/relaxation only — never widens
    * field VALUE validation (the daemon driver Zod is the single source of
-   * truth). Gated D-08-strict: it never engages GBNF on a cloud-family provider
+   * truth). Strictly gated: it never engages GBNF on a cloud-family provider
    * (anthropic/google/xai) by name. Threaded from
    * `config.orchestration.authoring.gbnfConstrain` at the call site.
    */
@@ -158,10 +158,10 @@ export function normalizeToolSchemasForProvider(
   const isGemini = caps.providerFamily === "google";
   const isXai = ctx.compat?.toolSchemaProfile === "xai";
   // GBNF gate derives SOLELY from the explicit compat profile — never from
-  // the provider name or baseUrl (D-08). The gbnfConstrain authoring gate
+  // the provider name or baseUrl. The gbnfConstrain authoring gate
   // arrives SEPARATELY in ctx.gbnfConstrain (threaded from
-  // config.orchestration.authoring.gbnfConstrain at the executor call site,
-  // CR-01); this pipeline only honors what arrives in ctx.
+  // config.orchestration.authoring.gbnfConstrain at the executor call
+  // site); this pipeline only honors what arrives in ctx.
   const isGbnf = ctx.compat?.toolSchemaProfile === "gbnf";
   const providerLower = ctx.provider.toLowerCase();
 
@@ -174,12 +174,12 @@ export function normalizeToolSchemasForProvider(
     ? providerLower
     : (isGemini ? "google" : providerLower);
 
-  // AUTHOR-03 (174-05): the gbnfConstrain authoring gate. GBNF-eligible providers
+  // The gbnfConstrain authoring gate. GBNF-eligible providers
   // are the local/default family — EXACTLY the set the early-return below treats
   // as "no cleaning needed" (no keyword set, not gemini, not xai). When the
   // operator flips `config.orchestration.authoring.gbnfConstrain` on, Layer 3.5
   // engages for these providers to harden the raw pipeline escape hatch even
-  // when they are not pinned to the explicit gbnf profile. Gated D-08-strict:
+  // when they are not pinned to the explicit gbnf profile. Strictly gated:
   // gbnfEligible EXCLUDES cloud families (anthropic/google/xai), so the flag
   // never infers GBNF from a cloud provider name. `applyGbnf` (NOT `isGbnf`)
   // drives every Layer 3.5 site below.
@@ -214,9 +214,9 @@ export function normalizeToolSchemasForProvider(
       );
       schema = result.schema;
       if (result.strippedKeywords.length > 0) {
-        // Fix B (log-review): demoted debug → trace. Fires per tool per
-        // request — dominated debug-mode logs at one-per-tool-per-turn
-        // cadence (~30 lines/turn on agents with 30+ tools registered).
+        // Trace, not debug: this fires per tool per request and would
+        // dominate debug-mode logs at one-per-tool-per-turn cadence
+        // (~30 lines/turn on agents with 30+ tools registered).
         // The stripped-keyword set is deterministic per (provider, tool)
         // pair; if an operator needs the detail, trace recovers it.
         logger?.trace(
@@ -238,11 +238,11 @@ export function normalizeToolSchemasForProvider(
 
     // Layer 3.5: GBNF structural transforms for llama.cpp-family local
     // providers (removal/relaxation only — pattern/format deliberately
-    // survive; reactive stripping on grammar-400 lives in the executor,
-    // GBNF-02). `applyGbnf` = the gbnf profile OR the gbnfConstrain authoring
-    // gate on a gbnf-eligible provider (174-05); FLAGS-OFF ⇒ === isGbnf.
+    // survive; reactive stripping on grammar-400 lives in the executor).
+    // `applyGbnf` = the gbnf profile OR the gbnfConstrain authoring
+    // gate on a gbnf-eligible provider; FLAGS-OFF ⇒ === isGbnf.
     if (applyGbnf) {
-      // CR-01 (175-REVIEW): force the Layer-4 top-level object contract
+      // Force the Layer-4 top-level object contract
       // BEFORE the gbnf transforms. T4 (missing-type injection) fires on
       // typeless nodes and infers "string" for a bare/description-only TOP
       // LEVEL (`parameters: {}` — a real no-arg-tool shape from sloppy MCP
@@ -254,9 +254,9 @@ export function normalizeToolSchemasForProvider(
       const gbnfResult = cleanSchemaForGbnf(schema);
       schema = gbnfResult.schema;
       if (gbnfResult.depthLimited) {
-        // WR-03 fail-safe surfaced: subtrees beyond the walk's depth cap
-        // passed through un-transformed (never a crash). Content-free per
-        // I7 — tool name + cap only, no schema bodies.
+        // Fail-safe surfaced: subtrees beyond the walk's depth cap
+        // passed through un-transformed (never a crash). Content-free —
+        // tool name + cap only, no schema bodies.
         logger?.warn(
           {
             toolName: tool.name,
@@ -293,9 +293,9 @@ export function normalizeToolSchemasForProvider(
     return { ...tool, parameters: schema } as ToolDefinition;
   });
 
-  // Once-per-boot INFO summary (GBNF-03): the FIRST transforming call per
+  // Once-per-boot INFO summary: the FIRST transforming call per
   // provider emits one content-free summary line (counts + names + the
-  // closed transform vocabulary, never schema bodies — I7); subsequent
+  // closed transform vocabulary, never schema bodies); subsequent
   // calls stay at the per-tool trace above.
   if (
     applyGbnf &&

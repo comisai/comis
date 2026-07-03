@@ -189,8 +189,8 @@ export const SessionListContract = defineContract({
     })),
     total: z.number(),
   }),
-  // 210-GAP MD-01: agent-self read (classified "ungated" — read-only/lifecycle,
-  // no in-handler admin check). Re-scoped admin→rpc so an agent's own _agentId
+  // Agent-self read (classified "ungated" — read-only/lifecycle,
+  // no in-handler admin check). rpc-scoped so an agent's own _agentId
   // rides it for self-scoping (the handler already filters to the caller's
   // sessions when _agentId is present) instead of being denied by the
   // deny-by-origin chokepoint. No cap required.
@@ -364,7 +364,7 @@ export const SessionSendContract = defineContract({
  * Request: `{ task, agent?, async?, max_steps?, model?, expected_outputs?,
  * artifact_refs?, objective?, domain_knowledge?, tool_groups?,
  * include_parent_history?, announce_channel_type?, announce_channel_id?,
- * worktree? }`. `worktree?` (WT-01) requests an isolated git worktree for the
+ * worktree? }`. `worktree?` requests an isolated git worktree for the
  * child (auto-clean-if-unchanged + conservative orphan-sweep —
  * worktree-lifecycle.ts).
  *
@@ -397,11 +397,11 @@ export const SessionSpawnContract = defineContract({
     include_parent_history: z.string().optional(),
     announce_channel_type: z.string().optional(),
     announce_channel_id: z.string().optional(),
-    // WT-01: request an isolated git worktree for the child (its own working
+    // Request an isolated git worktree for the child (its own working
     // tree on a fresh branch). The worktree is auto-cleaned ONLY if unchanged
     // (precise predicate: `status --porcelain` empty AND HEAD == base) and
     // orphans are conservatively swept — a dirty/ahead worktree is preserved.
-    // See worktree-lifecycle.ts. (WT-03: `--async` rides the already-async-only
+    // See worktree-lifecycle.ts. (`--async` rides the already-async-only
     // spawn — `async` above is the existing flag, not a new path.)
     worktree: z.boolean().optional(),
   }),
@@ -523,9 +523,9 @@ export const SessionResetContract = defineContract({
     reset: z.literal(true),
     previousMessageCount: z.number(),
   }),
-  // 210-GAP MD-01: agent-reachable lifecycle op (classified "ungated"; NO
+  // Agent-reachable lifecycle op (classified "ungated"; NO
   // in-handler admin check, unlike session.delete/export/reset_conversation).
-  // Re-scoped admin→rpc so an agent can reset a session it operates on. No cap.
+  // rpc-scoped so an agent can reset a session it operates on. No cap.
   scopes: ["rpc"] as const,
 });
 
@@ -583,7 +583,7 @@ export const SessionExportContract = defineContract({
  *     session_key"`.
  *   - Unknown session → `"Session not found: <key>"`.
  *
- * Request: `{ session_key?, instructions? }`. COMPACT-KEY (30uc-20260624):
+ * Request: `{ session_key?, instructions? }`.
  * `session_key` is OPTIONAL — omit it (or pass `"self"`/`"current"`) to compact
  * the CALLER's OWN session, resolved from the dispatcher-injected
  * `_callerSessionKey`, so an agent never constructs/guesses its own key.
@@ -596,7 +596,7 @@ export const SessionExportContract = defineContract({
 export const SessionCompactContract = defineContract({
   method: "session.compact",
   request: z.object({
-    // OPTIONAL (COMPACT-KEY): omit or pass "self"/"current" to compact the
+    // OPTIONAL: omit or pass "self"/"current" to compact the
     // caller's own session via the injected _callerSessionKey.
     session_key: z.string().optional(),
     instructions: z.string().optional(),
@@ -608,8 +608,8 @@ export const SessionCompactContract = defineContract({
     compactionTriggered: z.literal(true),
     instructions: z.nullable(z.string()),
   }),
-  // 210-GAP MD-01: agent-reachable lifecycle op (classified "ungated"; NO
-  // in-handler admin check). Re-scoped admin→rpc so an agent can compact a
+  // Agent-reachable lifecycle op (classified "ungated"; NO
+  // in-handler admin check). rpc-scoped so an agent can compact a
   // session it operates on. No cap.
   scopes: ["rpc"] as const,
 });
@@ -625,8 +625,8 @@ export const SessionCompactContract = defineContract({
  * next turn). After this, a follow-up turn has NO prior context in both dag
  * mode (LCD empty) and pipeline mode (sessionStore empty → rehydrates empty).
  *
- * Supersedes the Phase 164-03 `context.reset_lcd` which cleared the LCD only
- * and therefore provided no forget guarantee in pipeline mode. Handler path:
+ * A LCD-only clear would provide no forget guarantee in pipeline mode —
+ * both stores must be wiped together. Handler path:
  * session-archive.ts (bound in bindSessionArchiveHandlers).
  *
  * Admin-gated (defense-in-depth: contract scopes:["admin"] + in-handler
@@ -635,7 +635,7 @@ export const SessionCompactContract = defineContract({
  * returned or logged.
  *
  * `memory: true` additionally clears the conversation's RAG memories — the
- * GDPR / full-forget path (Phase 172-03 DIST-05). It deletes every memory row
+ * GDPR / full-forget path. It deletes every memory row
  * matching `source_session_key` (BOTH paired-conversation AND lcd-distilled
  * episodic memories) for the (tenant, agent) scope, then unlinks them from
  * consolidated observations (orphan→delete, multi-source→keep). The response
@@ -668,10 +668,10 @@ export const SessionResetConversationContract = defineContract({
     session_key: z.string(),
     memory: z.boolean().optional(),
     purge_derived: z.boolean().optional(),
-    // TARGET-01: admin-supplied agent scope. This is an ADMIN RPC, so the caller is
-    // trusted to name which agent's conversation to forget; absent, it falls back to
-    // the default. Live finding 2026-06-13: a non-default agent's reset returned
-    // lcdRowsDeleted:0 because the scope hardcoded the default agent (wrong scope).
+    // Admin-supplied agent scope. This is an ADMIN RPC, so the caller is
+    // trusted to name which agent's conversation to forget; absent, it falls
+    // back to the default. Without an explicit scope, a non-default agent's
+    // reset silently acts on the default agent and returns lcdRowsDeleted:0.
     agentId: z.string().optional(),
   }),
   response: z.object({
@@ -679,13 +679,13 @@ export const SessionResetConversationContract = defineContract({
     lcdRowsDeleted: z.number(),
     sessionMessagesCleared: z.number(),
     memoriesDeleted: z.number().optional(),
-    // TARGET-01: the agent the reset actually acted on (never a silent default).
+    // The agent the reset actually acted on (never a silent default).
     resolvedAgentId: z.string().optional(),
-    // Live finding 2026-06-11: without the runtime-layer destroy the next
-    // turn re-ingested the surviving pi session JSONL and resurrected the
-    // whole "forgotten" conversation (lcd-ingest epoch rebase). True when the
-    // pi runtime session was destroyed; false = the layer was unavailable and
-    // the conversation may resurrect (WARN logged with the consequence).
+    // Without the runtime-layer destroy, the next turn re-ingests the
+    // surviving pi session JSONL and resurrects the whole "forgotten"
+    // conversation (lcd-ingest epoch rebase). True when the pi runtime
+    // session was destroyed; false = the layer was unavailable and the
+    // conversation may resurrect (WARN logged with the consequence).
     runtimeSessionDestroyed: z.boolean().optional(),
   }),
   scopes: ["admin"] as const,

@@ -129,7 +129,7 @@ describe("createObsHandlers - billing admin guards", () => {
 // Non-billing handlers: admin trust enforcement
 // ---------------------------------------------------------------------------
 
-describe("createObsHandlers - diagnostics is rpc-scoped, no admin gate (OBS-SELF-DEAD self-diagnose)", () => {
+describe("createObsHandlers - diagnostics is rpc-scoped with no admin gate so an agent can self-diagnose", () => {
   it("obs.diagnostics succeeds without _trustLevel (rpc-scoped; agent self-diagnose)", async () => {
     const deps = makeDeps();
     const handlers = createObsHandlers(deps);
@@ -490,14 +490,13 @@ describe("createObsHandlers - dual-source merge", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CR-01 (Phase 179 wiring): the per-tool projection. The COST-01 tool_tag was
-  // persisted + HG-01 built aggregateToolCostByAgent, but the obs.billing.byAgent
+  // The per-tool projection. The tool_tag was
+  // persisted + aggregateToolCostByAgent existed, but the obs.billing.byAgent
   // handler never projected it — so the billing per-tool table was permanently
   // empty in prod, hidden by a fabricating view-test mock. These assert the REAL
-  // handler emits a non-empty tools[] (the test that would have caught CR-01).
-  // RED on pre-wiring code: the handler response has no `tools` key at all.
+  // handler emits a non-empty tools[] (the test that would have caught the gap).
   // -------------------------------------------------------------------------
-  it("obs.billing.byAgent projects the per-tool even-split as tools[] (CR-01 the projection)", async () => {
+  it("obs.billing.byAgent projects the per-tool even-split as tools[]", async () => {
     const toolRows = [
       { tool: "bash", cost: 0.18, tokens: 50_000, calls: 1.5 },
       { tool: "read", cost: 0.105, tokens: 30_000, calls: 1 },
@@ -525,7 +524,7 @@ describe("createObsHandlers - dual-source merge", () => {
       agentId: "agent-a",
     }) as { tools?: Array<{ tool: string; cost: number; tokens: number; calls: number }> };
 
-    // The projection is present + non-empty (the gap CR-01 names: this key did
+    // The projection is present + non-empty (this key did
     // not exist on the handler output before the wiring).
     expect(result.tools).toBeDefined();
     expect(result.tools!.length).toBe(2);

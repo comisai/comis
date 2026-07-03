@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Depth-aware summarization prompt style builder (Phase 171, SUM-01).
+ * Depth-aware summarization prompt style builder.
  *
  * Pure function: no I/O, no imports from @comis/memory (agent↛memory cut).
  * NEVER logs instruction content — only structural metadata.
@@ -9,10 +9,11 @@
  */
 
 /**
- * GEN-01 (I7): the single language-preservation sentence shared by the dag depth
+ * The single language-preservation sentence shared by the dag depth
  * templates AND the pipeline compaction instructions (`llm-compaction.ts`). Defined
  * ONCE here and imported by the pipeline site so the two can never silently drift.
- * Content-anchored — it sidesteps the DET-02 reply-language tag (no tag).
+ * Content-anchored — it keys the language to the source content itself rather than
+ * to a reply-language tag.
  *
  * The machine-parsed scaffolding (the dag `Files:`/`Expand for:`/`[SUPERSEDED]`
  * tokens, the pipeline's nine `## Section` headings) stays verbatim-English; only
@@ -24,7 +25,7 @@ export const LANGUAGE_PRESERVATION_INSTRUCTION =
 /**
  * Build the depth-keyed summarization instructions for the leaf/condense passes.
  *
- * Depth mapping (per design/lcd-v3-unified-substrate.md §6.4):
+ * Depth mapping:
  *  - d0 (leaf): extractive — concrete facts, file paths, decisions, tool outcomes
  *  - d1 (timeline): chronological — mark superseded decisions
  *  - d2 (trajectory): high-level arc — drop per-session minutiae

@@ -428,19 +428,18 @@ Increase `maxFiles` or `maxAgeDays` if you need more history; reduce them on tig
 
 **`*.trajectory.jsonl`** — one file per agent session, with a 10 MB soft cap and a 50 MB hard cap applied in-session. Accumulated session files across past sessions are pruned by the startup sweep against `maxFiles` and `maxAgeDays`.
 
-### Legacy `daemon.logging` Keys (Backward Compatibility)
+### Per-File `daemon.logging` Keys
 
-The legacy `daemon.logging.maxSize` and `daemon.logging.maxFiles` keys (documented below) continue to work for `daemon.log` specifically. When both are set, `observability.logRotation` takes precedence for the cross-stream sweep, and `daemon.logging.maxSize` retains its role as the pino-roll size threshold if you have not yet migrated to the new policy.
+The `daemon.logging.maxSize` and `daemon.logging.maxFiles` keys (documented below) apply to `daemon.log` specifically. When both key families are set, `observability.logRotation` takes precedence for the cross-stream sweep, and `daemon.logging.maxSize` retains its role as the pino-roll size threshold when `observability.logRotation.maxSizeBytes` is unset.
 
 <Info>
-Operators are encouraged to migrate to `observability.logRotation` for a unified,
-consistent rotation policy across all five log streams. The legacy `daemon.logging`
-keys remain supported for backward compatibility but govern only `daemon.log`.
+Prefer `observability.logRotation` for a unified, consistent rotation policy
+across all five log streams. The `daemon.logging` keys govern only `daemon.log`.
 </Info>
 
-### Legacy `daemon.logging` Configuration
+### `daemon.logging` Configuration
 
-You can still customize per-file daemon-log rotation using the legacy keys:
+You can customize per-file daemon-log rotation with these keys:
 
 ```yaml
 # config.yaml
@@ -458,7 +457,7 @@ daemon:
 | `maxFiles` | 5 | Number of rotated files to keep. Older files are deleted. |
 
 <Info>
-With the new cross-stream policy active (the default), `observability.logRotation`
+With the cross-stream policy active (the default), `observability.logRotation`
 controls the 50 MB roll threshold and the 5-file / 30-day retention for all streams.
 The `daemon.logging.maxSize` value still reaches pino-roll as the size threshold if
 you have not set `observability.logRotation.maxSizeBytes`.

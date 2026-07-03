@@ -2,7 +2,7 @@
 /**
  * Tests for mmrRerank() — pure greedy embedding-MMR diversity re-rank.
  *
- * Load-bearing RED-first assertions (all fail on the throwing stub):
+ * Load-bearing assertions:
  * - DETERMINISM: two calls on the same (ranked, embeddingsById, λ) return the same order.
  * - NEUTRAL λ (>= 1): returns `ranked` UNCHANGED — referential byte-identity (pure relevance).
  * - <2 EMBEDDED: fewer than 2 candidates carry an embedding → `ranked` UNCHANGED (no diversity

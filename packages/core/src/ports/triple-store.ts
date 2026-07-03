@@ -11,8 +11,8 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * versions of a (subject, predicate) coexist) and a single CURRENT truth per
  * (tenant, agent, subject, predicate).
  *
- * This is a NEW port — like MemoryCausalStore / MemoryEntityStore /
- * MemoryTemporalStore it deliberately does NOT widen the security-reviewed
+ * Like MemoryCausalStore / MemoryEntityStore /
+ * MemoryTemporalStore, this port deliberately does NOT widen the security-reviewed
  * `MemoryPort` (store/search/delete). New capabilities arrive as their own
  * segregated port. The sole adapter is in @comis/memory (it owns the `db` handle
  * and runs all SQL over the additive `memory_triples` table); the agent-side
@@ -31,15 +31,15 @@ import type { LearningScope } from "./outcome-signal-port.js";
  */
 
 /**
- * The isolation boundary for every triple operation (the §5.2 entity-scoping
+ * The isolation boundary for every triple operation (the entity-scoping
  * pattern). Every adapter statement — INSERT, UPDATE, SELECT, AND the
  * recursive-CTE walk's JOIN — filters on `(tenantId, agentId)`. This is a
  * load-bearing SECURITY scope in a multi-agent DB, not a nicety: a triple
  * written under one (tenant, agent) must NEVER be returned for another scope by
  * subject/object-string coincidence.
  *
- * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} — the isolation
- * fields are NOT re-declared (the 15× per-port repetition the collapse kills).
+ * UNIFIED onto the canonical {@link LearningScope} — the isolation
+ * fields are NOT re-declared (avoiding a per-port repetition of the same pair).
  * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope` and
  * re-narrows the injected clock `now` to REQUIRED (the `upsertTriple` write
  * path). The KG recall lane (`spreadLane`, the live graphSpread consumer) reads

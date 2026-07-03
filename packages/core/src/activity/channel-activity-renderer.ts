@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ChannelActivityRenderer — the renderer port (spec §4.4).
+ * ChannelActivityRenderer — the renderer port.
  *
  * CRITICAL boundary: this port lives in `core/activity`, NOT `channels/shared/`.
  * Placing it channel-side would force `core`/`observability` to depend on
- * `channels`, collapsing the hexagonal boundary (the reviewer's original
- * blocking finding; §17.1 strikes `channels/shared/activity-renderer.ts`).
+ * `channels`, collapsing the hexagonal boundary — a
+ * `channels/shared/activity-renderer.ts` home is deliberately ruled out.
  *
  * The port consumes **render frames**, not raw `ActivityEvent`s. Frames are
- * produced by the projections (§5, §9) and carry the materialised view a
+ * produced by the projections and carry the materialised view a
  * renderer paints: which events are visible, which are grouped, what plan-state
  * to show, what changed since the previous frame. Without frames, every
  * renderer would reimplement projection state.
@@ -24,7 +24,7 @@ import type { ActivityStrategy } from "./activity-strategy.js";
 
 /**
  * The materialised render-state for one render tick. Produced by the
- * projection (see §9). Renderers are stateless w.r.t. coalescing — they paint
+ * projection. Renderers are stateless w.r.t. coalescing — they paint
  * whatever the latest frame says is visible.
  */
 export interface ActivityRenderFrame {
@@ -38,7 +38,7 @@ export interface ActivityRenderFrame {
    * (Discord thread, Slack actions, ACP `tool_call`s).
    */
   groupedActivityIds: Readonly<Record<string, readonly string[]>>;
-  /** Current plan snapshot, if SEP is active for this turn (§16.7). */
+  /** Current plan snapshot, if SEP is active for this turn. */
   planSnapshot: PlanSnapshot | undefined;
   /** Diff vs previous frame — lets renderers minimize API calls. */
   changeSet: {
@@ -74,7 +74,7 @@ export interface ChannelActivityRenderer {
 
   /**
    * End-of-turn finalisation. Owns the delete-on-success / keep-on-failure
-   * policy (§7.3): on a successful turn the scaffolding is removed once the
+   * policy: on a successful turn the scaffolding is removed once the
    * assistant message has landed; on a failed turn the activity log is kept so
    * the user can diagnose. Called by the coordinator after it receives the
    * `FinalDeliveryReceipt` (so deletion never races ahead of the answer).

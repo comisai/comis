@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WhatsApp windowed EditPlace renderer tests (§18.2 row
- * "EditPlace"). Copies the Telegram canonical test shape but exercises the
+ * WhatsApp windowed EditPlace renderer tests.
+ * Copies the Telegram canonical test shape but exercises the
  * baileys-specific classifier:
  *
  *   - `classifyWhatsAppError` maps a windowed edit-expiry (a Boom with a 4xx
@@ -11,12 +11,13 @@
  *     everything else → `{kind:"internal", cause}`.
  *   - The approval is a plain-text instruction SHELL (`buttons:"none"`): the
  *     recorded `send` carries NO button surface.
- *   - 11 golden fixtures (S1-S7, S9-S12; S8 deferred) assert the
- *     serialised `FakeWhatsAppAdapter` call-log via `readFixture` + `toEqual`
- *     (NEVER `toMatchSnapshot`).
+ *   - 11 golden fixtures (S1-S7, S9-S12; no S8 — the buttoned-approval
+ *     scenario does not apply to WhatsApp's button-less approval shell) assert
+ *     the serialised `FakeWhatsAppAdapter` call-log via `readFixture` +
+ *     `toEqual` (NEVER `toMatchSnapshot`).
  *
  * Time/timers come from the per-test fakes (`createFakeClock`/`createFakeTimers`,
- * 5-level test-support path) — never raw `setTimeout`/`Date.now` (Pitfall 2).
+ * 5-level test-support path) — never raw `setTimeout`/`Date.now`.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -263,7 +264,7 @@ describe("createWhatsAppActivityRenderer", () => {
   });
 });
 
-// --- Task 2: 11 golden fixtures (S1-S7, S9-S12; no S8) -----------------------
+// --- 11 golden fixtures (S1-S7, S9-S12; no S8) -------------------------------
 //
 // Each scenario drives the renderer through a representative frame/outcome
 // sequence and asserts the serialised FakeWhatsAppAdapter call-log against the
@@ -280,9 +281,8 @@ async function runScenario(drive: ScenarioDriver): Promise<FakeWhatsAppCallLog> 
   const fake = createFakeWhatsAppAdapter(CHANNEL_ID);
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
-  // The golden fixtures were
-  // pinned BEFORE renderFrameText emitted the §8.5 "(running N s)" elapsed
-  // fallback. Omitting `clock` from the wrapper deps here skips the strategy's
+  // The golden fixtures do not include the "(running N s)" elapsed
+  // fallback renderFrameText can emit. Omitting `clock` from the wrapper deps here skips the strategy's
   // first-apply startedAtMs capture (elapsedMs stays undefined → fallback
   // skipped), keeping every committed fixture byte-stable. The strategy-level
   // tests in edit-place.test.ts DO inject a clock and explicitly assert the

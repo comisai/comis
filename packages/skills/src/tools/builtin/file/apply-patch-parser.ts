@@ -256,7 +256,7 @@ export function parsePatch(input: string): Result<PatchOperation[], string> {
           // We'll move them back to be context between change regions.
           // For correctness of context matching in the tool, we keep them as
           // contextAfter and the matcher must handle it.
-          // Actually, re-examining: the plan says hunks are separated by @@.
+          // Re-examining: in this patch format, hunks are separated by @@.
           // Context after changes is trailing context. If more changes appear
           // WITHOUT an @@ separator, they're part of the same hunk.
           // We'll just keep accumulating in the same hunk.

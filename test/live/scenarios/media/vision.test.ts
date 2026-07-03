@@ -5,7 +5,7 @@
  * `selectVisionProvider(registry, mediaType, preferredProvider?)` (from @comis/skills)
  * is the real, pure capability-routing function. Building a Map<string,VisionProvider>
  * of fake providers with declared `capabilities` lets us assert the exact routing
- * decision — the design's "fallback routing when primary lacks vision" — with no key,
+ * decision — fallback routing when the primary lacks vision — with no key,
  * no daemon. `createVisionProviderRegistry` proves the sandbox-honest path: no keys ⇒
  * empty registry ⇒ graceful degradation (undefined, no throw).
  *

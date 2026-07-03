@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the orchestrator channel-manager inbound-reaction fanout
- * (REACT-01, Verified Learning WS1).
+ * Unit tests for the orchestrator channel-manager inbound-reaction fanout.
  *
  * Asserts that startAll registers `adapter.onReaction?.(...)` (optional-call
  * form) for reaction-capable adapters and emits a `channel:reaction_received`
@@ -134,7 +133,7 @@ function makeDeps(adapter: ChannelPort, overrides?: Partial<ChannelManagerDeps>)
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("channel-manager -- inbound reaction fanout (REACT-01)", () => {
+describe("channel-manager -- inbound reaction fanout", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -177,7 +176,7 @@ describe("channel-manager -- inbound reaction fanout (REACT-01)", () => {
     expect(reactionEmit).toBeUndefined();
   });
 
-  it("WR-02: validates the binder-built reaction through parseReaction at the fanout boundary — an invalid reaction (empty messageId) is REJECTED and NOT emitted", async () => {
+  it("validates the binder-built reaction through parseReaction at the fanout boundary — an invalid reaction (empty messageId) is REJECTED and NOT emitted", async () => {
     const adapter = makeReactionAdapter();
     const deps = makeDeps(adapter);
     const manager = createChannelManager(deps);
@@ -194,7 +193,7 @@ describe("channel-manager -- inbound reaction fanout (REACT-01)", () => {
     expect(reactionEmit).toBeUndefined();
   });
 
-  it("WR-02: a VALID binder-built reaction still passes parseReaction and is emitted (no false rejection of well-formed inbound)", async () => {
+  it("a VALID binder-built reaction still passes parseReaction and is emitted (no false rejection of well-formed inbound)", async () => {
     const adapter = makeReactionAdapter();
     const deps = makeDeps(adapter);
     const manager = createChannelManager(deps);

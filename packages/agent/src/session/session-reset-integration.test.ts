@@ -45,7 +45,7 @@ const testTimers: TimerPort = {
   setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
 };
 // Test-only @comis/scheduler import — see session-reset-policy.test.ts for
-// rationale. Production agent source no longer imports scheduler.
+// rationale. Production agent source does not import scheduler.
 import { computeNextRunAtMs } from "@comis/scheduler";
 import { createSessionLifecycle, type SessionLifecycle } from "./session-lifecycle.js";
 import {

@@ -9,19 +9,13 @@
  * of the memory domain and are re-exported from `memory.ts`, so every existing
  * `from "./memory.js"` import (and the api-contracts barrel) still resolves.
  *
- * CROSS-WAVE SEAM (now closed): these are grouped in their OWN
- * `MEMORY_DIAGNOSTIC_CONTRACTS` array below. They were initially held OUT of
- * `MEMORY_CONTRACTS` (which feeds `API_CONTRACTS` via index.ts) — and tagged
- * each with `// @contract-deferred-handler` — because the
- * `api-contracts-bidirectional.test.ts` + `contract-handler-parity.test.ts`
- * gates require every `API_CONTRACTS` entry to have a MIGRATED
- * (`[Contract.method]:` computed-key) daemon handler, and registering them
- * before the handlers existed would have turned those gates RED between waves.
- * The four daemon handlers later landed in
- * `packages/daemon/src/api/memory-handlers.ts`, spread
- * `...MEMORY_DIAGNOSTIC_CONTRACTS` into `MEMORY_CONTRACTS`, AND removed the
- * four `@contract-deferred-handler` annotations — all in one diff — so the
- * registry↔handler set is 1:1 again.
+ * These are grouped in their OWN `MEMORY_DIAGNOSTIC_CONTRACTS` array below and
+ * spread into `MEMORY_CONTRACTS` (which feeds `API_CONTRACTS` via index.ts).
+ * The `api-contracts-bidirectional.test.ts` + `contract-handler-parity.test.ts`
+ * gates require every `API_CONTRACTS` entry to have a daemon handler registered
+ * under a `[Contract.method]:` computed key — the four handlers live in
+ * `packages/daemon/src/api/memory-handlers.ts`, so a contract added here must
+ * land in the same diff as its handler to keep the registry↔handler set 1:1.
  *
  * @module
  */
@@ -58,19 +52,19 @@ export const MemoryRecallTraceContract = defineContract({
     tenant_id: z.string().optional(),
     agent_id: z.string().optional(),
     // Bound the limit at parse time — positive integer with a sane cap.
-    // An unbounded/negative/fractional limit used to flow straight into the
-    // file-scan guard (`records.length >= limit`), so reject malformed bounds
-    // here (defense-in-depth + clearer UX), consistent with Comis's other
-    // `.int().positive()` contracts.
+    // An unbounded/negative/fractional limit would otherwise flow straight
+    // into the file-scan guard (`records.length >= limit`), so reject
+    // malformed bounds here (defense-in-depth + clearer UX), consistent with
+    // Comis's other `.int().positive()` contracts.
     limit: z.number().int().positive().max(1000).optional(),
   }),
   response: z.object({
     records: z.array(z.record(z.string(), z.unknown())),
-    // Live finding 2026-06-11: the handler returned a bare `{records: []}`
-    // when the recorder was simply disabled (diagnostics.recallTrace.enabled
-    // defaults false) — a silent empty in the very tool that exists to
-    // diagnose recall. tracingEnabled reports the recorder gate; hint (only
-    // when records is empty) says WHY it is empty and which knob enables it.
+    // A bare `{records: []}` when the recorder is simply disabled
+    // (diagnostics.recallTrace.enabled defaults false) would be a silent
+    // empty in the very tool that exists to diagnose recall. tracingEnabled
+    // reports the recorder gate; hint (only when records is empty) says WHY
+    // it is empty and which knob enables it.
     tracingEnabled: z.boolean().optional(),
     hint: z.string().optional(),
   }),
@@ -124,7 +118,7 @@ export const MemoryObservationsContract = defineContract({
 
 /**
  * `memory.entities` — list the entity graph for the scope, ordered
- * most-mentioned-first (admin-only). The handler calls the new
+ * most-mentioned-first (admin-only). The handler calls the
  * `MemoryEntityStore.listEntities(agentId, tenantId, limit)` scoped read
  * (defined in `ports/memory-entity-store.ts`).
  *
@@ -201,11 +195,9 @@ export const MemoryRecallStatsContract = defineContract({
 });
 
 /**
- * Admin-scoped diagnostic contracts. Originally defined here but held
- * OUT of `MEMORY_CONTRACTS` until the matching daemon handlers landed —
- * see the cross-wave-seam note at the top of this file. They are now folded
- * into `MEMORY_CONTRACTS` (`...MEMORY_DIAGNOSTIC_CONTRACTS`) in the same
- * diff as the handlers.
+ * Admin-scoped diagnostic contracts, folded into `MEMORY_CONTRACTS`
+ * (`...MEMORY_DIAGNOSTIC_CONTRACTS`). Every entry must have a matching daemon
+ * handler — see the registry↔handler note at the top of this file.
  */
 export const MEMORY_DIAGNOSTIC_CONTRACTS = [
   MemoryRecallTraceContract,

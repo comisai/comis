@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-trace asserter — typed helpers for the Phase-137 CACHE test suite.
+ * Cache-trace asserter — typed helpers for the CACHE test suite.
  *
  * Reads cache-trace NDJSON lines, computes cacheCreation/cacheRead token
  * deltas, detects digest changes (miss), and exposes typed helpers to

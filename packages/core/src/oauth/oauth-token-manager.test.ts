@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Type-shape smoke tests for the relocated oauth-token-manager types.
+ * Type-shape smoke tests for the oauth-token-manager type contracts.
  *
- * This file replaces the runtime test for `createOAuthTokenManager` (which
- * stays on the agent-side source — only the TYPES were relocated to core;
- * see oauth-token-manager.ts module JSDoc). The agent's 2115-line runtime
- * test continues to drive the production behavior; here we pin the
- * structural shape so a future drift (e.g., dropping `errorKind` from
- * `OAuthError`) surfaces as a TypeScript compile error.
+ * The runtime implementation (`createOAuthTokenManager`) lives on the
+ * agent side — only the TYPES live in core (see oauth-token-manager.ts
+ * module JSDoc). The agent's runtime test drives the production
+ * behavior; here we pin the structural shape so a drift (e.g., dropping
+ * `errorKind` from `OAuthError`) surfaces as a TypeScript compile error.
  */
 
 import { describe, it, expect, expectTypeOf } from "vitest";
@@ -18,7 +17,7 @@ import type {
   OAuthCredentials,
 } from "./oauth-token-manager.js";
 
-describe("oauth-token-manager — relocated type contracts", () => {
+describe("oauth-token-manager — public type contracts", () => {
   it("OAuthError carries the discriminated `code` union the CLI pattern-matches on", () => {
     const valid: OAuthError = {
       code: "REFRESH_FAILED",

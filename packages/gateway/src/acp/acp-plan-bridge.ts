@@ -2,7 +2,7 @@
 /**
  * acp-plan-bridge — drives the IDE's native plan panel from the Silent
  * Execution Planner (SEP) by emitting ACP `session/update { sessionUpdate:
- * "plan" }` frames (spec §16.7 / §16.8). The milestone adds NO new plan-state
+ * "plan" }` frames (spec §16.7 / §16.8). This bridge adds NO new plan-state
  * tool — SEP remains the single plan-state source; the bridge ONLY READS the
  * live plan through the core `ExecutionPlanPort` (the holder impl).
  *

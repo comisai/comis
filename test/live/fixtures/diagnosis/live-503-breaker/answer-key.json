@@ -6,7 +6,7 @@
     "HTTP 503",
     "endReason completed_with_tool_errors"
   ],
-  "hiddenMechanism": "The breaker open/reset is 100% dark — no tool:breaker_opened event exists (GA3). The only trace is the retry-breaker telling the model 'DO NOT retry'; nothing records that the breaker tripped on a repeated overloaded classification.",
+  "hiddenMechanism": "The breaker open/reset is 100% dark — no tool:breaker_opened event exists. The only trace is the retry-breaker telling the model 'DO NOT retry'; nothing records that the breaker tripped on a repeated overloaded classification.",
   "surfaceCeiling": [
     "trajectory JSONL (read file)",
     "obs_query tool (diagnostics/billing/delivery/channels only)",

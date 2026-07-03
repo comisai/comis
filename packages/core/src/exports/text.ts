@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @comis/core exports — pure text utilities:
-//   Phase 179 — Script classification + token-factor
-//   Phase 180 — search normalization (FTS-02) + trigram query routing (FTS-01)
-//   Phase 182 — grapheme-safe truncation boundary (SAFE-01) + multilingual name heuristic (EMB-01)
+// @comis/core exports — pure text utilities: script classification +
+// token-factor, search normalization + trigram query routing, grapheme-safe
+// truncation boundary + multilingual name heuristic.
 
 export { SCRIPT_CLASSES, classifyCodepoint, scriptShares, dominantScript } from "../text/script-classes.js";
 export type { ScriptClass, ScriptClassRow } from "../text/script-classes.js";

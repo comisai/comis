@@ -14,7 +14,8 @@ skill + the `terminal_session_*` tools) through the **GSD workflow** in the targ
 
 You are the **orchestrator**: GSD itself (`/gsd-*`) runs inside the driven Claude Code, not in you.
 Your job is to set it up, drive it through the gates, keep the long run healthy, and verify the
-result honestly. This is a **multi-hour, durable** drive — treat it like the v2.24 long-drive regime.
+result honestly. This is a **multi-hour, durable** drive — treat it as one from the start (durable
+session, per-phase engagement, honest verification).
 
 ## 0. Prerequisites (check first; STOP and tell the operator if missing)
 

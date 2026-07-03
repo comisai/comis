@@ -12,8 +12,6 @@
  * setTimeout/setInterval anywhere (AGENTS.md §2.5). The harness mirrors
  * agent/src/safety/circuit-breaker.test.ts: process-global fake timers + a
  * testClock that delegates to Date.now().
- *
- * RED on the absent module: `Cannot find module '../execution/activity-circuit-breaker.js'`.
  */
 import type { ActivityRenderError, ClockPort } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";

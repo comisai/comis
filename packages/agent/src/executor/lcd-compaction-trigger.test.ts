@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LCD afterTurn threshold-sweep trigger (Plan 129-06, C1/C3).
+ * Tests for the LCD afterTurn threshold-sweep trigger.
  *
- * RED-first. Drives `maybeRunLeafPass` — the trigger that activates the inert
+ * Drives `maybeRunLeafPass` — the trigger that activates the inert
  * `contextThreshold` config: when context utilization exceeds the threshold it
  * fires ONE leaf pass (select the oldest out-of-tail chunk → summarize via the
  * INJECTED stub summarizer → range-replace context_items at the EXACT covered
@@ -70,7 +70,7 @@ function assistantText(text: string): Message {
  * Persist a canonical pi-ai message at the next seq with an explicit tokenCount
  * (the store NEVER computes tokens — the caller supplies it agent-side). The
  * trigger reads this stored `tokenCount` as the utilization + chunk-size
- * authority (Pitfall 2), so the per-message tokenCount drives the math.
+ * authority, so the per-message tokenCount drives the math.
  */
 function append(store: ContextStorePort, msg: Message, seq: number, tokenCount: number, createdAt: number): void {
   const input: AppendMessageInput = {
@@ -130,7 +130,7 @@ function makeSummarizerDeps(
 }
 
 /**
- * A capturing event bus double — records every emit so the C3/event assertions
+ * A capturing event bus double — records every emit so the event assertions
  * can read the `context:dag_compacted` payload (counts only, never content).
  */
 function makeEventBus(): { bus: TypedEventBus; emits: Array<{ event: string; payload: Record<string, unknown> }> } {
@@ -188,7 +188,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
       opts({ windowTokens: 1_000 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -208,12 +208,12 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
   });
 
   it("emits a REAL durationMs (clock-at-emit minus clock-at-entry), not the hardcoded 0 stub", async () => {
-    // O1: the pass must time itself from the injected clock CALLABLE — capture a
+    // The pass must time itself from the injected clock CALLABLE — capture a
     // read at pass entry, a second at emit, emit the delta. Drive a fake clock
     // that returns 1000 on the FIRST read (pass entry) and 1175 on the SECOND
-    // (emit) → durationMs MUST be 175, never the old hardcoded 0. The scalar
-    // `now` keeps stamping `timestamp` (its distinct semantic). RED on pre-patch:
-    // the trigger has no nowFn param + durationMs is 0.
+    // (emit) → durationMs MUST be 175, never a hardcoded 0. The scalar
+    // `now` keeps stamping `timestamp` (its distinct semantic). Without the
+    // nowFn param the trigger could only ever report durationMs 0.
     seedHistory(store, 40, 100);
     const logger = createMockLogger();
     const { bus, emits } = makeEventBus();
@@ -235,17 +235,17 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
 
     const compacted = emits.filter((e) => e.event === "context:dag_compacted");
     expect(compacted.length).toBe(1);
-    // The REAL elapsed (1175 - 1000), > 0, NOT the old 0 stub.
+    // The REAL elapsed (1175 - 1000), > 0, NOT a hardcoded 0.
     expect(compacted[0]!.payload.durationMs).toBe(175);
     // `timestamp` stays the injected scalar `now` (not a clock read).
     expect(compacted[0]!.payload.timestamp).toBe(FIXED_NOW);
-    // Per-pass counts are UNCHANGED (Pitfall 3 — honest per-pass).
+    // Per-pass counts are UNCHANGED (honest per-pass accounting).
     expect(compacted[0]!.payload.leafSummariesCreated).toBe(1);
     expect(compacted[0]!.payload.condensedSummariesCreated).toBe(0);
     expect(compacted[0]!.payload.maxDepthReached).toBe(0);
   });
 
-  it("range-replaces context_items at the EXACT first-covered-message ordinal (C3 regression guard)", async () => {
+  it("range-replaces context_items at the EXACT first-covered-message ordinal (regression guard)", async () => {
     seedHistory(store, 40, 100);
     const logger = createMockLogger();
     const { bus } = makeEventBus();
@@ -265,7 +265,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
       opts({ windowTokens: 1_000 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -306,7 +306,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
       opts({ windowTokens: 1_000 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -345,7 +345,7 @@ describe("maybeRunLeafPass — under threshold is inert", () => {
       opts({ windowTokens: 1_000_000 }),
       makeSummarizerDeps(summarize, logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -369,7 +369,7 @@ describe("maybeRunLeafPass — under threshold is inert", () => {
       opts({ windowTokens: 1_000, freshTailTurns: 8 }),
       makeSummarizerDeps(summarize, logger),
       FIXED_NOW,
-      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the durationMs test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -479,20 +479,20 @@ describe("maybeRunLeafPass — non-fatal degrade", () => {
 });
 
 // ===========================================================================
-// Multi-pass — the trigger must make PROGRESS across passes (CR-01 + CR-02)
+// Multi-pass — the trigger must make PROGRESS across passes
 // ===========================================================================
 //
-// The headline BLOCKER pair: the afterTurn trigger must (CR-01) resolve history
+// The two coupled requirements: the afterTurn trigger must (1) resolve history
 // from the model-facing `context_items` view so a SECOND over-threshold pass
 // collapses the NEXT-oldest chunk (not re-select the already-summarized oldest
-// and skip on an ordinal-window divergence), and (CR-02) measure utilization
+// and skip on an ordinal-window divergence), and (2) measure utilization
 // against that SAME resolved view so a pass that has summarized enough to fit
-// under the threshold goes INERT (it observes its own compaction). On pre-fix
-// code both fail: pass 2 sources from the lossless `getMessages()` set, so it is
-// perpetually over threshold AND perpetually re-selects the collapsed oldest →
-// exactly one leaf summary is ever created, every later pass WARNs.
+// under the threshold goes INERT (it observes its own compaction). If either
+// half sourced from the lossless `getMessages()` set instead, both would fail:
+// pass 2 would be perpetually over threshold AND perpetually re-select the
+// collapsed oldest → exactly one leaf summary ever created, every later pass WARNs.
 
-describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () => {
+describe("maybeRunLeafPass — makes progress across passes", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -502,7 +502,7 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
     store = createLcdStore(db);
   });
 
-  it("creates SECOND+ distinct leaf summaries within ONE over-threshold drain, collapsing the NEXT-oldest chunk each pass (CR-01)", async () => {
+  it("creates SECOND+ distinct leaf summaries within ONE over-threshold drain, collapsing the NEXT-oldest chunk each pass", async () => {
     // 40 msgs × 100 tok = 4000 tok; window 1000 → utilization 4.0. The fresh tail
     // (8 STEPS ≈ msgs 25..39 = 1500 tok) ALONE exceeds the 750-tok threshold, so
     // even after collapsing ALL out-of-tail history the resolved view stays over
@@ -510,8 +510,7 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
     // chunks. leafChunkTokens 300 caps each pass to ~3 messages, so the drain
     // collapses several DISTINCT, non-overlapping oldest chunks in ONE call.
     //
-    // B-2: this used to require TWO manual maybeRunLeafPass calls (the single-pass
-    // contract); the bounded multi-pass drain now does it in ONE — re-resolving the
+    // The bounded multi-pass drain does this in ONE call — re-resolving the
     // view each pass so it collapses the NEXT-oldest chunk, never re-selecting the
     // already-summarized oldest (no ordinal-window divergence).
     seedHistory(store, 40, 100);
@@ -549,16 +548,16 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
     expect(hadDivergenceWarn).toBe(false);
   });
 
-  it("goes INERT once the RESOLVED context view fits under contextThreshold (CR-02)", async () => {
+  it("goes INERT once the RESOLVED context view fits under contextThreshold", async () => {
     // 40 msgs × 30 tok = 1200 tok; window 1000 → utilization 1.2 > 0.75 (750 tok)
     // so pass 1 fires. The out-of-tail history (msgs 0..24 = 750 tok) all fits in
     // ONE chunk (leafChunkTokens 20_000); after collapsing it into a ~5-tok leaf
     // the RESOLVED view = leaf(~5) + fresh tail (msgs 25..39 = 450 tok) ≈ 455 tok
     // → utilization 0.455 < 0.75. A correct trigger therefore goes inert on pass 2
     // BEFORE selecting any chunk: no summarizer call, no divergence WARN, and no
-    // second summary. On pre-fix code pass 2 measures the raw 1200-tok history,
-    // believes it is still over threshold, re-selects the collapsed oldest, and
-    // logs the ordinal-window divergence WARN.
+    // second summary. A trigger that measured the raw 1200-tok history instead
+    // would believe it is still over threshold, re-select the collapsed oldest,
+    // and log the ordinal-window divergence WARN.
     seedHistory(store, 40, 30);
     const logger = createMockLogger();
     const { bus, emits } = makeEventBus();
@@ -592,21 +591,21 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
 });
 
 // ===========================================================================
-// B-2 — a SINGLE call must drain MULTIPLE leaf passes (bounded), not stall at one
+// A SINGLE call must drain MULTIPLE leaf passes (bounded), not stall at one
 // ===========================================================================
 //
-// The B-2 stall: under sustained large-turn load ONE leaf pass per afterTurn
-// cannot keep utilization under threshold, so the assembler silently DROPS
-// (rather than summarizes) the oldest history. A single maybeRunLeafPass call
-// must therefore drain MULTIPLE passes — re-resolving the view each iteration so
-// it observes its own compaction (CR-02) — and terminate on the FIRST of:
+// The single-pass stall: under sustained large-turn load ONE leaf pass per
+// afterTurn cannot keep utilization under threshold, so the assembler silently
+// DROPS (rather than summarizes) the oldest history. A single maybeRunLeafPass
+// call must therefore drain MULTIPLE passes — re-resolving the view each
+// iteration so it observes its own compaction — and terminate on the FIRST of:
 // utilization ≤ contextThreshold (drained), a no-progress guard (no chunk / chunk
 // < MIN_SHRINKABLE / ordinal-window divergence), OR a hard maxPasses cap. It must
 // be bounded BOTH ways (the cap is the infinite-loop backstop; under
 // deferCompaction:false each pass is a synchronous LLM round-trip, so a turn must
 // never fire unbounded summarizer calls).
 
-describe("maybeRunLeafPass — bounded multi-pass drain (B-2)", () => {
+describe("maybeRunLeafPass — bounded multi-pass drain", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -616,7 +615,7 @@ describe("maybeRunLeafPass — bounded multi-pass drain (B-2)", () => {
     store = createLcdStore(db);
   });
 
-  it("B-2.1: a SINGLE call drains MULTIPLE leaf passes until the resolved view fits under threshold", async () => {
+  it("a SINGLE call drains MULTIPLE leaf passes until the resolved view fits under threshold", async () => {
     // 60 msgs × 100 tok = 6000 tok; window 10_000, threshold 0.5 (5000 tok) →
     // utilization 0.6 > 0.5 so the drain fires. The fresh tail (8 STEPS ≈ msgs
     // 45..59 = ~1500 tok) is SMALL relative to the threshold, so collapsing the
@@ -639,8 +638,8 @@ describe("maybeRunLeafPass — bounded multi-pass drain (B-2)", () => {
     await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, undefined, logger as unknown as LeafSummarizerDeps["logger"], bus);
 
     // MORE THAN ONE leaf summary persisted in that single call (the drain kept
-    // going past the first pass). On pre-patch code exactly ONE pass fires →
-    // getSummaries().length === 1 → this FAILS (RED).
+    // going past the first pass). A single-pass trigger would fire exactly ONE
+    // pass → getSummaries().length === 1 → this assertion fails.
     const summaries = store.getSummaries(SCOPE);
     expect(summaries.length).toBeGreaterThanOrEqual(2);
     expect(summaries.every((s) => s.kind === "leaf")).toBe(true);
@@ -653,7 +652,7 @@ describe("maybeRunLeafPass — bounded multi-pass drain (B-2)", () => {
     expect(summaryRefs.length).toBe(summaries.length); // every leaf is range-replaced in the view
   });
 
-  it("B-2.2: the hard maxLeafPassesPerTurn cap bounds the drain when utilization never drops under threshold", async () => {
+  it("the hard maxLeafPassesPerTurn cap bounds the drain when utilization never drops under threshold", async () => {
     // 40 msgs × 100 tok = 4000 tok; window 1000, threshold 0.75 (750 tok). The
     // fresh tail (8 STEPS ≈ 1500 tok) ALONE exceeds 750, so even after collapsing
     // ALL out-of-tail history the resolved view stays over threshold → a correct
@@ -688,7 +687,7 @@ describe("maybeRunLeafPass — bounded multi-pass drain (B-2)", () => {
     );
   });
 
-  it("B-2.3: the drain stops on no-progress (a single sub-MIN_SHRINKABLE out-of-tail chunk) instead of looping", async () => {
+  it("the drain stops on no-progress (a single sub-MIN_SHRINKABLE out-of-tail chunk) instead of looping", async () => {
     // Over threshold by tokens, but the ONLY out-of-tail history is a single
     // 1-token message (< MIN_SHRINKABLE 2). freshTailTurns 1 → the fresh tail is
     // the last assistant step; out-of-tail = [user(1 tok)]. selectLeafChunk picks
@@ -720,8 +719,8 @@ describe("maybeRunLeafPass — bounded multi-pass drain (B-2)", () => {
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
   });
 
-  it("B-2.4: the B-13 lcd-leaf-gate DEBUG fires per drain iteration so a stalled drain is diagnosable", async () => {
-    // The committed B-13 observability gate must survive the multi-pass refactor —
+  it("the lcd-leaf-gate DEBUG fires per drain iteration so a stalled drain is diagnosable", async () => {
+    // The lcd-leaf-gate observability DEBUG must survive the multi-pass refactor —
     // and now fire for EACH iteration so a drain that stalls (or hits the cap) is
     // reconstructable from logs alone. Drive the capped scenario (2 passes) and
     // assert the "lcd leaf pass evaluated" DEBUG fired at least twice (once per
@@ -751,7 +750,7 @@ describe("maybeRunLeafPass — bounded multi-pass drain (B-2)", () => {
 });
 
 // ===========================================================================
-// C4/C5: capability-routed compaction (LCD layer)
+// Capability-routed compaction (LCD layer)
 // ===========================================================================
 
 import type { SecurityPinMarkers } from "../context-engine/security-context-pinner.js";
@@ -770,7 +769,7 @@ function makeSummarizerDepsWithCapability(
   };
 }
 
-describe("C4/C5: capability-routed LCD leaf compaction", () => {
+describe("capability-routed LCD leaf compaction", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -894,10 +893,10 @@ describe("C4/C5: capability-routed LCD leaf compaction", () => {
 });
 
 // ===========================================================================
-// S4: security context pinning (LCD layer)
+// Security context pinning (LCD layer)
 // ===========================================================================
 
-describe("S4: security-pinned messages never selected for LCD eviction", () => {
+describe("security-pinned messages never selected for LCD eviction", () => {
   const MARKERS: SecurityPinMarkers = {
     canaryToken: "CANARY_lcd_test_xyz",
     contentDelimiter: "UNTRUSTED_BEGIN_lcd",
@@ -916,8 +915,8 @@ describe("S4: security-pinned messages never selected for LCD eviction", () => {
   it("pinned messages (containing canary) excluded from chunk selection — pinned message remains in context_items after compaction", async () => {
     // Seed history with mostly normal messages + inject a pinned message early in the history.
     // ALL messages in this test contain the canary, so all are pinned → no chunk selected →
-    // the pass is a no-op (nothing evictable). This is the S4 invariant: pinned messages
-    // never appear in eviction candidates.
+    // the pass is a no-op (nothing evictable). This is the security-pinning invariant:
+    // pinned messages never appear in eviction candidates.
     const logger = createMockLogger();
     const { bus } = makeEventBus();
 
@@ -978,16 +977,16 @@ describe("S4: security-pinned messages never selected for LCD eviction", () => {
 });
 
 // ===========================================================================
-// I1 (Phase 160): the ordinal-window divergence skip emits context:dag_degraded
+// The ordinal-window divergence skip emits context:dag_degraded
 // ===========================================================================
 //
-// The leaf divergence branch (`window === undefined`) is a defensive C3 guard:
+// The leaf divergence branch (`window === undefined`) is a defensive ordinal-integrity guard:
 // with the post-fix resolution it never fires on a clean store (the chunk ids
 // always resolve to an ordinal window). To drive it DETERMINISTICALLY we wrap a
 // real seeded store and return getContextItems() with DESCENDING message-ref
 // ordinals — so the selected oldest chunk's FIRST id maps to a HIGHER ordinal
 // than its LAST → chunkOrdinalWindow returns undefined → the divergence skip.
-// RED on pre-patch: the skip only WARNs (Pino-only); it emits nothing.
+// Without the emit the skip would only WARN (Pino-only), invisible to the bus.
 
 /**
  * Wrap a real ContextStorePort but rewrite getContextItems() so the message-ref
@@ -1017,7 +1016,7 @@ function withInvertedMessageOrdinals(real: ContextStorePort): ContextStorePort {
   };
 }
 
-describe("maybeRunLeafPass — ordinal-window divergence emits context:dag_degraded (I1)", () => {
+describe("maybeRunLeafPass — ordinal-window divergence emits context:dag_degraded", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -1069,36 +1068,36 @@ describe("maybeRunLeafPass — ordinal-window divergence emits context:dag_degra
 });
 
 // ===========================================================================
-// SUMW-02 (Phase 178): trigger denominator = budget window
+// Trigger denominator = budget window
 // ===========================================================================
 //
-// WHY THIS EXISTS — the v2.20 DIST-01 live incident: tool assembly budgets the
+// WHY THIS EXISTS — a live incident: tool assembly budgets the
 // turn against budget.windowTokens = min(reconciled contextWindow, capability
 // class cap) (= 32_000 for a capped small model), but the afterTurn triggers
 // ratioed utilization against summarizerDeps.getModel().contextWindow — the
 // session model's CONFIGURED window (131_072 live). A small-class agent
 // therefore assembled at 32_000 while the leaf/condense triggers armed only at
 // 0.75 × 131_072 ≈ 98_304 stored tokens — ~4× late, making condensation look
-// "intermittent". SUMW-02 threads ONE captured budgetWindowTokens (the turn's
-// computeTokenBudgetForProfile().windowTokens) from the tool-assembly result
-// through postExecution into BOTH afterTurn params objects as the REQUIRED
+// "intermittent". postExecution therefore threads ONE captured budgetWindowTokens
+// (the turn's computeTokenBudgetForProfile().windowTokens) from the tool-assembly
+// result into BOTH afterTurn params objects as the REQUIRED
 // utilization denominator — one window truth with assembly + preflight (the
 // pipeline trigger already ratios correctly: llm-compaction.ts thresholdTokens
-// derives from budget.windowTokens, FLOOR-02-pinned).
+// derives from budget.windowTokens, pinned by its own tests).
 //
 // These tests drive the afterTurn wrapper (runLeafPassAfterTurn) — the seam
 // where the denominator lives:
-//   - L1 (DIST-01 fixture) is RED on pre-patch code (the wrapper still reads
-//     the configured 131_072 → 0.198 ≤ 0.75 → inert).
-//   - L2 (frontier parity pin) passes pre+post BY DESIGN: when no cap binds,
-//     budgetWindowTokens == getModel().contextWindow (I3 byte-identical).
-//   - L3 (wiring source-lock) pins the postExecution → trigger threading and
-//     the ABSENCE of the legacy getModel-based denominator read — preventing
+//   - The capped-small-model fixture fails if the wrapper reads the
+//     configured 131_072 instead (0.198 ≤ 0.75 → inert).
+//   - The frontier parity pin: when no cap binds,
+//     budgetWindowTokens == getModel().contextWindow (identical behavior).
+//   - The wiring source-lock pins the postExecution → trigger threading and
+//     the ABSENCE of any getModel-based denominator read — preventing
 //     the regression class where an optional param with a fallback (or the
 //     Infinity-initialized streamSetup.effectiveWindowRef carrier: utilization
-//     ÷ Infinity = 0) silently DISARMS both triggers (research Pitfall 1).
+//     ÷ Infinity = 0) silently DISARMS both triggers.
 
-describe("SUMW-02: trigger denominator = budget window", () => {
+describe("trigger denominator is the turn's budget window", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -1108,7 +1107,7 @@ describe("SUMW-02: trigger denominator = budget window", () => {
     store = createLcdStore(db);
   });
 
-  /** Summarizer deps whose getModel() plants the CONFIGURED window the legacy read used. */
+  /** Summarizer deps whose getModel() plants the CONFIGURED window (the wrong denominator). */
   function depsWithConfiguredWindow(
     contextWindow: number,
     logger: ReturnType<typeof createMockLogger>,
@@ -1121,14 +1120,14 @@ describe("SUMW-02: trigger denominator = budget window", () => {
     };
   }
 
-  it("SUMW-02-L1 (DIST-01): arms at 0.75 × the BUDGET window on a capability-capped small model (configured 131072, budget 32000, ~26K stored)", async () => {
+  it("arms at 0.75 × the BUDGET window on a capability-capped small model (configured 131072, budget 32000, ~26K stored)", async () => {
     // 26 msgs × 1_000 stored tokens = 26_000 total. contextEngine: undefined →
     // schema defaults (contextThreshold 0.75, freshTailTurns 8) — 13 assistant
     // steps leave the oldest ~11 messages out-of-tail (a selectable leaf chunk).
-    // Pre-patch: utilization = 26_000 / getModel().contextWindow (131_072)
-    //   = 0.198 ≤ 0.75 → inert → NO summary → FAILS (RED).
-    // Post-patch: utilization = 26_000 / budgetWindowTokens (32_000) = 0.8125
-    //   > 0.75 → the leaf pass arms → ≥1 leaf summary persists.
+    // With a getModel().contextWindow denominator (131_072): utilization
+    //   = 0.198 ≤ 0.75 → inert → NO summary → this assertion fails.
+    // With the budget denominator: utilization = 26_000 / budgetWindowTokens
+    //   (32_000) = 0.8125 > 0.75 → the leaf pass arms → ≥1 leaf summary persists.
     seedHistory(store, 26, 1_000);
     const logger = createMockLogger();
     const deps = depsWithConfiguredWindow(131_072, logger);
@@ -1149,10 +1148,10 @@ describe("SUMW-02: trigger denominator = budget window", () => {
     expect(summaries.every((s) => s.kind === "leaf")).toBe(true);
   });
 
-  it("SUMW-02-L2 (frontier parity pin): equal budget and configured window (no cap binds) arms byte-identically to the legacy denominator", async () => {
-    // I3: for frontier/mid no capability cap binds, so budgetWindowTokens ==
-    // getModel().contextWindow — this test passes pre- AND post-patch BY DESIGN,
-    // pinning that equal-values behavior is identical to the legacy read.
+  it("frontier parity pin: equal budget and configured window (no cap binds) arms identically under either denominator", async () => {
+    // For frontier/mid no capability cap binds, so budgetWindowTokens ==
+    // getModel().contextWindow — this pins that the equal-values behavior is
+    // identical no matter which of the two windows serves as the denominator.
     // (a) stored 26_000 vs 200_000 → utilization 0.13 ≤ 0.75 → inert (no summary).
     seedHistory(store, 26, 1_000);
     const logger = createMockLogger();
@@ -1194,27 +1193,27 @@ describe("SUMW-02: trigger denominator = budget window", () => {
     expect(summaries.every((s) => s.kind === "leaf")).toBe(true);
   });
 
-  it("SUMW-02-L3 (wiring source-lock): postExecution threads params.budgetWindowTokens into BOTH afterTurn passes; neither trigger reads the legacy getModel window", () => {
+  it("wiring source-lock: postExecution threads params.budgetWindowTokens into BOTH afterTurn passes; neither trigger reads the getModel snapshot window", () => {
     // Structural locks (recall-dag-budget-partition.test.ts precedent). The
     // threading chain is compiler-enforced hop-by-hop (required field at every
     // hop), but the runDeferredPasses call objects are plain literals a refactor
-    // could silently drop — restoring the old denominator via a fallback, or
-    // (worse) the Infinity-initialized streamSetup.effectiveWindowRef carrier,
+    // could silently drop — restoring a getModel-based denominator via a fallback,
+    // or (worse) the Infinity-initialized streamSetup.effectiveWindowRef carrier,
     // where utilization ÷ Infinity = 0 silently DISARMS both triggers. Lock the
     // two coupled sites:
     //   1. executor-post-execution.ts passes `budgetWindowTokens:
     //      params.budgetWindowTokens` in EXACTLY the leaf + condense call
     //      objects (×2 — one per afterTurn pass).
-    //   2. NEITHER trigger contains the legacy code read of the summarizer
-    //      snapshot window as the denominator (deleted by SUMW-02; the
+    //   2. NEITHER trigger reads the summarizer snapshot window as the
+    //      denominator (the
     //      summarize seam's model identity still flows through summarizerDeps —
-    //      only the utilization DENOMINATOR moved to the threaded budget value).
+    //      only the utilization DENOMINATOR is the threaded budget value).
     const postExecSource = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const threaded = postExecSource.match(/budgetWindowTokens: params\.budgetWindowTokens/g) ?? [];
     expect(threaded.length).toBe(2);
 
     // Code-only literal (the JSDoc prose uses a different phrasing): the exact
-    // legacy denominator expression must be GONE from both trigger sources.
+    // getModel-snapshot denominator expression must be ABSENT from both trigger sources.
     const legacyRead = "summarizerDeps.getModel().contextWindow";
     const leafTriggerSource = readFileSync(resolve(here, "lcd-compaction-trigger.ts"), "utf-8");
     const condenseTriggerSource = readFileSync(resolve(here, "lcd-condense-trigger.ts"), "utf-8");
@@ -1224,37 +1223,38 @@ describe("SUMW-02: trigger denominator = budget window", () => {
 });
 
 // ===========================================================================
-// SUMW-01 (Phase 178): leaf chunk clamp — input span ≤ resolved summarizer window
+// Leaf chunk clamp — input span ≤ resolved summarizer window
 // ===========================================================================
 //
 // WHY THIS EXISTS — the LCD-leaf half of the span invariant ("for all compaction
 // calls, inputTokens ≤ resolved summarizer effectiveWindow"): selectLeafChunk
 // caps the chunk ONLY at the configured `leafChunkTokens` (20_000 default), so an
-// `operationModels.compaction` 8K override summarizer received a 20K chunk —
+// `operationModels.compaction` 8K override summarizer would receive a 20K chunk —
 // opaque provider error or silent truncation. The clamp (inside maybeRunLeafPass,
 // computed ONCE per drain) caps the chunk at
 //   min(leafChunkTokens, summarizerWindow − leafTargetTokens − SUMMARIZER_PROMPT_OVERHEAD_TOKENS)
 // floored at MIN_SHRINKABLE_LEAF_CHUNK_TOKENS, keyed to the RESOLVED summarizer
-// (`overrideModel?.model ?? getRealModel()` via resolveSummarizerWindowTokens —
-// the 178-02 contract), NEVER the getModel() session-primary snapshot (Pitfall 2:
-// a 131K primary + 8K compaction override must clamp at 8K). Splitting comes
-// free: the B-2 bounded drain (≤4 passes/turn) + next-turn re-arming turn the
+// (`overrideModel?.model ?? getRealModel()` via resolveSummarizerWindowTokens),
+// NEVER the getModel() session-primary snapshot (a 131K primary + 8K
+// compaction override must clamp at 8K). Splitting comes
+// free: the bounded drain (≤4 passes/turn) + next-turn re-arming turn the
 // smaller cap into more, smaller passes — oversized backlogs split, never overflow.
 //
 // Arithmetic (overhead 2_048): clamped cap = min(20_000, W − 1_200 − 2_048 −
-// prevTokens) — prevTokens is the ACTUAL previousSummary size (review WR-03;
-// 0 in fixtures with no pre-existing summaries).
-//   - L1 (RED): W=8_000 → cap 4_752 → each summarize call ≤ 4 × 1_000-token
-//     messages. Pre-patch: ONE chunk of all 11 out-of-tail messages (20_000 cap).
-//   - L2 (no-op pin, I3): W=200_000 → cap stays 20_000 → legacy chunk sizing.
-//   - L3 (degenerate): W=3_000 → 3_000−1_200−2_048 < MIN_SHRINKABLE → cap floors
+// prevTokens) — prevTokens is the ACTUAL previousSummary size
+// (0 in fixtures with no pre-existing summaries).
+//   - The 8K-override case: W=8_000 → cap 4_752 → each summarize call ≤
+//     4 × 1_000-token messages; an unclamped 20_000 cap would send ONE chunk
+//     of all 11 out-of-tail messages.
+//   - The no-op pin: W=200_000 → cap stays 20_000 → the configured chunk sizing.
+//   - The degenerate case: W=3_000 → 3_000−1_200−2_048 < MIN_SHRINKABLE → cap floors
 //     at 2; the fixture's 1-token oldest message makes the selected CHUNK
 //     sub-MIN_SHRINKABLE → the "too-small" terminator (the real terminator is
 //     the tiny CHUNK, not the window itself): NO summarize call, no throw. An
-//     oldest message ≥ MIN_SHRINKABLE but over the cap instead takes the WR-02
-//     deterministic floor (also no LLM call — see the WR-02 fixture).
+//     oldest message ≥ MIN_SHRINKABLE but over the cap instead takes the
+//     deterministic floor (also no LLM call — see the over-cap fixture below).
 
-describe("SUMW-01: leaf chunk clamp", () => {
+describe("leaf chunk clamp fits the resolved summarizer window", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -1282,19 +1282,19 @@ describe("SUMW-01: leaf chunk clamp", () => {
     return makeSummarizerDeps(summarize, logger, {
       overrideModel: { model: { contextWindow: overrideWindow }, getApiKey: async () => "k" },
       // The PRIMARY real model — a clamp wrongly keyed here (131_072) or to
-      // getModel()'s 200_000 leaves the 20_000 cap binding (Pitfall 2 regression).
+      // getModel()'s 200_000 leaves the 20_000 cap binding (the override-keying regression).
       getRealModel: () => ({ contextWindow: 131_072 }),
     });
   }
 
-  it("SUMW-01-L1 (8K/20K): every summarize call's chunk fits the 8K override summarizer — clamp keyed to overrideModel, not getRealModel/getModel", async () => {
+  it("every summarize call's chunk fits the 8K override summarizer — clamp keyed to overrideModel, not getRealModel/getModel", async () => {
     // 26 msgs × 1_000 stored tokens = 26_000; budget window 32_000 → utilization
     // 0.8125 > 0.75 arms. Schema defaults (freshTailTurns 8; 13 assistant steps)
     // leave msgs 0..10 out-of-tail. Clamped cap = 8_000 − 1_200 − 2_048 = 4_752 →
     // each chunk greedily takes ≤ 4 × 1_000-token messages (4_000 ≤ 4_752 < 5_000).
     // Keyed to getRealModel's 131_072 or getModel's 200_000 the cap would stay
     // 20_000 and ONE call would receive all 11 out-of-tail messages → the ≤4
-    // assertion is itself the Pitfall-2 override-keying proof. RED pre-patch.
+    // assertion is itself the override-keying proof.
     seedHistory(store, 26, 1_000);
     const logger = createMockLogger();
     const { summarize, callSizes } = recordingSummarizer();
@@ -1320,11 +1320,11 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(Math.max(...sizes)).toBeLessThanOrEqual(4);
   });
 
-  it("SUMW-01-L2 (no-op pin, I3): a large-window override summarizer leaves the configured cap binding — legacy chunk sizing byte-identical", async () => {
+  it("no-op pin: a large-window override summarizer leaves the configured cap binding — configured chunk sizing unchanged", async () => {
     // W=200_000 → min(20_000, 200_000−1_200−2_048) = 20_000 (the configured knob
     // governs). The ONE summarize call receives the FULL out-of-tail chunk (all 11
-    // evictable messages, 11_000 ≤ 20_000) — exactly the pre-clamp behavior.
-    // Passes pre- AND post-patch BY DESIGN.
+    // evictable messages, 11_000 ≤ 20_000) — the clamp binds only when the
+    // window is the tighter bound.
     seedHistory(store, 26, 1_000);
     const logger = createMockLogger();
     const { summarize, callSizes } = recordingSummarizer();
@@ -1344,19 +1344,19 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(store.getSummaries(SCOPE).length).toBeGreaterThanOrEqual(1);
     const sizes = callSizes();
     expect(sizes.length).toBe(1);
-    expect(sizes[0]).toBe(11); // the full out-of-tail chunk — legacy sizing
+    expect(sizes[0]).toBe(11); // the full out-of-tail chunk — the configured cap governs
   });
 
-  it("INT-W1 (flagship): a served-bound PRIMARY summarizer (configured 131_072 / served 8_192, NO override) clamps the leaf chunk to the SERVED window", async () => {
-    // The milestone integration WARNING 1 scenario: summarizer = the primary
+  it("a served-bound PRIMARY summarizer (configured 131_072 / served 8_192, NO override) clamps the leaf chunk to the SERVED window", async () => {
+    // The served-below-configured scenario: summarizer = the primary
     // model on a provider serving 8_192 against a configured 131_072. The
     // resolved window must be min(131_072, 8_192) = 8_192 → clamped cap =
     // 8_192 − 1_200 − 2_048 = 4_944 → each chunk ≤ 4 × 1_000-token messages.
-    // Pre-INT-W1 the helper returned the configured 131_072 → cap stayed at
-    // the 20_000 knob → ONE ~11-message (~11K-token) chunk was dispatched to a
-    // provider serving 8K — silent input truncation of the summary source
-    // (RED). primaryServedWindow is the executor-reconcile-gated
-    // windowProvenance.served (WR-02: it binds exactly the getRealModel model).
+    // If the helper returned the configured 131_072 the cap would stay at
+    // the 20_000 knob → ONE ~11-message (~11K-token) chunk dispatched to a
+    // provider serving 8K — silent input truncation of the summary source.
+    // primaryServedWindow is the executor-reconcile-gated
+    // windowProvenance.served (it binds exactly the getRealModel model).
     seedHistory(store, 26, 1_000);
     const logger = createMockLogger();
     const { summarize, callSizes } = recordingSummarizer();
@@ -1386,17 +1386,17 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(Math.max(...sizes)).toBeLessThanOrEqual(4);
   });
 
-  it("SUMW-01-L3 (degenerate): a summarizer window below target+overhead floor-clamps and the SUB-MIN_SHRINKABLE chunk terminates via the too-small path — no summarize call, no throw", async () => {
+  it("degenerate: a summarizer window below target+overhead floor-clamps and the SUB-MIN_SHRINKABLE chunk terminates via the too-small path — no summarize call, no throw", async () => {
     // W=3_000 → 3_000 − 1_200 − 2_048 = −248 < MIN_SHRINKABLE → the cap floors at
     // 2. The OLDEST out-of-tail message carries 1 stored token, so the selected
     // chunk is that lone message (adding the next 1_000-token message would exceed
     // the floored cap) → chunk.tokens 1 < MIN_SHRINKABLE → the existing
     // "too-small" no-progress terminator ends the drain cleanly. NOTE the real
     // terminator is the sub-MIN_SHRINKABLE CHUNK, not the degenerate window —
-    // a ≥-MIN_SHRINKABLE oldest message over the cap takes the WR-02
-    // deterministic floor instead (see below). Pre-patch (cap 20_000): the
-    // chunk is the full 10_001-token out-of-tail backlog → it WOULD summarize
-    // → a summary persists → FAILS (RED).
+    // a ≥-MIN_SHRINKABLE oldest message over the cap takes the
+    // deterministic floor instead (see below). Without the clamp (cap 20_000):
+    // the chunk would be the full 10_001-token out-of-tail backlog → it WOULD
+    // summarize → a summary persists → this assertion fails.
     expect(MIN_SHRINKABLE_LEAF_CHUNK_TOKENS).toBe(2); // the fixture's premise
     append(store, userMsg("u0"), 0, 1, 1000); // the 1-token oldest out-of-tail message
     for (let i = 1; i < 26; i++) {
@@ -1425,11 +1425,11 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(callSizes().length).toBe(0); // the summarizer was never invoked
   });
 
-  it("WR-02: a single message LARGER than the clamped cap goes straight to the deterministic floor — no LLM call, bounded fallback persisted", async () => {
+  it("a single message LARGER than the clamped cap goes straight to the deterministic floor — no LLM call, bounded fallback persisted", async () => {
     // selectLeafChunk's always-include-one rule selects a lone oversized FIRST
-    // message regardless of the cap — pre-fix it was fed WHOLE to the
-    // summarizer, where every LLM attempt is a guaranteed overflow (up to 4
-    // failing calls per pass / 16 per drain — wasted spend + breaker churn),
+    // message regardless of the cap — without the floor it would be fed WHOLE
+    // to the summarizer, where every LLM attempt is a guaranteed overflow (up to
+    // 4 failing calls per pass / 16 per drain — wasted spend + breaker churn),
     // violating the span invariant the suite pins. 8K override → cap 4_752
     // (no prior summaries): the 10_000-token oldest message exceeds it.
     append(store, userMsg("u0-huge"), 0, 10_000, 1000);
@@ -1452,7 +1452,7 @@ describe("SUMW-01: leaf chunk clamp", () => {
       logger as unknown as LeafSummarizerDeps["logger"],
     );
 
-    // The summarizer was NEVER invoked with the over-cap chunk (RED pre-fix: 4
+    // The summarizer was NEVER invoked with the over-cap chunk (otherwise: 4
     // ladder attempts against the lone 10_000-token message)...
     expect(callSizes().length).toBe(0);
     // ...and the bounded deterministic floor persisted instead (fallback:true,
@@ -1463,14 +1463,14 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(summaries[0]!.fallback).toBe(true);
   });
 
-  it("WR-03 (leaf mirror): the chunk cap subtracts the ACTUAL previousSummary tokens threaded into the pass prompt", async () => {
+  it("the chunk cap subtracts the ACTUAL previousSummary tokens threaded into the pass prompt (mirrors the condense side)", async () => {
     // previousSummaryContent returns the last summary of ANY kind — a
     // pre-existing summary whose CONTENT is 8_000 chars ≈ 2_000 tokens rides
     // into the next leaf prompt, while the flat 2_048 overhead covers only the
     // instruction template. 8K override: cap = 8_000 − 1_200 − 2_048 − 2_000 =
-    // 2_752 → the first chunk takes ≤ 2 × 1_000-token messages. Pre-fix the cap
-    // ignored prev (4_752 → 4 messages): chunk + target + template + prev =
-    // 4_000 + 1_200 + 2_048 + 2_000 = 9_248 > 8_000 — a provider overflow.
+    // 2_752 → the first chunk takes ≤ 2 × 1_000-token messages. A cap that
+    // ignored prev (4_752 → 4 messages) would overflow: chunk + target +
+    // template + prev = 4_000 + 1_200 + 2_048 + 2_000 = 9_248 > 8_000.
     seedHistory(store, 30, 1_000);
     store.appendLeafSummary({
       scope: SCOPE,
@@ -1513,13 +1513,13 @@ describe("SUMW-01: leaf chunk clamp", () => {
 });
 
 // ===========================================================================
-// SUMW-01 review WR-05: leaf clamp defensive posture — inside the never-rejects
+// Leaf clamp defensive posture — inside the never-rejects
 // boundary + a finite guard on the derived cap (parity with the condense
 // sibling, which resolves its window inside its try and no-ops on a non-finite
 // childTokenBudget).
 // ===========================================================================
 
-describe("SUMW-01 review WR-05: leaf clamp defensive posture", () => {
+describe("leaf clamp defensive posture", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -1529,10 +1529,10 @@ describe("SUMW-01 review WR-05: leaf clamp defensive posture", () => {
     store = createLcdStore(db);
   });
 
-  it("a throwing getRealModel degrades to the non-fatal WARN — maybeRunLeafPass never rejects (T-129-18)", async () => {
+  it("a throwing getRealModel degrades to the non-fatal WARN — maybeRunLeafPass never rejects", async () => {
     // The clamp's window resolution invokes the caller-supplied getRealModel().
-    // Pre-fix it executed BEFORE the try at the drain loop, so a throwing deps
-    // getter REJECTED maybeRunLeafPass — breaking the module's first
+    // If it executed BEFORE the try at the drain loop, a throwing deps
+    // getter would REJECT maybeRunLeafPass — breaking the module's first
     // load-bearing contract ("the call site simply awaits a promise that never
     // rejects"); on the inline path that rejection fails the live turn.
     seedHistory(store, 40, 100);
@@ -1566,11 +1566,11 @@ describe("SUMW-01 review WR-05: leaf clamp defensive posture", () => {
     // 50 msgs × 1_000 stored tokens; freshTailTurns 8 (assistants at odd
     // indices) puts the boundary at the 8th-from-last assistant (index 35):
     // 35 out-of-tail messages = 35_000 tokens — ABOVE the configured 20_000
-    // cap, so the cap is load-bearing. Pre-fix, a NaN window made the derived
-    // cap NaN (`Math.max(2, Math.min(20_000, NaN))` → NaN), which disables
-    // selectLeafChunk's `tokens + next > cap` break entirely → the WHOLE
-    // 35-message out-of-tail history became one chunk (worse than pre-clamp,
-    // which always had the finite configured cap).
+    // cap, so the cap is load-bearing. Without the finite guard, a NaN window
+    // makes the derived cap NaN (`Math.max(2, Math.min(20_000, NaN))` → NaN),
+    // which disables selectLeafChunk's `tokens + next > cap` break entirely →
+    // the WHOLE 35-message out-of-tail history becomes one chunk (an unbounded
+    // chunk, worse than the finite configured cap).
     seedHistory(store, 50, 1_000);
     const logger = createMockLogger();
     const fn = vi.fn(async (_messages: AgentMessage[]) => "SHORT-LEAF-SUMMARY");
@@ -1600,16 +1600,16 @@ describe("SUMW-01 review WR-05: leaf clamp defensive posture", () => {
 });
 
 // ===========================================================================
-// OBS-01 (Phase 180-08): summary_language_mismatch at the dag LEAF site (depth 0)
+// summary_language_mismatch at the dag LEAF site (depth 0)
 // ===========================================================================
 //
-// The requirement's exact four-row matrix at the leaf site. RED on pre-patch:
-// maybeRunLeafPass emits NO context:summary_language_mismatch. The source script
+// The four-row source/summary script matrix at the leaf site pins that
+// maybeRunLeafPass emits context:summary_language_mismatch. The source script
 // is driven by the seeded MESSAGE content (the summarizer INPUT chunk); the
 // summary script is driven by the injected summarizer's output text. All Hebrew
-// glyphs are built from String.fromCodePoint (WR-01) so a shell/editor mojibake
+// glyphs are built from String.fromCodePoint so a shell/editor mojibake
 // can never desync the fixture.
-describe("maybeRunLeafPass — summary_language_mismatch (OBS-01, depth 0)", () => {
+describe("maybeRunLeafPass — summary_language_mismatch (depth 0)", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 

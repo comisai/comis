@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * FLEET-reprove (Phase 162 P1 — RE-PROVE & GA: obs.fleet.health reproduces the
- * Phase-158 corpus in ONE call, ZERO log-greps).
+ * FLEET-reprove — obs.fleet.health reproduces the frozen
+ * corpus in ONE call, ZERO log-greps.
  *
- * The milestone's reason-to-exist proof. The fleet lens (Phases 159-161) replaces
- * the manual cross-session triage the §2 by-hand review ran on `daemon.log` (the
+ * The milestone's reason-to-exist proof. The fleet lens replaces
+ * the manual cross-session triage the by-hand review ran on `daemon.log` (the
  * severity histogram + group-by-message + pm2 native model scrape). This scenario
  * proves that a SINGLE `assembleFleetHealthReport` call reproduces that corpus's
  * signal classes — both flagship health signals (`lcd_divergence` +
  * `mcp_reconnect_failed`), the model/config posture findings (I-track), AND the
  * cross-session A-track rates (degraded rate / errorKinds / breaker / cost).
  *
- * It is the analog of v2.14's Phase-156 `diagnosis-reprove.test.ts` — with the
+ * It is the analog of `diagnosis-reprove.test.ts` — with the
  * entire Stage-C judged apparatus DROPPED. The fleet proof is a COUNT/STRUCTURE
  * reproduction, so it is KEYLESS + DETERMINISTIC: no model, no judge, no API key,
  * no cost governor, no benchmark ledger, no live-gate env flag, and no environment
  * read of any kind (the same anti-cargo-cult discipline `fleet-gate-substrate.
  * test.ts:5-12` documents). The costed LIVE RUN (boot the new instrumented daemon
  * → it writes real I-track rows → `comis fleet` surfaces them) is the operator's —
- * see the co-located `fleet-reprove-runbook.md` (the 161-HUMAN-UAT item #4).
+ * see the co-located `fleet-reprove-runbook.md`.
  *
  * THE "0 LOG-GREPS" CLAIM IS BY CONSTRUCTION. The assembler reads ONLY sqlite
  * (`obsStore.aggregateSessionsInWindow` + 3× `queryDiagnostics({category})`) and
@@ -26,10 +26,10 @@
  * (fleet-health.ts:316,328,331-333). The findings asserted below all came from the
  * SEEDED store, never a log file; the proof is structural, NOT a stub of sources.
  *
- * SCOPE REALITY (LOAD-BEARING): the current real `~/.comis` was produced by the
- * PRE-160 daemon, so it has NO `health_signal`/`model_health`/`config_posture`
+ * SCOPE REALITY (LOAD-BEARING): the current real `~/.comis` was produced by an
+ * earlier daemon build, so it has NO `health_signal`/`model_health`/`config_posture`
  * rows. The I-track is therefore SEEDED into a `mkdtempSync` tmp dataDir (NEVER the
- * real `~/.comis` for the write side — the D9 no-prod-datadir rule). The full
+ * real `~/.comis` for the write side — the no-prod-datadir rule). The full
  * end-to-end I-track surfacing against REAL freshly-written rows is the operator's
  * live RUN (the RUNBOOK).
  *
@@ -58,7 +58,7 @@ import { assertNoSecrets } from "../../cost.js";
 // code; tests inject a fixed instant). Relative depth: this scenario sits at
 // test/live/scenarios/prove/, three `..` lands at test/, then support/.
 import { createFakeClock } from "../../../support/fake-clock.js";
-// Resolves via the 162-01 TOP-LEVEL barrel re-export (the live config aliases
+// Resolves via the TOP-LEVEL barrel re-export (the live config aliases
 // @comis/daemon -> daemon/dist/index.js — the top-level barrel only).
 import { assembleFleetHealthReport } from "@comis/daemon";
 
@@ -100,14 +100,14 @@ function summaryDetails(
 
 /**
  * Seed the store so a single `assembleFleetHealthReport` call reproduces the
- * Phase-158 corpus's signal classes. Mirrors fleet-health.test.ts:150-200, ADDING
+ * corpus's signal classes. Mirrors fleet-health.test.ts:150-200, ADDING
  * the second flagship (`mcp_reconnect_failed`) — the existing seed covered only
  * `lcd_divergence`. `now` is the fakeClock instant so every row sits inside the
  * 24h window.
  *
  * A-track (two session_summary rows, one degraded): drives degradedRate /
  * topErrorKinds / breakerTripTotal / cost.costUsd.
- * I-track (Phase-160 diagnostic rows): one `health_signal` per FLAGSHIP signal
+ * I-track (diagnostic rows): one `health_signal` per FLAGSHIP signal
  * (lcd_divergence + mcp_reconnect_failed) + one `model_health` + one
  * `config_posture` — the buildFindings codes the proof asserts.
  */
@@ -141,7 +141,7 @@ function seedStore(store: ObservabilityStore, now: number): void {
       toolStats: { web_search: { ok: 1, failed: 4 } },
     }),
   });
-  // --- I-track: one row per FLAGSHIP corpus signal class (the M2 verdicts). ---
+  // --- I-track: one row per FLAGSHIP corpus signal class. ---
   // Flagship 1: lcd-ingest-skipped (corpus byHandCount 7) -> health_signal:lcd_divergence.
   store.insertDiagnostic({
     timestamp: now - 2_000,
@@ -178,7 +178,7 @@ function seedStore(store: ObservabilityStore, now: number): void {
 }
 
 describe(
-  "Phase 162 P1 — fleet RE-PROVE: obs.fleet.health reproduces the 158 corpus in 1 call, 0 grep (keyless, deterministic)",
+  "fleet RE-PROVE: obs.fleet.health reproduces the frozen corpus in 1 call, 0 grep (keyless, deterministic)",
   () => {
     it("ONE assembleFleetHealthReport call reproduces both flagships + model/config (I-track) + the A-track rates", async () => {
       // The seeded store + tmp dataDir — NEVER the real ~/.comis for the write side
@@ -217,22 +217,22 @@ describe(
       expect(report.breakerTripTotal).toBeGreaterThanOrEqual(2);
       // cost.costUsd is A1-sourced (the session_summary store) — non-zero here;
       // cost.totalTokens is A3-sourced (session-index files) and may be 0 with no
-      // day-files, so it is NOT asserted (WR-03, fleet-health.ts:365-372).
+      // day-files, so it is NOT asserted (fleet-health.ts:365-372).
       expect(report.cost.costUsd).toBeGreaterThan(0);
 
       // --- Secret/residency sweep over the serialized report (mandatory belt-and-
-      //     suspenders; the 162-02 GA marker pins `.toContain("assertNoSecrets")`
+      //     suspenders; the GA marker pins `.toContain("assertNoSecrets")`
       //     over this file). The digest-only report carries no bodies — this is the
       //     defense-in-depth second sweep point. ---
       expect(() => assertNoSecrets(JSON.stringify(report), "fleet-reprove-report")).not.toThrow();
     });
 
     it("CONTRASTS the manual cost the lens replaces — narrative coverage, NO hard-coded number", () => {
-      // The frozen Phase-158 corpus is the reference: `manualCost` is the by-hand
+      // The frozen corpus is the reference: `manualCost` is the by-hand
       // cross-session triage (the severity histogram + group-by-message + pm2 model
       // scrape) the ONE-call fleet report REPLACES. The contrast is QUALITATIVE —
       // we assert the manual steps EXIST as the cost-to-beat and that the report's
-      // finding/rollup CLASSES cover them, NOT a token/effort delta (Pitfall 4: no
+      // finding/rollup CLASSES cover them, NOT a token/effort delta (no
       // hard-coded cost-to-beat number in any pnpm validate-tier check).
       const corpus = loadCorpus(FIXTURES_DIR);
 

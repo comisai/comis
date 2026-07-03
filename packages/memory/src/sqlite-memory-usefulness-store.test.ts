@@ -27,7 +27,7 @@ const memoryConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false,
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall-related config keys nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,
@@ -223,11 +223,11 @@ describe("createSqliteMemoryUsefulnessStore", () => {
       if (res.ok) expect(res.value.size).toBe(0);
     });
 
-    // WR-03: failure_count must be PROJECTED into the signal so the bandit feed sees it
-    // (RANK-01 negative reward). It is surfaced ONLY when > 0 (spread-conditional, like
+    // failure_count must be PROJECTED into the signal so the bandit feed sees it
+    // (the negative-reward term). It is surfaced ONLY when > 0 (spread-conditional, like
     // lastUsefulAt) so a clean memory's signal shape is byte-identical → the recall
     // hot-path usefulnessNorm (used/ignored only) is unaffected (the 44 golden scores).
-    it("WR-03: projects failureCount onto the signal when failures accrued (else omits it — byte-identity for clean memories)", async () => {
+    it("projects failureCount onto the signal when failures accrued (else omits it — byte-identity for clean memories)", async () => {
       const mFail = await seedMemory({ id: "m-fail" });
       const mClean = await seedMemory({ id: "m-clean" });
       await store.recordUsage([mFail], [], SCOPE_A); // used once
@@ -482,15 +482,13 @@ describe("createSqliteMemoryUsefulnessStore", () => {
   });
 
   // =====================================================================
-  // recordFailure (FORGET-02) — failure_count is a DISTINCT column from
+  // recordFailure — failure_count is a DISTINCT column from
   // ignored_count (outcome-attributed task failure, NOT recalled-but-not-cited)
   // =====================================================================
 
-  describe("recordFailure (failure_count, FORGET-02)", () => {
+  describe("recordFailure (failure_count)", () => {
     /**
-     * Read the raw `failure_count` for a (memory id, intent) bucket. The column
-     * is NEW in v2.26 (RANK-05) — this lookup fails on pre-patch HEAD because the
-     * column does not exist yet.
+     * Read the raw `failure_count` for a (memory id, intent) bucket.
      */
     function rawFailure(
       memoryId: string,
@@ -530,7 +528,7 @@ describe("createSqliteMemoryUsefulnessStore", () => {
       expect(rowCount()).toBe(1);
     });
 
-    it("leaves ignored_count and used_count UNCHANGED — failure_count is a SEPARATE signal (Pitfall 5)", async () => {
+    it("leaves ignored_count and used_count UNCHANGED — failure_count is a SEPARATE signal", async () => {
       const m1 = await seedMemory({ id: "m1" });
       // Pre-seed some usage so we can prove the failure write does not touch it.
       await store.recordUsage([m1], [], SCOPE_A); // used_count=1

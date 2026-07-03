@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * EFF-01 bounded read helpers extracted from `lcd-store.ts` to keep the store
+ * Bounded read helpers extracted from `lcd-store.ts` to keep the store
  * factory under the 800-line architecture line cap (mirrors the prior
- * `lcd-store-writes.ts` + `lcd-fts.ts` extractions; Pitfall 6).
+ * `lcd-store-writes.ts` + `lcd-fts.ts` extractions).
  *
  * Three responsibilities, BYTE-IDENTICAL relocations of the methods that used
  * to live inside the `createLcdStore` return object (no SQL/column/ordering/
  * error-handling change):
  *   1. `getMessagesByIds(scope, ids)` — bounded message fetch via variable-length
- *      IN(), scoped by (conversation_id, agent_id, tenant_id) (R4/WR-02).
+ *      IN(), scoped by (conversation_id, agent_id, tenant_id).
  *   2. `getSummariesByIds(scope, ids)` — bounded summary fetch via variable-length
  *      IN(), same scope discipline.
  *   3. `countMessages(scope)` — single-integer COUNT(*) over lcd_messages with no
- *      row materialization, preserving the O(referenced-ids) read budget (EFF-01).
+ *      row materialization, preserving the O(referenced-ids) read budget.
  *
  * The factory `createBoundedReads(db, selectParts)` takes:
  *   - `db`           — the live database handle (for on-demand IN() prepares +
@@ -22,7 +22,7 @@
  *                      at `createLcdStore` top (preserves the prepare-once rule).
  *
  * `@comis/memory` is infra-free (AGENTS.md §2.4 — no logger): a degraded row
- * is skipped silently (WR-02), exactly as the originals did.
+ * is skipped silently, exactly as the originals did.
  *
  * @module
  */
@@ -49,7 +49,7 @@ import {
 } from "./lcd-store-mappers.js";
 
 /**
- * The three EFF-01 bounded-read methods returned by the factory.
+ * The three bounded-read methods returned by the factory.
  * Signatures are byte-identical to the `ContextStorePort` declarations.
  */
 export interface BoundedReads {
@@ -59,7 +59,7 @@ export interface BoundedReads {
 }
 
 /**
- * Build the three EFF-01 bounded-read helpers. Call once at `createLcdStore`
+ * Build the three bounded-read helpers. Call once at `createLcdStore`
  * top and spread the returned object into the port literal.
  *
  * @param db          — the live better-sqlite3 Database handle.
@@ -71,10 +71,10 @@ export function createBoundedReads(
   db: Database.Database,
   selectParts: Database.Statement,
 ): BoundedReads {
-  // EFF-01: bounded total-message COUNT for the assembler's `persistedMsgCount` —
+  // Bounded total-message COUNT for the assembler's `persistedMsgCount` —
   // a single integer, NO row materialization, so it keeps the O(referenced-ids)
-  // read budget (never an O(total-history) row fetch). R4: scoped by agent_id +
-  // tenant_id (WR-02). The count read goes through ctxCountRowMapper, not a raw
+  // read budget (never an O(total-history) row fetch). Scoped by agent_id +
+  // tenant_id. The count read goes through ctxCountRowMapper, not a raw
   // count cast (§6.8 untyped-sqlite) — same { c } shape as countCtxItems.
   const countMsgs = db.prepare(
     "SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
@@ -82,7 +82,7 @@ export function createBoundedReads(
 
   return {
     getMessagesByIds(scope: ContextStoreScope, ids: string[]): LcdMessage[] {
-      // EFF-01: bounded fetch — short-circuit immediately on empty set so zero
+      // Bounded fetch — short-circuit immediately on empty set so zero
       // DB queries are issued (the IN() SQL with zero placeholders is also an
       // error in most SQLite builds, making the guard doubly necessary).
       if (ids.length === 0) return [];
@@ -90,11 +90,11 @@ export function createBoundedReads(
       // Documented deviation from the prepare-once rule: the working set is
       // bounded by context_items cardinality (max ~100 items per turn), so the
       // extra statement-prepare cost is negligible and avoids a placeholder-count
-      // mismatch at the boundary. T-170-01-01: ids are always bound as '?'
+      // mismatch at the boundary. Ids are always bound as '?'
       // parameters — never string-interpolated — so SQL injection is structurally
-      // impossible. T-170-01-02: the three-column R4 scope triple
+      // impossible. The three-column scope triple
       // (conversation_id, agent_id, tenant_id) is always present so a cross-agent
-      // id lookup returns [] (EFF-01-S-4).
+      // id lookup returns [].
       const placeholders = ids.map(() => "?").join(",");
       const stmt = db.prepare(
         `SELECT * FROM lcd_messages
@@ -136,7 +136,7 @@ export function createBoundedReads(
     },
 
     countMessages(scope: ContextStoreScope): number {
-      // EFF-01: single-integer COUNT — no row materialization, so it preserves the
+      // Single-integer COUNT — no row materialization, so it preserves the
       // O(referenced-ids) read budget (the assembler's persistedMsgCount no longer
       // forces an O(total-history) getMessages fetch). Routed through
       // ctxCountRowMapper, not a raw count cast (§6.8 untyped-sqlite). A scope with
@@ -149,7 +149,7 @@ export function createBoundedReads(
     },
 
     getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[] {
-      // EFF-01: bounded fetch — short-circuit on empty set (zero DB queries).
+      // Bounded fetch — short-circuit on empty set (zero DB queries).
       if (ids.length === 0) return [];
       const placeholders = ids.map(() => "?").join(",");
       const stmt = db.prepare(

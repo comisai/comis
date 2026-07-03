@@ -27,8 +27,8 @@
 // Built-in tools (web-search, web-fetch)
 export { createWebSearchTool, __clearSearchCache } from "./builtin/web-search-tool/index.js";
 export { createWebFetchTool, fetchUrlContent, __clearFetchCache } from "./builtin/web-fetch-tool.js";
-// Web-fetch internals reused by the daemon-side `tool.invoke` executor (Phase 212,
-// WEB-02): the DNS-pinned fetch primitive + the fetch-free readability extractor.
+// Web-fetch internals reused by the daemon-side `tool.invoke` executor: the
+// DNS-pinned fetch primitive + the fetch-free readability extractor.
 // The autonomous `orch:web` path is validateUrl → fetchPinned → extractReadableContent
 // (undici, DNS-pinned, NO impit re-resolve), distinct from the in-process web_fetch tool.
 export { fetchPinned, createPinnedAgent } from "./integrations/pinned-fetch.js";
@@ -58,7 +58,7 @@ export { createProcessTool } from "./builtin/process-tool.js";
 export { createProcessRegistry } from "./builtin/process-registry.js";
 export type { ProcessRegistry } from "./builtin/process-registry.js";
 
-// Built-in tools -- Sleep (STREAM-03): the pacing primitive the model calls to
+// Built-in tools -- Sleep: the pacing primitive the model calls to
 // defer for the ~5-min prompt-cache TTL instead of polling in a token-burning
 // loop. Consumed by the daemon toolset assembly (setup-tools.ts) next to the
 // other always-on builtins (createExecTool/createProcessTool).
@@ -91,9 +91,9 @@ export {
   // instance per agent (from the matched entry's limits) feeding both the tool deps
   // (consume*) and the registry onCapForget (caps.forget).
   createSessionCaps,
-  // 164-01/03: the daemon woken-turn driver (164-06) consumes the pure drive-state journal
+  // The daemon woken-turn driver consumes the pure drive-state journal
   // (cross-wake memory) + the bounded digest/diff read selector + the content-free screen
-  // digest line — DRIVE-01 / READ-01. The read tool (164-06) delegates to boundedReadDigest.
+  // digest line. The read tool delegates to boundedReadDigest.
   emptyJournal,
   appendAnswered,
   appendStep,
@@ -106,19 +106,19 @@ export {
   type DriveJournal,
   type DriveReadMode,
   type ReadDigest,
-  // 165-01/02/03/06 (DUR-01/02 / LIVE-01 / ENDURE-01): the Phase-165 pure siblings the
-  // daemon-side durability/endurance wiring (165-07) consumes — the re-attach DECISION +
-  // the durable descriptor (de)serialize + the busy-vs-hung predicate (the LIVE-01 backstop
-  // + the ENDURE-01 reaper exclusion) + the spend-ceiling check + the registry's injected
-  // descriptor-store port + recover-on-boot seams. Promoted to the top-level barrel here
-  // (the integration plan is their first `@comis/skills/tools`-level consumer).
+  // The pure durability/endurance siblings the daemon-side wiring consumes — the
+  // re-attach DECISION + the durable descriptor (de)serialize + the busy-vs-hung
+  // predicate (the liveness backstop + the reaper exclusion) + the spend-ceiling
+  // check + the registry's injected descriptor-store port + recover-on-boot seams.
+  // Promoted to the top-level barrel here (the daemon is their first
+  // `@comis/skills/tools`-level consumer).
   reattachDecision,
   serializeDescriptor,
   deserializeDescriptor,
   buildSessionDescriptor,
   busyOrHung,
   checkSpendCeiling,
-  // The daemon-side has-session liveness probe builder (165-07 wiring): `tmux has-session -t
+  // The daemon-side has-session liveness probe builder: `tmux has-session -t
   // comis-<id>` — the re-attach + backstop probe (exit 0 ⇒ alive).
   buildTmuxHasSessionArgv,
   buildTmuxKillArgv,
@@ -131,11 +131,11 @@ export {
   type BusySignal,
   type BusyVerdict,
   type SpendBreach,
-  // 166-01/02 (NOTIFY-01/02): the pure user-facing notification kernel — the three-way wake
-  // decision + the I9-safe done/needs-you/failed outcome map (the failed outcome deferred
-  // from Phase 165 lands here), the drive.notify gate (needs-you always fires — I4), and the
-  // content-free heartbeat one-liner (I3). The daemon wake-notify wiring (plan 03) is their
-  // first `@comis/skills/tools`-level consumer (the public-export-consumers arch gate).
+  // The pure user-facing notification kernel — the three-way wake decision + the
+  // done/needs-you/failed outcome map, the drive.notify gate (needs-you always
+  // fires), and the content-free heartbeat one-liner. The daemon wake-notify
+  // wiring is their first `@comis/skills/tools`-level consumer (the
+  // public-export-consumers arch gate).
   decideWakeAction,
   mapTerminalOutcome,
   shouldNotifyOutcome,
@@ -143,11 +143,11 @@ export {
   type OutcomeInputs,
   type EscalationReason,
   type NotifyPolicy,
-  // 124-09: the woken-turn driver (daemon-side) consumes the safe-only auto-answer policy
-  // (124-04) + the normalized loop-guard (124-04) — the SEC-12/SEC-11 governance modules.
+  // The woken-turn driver (daemon-side) consumes the safe-only auto-answer policy
+  // + the normalized loop-guard — the auto-answer governance modules.
   decideAutoAnswer,
   createLoopGuard,
-  // v2.26 DIALOG-01: the woken-turn driver resolves a session's platform profile by allowId to feed
+  // The woken-turn driver resolves a session's platform profile by allowId to feed
   // decideAutoAnswer the profile's dialogs (the safe-only policy still disposes).
   getPlatformProfile,
   type TerminalPlatformProfile,
@@ -158,7 +158,7 @@ export {
   type LoopGuardDeps,
   type TerminalToolDeps,
   type TerminalEventBus,
-  // 124-09: the decoded fd3 push-channel frame the daemon's onTerminalEvent hook
+  // The decoded fd3 push-channel frame the daemon's onTerminalEvent hook
   // re-publishes onto the TypedEventBus (the 3rd emit-hook site).
   type TerminalEventFrame,
   type TerminalEvictedEvent,
@@ -169,9 +169,9 @@ export {
   type AllowMatch,
   type TerminalScope,
   type SessionListing,
-  // 164-06: the origin key scoping a session's visibility — the daemon-wiring
+  // The origin key scoping a session's visibility — the daemon-wiring
   // drive-scope helper (terminal-drive-scope.ts) returns it from registryOwnerFor
-  // (the I5 strip: a drive:-scoped wake owner → the stamped registry owner).
+  // (a drive:-scoped wake owner → the stamped registry owner).
   type SessionOwner,
   // The per-session caps surface (the daemon wires caps.forget to onCapForget)
   // + the reaper eviction payload (the daemon's onEvict hook param) + the typed reason.
@@ -194,7 +194,7 @@ export {
   createCtxExpandTool,
   type ContextToolDeps,
   type ContextToolLogger,
-  // DEPTH-02: tier→multi-hop-depth map for the daemon wiring site.
+  // The tier→multi-hop-depth map for the daemon wiring site.
   depthForTier,
   type WalkCapabilityClass,
 } from "./builtin/context-tools/index.js";
@@ -205,10 +205,9 @@ export type { SandboxProvider, SandboxOptions, ExecSandboxConfig } from "./built
 // Built-in tools -- Exec sandbox detection
 export { detectSandboxProvider } from "./builtin/sandbox/detect-provider.js";
 export type { DetectLogger } from "./builtin/sandbox/detect-provider.js";
-// JAIL-03 namespace preflight (Phase 211) — the boot probe that PRODUCES
-// `namespacePreflightOk` for the shipped degradeAutonomy downshift. Re-exported
-// on the barrel now that the daemon (211-06) is the out-of-package consumer
-// (mirrors detectSandboxProvider — was deep-path-only in 211-04 to avoid a dead export).
+// Namespace preflight — the boot probe that PRODUCES `namespacePreflightOk` for
+// the degradeAutonomy downshift. Re-exported on the barrel now that the daemon is
+// the out-of-package consumer (mirrors detectSandboxProvider).
 export { namespacePreflight } from "./builtin/sandbox/detect-provider.js";
 export type { NamespacePreflightResult } from "./builtin/sandbox/detect-provider.js";
 
@@ -228,7 +227,7 @@ export type { LocalSttProbeResult, LocalSttProbeDeps } from "./integrations/loca
 // Integrations -- TTS provider factory
 export { createTTSProvider } from "./integrations/tts-factory.js";
 
-// Integrations -- keyless local/Piper (in-process) text-to-audio TTS adapter (TTS-02)
+// Integrations -- keyless local/Piper (in-process) text-to-audio TTS adapter
 export { createLocalTtsAdapter } from "./integrations/local-tts-adapter.js";
 export type { LocalTtsConfig } from "./integrations/local-tts-adapter.js";
 
@@ -291,8 +290,8 @@ export { createCompositeFileExtractor } from "./integrations/document/composite-
 export { createImageGenProvider, createImageGenRateLimiter } from "./integrations/image-gen/index.js";
 export type { ImageGenRateLimiter } from "./integrations/image-gen/index.js";
 
-// Video generation (FAL queue adapter, factory, rate limiter) — consumed by
-// Plan 04's daemon wiring (createVideoGenProvider + createVideoGenRateLimiter +
+// Video generation (FAL queue adapter, factory, rate limiter) — consumed by the
+// daemon wiring (createVideoGenProvider + createVideoGenRateLimiter +
 // createFalVideoAdapter), mirroring the image route.
 export {
   createVideoGenProvider,
@@ -301,22 +300,21 @@ export {
 } from "./integrations/video-gen/index.js";
 export type { VideoGenRateLimiter } from "./integrations/video-gen/index.js";
 
-// Orchestrate — the Surface-2 autonomy runner (Phase 212, ORCH-01/02). The
-// runner + its ResultRef store; consumed by Phase 212 Plan 05's daemon wiring
-// (the dormancy activation threads capSocketPath + the store into the runner and
-// adds `orchestrate` to the autonomy tool set). The cap-socket runtime shim
+// Orchestrate — the autonomy runner. The runner + its ResultRef store; consumed
+// by the daemon wiring (the dormancy activation threads capSocketPath + the store
+// into the runner and adds `orchestrate` to the autonomy tool set). The cap-socket runtime shim
 // (invoke/wrapResultRef) is NOT surfaced here — the generated comis_tools.js
 // imports it by a relative in-jail path, never through this barrel.
 export {
   createOrchestrateTool,
   scrubSecretEnv,
   createResultRefStore,
-  // Plan 05 dormancy activation: the shipped daemon-side executor cores
-  // (read/grep/find/ls/jq + web_search) the Plan-02 tool.invoke executor routes to.
+  // The daemon-side executor cores (read/grep/find/ls/jq + web_search) the
+  // tool.invoke executor routes to.
   createOrchestrateExecutorCores,
-  // WT-01/WT-02 (Phase 219): the git-worktree lifecycle for `spawn --worktree`,
-  // consumed by the daemon's executeSubAgent + boot orphan-sweep (the daemon
-  // binds the real execFile-backed GitExec at the composition root).
+  // The git-worktree lifecycle for `spawn --worktree`, consumed by the daemon's
+  // executeSubAgent + boot orphan-sweep (the daemon binds the real
+  // execFile-backed GitExec at the composition root).
   createWorktree,
   isWorktreeCleanIfUnchanged,
   cleanIfUnchanged,
@@ -336,7 +334,7 @@ export type {
   OrchestrateFileCore,
   OrchestrateFileCoreContext,
   OrchestrateWebSearchCore,
-  // WT-01/WT-02 lifecycle types.
+  // The git-worktree lifecycle types.
   GitExec,
   WorktreeEntry,
   CreateWorktreeOptions,

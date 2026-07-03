@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Single source of truth for classifying a TYPED RPC refusal (OBS-RPC-REFUSAL-CLASS).
+ * Single source of truth for classifying a TYPED RPC refusal.
  *
  * ## Why this lives in `@comis/core`
  * An RPC error is classified + logged at **two** layers: the daemon's
@@ -11,11 +11,11 @@
  * (`SandboxDowngradeError`), or local (`RequiredToolsUnreachableError`) error classes —
  * the dependency direction forbids it.
  *
- * Before this module each layer hard-coded its own typed→kind mapping and they
- * **drifted**: the gateway layer kept logging intentional policy/security refusals as
- * `internal`/ERROR(50) long after the dispatch layer was fixed to `precondition`/warn,
- * so a `logscan --level 50,60` operator health sweep STILL flagged a fail-closed
- * refusal as an ERROR (found live, orchestration-excellence-20260701). Both layers now
+ * If each layer hard-coded its own typed→kind mapping they would drift: one
+ * layer logging an intentional policy/security refusal as `internal`/ERROR(50)
+ * while the other logs `precondition`/warn means a `logscan --level 50,60`
+ * operator health sweep flags a fail-closed
+ * refusal as an ERROR. Both layers therefore
  * delegate here, keyed off the stable {@link Error.name} — the lowest-common-denominator
  * signal available WITHOUT a cross-package import. **Add a new typed refusal in ONE
  * place: {@link TYPED_RPC_ERROR_BY_NAME}.**
@@ -46,13 +46,13 @@ export interface TypedRpcErrorClassification {
 // Keyed by `Error.name` (a `Map` — not object indexing — to keep the key set closed and
 // avoid the `detect-object-injection` sink on the `.get(name)` lookup). The name strings
 // are the CONTRACT with the error classes (each sets `this.name`); keep this map in sync
-// when a class is renamed or a new typed refusal is introduced. The hints match the
-// daemon's historical per-class hints so behavior is byte-identical after the two layers
-// delegate here (and the gateway layer now inherits the knob-naming hints too).
+// when a class is renamed or a new typed refusal is introduced. The hints here are the
+// single per-class hint text — the daemon and gateway layers both delegate here, so the
+// same refusal produces byte-identical hints (including the knob-naming hints) at both layers.
 const TYPED_RPC_ERROR_BY_NAME: ReadonlyMap<string, TypedRpcErrorClassification> = new Map([
   // Caller precondition failures (incl. gated-off policy refusals).
   ["PreconditionError", { errorKind: "precondition", hint: "Caller precondition not met; check resource state before retry", level: "warn" } as const],
-  // Fail-closed SECURITY refusal (P0-C sub-agent sandbox no-downgrade gate).
+  // Fail-closed SECURITY refusal (the sub-agent sandbox no-downgrade gate).
   ["SandboxDowngradeError", { errorKind: "precondition", hint: "Child sandbox posture is less confined than its spawner; align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to allow", level: "warn" } as const],
   // Caller-side validation failures.
   ["ValidationError", { errorKind: "validation", hint: "Check parameter types and values against the schema", level: "warn" } as const],

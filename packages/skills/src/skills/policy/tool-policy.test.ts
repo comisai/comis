@@ -334,21 +334,20 @@ describe("TOOL_PROFILES", () => {
 });
 
 // ---------------------------------------------------------------------------
-// COORD-01 (Phase 218): the `coordinator` TOOL_PROFILE — the lean-coordinator
-// orchestration surface. A long-running lead with `autonomy.role: coordinator`
-// resolves `coordinatorToolGroups: ["coordinator"]` (schema-agent-autonomy.ts),
-// which setup-tools applies as the effective tool-group allowlist. The surface
-// is: the orchestration tools (sessions_spawn/pipeline/cron/message + the rest
-// of group:sessions) + the orch:read drill-in tools (read/grep/find/ls — so the
-// lead can read a child ResultRef, SUMREF-03) + obs_query (the obs surface as a
-// TOOL NAME, NOT a new capability — AGENT_CAPABILITIES is unchanged). It
-// EXCLUDES the heavy-work tools (no exec/edit/write/browser inline — COORD-02:
-// heavy work has nowhere to run except a fresh-window child).
-//
-// These cases are RED until the `coordinator` entry exists in TOOL_PROFILES.
+// The `coordinator` TOOL_PROFILE — the lean-coordinator orchestration surface.
+// A long-running lead with `autonomy.role: coordinator` resolves
+// `coordinatorToolGroups: ["coordinator"]` (schema-agent-autonomy.ts), which
+// setup-tools applies as the effective tool-group allowlist. The surface is:
+// the orchestration tools (sessions_spawn/pipeline/cron/message + the rest of
+// group:sessions) + the read-only drill-in tools (read/grep/find/ls — so the
+// lead can read a child ResultRef without ingesting it) + obs_query (the
+// observability surface as a TOOL NAME, NOT a new capability —
+// AGENT_CAPABILITIES is unchanged). It EXCLUDES the heavy-work tools (no
+// exec/edit/write/browser inline): heavy work has nowhere to run except a
+// fresh-window child.
 // ---------------------------------------------------------------------------
-describe("TOOL_PROFILES.coordinator (COORD-01 — the lean-coordinator orchestration surface)", () => {
-  it("COORD-01-T1: the coordinator profile exists and includes the orchestration tools sessions_spawn/pipeline/cron/message", () => {
+describe("TOOL_PROFILES.coordinator (the lean-coordinator orchestration surface)", () => {
+  it("exists and includes the orchestration tools sessions_spawn/pipeline/cron/message", () => {
     const coordinator = TOOL_PROFILES["coordinator"];
     expect(coordinator, "TOOL_PROFILES.coordinator must exist").toBeDefined();
     expect(coordinator).toContain("sessions_spawn");
@@ -357,7 +356,7 @@ describe("TOOL_PROFILES.coordinator (COORD-01 — the lean-coordinator orchestra
     expect(coordinator).toContain("message");
   });
 
-  it("COORD-01-T2: includes the orch:read drill-in tools (read/grep/find/ls) so the lead can read a child ResultRef (SUMREF-03)", () => {
+  it("includes the read-only drill-in tools (read/grep/find/ls) so the lead can read a child ResultRef", () => {
     const coordinator = TOOL_PROFILES["coordinator"]!;
     expect(coordinator).toContain("read");
     expect(coordinator).toContain("grep");
@@ -365,11 +364,11 @@ describe("TOOL_PROFILES.coordinator (COORD-01 — the lean-coordinator orchestra
     expect(coordinator).toContain("ls");
   });
 
-  it("COORD-01-T3: includes obs_query (the obs surface as a tool NAME, not a new capability)", () => {
+  it("includes obs_query (the observability surface as a tool NAME, not a new capability)", () => {
     expect(TOOL_PROFILES["coordinator"]).toContain("obs_query");
   });
 
-  it("COORD-01-T4: EXCLUDES the heavy-work tools — no exec/edit/write/browser inline (COORD-02)", () => {
+  it("EXCLUDES the heavy-work tools — no exec/edit/write/browser inline", () => {
     const coordinator = TOOL_PROFILES["coordinator"]!;
     expect(coordinator).not.toContain("exec");
     expect(coordinator).not.toContain("edit");
@@ -377,7 +376,7 @@ describe("TOOL_PROFILES.coordinator (COORD-01 — the lean-coordinator orchestra
     expect(coordinator).not.toContain("browser");
   });
 
-  it("COORD-01-T5: applyToolPolicy with the coordinator profile keeps the orchestration tools and filters the heavy-work tools", () => {
+  it("applyToolPolicy with the coordinator profile keeps the orchestration tools and filters the heavy-work tools", () => {
     const tools = [
       ...createMockTools(),
       mockTool("obs_query"),

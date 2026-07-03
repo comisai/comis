@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Gap-report writer — builds and persists the SWP-02 gap report to the ledger.
+ * Gap-report writer — builds and persists the gap report to the ledger.
  *
  * GapReport.phaseOrder: phases 137–144 sorted by observed red probe count
  * (most-broken first). This is the machine-readable input that later phases
  * consume to reorder/gate their execution.
  *
- * All writes run assertNoSecrets before writeFileSync — T-135-10 / T-135-11
- * (Information Disclosure) mitigation.
+ * All writes run assertNoSecrets before writeFileSync — Information Disclosure
+ * mitigation.
  *
  * @module
  */
@@ -116,7 +116,7 @@ export function buildGapReport(result: SweepResult, gitSha: string): GapReport {
  * Runs assertNoSecrets on the serialized JSON before writing — throws on
  * any secret-shaped match.
  *
- * T-135-10: assertNoSecrets prevents credential leakage from verdict reasons
+ * assertNoSecrets prevents credential leakage from verdict reasons
  * into the persisted ledger file.
  *
  * @param result        - SweepResult to persist.
@@ -133,7 +133,7 @@ export function writeGapReport(
   const sha = gitSha ?? getGitSha();
   const report = buildGapReport(result, sha);
   const date = new Date(result.ranAt).toISOString().slice(0, 10);
-  // WR-04: append a millisecond-precision timestamp suffix to the ledger dir
+  // Append a millisecond-precision timestamp suffix to the ledger dir
   // so that same-date same-SHA re-runs produce distinct directories and never
   // silently overwrite a prior run's artifacts. The ranAt field is already
   // an ISO string from Date.now(), so it is unique per-run.
@@ -141,7 +141,7 @@ export function writeGapReport(
   const ledgerDir = resolve(benchmarksDir, `live/${date}-${sha}-${ts}`);
   mkdirSync(ledgerDir, { recursive: true });
   const json = JSON.stringify(report, null, 2);
-  // T-135-10: secret-sweep gate BEFORE writeFileSync — no exception
+  // Secret-sweep gate BEFORE writeFileSync — no exception
   assertNoSecrets(json, "gap-report.json");
   writeFileSync(resolve(ledgerDir, "gap-report.json"), json, "utf-8");
   return ledgerDir;
@@ -156,7 +156,7 @@ export function writeGapReport(
  *   - Phase Priority table (phases 137–144, most-broken first)
  *   - Probe Verdicts table (all verdicts with id, category, status, reason)
  *
- * T-135-11: assertNoSecrets on markdown content before write.
+ * assertNoSecrets on markdown content before write.
  *
  * @param report      - GapReport to render.
  * @param outputPath  - Absolute path to write the markdown file.
@@ -169,7 +169,7 @@ export function writeGapReadiness(report: GapReport, outputPath: string): void {
     return `| ${i + 1} | Phase ${p} | ${redCount} |`;
   });
 
-  // WR-03: sanitize reason before inserting into Markdown table — pipes and
+  // Sanitize reason before inserting into Markdown table — pipes and
   // newlines in API error messages corrupt the table structure.
   const verdictRows = report.probeVerdicts.map((v) => {
     const safeReason = (v.reason ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
@@ -197,7 +197,7 @@ export function writeGapReadiness(report: GapReport, outputPath: string): void {
   ];
 
   const content = lines.join("\n") + "\n";
-  // T-135-11: secret-sweep gate BEFORE writeFileSync — no exception
+  // Secret-sweep gate BEFORE writeFileSync — no exception
   assertNoSecrets(content, "gap-readiness.md");
   writeFileSync(outputPath, content, "utf-8");
 }

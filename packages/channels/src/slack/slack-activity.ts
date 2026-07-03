@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slack EditPlace activity renderer (§7.2 / §18.2 row "EditPlace").
+ * Slack EditPlace activity renderer.
  *
  * Copies the canonical Telegram shape — only the error classifier
  * differs. Three parts:
@@ -13,13 +13,13 @@
  *      (+ `retryAfter`) → rate_limited; `"message_not_found"` /
  *      `"cant_update_message"` → not_supported:edit (drop edits);
  *      `"not_in_channel"` / `"cant_delete_message"` → permission. It NEVER parses
- *      the generic "Failed to…" string. §19.3: `data.error`
+ *      the generic "Failed to…" string. `data.error`
  *      is used ONLY to choose the closed `ActivityRenderError` variant — never
  *      rendered or logged as activity text.
  *
  *   2. `makeSlackRenderActions` — the `ActivityRenderActions` adapter. `send`
  *      posts the placeholder and, on an approval frame, paints the signed Block
- *      Kit `actions` (each element's callback value = the §6.4.2 wire string from
+ *      Kit `actions` (each element's callback value = the signed callback wire string from
  *      `buildApprovalButtons`, via the renderer-injected `SignCallbackData`); a
  *      subagent placeholder opens a thread (`thread_ts`) for its expand. These
  *      are DISPLAY affordances — resolution is owned by the
@@ -60,8 +60,8 @@ import {
 } from "../shared/strategies/approval-render.js";
 
 /**
- * The subagent-expand marker the projection paints into the parent line
- * (§18.2-S7). When a placeholder send carries it, Slack opens a thread
+ * The subagent-expand marker the projection paints into the parent line.
+ * When a placeholder send carries it, Slack opens a thread
  * (`thread_ts`) for the expand affordance — a DISPLAY affordance, not a
  * resolution (the InteractiveCallbackRouter owns resolution).
  */
@@ -230,7 +230,7 @@ export function makeSlackRenderActions(
  *
  * `signCallbackData` is the secret-bound signer injected at the composition root:
  * the renderer CONSUMES it to build signed Block Kit action elements and
- * never imports the orchestrator package (Pitfall 5). When omitted, an
+ * never imports the orchestrator package. When omitted, an
  * approval frame degrades to a button-less text prompt.
  */
 export function createSlackActivityRenderer(

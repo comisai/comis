@@ -28,8 +28,8 @@ export { createConfigResolver, resolveBreakpointStrategy, SYSTEM_PROMPT_DYNAMIC_
 export type { ConfigResolverConfig } from "./config-resolver.js";
 
 // createCacheTraceWriter (+ parseSize, rotateIfNeeded, CacheTraceConfig)
-// were removed when cache-trace moved to
-// @comis/observability/cache-trace/*. Operators using
+// live in @comis/observability/cache-trace/* and are deliberately NOT
+// re-exported here. Operators using
 // `diagnostics.cacheTrace.enabled` get the schema-versioned artifact;
 // `agents.<name>.tracing.enabled` gates the api-payload-trace below.
 

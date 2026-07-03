@@ -14,10 +14,10 @@
  * to abstain at call time; the cron no-key discipline), builds `createDialecticSeam`, and a
  * `buildDialecticRecall(agentId)` factory that constructs the FULL `createMemoryRecall` (NOT
  * `memoryApi.search`) over the daemon's store set + the per-agent RagConfig — reconstructing
- * the A1 deps + config exactly as prompt-assembly's executor read path does, INCLUDING the
- * `forget` FadeMem decay gate the main path passes (the main↔dialectic recall-parity fix;
- * default-OFF ⇒ byte-identical recall). Recall scoring is the fixed `rag.scoring` alphas — the
- * tuned-alpha bandit overlay was deleted in Phase 224 (RECALL-02/03).
+ * the recall deps + config exactly as prompt-assembly's executor read path does, INCLUDING the
+ * `forget` FadeMem decay gate the main path passes (main↔dialectic recall parity;
+ * default-OFF ⇒ byte-identical recall). Recall scoring is the fixed `rag.scoring` alphas —
+ * there is no tuned-alpha bandit overlay.
  *
  * The agent receives the store port TYPEs only (the agent↛memory build cut is untouched —
  * every store dep is a @comis/core port type; the concrete adapters are daemon-constructed
@@ -74,7 +74,7 @@ export interface DialecticStoreSet {
   /** Pinned-memory store. The SAME `SqliteMemoryAdapter` already in `memoryPort`
    *  implements both `MemoryPort` AND `MemoryPinnedStore`. Supplied here as the
    *  segregated `MemoryPinnedStore` port so the dialectic recall's Step-0 pinned-first
-   *  lane can fire (mirrors the main path R6 fix). Absent OR `rag.pinned.enabled=false` ⇒
+   *  lane can fire (parity with the main recall path). Absent OR `rag.pinned.enabled=false` ⇒
    *  no query runs (default-OFF byte-identity). A @comis/core port TYPE (the agent↛memory cut). */
   pinnedStore?: MemoryPinnedStore;
 }
@@ -92,25 +92,24 @@ export interface DialecticWiringDeps {
    *  model/operationModels + rag). The wiring enables when ANY agent opts in and resolves the
    *  seam/recall/maxRecall per invoking agent from THIS map. */
   agentsConfig: Record<string, PerAgentConfig>;
-  /** The master cost-feature kill switch (`memory.enabled`, opt-out posture; renamed from
-   *  costFeatures.enabled in Phase 226).
+  /** The master cost-feature kill switch (`memory.enabled`, opt-out posture).
    *  The dialectic (`memory_ask`) is the ONE query-time LLM tool in the memory stack — a
    *  cost-bearing feature — so when this is `false` the wiring returns the dead `{}` (no seam,
    *  no recall builder, no maxRecall ⇒ the handler abstains, the tool is never exposed) EVEN
    *  for an agent whose own `dialectic.enabled` is true. The cost switch wins over the per-agent
-   *  opt-in. Default `true` (the schema default) ⇒ byte-identical to the pre-switch behavior. */
+   *  opt-in. Default `true` (the schema default) ⇒ only the per-agent opt-in gates the wiring. */
   costFeaturesEnabled: boolean;
   /** Resolves the provider apiKey VALUE by NAME (never logged). */
   secretManager: { get: (name: string) => string | undefined };
-  /** FLAG-3: per-agent OAuth-credential resolver factory. Returns a per-call `getApiKey` for the
+  /** Per-agent OAuth-credential resolver factory. Returns a per-call `getApiKey` for the
    *  resolved cheap provider when that agent has an OAuth manager (openai-codex), else `undefined`.
    *  Built in `dialecticWiringDepsFromBoot` from the boot `oauthManagers` map (the SAME the Codex
    *  image/video/vision bundles use). Without it, an OAuth provider resolves no API key and the seam
    *  abstains on every `memory.ask`. */
   getResolveCredential?: (agentId: string, provider: string) => (() => Promise<string>) | undefined;
-  /** Provider entries (for apiKeyName lookup + the R6 capabilities override) —
+  /** Provider entries (for apiKeyName lookup + the capabilities override) —
    *  `container.config.providers?.entries`. `capabilities` supplies the optional
-   *  operator capabilityClass override the dialectic seam's R6 routing reads (CR-01). */
+   *  operator capabilityClass override the dialectic seam's capability routing reads. */
   providers: Record<string, (JudgeProviderEntry & { capabilities?: ProviderCapabilities }) | undefined>;
   /** The daemon-constructed recall store set (the SAME stores prompt-assembly wires). */
   stores: DialecticStoreSet;
@@ -149,18 +148,18 @@ export interface DialecticWiring {
  *  structurally (the relevant `c` fields only) so daemon.ts can map the boot context to the
  *  wiring deps in ONE expression — keeping daemon.ts at zero net new wiring lines (it is at
  *  the 3000-line cap; all the mapping lives here). The concrete adapters are the SAME ones
- *  daemon.ts threads into createPiExecutor (A1: daemon-constructed in setup-memory). */
+ *  daemon.ts threads into createPiExecutor (daemon-constructed in setup-memory). */
 export interface DialecticBootSlice {
   defaultAgentId: string;
   agentsConfig: Record<string, PerAgentConfig>;
-  /** FLAG-3: per-agent OAuth managers (the boot `oauthManagers` map on PostChannelsBootContext —
+  /** Per-agent OAuth managers (the boot `oauthManagers` map on PostChannelsBootContext —
    *  the SAME one threaded to the Codex image/video/vision bundles). Read to build the dialectic
    *  credential resolver so OAuth providers (openai-codex) don't abstain on a missing API key. */
   oauthManagers?: Map<string, import("@comis/core").OAuthTokenManager>;
-  /** FLAG-3 (approach A): per-agent pi AuthStorage (piAuthStorage) — the runtime-override target.
+  /** Per-agent pi AuthStorage (piAuthStorage) — the runtime-override target.
    *  `resolveProviderApiKey` calls `authStorage.setRuntimeApiKey(token)` so the dialectic's pi model
    *  picks up the OAuth bearer (the PROVEN main-agent path; passing the token as `apiKey` does NOT work
-   *  for openai-codex — empirically verified live 2026-06-22). Threaded beside `oauthManagers`. */
+   *  for openai-codex — verified against a live daemon). Threaded beside `oauthManagers`. */
   authStorages?: Map<string, AuthStorage>;
   container: {
     secretManager: { get: (name: string) => string | undefined };
@@ -168,10 +167,10 @@ export interface DialecticBootSlice {
       providers?: { entries?: Record<string, (JudgeProviderEntry & { capabilities?: ProviderCapabilities }) | undefined> };
       /** The configured tenant (the daemon-wide `container.config.tenantId`). */
       tenantId: string;
-      /** The master cost-feature kill switch (`memory.enabled`, renamed from costFeatures.enabled in
-       *  Phase 226). Threaded into the dialectic wiring so the query-time `memory_ask` tool is
-       *  force-disabled when the operator turns all cost features off. The REAL `MemoryConfig` slice
-       *  (IN-01): tsc enforces the costFeatures→enabled rename here exactly as on the other H-1
+      /** The master cost-feature kill switch (`memory.enabled`).
+       *  Threaded into the dialectic wiring so the query-time `memory_ask` tool is
+       *  force-disabled when the operator turns all cost features off. The REAL `MemoryConfig`
+       *  slice: tsc enforces the schema's field name here exactly as on the other
        *  gate readers — not a loose local `{ enabled: boolean }`. */
       memory: Pick<MemoryConfig, "enabled">;
     };
@@ -206,14 +205,14 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
     agentsConfig: c.agentsConfig,
     // The master cost-feature kill switch — the dialectic (memory_ask) is a cost feature, so a
     // `false` here force-disables it regardless of any agent's per-agent dialectic.enabled.
-    // `!== false` (IN-01) matches the H-1 fail-open contract on every other gate reader: a
+    // `!== false` matches the fail-open contract on every other gate reader: a
     // missing/undefined `enabled` at this boundary stays ENABLED (default-on), never silently
     // fail-CLOSED — though the schema always materializes `enabled` so this is defense-in-depth.
     costFeaturesEnabled: c.container.config.memory.enabled !== false,
     secretManager: c.container.secretManager,
-    // FLAG-3: per-agent OAuth-credential resolver — returns a per-call getApiKey for the cheap
+    // Per-agent OAuth-credential resolver — returns a per-call getApiKey for the cheap
     // provider when that agent has an OAuth manager (openai-codex), else undefined (seam falls back
-    // to the static apiKey). Resolves the OAuth bearer so memory.ask no longer abstains on OAuth deployments.
+    // to the static apiKey). Resolves the OAuth bearer so memory.ask does not abstain on OAuth deployments.
     getResolveCredential: (agentId, provider) => {
       // eslint-disable-next-line security/detect-object-injection -- agentId is the invoking agent's configured id
       const mgr = c.oauthManagers?.get(agentId);
@@ -240,9 +239,9 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
       tripleStore: c.tripleStore,
       embeddingStore: c.embeddingStore,
       usefulnessStore: c.usefulnessStore,
-      // R6: c.memoryAdapter implements BOTH MemoryPort AND MemoryPinnedStore (SqliteMemoryAdapter
+      // c.memoryAdapter implements BOTH MemoryPort AND MemoryPinnedStore (SqliteMemoryAdapter
       // satisfies both); pass it here as the segregated pinnedStore so the dialectic recall's
-      // Step-0 pinned-first lane can fire — parity with the main path (prompt-assembly) fix.
+      // Step-0 pinned-first lane can fire — parity with the main path (prompt-assembly).
       pinnedStore: c.memoryAdapter,
     },
     clock: c.clock,
@@ -333,19 +332,19 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
     }
 
     // Custom-provider model spec (the resolved …/v1 baseUrl) so a keyless/local YAML provider
-    // the pi-ai catalog can't see still resolves a Model. Without it, memory.ask abstained
-    // "model not found" on every keyless ask — even with a CAPABLE model (live 2026-06-20; the
-    // #223 judge-resolver bug class, this seam was the missed sibling). Undefined for built-ins.
+    // the pi-ai catalog can't see still resolves a Model. Without it, memory.ask abstains
+    // "model not found" on every keyless ask — even with a CAPABLE model (the same bug class
+    // as the #223 judge resolver). Undefined for built-ins.
     const customModel = buildCustomJudgeModelSpec(
       providerEntry,
       resolved.provider,
       resolved.modelId,
     );
 
-    // R6 (CR-01): derive the capability routing for the cron/memory model that
+    // Derive the capability routing for the cron/memory model that
     // actually makes the synthesis LLM call. A small/nano cron model (absent an
     // operator capable override) routes synthesize() to { abstain: true } so a weak
-    // model never fabricates citations into the dialectic answer (T-153-fabricate).
+    // model never fabricates citations into the dialectic answer.
     const seamCapability = resolveMemoryOpsCapability(
       { provider: resolved.provider, modelId: resolved.modelId },
       providerEntry?.capabilities,
@@ -353,8 +352,8 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
 
     // The ONE query-time synthesis seam (bounded by THIS agentʼs dialectic.maxOutputTokens — the
     // cost axis; falls back to the schema default when the agentʼs dialectic block is absent).
-    // FLAG-3: per-call OAuth-credential resolver for THIS agent's cheap provider. Undefined for
-    // non-OAuth/keyless providers ⇒ the seam keeps using the static `apiKey` (pre-fix behavior).
+    // Per-call OAuth-credential resolver for THIS agent's cheap provider. Undefined for
+    // non-OAuth/keyless providers ⇒ the seam uses the static `apiKey`.
     const resolveCredential = getResolveCredential?.(agentId, resolved.provider);
     const seamDeps: DialecticSeamDeps = {
       provider: resolved.provider,
@@ -365,7 +364,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
       clock,
       logger,
       agentId,
-      // R6 routing (CR-01): keys on the cron/memory model, not the agent primary.
+      // Capability routing keys on the cron/memory model, not the agent primary.
       capabilityClass: seamCapability.capabilityClass,
       hasCapableModelOverride: seamCapability.hasCapableModelOverride,
       ...(customModel !== undefined ? { customModel } : {}),
@@ -380,24 +379,24 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
   const dialecticSeam = (agentId: string, question: string, groundingText: string) =>
     seamFor(agentId)(question, groundingText);
 
-  // The per-agent recall factory re-reads the INVOKING agentʼs RagConfig (the prior code
-  // ignored its agentId param and always read the default agentʼs rag — so a non-default agentʼs
-  // includeTrustLevels / maxResults / scoring were never honored). The FULL createMemoryRecall
-  // (trust-filtered) is reconstructed exactly as prompt-assemblyʼs executor read path does.
+  // The per-agent recall factory re-reads the INVOKING agentʼs RagConfig — never the default
+  // agentʼs — so a non-default agentʼs includeTrustLevels / maxResults / scoring are honored.
+  // The FULL createMemoryRecall (trust-filtered) is reconstructed exactly as prompt-assemblyʼs
+  // executor read path does.
   //
-  // The main↔dialectic recall-parity fix:
-  //   - `forget` (the FadeMem decay gate) is now passed — the SAME
+  // Main↔dialectic recall parity:
+  //   - `forget` (the FadeMem decay gate) is passed — the SAME
   //     field the main path passes at prompt-assembly.ts:854 — so memory.ask applies the per-type
   //     decay when `rag.forget.enabled`. Default-OFF byte-identity holds (score.ts forces the
   //     forgetFactor to EXACTLY 1.0 when off).
   //
-  // Recall scoring is the FIXED `rag.scoring` alphas (Phase 224, RECALL-02/03): the UCB
-  // tuned-alpha bandit + its overlay were DELETED, so memory.ask — like the main prompt-assembly
+  // Recall scoring is the FIXED `rag.scoring` alphas: there is no UCB tuned-alpha bandit or
+  // overlay, so memory.ask — like the main prompt-assembly
   // recall path — applies the config-sourced alphas only (no learned-weight read). The factory is
   // SYNCHRONOUS (`(agentId) => MemoryRecall`; the handler reads it without an `await`).
   const buildDialecticRecall = (agentId: string): MemoryRecall => {
     const rag = configFor(agentId).rag;
-    // `feedback` predates its config landing — structural-widen like prompt-assembly.
+    // `feedback` is not declared on the RagConfig type — structural-widen like prompt-assembly.
     const ragFeedback = (rag as typeof rag & { feedback?: { enabled: boolean } }).feedback;
 
     // Construct the FULL orchestrator with the fixed config `scoring`. Everything is identical to
@@ -412,8 +411,8 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
         ...(stores.tripleStore !== undefined ? { tripleStore: stores.tripleStore } : {}),
         ...(stores.embeddingStore !== undefined ? { embeddingStore: stores.embeddingStore } : {}),
         ...(stores.usefulnessStore !== undefined ? { usefulnessStore: stores.usefulnessStore } : {}),
-        // R6: wire the pinned store so the dialectic recall's Step-0 pinned-first lane can
-        // fire — parity with the main path (prompt-assembly) fix. Default-OFF byte-identity:
+        // Wire the pinned store so the dialectic recall's Step-0 pinned-first lane can
+        // fire — parity with the main path (prompt-assembly). Default-OFF byte-identity:
         // with `rag.pinned.enabled=false` (the default), no query runs even when the store is present.
         ...(stores.pinnedStore !== undefined ? { pinnedStore: stores.pinnedStore } : {}),
         ...(timers !== undefined ? { timers } : {}),
@@ -426,7 +425,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
         minScore: rag.minScore,
         includeTrustLevels: rag.includeTrustLevels,
         rerank: rag.rerank,
-        // Fixed config-sourced scoring alphas — no learned overlay (Phase 224, RECALL-02/03).
+        // Fixed config-sourced scoring alphas — no learned overlay.
         scoring: rag.scoring,
         lanes: rag.lanes,
         entityLane: rag.entityLane,
@@ -434,7 +433,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
         queryUnderstanding: rag.queryUnderstanding,
         // The FadeMem decay gate — the SAME field prompt-assembly.ts:854 passes.
         forget: rag.forget,
-        // R6: forward the pinned-memory injection config so the dialectic recall's
+        // Forward the pinned-memory injection config so the dialectic recall's
         // Step-0 knows the cap. A fully-defaulted RagConfig field (same posture as mmr/forget).
         // Default-OFF (`enabled:false`) ⇒ the pinned lane is skipped (byte-identical).
         pinned: rag.pinned,

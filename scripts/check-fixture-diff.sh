@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# CI gate — golden-fixture undeclared-diff lock (AGENT-TRANSPARENCY-SPEC §18.1).
+# CI gate — golden-fixture undeclared-diff lock.
 #
 # Golden fixtures under `packages/channels/src/__tests__/__fixtures__/**/*.expected.json`
-# pin the canonical recorded render stream. §18.1: "changing a fixture requires a
-# separate commit with reviewer signoff. CI fails on undeclared-diff." A fixture
+# pin the canonical recorded render stream. The contract: changing a fixture requires
+# a separate commit with reviewer signoff, and CI fails on an undeclared diff. A fixture
 # that changes in the SAME diff as a renderer `*-activity.ts` is the dangerous
 # case — the renderer change could silently re-bless a wrong fixture (the
 # self-heal trap `toMatchSnapshot` would allow; this gate is the producer-side
@@ -15,7 +15,7 @@
 # declared via a `FIXTURE-DIFF-APPROVED` marker (a commit-message trailer in the
 # range, or the env var FIXTURE_DIFF_APPROVED=1 set by a reviewer-signoff CI step).
 #
-# Only MODIFIED fixtures (git status M) are correlated — §18.1 locks *changing* an
+# Only MODIFIED fixtures (git status M) are correlated — the lock targets *changing* an
 # existing fixture, which is the self-heal/re-bless danger. A NET-NEW fixture
 # (status A) born alongside its renderer in the same PR is legitimate initial
 # creation, not a re-bless, and passes. A fixture-only change (no renderer) or a

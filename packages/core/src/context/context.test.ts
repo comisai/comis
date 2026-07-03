@@ -189,10 +189,10 @@ describe("RequestContext", () => {
       expect(result.success).toBe(false);
     });
 
-    it("RequestContext carries agentId when provided; absent stays undefined (R4 132-03)", () => {
-      // R4 (132-03): agentId is OPTIONAL (not known at channel ingress, like
-      // sessionKey) and populated at the executor entry; the ctx_* tools read it
-      // per-call to scope LCD reads by agent (WR-02).
+    it("RequestContext carries agentId when provided; absent stays undefined", () => {
+      // agentId is OPTIONAL (not known at channel ingress, like sessionKey)
+      // and populated at the executor entry; the ctx_* tools read it
+      // per-call to scope LCD reads by agent.
       const withAgent = RequestContextSchema.parse({
         userId: "u1",
         sessionKey: "t1:u1:c1",
@@ -224,13 +224,13 @@ describe("RequestContext", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // resolvedLanguage — GEN-03 ALS carrier (mirrors resolvedModel :60)
+  // resolvedLanguage — ALS carrier (mirrors resolvedModel)
   // ---------------------------------------------------------------------------
-  describe("resolvedLanguage (GEN-03 ALS carrier)", () => {
+  describe("resolvedLanguage (ALS carrier)", () => {
     it("RequestContext carries resolvedLanguage when provided (parses through strictObject)", () => {
-      // HIGH-risk boundary: z.strictObject REJECTS unknown keys, so the carrier
-      // field MUST be modeled for the parent's ALS set-side mutation to survive
-      // a parse. Mirrors the resolvedModel precedent (:60).
+      // z.strictObject REJECTS unknown keys, so the carrier field MUST be
+      // modeled for the parent's ALS set-side mutation to survive a parse.
+      // Mirrors how the resolvedModel field is modeled.
       const result = RequestContextSchema.safeParse({
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
@@ -335,7 +335,7 @@ describe("RequestContext", () => {
       }
     });
 
-    it("context without contentDelimiter still parses (backward compat)", () => {
+    it("context without contentDelimiter still parses (field is optional)", () => {
       const result = RequestContextSchema.safeParse({
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
@@ -375,7 +375,7 @@ describe("RequestContext", () => {
       }
     });
 
-    it("context without channelType still parses (backward compat)", () => {
+    it("context without channelType still parses (field is optional)", () => {
       const result = RequestContextSchema.safeParse({
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",

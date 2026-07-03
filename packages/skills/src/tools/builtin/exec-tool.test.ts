@@ -1244,14 +1244,14 @@ describe("sandbox integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Backward compatibility regression suite
+// sandboxConfig-omitted behavior suite
 // ---------------------------------------------------------------------------
-// Explicitly verifies all original exec-tool behaviors are preserved when
+// Verifies exec-tool's default (un-sandboxed) behavior when the optional
 // sandboxConfig is omitted. Uses createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() }) -- NO
-// sandboxConfig parameter -- to ensure the old API surface is untouched.
+// sandboxConfig parameter.
 // ---------------------------------------------------------------------------
 
-describe("backward compatibility (no sandboxConfig)", () => {
+describe("exec-tool with sandboxConfig omitted (un-sandboxed default)", () => {
   let registry: ProcessRegistry;
   let workspace: string;
 

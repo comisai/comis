@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the shared bounded-poll helper (DIVERGENCE 5).
+ * Tests for the shared bounded-poll helper.
  *
  * NO real timers: the deadline clock is injected via `createFakeClock` and the
  * `pollUntilDone` sleep is an injected lambda that ADVANCES the fake clock
  * synchronously (AGENTS.md §2.5 — never `vi.useFakeTimers`, never real
  * setTimeout). This proves the helper performs no wall-clock waiting and that
- * Phase 189's daemon poller can drive it deterministically.
+ * the daemon's background poller can drive it deterministically.
  *
  * @module
  */
@@ -98,7 +98,7 @@ describe("pollUntilDone", () => {
     expect(calls).toBeLessThan(10);
   });
 
-  it("short-circuits immediately on a failed status (VPORT-02) — no further polls", async () => {
+  it("short-circuits immediately on a failed status — no further polls", async () => {
     const clock = createFakeClock(0);
     let calls = 0;
     const outcome = await pollUntilDone({

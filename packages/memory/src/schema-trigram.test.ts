@@ -1,24 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the trigram twin DDL layer (schema-trigram.ts) — FTS-01's table half.
+ * Tests for the trigram twin DDL layer (schema-trigram.ts) — the trigram-search
+ * table half.
  *
- * Drives FTS-01: three self-contained FTS5 trigram twins (lcd_messages_fts_tri,
- * lcd_summaries_fts_tri, memory_fts_tri) plus the base-table delete-mirror
- * triggers and the WHEN-guarded memories content-update trigger. The twins store
- * their OWN content (self-contained, NOT external-content / "rebuild"-backed) so
- * a rebuild can never re-index RAW pre-normalization text — exactly the G10 wipe
- * mechanism (scoped DELETE on the vtable removes matchable text).
- *
- * Pre-patch (Task 1 RED): `ensureTrigramTwins` is a stub with an empty body, so
- * every twin-existence and trigger-behavior case below FAILS until Task 2
- * implements the DDL. The import resolves (the stub exports the symbol) — the
- * failures are behavioral (no such table / trigger never fired), the RED proof.
+ * Drives the trigram-search layer: three self-contained FTS5 trigram twins
+ * (lcd_messages_fts_tri, lcd_summaries_fts_tri, memory_fts_tri) plus the
+ * base-table delete-mirror triggers and the WHEN-guarded memories
+ * content-update trigger. The twins store their OWN content (self-contained, NOT
+ * external-content / "rebuild"-backed) so a rebuild can never re-index RAW
+ * pre-normalization text — exactly the wipe mechanism (scoped DELETE on the
+ * vtable removes matchable text).
  *
  * Probe-pinned: every assertion here was first executed live against the bundled
- * SQLite 3.53.1 (RESEARCH §Probe Results 3–5) — trigram substring MATCH, R4
- * UNINDEXED isolation, scoped-DELETE wipe, and the design-correction-#3 WHEN
- * guard (a plain AFTER UPDATE OF content fires on the consolidation no-op fold;
- * the guard is mandatory).
+ * SQLite 3.53.1 — trigram substring MATCH, per-agent UNINDEXED isolation,
+ * scoped-DELETE wipe, and the WHEN guard (a plain AFTER UPDATE OF content fires
+ * on the consolidation no-op fold; the guard is mandatory).
  */
 import Database from "better-sqlite3";
 import { describe, it, expect } from "vitest";
@@ -91,7 +87,7 @@ describe("schema-trigram — twin existence + idempotency", () => {
     expect(memColNames).toContain("content");
     expect(memColNames).not.toContain("conversation_id");
     expect(memColNames).not.toContain("agent_id");
-    // lcd_messages_fts_tri: carries the R4 UNINDEXED scope columns
+    // lcd_messages_fts_tri: carries the UNINDEXED tenant/agent scope columns
     const msgCols = db
       .prepare("PRAGMA table_info(lcd_messages_fts_tri)")
       .all() as Array<{ name: string }>;
@@ -267,7 +263,7 @@ describe("schema-trigram — boot safety / trigger pairing (partial schema must 
   });
 });
 
-describe("schema-trigram — R4 mechanics on the raw LCD twin (probe-verified isolation)", () => {
+describe("schema-trigram — tenant/agent isolation mechanics on the raw LCD twin (probe-verified)", () => {
   it("MATCH ? AND conversation_id = ? AND agent_id = ? isolates agents in BOTH directions", () => {
     const db = baseTablesDb();
     ensureTrigramTwins(db);

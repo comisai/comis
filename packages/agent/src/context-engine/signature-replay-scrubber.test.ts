@@ -164,7 +164,7 @@ describe("createSignatureReplayScrubber", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Two assistants: BOTH scrubbed (latest no longer preserved)
+  // Two assistants: BOTH scrubbed (the latest gets no exemption)
   // -------------------------------------------------------------------------
 
   it("two assistant messages: signed thinking stripped from BOTH (older + latest)", async () => {

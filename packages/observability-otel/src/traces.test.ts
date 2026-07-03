@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-01 / OTEL-03 — per-turn span emission carries the Comis traceId as the
- * `comis.trace_id` ATTRIBUTE (not the OTel trace id — Pitfall 4) + content-free
+ * Per-turn span emission carries the Comis traceId as the
+ * `comis.trace_id` ATTRIBUTE (not the OTel trace id) + content-free
  * GenAI attributes; the 3 content attrs (input/output messages, system
  * instructions) are ABSENT with `captureContent:false`, and stay absent even
  * with `genaiSemconv:true`.
@@ -14,7 +14,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { makeSpanFixture, type SpanFixture } from "./test-harness.js";
 import { emitTurnSpan } from "./traces.js";
 
-describe("emitTurnSpan (OTEL-01 — content-free spans with the comis.trace_id attribute)", () => {
+describe("emitTurnSpan (content-free spans with the comis.trace_id attribute)", () => {
   let fx: SpanFixture | undefined;
   afterEach(async () => {
     if (fx) await fx.shutdown();
@@ -76,7 +76,7 @@ describe("emitTurnSpan (OTEL-01 — content-free spans with the comis.trace_id a
     expect(json).not.toContain("SECRET-SYSTEM-PROMPT");
   });
 
-  it("with genaiSemconv:true AND captureContent:true, content is re-redacted (E3) — no body in any attribute", () => {
+  it("with genaiSemconv:true AND captureContent:true, content is re-redacted — no body in any attribute", () => {
     fx = makeSpanFixture();
     const tracer = fx.provider.getTracer("comis");
 

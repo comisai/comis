@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DEPTH-03 (Plan 174-03 / WR-02 Plan 174-04) — the run-ONCE bootstrap crash-recovery
- * trigger, extracted from `createPiExecutor`'s in-lock `runSessionLocked` body.
+ * The run-ONCE bootstrap crash-recovery trigger, extracted from
+ * `createPiExecutor`'s in-lock `runSessionLocked` body.
  *
  * Closure-extraction protocol: state-by-parameter (`Readonly<MaybeRunBootstrapSweepState>`)
  * — mirrors `installCompactionTrigger` / `runSafetyGates`, keeping the over-cap
- * `pi-executor.ts` from accreting another inline wiring block (IN-01).
+ * `pi-executor.ts` from accreting another inline wiring block.
  *
- * WR-02 (Plan 174-04): the trigger now runs EXACTLY ONCE per session — gated on the
- * existing `isFirstMessageInSession` signal (`sessionContext.messages.length === 0`),
- * computed once at the top of `runSessionLocked`. The previous inline block gated only
- * on `contextStore` presence, so it re-ran the sweep on EVERY turn for the life of every
- * dag session. Exactly-once was already guaranteed by the durable ingest cursor (turns
- * 2+ were idempotent no-ops), so this removes per-turn LCD single-flight overhead
- * (`runOnConversation` + `getIngestCursor` + `getMessages` + `upsertIngestCursor`) and
- * honors the documented "Runs ONCE at session start" contract — code and comment now agree.
+ * The trigger runs EXACTLY ONCE per session — gated on the existing
+ * `isFirstMessageInSession` signal (`sessionContext.messages.length === 0`),
+ * computed once at the top of `runSessionLocked`. Gating only on `contextStore`
+ * presence would re-run the sweep on EVERY turn for the life of every dag session.
+ * Exactly-once is already guaranteed by the durable ingest cursor (turns 2+ are
+ * idempotent no-ops), so the first-message gate removes per-turn LCD single-flight
+ * overhead (`runOnConversation` + `getIngestCursor` + `getMessages` +
+ * `upsertIngestCursor`) and honors the documented "Runs ONCE at session start"
+ * contract.
  *
  * The recovery itself is the EXISTING `bootstrapLcdSweep` (epoch cursor + fail-closed
  * identity guard); this helper is only the gate + scope build + delegating call. The scope
- * is built EXACTLY as the afterTurn ingest block does so read scope == write scope
- * (DAG-CRIT-1 / WR-02): conversationId === sessionKey === formattedKey,
+ * is built EXACTLY as the afterTurn ingest block does so read scope == write scope:
+ * conversationId === sessionKey === formattedKey,
  * agentId === `agentId ?? "default"`.
  *
  * Architecture cut (agent↛memory): imports ONLY the core `ContextStorePort`/`ClockPort`/
@@ -46,7 +47,7 @@ import { bootstrapLcdSweep } from "../lcd-bootstrap-sweep.js";
  */
 export interface MaybeRunBootstrapSweepState {
   /**
-   * WR-02 run-once gate: true on the FIRST message of this session
+   * Run-once gate: true on the FIRST message of this session
    * (`sessionContext.messages.length === 0`). When false the helper is a no-op (no store
    * read, no event) — the durable cursor already covered any gap on the first message.
    */
@@ -72,15 +73,15 @@ export interface MaybeRunBootstrapSweepState {
 }
 
 /**
- * Run the DEPTH-03 bootstrap crash-recovery sweep ONCE at session start, before the first
- * turn proceeds. No-op when this is NOT the first message in the session (WR-02) or when no
+ * Run the bootstrap crash-recovery sweep ONCE at session start, before the first
+ * turn proceeds. No-op when this is NOT the first message in the session or when no
  * store is wired. Delegates to {@link bootstrapLcdSweep} (the recovery logic + the
  * `shouldRunLcdStorePasses` dag gate live there; a pipeline agent does no sweep work).
  */
 export async function maybeRunBootstrapSweep(
   state: Readonly<MaybeRunBootstrapSweepState>,
 ): Promise<void> {
-  // WR-02: truly run ONCE — gate on the first-message signal. Turns 2+ were already
+  // Truly run ONCE — gate on the first-message signal. Turns 2+ are already
   // idempotent via the durable ingest cursor; skipping them removes the per-turn LCD
   // single-flight overhead and matches the "Runs ONCE at session start" contract.
   if (!state.isFirstMessageInSession || !state.contextStore) return;

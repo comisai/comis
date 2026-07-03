@@ -6,21 +6,20 @@
  * Each constant uses verbose UPPER_SNAKE_CASE naming and includes
  * a JSDoc comment explaining its purpose and which layer consumes it.
  *
- * Constants are NOT exposed in user config (per locked decision:
- * budget components are internal). Users control the pipeline via
+ * Constants are NOT exposed in user config — budget components are
+ * internal. Users control the pipeline via
  * ContextEngineConfigSchema (enabled, thinkingKeepTurns).
  *
  * @module
  */
 
 // ---------------------------------------------------------------------------
-// Output Headroom (Layer 0: reasoning-aware output floor — Fix 3 / Phase 166)
+// Output Headroom (Layer 0: reasoning-aware output floor)
 // ---------------------------------------------------------------------------
 
 /** Minimum visible output tokens guaranteed on every LLM dispatch — the
  *  non-reasoning floor (the answer/tool-call body that must survive after the
- *  thinking block). Used by: output-headroom.ts + config-resolver.ts clamp.
- *  Design ref: design/small-model-context-fidelity.md §4 Fix 3 item 1. */
+ *  thinking block). Used by: output-headroom.ts + config-resolver.ts clamp. */
 export const MIN_VISIBLE_OUTPUT_TOKENS = 768;
 
 // ---------------------------------------------------------------------------
@@ -158,8 +157,8 @@ export function resolveToolMaskingTier(toolName: string): ToolMaskingTier {
  *  3.5 better matches Anthropic's tokenizer (measured 38.8% overcount at 4.0
  *  against production dashboard data). Aligned with estimateBlockTokens().
  *
- *  Ratios are Latin-calibrated and stay flat here; since Phase 179 (TOK-01),
- *  call sites with source text in scope modulate the divisor by
+ *  Ratios are Latin-calibrated and stay flat here; call sites with
+ *  source text in scope modulate the divisor by
  *  scriptTokenFactor(text) from @comis/core (dense scripts — Hebrew/Arabic/
  *  CJK/etc — carry ~2-3× tokens per char). Sites without text in scope are
  *  marked flat-by-design at the call site. */
@@ -181,7 +180,7 @@ export const SYSTEM_PROMPT_HASH_LENGTH = 16;
 /**
  * Warn if bootstrap content exceeds this percentage of estimated total prompt input.
  *
- * F4: denominator is `systemPromptChars + toolDefOverheadChars` (system prompt + tool schemas),
+ * The denominator is `systemPromptChars + toolDefOverheadChars` (system prompt + tool schemas),
  * not raw system prompt alone. Threshold lowered from 85→40: fires only when bootstrap is
  * genuinely disproportionate to the full assembled input, eliminating the 100% false-alarm
  * rate on small-model turns (compact-secure system prompt ~2.8K vs ~12K bootstrap).
@@ -267,10 +266,10 @@ export const DEFAULT_COMPACTION_PREFIX_ANCHOR_TURNS = 2;
  *  Used by: llm-compaction layer. */
 export const MIN_MIDDLE_MESSAGES_FOR_COMPACTION = 3;
 
-/** SUMW-01 (Phase 178): reserved token allowance for the summarizer prompt
+/** Reserved token allowance for the summarizer prompt
  *  TEMPLATE around the input span — the SDK generateSummary instruction
  *  template (order of a few hundred tokens), reserved with margin. The
- *  threaded previousSummary is NOT covered by this constant (review WR-03: it
+ *  threaded previousSummary is NOT covered by this constant (it
  *  can itself be ~target-sized — 1_200 leaf / 2_000 condense defaults, and
  *  `condensedTargetTokens` allows 10_000 — so a flat reserve cannot cover it
  *  by its own arithmetic); both LCD clamp sites subtract the ACTUAL
@@ -286,11 +285,11 @@ export const MIN_MIDDLE_MESSAGES_FOR_COMPACTION = 3;
 export const SUMMARIZER_PROMPT_OVERHEAD_TOKENS = 2_048;
 
 // ---------------------------------------------------------------------------
-// LCD Leaf Summarization Escalation (Phase 129, C1)
+// LCD Leaf Summarization Escalation
 // ---------------------------------------------------------------------------
 
 /** Bounded token target for the deterministic Level-3 leaf-summary truncation —
- *  the guaranteed-shrink floor (LOSSLESS-CLAW §5). When both LLM summarization
+ *  the guaranteed-shrink floor. When both LLM summarization
  *  levels fail to reduce the chunk (oversized output or throws), Level 3 builds a
  *  count-only note capped at this size so the leaf summary ALWAYS ends up strictly
  *  smaller than the chunk it replaces (the escalation terminator — never loops).
@@ -298,13 +297,13 @@ export const SUMMARIZER_PROMPT_OVERHEAD_TOKENS = 2_048;
 export const LEAF_FALLBACK_TARGET_TOKENS = 512;
 
 /** Marker string prefixed onto the deterministic Level-3 leaf truncation output so
- *  a fallback (non-LLM) leaf summary is identifiable downstream (Phase 132
- *  taint-escapes it; the assembler/store record `fallback: true`). The two LLM
+ *  a fallback (non-LLM) leaf summary is identifiable downstream (the summarizer
+ *  wrapper taint-escapes it; the assembler/store record `fallback: true`). The two LLM
  *  levels never emit this marker — its presence means the deterministic floor ran.
  *  Used by: lcd-leaf-summarizer (Level-3 marker). */
 export const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
 
-/** B-2: hard cap on the number of leaf passes one afterTurn drain may fire (the
+/** Hard cap on the number of leaf passes one afterTurn drain may fire (the
  *  infinite-loop backstop). The drain loops `runOneLeafPass` — re-resolving the
  *  model-facing view each iteration so utilization reflects the prior pass's
  *  compaction — and terminates on the FIRST of: utilization ≤ contextThreshold
@@ -317,11 +316,11 @@ export const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
  *  is enough to drain a few back-to-back large turns' backlog under threshold in one
  *  turn while bounding worst-case added latency; a sustained over-threshold load that
  *  the cap cannot fully drain in one turn simply continues draining on the next
- *  afterTurn (the leaf gate stays armed) rather than stalling at one pass forever
- *  (the B-2 stall this fixes). Used by: lcd-compaction-trigger (the drain loop cap). */
+ *  afterTurn (the leaf gate stays armed) rather than stalling at one pass forever.
+ *  Used by: lcd-compaction-trigger (the drain loop cap). */
 export const LCD_MAX_LEAF_PASSES_PER_TURN = 4;
 
-/** TRUSTED-HEADER marker (R2, Phase 132) appended to a fallback summary's
+/** TRUSTED-HEADER marker appended to a fallback summary's
  *  `summaryRefToMessage` header — OUTSIDE the `wrapExternalContent` untrusted
  *  region — so the model is honestly told the summary is an emergency, degraded
  *  truncation (the breaker/spend-cap floor or the deterministic Level-3 floor
@@ -333,17 +332,17 @@ export const LCD_MAX_LEAF_PASSES_PER_TURN = 4;
  *  Level-3 prefix); this is the header equivalent. Used by: lcd-assembler. */
 export const LCD_FALLBACK_HEADER_MARKER = "fallback=emergency-truncation";
 
-/** B-8: per-tool-RESULT character cap for tool results sitting in the LCD `dag`
+/** Per-tool-RESULT character cap for tool results sitting in the LCD `dag`
  *  assembler's UNCONDITIONAL fresh tail. The dag assembly path runs NEITHER the
  *  pipeline observation masker NOR the dead-content evictor (those are wired only
  *  in the pipeline branch), and the fresh tail is concatenated verbatim and
- *  UNCONDITIONALLY (`[...budgeted, ...freshTail]`, A1/A3) — so a turn whose last
+ *  UNCONDITIONALLY (`[...budgeted, ...freshTail]`) — so a turn whose last
  *  `freshTailTurns` steps carry a huge tool output (a 200K-char file read, a giant
  *  command dump) can overflow the model window before any budget pass sees it.
  *  This cap bounds each oversized fresh-tail tool RESULT's total text via the
  *  shared `createToolResultSizeGuard()` (head+tail+honest marker — NOT hand-rolled)
- *  while every result that fits passes through byte-identical (A1 preserved for
- *  what fits).
+ *  while every result that fits passes through byte-identical (verbatim
+ *  fresh-tail fidelity preserved for what fits).
  *
  *  Value = {@link TOOL_RESULT_HARD_CAP_CHARS} (100_000), the same absolute
  *  per-result ceiling the pipeline microcompaction guard enforces — chosen for
@@ -355,11 +354,11 @@ export const LCD_FALLBACK_HEADER_MARKER = "fallback=emergency-truncation";
  *  per result at {@link CHARS_PER_TOKEN_RATIO}, so even a fresh tail of several
  *  capped results fits any modern window's fresh-tail allowance — masking is
  *  acceptable ONLY because the LCD store keeps the full content losslessly and
- *  `ctx_expand` recovers it. Used by: lcd-assembler (B-8 fresh-tail bounding). */
+ *  `ctx_expand` recovers it. Used by: lcd-assembler (fresh-tail bounding). */
 export const LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS = TOOL_RESULT_HARD_CAP_CHARS;
 
 // ---------------------------------------------------------------------------
-// LCD Condensation Escalation (Phase 130, C2) — the depth>0 summary-of-summaries
+// LCD Condensation Escalation — the depth>0 summary-of-summaries
 // ---------------------------------------------------------------------------
 
 /** Bounded token target for the deterministic Level-3 CONDENSATION truncation —
@@ -373,7 +372,7 @@ export const CONDENSED_FALLBACK_TARGET_TOKENS = 512;
 
 /** Marker string prefixed onto the deterministic Level-3 condensation truncation
  *  output so a fallback (non-LLM) condensed summary is identifiable downstream
- *  (Phase 132 taint-escapes it; the store records `fallback: true`). The two LLM
+ *  (the summarizer wrapper taint-escapes it; the store records `fallback: true`). The two LLM
  *  levels never emit this marker — its presence means the deterministic floor ran.
  *  Distinct from the leaf marker so the two tiers' floors are separable in logs +
  *  the synthetic-session gate. Used by: lcd-condense (Level-3 marker). */

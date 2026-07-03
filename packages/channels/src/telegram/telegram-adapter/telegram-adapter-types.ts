@@ -72,7 +72,7 @@ export interface TelegramAdapterState {
   bot: Bot;
   /** Message handlers registered via handle.onMessage(). */
   handlers: MessageHandler[];
-  /** Reaction handlers registered via handle.onReaction() (REACT-01, WS1). */
+  /** Reaction handlers registered via handle.onReaction(). */
   reactionHandlers: ReactionHandler[];
   /** "telegram-pending" before start(); "telegram-{botId}" after start() succeeds. */
   channelId: string;

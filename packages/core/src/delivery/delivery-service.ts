@@ -2,21 +2,19 @@
 /**
  * DeliveryService factory.
  *
- * Replaces the standalone `deliverToChannel(adapter, ..., deps?)` export in
- * channels/src/shared/deliver-to-channel.ts. Two surgical differences:
- *  1. The global hook-runner lookup is replaced by `deps.hookRunner` (the
- *     `if (hookRunner)` null-guard is dropped — deps.hookRunner is REQUIRED).
- *  2. Function parameters lose the trailing optional `DeliverToChannelDeps`
- *     argument; deps is captured in closure. All `deps?.X` references become `deps.X`
- *     (`deps.deliveryQueue` is REQUIRED; eventBus / retryEngine / abortSignal /
- *     maxCharsOverride / replyMode remain optional, so the INNER `?.` on those
- *     fields stays). In-flight outbound `Promise` tracking is owned internally
+ * The single outbound-delivery entry point for channel adapters:
+ *  1. Hooks run through `deps.hookRunner` — REQUIRED, injected at
+ *     construction, never resolved from global state.
+ *  2. Deps are captured in closure at construction (`deps.deliveryQueue` is
+ *     REQUIRED; eventBus / retryEngine / abortSignal / maxCharsOverride /
+ *     replyMode are optional, so the INNER `?.` on those fields is
+ *     deliberate). In-flight outbound `Promise` tracking is owned internally
  *     by the factory and drained via the public `drainInFlight()` method —
  *     callers must NOT inject a tracking Set via deps.
  *
- * Hook execution order, traceId propagation, suppressError wrap on
- * after_delivery, and all `delivery:*` event emissions are byte-identical to
- * the prior standalone behavior.
+ * Hook execution order, traceId propagation, the suppressError wrap on
+ * after_delivery, and all `delivery:*` event emissions are load-bearing
+ * contracts pinned by the pipeline tests in delivery-service.test.ts.
  *
  * @module
  */
@@ -74,27 +72,22 @@ const PASSTHROUGH_PLATFORMS = new Set(["discord", "gateway", "echo"]);
 /**
  * Dependencies for createDeliveryService.
  *
- * `hookRunner` + `deliveryQueue` are REQUIRED — the closures that replace the
- * prior global hook-runner singleton and optional-deps shape (was an optional
- * `DeliverToChannelDeps` argument). `eventBus`, `retryEngine`,
- * `maxCharsOverride`, `replyMode`, and `abortSignal` are optional — they
- * preserve the per-call/per-instance optional knobs the standalone function
- * already accepts.
+ * `hookRunner` + `deliveryQueue` are REQUIRED. `eventBus`, `retryEngine`,
+ * `maxCharsOverride`, `replyMode`, and `abortSignal` are optional
+ * per-instance / per-call knobs.
  *
- * Note: in-flight outbound `Promise` tracking is now an internal concern of
+ * Note: in-flight outbound `Promise` tracking is an internal concern of
  * `createDeliveryService` (no `inFlightSends` deps field). The drain is
  * exposed via the public `drainInFlight()` method on the returned service.
- *
- * @see packages/channels/src/shared/deliver-to-channel.ts:DeliverToChannelDeps
  */
 export interface DeliveryServiceDeps {
-  /** Hook runner. REQUIRED — closes the global-state dependency. */
+  /** Hook runner. REQUIRED — hooks are injected, never resolved from global state. */
   hookRunner: HookRunner;
 
   /**
-   * Delivery queue for crash-safe persistence. REQUIRED (was optional in the
-   * standalone function's deps record). Use `createNoOpDeliveryQueue()` from
-   * `@comis/core` when the queue feature is disabled.
+   * Delivery queue for crash-safe persistence. REQUIRED. Use
+   * `createNoOpDeliveryQueue()` from `@comis/core` when the queue feature
+   * is disabled.
    */
   deliveryQueue: DeliveryQueuePort;
 
@@ -111,14 +104,14 @@ export interface DeliveryServiceDeps {
   replyMode?: "off" | "first" | "all";
 
   /**
-   * REACT-04 (Verified Learning, Phase 206-04): OPTIONAL outbound-message →
+   * OPTIONAL outbound-message →
    * trajectory binding for the DIRECT ack path. The recurring delivery-queue
    * DRAIN (setup-delivery.ts:drainDeliveryQueue) already binds; but the PRIMARY
    * inbound-reply path (setup-and-route → executeAndDeliver → execution-deliver
    * → this `deliverToChannel`) sends via the direct ack (enqueue in_flight →
-   * adapter.sendMessage → ack) and previously NEVER bound the minted reply id →
-   * trajectory, so a reaction on a normal agent reply map-missed and never drove
-   * learning (the 206-03 Stage-C live finding). Threaded here so the direct ack
+   * adapter.sendMessage → ack). Without this callback it would never bind the
+   * minted reply id → trajectory, so a reaction on a normal agent reply would
+   * map-miss and never drive learning. Threaded here so the direct ack
    * binds the SAME (messageId → scope) the drain does. `undefined` when learning-
    * outcome is disabled for every agent → the direct ack does ZERO extra work
    * (byte-identity). The same callback instance feeds BOTH the drain and this
@@ -127,7 +120,7 @@ export interface DeliveryServiceDeps {
    * Invoked ONLY on a successful ack with a non-null traceId AND a non-null
    * agentId (the request ALS) — a null traceId/agentId (a pre-executor / non-
    * agent send) is a FAIL-CLOSED skip: mis-attributing a reaction to the tenantId
-   * would corrupt cross-agent isolation (T-198-16), so we record nothing.
+   * would corrupt cross-agent isolation, so we record nothing.
    */
   recordOutboundMessage?: (
     messageId: string,
@@ -139,8 +132,8 @@ export interface DeliveryServiceDeps {
  * DeliveryService — outbound delivery + shutdown drain.
  *
  * No speculative methods — add ops only when call sites exist.
- * `abortSignal` rides on a per-call options channel (consistent with
- * the standalone function's `deps.abortSignal`).
+ * `abortSignal` rides on the per-call options argument, not on the
+ * construction-time deps.
  */
 export interface DeliveryService {
   deliverToChannel(
@@ -306,7 +299,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // Use chunkBlocks on the rendered output to avoid double-parsing
           chunks = chunkBlocks(formatted, { mode: "paragraph", maxChars });
         } else if (PASSTHROUGH_PLATFORMS.has(adapter.channelType)) {
-          // Passthrough platforms (discord, slack): raw markdown, use IR chunker
+          // Passthrough platforms (discord, echo): raw markdown, use IR chunker
           chunks = chunkForDelivery(formatted, adapter.channelType, {
             maxChars,
             useMarkdownIR: true,
@@ -325,7 +318,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         const ctx = tryGetContext();
         const tenantId = ctx?.tenantId ?? "default";
         const traceId = ctx?.traceId ?? null;
-        // REACT-02 (CR-01): the resolved agentId for the turn rides on the
+        // The resolved agentId for the turn rides on the
         // request ALS (executor entry, context.ts:49). It is the partition the
         // reaction trajectory map + the byte-identity gate key on downstream —
         // NEVER the tenantId. Persisted into the queue entry's optionsJson below
@@ -333,14 +326,14 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // to the REAL agent. `null` when absent (pre-executor paths) → the drain
         // fails closed and does not map the message.
         const agentId = ctx?.agentId ?? null;
-        // FLAG-2 (group reaction-spoof): the conversation PARTICIPANT — the inbound
+        // Group reaction-spoof guard: the conversation PARTICIPANT — the inbound
         // sender whose message triggered this reply — rides on the request ALS as
         // ctx.userId (the inbound pipeline sets userId = sessionKey.userId =
         // msg.senderId). It is threaded onto the reaction trajectory binding so an
         // unmapped group BYSTANDER cannot inherit defaultTrustLevel and spoof
         // reaction-learning; only the participant (or an explicitly-mapped reactor)
         // drives it. `undefined` on pre-resolution paths → the trust resolution fails
-        // safe to the prior defaultTrustLevel-for-unmapped behavior.
+        // safe to the standard defaultTrustLevel-for-unmapped behavior.
         const participantId = ctx?.userId;
 
         // Resolve delivery strategy
@@ -421,17 +414,17 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // 'in_flight' -> 'pending' for the drainer to retry. All ack/nack/fail
           // statements are status-agnostic UPDATE-by-id, so no SQL change is needed.
           let entryId: string | null = null;
-          // deps.deliveryQueue is REQUIRED in DeliveryServiceDeps (was
-          // optional in the standalone DeliverToChannelDeps).
+          // deps.deliveryQueue is REQUIRED in DeliveryServiceDeps — no
+          // null-guard needed here.
           {
-            // REACT-02 (CR-01): persist agentId into the serialized options so
+            // Persist agentId into the serialized options so
             // the drain reads the REAL agent (drain reads options.agentId). It is
             // added to a SEPARATE persistence object — NOT to `sendOpts` — so it
             // never rides into the platform `adapter.sendMessage` call. Omitted
             // entirely when absent (pre-executor paths), keeping the drain
             // fail-closed rather than mis-attributing to the tenantId.
             //
-            // FLAG-2: likewise persist the conversation participant (ctx.userId) so
+            // Likewise persist the conversation participant (ctx.userId) so
             // a reaction resolved via the DRAIN path (not the direct ack) is also
             // participant-aware — an unmapped group bystander stays inert. Omitted
             // when absent; the drain then threads `undefined` → fail-safe.
@@ -454,7 +447,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
             if (enqueueResult.ok) {
               entryId = enqueueResult.value;
-              // delivery:enqueued is now emitted by the adapter (SqliteDeliveryQueueAdapter
+              // delivery:enqueued is emitted by the adapter (SqliteDeliveryQueueAdapter
               // emits inside enqueueInFlight after the INSERT succeeds -- single source of
               // truth). No-op here.
             }
@@ -519,17 +512,17 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               });
             }
 
-            // --- REACT-04 (206-04): bind the minted reply id → trajectory on the
+            // --- Bind the minted reply id → trajectory on the
             // DIRECT ack path (the primary inbound-reply path sends HERE, not via
             // the drain). Mirrors the drain's binding (setup-delivery.ts:287) so a
             // reaction on this outbound reply resolves its trajectory. Fail-closed:
             // a null traceId OR a null agentId (a pre-executor / non-agent send) is
             // a SKIP — mis-attributing a reaction to the tenantId would corrupt
-            // cross-agent isolation (T-198-16). The callback is undefined when
+            // cross-agent isolation. The callback is undefined when
             // learning-outcome is disabled for all agents → zero extra work
             // (byte-identity). ReactionTrajectoryMap.record is idempotent by
             // messageId, so a reply that ALSO traverses the drain (transient-nack →
-            // retry) cannot double-bind. Diagnosability (§2.7): the bind shares the
+            // retry) cannot double-bind. Diagnosability: the bind shares the
             // SAME messageId as the delivery:acked event just emitted (so the
             // attribution is reconstructable from the event trail), and the
             // downstream observeReactionNonFatal INFO line is the proof it resolved
@@ -540,19 +533,19 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 tenantId,
                 agentId,
                 sessionId: traceId, // session identity falls back to the trajectory id (scope-consistent with the drain)
-                // FLAG-2: bind the conversation participant (the inbound sender) so a
+                // Bind the conversation participant (the inbound sender) so a
                 // reaction from an unmapped group bystander is inert (resolves to
                 // "external"); only the participant inherits defaultTrustLevel.
                 participantId,
               });
-              // WR-01 (206-05): the bind above is otherwise SILENT. Emit a
+              // The bind above is otherwise SILENT. Emit a
               // positive, counts-only `delivery:reply_bound` so the primary-path
               // attribution is observable — a later reaction map-miss can then be
               // told apart ("bind fired → entry evicted" vs "bind never fired")
               // from the event trail in one obs call, with no daemon.log grep.
               // Same fail-closed branch as the bind; shares `messageId` with the
               // `delivery:acked` event just emitted. IDS/closed-scalars ONLY —
-              // never a body or a secret (§2.7 / SEC-01); `agentId` is the REAL
+              // never a body or a secret (redaction discipline); `agentId` is the REAL
               // agent (never the tenantId). Only on the learning-enabled path
               // (recordOutboundMessage defined) → byte-identity when disabled.
               deps.eventBus?.emit("delivery:reply_bound", {

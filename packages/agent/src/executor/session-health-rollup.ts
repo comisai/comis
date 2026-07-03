@@ -2,7 +2,7 @@
 import type { ErrorKind } from "@comis/core";
 
 /**
- * F1 session-health rollup: the five health fields persisted onto
+ * Session-health rollup: the five health fields persisted onto
  * `SessionMetadata.sessionEnd` and emitted on `session:summary`.
  *
  * - `degraded`        — the run finished in a non-clean state (tool errors,
@@ -28,8 +28,8 @@ export interface SessionHealthRollup {
 
 /**
  * The narrow structural slice of `bridgeResult` this reduce consumes — NOT the
- * whole `ExecutionResult`. After Phase 152-01, `toolExecResults[i]` carries the
- * optional `errorKind`, and `breakerTripCount` is accumulated on the bridge.
+ * whole `ExecutionResult`. `toolExecResults[i]` carries the optional
+ * `errorKind`, and `breakerTripCount` is accumulated on the bridge.
  */
 interface RollupInput {
   sessionCostUsd?: number;
@@ -48,13 +48,13 @@ interface RollupInput {
  * (executor-post-execution.ts — the one authoritative table) and passes that
  * SAME mapped value here, so `degraded` and `endReason` can never disagree.
  *
- * This replaces the prior dual closed sets (DEGRADED_REASONS +
- * ERROR_CLASS_REASONS) that were hand-maintained separately from
- * `END_REASON_MAP` and silently diverged: `loop_detected` and `session_reset`
- * mapped to `endReason:"error"` via the map's fallthrough yet were in NEITHER
- * set, recording a runaway-loop / session-reset abort as `degraded:false`
- * (Phase 152 CR-01). Deriving from the mapped `endReason` removes the second
- * domain entirely, so a newly added finish reason cannot reopen the divergence.
+ * Do NOT reintroduce a separate hand-maintained set of degraded finish
+ * reasons: any set kept apart from `END_REASON_MAP` silently diverges (e.g.
+ * `loop_detected` and `session_reset` map to `endReason:"error"` via the
+ * map's fallthrough, so a set that omits them would record a runaway-loop /
+ * session-reset abort as `degraded:false`). Deriving from the mapped
+ * `endReason` removes the second domain entirely, so a newly added finish
+ * reason cannot open a divergence.
  */
 const CLEAN_END_REASONS: ReadonlySet<string> = new Set<string>(["success"]);
 
@@ -62,11 +62,11 @@ const CLEAN_END_REASONS: ReadonlySet<string> = new Set<string>(["success"]);
 const TOP_ERROR_KINDS_CAP = 3;
 
 /**
- * Pure reduce over accumulated bridge state → the five F1 health fields.
+ * Pure reduce over accumulated bridge state → the five health fields.
  *
  * Same inputs always produce the same output: no reads, no writes, no time
  * source, no event emission. The fire-and-forget persist/emit guards live at the
- * post-execution call site (Plan 04).
+ * post-execution call site.
  *
  * @param bridgeResult - the narrow bridge slice (cost, breaker trips, per-tool results).
  * @param endReason - the ALREADY-MAPPED `SessionMetadata.sessionEnd.endReason`
@@ -109,7 +109,7 @@ export function buildSessionHealthRollup(
 
   // Single source of truth: degraded iff the mapped endReason is not "success".
   // The chokepoint derives endReason once via END_REASON_MAP and passes it here,
-  // so this can never contradict the co-persisted sessionEnd.endReason (CR-01).
+  // so this can never contradict the co-persisted sessionEnd.endReason.
   const degraded = !CLEAN_END_REASONS.has(endReason);
 
   return {

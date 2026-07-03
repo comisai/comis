@@ -8,9 +8,9 @@
  * 1. **Callback subscribers** via addEventListener() -- for wiring
  *    specific events to globalState.
  *
- * 2. **Document CustomEvents** via document.dispatchEvent() -- for
- *    child views in phases 304-312 to listen without needing a
- *    reference to the EventDispatcher instance.
+ * 2. **Document CustomEvents** via document.dispatchEvent() -- so
+ *    child views can listen without needing a reference to the
+ *    EventDispatcher instance.
  *
  * This provides dual event delivery to both callback handlers and document CustomEvents.
  *

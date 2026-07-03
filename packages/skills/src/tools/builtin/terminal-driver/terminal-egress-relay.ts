@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * buildEgressRelayLaunch -- the worker-side, PORT-typed constructor for the
- * in-jail relay-as-init launch (§3.5). It builds (does NOT run) the pieces
+ * in-jail relay-as-init launch. It builds (does NOT run) the pieces
  * the Terminal Worker needs to spawn the driven CLI under the egress
  * relay for `network: listed-hosts`:
  *

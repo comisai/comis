@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * resolveImageProvider — the pure, I/O-free priority resolver for
- * image-generation provider selection (RES-02/03/04).
+ * image-generation provider selection.
  *
  * Mirrors the numbered-priority structure of `resolveWorkspaceDir`
  * (packages/core/src/workspace/workspace-resolver.ts) and the logic of the
@@ -14,7 +14,7 @@
  * environment, and never imports a secret store — so it is trivially
  * unit-testable with no daemon and no network.
  *
- * Honest-capability invariant (I3 / T-183-01): an image-incapable main provider
+ * Honest-capability invariant: an image-incapable main provider
  * or absent credentials yields `{ ok: false, errorKind, hint }` — NEVER a
  * silent fall-through to a different paid provider. The `fallbackChain` is
  * consulted ONLY after the follow-main path fails, and each skip is reported.
@@ -28,16 +28,16 @@ import type { ImageErrorKind } from "./image-error.js";
 /**
  * The structural subset of the image-generation selection config this resolver
  * reads. Declared LOCALLY (not imported from the runtime
- * `ImageGenerationConfig` in schema-integrations.ts) so this Wave-1 plan stays
- * decoupled from Plan 02, which edits that schema in the same wave. The
- * resolver only needs these three fields.
+ * `ImageGenerationConfig` in schema-integrations.ts) to keep this pure
+ * resolver decoupled from the runtime config schema. The resolver only needs
+ * these three fields.
  */
 export type ImageGenSelectionConfig = {
   /** "auto" | "fal" | "openai" | "openai-codex" | "google" | "openrouter" */
   provider: string;
   /** Tool/config-supplied model that overrides the per-provider default. */
   model?: string;
-  /** Plan 02 lands the real field; this resolver reads it defensively. */
+  /** Defined by the runtime schema; this resolver reads it defensively. */
   fallbackChain?: string[];
 };
 
@@ -55,7 +55,7 @@ export type ImageProviderSelection =
     }
   | { ok: false; errorKind: ImageErrorKind; hint: string };
 
-/** The exact config knob a RES-03 hint must name (success-criterion #3). */
+/** The exact config knob every honest-unavailable hint must name. */
 const PROVIDER_KNOB = "integrations.media.imageGeneration.provider";
 
 function unavailableHint(mainProviderId: string): string {
@@ -76,8 +76,8 @@ export function resolveImageProvider(
   if (cfg.provider !== "auto") {
     const cap = IMAGE_CAPABILITY[cfg.provider];
     // `fal` (and any explicit provider with no IMAGE_CAPABILITY entry) is an
-    // explicit-only legacy backend with no follow-main capability — its
-    // relegated adapter path is wired separately in Plan 04. Here it resolves
+    // explicit-only backend with no follow-main capability — its concrete
+    // adapter path is wired separately in the daemon. Here it resolves
     // to honest-unavailable; do NOT special-case `fal` into the capability map.
     if (cap && credsAvailable(cap.imagesApi)) {
       return { ok: true, ...cap, model: cfg.model, source: "explicit" };
@@ -119,7 +119,7 @@ export function resolveImageProvider(
 }
 
 /**
- * 3. Fallback chain (RES-04) — consulted ONLY after follow-main fails. Each
+ * 3. Fallback chain — consulted ONLY after follow-main fails. Each
  * entry that cannot serve (incapable or no creds) is reported via `onSkip` with
  * a reason naming it; the first usable entry wins. Returns undefined if the
  * chain is empty or exhausted (the caller emits the honest-unavailable).

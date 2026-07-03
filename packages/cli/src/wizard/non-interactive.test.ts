@@ -217,9 +217,9 @@ describe("validateNonInteractiveOptions", () => {
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
   });
 
-  // ---------- C2-C4: soft-warn validation regression tests ----------
+  // ---------- Soft-warn validation regression tests ----------
 
-  it("C2: emits a console.warn for unknown providers (no throw)", () => {
+  it("emits a console.warn for unknown providers (no throw)", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const opts = validOpts({ provider: "fake-provider-xyz" });
@@ -233,7 +233,7 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
-  it("C3: validation passes silently for catalog providers (no warn)", () => {
+  it("validation passes silently for catalog providers (no warn)", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const opts = validOpts({ provider: "anthropic" });
@@ -255,7 +255,7 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
-  it("C4: RECOMMENDED_MODELS does not appear in non-interactive.ts source", () => {
+  it("RECOMMENDED_MODELS does not appear in non-interactive.ts source", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "non-interactive.ts"), "utf-8");
     expect(src).not.toMatch(/RECOMMENDED_MODELS/);
@@ -340,10 +340,9 @@ describe("validateNonInteractiveOptions", () => {
   });
 
   it("accepts each valid --stt-provider and --tts-provider value", () => {
-    // WIZ-04 (updated-not-frozen, I9): the allow-lists GREW keyless-first when
-    // Plan 01 reshaped SUPPORTED_TRANSCRIPTION_PROVIDERS / SUPPORTED_TTS_PROVIDERS.
-    // The validator derives `known` from those constants, so auto/local/edge are
-    // now accepted without a key flag.
+    // The validator derives `known` from SUPPORTED_TRANSCRIPTION_PROVIDERS /
+    // SUPPORTED_TTS_PROVIDERS rather than freezing its own list, so the keyless
+    // providers (auto/local/edge) are accepted without a key flag.
     for (const id of ["auto", "local", "openai", "groq", "deepgram"]) {
       expect(() =>
         validateNonInteractiveOptions(validOpts({ sttProvider: id })),
@@ -390,10 +389,10 @@ describe("buildNonInteractiveState", () => {
   });
 
   it("delegates --model resolution to daemon when not specified", () => {
-    // --model defaults to literal "default" (daemon-side resolution per
-    // builtin-provider-guard.ts:45 catalog readback). The hardcoded
-    // RECOMMENDED_MODELS provider->model lookup was removed; daemon
-    // decides at runtime. Verify both providers behave the same.
+    // --model defaults to the literal "default", resolved daemon-side
+    // (builtin-provider-guard.ts catalog readback). There is no CLI-side
+    // provider->model lookup; the daemon decides at runtime. Verify both
+    // providers behave the same.
     const stateA = buildNonInteractiveState(validOpts({ provider: "anthropic" }));
     expect(stateA.model).toBe("default");
     const stateB = buildNonInteractiveState(validOpts({ provider: "openai" }));
@@ -428,11 +427,11 @@ describe("buildNonInteractiveState", () => {
   });
 
   it("buildNonInteractiveState never emits gateway.password even if gatewayPassword leaks in", () => {
-    // Gateway password auth is removed entirely: the daemon's GatewayConfigSchema
+    // Gateway auth is token-only: the daemon's GatewayConfigSchema
     // is a z.strictObject with no `password` key, so emitting one FATAL-crash-loops
     // the daemon at boot. The wizard must be structurally incapable of emitting it,
     // even when stray gatewayAuth/gatewayPassword values are forced in (these fields
-    // no longer exist on the type, hence the `as never` cast — this pins RUNTIME
+    // do not exist on the type, hence the `as never` cast — this pins RUNTIME
     // behavior, not the type).
     const state = buildNonInteractiveState(
       validOpts({ gatewayPassword: "x", gatewayAuth: "password" } as never),
@@ -568,8 +567,8 @@ describe("buildNonInteractiveState", () => {
     expect(state.ttsProvider).toEqual({ provider: "openai" });
   });
 
-  it("records a keyless STT provider for --stt-provider auto with an ollama main and no key (WIZ-03)", () => {
-    // Pitfall 3: the STT branch must take the explicit `!requiredEnvKey`
+  it("records a keyless STT provider for --stt-provider auto with an ollama main and no key", () => {
+    // The STT branch must take the explicit `!requiredEnvKey`
     // keyless short-circuit (mirroring TTS/image), NOT the fragile reuse-main
     // fall-through that happens to work only because ollama also has no env key.
     const state = buildNonInteractiveState(
@@ -579,7 +578,7 @@ describe("buildNonInteractiveState", () => {
     expect(state.transcriptionProvider).not.toHaveProperty("apiKey");
   });
 
-  it("records a keyless STT provider for --stt-provider local with no key (WIZ-03)", () => {
+  it("records a keyless STT provider for --stt-provider local with no key", () => {
     const state = buildNonInteractiveState(
       validOpts({ provider: "ollama", apiKey: undefined, sttProvider: "local" }),
     );
@@ -587,12 +586,12 @@ describe("buildNonInteractiveState", () => {
     expect(state.transcriptionProvider).not.toHaveProperty("apiKey");
   });
 
-  it("leaves STT and TTS unset when the audio flags are omitted so the daemon applies keyless defaults (WIZ-03 never-strand)", () => {
+  it("leaves STT and TTS unset when the audio flags are omitted so the daemon applies keyless defaults", () => {
     // The codex-safe mechanism: with NO --stt-provider/--tts-provider, the state
     // omits both sections, so 10-write-config writes nothing and the daemon's
-    // Phase-193 schema default (auto/edge) applies — never a stranded openai.
+    // schema default (auto/edge) applies — never a stranded openai.
     // A keyless ollama main stands in for the OAuth-only case (openai-codex
-    // itself still hard-throws per FLAG 3 / OQ1=A; the keyless-default path is
+    // itself still hard-throws; the keyless-default path is
     // what protects an OAuth-only user from a phantom OPENAI_API_KEY).
     const state = buildNonInteractiveState(
       validOpts({ provider: "ollama", apiKey: undefined }),
@@ -610,7 +609,7 @@ describe("buildNonInteractiveState", () => {
     const state = buildNonInteractiveState(
       validOpts({ provider: "google", apiKey: "AIza-main-1234567890", videoProvider: "google" }),
     );
-    // CRED-01: no extra key — GOOGLE_API_KEY already covered by the main provider.
+    // No extra key — GOOGLE_API_KEY is already covered by the main provider.
     expect(state.videoProvider).toEqual({ provider: "google" });
   });
 

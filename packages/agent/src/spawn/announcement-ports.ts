@@ -38,7 +38,7 @@ export interface QueuedAnnouncementShape {
   callerAgentId: string;
   callerSessionKey: string;
   runId: string;
-  /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep (D-MIRRORS). */
+  /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;
 }
 
@@ -52,9 +52,9 @@ export interface AnnouncementBatcher {
   flush(): Promise<void>;
   shutdown(): Promise<void>;
   readonly pending: number;
-  /** DELIVERY-01: has this idempotency key already been delivered? Mirrors the orchestrator batcher — keep in lockstep (D-MIRRORS / D-SHAREDDEDUP). Plan 03's failure path reads it. */
+  /** Has this idempotency key already been delivered? Mirrors the orchestrator batcher — keep in lockstep. The failure-notification path reads it too. */
   hasDelivered(key: string): boolean;
-  /** DELIVERY-01: mark an idempotency key delivered (success only). Mirrors the orchestrator batcher (D-MIRRORS). */
+  /** Mark an idempotency key delivered (success only). Mirrors the orchestrator batcher — keep in lockstep. */
   markDelivered(key: string): void;
 }
 
@@ -73,7 +73,7 @@ export interface DeadLetterEntryShape {
   lastAttemptAt: number;
   lastError?: string;
   threadId?: string;
-  /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Mirrors DeadLetterEntry.idempotencyKey — keep in lockstep (D-MIRRORS). */
+  /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors DeadLetterEntry.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;
 }
 
@@ -92,10 +92,10 @@ export interface AnnouncementDeadLetterQueue {
       options?: { threadId?: string },
     ) => Promise<boolean>,
     /**
-     * WR-01: invoked with the entry's `idempotencyKey` after a SUCCESSFUL
+     * Invoked with the entry's `idempotencyKey` after a SUCCESSFUL
      * re-delivery so the caller can mark the recovered key delivered (shared
      * deliveredKeys set) — otherwise a later failure sweep double-notifies.
-     * Mirrors the orchestrator DLQ signature (D-MIRRORS).
+     * Mirrors the orchestrator DLQ signature — keep in lockstep.
      */
     onDelivered?: (idempotencyKey: string) => void,
   ): Promise<void>;

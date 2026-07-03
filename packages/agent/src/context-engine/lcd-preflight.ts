@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: ContextExhaustionError is a control-flow signal caught by handleEnvelopeException and mapped to finishReason:context_exhausted (design Fix 3/5)
+// @allow-throw: ContextExhaustionError is a control-flow signal caught by handleEnvelopeException and mapped to finishReason:context_exhausted
 /**
- * Pre-flight fit check for the LCD dag assembler (Phase 166 CWF-02).
+ * Pre-flight fit check for the LCD dag assembler.
  *
  * Enforces the invariant: assembledInputTokens ≤ effectiveWindow − outputHeadroom.
- * Security-pinned messages (T-S4) are NEVER evicted in the harder-eviction pass.
+ * Security-pinned messages are NEVER evicted in the harder-eviction pass.
  *
  * Escalation ladder:
  *  (a) Evict harder with security-pinned messages excluded.
@@ -13,7 +13,7 @@
  *
  * Separated from lcd-assembler.ts to keep that file ≤ 820 lines.
  *
- * Root-cause context-exhaustion guard (2026-06-22): the NON-EVICTABLE fixed
+ * Root-cause context-exhaustion guard: the NON-EVICTABLE fixed
  * overhead S (system prompt + tool schemas) is the dominant term on small
  * windows. The window-aware tool-budget fit pass (executor-tool-assembly.ts
  * `enforceToolBudgetFit`) defers tools so S fits BEFORE this pre-flight runs,
@@ -27,8 +27,7 @@
  * guidance, keep identity + essential behavior) would let the agent still reply
  * on a window < full-prompt. Deferred: it is deeply invasive in the 1954-line
  * prompt-assembly.ts (per-session bootstrap snapshot + once-per-session
- * systemPromptOverride). Tracked against the codex nano-window context-exhaustion
- * incident. Until then the degenerate case fails honestly (above).
+ * systemPromptOverride). Until then the degenerate case fails honestly (above).
  *
  * @module
  */
@@ -51,7 +50,7 @@ type TLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 const VALID_LEVELS: readonly TLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
 /**
- * Run the CWF-02 pre-flight fit check.
+ * Run the pre-flight fit check.
  *
  * @param deps              - ContextEngineDeps (reads securityPinMarkers, callbacks, logger).
  * @param effectiveWindow   - budget.windowTokens for this turn.
@@ -62,15 +61,15 @@ const VALID_LEVELS: readonly TLevel[] = ["off", "minimal", "low", "medium", "hig
  *                            The NEWEST keptCount items from evictable were kept.
  * @param freshTail         - The unconditional fresh-tail messages.
  * @param reasoningStyle    - profile.reasoningStyle ("none" | "native").
- * @param capInfo           - W1 cap provenance (budget.rawContextWindowTokens +
+ * @param capInfo           - Window-cap provenance (budget.rawContextWindowTokens +
  *                            budget.windowCapSource). When the effective window was
  *                            clamped by a capability-class cap, the exhaustion throw
  *                            and WARN name the raw window and the exact config knob.
  *
  * Throws ContextExhaustionError if infeasible even at the thinking-level floor.
  * Emits onEffectiveWindow, onThinkingDownshifted, onAssembledInputTokens callbacks as side effects.
- * Returns the ORIGINAL assembled input token count (CR-03 — what is actually
- * dispatched) so the assembler's INFO line can log the budget equation (W5).
+ * Returns the ORIGINAL assembled input token count (what is actually
+ * dispatched) so the assembler's INFO line can log the budget equation.
  */
 export function runPreflightFitCheck(
   deps: ContextEngineDeps,
@@ -81,7 +80,7 @@ export function runPreflightFitCheck(
   reasoningStyle: "none" | "native",
   capInfo?: ContextWindowCapInfo,
 ): number {
-  // Emit effectiveWindow callback so Plan 04 can clamp max_tokens dynamically.
+  // Emit effectiveWindow callback so the caller can clamp max_tokens dynamically.
   deps.onEffectiveWindow?.(effectiveWindow);
 
   const rawThinkingLevel = deps.getThinkingLevel?.() ?? "medium";
@@ -89,9 +88,9 @@ export function runPreflightFitCheck(
     ? (rawThinkingLevel as TLevel)
     : "medium";
 
-  // WR-02: use the operator-configurable floor (from contextEngine.budget.minVisibleOutputTokens)
-  // when provided; otherwise fall back to the compile-time constant (768). Frontier/mid:
-  // default 768 → byte-identical result.
+  // Use the operator-configurable floor (from contextEngine.budget.minVisibleOutputTokens)
+  // when provided; otherwise fall back to the compile-time constant (768), which is
+  // what frontier/mid deployments (no explicit config) run with.
   const minVisibleFloor = deps.minVisibleOutputTokens;
 
   let effectiveThinkingLevel: TLevel = thinkingLevelInput;
@@ -105,35 +104,34 @@ export function runPreflightFitCheck(
 
   // Estimate fresh tail token count via the shared factored per-message estimator
   // (factored-message-tokens.ts): ceil(chars / (CHARS_PER_TOKEN_RATIO × scriptTokenFactor))
-  // over each message's OWN extracted text (string + array multi-part/tool-result content,
-  // IN-01; dense scripts carry ~2-3× tokens/char, ASCII factor 1.0 → the bare 3.5:1 form, TOK-01).
-  // Per-message counts are kept (not just the sum) so the Issue-6 cause classifier below
+  // over each message's OWN extracted text (string + array multi-part/tool-result content;
+  // dense scripts carry ~2-3× tokens/char, ASCII factor 1.0 → the bare 3.5:1 form).
+  // Per-message counts are kept (not just the sum) so the exhaustion-cause classifier below
   // can tell a single-oversized-message failure from an aggregate overflow.
-  // ISSUE #3: factoredMessageTokens is the SINGLE shared estimator — boundFreshTailTotalToResidual
+  // factoredMessageTokens is the SINGLE shared estimator — boundFreshTailTotalToResidual
   // uses the SAME function, so the fresh-tail BOUND and this MEASURE can never diverge
   // (no estimator gap → no fudge factor needed in the bound).
   const freshTailMsgTokens = freshTail.map((m) => factoredMessageTokens(m));
   const freshTailTokens = freshTailMsgTokens.reduce((s, t) => s + t, 0);
-  // OF-01 (v2.19): count the FULL SDK prompt, not just history+freshTail. The
+  // Count the FULL SDK prompt, not just history+freshTail. The
   // dominant term is the system prompt + tool schemas (S = getSystemTokensEstimate)
-  // — the SAME value the eviction budget subtracts (lcd-assembler `S`). The
-  // fit-check previously OMITTED it, so a real ~31.5K prompt (S≈25584 + history +
-  // freshTail) looked like ~6.5K, passed the check, and the model truncated
+  // — the SAME value the eviction budget subtracts (lcd-assembler `S`). Omitting
+  // it makes a real ~31.5K prompt (S≈25584 + history +
+  // freshTail) look like ~6.5K, pass the check, and the model truncates
   // silently at stopReason:length — the governor / clamp / context-exhausted
-  // ladder never engaged. S is non-evictable (system+tools), so it also enters
+  // ladder never engages. S is non-evictable (system+tools), so it also enters
   // the harder-eviction budget below and the reported assembled count.
-  // See design/small-model-orchestration-fidelity.md §6 Fix 1.
   const systemTokens = deps.getSystemTokensEstimate?.() ?? 0;
-  // CR-03: save the ORIGINAL assembled count (what is actually dispatched to the LLM)
+  // Save the ORIGINAL assembled count (what is actually dispatched to the LLM)
   // BEFORE any simulation in step (a). onAssembledInputTokens must always report this
   // value — NOT the simulated undercount from the security-pin harder-eviction pass.
   const originalAssembledInputTokens = systemTokens + budgetedTokens + freshTailTokens;
   let assembledInputTokens = originalAssembledInputTokens;
 
-  // W2 (obs-llm-troubleshooting): emit the budget equation once per fit check —
+  // Emit the budget equation once per fit check —
   // "fits"/"downshifted" at the end, "exhausted" right before the throw — so the
   // trajectory carries the numbers obs.explain needs to explain a degraded turn
-  // (they previously existed only as daemon-log DEBUG lines).
+  // (a daemon-log DEBUG line alone would be invisible at the default level).
   let governorFired = false;
   const emitBudgetComputed = (
     verdict: "fits" | "downshifted" | "exhausted",
@@ -160,16 +158,16 @@ export function runPreflightFitCheck(
     // (a) Evict harder against the room that ACTUALLY remains after the
     // non-evictable S (system+tools) and the unconditionally-shipped fresh tail.
     //
-    // ISSUE #1 (multi-turn nano, 2026-06-22): this rung MUST run UNCONDITIONALLY.
-    // It was previously gated on `if (deps.securityPinMarkers)`, so on a fresh
-    // session with no canary (markers undefined — the common case) the harder
-    // eviction was SKIPPED entirely: the looser history-budget eviction from the
+    // This rung MUST run UNCONDITIONALLY — never gate it on
+    // `if (deps.securityPinMarkers)`. Gated, a fresh
+    // session with no canary (markers undefined — the common case) skips the harder
+    // eviction entirely: the looser history-budget eviction from the
     // assembler (H = W−S−O−M−R−P + the 8K-starvation add-back ≈ 4096 on an 8192
-    // nano window) leaked through, assembled stayed > the bound, and the turn threw
+    // nano window) leaks through, assembled stays > the bound, and the turn throws
     // on EVICTABLE history that could have been trimmed. Accumulated evictable
     // history must NEVER cause exhaustion — it evicts down to whatever fits (even
     // to near-zero → a degraded-but-running stateless turn). Security-pinned
-    // messages (T-S4) are still excluded from the harder pass when markers exist;
+    // messages are still excluded from the harder pass when markers exist;
     // with no markers, NO item is pinned (pinnedItems = [], pinnedTokens = 0) and
     // ALL evictable history is trimmed under the tighter budget.
     const markers = deps.securityPinMarkers;
@@ -184,7 +182,7 @@ export function runPreflightFitCheck(
         )
       : evictable;
     const pinnedTokens = pinnedItems.reduce((s, b) => s + b.tokens, 0);
-    // OF-01: S (system+tools) is non-evictable — reserve it in the harder-eviction
+    // S (system+tools) is non-evictable — reserve it in the harder-eviction
     // budget so history is evicted against the room that ACTUALLY remains.
     const tighterBudget = Math.max(0, headroomBound - systemTokens - pinnedTokens - freshTailTokens);
     const hardEvictedMsgs = evictHistoryUnderBudget(nonPinnedItems, tighterBudget);
@@ -234,7 +232,7 @@ export function runPreflightFitCheck(
     const finalHeadroom = computeOutputHeadroom(reasoningStyle, effectiveThinkingLevel, minVisibleFloor);
     const finalBound = effectiveWindow - finalHeadroom;
     if (assembledInputTokens > finalBound) {
-      // Issue-6: classify WHY. A single item whose tokens alone (on top of the
+      // Classify WHY. A single item whose tokens alone (on top of the
       // non-evictable S) exceed the bound is an oversized-MESSAGE failure —
       // eviction/narrowing other content can never fix it, so the generic
       // "narrow the ask" advice would mislead. Distinguish the current input
@@ -242,10 +240,10 @@ export function runPreflightFitCheck(
       // actionable) from an earlier message (only a session reset helps).
       // Everything else is the historical aggregate overflow.
       //
-      // ROOT-CAUSE fix (2026-06-22): the FIXED overhead S (system prompt + tool
+      // The FIXED overhead S (system prompt + tool
       // schemas) is NON-EVICTABLE. When S alone exceeds the bound, the turn is
       // infeasible regardless of history/thinking/message — so this must be
-      // classified FIRST, before the message/history branches. Pre-fix this fell
+      // classified FIRST, before the message/history branches. Otherwise it falls
       // through to oversized_input because `singleItemBound = finalBound − S`
       // goes NEGATIVE (any message token count > a negative number), producing
       // the misleading "your message alone is larger than this model's context
@@ -253,13 +251,13 @@ export function runPreflightFitCheck(
       // is the WINDOW or the agent's tool/prompt footprint — never the message.
       const singleItemBound = finalBound - systemTokens;
       const lastUserIdx = findLastUserIndex(freshTail);
-      // ISSUE #2b (2026-06-22): when history is FULLY evicted (keptCount==0 and nothing
-      // evictable remains — Fix C did its job) and the protected fresh tail is the SOLE
+      // When history is FULLY evicted (keptCount==0 and nothing
+      // evictable remains) and the protected fresh tail is the SOLE
       // overflow, "aggregate" misleads: the remedy is to shrink the user's input, not to
       // reset a (now-empty) conversation. Reclassify as oversized_input when the LAST
       // user message DOMINATES the fresh-tail tokens (> half) — distinguishing "one large
       // current message (+ a tiny recent turn)" from a genuine many-comparable-messages
-      // aggregate (the live turn-14 residual after the preamble drop: a ~2000-tok message
+      // aggregate (e.g. a ~2000-tok message
       // just under the single-item bound + a small prior turn). The dominance test keeps
       // the existing aggregate case (5 comparable messages, each ~20% of the sum) intact.
       const lastUserTokens = lastUserIdx >= 0 ? (freshTailMsgTokens[lastUserIdx] ?? 0) : 0;
@@ -306,14 +304,14 @@ export function runPreflightFitCheck(
     }
   }
 
-  // CR-03: always report the ORIGINAL assembled count (what is actually dispatched).
+  // Always report the ORIGINAL assembled count (what is actually dispatched).
   // The simulated harder-eviction in step (a) only measures feasibility; it does NOT
   // change the actual context array dispatched (that is built from `repaired` in
   // lcd-assembler.ts). Reporting the simulated count would give config-resolver a
   // stale undercount → dynamicMax set too high → silent LLM truncation.
   deps.onAssembledInputTokens?.(originalAssembledInputTokens);
 
-  // W2: the non-throw outcomes. `outputHeadroom` holds the downshifted value when
+  // The non-throw outcomes. `outputHeadroom` holds the downshifted value when
   // the governor fired (the loop reassigns it), so the event reports the headroom
   // the dispatch will actually run with.
   emitBudgetComputed(governorFired ? "downshifted" : "fits", originalAssembledInputTokens, outputHeadroom);

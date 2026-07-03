@@ -81,11 +81,11 @@ describe("createOutputGuard", () => {
   });
 
   it("redacts a bound known secret even when bare (no key=/token: prefix)", () => {
-    // Live finding (v2.20 security validation, 2026-06-10): a bare 48-char hex
-    // gateway token has no "key="/"token:" prefix, so the prefix-gated
-    // HEX_SECRET_32 pattern misses it and it leaked through OutputGuard. Exact-match
-    // redaction of the daemon's KNOWN secret values closes this with zero
-    // false-positive risk (no entropy heuristic that would over-redact git SHAs).
+    // A bare 48-char hex gateway token has no "key="/"token:" prefix, so the
+    // prefix-gated HEX_SECRET_32 pattern misses it and it would leak through
+    // OutputGuard. Exact-match redaction of the daemon's KNOWN secret values
+    // closes this with zero false-positive risk (no entropy heuristic that
+    // would over-redact git SHAs).
     const token = "53bfa28f30236de2c895d6fc2712485610f8f3ff08991df1"; // 48-char bare hex
     const g = createOutputGuard({ knownSecrets: [token] });
     const result = g.scan(`Sure, the value is ${token} — there you go.`);
@@ -139,7 +139,7 @@ describe("createOutputGuard", () => {
   // Warning findings -- detect-only, NOT redacted
   // -------------------------------------------------------------------------
 
-  it("REDACTS bearer token (severity upgraded to critical), blocked=true", () => {
+  it("REDACTS bearer token (severity critical), blocked=true", () => {
     // bearer_token severity is "critical" — token is redacted in sanitized output.
     const response = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9";
     const result = guard.scan(response);
@@ -299,11 +299,11 @@ describe("createOutputGuard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R4.6 regression: bearer_token severity lock
+  // Regression: bearer_token severity lock
   // -------------------------------------------------------------------------
 
-  it("bearer_token rule has severity critical and redacts Bearer hf_ tokens (R4.6 regression)", () => {
-    // R4.6: the bearer_token rule is severity:"critical" (REDACTS), NOT detect-only.
+  it("bearer_token rule has severity critical and redacts Bearer hf_ tokens (severity lock)", () => {
+    // The bearer_token rule is severity:"critical" (REDACTS), NOT detect-only.
     // This test locks that contract so future refactors cannot silently downgrade it.
     const response = "auth: Bearer hf_aaaaaaaabbbbbbbbccccccccdddddddd";
     const result = guard.scan(response);
@@ -520,8 +520,8 @@ describe("createOutputGuard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // registerSecret — the ENDPOINT-03 mint-time registration API (Phase 211).
-  // RESEARCH Pitfall 1: createOutputGuard binds knownSecrets ONCE in a closure;
+  // registerSecret — the mint-time secret registration API.
+  // Pitfall: createOutputGuard binds knownSecrets ONCE in a closure;
   // registerSecret must push the value in (live-read on the next scan), keeping
   // the KNOWN_SECRET_MIN_LENGTH (8) floor + longest-first ordering.
   // -------------------------------------------------------------------------

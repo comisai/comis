@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * MEDIA-01/02/03 — inbound media routing end-to-end through the REAL grammy
- * adapter (Phase 207, Plan 06 — the scenario that DRIVES the media pipeline on
- * the surface the chat-API structurally cannot reach: there are no media
- * attachments in /v1/chat/completions).
+ * adapter (the scenario that DRIVES the media pipeline on the surface the
+ * chat-API structurally cannot reach: there are no media attachments in
+ * /v1/chat/completions).
  *
  * An injected voice/photo/document/video/video_note `message` reaches the agent
  * as a `tg-file://{file_id}` attachment (buildAttachments → the NormalizedMessage
@@ -14,12 +14,12 @@
  * SHORT-CIRCUITS to a hint BEFORE downloading — media-handler has no
  * transcriber/extractor without a capability provider).
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205/206 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): the WIRING
  *     proof, deterministic. Per kind, makeMediaUpdate's shape feeds the REAL
  *     buildAttachments (@comis/channels) → a `tg-file://{file_id}` attachment
- *     (NEVER a transcript — Pitfall 2 / CF-3: the keyless handler short-circuits
+ *     (NEVER a transcript — the keyless handler short-circuits
  *     to a hint before any download). The emulator's file route serves the stored
  *     bytes via a DIRECT fetch (no daemon, no SSRF guard). A spoiler / location /
  *     venue maps to metadata.hasSpoiler / metadata.location through the REAL
@@ -27,11 +27,11 @@
  *     re-asserts ZERO packages source change.
  *
  *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) boots an isolated daemon with
- *     the mediaLoopbackOverride (Plan 05) so the real SSRF-guarded byte download
+ *     the mediaLoopbackOverride so the real SSRF-guarded byte download
  *     reaches the loopback emulator, injects a media message, and asserts the
  *     pipeline ran end-to-end (the agent replied; for a capability-bearing model
  *     the transcript/analysis/extraction is asserted in the tg db / trajectory
- *     ground truth). NO-FALSE-SUCCESS (I5): a keyless model that has no
+ *     ground truth). NO-FALSE-SUCCESS: a keyless model that has no
  *     transcriber/vision/extractor short-circuits to a hint — the pipeline runs
  *     but does NOT transcribe; that is an HONEST reason-coded finding, NEVER a
  *     faked "transcribed". SKIPPED (skip != fail) without COMIS_LIVE.
@@ -91,7 +91,7 @@ describe("MEDIA-01/03 Stage-B — the media update reaches the agent as a tg-fil
   ];
 
   for (const { kind, attachmentType } of KINDS) {
-    it(`a ${kind} media message yields a tg-file://{file_id} ${attachmentType} attachment via the real buildAttachments (Pitfall 2: NOT a transcript)`, () => {
+    it(`a ${kind} media message yields a tg-file://{file_id} ${attachmentType} attachment via the real buildAttachments (NOT a transcript)`, () => {
       const fileId = `file_${kind}_abc123`;
       const update = makeMediaUpdate({
         updateId: 9000,
@@ -142,7 +142,7 @@ describe("MEDIA-02 Stage-B — the file route serves the stored bytes via a DIRE
 
     // Resolve the stored file_path via getFile (keyed by file_id), then fetch the
     // route DIRECTLY — no daemon, no SSRF guard (the Stage-B byte-serving leg;
-    // the SSRF-guarded download is Plan 05's deterministic proof + Stage-C here).
+    // the SSRF-guarded download is proven deterministically elsewhere + in Stage-C here).
     const updatesRes = await fetch(`${apiRoot}/bot${FAKE_BOT_TOKEN}/getUpdates`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -159,7 +159,7 @@ describe("MEDIA-02 Stage-B — the file route serves the stored bytes via a DIRE
       body: JSON.stringify({ file_id: fileId }),
     });
     const fileBody = (await fileRes.json()) as { result: { file_path: string; file_size: number } };
-    // getFile reports the REAL byte length (not the 204 hardcoded 1024).
+    // getFile reports the REAL byte length (not a hardcoded placeholder).
     expect(fileBody.result.file_size).toBe(bytes.length);
 
     const byteRes = await fetch(`${apiRoot}/file/bot${FAKE_BOT_TOKEN}/${fileBody.result.file_path}`);
@@ -170,7 +170,7 @@ describe("MEDIA-02 Stage-B — the file route serves the stored bytes via a DIRE
   });
 });
 
-describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via the real mapGrammyToNormalized (A1)", () => {
+describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via the real mapGrammyToNormalized", () => {
   it("has_media_spoiler → metadata.hasSpoiler === true", () => {
     const update = makeMediaUpdate({
       updateId: 9100,
@@ -227,7 +227,7 @@ describe("MEDIA Stage-B — the whole phase diff is test/-only (zero production 
     // The media pipeline (buildAttachments / mapGrammyToNormalized / the resolver)
     // is already wired in packages/channels/src and verified at HEAD — the harness
     // EMITS what it consumes + serves the bytes. If this fails, a product file was
-    // touched (the 206 Defect Watch may have fired — see the SUMMARY) — STOP.
+    // touched — STOP.
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
     const offending = porcelain
@@ -250,7 +250,7 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
 
   beforeAll(async () => {
     const { buildRig } = await import("../../harness/rig.js");
-    // mediaLoopbackOverride:true → the daemon boots with the Plan-05 setupMedia
+    // mediaLoopbackOverride:true → the daemon boots with the setupMedia
     // override so the real SSRF-guarded download reaches the loopback emulator.
     built = await buildRig({ channel: "telegram", model: "keyless", mediaLoopbackOverride: true });
     memoryDbPath = built.memoryDbPath;
@@ -264,15 +264,15 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
 
   /**
    * Count DISTINCT inbound (`role='user'`) lcd_messages rows that ACTUALLY carry
-   * a MEDIA ATTACHMENT — the inbound-media-routed oracle (WR-01). Honest about
+   * a MEDIA ATTACHMENT — the inbound-media-routed oracle. Honest about
    * what `lcd_messages` CAN assert, and materially stronger than "some user row
    * exists" (the prior query only filtered `role='user'`, so a regression that
    * dropped the attachment and routed the inbound as a plain text turn would have
-   * stayed green — the I5 "the assertion must confirm the real pipeline ran" gap).
+   * stayed green — the "the assertion must confirm the real pipeline ran" gap).
    *
    * ── Why the filter is `hasAttachments`, NOT `tg-file://` (a live-verified call) ──
    *
-   * The review's suggested `tg-file://` filter does NOT match on the real Stage-C
+   * A `tg-file://` filter does NOT match on the real Stage-C
    * path: with an STT provider PRESENT (local whisper here), the daemon RESOLVES
    * the `tg-file://` pointer at ingest (CompositeResolver routing, scheme=tg-file,
    * attachmentType=audio — confirmed in the daemon log) and CONSUMES it inline; it
@@ -289,12 +289,12 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
    * Message Context" JSON block persisted in `lcd_message_parts.metadata` (the
    * verbatim text block — core/.../parts-codec.ts). So an attachment-bearing turn
    * is queryable by JOINing the parts and LIKE-matching `hasAttachments` — and a
-   * plain TEXT turn carries NO such flag, so it does NOT match (the property WR-01
-   * wants). Live-verified: 1 attachment-bearing user row per injected voice turn
+   * plain TEXT turn carries NO such flag, so it does NOT match (the property the
+   * oracle wants). Live-verified: 1 attachment-bearing user row per injected voice turn
    * (`%hasAttachments%` == 1), 0 for a non-attachment turn.
    *
    * This proves the MEDIA ROUTING (the attachment reached the agent's prompt
-   * assembly) — NOT a transcript (Pitfall 2 / CF-3): on this keyless+whisper host
+   * assembly) — NOT a transcript: on this keyless+whisper host
    * the STT attempt fails on the synthetic bytes and the handler short-circuits to
    * an honest "couldn't transcribe" reply, exactly as the no-false-success contract
    * requires. The Stage-B legs above separately prove the `tg-file://` pointer
@@ -331,7 +331,7 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
   }
 
   it(
-    "an injected voice message routes through the real adapter→media pipeline and the agent replies (transcript IF the model has STT, else an honest hint — never a faked transcript, I5)",
+    "an injected voice message routes through the real adapter→media pipeline and the agent replies (transcript IF the model has STT, else an honest hint — never a faked transcript)",
     async () => {
       const r = built;
       const dbPath = memoryDbPath;
@@ -342,7 +342,7 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
       // Inject a voice message (real bytes) — the daemon's grammy adapter
       // long-polls it, buildAttachments emits the tg-file:// pointer, and the
       // media handler runs (downloading + transcribing IF a transcriber exists,
-      // else short-circuiting to a hint — CF-3). injectMedia returns the inbound id.
+      // else short-circuiting to a hint). injectMedia returns the inbound id.
       const voiceBytes = Buffer.from("RIFF....WAVEfmt fake-voice-clip-for-stt", "utf8");
       const inboundId = await r.controlClient.injectMedia({
         chatId: r.chat.chatId,
@@ -365,13 +365,13 @@ describe.skipIf(!isLive)("MEDIA-02 Stage-C — the SSRF-guarded byte download + 
 
       // The inbound row that CARRIES the tg-file:// media pointer reached the LCD
       // store (the agent saw the ATTACHMENT, not merely some text turn). This
-      // proves the media ROUTING — NOT a transcript (Pitfall 2). Whether the bytes
+      // proves the media ROUTING — NOT a transcript. Whether the bytes
       // were transcribed/seen/extracted is gated behind a capability provider; on a
       // plain keyless model the handler short-circuits to a hint (an HONEST result).
       const inboundRows = countInboundMediaRows(dbPath);
       expect(
         inboundRows,
-        "FINDING: no inbound ATTACHMENT-BEARING user row in lcd_messages after the voice inject — the media message did not reach the agent's prompt assembly (a plain-text user row carries NO hasAttachments flag and would NOT match this; check the apiRoot seam / buildAttachments / the inbound metadata injection). NOT a faked green (I5).",
+        "FINDING: no inbound ATTACHMENT-BEARING user row in lcd_messages after the voice inject — the media message did not reach the agent's prompt assembly (a plain-text user row carries NO hasAttachments flag and would NOT match this; check the apiRoot seam / buildAttachments / the inbound metadata injection). NOT a faked green.",
       ).toBeGreaterThanOrEqual(1);
     },
     1_800_000,

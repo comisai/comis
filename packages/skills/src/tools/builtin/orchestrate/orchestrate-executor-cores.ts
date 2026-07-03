@@ -6,10 +6,10 @@
 // surfaces a content-free error rather than crashing the executor.
 /**
  * `orchestrate-executor-cores` — the SHIPPED in-process tool cores the
- * daemon-side `tool.invoke` executor (Phase 212 Plan 02,
- * `setup-tool-invoke-executor.ts`) routes the 5 file builtins + `web_search` to
- * (Gap 1; v8 §6.2/§6.3). Plan 02 left the cores as INJECTED deps (mocked in its
- * tests); Plan 05's dormancy activation wires the real ones — and they live HERE
+ * daemon-side `tool.invoke` executor (`setup-tool-invoke-executor.ts`)
+ * routes the 5 file builtins + `web_search` to.
+ * The executor takes the cores as INJECTED deps (mocked in its
+ * tests); the daemon wiring supplies these real ones — and they live HERE
  * (skills) so the daemon imports ONE factory over a published subpath rather
  * than reaching into the file-tools / web-search internals it must not depend on.
  *
@@ -20,8 +20,8 @@
  *     `.execute()`d. Read-only by construction (no `edit`/`write` core surfaced).
  *     The `AgentToolResult` it returns is the value the jailed SDK receives over
  *     the cap socket; high-volume returns are offloaded to a `ResultRef` by the
- *     executor's `materialize` seam (REF-01), not here.
- *   - `jq`/`sql`/`jsonpath` (READ-02 / QRY-01 / QRY-02): the in-jail ResultRef
+ *     executor's `materialize` seam, not here.
+ *   - `jq`/`sql`/`jsonpath`: the in-jail ResultRef
  *     query engine. The jailed script's `wrapResultRef(...).jq(expr)` /
  *     `.sql(query)` / `.jsonpath(expr)` sends `tool.invoke("jq"|"sql"|"jsonpath",
  *     {path, …})`; each core resolves the workspace-confined file (`safePath`,
@@ -34,13 +34,13 @@
  *     (untrusted) model query — so the master external-access switch blocks every
  *     local-file reader (read_text/read_blob/glob/read_*), ATTACH/COPY, and
  *     remote readers WHOLESALE except reads under the workspace allow-root, and
- *     the appended model query cannot widen them (CR-01). Layered on top:
+ *     the appended model query cannot widen them. Layered on top:
  *     `--readonly :memory:`, autoload/autoinstall OFF, and the model query
  *     screened by `rejectDangerousSql` — INSTALL/LOAD/ATTACH/COPY/EXPORT/PRAGMA,
  *     the pure-exfil readers (read_text/read_blob/glob/getenv/parquet_metadata),
  *     and http(s)/s3/gcs url-readers are refused BEFORE spawn — so the un-jailed
  *     daemon-side DuckDB can never read a host file outside the workspace or
- *     become an SSRF/exfil/file-write egress (T-221-QRY-01..06). `jsonpath` does NOT add an eval-based JSONPath
+ *     become an SSRF/exfil/file-write egress. `jsonpath` does NOT add an eval-based JSONPath
  *     library (those are banned by AGENTS.md §2.2 and have live RCE CVEs); it
  *     compiles the `$`-dot/bracket path into a DuckDB `json_extract` query and
  *     runs it through the SAME hardened `duckdb` invocation as `sql`. A binary
@@ -51,10 +51,10 @@
  *     Debian's apt repos and is provisioned as a pinned static binary). The real
  *     in-jail proof is the VPS-deferred `orchestrate-jail.linux.test.ts`.
  *
- * `web_search` (WEB-01): adapts the SHIPPED `createWebSearchTool` (constructed
+ * `web_search`: adapts the SHIPPED `createWebSearchTool` (constructed
  * ONCE) — the daemon-side network search the jailed (`--unshare-net`) script
  * cannot run itself. The DNS-pin lives on the `web_fetch` path inside the
- * executor (Plan 02); `web_search` rides the shipped multi-provider tool.
+ * executor; `web_search` rides the shipped multi-provider tool.
  *
  * @module
  */
@@ -91,9 +91,9 @@ export interface OrchestrateFileCores {
   find: OrchestrateFileCore;
   ls: OrchestrateFileCore;
   jq: OrchestrateFileCore;
-  /** QRY-01: DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, hardened). */
+  /** DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, hardened). */
   sql: OrchestrateFileCore;
-  /** QRY-02: precise JSON extraction via DuckDB `json_extract` (NO eval lib). */
+  /** Precise JSON extraction via DuckDB `json_extract` (NO eval lib). */
   jsonpath: OrchestrateFileCore;
 }
 
@@ -126,12 +126,12 @@ function errorResult(error: string): { error: string } {
   return { error };
 }
 
-/** Bound a duckdb stderr diagnostic before it crosses the jail boundary (IN-04). */
+/** Bound a duckdb stderr diagnostic before it crosses the jail boundary. */
 const DUCKDB_STDERR_MAX_CHARS = 500;
 
 /**
  * Scrub a duckdb stderr diagnostic for the `{ error }` returned to the jailed
- * client (IN-04). DuckDB error text can echo the offending SQL AND absolute host
+ * client. DuckDB error text can echo the offending SQL AND absolute host
  * paths (e.g. a failed `read_json_auto('/abs/...')` names the path); the jailed
  * client must never see daemon-side host paths. Replace any absolute path-like
  * run (`/...`, `~/...`, `C:\...`) with `<path>` and bound the length. Pure.
@@ -160,7 +160,7 @@ const SQL_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
  * query on EVERY `-c` payload. The ORDER is load-bearing — each statement runs
  * left-to-right and the security knobs LOCK once restrictive, so they must be
  * set BEFORE the model query (which is appended after this prelude) so the query
- * cannot widen them from inside its own SQL (CR-01):
+ * cannot widen them from inside its own SQL:
  *
  *   1. `allowed_directories=['<workspaceDir>']` — the run's workspace is the ONLY
  *      directory DuckDB may read; these allow-roots are queryable IRRESPECTIVE of
@@ -183,7 +183,8 @@ const SQL_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
  */
 function buildDuckDbHardeningPrelude(workspaceDir: string): string {
   // Single-quote-escape the workspace path for the SQL string-list literal
-  // (a data-dir / agent-id containing a quote must not break out — mirrors WR-01).
+  // (a data-dir / agent-id containing a quote must not break out — same
+  // escaping as the jsonpath core's path literal).
   const escWs = workspaceDir.replace(/'/g, "''");
   return (
     `SET allowed_directories=['${escWs}']; ` +
@@ -196,7 +197,7 @@ function buildDuckDbHardeningPrelude(workspaceDir: string): string {
 /**
  * Statement keywords that let DuckDB install an extension, load one, attach an
  * external database, or read/write a file/URL outside the confined `results/`
- * input — the daemon-side SSRF / exfil / file-write surface (T-221-QRY-01). The
+ * input — the daemon-side SSRF / exfil / file-write surface. The
  * query engine is a read-only slicer; ANY of these in a model-supplied query is
  * refused BEFORE `duckdb` is ever spawned. Matched as whole words, case-insensitive.
  */
@@ -223,7 +224,7 @@ const DANGEROUS_URL_SCHEMES = ["http://", "https://", "s3://", "gcs://", "gs://"
  * DuckDB local-file / environment table functions that have NO legitimate use
  * over a tabular `results/` ResultRef — they read raw file bytes, enumerate a
  * directory, or read a daemon env var from an ARBITRARY absolute host path with
- * none of the {@link DANGEROUS_SQL_KEYWORDS} and no url-scheme (CR-01). The real
+ * none of the {@link DANGEROUS_SQL_KEYWORDS} and no url-scheme. The real
  * confinement is `enable_external_access=false` + `allowed_directories` in
  * {@link buildDuckDbHardeningPrelude} (which blocks ALL readers off the allow-root,
  * including future ones); this denylist is belt-and-suspenders for the pure-exfil
@@ -245,7 +246,7 @@ const DANGEROUS_SQL_READERS = [
 
 /**
  * Screen a model-supplied DuckDB query for the extension / file-write / network
- * verbs and url-readers a read-only slicer must never run (T-221-QRY-01). Pure —
+ * verbs and url-readers a read-only slicer must never run. Pure —
  * returns a human reason on the FIRST hit, or `null` when the query is safe to
  * spawn. Called BEFORE `execFile` so a malicious query NEVER reaches `duckdb`.
  *
@@ -337,7 +338,7 @@ export function createOrchestrateExecutorCores(
   }
 
   /**
-   * The `jq` core (READ-02): resolve the workspace-confined path and run the
+   * The `jq` core: resolve the workspace-confined path and run the
    * system `jq` over it (no shell — `execFile`). Returns the parsed slice, or a
    * content-free `{ error }` on a bad path / missing binary / non-zero exit.
    */
@@ -426,7 +427,7 @@ export function createOrchestrateExecutorCores(
     log.debug({ step: "duckdb-spawn", toolName }, "orchestrate duckdb spawning");
     // Confine the daemon-side duckdb to the run's workspace: the prelude sets
     // allowed_directories=[<ws>] + enable_external_access=false + lock BEFORE the
-    // (untrusted) model query (CR-01), and the process cwd is the workspace so a
+    // (untrusted) model query, and the process cwd is the workspace so a
     // workspace-relative `results/...` read resolves inside the allow-root rather
     // than against the daemon's cwd.
     const payload = buildDuckDbHardeningPrelude(workspaceDir) + query;
@@ -455,7 +456,7 @@ export function createOrchestrateExecutorCores(
                 missing
                   ? "duckdb is not installed on the host"
                   : // Scrub absolute host paths + bound length before the error
-                    // crosses the jail boundary (IN-04): a duckdb diagnostic can
+                    // crosses the jail boundary: a duckdb diagnostic can
                     // echo the offending SQL/path; the jailed client must not see
                     // daemon-side host paths.
                     `duckdb error: ${scrubDuckDbStderr(stderr) || "non-zero exit"}`,
@@ -475,7 +476,7 @@ export function createOrchestrateExecutorCores(
   }
 
   /**
-   * The `sql` core (QRY-01): run a model-supplied DuckDB query over the
+   * The `sql` core: run a model-supplied DuckDB query over the
    * workspace-confined ResultRef file. Path-confined (`safePath`), then screened
    * (`rejectDangerousSql` — INSTALL/LOAD/ATTACH/COPY/EXPORT/url-readers refused
    * BEFORE any spawn, the SSRF/exfil floor), then run through the hardened
@@ -511,7 +512,7 @@ export function createOrchestrateExecutorCores(
     }
     // Screen the model query for extension / file-write / network verbs, the
     // pure-exfil local-file readers, + url readers BEFORE spawning duckdb
-    // (T-221-QRY-01 / CR-01) — refuse, never spawn, on a hit. The running duckdb
+    // — refuse, never spawn, on a hit. The running duckdb
     // is ALSO confined to the workspace via the hardening prelude (defense in depth).
     const rejection = rejectDangerousSql(query);
     if (rejection !== null) {
@@ -525,7 +526,7 @@ export function createOrchestrateExecutorCores(
   };
 
   /**
-   * The `jsonpath` core (QRY-02): extract a precise value from a JSON ResultRef
+   * The `jsonpath` core: extract a precise value from a JSON ResultRef
    * via DuckDB `json_extract` — NO eval-based JSONPath library (banned, RCE CVEs).
    * Path-confined (`safePath`), the expr validated to a conservative `$`-dot/bracket
    * grammar (`isSafeJsonPath`) so it carries no SQL/quote injection, then compiled
@@ -561,8 +562,8 @@ export function createOrchestrateExecutorCores(
       return errorResult("jsonpath path escapes the workspace");
     }
     // Validate the JSONPath to the conservative dot/bracket grammar so it cannot
-    // inject SQL/quotes into the json_extract literal (the no-eval safety floor,
-    // T-221-QRY-03). Refused BEFORE any spawn.
+    // inject SQL/quotes into the json_extract literal (the no-eval safety
+    // floor). Refused BEFORE any spawn.
     if (!isSafeJsonPath(expr)) {
       log.warn(
         { errorKind: "validation" as const, hint: "jsonpath expr is not a safe $-rooted dot/bracket path — refusing", toolName: "jsonpath" },
@@ -575,7 +576,7 @@ export function createOrchestrateExecutorCores(
     // Compile the JSONPath into a DuckDB json_extract query over read_json_auto.
     // The path literal is the safePath-confined absolute path; the expr passed the
     // grammar gate above. read_json_auto yields one row of the doc as `j`.
-    // WR-01: single-quote-escape absPath before interpolating it into the SQL
+    // Single-quote-escape absPath before interpolating it into the SQL
     // string literal. `safePath` confines the LOCATION (under the workspace) but
     // does NOT escape SQL metacharacters; an operator data-dir / agent-id
     // containing a `'` (agentId is only z.string().min(1)) would otherwise break

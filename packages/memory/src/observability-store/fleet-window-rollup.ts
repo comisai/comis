@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `reduceFleetWindow` (A2) — the PURE cross-session window-rollup reducer.
+ * `reduceFleetWindow` — the PURE cross-session window-rollup reducer.
  *
- * Folds the per-session A1 rollups (`SessionSummaryRollup[]`, produced by
- * `ObservabilityStore.aggregateSessionsInWindow` in 159-01) into ONE fleet
+ * Folds the per-session rollups (`SessionSummaryRollup[]`, produced by
+ * `ObservabilityStore.aggregateSessionsInWindow`) into ONE fleet
  * aggregate: session count, degraded rate, merged + capped top errorKinds,
  * breaker-trip total, per-tool ok/failed, and cost. This is the cross-session
  * reduce that `obs.explain` structurally cannot produce — it sees a single
  * session, this sees the whole window.
  *
- * THE LOAD-BEARING REQUIREMENT — real synthetic exclusion (NOT the 158-gate
- * no-op trap): when `excludeSynthetic` is set, the reducer drops every row whose
+ * THE LOAD-BEARING REQUIREMENT — real synthetic exclusion (not a no-op): when
+ * `excludeSynthetic` is set, the reducer drops every row whose
  * `source` is not `"runtime"` BEFORE reducing, so test/bench sessions cannot
  * inflate the operator-facing fleet metric. The filter acts on the REAL
- * `SessionSummaryRollup.source` field that 159-01 threaded onto the row's
- * `details` JSON — the Phase-158 gap-gate explicitly flagged that a bare
- * exclusion was a no-op when the field did not exist. The companion test pins
+ * `SessionSummaryRollup.source` field threaded onto the row's
+ * `details` JSON; a bare exclusion would be a no-op if the field did not exist.
+ * The companion test pins
  * this by asserting the two `excludeSynthetic` branches produce DIFFERENT counts.
  *
  * Purity + bounding (AGENTS §2.5 determinism; §2.7 bounded-payload): no clock, no
@@ -38,7 +38,7 @@ const FLEET_TOP_ERROR_KINDS_CAP = 3;
 /**
  * How many distinct degradation CAUSES (`endReason` buckets) the fleet rollup's
  * `degradedByCause` keeps — hard cap, DoS-bounded. Sized to cover the FULL closed
- * degraded-cause union so a real cause can NEVER be silently dropped (IN-02): the
+ * degraded-cause union so a real cause can NEVER be silently dropped: the
  * reachable causes are the 9 non-`"success"` members of the `sessionEnd.endReason`
  * union (error, timeout, budget_exceeded, budget_exhausted, circuit_open,
  * provider_degraded, completed_with_tool_errors, context_exhausted,
@@ -74,7 +74,7 @@ export interface FleetWindowRollup {
    * (`sessionCount`) and `degradedRate`, rather than re-deriving the count from
    * the unfiltered rows (which would double-count a synthetic degraded row and
    * make `sessions.degraded` exceed `total` / disagree with `degradedRate` and
-   * `sum(degradedByCause)`) (WR-01). Equals `sum(Object.values(degradedByCause))`
+   * `sum(degradedByCause)`). Equals `sum(Object.values(degradedByCause))`
    * before the cap (the cap only trims the cause SPREAD, not this total).
    */
   degradedCount: number;
@@ -83,7 +83,7 @@ export interface FleetWindowRollup {
   /** Merged per-kind failure counts, capped to the top-N by summed count. */
   topErrorKinds: Record<string, number>;
   /**
-   * QT2/QT3 — degraded session COUNTS bucketed by the named `endReason` cause
+   * Degraded session COUNTS bucketed by the named `endReason` cause
    * (the fleet-level degradation detector: "N degraded by context_exhausted, M
    * by output_starved"). ONLY degraded rows contribute; a missing/blank cause
    * folds into `"unknown"`. Capped at {@link FLEET_DEGRADED_BY_CAUSE_CAP},
@@ -110,7 +110,7 @@ export function reduceFleetWindow(
   rows: readonly SessionSummaryRollup[],
   opts: { excludeSynthetic: boolean },
 ): FleetWindowRollup {
-  // The load-bearing filter: act on the REAL source field threaded by 159-01.
+  // The load-bearing filter: act on the REAL source field threaded onto the rollup row.
   // `source === "runtime"` is a genuine predicate (the row carries the value),
   // NOT the 158-gate no-op (which filtered a field that did not exist).
   const kept = opts.excludeSynthetic ? rows.filter((r) => r.source === "runtime") : rows;
@@ -120,7 +120,7 @@ export function reduceFleetWindow(
   let costUsd = 0;
   const mergedKinds = new Map<string, number>();
   const mergedTools = new Map<string, { ok: number; failed: number }>();
-  // QT2/QT3 — degraded-session counts bucketed by named endReason cause.
+  // Degraded-session counts bucketed by named endReason cause.
   const causeCounts = new Map<string, number>();
 
   for (const r of kept) {
@@ -138,10 +138,10 @@ export function reduceFleetWindow(
     costUsd += r.costUsd;
     for (const [kind, n] of Object.entries(r.topErrorKinds)) {
       // Defensive coercion: the reducer is a public export reachable directly by
-      // the Phase-161 handler, so it must not assume its caller validated. A
+      // the fleet handler, so it must not assume its caller validated. A
       // non-finite/non-number count contributes 0 rather than producing "05"
       // (string concat) or NaN — keeping the `number` output contract honest
-      // regardless of caller hygiene (mirrors the A3 reader's Number.isFinite).
+      // regardless of caller hygiene (mirrors the session reader's Number.isFinite).
       const inc = typeof n === "number" && Number.isFinite(n) ? n : 0;
       mergedKinds.set(kind, (mergedKinds.get(kind) ?? 0) + inc);
     }
@@ -177,7 +177,7 @@ export function reduceFleetWindow(
   const sessionCount = kept.length;
   return {
     sessionCount,
-    // The absolute degraded count over the kept rows — WR-01: the fleet handler
+    // The absolute degraded count over the kept rows — the fleet handler
     // reads this back so `sessions.degraded` shares the synthetic-excluded
     // population with `total`/`degradedRate` instead of counting unfiltered rows.
     degradedCount,

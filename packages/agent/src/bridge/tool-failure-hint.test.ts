@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// UC-C2 obs-gap (live 2026-06-20): the generic tool-failure hint ("check
+// Live incident (2026-06-20): the generic tool-failure hint ("check
 // errorText for root cause") masked the actual `[error_code]` the errorText
 // carried, so a command-allowlist policy block read like a tmux/macOS
-// dependency failure. The hint now names the bracketed category code.
+// dependency failure. The hint names the bracketed category code.
 import { describe, it, expect } from "vitest";
 import { toolFailureHint, GENERIC_TOOL_FAILURE_HINT } from "./tool-failure-hint.js";
 
 describe("toolFailureHint", () => {
-  it("names permission_denied from a JSON-wrapped tool result (the UC-C2 shape)", () => {
+  it("names permission_denied from a JSON-wrapped tool result (code buried in content[].text)", () => {
     const errorText = '{"content":[{"type":"text","text":"[permission_denied] command not allowlisted: expr"}],"details":{}}';
     const hint = toolFailureHint(errorText);
     expect(hint).toContain("permission_denied");

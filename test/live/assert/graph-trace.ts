@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Graph-trace asserter — typed helpers for the Phase-141 ORCH test suite.
+ * Graph-trace asserter — typed helpers for the ORCH test suite.
  *
  * Provides structural asserters over captured EventBus event arrays for the
  * real graph lifecycle events emitted by events-agent.ts:
@@ -133,7 +133,7 @@ function nodeUpdatedEvents(events: CapturedEvent[]): NodeUpdatedPayload[] {
  * @param graphId        - Optional graphId to scope events; when provided, only
  *                         events where payload.graphId === graphId are considered.
  *                         When omitted, all graph:node_updated events are used.
- *                         Prevents cross-graph pollution in multi-graph scenarios (WR-05).
+ *                         Prevents cross-graph pollution in multi-graph scenarios.
  * @throws Error when any node starts before its declared predecessor.
  */
 export function assertDependencyOrder(
@@ -198,7 +198,7 @@ export function assertDependencyOrder(
  * @param graphId - Optional graphId to scope events; when provided, only
  *                  events where payload.graphId === graphId are considered.
  *                  When omitted, all graph:node_updated events are used.
- *                  Prevents cross-graph pollution in multi-graph scenarios (WR-05).
+ *                  Prevents cross-graph pollution in multi-graph scenarios.
  * @throws Error when activeSet.size exceeds cap after any event.
  */
 export function assertConcurrencyCapHolds(

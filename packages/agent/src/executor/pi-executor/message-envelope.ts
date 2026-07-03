@@ -108,13 +108,13 @@ export function handleEnvelopeException(
     readonly error: unknown;
     readonly sessionKey: SessionKey;
     readonly agentId: string | undefined;
-    /** Execution start (clock ms) — elapsed rides the WARN + timeout hint (177-REVIEW IN-02). */
+    /** Execution start (clock ms) — elapsed rides the WARN + timeout hint. */
     readonly executionStartMs: number;
   },
 ): void {
   const { error, sessionKey, agentId, executionStartMs } = ctx;
 
-  // CR-01 (Phase 166): ContextExhaustionError is a clean escalation — it means
+  // ContextExhaustionError is a clean escalation — it means
   // the pre-flight fit check determined the conversation cannot fit in the context
   // window even after all down-shifts.  It must map to "context_exhausted" so
   // END_REASON_MAP fires the correct degradation cause for fleet-health reporting.
@@ -131,9 +131,9 @@ export function handleEnvelopeException(
     );
     state.result.finishReason = "context_exhausted";
     state.result.response = "The conversation history is too large to process. Please start a new conversation or use the `sessions reset` command.";
-    // Issue-6: carry the exhaustion message (which embeds the `[cause: …]` tag)
+    // Carry the exhaustion message (which embeds the `[cause: …]` tag)
     // so postExecution's buildContextExhaustedReply can branch its advice by
-    // cause — mirrors what the HR-01 mid-turn path gets via lastLlmErrorMessage.
+    // cause — mirrors what the mid-turn recovery path gets via lastLlmErrorMessage.
     state.result.errorContext = {
       errorType: "ContextExhaustion",
       retryable: false,
@@ -142,14 +142,13 @@ export function handleEnvelopeException(
     return;
   }
 
-  // Classify BEFORE the WARN so the knob-named hint rides the log line
-  // (LAT-01). This envelope seam has no effectiveTimeout in scope (state
-  // carries only the result; threading new fields is out of 177-04's scope),
-  // so the binding degrades gracefully to the agent knob with the ctx
-  // agentId — the H-6/H-8 contract: a knob-named hint, never a throw. The
-  // elapsed time IS in scope (executionStartMs, 177-REVIEW IN-02): the §2.7
-  // matrix wants durationMs on failure lines, and the hint's elapsed clause
-  // matches the failure-path consumer.
+  // Classify BEFORE the WARN so the knob-named hint rides the log line.
+  // This envelope seam has no effectiveTimeout in scope (state carries only
+  // the result), so the binding degrades gracefully to the agent knob with
+  // the ctx agentId — the contract: a knob-named hint, never a throw. The
+  // elapsed time IS in scope (executionStartMs): failure log lines must
+  // carry durationMs, and the hint's elapsed clause matches the
+  // failure-path consumer.
   const durationMs = deps.clock.now() - executionStartMs;
   const isPromptTimeout = error instanceof PromptTimeoutError;
   const classifiedOuter = isPromptTimeout
@@ -168,7 +167,7 @@ export function handleEnvelopeException(
   // Never expose raw error internals (API keys, URLs, stack traces) to users.
   // The raw error is already logged to deps.logger.warn above for operator diagnostics.
   // The classified userMessage stays generic/user-safe — the knob detail
-  // rides ONLY the hint above (T-177-13).
+  // rides ONLY the hint above.
   state.result.response = classifiedOuter.userMessage;
   state.result.errorContext = {
     errorType: isPromptTimeout ? "PromptTimeout" : "UnexpectedError",

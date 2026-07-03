@@ -54,16 +54,16 @@ import {
   resolveOutputFormat,
   parseTtsDirective,
 } from "@comis/skills";
-// VIS-01 (187): the daemon-side vision gate — `isVisionCapable(getModel(...))`,
+// The daemon-side vision gate — `isVisionCapable(getModel(...))`,
 // the SAME dance setup-channels-media.ts:135 runs. @comis/agent + pi-ai are
 // already daemon deps (graph-coordinator.ts:16, setup-channels-media.ts:35).
 import { isVisionCapable } from "@comis/agent";
 import { getModel } from "@earendil-works/pi-ai";
 import { guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension } from "../wiring/daemon-utils.js";
-// VIS-04 (187): the vision-turn trajectory direct-emit helper (extracted to a
+// The vision-turn trajectory direct-emit helper (extracted to a
 // sibling to keep this file ≤800 — the emits would otherwise push it over).
 import { createVisionObsEmitter, resolveTerminalUnavailable } from "./vision-obs-emit.js";
-// OBS-02/03 (196): the voice-handler wiring shim (sibling — media-handlers.ts is
+// The voice-handler wiring shim (sibling — media-handlers.ts is
 // at its 800-line cap). Each handler calls wireVoiceForHandler + .completed/.failed.
 import { wireVoiceForHandler, toSttErrorKind, pruneTtsOutputDir } from "./voice-handler-wiring.js";
 import { fetchImageBytesSsrfSafe } from "./ssrf-image-fetch.js";
@@ -90,7 +90,7 @@ export type { MediaHandlerDeps };
 export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcHandler> {
   return {
     [ImageAnalyzeContract.method]: async (rawParams) => {
-      // VIS-01 (187): the registry is no longer the ONLY vision path — a
+      // The registry is not the ONLY vision path — a
       // vision-capable MAIN provider serves image.analyze with no separate
       // vision key (deps.mainProviderVision). Short-circuit ONLY when NEITHER a
       // registry NOR a main-vision bridge is wired (the ladder's honest-
@@ -147,7 +147,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
           break;
         }
         case "url": {
-          // CR-01: route through the shared DNS-pinned SSRF fetcher — it
+          // Route through the shared DNS-pinned SSRF fetcher — it
           // validates the host BEFORE connecting, pins DNS to the validated IP
           // (no rebinding TOCTOU window — a bare `fetch` would re-resolve DNS
           // and could be rebound to an internal/metadata IP), refuses redirects,
@@ -187,15 +187,15 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         throw new Error(`Image size ${fileSizeMb.toFixed(1)}MB exceeds limit of ${deps.mediaConfig.imageAnalysis.maxFileSizeMb}MB`);
       }
 
-      // VIS-01/02/03 (187): the provider-following vision ladder. The handler is
-      // a CONSUMER of resolveVisionPath + deps.mainProviderVision (the 183
+      // The provider-following vision ladder. The handler is
+      // a CONSUMER of resolveVisionPath + deps.mainProviderVision (the selection
       // firewall — never re-derives selection). Tiers: main-vision → registry
-      // (byte-identical to pre-187 when the main lacks vision) → honest-
+      // (the unchanged path when the main lacks vision) → honest-
       // unavailable. The buffer/scope/size guards above ran FIRST (untouched).
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const preferredProvider = deps.mediaConfig.vision.defaultProvider;
       const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
-      // VIS-04: §2.7 clock (systemNowMs, never Date.now()) + the trajectory/§2.7-log emitter (fires media.vision.requested at construction).
+      // §2.7 clock (systemNowMs, never Date.now()) + the trajectory/§2.7-log emitter (fires media.vision.requested at construction).
       const visionStartMs = systemNowMs();
       const obs = createVisionObsEmitter(rawParams._callerSessionKey as string | undefined, deps.trajectoryRegistry, deps.logger, agentId, visionStartMs, systemNowMs, { provider: main.providerId, mainProvider: main.providerId });
       // The daemon-side vision gate (setup-channels-media.ts:135 dance): resolve
@@ -225,17 +225,17 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         (reason) => deps.logger.debug({ agentId, hint: reason, step: "vision_resolve" }, "vision path skip"),
       );
 
-      // WR-03: the last bridge-failure kind/hint, carried into the honest-
+      // The last bridge-failure kind/hint, carried into the honest-
       // unavailable terminal so it keeps the specific reason (auth_required/etc).
       let lastBridgeKind: ImageErrorKind | undefined;
       let lastBridgeHint: string | undefined;
 
       // main-vision FIRST. On a RUNTIME failure, fall back to the registry's OWN
-      // keys — never throw the bridge err out (T-187-08: no silent provider retry).
+      // keys — never throw the bridge err out (no silent provider retry).
       if (sel.ok && sel.path === "main-vision" && deps.mainProviderVision) {
         const r = await deps.mainProviderVision.describeImage(buffer, prompt, mimeType, agentId);
         if (r.ok) {
-          // VIS-04: media.vision.completed (path main-vision; costUsd from the
+          // Record media.vision.completed (path main-vision; costUsd from the
           // bridge) + the §2.7 INFO completion line (one call).
           obs.succeeded({ provider: r.value.provider, mainProvider: main.providerId, path: "main-vision", model: r.value.model, costUsd: r.value.costUsd });
           const result = { description: r.value.text, provider: r.value.provider, model: r.value.model };
@@ -243,26 +243,26 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
           return result;
         }
         // bridge runtime failure → registry fallback (media.vision.failed + §2.7 WARN).
-        // WR-03: keep the bridge's kind + content-free hint for the terminal.
+        // Keep the bridge's kind + content-free hint for the terminal.
         const bridgeKind = (r.error as { errorKind?: ImageErrorKind }).errorKind;
         lastBridgeKind = bridgeKind;
         lastBridgeHint = (r.error as { message?: string }).message;
         obs.failed({ errorKind: bridgeKind ?? "dependency", path: "main-vision", provider: main.providerId, mainProvider: main.providerId, hint: "main-vision failed; falling back to the vision registry", message: "Main-provider vision failed, trying the registry" });
       }
 
-      // registry SECOND (VIS-02 byte-identical when the main lacks vision / an
+      // registry SECOND (the unchanged path when the main lacks vision / an
       // explicit defaultProvider is set), OR the main-vision runtime fallback.
       if ((sel.ok && (sel.path === "registry" || sel.path === "main-vision"))) {
         const provider = visionRegistry ? selectVisionProvider(visionRegistry, "image", preferredProvider) : undefined;
         if (provider) {
           const visionResult = await provider.describeImage({ image: buffer, prompt, mimeType });
           if (!visionResult.ok) {
-            // WR-01 (§2.7): instrument the registry tier's OWN failure (path
+            // §2.7: instrument the registry tier's OWN failure (path
             // label + classified errorKind) before throwing.
             obs.failedFrom(visionResult.error, { path: "registry", provider: main.providerId, mainProvider: main.providerId, hint: "vision registry provider failed", message: "Vision registry analysis failed" });
             throw visionResult.error;
           }
-          // VIS-04: media.vision.completed (path registry; NO costUsd, Pitfall 4) + INFO line.
+          // Record media.vision.completed (path registry; NO costUsd — registry providers report no cost) + INFO line.
           obs.succeeded({ provider: visionResult.value.provider, mainProvider: main.providerId, path: "registry", model: visionResult.value.model });
           const result = { description: visionResult.value.text, provider: visionResult.value.provider, model: visionResult.value.model };
           if (systemGetEnv("NODE_ENV") !== "production") ImageAnalyzeContract.response.parse(result);
@@ -271,7 +271,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         // main-vision failed AND no registry provider → honest-unavailable below.
       }
 
-      // honest-unavailable LAST — media.vision.failed + §2.7 WARN. WR-03: prefer
+      // honest-unavailable LAST — media.vision.failed + §2.7 WARN. Prefer
       // the last bridge failure's kind/hint over the generic unsupported_provider.
       const term = resolveTerminalUnavailable(sel, lastBridgeKind ?? "unsupported_provider", lastBridgeHint ?? "No vision provider available for image analysis.");
       obs.failed({ errorKind: term.errorKind, path: "unavailable", provider: main.providerId, mainProvider: main.providerId, hint: term.hint, message: "Vision analysis unavailable" });
@@ -312,14 +312,14 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         ttsOpts.speed = directive.directive.speed;
       }
 
-      // OBS-02/03: fire media.tts.requested + thread source/onSkip; record + §2.7 line.
+      // Fire media.tts.requested + thread source/onSkip; record + §2.7 line.
       const voiceObs = wireVoiceForHandler(rawParams, deps, "tts");
       const synthResult = await deps.ttsAdapter.synthesize(text, ttsOpts as { voice?: string; format?: string });
       if (!synthResult.ok) {
         voiceObs.failed({ sttErrorKind: toSttErrorKind(synthResult.error), provider: voiceObs.provider, source: voiceObs.source, errMessage: synthResult.error.message });
         throw synthResult.error;
       }
-      voiceObs.completed({ provider: voiceObs.provider, keyless: voiceObs.keyless, audioBytes: synthResult.value.audio.byteLength, source: voiceObs.source }); // WR-02: keyless costUsd:0 derived centrally in wireVoiceObs
+      voiceObs.completed({ provider: voiceObs.provider, keyless: voiceObs.keyless, audioBytes: synthResult.value.audio.byteLength, source: voiceObs.source }); // keyless costUsd:0 derived centrally in wireVoiceObs
 
       // Determine file extension from mimeType
       const ext = mimeToExtension(synthResult.value.mimeType);
@@ -446,7 +446,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // Detect MIME type from magic bytes or default to audio/ogg (common for voice messages)
       const mimeType = detectMimeFromMagicBytes(buffer) ?? "audio/ogg";
 
-      // OBS-02/03: fire media.stt.requested + thread source/onSkip; record + §2.7 line.
+      // Fire media.stt.requested + thread source/onSkip; record + §2.7 line.
       const voice = wireVoiceForHandler(rawParams, deps, "stt");
       const sttResult = await deps.transcriber.transcribe(buffer, {
         mimeType,
@@ -456,7 +456,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         voice.failed({ sttErrorKind: toSttErrorKind(sttResult.error), provider: voice.provider, source: voice.source, errMessage: sttResult.error.message });
         throw sttResult.error;
       }
-      voice.completed({ provider: voice.provider, keyless: voice.keyless, ...(sttResult.value.durationMs !== undefined ? { durationMs: sttResult.value.durationMs } : {}), audioBytes: buffer.byteLength, source: voice.source }); // WR-02: keyless costUsd:0 derived centrally
+      voice.completed({ provider: voice.provider, keyless: voice.keyless, ...(sttResult.value.durationMs !== undefined ? { durationMs: sttResult.value.durationMs } : {}), audioBytes: buffer.byteLength, source: voice.source }); // keyless costUsd:0 derived centrally
       const result = {
         text: sttResult.value.text,
         language: sttResult.value.language,
@@ -487,12 +487,12 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
 
       const mimeType = detectMimeFromMagicBytes(buffer) ?? "video/mp4";
 
-      // VIS-03 (187): raw video → the gemini-video tier ONLY (Pitfall 3 — pi-ai
+      // Raw video → the gemini-video tier ONLY (pi-ai
       // has no video content type, so main-vision is N/A for video). The handler
       // consumes resolveVisionPath (mediaKind:"video"); describeVideo is UNCHANGED.
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
-      // VIS-04: clock + the trajectory/§2.7-log emitter (fires media.vision.requested).
+      // Clock + the trajectory/§2.7-log emitter (fires media.vision.requested).
       const visionStartMs = systemNowMs();
       const obs = createVisionObsEmitter(rawParams._callerSessionKey as string | undefined, deps.trajectoryRegistry, deps.logger, agentId, visionStartMs, systemNowMs, { provider: main.providerId, mainProvider: main.providerId });
       const videoProvider = selectVisionProvider(deps.visionRegistry, "video", deps.mediaConfig.vision.defaultProvider);
@@ -510,12 +510,12 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
 
       const videoResult = await videoProvider.describeVideo({ video: buffer, prompt, mimeType });
       if (!videoResult.ok) {
-        // WR-01 (§2.7): instrument the gemini-video tier's OWN failure before throwing.
+        // §2.7: instrument the gemini-video tier's OWN failure before throwing.
         obs.failedFrom(videoResult.error, { path: "gemini-video", provider: main.providerId, mainProvider: main.providerId, hint: "gemini-video provider failed", message: "Video description failed" });
         throw videoResult.error;
       }
 
-      // VIS-04: media.vision.completed (path gemini-video; NO costUsd, Pitfall 4) + INFO line.
+      // Record media.vision.completed (path gemini-video; NO costUsd — registry providers report no cost) + INFO line.
       obs.succeeded({ provider: videoResult.value.provider, mainProvider: main.providerId, path: "gemini-video", model: videoResult.value.model });
       const result = {
         description: videoResult.value.text,
@@ -762,7 +762,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       MediaProvidersContract.request.parse(userParams);
       const result = {
         stt: deps.transcriber ? {
-          // FLAG 6 (OBS-03): report the resolved STT provider (selection > config > literal).
+          // Report the resolved STT provider (selection > config > literal).
           provider: deps.voiceSelection?.stt?.provider ?? deps.mediaConfig.transcription.provider ?? "configured",
           model: undefined,
           fallback: [],

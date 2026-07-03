@@ -77,7 +77,7 @@ export interface ScopeArgsInput {
    * gateway-token family / master key). bwrap `--unsetenv` is name-only, so a prefix
    * family (`GATEWAY_TOKEN_*`) must arrive here as enumerated concrete names; this is
    * what protects the DEFAULT tmux/durable backend, which inherits the tmux SERVER env
-   * and bypasses the `scrubChildEnv` object (TERM-ENV-GATEWAY-TOKEN-LEAK). Order- and
+   * and bypasses the `scrubChildEnv` object. Order- and
    * duplicate-insensitive (deduped against the fixed list before emit).
    */
   extraUnsetEnvKeys?: readonly string[];
@@ -194,7 +194,7 @@ function isUnderDir(child: string, parent: string): boolean {
  * explicitly for the controlling tty. The `<network>` refinement comes AFTER
  * `--unshare-all` — bwrap mutates its unshare set per flag IN ARG ORDER, so a
  * `--share-net` emitted before the unshare-all would be re-clobbered and the
- * jail would get NO network even at `network:"full"` (the live-VPS T5 bug).
+ * jail would get NO network even at `network:"full"` (a live-VPS-reproduced bug).
  */
 export function buildScopeArgs(input: ScopeArgsInput): string[] {
   const args: string[] = [input.bwrapPath];
@@ -259,20 +259,21 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   //    `NODE_OPTIONS=--permission …` leaked into a driven claude AND CLAUDE_CODE_BUBBLEWRAP never
   //    reached it → its Bash/SessionStart hook EROFS'd on the default backend). `--unsetenv` strips
   //    the daemon's interpreter-control hardening (NODE_OPTIONS, BASH_ENV, …) + the CLAUDECODE
-  //    sentinel; `--setenv CLAUDE_CODE_BUBBLEWRAP=1` (EROFS-01) tells the driven CLI it is already
+  //    sentinel; `--setenv CLAUDE_CODE_BUBBLEWRAP=1` tells the driven CLI it is already
   //    bubblewrapped so it does NOT nest its own (nested-broken) sandbox. The PTY-path `env` scrub
   //    (`scrubChildEnv`) stays as defense-in-depth; this is the authoritative, backend-independent
   //    application.
   //    The fixed interpreter-control/CLAUDECODE names ALWAYS unset; the caller-supplied
-  //    daemon-secret names (the gateway-token family / master key present in the live env —
-  //    TERM-ENV-GATEWAY-TOKEN-LEAK) are deduped in so the tmux backend strips them too.
+  //    daemon-secret names (the gateway-token family / master key present in the live env,
+  //    which would otherwise leak into driven children) are deduped in so the tmux backend
+  //    strips them too.
   const unsetEnvKeys = new Set<string>([...JAIL_UNSET_ENV_VARS, ...(input.extraUnsetEnvKeys ?? [])]);
   for (const key of unsetEnvKeys) {
     args.push("--unsetenv", key);
   }
   args.push("--setenv", "CLAUDE_CODE_BUBBLEWRAP", "1");
 
-  // -- claude session-env carve-out (EROFS-03) -- a writable tmpfs at <home>/.claude/session-env.
+  // -- claude session-env carve-out -- a writable tmpfs at <home>/.claude/session-env.
   //    claude's OWN bash sandbox remounts $HOME read-only IN-PLACE before `mkdir ~/.claude/
   //    session-env/<id>` (its per-bash-command state) → EROFS on the default durable backend in the
   //    prod seccomp'd daemon (CLAUDE_CODE_BUBBLEWRAP does NOT suppress that remount there — it only
@@ -316,8 +317,8 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   //    which also shadows the session workspace when it IS the agent's OWN workspace
   //    (the default `<dataDir>/workspace/<agent>`, the same dir the agent's read/
   //    write/exec tools operate on). Re-bind ONLY that subpath RW on top of the
-  //    tmpfs so the workspace is writable + PERSISTENT in the jail (a driven GSD
-  //    milestone's work survives), while the secrets at sibling <dataDir> paths
+  //    tmpfs so the workspace is writable + PERSISTENT in the jail (a driven
+  //    long-running coding session's work survives), while the secrets at sibling <dataDir> paths
   //    (secret.db / .env / config.yaml / memory.db) stay shadowed. A workspace
   //    OUTSIDE <dataDir> (e.g. an operator-relocated dir) needs no re-bind — its
   //    earlier `pushFilesystemBinds` mount is never masked. `isUnderDir` is strict

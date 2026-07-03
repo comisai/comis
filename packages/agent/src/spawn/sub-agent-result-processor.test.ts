@@ -227,7 +227,7 @@ describe("persistFailureRecord", () => {
     expect(content.usage.cacheSavedUsd).toBe(0.01);
   });
 
-  it("backward compat: old usage without cache fields parses without error", async () => {
+  it("usage without cache fields persists and parses without error (cache fields optional)", async () => {
     await persistFailureRecord({
       dataDir: tmpDir,
       sessionKey: "default:sub-agent-compat:sub-agent:compat",
@@ -328,17 +328,12 @@ describe("deliverFailureNotification", () => {
 });
 
 // ---------------------------------------------------------------------------
-// deliverFailureNotification idempotency (DELIVERY-03)
+// deliverFailureNotification idempotency
 //
 // The failure path must dedup on the SAME announceKey = `${callerSessionKey}::${runId}`
 // that the success path (deliverAnnouncement) builds, sharing the batcher's
-// deliveredKeys via hasDelivered/markDelivered (D-SHAREDDEDUP from Plan 01).
-// A Phase-170 budget-failed node delivered twice must notify ONCE.
-//
-// NOTE: these tests pass `callerSessionKey` + a `batcher` with hasDelivered/
-// markDelivered into deliverFailureNotification — neither exists on the
-// pre-patch signature, so the suite fails to compile against pre-patch code.
-// That compile-failure IS the RED for the signature change (§2.10).
+// deliveredKeys via hasDelivered/markDelivered.
+// A budget-failed graph node delivered twice must notify ONCE.
 // ---------------------------------------------------------------------------
 
 /** A stub batcher whose delivered-key set is a real shared Set (mirrors the orchestrator batcher). */
@@ -356,7 +351,7 @@ function makeStubBatcher() {
   };
 }
 
-describe("deliverFailureNotification idempotency (DELIVERY-03)", () => {
+describe("deliverFailureNotification idempotency on the shared announce key", () => {
   it("is idempotent on the same (callerSessionKey, runId): second call is a no-op", async () => {
     const sendToChannel = vi.fn().mockResolvedValue(true);
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
@@ -400,7 +395,7 @@ describe("deliverFailureNotification idempotency (DELIVERY-03)", () => {
     expect(batcher.markDelivered).toHaveBeenCalledWith("default:u1:c1::r1");
   });
 
-  it("does NOT mark delivered when sendToChannel rejects (key stays retry-eligible, Pitfall 3)", async () => {
+  it("does NOT mark delivered when sendToChannel rejects (key stays retry-eligible)", async () => {
     const sendToChannel = vi.fn().mockRejectedValue(new Error("network down"));
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
     const batcher = makeStubBatcher();
@@ -446,7 +441,7 @@ describe("deliverFailureNotification idempotency (DELIVERY-03)", () => {
     expect(batcher.markDelivered).not.toHaveBeenCalled();
   });
 
-  it("behaves as today when deps.batcher is absent (no dedup, always sends, never throws)", async () => {
+  it("always sends when deps.batcher is absent (no dedup sink is consulted, never throws)", async () => {
     const sendToChannel = vi.fn().mockResolvedValue(true);
 
     const params = {
@@ -458,7 +453,7 @@ describe("deliverFailureNotification idempotency (DELIVERY-03)", () => {
       callerSessionKey: "default:u1:c1",
     };
 
-    // No batcher in deps → behaves exactly as the pre-patch path.
+    // No batcher (and no deliveryDedup) in deps → no dedup sink → both sends fire.
     await deliverFailureNotification(params, { sendToChannel });
     await deliverFailureNotification(params, { sendToChannel });
 
@@ -467,17 +462,17 @@ describe("deliverFailureNotification idempotency (DELIVERY-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02: in a NO-BATCHER construction the success path must still mark delivered
-// so the failure path dedups. Pre-fix, deliverAnnouncement only marked a key
-// indirectly THROUGH the batcher; its non-batcher success branches (direct
-// announceToParent / direct sendToChannel) delivered to the user but never
-// marked, so deliverFailureNotification's dedup was silently inert whenever the
-// runner was constructed without a batcher. A shared DeliveryDedup injected into
+// In a NO-BATCHER construction the success path must still mark delivered
+// so the failure path dedups. If deliverAnnouncement only marked a key
+// indirectly THROUGH the batcher, its non-batcher success branches (direct
+// announceToParent / direct sendToChannel) would deliver to the user but never
+// mark, leaving deliverFailureNotification's dedup silently inert whenever the
+// runner is constructed without a batcher. A shared DeliveryDedup injected into
 // BOTH closes the hole: a success then a sweep-driven failure on the same key
 // must NOT double-deliver, with or without a batcher.
 // ---------------------------------------------------------------------------
 
-describe("deliverAnnouncement / deliverFailureNotification shared dedup without a batcher (WR-02)", () => {
+describe("deliverAnnouncement / deliverFailureNotification shared dedup without a batcher", () => {
   it("a direct-channel success marks the shared dedup so a later failure notification is suppressed", async () => {
     const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
     const { createDeliveryDedup } = await import("./announce-key.js");
@@ -565,7 +560,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     expect(deliveryDedup.has("default:u3:c3::r3")).toBe(true);
   });
 
-  it("does NOT mark the shared dedup when the direct send fails (key stays open, Pitfall 3)", async () => {
+  it("does NOT mark the shared dedup when the direct send fails (key stays open)", async () => {
     const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
     const { createDeliveryDedup } = await import("./announce-key.js");
     const deliveryDedup = createDeliveryDedup();
@@ -589,12 +584,12 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
 });
 
 // ---------------------------------------------------------------------------
-// classifyErrorContext - HTTP 5xx detection (operator-precedence regression).
-// The old expression
+// classifyErrorContext - HTTP 5xx detection (word-boundary guard).
+// A naive expression like
 // `lowerMsg.includes("provider") || lowerMsg.includes("5") && lowerMsg.includes("00")`
-// falsely classified any message containing both "5" and "00" substrings as a
-// retryable ProviderError. The fix uses a word-bounded regex /\b5\d{2}\b/ to
-// match only HTTP status codes 500-599.
+// falsely classifies any message containing both "5" and "00" substrings as a
+// retryable ProviderError. The word-bounded regex /\b5\d{2}\b/ matches
+// only HTTP status codes 500-599.
 // ---------------------------------------------------------------------------
 
 describe("classifyErrorContext HTTP-5xx detection", () => {
@@ -613,7 +608,7 @@ describe("classifyErrorContext HTTP-5xx detection", () => {
   });
 
   it("does NOT misclassify benign messages containing '5' and '00' substrings", () => {
-    // These were false-positives under the prior operator-precedence bug.
+    // Benign messages containing both "5" and "00" substrings but no HTTP 5xx code.
     const falsePositiveCandidates = [
       "Step 5 failed at 12:00:00",
       "Took 5 attempts, total 0.0001 cost",
@@ -640,20 +635,19 @@ describe("classifyErrorContext HTTP-5xx detection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// classifyErrorContext - transport-errno widening (DELIVERY-02).
+// classifyErrorContext - transport-errno widening.
 // The bare Node errno spellings do NOT contain "timeout"/"timed out"
 // (e.g. "ETIMEDOUT".toLowerCase() === "etimedout"), and ECONNRESET /
 // ECONNREFUSED / "socket hang up" / "fetch failed" / "network request failed"
-// match NONE of the existing transient tokens — so on pre-patch code they fall
-// through to Unknown → retryable:false → immediate dead-letter, defeating the
-// most common transient delivery failure. The widening adds an explicit
-// transport-errno branch so these self-heal (retry-with-backoff in the batcher).
+// match NONE of the other transient tokens — without an explicit branch they
+// would fall through to Unknown → retryable:false → immediate dead-letter,
+// defeating the most common transient delivery failure. The explicit
+// transport-errno branch makes these self-heal (retry-with-backoff in the batcher).
 // ---------------------------------------------------------------------------
 
-describe("classifyErrorContext transport-errno widening (DELIVERY-02)", () => {
+describe("classifyErrorContext transport-errno widening", () => {
   it("classifies bare transport errno spellings as retryable (transient delivery blips)", () => {
-    // All FAIL on pre-patch code (Unknown / retryable:false); the widening flips
-    // each to retryable:true. Case-insensitive on the raw message.
+    // Case-insensitive on the raw message.
     const transientTransport = [
       "ETIMEDOUT",
       "ECONNRESET",
@@ -677,7 +671,7 @@ describe("classifyErrorContext transport-errno widening (DELIVERY-02)", () => {
 
   // REGRESSION-GUARD: the widening must NOT make genuinely permanent failures
   // retryable, and must NOT collide with the existing numeric false-positive
-  // pins. These stay exactly as pre-patch (retryable:false / NOT ProviderError).
+  // pins. These must stay retryable:false / NOT ProviderError.
   it("keeps genuinely permanent failures non-retryable after the widening", () => {
     expect(classifyErrorContext("token budget exceeded", "failed").retryable).toBe(false);
     expect(classifyErrorContext("max steps reached", "failed").retryable).toBe(false);
@@ -701,12 +695,12 @@ describe("classifyErrorContext transport-errno widening (DELIVERY-02)", () => {
     }
   });
 
-  // INFO-CLASSIFIER: the two natural-language phrases "connection reset" /
+  // The two natural-language phrases "connection reset" /
   // "connection refused" are pure exposure — their errno twins (ECONNRESET /
   // ECONNREFUSED) already match every genuine Node transport error (which always
   // carries the errno spelling), so the phrases are redundant for real failures
-  // but could over-match a PERMANENT error that quotes them as content. Drop the
-  // redundant phrases (clean tightening, errno-style only) while keeping the
+  // but could over-match a PERMANENT error that quotes them as content. The
+  // classifier omits the redundant phrases (errno-style only) while keeping the
   // errno-less real phrasings (fetch failed / socket hang up). Mirrors the
   // existing 5xx false-positive guard the file already carries.
   it("does NOT classify a permanent error that merely quotes 'connection refused' as retryable", () => {
@@ -729,8 +723,8 @@ describe("classifyErrorContext transport-errno widening (DELIVERY-02)", () => {
     expect(classifyErrorContext("read ECONNRESET", "failed").retryable).toBe(true);
   });
 
-  it("is re-exported from the spawn barrel so the daemon wiring can inject it (DELIVERY-02)", async () => {
-    // Characterization pin (Task 2): classifyErrorContext must reach the
+  it("is re-exported from the spawn barrel so the daemon wiring can inject it", async () => {
+    // Characterization pin: classifyErrorContext must reach the
     // @comis/agent public surface via the spawn/index.js barrel — the path
     // packages/agent/src/index.ts re-exports from — so setup-cross-session
     // can inject it into the orchestrator batcher (it cannot import the agent
@@ -786,13 +780,13 @@ describe("announcement scrub", () => {
 });
 
 // ---------------------------------------------------------------------------
-// deliverAnnouncement idempotency-key threading (DELIVERY-01).
+// deliverAnnouncement idempotency-key threading.
 // The key `${callerSessionKey}::${runId}` is built ONCE at the entry and
 // threaded as data through the batcher enqueue and the fallback DLQ entry —
 // never reconstructed downstream. `::` delimits the session key's own colons.
 // ---------------------------------------------------------------------------
 
-describe("deliverAnnouncement idempotency key (DELIVERY-01)", () => {
+describe("deliverAnnouncement idempotency-key threading", () => {
   it("sets idempotencyKey = `${callerSessionKey}::${runId}` on the batcher enqueue", async () => {
     const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
     const enqueue = vi.fn();

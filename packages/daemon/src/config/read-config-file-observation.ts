@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `readConfigFileObservation` — daemon-side aggregator that produces the
- * design-§9.2 file-state observation for one config path.
+ * file-state observation for one config path.
  *
  * Returns a `ConfigFileObservation` containing snapshots of:
  *   - the target config file (`snapshot`),
@@ -11,7 +11,7 @@
  * Each sibling is independently `null` when absent — the caller's
  * `createConfigObserveAuditRecord` projects the snapshot fields onto
  * the record's LKG-triple / backup-triple slots, nulling each when the
- * corresponding snapshot is null. Design §9.2 records reserve space
+ * corresponding snapshot is null. The audit records reserve space
  * for the backup writer even though no in-tree producer ships today
  * (the backup field set is a stable contract for the future writer).
  *
@@ -67,7 +67,7 @@ function backupPath(configPath: string): string {
 }
 
 /**
- * Aggregate the design-§9.2 file-state observation for one config path.
+ * Aggregate the file-state observation for one config path.
  *
  * The `snapshot`, `lkg`, and `backup` fields are independently null
  * when the corresponding file is absent or unreadable. `exists`

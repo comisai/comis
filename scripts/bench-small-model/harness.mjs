@@ -9,9 +9,8 @@
  * through the scorers and asserts expected verdicts (RED→GREEN), so the metrics
  * are trustworthy before a single GPU token is spent.
  *
- * Design source: .planning/SMALL_MODEL_EXCELLENCE_DESIGN.md (Phase 1 PROVE / M1).
  * Wire-level facts verified 2026-06-07: qwen3.6:35b + gemma4:31b both tool-call
- * via Ollama's OpenAI-compatible /v1/chat/completions (requirement L4).
+ * via Ollama's OpenAI-compatible /v1/chat/completions.
  *
  * @module
  */

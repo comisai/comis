@@ -59,7 +59,7 @@ export async function setupDeliveryQueue(deps: {
   logger: ComisLogger;
   channelAdapters: Map<string, DeliveryAdapter>;
   /**
-   * REACT-02 (Verified Learning, Phase 199): OPTIONAL outbound-message → trajectory
+   * Verified Learning: OPTIONAL outbound-message → trajectory
    * capture, threaded into every drain pass. `undefined` when learning-outcome is
    * disabled for all agents → the drain does ZERO extra work (byte-identity).
    */
@@ -93,8 +93,8 @@ export async function setupDeliveryQueue(deps: {
   // Single-tick gate: in-flight Promise prevents overlapping ticks.
   let draining: Promise<void> | null = null;
   // Transition-gate state for the empty-drain log.
-  // Previously, every recurring tick on an empty queue emitted
-  // "Delivery queue drain: no pending entries" — dominated debug logs at
+  // Without the gate, every recurring tick on an empty queue would emit
+  // "Delivery queue drain: no pending entries" — dominating debug logs at
   // one line per drainIntervalMs (5–10s). The gate logs ONCE when the
   // queue transitions to empty; subsequent empty ticks are silent. Start
   // `true` so the first empty-after-startup tick still produces a line.
@@ -201,7 +201,7 @@ export async function drainDeliveryQueue(deps: {
   drainBudgetMs: number;
   defaultMaxAttempts: number;
   /**
-   * REACT-02 (Verified Learning, Phase 199): capture (platform messageId →
+   * Verified Learning: capture (platform messageId →
    * trajectory scope) for an agent-authored OUTBOUND message so an inbound
    * reaction can resolve its trajectory. OPTIONAL — `undefined` when learning-
    * outcome is disabled for every agent (the byte-identity default → the drain
@@ -229,9 +229,9 @@ export async function drainDeliveryQueue(deps: {
 
   const entries = pendingResult.value;
   if (entries.length === 0) {
-    // Fix B (log-review): the noisy "no pending entries" log moved up to
-    // runOneDrainPass as a transition-gated emit. Direct callers (the
-    // row-selection-invariant unit test) just observe the return value.
+    // The noisy "no pending entries" log lives in runOneDrainPass as a
+    // transition-gated emit. Direct callers (the row-selection-invariant
+    // unit test) just observe the return value.
     return { hadEntries: false };
   }
 
@@ -271,7 +271,7 @@ export async function drainDeliveryQueue(deps: {
       await deliveryQueue.ack(entry.id, sendResult.value);
       delivered++;
 
-      // REACT-02 (CR-01): capture (platform messageId → trajectory scope) for
+      // Capture (platform messageId → trajectory scope) for
       // inbound-reaction resolution. Agent-authored OUTBOUND only (the delivery
       // queue is outbound); entry.traceId === trajectoryId AND options.agentId are
       // both set from the request ALS at enqueue (delivery-service.ts). The
@@ -279,17 +279,17 @@ export async function drainDeliveryQueue(deps: {
       // reaction observe()s under — it must be the REAL agent, NEVER the tenantId.
       // A null traceId (no trajectory) OR an absent agentId (a pre-executor /
       // non-agent send) is a FAIL-CLOSED skip: mis-attributing a reaction to the
-      // tenantId would corrupt cross-agent isolation (T-198-16), so we record
+      // tenantId would corrupt cross-agent isolation, so we record
       // nothing rather than fall back. The callback is undefined when
       // learning-outcome is disabled for all agents → zero extra work (byte-identity).
       const recordAgentId = typeof options.agentId === "string" ? options.agentId : undefined;
       if (entry.traceId !== null && recordAgentId !== undefined && recordOutboundMessage !== undefined) {
-        // FLAG-2: carry the conversation participant (the inbound sender) persisted
+        // Carry the conversation participant (the inbound sender) persisted
         // into optionsJson at enqueue (delivery-service.ts) so a reaction resolved
         // via this drain path is participant-aware — an unmapped group bystander
         // resolves to "external" (inert) and cannot spoof reaction-learning. Absent
-        // on legacy/pre-threading rows → undefined → the trust resolution fails safe
-        // to the prior defaultTrustLevel-for-unmapped behavior.
+        // on rows whose enqueue did not thread a participant → undefined → the trust
+        // resolution fails safe to the defaultTrustLevel-for-unmapped behavior.
         const recordParticipantId = typeof options.participantId === "string" ? options.participantId : undefined;
         recordOutboundMessage(sendResult.value, {
           traceId: entry.traceId,

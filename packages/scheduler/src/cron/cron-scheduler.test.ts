@@ -118,8 +118,8 @@ describe("CronScheduler", () => {
     scheduler.stop();
   });
 
-  it("OBS-8: a fire-and-forget system_event job logs 'dispatched', NOT 'completed' (work runs async)", async () => {
-    // reflect-obs-20260627: the __REFLECT__ sentinel is a fire-and-forget system_event — executeJob
+  it("a fire-and-forget system_event job logs 'dispatched', NOT 'completed' (work runs async)", async () => {
+    // The __REFLECT__ sentinel is a fire-and-forget system_event — executeJob
     // dispatches and returns in ms while the reflection runs ~20s async. Logging "Job completed
     // durationMs:15" reads as "finished in 15ms" and a completion-grep false-matches it. So a
     // system_event dispatch logs "Job dispatched (fire-and-forget)" with dispatch:true instead.
@@ -133,7 +133,7 @@ describe("CronScheduler", () => {
     expect(msgs).not.toContain("Job completed");
   });
 
-  it("OBS-8: an awaited agent_turn job logs 'completed' (durationMs is the real work)", async () => {
+  it("an awaited agent_turn job logs 'completed' (durationMs is the real work)", async () => {
     const turnJob = makeJob({ id: "turn", nextRunAtMs: clock - 1, payload: { kind: "agent_turn", message: "do the thing" } });
     const { scheduler, logger } = makeScheduler({ jobs: [turnJob], executeJob: vi.fn(async () => ({ status: "ok" as const })) });
     await scheduler.start();

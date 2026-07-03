@@ -224,8 +224,8 @@ content-free [`session:sub_agent_progress`](/developer-guide/event-bus) event:
 
 - It is an **advance signal**, not a result. The `progressLine` is a short status
   (a few words like `running, step N`); the payload carries **no** child output,
-  message body, or tool result -- it is content-free by design (the same §2.7
-  observability rule the rest of the platform follows).
+  message body, or tool result -- it is content-free by design (the same
+  counts-and-ids-only observability rule the rest of the platform follows).
 - It is **read-only**. The fork does not re-run the child, call a tool, or spawn
   anything -- it only reads the child's elapsed time and step count and emits the
   event. It is read-only *by construction*: the fork has no execution channel at

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PROM-01 — the standalone Prometheus `/metrics` pull surface.
+ * The standalone Prometheus `/metrics` pull surface.
  *
  * Drives the REAL `registerOtelExporter` with `prometheus.enabled:true` +
  * `otel.enabled:false` (STANDALONE — no OTLP collector), scrapes the exporter's
@@ -50,7 +50,7 @@ function standalonePrometheusConfig(port: number) {
 
 const HIGH_CARDINALITY_TOKENS = ["session", "trace_id", "traceid", "user", "sessionkey", "userid"];
 
-describe("PrometheusExporter standalone /metrics (PROM-01)", () => {
+describe("PrometheusExporter standalone /metrics", () => {
   let handle: { shutdown(): Promise<void> } | undefined;
   afterEach(async () => {
     if (handle) await handle.shutdown();
@@ -207,7 +207,7 @@ describe("wireSeriesCardinality (the distinct-series taps + the cap WARN)", () =
     await fx.shutdown();
   });
 
-  it("MD-02: past the cardinalityCap the distinct-series estimate is BOUNDED — overflow drops to a single bucket (not just a WARN)", async () => {
+  it("past the cardinalityCap the distinct-series estimate is BOUNDED — overflow drops to a single bucket (not just a WARN)", async () => {
     const warns: string[] = [];
     const fx = makeMetricFixture();
     const eventBus = new TypedEventBus();

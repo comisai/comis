@@ -57,7 +57,7 @@ export interface StrandedFinding {
 
 /**
  * The structured result of the probe. Additive to the existing WARN side-effect
- * (one probe, two sinks): the I3 boot snapshot records these COUNTS into the
+ * (one probe, two sinks): the boot snapshot records these COUNTS into the
  * `config_posture` row — never a secret value.
  */
 export interface StorageMismatchResult {

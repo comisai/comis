@@ -9,7 +9,7 @@
  * trust-filter -> dedup) per benchmark question, and scores recall@k / MRR against
  * the `buildGoldMap`-resolved gold-evidence ids by REUSING `recall-eval.ts`'s
  * `scoreRanking`. The number this prints is the "better memory" claim turned
- * into a reproducible regression proxy that every later phase is scored against.
+ * into a reproducible regression proxy that every later change is scored against.
  *
  * ARCHITECTURE CUT (the single escape hatch): this *.test.ts MAY
  * import the memory package (a devDependency); the agent->memory architecture cut
@@ -94,7 +94,7 @@ const HARNESS_VERSION = "phase-89-v1";
  * The bench store config (mirrors the roundtrip template makeTestConfig at
  * memory-persistence-roundtrip.test.ts:26-35). `as MemoryConfig` like the template:
  * the adapter reads the fields it needs; `dims` = the probed embedding dimensions
- * (or 4 for the FTS-only honest fallback, A6).
+ * (or 4 for the FTS-only honest fallback).
  */
 function makeBenchConfig(dbPath: string, dims: number): MemoryConfig {
   return {
@@ -155,8 +155,8 @@ function resolveReportDir(fallbackTmpDir: string): string {
 }
 
 describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", () => {
-  // questionId -> the live ranked MemorySearchResult[] (memoized; recall() is async,
-  // scoreRanking's rankFn is sync — Pattern D). Keyed by the UNIQUE questionId, never
+  // questionId -> the live ranked MemorySearchResult[] (memoized because recall() is
+  // async while scoreRanking's rankFn is sync). Keyed by the UNIQUE questionId, never
   // by q.query (two distinct questions can share query text -> a query-keyed memo
   // would collide and silently zero a lane).
   const rankedByQuestion = new Map<string, MemorySearchResult[]>();
@@ -164,7 +164,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
   // key the memo on it (scoreRanking ignores extra fields, reading only relevantIds +
   // the rankFn result).
   const queries: Array<EvalQuery & { questionId: string }> = [];
-  // The LoCoMo questionId set (for the round-2 "non-empty ranked lane" assertion).
+  // The LoCoMo questionId set (for the "non-empty ranked lane" assertion below).
   let locomoQuestionIds = new Set<string>();
   // The tmp recall-trace JSONL the live pipeline writes (the analyzer tie-in reads it).
   let traceFile = "";
@@ -191,7 +191,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     locomoQuestionIds = new Set(locomoItems.flatMap((s) => s.qa.map((q) => q.questionId)));
 
     // 2. EMBEDDING PROVIDER — only when LLAMA_MODEL_PATH is set; else honest FTS-only
-    // (dims=4, no 2nd ctor arg -> the vector lane does not contribute; A6).
+    // (dims=4, no 2nd ctor arg -> the vector lane does not contribute).
     let embed: Awaited<ReturnType<typeof createEmbeddingProvider>> | undefined;
     let dims = 4;
     if (LLAMA_MODEL_PATH !== undefined && LLAMA_MODEL_PATH.length > 0) {
@@ -394,7 +394,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     expect(metrics.mrr).toBeGreaterThanOrEqual(0);
   });
 
-  // ROUND-2 HARDENING — catch a silently-zeroed LoCoMo lane. The gold-set assertion
+  // HARDENING — catch a silently-zeroed LoCoMo lane. The gold-set assertion
   // alone passes even if recall ran on an empty query, so ALSO assert at least one
   // LoCoMo question produced a NON-EMPTY ranked result.
   it("the LoCoMo lane produces non-empty ranked results (not silently zeroed)", () => {
@@ -410,7 +410,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     ).toBe(true);
   });
 
-  // ROUND-2 contract: at least one LoCoMo question carries a NON-EMPTY gold set (proves
+  // Contract: at least one LoCoMo question carries a NON-EMPTY gold set (proves
   // the questionId key matches between the goldByQuestion build and the EvalQuery lookup).
   it("at least one LoCoMo question carries a non-empty mapped gold set", () => {
     const locomoGold = queries.filter((q) => locomoQuestionIds.has(q.questionId));

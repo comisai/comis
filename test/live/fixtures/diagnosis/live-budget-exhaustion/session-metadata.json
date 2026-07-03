@@ -4,5 +4,5 @@
   "degraded": true,
   "costUsd": 2.2,
   "budgetCeilingUsd": 2.0,
-  "note": "Synthesized: cumulative token spend (token_usage records, rising costUsd 0.55 -> 1.10 -> 1.65 -> 2.20) crossed the configured $2.00 budget ceiling; the session terminated with endReason budget_exhausted. A resource limit, not a tool failure. The per-session cost rollup has to be summed by hand across token_usage records today (the D5 flight-recorder gap)."
+  "note": "Synthesized: cumulative token spend (token_usage records, rising costUsd 0.55 -> 1.10 -> 1.65 -> 2.20) crossed the configured $2.00 budget ceiling; the session terminated with endReason budget_exhausted. A resource limit, not a tool failure. The per-session cost rollup has to be summed by hand across token_usage records today (the flight-recorder gap)."
 }

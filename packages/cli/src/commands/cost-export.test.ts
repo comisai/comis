@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Behavior tests for the `comis cost export` CLI command (COST-03, Phase 179).
+ * Behavior tests for the `comis cost export` CLI command.
  *
  * `cost export` reads the LOCAL ~/.comis observability store (the telemetry lives
  * on disk; an export must not require a live gateway) and emits the corrected-cost
  * quarter-hour (or hourly) buckets as CSV or JSON, each row carrying the four cost
- * rollups + cacheSaved/costCorrection + the E1 pricing-coverage pair
+ * rollups + cacheSaved/costCorrection + the pricing-coverage pair
  * (pricingState/missingPricingCount). The agent/provider/model/since filters are
  * threaded as TYPED params bound into the aggregate's prepared statement.
  *

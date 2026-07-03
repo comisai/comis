@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WR-01 (Phase 196 review): `accumulateVoiceRecord` source-fallback regression.
+ * `accumulateVoiceRecord` source-fallback regression tests.
  *
  * The seq-aware voice fold seeds `source` from the `media.*.requested` record and
- * (post-review) must FALL BACK to that carried source when a terminal
+ * must FALL BACK to that carried source when a terminal
  * `completed`/`failed` record omits `source` — mirroring the provider/keyless
  * fallback. The live emitter always passes `source` on the terminal, but the fold
  * is the offline oracle for partial/reordered on-disk records, so a source-less
- * terminal must not drop the OBS-03 selection rung. These tests fail on the
+ * terminal must not drop the provider-selection rung. These tests fail on the
  * pre-fix code (which read `source` ONLY from the terminal record's data).
  *
  * @module
@@ -17,9 +17,9 @@ import { accumulateVoiceRecord, type VoiceFoldState } from "./obs-explain-voice-
 
 const INITIAL: VoiceFoldState = { signal: undefined, outcomeSeq: 0 };
 
-describe("accumulateVoiceRecord — WR-01 source fallback", () => {
+describe("accumulateVoiceRecord — source fallback from the requested seed", () => {
   it("retains the requested-seeded source when the completed record omits source", () => {
-    // Seed: media.stt.requested carries the resolved OBS-03 rung.
+    // Seed: media.stt.requested carries the resolved provider-selection rung.
     const seeded = accumulateVoiceRecord(
       INITIAL,
       "media.stt.requested",
@@ -38,7 +38,7 @@ describe("accumulateVoiceRecord — WR-01 source fallback", () => {
     // The seeded source survives (pre-fix: dropped → undefined).
     expect(done.signal?.source).toBe("keyless-local");
     expect(done.signal?.outcome).toBe("ok");
-    expect(done.signal?.costUsd).toBe(0); // OBS-05 keyless $0 still visible
+    expect(done.signal?.costUsd).toBe(0); // keyless $0 still visible
   });
 
   it("retains the requested-seeded source when the failed record omits source", () => {

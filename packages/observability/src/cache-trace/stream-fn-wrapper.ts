@@ -74,12 +74,12 @@ function sha256(s: string): string {
  * survives in the count fields (`toolUseCount` / `toolResultCount` /
  * `pairedToolResultCount`) which are plain integers and cannot vanish under
  * the bound — so the pairing/orphan invariant the descriptor feeds holds at
- * ANY turn size, including large parallel-tool fan-outs. WR-01 (Phase 126).
+ * ANY turn size, including large parallel-tool fan-outs.
  */
 const MAX_SAMPLED_IDS = 32;
 
 /**
- * O2: the SMALL assembled-array shape descriptor recorded on
+ * The SMALL assembled-array shape descriptor recorded on
  * `stream:context`. Counts/flags + opaque toolCallId strings ONLY — never
  * block bodies — so it stays well under the 32 KB bound and is NOT in the
  * sanitizeForPersistence exempt set.
@@ -182,7 +182,7 @@ function computeAssembledShape(
 
   // Pairing/orphan signal computed over the FULL id sets BEFORE sampling, so
   // the count never depends on the sampled arrays surviving the 64-item cap.
-  // (WR-01: large fan-outs used to defeat the array-based pairing check.)
+  // (A large fan-out would otherwise defeat an array-based pairing check.)
   const toolUseIdSet = new Set(toolUseIds);
   const pairedToolResultCount = toolResultIds.reduce(
     (n, rid) => (toolUseIdSet.has(rid) ? n + 1 : n),
@@ -244,7 +244,7 @@ export function buildCacheTraceWrapper(trace: CacheTrace): StreamFnWrapper {
         messagesDigest,
         systemDigest,
       };
-      // O2: the SMALL assembled-array shape descriptor (counts/flags + tool
+      // The SMALL assembled-array shape descriptor (counts/flags + tool
       // id pairing). Emitted OUTSIDE the includeMessages guard so it is
       // present even when the full messages array is gated off — it is not a
       // body dump, so it survives the 32 KB sanitizeForPersistence bound.

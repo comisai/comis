@@ -31,23 +31,23 @@ export interface ExecutionResult {
     ghostCostUsd?: number;
     /** Number of API requests that timed out. */
     timedOutRequests?: number;
-    /** 1.3: Session-cumulative total cost across all turns (USD). */
+    /** Session-cumulative total cost across all turns (USD). */
     sessionCostUsd?: number;
-    /** 1.3: Session-cumulative cache savings across all turns (USD). */
+    /** Session-cumulative cache savings across all turns (USD). */
     sessionCacheSavedUsd?: number;
   };
   stepsExecuted: number;
   llmCalls: number;
-  // LAT-04 (Phase 177): prompt_timeout is the PromptTimeoutError terminal —
+  // prompt_timeout is the PromptTimeoutError terminal —
   // END_REASON_MAP translates it to endReason timeout (the named cause).
-  // SPEND-02 (Phase 177-01): spend_exceeded is the dollars kill-switch terminal —
+  // spend_exceeded is the dollars kill-switch terminal —
   // a DEDICATED member (not a reuse of budget_exceeded, which is the token cap)
   // so the dollars-vs-tokens cause stays distinct. SafetyCheckResult.finishReason
-  // (bridge-safety-controls.ts) is typed off this; Plan 03's checkSpendLimit returns it.
+  // (bridge-safety-controls.ts) is typed off this; checkSpendLimit returns it.
   finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "spend_exceeded" | "error";
   /** Ordered list of tool names invoked during execution (for post-mortem analysis). */
   toolCallHistory?: string[];
-  /** Issue-4 narrate-without-emit nudge outcome (small/nano only). A fired-but-
+  /** Narrate-without-emit nudge outcome (small/nano only). A fired-but-
    *  unrecovered nudge promotes the clean would-be terminal to the named
    *  degraded cause `narration_stall` at the post-execution chokepoint. */
   narrateNudge?: { fired: boolean; recovered: boolean };
@@ -75,9 +75,9 @@ export interface ExecutionResult {
     stopReason: string;
   };
   /** Silent Execution Planner metrics (undefined if SEP inactive).
-   *  SEP is observability-only post-L4: plan extraction + step counting
-   *  remain; the legacy enforcement nudge was replaced by the post-batch
-   *  continuation handler. */
+   *  SEP is observability-only: plan extraction + step counting
+   *  remain; enforcement is handled by the post-batch continuation
+   *  handler, not an SEP nudge. */
   plannerMetrics?: {
     stepsPlanned: number;
     stepsCompleted: number;
@@ -98,14 +98,14 @@ export interface ExecutionResult {
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
-// promptTimeout, and WT-01's workspaceDir for an isolated worktree run). They are
+// promptTimeout, and workspaceDir for an isolated worktree run). They are
 // not a cluster-split candidate — each describes ONE execution's override surface,
 // applied at distinct executor chokepoints; `operationType` is the only required field.
 export interface ExecutionOverrides {
   /** Override the shared StepCounter with a fresh instance.
    *  When provided, this counter is used instead of the deps.stepCounter. */
   stepCounter?: StepCounter;
-  /** Per-execution token cap for sub-agent isolation (BUDGET-01).
+  /** Per-execution token cap for sub-agent isolation.
    *  Fed to budgetGuard.resetExecution(cap); checkBudget enforces
    *  min(config.perExecution, tokenBudget) so a runaway child is stopped
    *  mid-run. Absent ⇒ resetExecution() with no cap (config.perExecution). */
@@ -132,9 +132,9 @@ export interface ExecutionOverrides {
   skipSep?: boolean;
   /** Per-operation prompt timeout override. When set, shadows config.promptTimeout for ALL LLM calls in this execution.
    *  `source` labels which resolution level produced promptTimeoutMs — carried,
-   *  never re-derived (LAT-01: the cron producer materializes this object
+   *  never re-derived (the cron producer materializes this object
    *  unconditionally, so the label cannot be inferred at decode). Absent ⇒
-   *  legacy producer ⇒ treated as operation_explicit at decode. */
+   *  treated as operation_explicit at decode. */
   promptTimeout?: { promptTimeoutMs?: number; retryPromptTimeoutMs?: number; source?: TimeoutSource };
   /** Operation type for cost attribution and timeout resolution. */
   operationType: ModelOperationType;
@@ -148,12 +148,12 @@ export interface ExecutionOverrides {
    *  agents where all tools are reachable. */
   activeToolGroups?: string[];
   /**
-   * WT-01: per-run workspace override — the child's file-tool jail cwd for THIS
+   * Per-run workspace override — the child's file-tool jail cwd for THIS
    * execution. A `spawn --worktree` child runs in an ISOLATED git worktree, so the
    * daemon passes the worktree dir here; the executor uses it as the SDK session
    * cwd + the resource-loader / command-handler / context-engine workspace root,
    * so exec/read/write/edit resolve inside the worktree (still attenuated + jailed
-   * — the worktree is confined under the agent's own jailed workspace, T-219-11).
+   * — the worktree is confined under the agent's own jailed workspace).
    * Absent ⇒ `deps.workspaceDir` (the agent's shared workspace — today's path,
    * byte-identical).
    */

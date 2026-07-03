@@ -42,7 +42,7 @@ export const TableModeSchema = z
  * Reply mode for outbound messages in conversations.
  *
  * - `off`: Never set replyTo on outbound messages
- * - `first`: Set replyTo on the first chunk only (default, current behavior)
+ * - `first`: Set replyTo on the first chunk only (default)
  * - `all`: Set replyTo on all chunks
  */
 export const ReplyModeSchema = z.enum(["off", "first", "all"]).default("first");

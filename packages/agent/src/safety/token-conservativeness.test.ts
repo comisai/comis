@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TOK-02 (Phase 179, plan 179-05): the offline conservativeness suite.
+ * The offline token-estimate conservativeness suite.
  *
  * "No factor ships unmeasured": every committed ground-truth fixture entry
  * (packages/core/src/text/__fixtures__/token-counts.json — generated ONCE by
@@ -14,22 +14,22 @@
  * offline, forever. CI never networks — the fixture JSON is repo-tracked and
  * read with a plain fs read (no fetch anywhere in this file).
  *
- * Single-leg note (179-02 deviation, documented): the committed corpus has
+ * Single-leg note: the committed corpus has
  * the qwen leg measured (node-llama-cpp x qwen3-coder:30b) and the anthropic
  * leg pending the operator's `./run.sh --leg anthropic` (fields null until
  * then). `maxTokenCount` = max over MEASURED legs, so the assertion stays
  * honest with one leg and AUTOMATICALLY tightens when the operator leg lands
  * (the completeness gate below validates anthropic values whenever non-null).
  *
- * The suite lives agent-side (deviation note in the plan): the design writes
- * the assertion over `estimateMessageTokens` — an agent symbol — so it reads
- * the core-owned fixtures cross-package via import.meta.url.
+ * The suite lives agent-side: the assertion runs over `estimateMessageTokens`
+ * — an agent symbol — so it reads the core-owned fixtures cross-package via
+ * import.meta.url.
  *
- * Same-commit factor-lowering rule (TOK-02 closing rule): any non-latin entry
- * violating the assertion lowers that script's row tokenFactor in
- * packages/core/src/text/script-classes.ts in the SAME commit as this suite.
- * This commit applied it: cyrillic 0.75 -> 0.59 (13 ru violations, worst
- * ru_chat_14 implied 0.598) and hebrew letters 0.55 -> 0.50 (he_mixed_04,
+ * Same-commit factor-lowering rule: any non-latin entry violating the
+ * assertion lowers that script's row tokenFactor in
+ * packages/core/src/text/script-classes.ts in the SAME commit that touches
+ * this suite. Shipped derivations: cyrillic 0.59 (13 ru violations, worst
+ * ru_chat_14 implied 0.598) and hebrew letters 0.50 (he_mixed_04,
  * harmonic-blend bound 0.5016 with latin locked at 1.0).
  */
 import { readFileSync } from "node:fs";
@@ -77,10 +77,10 @@ function measuredLegs(entry: FixtureEntry): number[] {
 const EXPECTED_SCRIPTS = ["he", "ar", "ru", "zh", "ja", "el", "th", "hi", "en"] as const;
 
 // ---------------------------------------------------------------------------
-// Completeness gates — the ">= 2 tokenizers" phase pin, loud not silent.
+// Completeness gates — the ">= 2 tokenizers" pin, loud not silent.
 // ---------------------------------------------------------------------------
 
-describe("TOK-02 fixture corpus completeness (the >= 2 tokenizers pin, loud not silent)", () => {
+describe("fixture corpus completeness (the >= 2 tokenizers pin, loud not silent)", () => {
   it("carries at least 180 entries spanning all 9 script corpora", () => {
     expect(fixtures.entries.length).toBeGreaterThanOrEqual(180);
     const present = new Set(fixtures.entries.map((e) => e.script));
@@ -92,7 +92,7 @@ describe("TOK-02 fixture corpus completeness (the >= 2 tokenizers pin, loud not 
   it("every entry carries both tokenizer-leg fields with maxTokenCount = max over the MEASURED legs", () => {
     for (const entry of fixtures.entries) {
       // Both leg FIELDS present on every entry (a stripped field is a schema
-      // break, loud). A null leg is the documented un-run state (179-02): the
+      // break, loud). A null leg is the documented un-run state: the
       // generator's merge-by-id fills it on the operator run and maxTokenCount
       // is recomputed over PRESENT legs after every merge.
       expect("anthropicTokens" in entry, `${entry.id}: anthropicTokens field missing`).toBe(true);
@@ -134,7 +134,7 @@ describe("TOK-02 fixture corpus completeness (the >= 2 tokenizers pin, loud not 
 // THE assertion: estimate >= worst measured tokenizer count, per entry.
 // ---------------------------------------------------------------------------
 
-describe("TOK-02 offline conservativeness: estimateMessageTokens >= maxTokenCount for EVERY committed fixture", () => {
+describe("offline conservativeness: estimateMessageTokens >= maxTokenCount for EVERY committed fixture", () => {
   it("no committed fixture entry under-counts against the worst measured tokenizer leg", () => {
     const violations: string[] = [];
     for (const entry of fixtures.entries) {
@@ -149,19 +149,19 @@ describe("TOK-02 offline conservativeness: estimateMessageTokens >= maxTokenCoun
         );
       }
     }
-    // Per the TOK-02 closing rule, a violation here means that script's row
-    // tokenFactor must be LOWERED in packages/core/src/text/script-classes.ts
-    // in the SAME commit (latin/en is I1-LOCKED at 1.0 — an en violation is
-    // surfaced to the operator instead, never silently excluded).
+    // Per the same-commit factor-lowering rule, a violation here means that
+    // script's row tokenFactor must be LOWERED in
+    // packages/core/src/text/script-classes.ts in the SAME commit (latin/en is
+    // LOCKED at 1.0 — Latin byte-identity — so an en violation is surfaced to
+    // the operator instead, never silently excluded).
     expect(violations, `factor table under-counts ground truth:\n${violations.join("\n")}`).toEqual([]);
   });
 
   it("teeth control: at least one non-latin fixture VIOLATES the flat chars/4 baseline", () => {
-    // The suite's RED-equivalence (running it against pre-TOK-01 code is
-    // temporally impossible in wave 3, so the negative control is embedded):
-    // proving (a) pre-patch chars/4 WAS blind to this ground truth and (b) the
-    // suite is not vacuous. If this control ever fails, the corpus no longer
-    // exercises the defect class this phase fixed.
+    // Embedded negative control: proving (a) a flat chars/4 estimate IS blind
+    // to this ground truth and (b) the suite is not vacuous. If this control
+    // ever fails, the corpus no longer exercises the under-count defect class
+    // the script-aware factors exist to close.
     const flatBaselineViolated = fixtures.entries.some(
       (e) => e.script !== "en" && Math.ceil(e.text.length / 4) < e.maxTokenCount,
     );
@@ -174,7 +174,7 @@ describe("TOK-02 offline conservativeness: estimateMessageTokens >= maxTokenCoun
 // only `other` ships unmeasured (commented as structurally unmeasurable).
 // ---------------------------------------------------------------------------
 
-describe("TOK-02 provenance audit: every non-other SCRIPT_CLASSES row carries measured provenance", () => {
+describe("provenance audit: every non-other SCRIPT_CLASSES row carries measured provenance", () => {
   const classesSource = readFileSync(
     fileURLToPath(new URL("../../../core/src/text/script-classes.ts", import.meta.url)),
     "utf8",

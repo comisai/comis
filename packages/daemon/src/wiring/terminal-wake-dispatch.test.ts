@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED (124-07 Task 2): the recurring wake-dispatch FSM
- * (`createTerminalWakeDispatcher`), modeled on `completion-dispatcher.ts`
- * but RECURRING/mid-session. It turns a `terminal:input_needed` event into
- * AT MOST ONE woken agent turn and proves the 5 OPS-08/OPS-09 behaviors:
+ * The recurring wake-dispatch FSM (`createTerminalWakeDispatcher`), modeled on
+ * `completion-dispatcher.ts` but RECURRING/mid-session. It turns a
+ * `terminal:input_needed` event into AT MOST ONE woken agent turn and proves
+ * the 5 core behaviors:
  *
  *   1. DEDUPE          — 3 input_needed for one unanswered (sessionId,requestId) → 1 turn
  *   2. ACTIVE-CHECK    — a wake for a killed/evicted session is dropped + audited
@@ -154,8 +154,8 @@ describe("terminal-wake-dispatch (recurring wake-FSM)", () => {
     expect(h.logger.warn).toHaveBeenCalled();
   });
 
-  it("a SUCCESSFUL turn resets the consecutive run so a later failure run starts from zero — not a lifetime cap (WR-01)", async () => {
-    // The discriminating WR-01 contract: a settled turn moves the goalpost. Drive a
+  it("a SUCCESSFUL turn resets the consecutive run so a later failure run starts from zero — not a lifetime cap", async () => {
+    // The discriminating contract: a settled turn moves the goalpost. Drive a
     // FAILING wake (hop→1), then a SUCCEEDING wake (resets hop→0), then a fresh
     // consecutive FAILURE run must take the FULL maxHops again before escalating.
     //
@@ -206,8 +206,8 @@ describe("terminal-wake-dispatch (recurring wake-FSM)", () => {
     );
   });
 
-  it("RESETS the consecutive hop count after a turn SETTLES — a long run of answered prompts never over-escalates (WR-01)", async () => {
-    // The availability defect WR-01 fixes: a long-lived session that keeps SETTLING
+  it("RESETS the consecutive hop count after a turn SETTLES — a long run of answered prompts never over-escalates", async () => {
+    // The availability defect this guards against: a long-lived session that keeps SETTLING
     // its woken turns must NOT escalate after maxHops total answers. Each settled
     // turn ends the consecutive run, so hopCount returns to 0 and the cap is never hit.
     const h = makeHarness(dataDir, { maxHops: 2, maxConcurrentAttentionTurns: 5 });
@@ -224,7 +224,7 @@ describe("terminal-wake-dispatch (recurring wake-FSM)", () => {
     }
 
     // All four were answered (woken), none escalated — the lifetime budget is
-    // maxInteractions (the P4 cap), NOT maxHops.
+    // maxInteractions, NOT maxHops.
     expect(h.wakeOneTurn).toHaveBeenCalledTimes(4);
     expect(h.escalate).not.toHaveBeenCalled();
   });
@@ -274,7 +274,7 @@ describe("terminal-wake-dispatch (recurring wake-FSM)", () => {
     expect(persisted?.dispatchState).toBe("woken");
   });
 
-  it("forgetSession drops the FSM in-memory state so a re-used id starts fresh (IN-03/WR-02)", async () => {
+  it("forgetSession drops the FSM in-memory state so a re-used id starts fresh", async () => {
     // A session mid-wake (woken, pendingFrame=req-1) when the daemon died — the
     // dedupe gate keys on it, so the same requestId would normally coalesce.
     persistWakeStateSync(dataDir, {

@@ -32,7 +32,7 @@ import sharp from "sharp";
 import { ok, err } from "@comis/shared";
 import type { Result } from "@comis/shared";
 
-// --- Tool output text sanitization (formerly tool-sanitizer.ts) ---
+// --- Tool output text sanitization ---
 
 /**
  * Normalize text for secure pattern matching.
@@ -133,7 +133,7 @@ export function sanitizeToolOutput(
   return sanitized;
 }
 
-// --- Tool image sanitization (formerly tool-image-sanitizer.ts) ---
+// --- Tool image sanitization ---
 
 // Disable sharp cache to prevent memory accumulation across calls
 sharp.cache(false);

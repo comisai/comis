@@ -225,14 +225,14 @@ describe("appendSessionIndexEntry — JSONL write", () => {
 });
 
 // ---------------------------------------------------------------------------
-// synthetic?/source? optional fields (D9) — round-trip
+// synthetic?/source? optional fields — round-trip
 // ---------------------------------------------------------------------------
 
-describe("appendSessionIndexEntry — synthetic/source provenance (D9)", () => {
+describe("appendSessionIndexEntry — synthetic/source provenance", () => {
   it("round-trips an explicit source:'test' + synthetic:true through the JSONL", async () => {
-    // RED-and-GREEN-in-one-commit (AGENTS.md §2.10): this object literal does NOT
-    // type-check against the pre-patch SessionIndexEventBase (the fields don't
-    // exist yet) — the GREEN patch in types.ts adds the two optional readonly fields.
+    // source and synthetic are optional readonly provenance fields on
+    // SessionIndexEventBase; this literal sets both explicitly to prove they
+    // survive the JSONL write and read back intact.
     const rec: SessionStartedEvent = {
       ...makeSessionStarted(),
       source: "test",
@@ -252,9 +252,9 @@ describe("appendSessionIndexEntry — synthetic/source provenance (D9)", () => {
     // A production-shaped row carries NEITHER field — readers treat absence as
     // synthetic !== true (the obs.* default-include case). To exercise the
     // production branch from inside vitest (which auto-sets VITEST=true +
-    // NODE_ENV=test), both flags are stubbed to non-test values so the D9
+    // NODE_ENV=test), both flags are stubbed to non-test values so the
     // test-process stamp does NOT fire. (Under VITEST the writer always stamps
-    // source:"test" — covered by the D9 write-guard suite below.)
+    // source:"test" — covered by the write-guard suite below.)
     vi.stubEnv("VITEST", "");
     vi.stubEnv("NODE_ENV", "production");
     appendSessionIndexEntry(tmpDir, makeSessionStarted());
@@ -281,11 +281,11 @@ describe("appendSessionIndexEntry — synthetic/source provenance (D9)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// VITEST + real-~/.comis throw-guard (D9) — stops the Phase-149-02 leak class
+// VITEST + real-~/.comis throw-guard — stops a test run polluting production telemetry
 // ---------------------------------------------------------------------------
 
-describe("appendSessionIndexEntry — D9 test-process write-guard", () => {
-  it("throws when VITEST=true and dataDir is under the real ~/.comis (D9 guard)", () => {
+describe("appendSessionIndexEntry — test-process write-guard", () => {
+  it("throws when VITEST=true and dataDir is under the real ~/.comis", () => {
     vi.stubEnv("VITEST", "true");
     const realHome = path.join(os.homedir(), ".comis");
     expect(() => appendSessionIndexEntry(realHome, makeSessionStarted())).toThrow(

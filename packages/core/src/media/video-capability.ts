@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * VIDEO_CAPABILITY — the single source of truth (CAP-01) for "which resolved
+ * VIDEO_CAPABILITY — the single source of truth for "which resolved
  * main provider can generate video, via which backend, and with what default
  * video model".
  *
@@ -22,15 +22,12 @@
  * API-available; Anthropic / openai-codex / Groq have none → they resolve to
  * `undefined` (honest-unavailable, or explicit FAL).
  *
- * Phase 188 RETURNS the veo/grok SELECTION; the live Veo/Grok adapters land in
- * Phase 190 (the selector returns the selection, not a live provider call).
- *
- * Model-id provenance ([VERIFIED] against the v2.24 design §5b/§15 at plan time,
- * 2026-06-15): `veo-3.0-fast-generate-001` is the GA Veo recommended default
- * (VEO-01); `grok-imagine-video` is the public xAI Grok Imagine video model
- * (GROK-01, public REST API since 2026-01-28). Both remain overridable by
+ * Model-id provenance (verified against the live provider docs, 2026-06-15):
+ * `veo-3.0-fast-generate-001` is the GA Veo recommended default;
+ * `grok-imagine-video` is the public xAI Grok Imagine video model
+ * (public REST API since 2026-01-28). Both remain overridable by
  * config/tool model. Per-second pricing and preview model ids drift ~monthly —
- * re-verify at the plan time of the phase that wires the live adapter.
+ * re-verify when touching the live adapters.
  *
  * @module
  */
@@ -43,7 +40,7 @@ export const VIDEO_CAPABILITY: Record<
   "google-vertex": { videoApi: "veo", defaultModel: "veo-3.0-fast-generate-001" },
   "xai": { videoApi: "grok", defaultModel: "grok-imagine-video" },
   // openai / openai-codex / anthropic / amazon-bedrock / groq / mistral /
-  // deepseek / default → undefined (CAP-01: no native video API).
+  // deepseek / default → undefined (no native video API).
   // auto / fal are NOT keys (selection-mode + explicit-only, not follow-main
   // capabilities).
 };

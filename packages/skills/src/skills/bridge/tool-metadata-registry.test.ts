@@ -42,26 +42,23 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 
 describe("tool-metadata-registry -- registry count", () => {
   it("registers exactly 63 unique tools (registry count assertion)", () => {
-    // 63 = 61 prior + video_generate + video_status (Phase 188-02 SEC-01 —
-    // both EXPLICITLY registered never-export; video_status is reserved, its
-    // tool lands Phase 189). NOTE: image_generate is NOT registered here (it
-    // rides the default-deny safety net) — video IS, for the SEC-01 annotation.
-    // The 61 prior = 60 + obs_fleet_health (Phase 161-02 — the slim, READ-ONLY
-    // permission-gated MCP tool surfacing the obs.fleet.health FleetHealthReport,
-    // the cross-session sibling of obs_explain).
-    // The 60 prior = 59 + obs_explain (Phase 154-03 — the slim, READ-ONLY
-    // permission-gated MCP tool surfacing the obs.explain IncidentReport).
-    // The 59 prior = 56 + the 3 ctx_* in-session expansion tools (ctx_search /
-    // ctx_inspect / ctx_expand) rebuilt in Phase 131 (E1/E2). The 4 OLD ctx_*
-    // DAG read tools were deleted in Phase 126; these 3 are the governed TOOL
-    // surface over the LCD store.
+    // The registry pins an exact tool count so an accidental add or removal is
+    // caught. Notable entries: video_generate and video_status are EXPLICITLY
+    // registered never-export (cost-bearing + outbound delivery); video_status
+    // is reserved so its policy is pinned before the tool exists. image_generate
+    // is NOT registered here — it rides the default-deny safety net.
+    // obs_fleet_health and obs_explain are slim, READ-ONLY, permission-gated MCP
+    // tools surfacing the obs.fleet.health FleetHealthReport and the obs.explain
+    // IncidentReport respectively. The three ctx_* in-session expansion tools
+    // (ctx_search / ctx_inspect / ctx_expand) are the governed TOOL surface over
+    // the LCD store.
     const all = getAllToolMetadata();
     expect(all.size).toBe(64);
   });
 });
 
 // ===========================================================================
-// memory_manage schema↔metadata parity (admin-manage-tools live-test 2026-06-25)
+// memory_manage schema↔metadata parity
 //
 // The metadata-registry entry (validActions/validKeys/requiredByAction) is a SECOND
 // source of truth, consumed by schema-validator.validateToolEntry BEFORE the tool's
@@ -98,14 +95,14 @@ describe("tool-metadata-registry -- memory_manage schema↔metadata parity", () 
 });
 
 // ===========================================================================
-// Sleep primitive (STREAM-03) — read-only + concurrency-safe + never-export
+// Sleep primitive — read-only + concurrency-safe + never-export
 // ===========================================================================
 
-describe("tool-metadata-registry -- sleep primitive (STREAM-03)", () => {
+describe("tool-metadata-registry -- sleep primitive", () => {
   // The sleep builtin paces the model between turns; it mutates NO state, so it
-  // must register read-only + concurrency-safe (Plan 04's read-only detection +
-  // Plan 05's serializer rely on this to let it overlap concurrency-safe reads
-  // instead of serializing them behind it). The mcp-export-policy.test.ts AST
+  // must register read-only + concurrency-safe: the read-only detection and the
+  // tool serializer rely on these flags to let it overlap concurrency-safe reads
+  // instead of serializing them behind it. The mcp-export-policy.test.ts AST
   // gate additionally requires every registered name to carry an explicit policy;
   // sleep is an internal loop-pacing primitive inside Comis's trust boundary, so
   // it is never-export (like ctx_* / terminal_*).
@@ -122,11 +119,11 @@ describe("tool-metadata-registry -- sleep primitive (STREAM-03)", () => {
 });
 
 // ===========================================================================
-// Context expansion — all three ctx_* tools never-export + read-only (E2)
+// Context expansion — all three ctx_* tools never-export + read-only
 // ===========================================================================
 
 describe("tool-metadata-registry -- context expansion governance", () => {
-  // The three in-session expansion tools (Phase 131, E1/E2). All MUST be
+  // The three in-session expansion tools. All MUST be
   // never-export: they live inside Comis's trust boundary over the LCD store
   // and must never reach the MCP-exported set. They only READ the store, so
   // they are also isReadOnly. The mcp-export-policy.test.ts AST gate
@@ -149,10 +146,11 @@ describe("tool-metadata-registry -- context expansion governance", () => {
 // ===========================================================================
 
 describe("tool-metadata-registry -- terminal driver never-export", () => {
-  // The canonical nine (spec §5). All MUST be never-export: they live inside
-  // Comis's trust boundary and must never reach the MCP-exported set, even the
-  // six that land as stubs in later phases. The mcp-export-policy.test.ts AST
-  // gate additionally requires every registered name to carry an explicit policy.
+  // The canonical nine terminal-driver tools. All MUST be never-export: they
+  // live inside Comis's trust boundary and must never reach the MCP-exported
+  // set, even the six registered as stubs ahead of their implementation. The
+  // mcp-export-policy.test.ts AST gate additionally requires every registered
+  // name to carry an explicit policy.
   const TERMINAL_TOOLS = [
     "terminal_session_create",
     "terminal_session_list",
@@ -196,14 +194,14 @@ describe("tool-metadata-registry -- terminal driver never-export", () => {
 });
 
 // ===========================================================================
-// Video synthesis — video_generate + video_status never-export (SEC-01, 188-02)
+// Video synthesis — video_generate + video_status never-export
 // ===========================================================================
 
-describe("tool-metadata-registry -- video synthesis never-export (SEC-01)", () => {
+describe("tool-metadata-registry -- video synthesis never-export", () => {
   // Both cost-bearing/outbound video tools MUST be never-export: a generated
   // video is delivered to a channel and bills the agent's provider, so it must
-  // never reach the MCP-exported set. video_status is reserved here (its tool
-  // lands Phase 189) so its policy is pinned before the tool exists. The
+  // never reach the MCP-exported set. video_status is reserved here so its
+  // policy is pinned before the tool exists. The
   // mcp-export-policy.test.ts AST gate additionally requires every registered
   // name to carry an explicit policy. This block is mutation-proven RED: flip
   // either registration to "permission-gated"/"public" and it fails.
@@ -217,10 +215,10 @@ describe("tool-metadata-registry -- video synthesis never-export (SEC-01)", () =
 });
 
 // ===========================================================================
-// Voice tool export policy regression (SEC-04, 197-03)
+// Voice tool export policy regression
 // ===========================================================================
 
-describe("tool-metadata-registry -- voice tool export policy regression (SEC-04)", () => {
+describe("tool-metadata-registry -- voice tool export policy regression", () => {
   // The two voice tools' export policies are deliberately DIFFERENT — do NOT
   // "fix" them to match. transcribe_audio is READ-ONLY (it turns inbound audio
   // into text; isReadOnly:true) so it is permission-gated — usable by an MCP
@@ -500,7 +498,7 @@ describe("tool-metadata-registry -- cron validator", () => {
     expect(result).toBeUndefined();
   });
 
-  // CRON-IN-01 (live 2026-06-20): the model correctly emitted schedule_kind:"in"
+  // Live regression: the model correctly emitted schedule_kind:"in"
   // for "remind me in 2 minutes" but this validator rejected it ("Valid: cron,
   // every, at"), forcing a fallback to the timezone-error-prone "at" path.
   it("accepts add with schedule_kind=in + positive schedule_in_seconds", async () => {
@@ -985,7 +983,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
   });
 
   it("registry's validKeys covers every field listed in managed-sections schemaFragment.requiredByAction", async () => {
-    // Cross-consistency parity (Task 5): MANAGED_SECTIONS is on the public
+    // Cross-consistency parity: MANAGED_SECTIONS is on the public
     // @comis/core export, so we can assert that every field a managed-section
     // marks as required-for-this-redirect is at least a VALID key on the
     // registry's runtime gate.
@@ -1032,7 +1030,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
 // ===========================================================================
 
 // ===========================================================================
-// Failure Detectors (§16.10/§16.11)
+// Failure Detectors
 //
 // Per-tool failureDetector bodies registered (via spread-merge) on
 // web_search + web_fetch. They are consulted in pi-event-bridge.ts BEFORE

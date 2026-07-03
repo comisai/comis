@@ -1,13 +1,13 @@
-# Memory & Learning Stress Catalog — 12 complex workloads for the v2.31 Reflection engine
+# Memory & Learning Stress Catalog — 12 complex workloads for the Reflection engine
 
-> A catalog of **complex, adversarial use cases** chosen to stress Comis's SHIPPED v2.31 reflection/learning
+> A catalog of **complex, adversarial use cases** chosen to stress Comis's SHIPPED reflection/learning
 > engine in every dimension that breaks a naive memory. Each entry is a *workload*, **not a new Comis
 > capability** — its domain tools come from a runnable **`sim/` MCP tool-simulator**, and the thing under
 > test is the LEARNING — reflect → cross-session recall → reuse/promote → supersede → evict → trust-tier. The
 > agent drives real `mcp:<server>/<tool>` tools guided by a **mechanics-only** skill (the strategy is what the
 > engine must LEARN). **All 14 are built + live-validated**: these 12 complex workloads, plus 2 foundational
 > exemplars — [**threat-hunting**](./adaptive-threat-hunting.md) (a full pinned spec) and **package-delivery**
-> (the Hindsight demo, below). Each maps to `sim/<workload>/` — see [`../sim/README.md`](../sim/README.md) for
+> (the reuse→promote demo, below). Each maps to `sim/<workload>/` — see [`../sim/README.md`](../sim/README.md) for
 > the dir ↔ MCP-server ↔ skill table + the deploy → `mcp connect` → drive runbook.
 >
 > **Drive surface for every entry = OFFLINE / DB / event-resident** (model `EXAMPLE-verified-learning.md` +
@@ -43,14 +43,14 @@
 
 ---
 
-## ⟢ Package-delivery courier (foundational exemplar — the Hindsight demo)
+## ⟢ Package-delivery courier (foundational exemplar — the reuse→promote demo)
 **Domain:** an office-building delivery courier. **Primary: TRANSFER + REUSE.** · `sim/package-delivery` (`depot-sim`).
 
 An AI agent delivers packages inside an office building it has never seen. It starts knowing only that it has
 tools to navigate and a job to deliver — not where anyone sits or the best route. Cold, it wanders office to
 office reading nameplates and eventually gets lucky; over repeated deliveries it learns the building's layout,
-who sits where, and the fastest route, then goes straight to the recipient. This is the literal Hindsight
-package-delivery story — the simplest, most visual instance of "learn the map + the strategy."
+who sits where, and the fastest route, then goes straight to the recipient. This is the classic
+package-delivery learning story — the simplest, most visual instance of "learn the map + the strategy."
 
 **What makes it a genuine stress test:**
 - **TRANSFER** — the learned "read the lobby directory, take the elevator to the dept floor" strategy must

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * iMessage plain-text approval-prompt tests (renderer half; §6.4.6 / §18.3).
+ * iMessage plain-text approval-prompt tests (renderer half).
  *
  * iMessage has NO button surface (AppendOnly, send-only, `buttons:"none"`), so a
  * `kind:"approval"` frame appends the plain-text prompt
@@ -8,7 +8,7 @@
  * "Reply approve or deny within the approval timeout" for a single pending
  * approval, and the shortId-disambiguated form when more than one is pending in the
  * same session. NO signed buttons are attached — HMAC is skipped for plaintext
- * (§6.4.6); the router's plain-text branch scopes the reply to
+ * prompts; the router's plain-text branch scopes the reply to
  * `pendingForSession` and replay is blocked by pending-table removal.
  *
  * The imessage-fake's send row is `{ op, id, text }` (no buttons field at all), so
@@ -88,7 +88,7 @@ describe("iMessage plain-text approval prompt (no buttons, shortId when ambiguou
     }
   });
 
-  it("posts the prompt as TEXT only — the send carries no button surface (§6.4.6)", async () => {
+  it("posts the prompt as TEXT only — the send carries no button surface", async () => {
     const fake = createFakeIMessageAdapter();
     const r = createIMessageActivityRenderer(fake, "chat-1");
 
@@ -132,9 +132,9 @@ describe("iMessage plain-text approval prompt (no buttons, shortId when ambiguou
     await r.apply(plain);
 
     const send = fake.recorded.calls.find((c) => c.op === "send");
-    // [Rule 1 — bug fix, quick-260528-nsv] Non-failed tool event renders with
-    // the per-step running 🔧 marker (eventLabel re-derives it post-patch);
-    // the no-prompt invariant (this test's load-bearing point) is unchanged.
+    // A non-failed tool event renders with the per-step running 🔧 marker
+    // (derived by eventLabel); the no-prompt invariant is this test's
+    // load-bearing point.
     if (send?.op === "send") expect(send.text).toBe("🔧 running tool");
   });
 });

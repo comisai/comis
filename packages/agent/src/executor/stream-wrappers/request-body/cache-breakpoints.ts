@@ -72,8 +72,8 @@ export const sessionPrefixStability = new Map<string, {
   callCount?: number;
   /** Call indices where a non-benign cached-region message mutation was observed.
    *  Windowed (recent only) so a ONCE-PER-TURN mutation accumulates across turn
-   *  boundaries even though within-turn calls are clean (the #C2 blind spot: the
-   *  consecutive counter reset on benign within-turn growth, so it never fired). */
+   *  boundaries even though within-turn calls are clean (a consecutive counter
+   *  would reset on benign within-turn growth and never fire). */
   cacheMutations?: number[];
 }>();
 
@@ -307,7 +307,7 @@ export function maybePromoteBreakpoints(
   // Monotonicity guard: cannot promote to 1h if tools/system use 5m
   if (resolvedRetention !== "long") return 0;
 
-  // Non-Anthropic body guard (codex turn-abort regression 2026-06-14): the
+  // Non-Anthropic body guard (live-observed codex turn-abort regression): the
   // OpenAI responses / openai-codex request body has `input`, not a `messages`
   // array, so `messages` is undefined here. cache_control breakpoint promotion
   // is Anthropic-only — no-op rather than throw `reading 'length'`, which the

@@ -75,7 +75,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // The session-not-found error message preserves the user-friendly hint
       // including the list of available keys — that path runs AFTER the
       // parse since session_key must be present to do the lookup.
-      // Internal-field read BEFORE strip (caller-scoping — CR-02). The
+      // Internal-field read BEFORE strip (caller-scoping). The
       // tool.invoke rpc route injects `_agentId = lease.agentId`; its PRESENCE
       // is the unforgeable agent-origin signal (inbound _agentId is stripped
       // from external callers at the gateway). Admin/operator/CLI calls arrive
@@ -89,7 +89,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
 
-      // CR-02 self-scope: an agent-origin caller may read ONLY its own
+      // Agent self-scope: an agent-origin caller may read ONLY its own
       // session. Mirror session.search's `_agentId` filter exactly
       // (session-list.ts:163-168) — the session belongs to the caller iff
       // `parseFormattedSessionKey(sessionKey)?.agentId === callerAgentId`.

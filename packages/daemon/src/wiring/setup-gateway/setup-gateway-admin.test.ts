@@ -202,7 +202,7 @@ describe("buildSlashCommandDeps destroySession emits session:expired", () => {
   });
 });
 
-describe("detectGreetingTrigger maps wiring-tier state to a GreetingTrigger (spec §12)", () => {
+describe("detectGreetingTrigger maps wiring-tier state to a GreetingTrigger", () => {
   it('returns "onboarding-limited" for a non-interactive surface regardless of config', () => {
     expect(detectGreetingTrigger({ agentConfig: configuredAgent(), interactive: false })).toBe("onboarding-limited");
     expect(detectGreetingTrigger({ agentConfig: undefined, interactive: false })).toBe("onboarding-limited");

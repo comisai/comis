@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the SEC-03 (Phase 192) raw-error log-redaction helper.
+ * Tests for the raw-error log-redaction helper.
  *
  * `redactErr` is the de-mask discipline the off-turn video poller applies before
  * a raw provider/channel error rides a log line: its free-text message can echo a
@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { redactErr, makeRedactErr } from "./video-log-redaction.js";
 
-describe("redactErr (SEC-03 raw-error scrub)", () => {
+describe("redactErr (raw-error scrub)", () => {
   it("scrubs a Google API key (AIzaSy…) from the error message", () => {
     const secret = "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456";
     const out = redactErr(new Error(`download failed with key ${secret}`));
@@ -54,14 +54,14 @@ describe("redactErr (SEC-03 raw-error scrub)", () => {
     expect("stack" in out).toBe(false);
   });
 
-  // ─── CR-01 DE-MASK: the three real production leaks the pre-fix tests missed ───
-  // The shipped tests only ever placed a COVERED secret shape in the TOP-LEVEL
-  // .message. The poller, though, feeds `redactErr` the RAW provider error, and
-  // the realistic failure mode is an undici `TypeError("fetch failed")` whose
-  // network/URL detail lives in `err.cause` — never read by the old redactErr.
-  // And a FAL key is shaped `<uuid>:<32hex>`, which NO existing pattern catches.
+  // ─── DE-MASK: three real leaks a top-level-only scrub misses ───
+  // A top-level-only scrub covers only a secret shape in the TOP-LEVEL .message.
+  // The poller feeds `redactErr` the RAW provider error, and the realistic failure
+  // mode is an undici `TypeError("fetch failed")` whose network/URL detail lives in
+  // `err.cause` — so the cause chain MUST be walked. And a FAL key is shaped
+  // `<uuid>:<32hex>`, which NO generic pattern catches.
 
-  it("CR-01(a): scrubs a Google API key carried in err.cause.message (cause chain, not top-level)", () => {
+  it("scrubs a Google API key carried in err.cause.message (cause chain, not top-level)", () => {
     // undici surfaces a low-level failure as TypeError("fetch failed") whose
     // .cause carries the real (keyed-URL-bearing) detail. The old redactErr read
     // only the top message → the cause (and any secret in it) was silently dropped.
@@ -69,13 +69,13 @@ describe("redactErr (SEC-03 raw-error scrub)", () => {
     const cause = new Error(`getaddrinfo ENOTFOUND host key=${secret}`);
     const out = redactErr(new Error("fetch failed", { cause }));
     expect(out.errMessage).not.toContain(secret);
-    // WR-01 / §2.7: the failure-CLASS detail in the cause must SURVIVE redaction —
+    // §2.7: the failure-CLASS detail in the cause must SURVIVE redaction —
     // an operator must still tell a DNS failure from a refused connection.
     expect(out.errMessage).toContain("ENOTFOUND");
     expect(out.errMessage).toContain("fetch failed");
   });
 
-  it("CR-01(b): scrubs a FAL key shape (<uuid>:<32hex>) the generic patterns miss", () => {
+  it("scrubs a FAL key shape (<uuid>:<32hex>) the generic patterns miss", () => {
     // A FAL FAL_KEY is `<uuid>:<32hex>`. The UUID half has hyphens (breaks a hex
     // run) and the hex half is ~32 chars (< the 40-char HEX_SECRET_LONG floor),
     // so it is not sk-/Bearer/AIza/long-hex — every existing pattern misses it.
@@ -86,7 +86,7 @@ describe("redactErr (SEC-03 raw-error scrub)", () => {
     expect(out.errMessage).not.toContain("9f8e7d6c5b4a32109f8e7d6c5b4a3210");
   });
 
-  it("CR-01(c): scrubs the Veo keyed-download-URL (&key=) when it lives inside a cause chain", () => {
+  it("scrubs the Veo keyed-download-URL (&key=) when it lives inside a cause chain", () => {
     const secret = "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456";
     const url = `https://generativelanguage.googleapis.com/v1beta/files/x:download?alt=media&key=${secret}`;
     const inner = new Error(`download leg failed for ${url}`);
@@ -95,7 +95,7 @@ describe("redactErr (SEC-03 raw-error scrub)", () => {
     expect(out.errMessage).not.toMatch(/key=AIza[A-Za-z0-9_-]{4,}/);
   });
 
-  it("CR-01: bounded cause walk — a deep chain does not loop and still scrubs every level", () => {
+  it("bounded cause walk — a deep chain does not loop and still scrubs every level", () => {
     const secret = "sk-proj-DEADBEEFcafef00dDEADBEEFcafef00dXY";
     // Build a 6-deep chain (deeper than MAX_CAUSE_DEPTH) with the secret at the
     // bottom — the walk is bounded, so the deepest level may be unwalked, but no
@@ -109,18 +109,18 @@ describe("redactErr (SEC-03 raw-error scrub)", () => {
     expect(out.errMessage).not.toContain(secret);
   });
 
-  it("CR-01: a non-Error cause (string) terminates the walk without throwing", () => {
+  it("a non-Error cause (string) terminates the walk without throwing", () => {
     const out = redactErr(new Error("fetch failed", { cause: "some string cause" }));
     expect(out.errName).toBe("Error");
     expect(out.errMessage).toContain("fetch failed");
   });
 });
 
-describe("redactErr — exact-match bound-secret scrub (the v2.20 knownSecrets precedent)", () => {
+describe("redactErr — exact-match bound-secret scrub (the knownSecrets precedent)", () => {
   it("scrubs a bound FAL secret by EXACT MATCH regardless of shape/context", () => {
     // The robust, shape-independent fix: bind the RESOLVED video secrets actually
     // in use and exact-match-scrub them. This catches ANY shape (incl. future ones)
-    // without a regex guessing the format — the v2.20 OutputGuard knownSecrets idiom.
+    // without a regex guessing the format — the OutputGuard knownSecrets idiom.
     const falKey = "b1946ac9-2c7f-4d3e-8a1b-9f8e7d6c5b4a:9f8e7d6c5b4a32109f8e7d6c5b4a3210";
     const redact = makeRedactErr([falKey]);
     const out = redact(new Error(`provider error mentioning ${falKey} verbatim`));

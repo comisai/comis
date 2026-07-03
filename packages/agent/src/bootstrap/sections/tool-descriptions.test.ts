@@ -88,7 +88,8 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/## Credential Discovery/);
   });
 
-  // MCP Output Directory rule -- Layer 2 of COMIS-MCP-OUTPUT-SANDBOXING-DESIGN.md.
+  // MCP Output Directory rule -- the prompt-guidance layer of MCP output
+  // sandboxing (the runtime layer rejects out-of-workspace paths).
   // Closes a cascade where gemini-image-mcp wrote outputs outside the workspace
   // and message.attach + sandbox-exec (correctly) rejected them.
   it("gateway guide includes MCP output directory rule", () => {
@@ -111,18 +112,18 @@ describe("TOOL_GUIDES", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R10a — gateway guide prohibition: remove fallback clause permitting
-  // gateway.patch for MCP installs; replace with explicit NEVER prohibition.
+  // Gateway guide prohibition: no fallback clause permitting gateway.patch
+  // for MCP installs — the guide carries an explicit NEVER prohibition.
   // -------------------------------------------------------------------------
-  it("R10a — gateway guide must NOT contain fallback clause permitting gateway.patch for MCP installs", () => {
+  it("gateway guide must NOT contain fallback clause permitting gateway.patch for MCP installs", () => {
     expect(TOOL_GUIDES.gateway).not.toMatch(/Only fall back to gateway.*integrations\.mcp\.servers/);
   });
 
-  it("R10a — gateway guide prohibits gateway.patch against integrations.mcp.servers", () => {
+  it("gateway guide prohibits gateway.patch against integrations.mcp.servers", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/NEVER use gateway.*integrations\.mcp\.servers/);
   });
 
-  it("R10a — mcp_manage JIT guide states Validation failed means fix args not abandon tool", () => {
+  it("mcp_manage JIT guide states Validation failed means fix args not abandon tool", () => {
     expect(TOOL_GUIDES.mcp_manage).toMatch(/[Vv]alidation.*fix the arguments|fix the arguments.*validation/i);
   });
 
@@ -196,22 +197,22 @@ describe("TOOL_GUIDES", () => {
   });
 
   // -------------------------------------------------------------------------
-  // TOOL_GUIDE rewrite — single-call creation is now PREFERRED for batch
-  // fleet creation; the existing 2-step flow is relabeled as FALLBACK and
-  // ordered after the single-call section.
+  // Single-call creation is the PREFERRED path for batch fleet creation;
+  // the 2-step flow is labeled FALLBACK and ordered after the single-call
+  // section.
   //
   // Goal: shrink the LLM's parallel-tool-call surface (3 calls per agent →
   // 1 call per agent) so TOOL_GUIDE prescriptive text is not crowded out
   // under high parallel-tool-call load (production session showed silent
   // termination after a 9-agent batch creation).
   //
-  // The prescriptive 2-step pin tests above MUST continue to pass against
-  // the rewritten guide (FALLBACK section preserves the verbatim 2-step
-  // language including "Two-step creation flow", "ROLE.md", "Do NOT pass
-  // persona", and "Workspace.profile values").
+  // The prescriptive 2-step pin tests above hold against this guide too:
+  // the FALLBACK section preserves the verbatim 2-step language including
+  // "Two-step creation flow", "ROLE.md", "Do NOT pass persona", and
+  // "Workspace.profile values".
   // -------------------------------------------------------------------------
   describe("TOOL_GUIDES.agents_manage (single-call PREFERRED)", () => {
-    it("Test 10 — contains a 'Single-call creation' PREFERRED block with workspace.role/identity example", () => {
+    it("contains a 'Single-call creation' PREFERRED block with workspace.role/identity example", () => {
       expect(TOOL_GUIDES.agents_manage).toContain("Single-call creation");
       expect(TOOL_GUIDES.agents_manage).toContain("PREFERRED for batch fleet creation");
       expect(TOOL_GUIDES.agents_manage).toContain("workspace:");
@@ -219,12 +220,12 @@ describe("TOOL_GUIDES", () => {
       expect(TOOL_GUIDES.agents_manage).toMatch(/identity:\s*"/);
     });
 
-    it("Test 11 — size hints (16384 / 4096) appear in the single-call section", () => {
+    it("size hints (16384 / 4096) appear in the single-call section", () => {
       expect(TOOL_GUIDES.agents_manage).toContain("16384");
       expect(TOOL_GUIDES.agents_manage).toContain("4096");
     });
 
-    it("Test 12 — FALLBACK relabel and ordering: single-call appears BEFORE the FALLBACK 2-step block", () => {
+    it("FALLBACK labeling and ordering: single-call appears BEFORE the FALLBACK 2-step block", () => {
       const guide = TOOL_GUIDES.agents_manage;
       expect(guide).toContain("Two-step creation flow (FALLBACK)");
       const singleCallIdx = guide.indexOf("Single-call creation");
@@ -243,11 +244,11 @@ describe("TOOL_GUIDES", () => {
   // found for openrouter" and the user saw a generic "An error occurred"
   // message.
   //
-  // The fix wraps the brittle "Just store the API key (gateway env_set) and
+  // The guide wraps the brittle "Just store the API key (gateway env_set) and
   // switch the agent directly" shortcut behind a mandatory 4-step pre-check
-  // (env_list → ask if absent → env_set → switch). The new section is
-  // placed at the TOP of the providers_manage TOOL_GUIDE so the LLM reads
-  // it BEFORE the "Built-in vs Custom Provider Check" section.
+  // (env_list → ask if absent → env_set → switch). The section sits at the
+  // TOP of the providers_manage TOOL_GUIDE so the LLM reads it BEFORE the
+  // "Built-in vs Custom Provider Check" section.
   //
   // The 8 anchor pins below verify the 6 contract truths (header present,
   // env_list referenced, ASK THE USER wording, hard-stop wording, brittle
@@ -255,25 +256,25 @@ describe("TOOL_GUIDES", () => {
   // multi-path enumeration).
   // -------------------------------------------------------------------------
   describe("TOOL_GUIDES.providers_manage (credential pre-check)", () => {
-    it("Test 1 — providers_manage TOOL_GUIDE contains 'Credential Pre-Check (MANDATORY before any provider switch)' header", () => {
+    it("providers_manage TOOL_GUIDE contains 'Credential Pre-Check (MANDATORY before any provider switch)' header", () => {
       expect(TOOL_GUIDES.providers_manage).toContain("Credential Pre-Check (MANDATORY before any provider switch)");
     });
 
-    it("Test 2 — providers_manage TOOL_GUIDE references env_list", () => {
+    it("providers_manage TOOL_GUIDE references env_list", () => {
       expect(TOOL_GUIDES.providers_manage).toContain("env_list");
     });
 
-    it("Test 3 — providers_manage TOOL_GUIDE includes 'ASK THE USER for the API key' with recovery wording", () => {
+    it("providers_manage TOOL_GUIDE includes 'ASK THE USER for the API key' with recovery wording", () => {
       expect(TOOL_GUIDES.providers_manage).toContain("ASK THE USER for the API key");
     });
 
-    it("Test 4 — providers_manage TOOL_GUIDE forbids proceeding without a key", () => {
+    it("providers_manage TOOL_GUIDE forbids proceeding without a key", () => {
       expect(TOOL_GUIDES.providers_manage).toContain("Do NOT proceed without the key");
     });
 
-    it("Test 5 — brittle 'just store + switch directly' shortcut wording is no longer present anywhere in tool-descriptions", async () => {
-      // The pre-fix wording was: "Just store the API key (gateway env_set) and switch the agent directly."
-      // It must be replaced by the credential-aware sequenced flow.
+    it("brittle 'just store + switch directly' shortcut wording is absent everywhere in tool-descriptions", async () => {
+      // The forbidden wording: "Just store the API key (gateway env_set) and switch the agent directly."
+      // Only the credential-aware sequenced flow is allowed.
       // Source-grep mirrors the import.meta.url + fileURLToPath precedent at
       // packages/skills/src/builtin/platform/agents-manage-tool.test.ts:1457-1463.
       const fs = await import("node:fs");
@@ -284,7 +285,7 @@ describe("TOOL_GUIDES", () => {
       expect(fileContent).not.toMatch(/Just store the API key.*and switch the agent directly/);
     });
 
-    it("Test 6 — Credential Pre-Check section appears textually before Built-in vs Custom Provider Check section", () => {
+    it("Credential Pre-Check section appears textually before Built-in vs Custom Provider Check section", () => {
       const guide = TOOL_GUIDES.providers_manage;
       const preCheckIdx = guide.indexOf("Credential Pre-Check (MANDATORY before any provider switch)");
       const builtInIdx = guide.indexOf("Built-in vs Custom Provider Check");
@@ -293,20 +294,20 @@ describe("TOOL_GUIDES", () => {
       expect(preCheckIdx).toBeLessThan(builtInIdx);
     });
 
-    it("Test 7 — 'Switching an Agent's Provider or Model' lists three preconditions including credential pre-check", () => {
+    it("'Switching an Agent's Provider or Model' lists three preconditions including credential pre-check", () => {
       expect(TOOL_GUIDES.providers_manage).toContain("Three preconditions");
       expect(TOOL_GUIDES.providers_manage).toContain("Credential pre-check passed");
     });
 
-    it("Test 8 — Credential Pre-Check enumerates all provider-switch paths (gateway.patch + agents_manage + providers_manage)", () => {
+    it("Credential Pre-Check enumerates all provider-switch paths (gateway.patch + agents_manage + providers_manage)", () => {
       const guide = TOOL_GUIDES.providers_manage;
       expect(guide).toContain("gateway.patch agents.*.provider");
       expect(guide).toContain("agents_manage update");
       expect(guide).toContain("providers_manage create");
     });
 
-    it("Test 9 (hygiene) — 'Credential Workflow' is renamed to 'Credential Workflow Summary'", () => {
-      // The section is renamed to clarify that the canonical entry point is
+    it("the credential storage section is titled 'Credential Workflow Summary', not bare 'Credential Workflow'", () => {
+      // The "Summary" suffix clarifies that the canonical entry point is
       // the Credential Pre-Check above; this section just documents what gets
       // stored where. A bare "Credential Workflow" header would re-introduce
       // ambiguity.
@@ -388,7 +389,7 @@ describe("resolveDescription", () => {
     expect(result).toContain("sessions_send");
   });
 
-  it("returns tool name for removed native tool (fallback)", () => {
+  it("returns bare tool name for a native tool absent from the map (fallback)", () => {
     const result = resolveDescription({ name: "read" }, LEAN_TOOL_DESCRIPTIONS);
     expect(result).toBe("read");
   });

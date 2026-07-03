@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * approval-render helpers (render side, §6.4 / §7.7).
+ * approval-render helper tests (render side of the approval flow).
  *
  * The render path is text-only today; these helpers are the shared foundation
  * every per-channel approval UI builds on:
  *
  *   - `buildApprovalButtons(event, sign)` turns a `kind:"approval"` event's
  *     redacted `ApprovalCorrelation` (`shortId` + `choices`) into signed
- *     `RichButton` rows. Each button's `callback_data` is the §6.4.2 wire
+ *     `RichButton` rows. Each button's `callback_data` is the wire
  *     string `v1.<choice>.<shortId>.<hmac>` where `<hmac>` comes from the
  *     INJECTED, secret-bound signer — the renderer never sees the secret and
  *     never reaches `@comis/orchestrator`.
  *   - `buildApprovalText(event, opts?)` is the plain-text fallback (IRC /
  *     WhatsApp / Signal / iMessage): single-pending → "Reply approve or deny …";
  *     `includeShortId` → "Reply approve <S> or deny <S>" so a renderer that
- *     knows the pending count can disambiguate (§6.4.6).
+ *     knows the pending count can disambiguate.
  *
  * The signer used here is the REAL `signCallbackData` from `@comis/core` bound
  * to a fixed test secret — so the asserted `callback_data` is byte-identical to
  * what the orchestrator's router will later verify (one primitive, no
- * duplication, no boundary violation; Pitfall 5).
+ * duplication, no boundary violation).
  */
 import { describe, it, expect } from "vitest";
 import { signCallbackData } from "@comis/core";
@@ -98,7 +98,7 @@ describe("buildApprovalButtons", () => {
     expect(approve.text).toBe("Approve");
     expect(deny.text).toBe("Deny");
 
-    // callback_data is the exact §6.4.2 wire string built from the INJECTED signer.
+    // callback_data is the exact wire string built from the INJECTED signer.
     expect(approve.callback_data).toBe(
       `v1.approve.${SHORT_ID}.${signCallbackData(TEST_SECRET, "approve", SHORT_ID)}`,
     );
@@ -166,7 +166,7 @@ describe("buildApprovalText", () => {
     expect(text).not.toContain(SHORT_ID);
   });
 
-  it("includeShortId form embeds the shortId after each verb (§6.4.6 disambiguation)", () => {
+  it("includeShortId form embeds the shortId after each verb for multi-pending disambiguation", () => {
     const text = buildApprovalText(approvalEvent(), { includeShortId: true });
     expect(text).toBe(`Reply approve ${SHORT_ID} or deny ${SHORT_ID}`);
   });

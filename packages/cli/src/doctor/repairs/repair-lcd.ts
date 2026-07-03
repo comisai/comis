@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD repair module for comis doctor — DOC-03 (Phase 171); extended for the
- * FTS-02 normalized trigram-twin backfill (Phase 180).
+ * LCD repair module for comis doctor, including the normalized
+ * trigram-twin backfill.
  *
  * Two repair actions (offline-safe, pure-SQL, no daemon required):
  *   - repairFtsDrift: repopulate self-contained lcd_messages_fts from lcd_message_parts;
  *                     rebuild external-content lcd_summaries_fts via 'rebuild' idiom;
  *                     AND backfill the three self-contained trigram twins with
- *                     NORMALIZED text (Phase 180) so pre-existing history becomes
+ *                     NORMALIZED text so pre-existing history becomes
  *                     trigram-searchable
  *   - repairContextItems: remove dangling lcd_context_items refs (summary/message not in store)
  *
- * REMOVED: repairFallbackSummaries — LLM re-summarization is IMPOSSIBLE offline
+ * Deliberately NO repairFallbackSummaries — LLM re-summarization is IMPOSSIBLE offline
  * (the daemon is stopped during --repair and cli↛agent is a forbidden import cut).
  * Fallback-marker summaries (fallback=1) are quality debt re-summarized by the daemon
  * during normal compaction — not repairable by doctor --repair. The fallback-summary
  * finding in lcd-health.ts is repairable:false.
  *
- * F1 ABSOLUTE CONSTRAINT: lcd_messages is NEVER written by any repair path.
+ * ABSOLUTE CONSTRAINT: lcd_messages is NEVER written by any repair path.
  * Repairs operate strictly above the lossless verbatim raw store.
  *
  * FTS architecture:
@@ -28,15 +28,15 @@
  *     Instead, re-derive FTS rows from lcd_message_parts using the same render fn as
  *     the adapter populate path (renderMessageFtsText from @comis/memory).
  *   - lcd_messages_fts_tri / lcd_summaries_fts_tri / memory_fts_tri: SELF-CONTAINED
- *     FTS5 trigram twins (Phase 180-02). They store NORMALIZED text so a script-routed
+ *     FTS5 trigram twins. They store NORMALIZED text so a script-routed
  *     MATCH can read Hebrew/Arabic/Cyrillic/CJK. The backfill below feeds each twin
  *     `normalizeForSearch(...)` of EXACTLY what the populate path indexes — the SAME
  *     render fn for messages, the raw content column for summaries/memories — so the
- *     repair output is byte-equivalent to a fresh TS write (the I7 doctor leg: index
- *     side = query side = doctor backfill, one normalizer). These twins are NOT
+ *     repair output is byte-equivalent to a fresh TS write (index side, query
+ *     side, and doctor backfill all share one normalizer). These twins are NOT
  *     external-content, so 'rebuild' is forbidden — it would re-index RAW text and
- *     silently undo FTS-02. Skipped wholesale on hosts lacking the trigram tokenizer
- *     (tableExists guard).
+ *     silently undo the normalization. Skipped wholesale on hosts lacking the
+ *     trigram tokenizer (tableExists guard).
  *
  * Open DB in READ-WRITE mode (timeout: 5000) to surface SQLITE_BUSY cleanly.
  * Operator must stop daemon first and run `comis sessions backup` before repair.
@@ -56,7 +56,7 @@ import { renderMessageFtsText } from "@comis/memory";
 
 /**
  * Repair FTS5 index drift for lcd_messages and lcd_summaries, plus backfill the
- * three normalized trigram twins (Phase 180).
+ * three normalized trigram twins.
  *
  * lcd_summaries_fts (EXTERNAL-CONTENT): uses the standard FTS5 'rebuild' command.
  *
@@ -69,20 +69,20 @@ import { renderMessageFtsText } from "@comis/memory";
  * This mirrors the adapter populate path in lcd-store.ts (the createLcdStore append
  * transaction) exactly — same render fn, same columns, same rowid linkage.
  *
- * Trigram twins (lcd_messages_fts_tri / lcd_summaries_fts_tri / memory_fts_tri,
- * Phase 180-02): SELF-CONTAINED, so 'rebuild' is FORBIDDEN (it would re-index raw
+ * Trigram twins (lcd_messages_fts_tri / lcd_summaries_fts_tri / memory_fts_tri):
+ * SELF-CONTAINED, so 'rebuild' is FORBIDDEN (it would re-index raw
  * pre-normalization text). Each twin is delete-all-then-repopulated with
  * `normalizeForSearch(...)` of exactly what the populate path indexes — the SAME
  * renderMessageFtsText output for messages, the raw content column for
  * summaries/memories — at the base row's rowid, copying the base row's R4 scope
- * columns verbatim. This makes pre-existing history (rows written before Phase 180's
- * TS twin writes) trigram-searchable, operator-run. Each twin is independently
+ * columns verbatim. This makes pre-existing history (rows written before the
+ * twins' populate path indexed them) trigram-searchable, operator-run. Each twin is independently
  * guarded on its own existence (tableExists), so a trigram-less host skips them all
  * gracefully and a partial-schema db skips whichever twins are absent.
  *
  * Gracefully skips any FTS table that does not exist (FTS5 not compiled on host).
  *
- * F1: Never writes to lcd_messages / lcd_summaries / memories. Reads them (SELECT
+ * Never writes to lcd_messages / lcd_summaries / memories. Reads them (SELECT
  * only) to derive FTS content; only the FTS shadow objects are mutated.
  */
 export async function repairFtsDrift(
@@ -232,7 +232,7 @@ export async function repairFtsDrift(
     // ── memory_fts_tri (SELF-CONTAINED TRIGRAM TWIN — NORMALIZED, rowid lane) ─
     // Backfill from memories.content normalized, at the memories rowid. The LTM
     // trigram lane carries NO scope columns — it scopes via a rowid-JOIN to
-    // memories plus post-fusion tenant/agent filters (plans 180-05/06).
+    // memories plus post-fusion tenant/agent filters.
     if (tableExists("memory_fts_tri")) {
       db.prepare("DELETE FROM memory_fts_tri").run();
 
@@ -279,7 +279,7 @@ function safeParseJson(raw: string): unknown {
  *
  * An optional conversationId scope can narrow the repair to one conversation.
  *
- * F1: Reads lcd_messages to verify ref existence only (SELECT). NEVER writes to it.
+ * Reads lcd_messages to verify ref existence only (SELECT). NEVER writes to it.
  */
 export async function repairContextItems(
   db: Database.Database,
@@ -305,7 +305,7 @@ export async function repairContextItems(
     }
 
     // Delete dangling message refs
-    // F1: SELECT from lcd_messages (read-only check) — never INSERT/UPDATE/DELETE lcd_messages
+    // SELECT from lcd_messages (read-only check) — never INSERT/UPDATE/DELETE lcd_messages
     const messageDeleteSql =
       "DELETE FROM lcd_context_items" +
       " WHERE ref_kind='message'" +

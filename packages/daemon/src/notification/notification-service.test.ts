@@ -131,7 +131,7 @@ describe("NotificationService", () => {
       }),
     );
     // The error must name the resolution ladder it walked and the knob that
-    // fixes it — not just the symptom (live finding, 2026-06-12 C7 run).
+    // fixes it — not just the symptom.
     if (!result.ok) {
       expect(result.error.message).toContain("tried:");
       expect(result.error.message).toContain("recent_session");

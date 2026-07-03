@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LOCAL — overlay this checkout's built dist onto the VPS daemon's source tree (no rebuild on the box;
-# M1 added no new third-party deps so node_modules on the VPS is fine). Run from anywhere in the repo
+# when the build under test adds no new third-party deps, node_modules on the VPS is fine). Run from anywhere in the repo
 # AFTER `pnpm build`.
 #   Setup once:  cp scripts/.live-env.example scripts/.live-env  &&  set VPS=user@host (+ SRC).
 #   Then (after `pnpm build`):  ./deploy-dist.sh        # .live-env is auto-sourced; or pass VPS=… inline

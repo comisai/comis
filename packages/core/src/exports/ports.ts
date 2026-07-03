@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/core exports — Port interfaces (hexagonal architecture boundaries)
-// Runtime values that previously lived under core/src/ports/ now live in
-// non-ports/ home modules. The public surface stays byte-identical — only
-// the re-export targets shifted.
+// Runtime values live in non-ports home modules (`core/src/ports/*.ts` is
+// type-only); this barrel re-exports them onto the public surface.
 
 export { ChannelCapabilitySchema } from "../domain/channel-capability.js";
 export { createNoOpDeliveryQueue } from "../delivery/no-op-delivery-queue.js";
@@ -167,15 +166,15 @@ export type {
   EgressMaterialization,
 } from "../ports/index.js";
 
-// LCD parts <-> pi-ai Message codec (v2.12, Phase 127). Runtime VALUES (not
-// types) — the pure round-trip functions the memory adapter (Plan 04) and
-// Phase 128 ingest consume. The port + DTO TYPES are in the export-type block
-// above; these two functions are the value seam.
+// LCD parts <-> pi-ai Message codec. Runtime VALUES (not types) — the pure
+// round-trip functions the memory adapter and context ingest consume. The port
+// + DTO TYPES are in the export-type block above; these two functions are the
+// value seam.
 export { messageToParts, partsToMessage } from "../context-store/index.js";
 
-// Reflection delta-ops (v2.31 Phase 223). Runtime VALUES (not types) — the pure
-// `applyDeltaOps` (byte-stable section refresh, REFLECT-04) + `renderStructuredBody`
-// (AST → markdown) the agent reflection job (Plan 04) consumes. They live in the
-// non-ports home module (`core/src/ports/*.ts` is type-only); the DeltaOp /
-// DocSection / StructuredBody TYPES are in the export-type block above.
+// Reflection delta-ops. Runtime VALUES (not types) — the pure `applyDeltaOps`
+// (byte-stable section refresh) + `renderStructuredBody` (AST → markdown) the
+// agent reflection job consumes. They live in the non-ports home module
+// (`core/src/ports/*.ts` is type-only); the DeltaOp / DocSection /
+// StructuredBody TYPES are in the export-type block above.
 export { applyDeltaOps, renderStructuredBody } from "../reflection/delta-ops.js";

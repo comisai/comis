@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The pure structural full-screen-dialog predicate (CLASS-01; design §4 Phase A,
- * §7.1.3 STRUCTURAL-ONLY).
+ * The pure structural full-screen-dialog predicate (STRUCTURAL-ONLY).
  *
  * `detectsFullScreenDialog(snapshot, hintPatterns?)` answers ONE question over the
  * rendered grid: is this frame, by STRUCTURE alone, an interactive full-screen dialog
  * (a boxed prompt, an enumerated option menu, or a genuine selector affordance)? It
- * exists to close the documented claude-2.1.x misread (`project_v211_classifier_claude_menus_stuck`):
+ * exists to close the documented claude-2.1.x misread:
  * a full-screen permission/menu dialog whose cursor sits on a blank input line BELOW
  * the prompt block makes {@link isCursorParked} (correctly) return `false`, so
  * {@link classifyFrame} used to fall through to `stuck`. This predicate lets the
  * classifier read such a settled, diff-empty frame as `awaiting-input` instead.
  *
- * CLI-AGNOSTIC by design (§7.1.3): it is a STRUCTURAL test, NOT a per-CLI pattern
- * table (that brittleness is exactly what the CLASS-02 fixture corpus guards against).
+ * CLI-AGNOSTIC by design: it is a STRUCTURAL test, NOT a per-CLI pattern
+ * table (that brittleness is exactly what the fixture corpus guards against).
  * It fires `true` when ANY ONE strong structural cue is present over the rows:
  *   - a box-drawing run (`╭╮╰╯│─…`, an ASCII `+--+` corner/edge, or a PREDOMINANTLY
  *     border-fill `|----|` row — NOT an arbitrary `| prose | prose |` markdown row), OR
@@ -23,7 +22,7 @@
  *   - a genuine selector affordance: a `❯` caret, or a `(y/n)`/`[Y/n]` confirmation
  *     token that is a STANDALONE END-OF-LINE affordance (not a substring mid-prose).
  *
- * TIGHT by design (RESEARCH Pitfall 2 / T-163-02 — the severity-HIGH failure; MR-01):
+ * TIGHT by design — an over-broad match is the severity-HIGH failure mode:
  * mere indentation, bullets (`●`/`⎿`), a stray `>` quote, a markdown table row
  * (`| col | col |`), a numbered prose list that keeps generating, or a `(y/n)` token
  * buried mid-sentence in generation prose must NOT match — else a completed/thinking
@@ -32,17 +31,17 @@
  *
  * `hintPatterns` (the operator-configured cues, NEVER model/screen-derived) REINFORCE a
  * BORDERLINE selector match only — a hintPattern present on prose with no structural cue
- * does NOT force `true`. Structure is primary (T-124-06): a prompt-injecting CLI cannot
+ * does NOT force `true`. Structure is primary: a prompt-injecting CLI cannot
  * phish a keystroke by echoing the operator's cue mid-generation.
  *
  * Caller contract: {@link classifyFrame} gates this on `frame.diffEmpty` and reaches it
  * only AFTER `isCursorParked` returned `false`, so a STATIC settled old menu IS
  * `awaiting-input` BY DESIGN (a settled menu is awaiting input); "hung" means NO
  * structure (no box/menu/selector), which still falls through to the `stuck`-by-progress
- * branch. PARK_ROW_TOLERANCE / isCursorParked are NOT touched — CLASS-01 ADDS a branch,
- * it never weakens the load-bearing gate.
+ * branch. PARK_ROW_TOLERANCE / isCursorParked are NOT touched — this predicate ADDS a
+ * branch, it never weakens the load-bearing gate.
  *
- * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors
+ * Architecture invariants (binding — AGENTS.md; mirrors
  * `terminal-classifier.ts` / `terminal-auto-answer.ts`):
  *   - PURE: a free function, NOT a factory. NO clock/timer reads, NO module-global
  *     mutable state, NO I/O.
@@ -59,7 +58,7 @@
 import type { EmulatorSnapshot } from "./terminal-render.js";
 
 // ---------------------------------------------------------------------------
-// Structural-cue matchers — STRONG cues only (tight by design, T-163-02).
+// Structural-cue matchers — STRONG cues only (tight by design).
 // ---------------------------------------------------------------------------
 
 /**
@@ -71,7 +70,7 @@ const BOX_DRAWING = /[╭╮╰╯│─└┌┐┘├┤┬┴┼]/;
  * An ASCII border row: a `+` with `-`/`=` runs (`+----+` corners/edges), OR a `|`-bounded
  * row that is PREDOMINANTLY BORDER FILL — only border glyphs (`-`/`=`/`+`/`|`) and spaces
  * between the outer pipes (a `|------|` rule or a blank `|      |` box edge). The second
- * alternative is INTENTIONALLY NOT `^\s*\|.*\|\s*$` (MR-01): that earlier form matched
+ * alternative is INTENTIONALLY NOT `^\s*\|.*\|\s*$`: that broader form matched
  * EVERY pipe-bounded row — so a markdown table row (`| Option | Cost |`) or a single
  * pipe-bounded ascii-art line (`|  A --> B  |`) in generation output was misread as
  * dialog chrome. A real box's `+---+` top/bottom border still fires on the first
@@ -85,7 +84,7 @@ const ASCII_BORDER = /(?:\+[-=]{2,}\+)|(?:^\s*\|[-=+|\s]*\|\s*$)/;
  * Anchored at line start (after optional indent) so a `step 1.` mid-sentence in prose
  * does NOT match — only a genuine list item. The caller requires ≥2 such rows AND that
  * they be the TRAILING structure (no prose below the last option) before treating them
- * as a menu — a numbered prose list that continues with a sentence is NOT a menu (MR-01).
+ * as a menu — a numbered prose list that continues with a sentence is NOT a menu.
  */
 // eslint-disable-next-line security/detect-unsafe-regex -- linear; no nested/overlapping quantifier (single anchored `\s*` + an unambiguous alternation + a lone `\s+\S`; verified <0.2ms on 100k pathological input — not ReDoS).
 const ENUMERATOR = /^\s*(?:[❯>]\s*)?(?:\d+[.)]|\[\d+\]|\([a-z]\))\s+\S/;
@@ -94,8 +93,8 @@ const ENUMERATOR = /^\s*(?:[❯>]\s*)?(?:\d+[.)]|\[\d+\]|\([a-z]\))\s+\S/;
  * A genuine selector affordance: a `❯` caret at a word boundary (`(?:^|\s)❯`), OR a
  * `(y/n)`/`(yes/no)`/`[y/n]`/`[Y/n]` confirmation token that is a STANDALONE END-OF-LINE
  * affordance (the token, then only an optional trailing prompt char `?`/`:`/`>` and
- * whitespace, then end-of-line). The end-of-line anchor is load-bearing (MR-01/MR-02):
- * the earlier alternatives had NO position anchor, so a `(yes/no)` / `[y/n]` token buried
+ * whitespace, then end-of-line). The end-of-line anchor is load-bearing:
+ * an unanchored alternative would let a `(yes/no)` / `[y/n]` token buried
  * mid-sentence in generation prose matched anywhere on the line and was misread as a
  * prompt. A real confirmation prompt always carries the token as the trailing affordance
  * (`Overwrite? (y/n)`), so anchoring it to end-of-line keeps every genuine prompt while
@@ -137,7 +136,7 @@ function isHintAffordanceLine(trimmed: string, hintPatterns: readonly string[]):
 // ---------------------------------------------------------------------------
 
 /**
- * Is this frame, by STRUCTURE, a full-screen interactive dialog? — CLASS-01.
+ * Is this frame, by STRUCTURE, a full-screen interactive dialog?
  *
  * Fires `true` iff ANY strong structural cue is present over the rendered rows:
  * a box-drawing/ASCII-border row, OR ≥2 enumerated option rows, OR a genuine selector
@@ -148,11 +147,11 @@ function isHintAffordanceLine(trimmed: string, hintPatterns: readonly string[]):
  *   `snapshot.screen` (split on `"\n"`) is read; the cursor is the caller's concern
  *   (this branch is reached only when the cursor is NOT parked).
  * @param hintPatterns - Optional operator prompt cues (reinforcement only — never
- *   enough to satisfy structure alone; preserves T-124-06).
+ *   enough to satisfy structure alone; structure stays primary).
  * @param perceptionAffordances - Optional SELECTED-platform perception patterns
  *   (`menuOrPicker`/`promptAffordance`/`turnEnd` from the profile, fed by the classifier).
  *   A rendered line matching any is a dialog cue — developer-authored + operator-selected
- *   by allowId (not screen-derived, T-124-06-safe); empty ⇒ the generic structural path.
+ *   by allowId (not screen-derived, so unphishable); empty ⇒ the generic structural path.
  * @returns `true` iff the rendered structure is unmistakably a dialog/menu.
  */
 export function detectsFullScreenDialog(
@@ -185,7 +184,7 @@ export function detectsFullScreenDialog(
     // an immediate cue.
     if (SELECTOR.test(line)) sawSelector = true;
 
-    // v2.26 CLASSIFY-01/D5: a SELECTED platform profile's perception affordance (a
+    // A SELECTED platform profile's perception affordance (a
     // `menuOrPicker`/`promptAffordance`/`turnEnd` pattern — e.g. Claude's `Select Model`
     // picker or `Esc to cancel`) the generic structural cues miss. These are
     // developer-authored + operator-selected-by-allowId (not screen/model-derived, so a
@@ -196,7 +195,7 @@ export function detectsFullScreenDialog(
     }
 
     // Count enumerated option rows (a single one is prose, "step 1."). The ≥2 check +
-    // the trailing-structure test below are what promote them to a menu (MR-01). Capture
+    // the trailing-structure test below are what promote them to a menu. Capture
     // the tail after each hit so the last enumerator's tail is what survives the loop.
     if (ENUMERATOR.test(line)) {
       enumeratorRows++;
@@ -204,7 +203,7 @@ export function detectsFullScreenDialog(
     }
 
     // hintPatterns REINFORCE only — and ONLY as a borderline selector affordance, never
-    // as a free substring in prose (T-124-06: a CLI must not phish a keystroke by echoing
+    // as a free substring in prose (a CLI must not phish a keystroke by echoing
     // the operator's cue mid-generation). A real affordance carries the cue at the END of
     // a SHORT prompt line (e.g. "Overwrite file? proceed?"), so reinforce iff the matched
     // operator cue sits at the trailing affordance position of a short line — never buried
@@ -216,7 +215,7 @@ export function detectsFullScreenDialog(
 
   // ≥2 line-start enumerators are a MENU only when the options are the TRAILING
   // structure — i.e. nothing but blank rows, more enumerators, or border rows appear
-  // BELOW the last option (MR-01). A *completed* response that ends in a NUMBERED PROSE
+  // BELOW the last option. A *completed* response that ends in a NUMBERED PROSE
   // LIST keeps generating prose after the items ("…and that completes it"), so a
   // non-enumerator prose line below the last enumerated row demotes it back to prose.
   // (A boxed menu already returned `true` above on its `+---+` border, so this only
@@ -234,8 +233,8 @@ export function detectsFullScreenDialog(
  * Are `rowsBelow` (the rows strictly AFTER the last enumerated option) all non-prose —
  * i.e. blank, another enumerator, or a box/ASCII border? `true` means the enumerated
  * options are the TRAILING structure of the frame (a real menu); `false` means
- * generation prose continues past the last option (a numbered prose list, NOT a menu —
- * MR-01). Pure; never throws (an empty tail — the options ARE the last rows — yields
+ * generation prose continues past the last option (a numbered prose list, NOT a
+ * menu). Pure; never throws (an empty tail — the options ARE the last rows — yields
  * `true`).
  */
 function isTrailingStructure(rowsBelow: readonly string[]): boolean {

@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `rig-control.test.ts` — the AUTO-02 lifecycle owner (Phase 205, Plan 04).
+ * `rig-control.test.ts` — the AUTO-02 lifecycle owner.
  *
- * Two tiers, the 204 `isLive` split:
+ * Two tiers, split by `isLive`:
  *
- *   • DETERMINISTIC (always runs, no daemon, no network): the Pitfall-1 ordering
- *     proof — `restart()` / `resetDeep()` await the current `daemonHandle.cleanup()`
+ *   • DETERMINISTIC (always runs, no daemon, no network): the cleanup-before-reboot
+ *     ordering proof — `restart()` / `resetDeep()` await the current `daemonHandle.cleanup()`
  *     (which sets the double-start `activeHandle = null`) BEFORE re-booting via the
  *     injected `bootFn`, so a real `startTestDaemon` would never throw "Test daemon
  *     already running". Plus the `resetDeep()` clean-slate filesystem proof (a real
  *     `mkdtempSync` data dir with a dummy `memory.db` + `logs/` + `workspace/sessions/`
  *     wiped) and the home-`.comis` SECURITY guard (`resetDeep()` THROWS on a
- *     non-isolated dataDir — T-205-10).
+ *     non-isolated dataDir).
  *
  *   • LIVE (`describe.skipIf(!isLive)`, COMIS_LIVE): boots a REAL isolated rig,
  *     calls `restart()`, and asserts the gateway is healthy again (a second
- *     `/health` passes — no double-start deadlock, Pitfall 1) and the emulator
- *     instance is PRESERVED across the re-boot (success-criterion #5).
+ *     `/health` passes — no double-start deadlock) and the emulator
+ *     instance is PRESERVED across the re-boot.
  *
  * Run under the LIVE vitest config (the bare root config excludes `test/live` →
  * 0 files = false green):
@@ -41,7 +41,7 @@ const TEST_CHAT: ChatRef = { chatId: 424242 };
 
 /**
  * A throwaway data dir with a memory.db + logs/ + workspace/sessions/ tree (the
- * isolated state `resetDeep()` wipes — used by Task-2 too). Returns the dir + the
+ * isolated state `resetDeep()` wipes). Returns the dir + the
  * memory.db path.
  */
 function makeIsolatedDataDir(): { dataDir: string; memoryDbPath: string } {
@@ -68,7 +68,7 @@ function makeFakeEmulator(): { emulator: TgEmulator; resetChat: ReturnType<typeo
 }
 
 // ---------------------------------------------------------------------------
-// DETERMINISTIC — Pitfall-1 ordering (cleanup BEFORE the re-boot), no daemon
+// DETERMINISTIC — cleanup-before-reboot ordering, no daemon
 // ---------------------------------------------------------------------------
 
 describe("rig-control (deterministic) — restart() ordering (the activeHandle double-start guard)", () => {
@@ -78,7 +78,7 @@ describe("rig-control (deterministic) — restart() ordering (the activeHandle d
     delete process.env["COMIS_DATA_DIR"];
   });
 
-  it("restart() awaits cleanup() BEFORE the boot (the activeHandle double-start guard ordering, Pitfall 1)", async () => {
+  it("restart() awaits cleanup() BEFORE the boot (the activeHandle double-start guard ordering)", async () => {
     const { dataDir, memoryDbPath } = makeIsolatedDataDir();
     cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
 
@@ -185,11 +185,11 @@ describe("rig-control (deterministic) — resetDeep() clean slate + the ~/.comis
     expect(existsSync(dataDir)).toBe(true);
     // The emulator chat was reset (channel-side clean slate).
     expect(resetChat).toHaveBeenCalledWith(TEST_CHAT);
-    // And it restarted (cleanup → boot, the Pitfall-1 ordering, runs as part of resetDeep).
+    // And it restarted (cleanup → boot, the cleanup-before-reboot ordering, runs as part of resetDeep).
     expect(order).toEqual(["cleanup", "boot"]);
   });
 
-  it("resetDeep() REFUSES a non-isolated dataDir (empty, or the operator's real ~/.comis) — the T-205-10 guard", async () => {
+  it("resetDeep() REFUSES a non-isolated dataDir (empty, or the operator's real ~/.comis) — the home-dir guard", async () => {
     const cleanup = vi.fn(async () => undefined);
     const handle = { cleanup, gatewayUrl: "http://127.0.0.1:1", authToken: "t" } as unknown as TestDaemonHandle;
     const bootFn = vi.fn(async () => handle) as unknown as typeof startTestDaemon;
@@ -224,7 +224,7 @@ describe("rig-control (deterministic) — resetDeep() clean slate + the ~/.comis
 
 // ---------------------------------------------------------------------------
 // DETERMINISTIC — reconfigure(overrides) rewrites the isolated YAML + restarts
-// (AUTO-04, the Track-K model sweep) — no daemon, no network.
+// (AUTO-04, the model sweep) — no daemon, no network.
 // ---------------------------------------------------------------------------
 
 describe("rig-control (deterministic) — reconfigure(overrides) rewrites the isolated config then restarts", () => {
@@ -280,12 +280,12 @@ describe("rig-control (deterministic) — reconfigure(overrides) rewrites the is
     await controller.reconfigure({ "agents.default.model": "qwen3.6:14b" });
 
     // The writer was consulted with the overrides and the file was rewritten so it
-    // names the NEW model (the Track-K sweep) and no longer the old one.
+    // names the NEW model (the model sweep) and no longer the old one.
     expect(configYamlFor).toHaveBeenCalledWith({ "agents.default.model": "qwen3.6:14b" });
     const rewritten = readFileSync(configPath, "utf-8");
     expect(rewritten).toContain("qwen3.6:14b");
     expect(rewritten).not.toContain("old-model-0.0:1b");
-    // THEN it restarted: cleanup() ran BEFORE boot (the Pitfall-1 ordering), same port.
+    // THEN it restarted: cleanup() ran BEFORE boot (the cleanup-before-reboot ordering), same port.
     expect(order).toEqual(["cleanup", "boot"]);
     expect(bootFn).toHaveBeenCalledWith({ configPath, gatewayPort: 1 });
     expect(controller.gatewayUrl).toBe("http://127.0.0.1:1");
@@ -335,7 +335,7 @@ describe.skipIf(!isLive)("rig-control Stage-C — restart() re-boots the isolate
 
   it("restart() re-boots without the double-start deadlock and preserves the emulator (a second /health passes)", async () => {
     // Boot a real isolated rig via the extracted internals factory, then drive it
-    // through a controller (the same composition startStandaloneRig uses in Task 2).
+    // through a controller (the same composition startStandaloneRig uses).
     built = await buildRig({ channel: "telegram", model: "keyless" });
     const controller = createRigController({
       emulator: built.emulator,
@@ -357,14 +357,14 @@ describe.skipIf(!isLive)("rig-control Stage-C — restart() re-boots the isolate
     // First /health is green (boot already awaited it).
     expect((await fetch(`${gatewayUrl}/health`)).ok).toBe(true);
 
-    // The Pitfall-1 proof: restart() does cleanup() (clears activeHandle) → re-pin
+    // The cleanup-before-reboot proof: restart() does cleanup() (clears activeHandle) → re-pin
     // COMIS_DATA_DIR → startTestDaemon — WITHOUT throwing "Test daemon already running".
     await controller.restart();
 
     // Same port, a SECOND /health passes (no deadlock, the daemon re-booted).
     expect(controller.gatewayUrl).toBe(gatewayUrl);
     expect((await fetch(`${gatewayUrl}/health`)).ok).toBe(true);
-    // The emulator instance is PRESERVED across the re-boot (success-criterion #5).
+    // The emulator instance is PRESERVED across the re-boot.
     expect(controller.emulator).toBe(emulatorBefore);
     // afterEach's built.cleanup() tears down the post-restart daemon: restart()
     // called onDaemonHandle(newHandle) → the rig's cleanup holder now points at it.

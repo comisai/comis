@@ -1,5 +1,5 @@
 {
-  "__comis_note": "Comis dashboards-as-code (PROM-03; design §6 WS7). Every panel expr references an emitted METRIC_CATALOG metric (CI drift guard: test/architecture/grafana-dashboard-metrics.test.ts). E7 drill-down keys on the comis.trace_id span attribute (PROMETHEUS_EXEMPLARS_SUPPORTED===false) — see docs/operations/prometheus-grafana.mdx.",
+  "__comis_note": "Comis dashboards-as-code. Every panel expr references an emitted METRIC_CATALOG metric (CI drift guard: test/architecture/grafana-dashboard-metrics.test.ts). Trace drill-down keys on the comis.trace_id span attribute (PROMETHEUS_EXEMPLARS_SUPPORTED===false) — see docs/operations/prometheus-grafana.mdx.",
   "uid": "comis-cache-health",
   "title": "Comis — Cache Health",
   "tags": ["comis", "cache"],

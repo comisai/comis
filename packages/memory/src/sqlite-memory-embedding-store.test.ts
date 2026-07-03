@@ -33,7 +33,7 @@ const memoryConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false,
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall-related config keys nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,

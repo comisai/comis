@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The single daemon-wide spend accumulator (Phase 177-01, WS3) — the load-bearing
+ * The single daemon-wide spend accumulator — the load-bearing
  * correctness piece of the dollars kill-switch.
  *
  * Holds the enforcement STATE for three ceiling scopes — per-`(tenant,agent)`,
@@ -8,7 +8,7 @@
  * boot from persisted `obs_token_usage.cost_total` and incremented LIVE from the
  * `observability:token_usage` event (the rows are its durability; there is NO
  * per-check SQL re-sum). It is the enforcement-state owner, SEPARATE from the
- * pure recorder `cost-tracker.ts` (recorder ≠ enforcer — principle 10).
+ * pure recorder `cost-tracker.ts` (recorder ≠ enforcer).
  *
  * The genuinely-new code shape — and the reason this module exists — is the
  * SYNCHRONOUS atomic {@link SpendAccumulator.checkAndReserve}. It models the
@@ -58,7 +58,7 @@ export interface SpendReservation {
 
 /**
  * The DIMENSION whose post-reserve fraction crossed `warnAtFraction` on a granted
- * reserve (WR-1, 177-obs-loop). Carries the breaching scope + that dimension's
+ * reserve. Carries the breaching scope + that dimension's
  * own post-reserve running total + cap — so the bridge emits an internally
  * CONSISTENT `observability:spend_warning` (correct scope, the dimension's total,
  * the dimension's cap) instead of hard-coding `scope:"agent"` + a session-local
@@ -91,7 +91,7 @@ export interface SpendCeilings {
  * `BudgetError` (budget-guard.ts) but carries the dollars scope + numeric amounts
  * only — never a message body.
  */
-/** Which limb of the per-root autonomy.budget meter tripped (OBS-3). The priced
+/** Which limb of the per-root autonomy.budget meter tripped. The priced
  *  $-ceiling gate leaves it undefined (→ the aggregate USD spend). The per-root
  *  token / wall-clock limbs set it so `explain` can name the exact knob + the
  *  correct unit — the `currentUsd`/`capUsd` numbers are tokens / ms (NOT dollars)
@@ -107,9 +107,9 @@ export class SpendError extends Error {
     public readonly currentUsd: number,
     public readonly capUsd: number,
     public readonly estUsd: number,
-    /** OBS-3: the tripped per-root limb (undefined for the priced $-ceiling gate). */
+    /** The tripped per-root limb (undefined for the priced $-ceiling gate). */
     public readonly limb?: SpendLimb,
-    /** OBS-3: the unit of `currentUsd`/`capUsd` for this limb (defaults to usd). */
+    /** The unit of `currentUsd`/`capUsd` for this limb (defaults to usd). */
     public readonly unit?: SpendUnit,
   ) {
     super(`Spend ceiling exceeded (${scope})`);
@@ -122,7 +122,7 @@ export interface SpendAccumulator {
    * Boot: seed the per-(tenant,agent), per-tenant, and global running totals from
    * persisted cost rows. The accumulator is agnostic — it accrues whatever rows it
    * is given (the boot read groups by `agent_id`; per-tenant may accrue
-   * live-from-boot, a documented honest degradation — see Plan 03 wiring).
+   * live-from-boot — a documented honest degradation).
    */
   rehydrate(rows: ReadonlyArray<{ agentId: string; tenantId: string; costUsd: number }>): void;
   /** Live: add an actual billed amount to all three counters (from the bus). */
@@ -137,7 +137,7 @@ export interface SpendAccumulator {
    * The granted reserve carries `warn`: the FIRST ceiling DIMENSION (checked in
    * (tenant,agent) → tenant → global order) whose post-reserve fraction is
    * at/above `warnAtFraction` (with that dimension's own total + cap), or `null`
-   * when none crossed (WR-1, 177-obs-loop — replaces the bare `warn: boolean` so
+   * when none crossed (a full dimension, not a bare `warn: boolean`, so
    * the bridge emits a scope-correct `observability:spend_warning`).
    */
   checkAndReserve(
@@ -153,10 +153,10 @@ export interface SpendAccumulator {
   reconcile(reservation: SpendReservation, actualUsd: number): void;
   /**
    * Read-only snapshot of the three running totals for the OTel `comis_spend_*`
-   * gauges (the headroom-gauge source — Pitfall 3 / 178-01). A PURE read: no
+   * gauges (the headroom-gauge source). A PURE read: no
    * mutation, no wall-clock call, never throws (the `budget/` discipline). The
    * returned maps are FRESH COPIES — a caller mutating them cannot corrupt the
-   * accumulator's authoritative enforcement counters (the kill-switch state, T-178-02).
+   * accumulator's authoritative enforcement counters (the kill-switch state).
    * Content-free: dollar COUNTS only, keyed by the `${tenantId} ${agentId}` /
    * `tenantId` scope keys — no message/query/body. `perAgent` reflects BOTH billed
    * spend (`recordSpend`/`rehydrate`) and in-flight reservations (`checkAndReserve`).
@@ -180,7 +180,7 @@ function agentKeyOf(scope: SpendScope): string {
  *
  * `deps.clock` is injected per the globals gate and to keep the module honest for
  * a future rolling-window variant; the shipped ceilings are plain running totals
- * (the design's ceilings are cumulative, not windowed), so no wall-clock call is
+ * (cumulative by design, not windowed), so no wall-clock call is
  * made in the hot path.
  */
 export function createSpendAccumulator(deps: {
@@ -201,7 +201,7 @@ export function createSpendAccumulator(deps: {
   }
 
   /**
-   * The breaching warn DIMENSION (WR-1): the FIRST non-null ceiling — checked in
+   * The breaching warn DIMENSION: the FIRST non-null ceiling — checked in
    * the SAME (tenant,agent) → tenant → global order as the breach check — whose
    * post-reserve fraction is at/above `warnAtFraction`, with that dimension's own
    * post-reserve total + cap. `null` when none crossed. A null/non-positive cap is
@@ -260,7 +260,7 @@ export function createSpendAccumulator(deps: {
       // so the next event-loop-concurrent caller sees this reservation.
       addToCounters(scope, estUsd);
 
-      // WR-1: report the breaching warn DIMENSION (scope + that dimension's own
+      // Report the breaching warn DIMENSION (scope + that dimension's own
       // post-reserve total + cap), not a bare boolean — the bridge emits a
       // scope-correct observability:spend_warning from it.
       const warn = firstWarnDimension(

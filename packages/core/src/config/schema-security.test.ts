@@ -9,7 +9,7 @@ import type { CredentialStorageMode } from "./schema-security.js";
 const here = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
-// SecurityConfigSchema.storage — RED tests (added before production patch)
+// SecurityConfigSchema.storage — the credential storage backend selector
 // ---------------------------------------------------------------------------
 
 describe("SecurityConfigSchema.storage credential storage backend", () => {
@@ -38,9 +38,9 @@ describe("SecurityConfigSchema.storage credential storage backend", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CredentialStorageMode type — GREEN test (compile-time + runtime sentinel;
-// landed in GREEN commit per AGENTS.md §2.10 since type cannot compile
-// against pre-patch code where the type did not exist).
+// CredentialStorageMode type — a compile-time + runtime sentinel: the type
+// annotation itself is the assertion (it cannot compile if the exported type
+// stops covering these values).
 // ---------------------------------------------------------------------------
 
 describe("CredentialStorageMode type covers encrypted, file, and env", () => {
@@ -130,10 +130,10 @@ describe("AgentToAgentConfigSchema.subAgentSessionPersistence", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AgentToAgentConfigSchema.tokenBudget (BUDGET-03) — per-spawn token budget
-// default; co-located under the existing security.agentToAgent section (D1),
+// AgentToAgentConfigSchema.tokenBudget — per-spawn token budget
+// default; co-located under the existing security.agentToAgent section,
 // so NO new SECTION_REGISTRY entry. null (default) = inherit graph share when a
-// graph budget is set, else unbounded (today's behavior).
+// graph budget is set, else unbounded.
 // ---------------------------------------------------------------------------
 
 describe("AgentToAgentConfigSchema.tokenBudget", () => {
@@ -177,9 +177,9 @@ describe("AgentToAgentConfigSchema.tokenBudget", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AgentToAgentConfigSchema.delivery.maxRetries (DELIVERY-01/02) — max transient
+// AgentToAgentConfigSchema.delivery.maxRetries — max transient
 // delivery retries before dead-lettering. Co-located under the existing
-// security.agentToAgent section (D1), so NO new SECTION_REGISTRY entry. Every
+// security.agentToAgent section, so NO new SECTION_REGISTRY entry. Every
 // field .default() (AGENTS.md §6.4): parsing `{}` yields delivery.maxRetries=3.
 // ---------------------------------------------------------------------------
 
@@ -227,7 +227,7 @@ describe("AgentToAgentConfigSchema.delivery.maxRetries", () => {
     }
   });
 
-  it("adds ZERO new SECTION_REGISTRY entries — delivery nests in the existing security.agentToAgent section (D1)", () => {
+  it("adds ZERO new SECTION_REGISTRY entries — delivery nests in the existing security.agentToAgent section", () => {
     // The delivery field is a nested object under the already-registered
     // `security.agentToAgent` section. There must be no `delivery` token in the
     // section registry — a new registry entry would be a churn regression.
@@ -238,7 +238,7 @@ describe("AgentToAgentConfigSchema.delivery.maxRetries", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AgentToAgentConfigSchema.sandboxNoDowngrade (SANDBOX-02/03, D1) — the one
+// AgentToAgentConfigSchema.sandboxNoDowngrade — the one
 // documented off-switch for the fail-closed sandbox no-downgrade gate. Defaults
 // TRUE (pure safety / fail-closed). Co-located under the existing
 // security.agentToAgent section, so NO new SECTION_REGISTRY entry. Every field
@@ -282,26 +282,26 @@ describe("AgentToAgentConfigSchema.sandboxNoDowngrade", () => {
     }
   });
 
-  it("adds ZERO new SECTION_REGISTRY entries — sandboxNoDowngrade nests in the existing security.agentToAgent section (D1)", () => {
+  it("adds ZERO new SECTION_REGISTRY entries — sandboxNoDowngrade nests in the existing security.agentToAgent section", () => {
     // The field nests in the already-registered `security.agentToAgent` section.
     // There must be no `sandboxNoDowngrade` token in the section registry — a new
-    // registry entry would be a churn regression (the 170/171 tokenBudget/delivery
-    // precedent).
+    // registry entry would be a churn regression (the tokenBudget/delivery fields
+    // set the same precedent).
     const registrySrc = readFileSync(resolve(here, "./section-registry.ts"), "utf8");
     expect(registrySrc).not.toMatch(/sandboxNoDowngrade/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// AgentToAgentConfigSchema.steerInject (STEER-01, D1 — the gated-off control)
+// AgentToAgentConfigSchema.steerInject — the gated-off control:
 // the load-bearing flag that selects the real mid-flight steer-INJECT path
-// (preserve transcript) over today's kill+respawn. Defaults FALSE (gated-off —
+// (preserve transcript) over the default kill+respawn. Defaults FALSE (gated-off —
 // flag-off is byte-identical kill+respawn). Co-located under the existing
 // security.agentToAgent section, so NO new SECTION_REGISTRY entry. Every field
 // .default() (AGENTS.md §6.4) — the inject branch reads it, never `?? false`.
 // ---------------------------------------------------------------------------
 
-describe("AgentToAgentConfigSchema.steerInject (STEER-01 — gated-off)", () => {
+describe("AgentToAgentConfigSchema.steerInject (gated-off by default)", () => {
   it("defaults to false when omitted (gated-off by default — byte-identical kill+respawn)", () => {
     const result = AgentToAgentConfigSchema.safeParse({});
     expect(result.success).toBe(true);
@@ -331,11 +331,11 @@ describe("AgentToAgentConfigSchema.steerInject (STEER-01 — gated-off)", () => 
     }
   });
 
-  it("adds ZERO new SECTION_REGISTRY entries — steerInject nests in the existing security.agentToAgent section (D1)", () => {
+  it("adds ZERO new SECTION_REGISTRY entries — steerInject nests in the existing security.agentToAgent section", () => {
     // The field nests in the already-registered `security.agentToAgent` section.
     // There must be no `steerInject` token in the section registry — a new
-    // registry entry would be a churn regression (the 170/171/172 tokenBudget/
-    // delivery/sandboxNoDowngrade precedent).
+    // registry entry would be a churn regression (the tokenBudget/delivery/
+    // sandboxNoDowngrade fields set the same precedent).
     const registrySrc = readFileSync(resolve(here, "./section-registry.ts"), "utf8");
     expect(registrySrc).not.toMatch(/steerInject/);
   });

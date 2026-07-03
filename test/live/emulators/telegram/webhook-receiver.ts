@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The HARNESS-SIDE webhook secret-token gate (AUTO-05, Phase 208).
+ * The HARNESS-SIDE webhook secret-token gate.
  *
  * The Telegram webhook contract: when a bot is registered with a `secret_token`,
  * Telegram stamps every delivered Update with the
@@ -9,7 +9,7 @@
  * without the shared secret is untrusted). See the grammy `webhookCallback({
  * secretToken })` primitive and Telegram's setWebhook docs.
  *
- * ⚠ THE PRODUCT GAP (AUTO-05 finding, re-verified at HEAD this session): Comis
+ * ⚠ THE PRODUCT GAP: Comis
  * has NO Telegram webhook ingestion route. `shouldUseRunner` (telegram-webhook.ts:116)
  * returns `!webhookUrl` and merely SKIPS the polling runner when a `webhookUrl`
  * is configured, with NOTHING replacing it — `bot.handleUpdate` is driven by no
@@ -19,7 +19,7 @@
  * end-to-end webhook ingestion (a POSTed Update reaching the agent) is a REAL
  * product boundary, NOT something this harness can drive into the agent.
  *
- * What this receiver IS: the harness-side proof of AUTO-05's secret-token gate.
+ * What this receiver IS: the harness-side proof of the secret-token gate.
  * It stands up a tiny loopback HTTP server that enforces EXACTLY the discipline
  * a real ingestion route must — a POST with the configured token is accepted
  * (200) and the Update is recorded; a POST with a WRONG or ABSENT token is

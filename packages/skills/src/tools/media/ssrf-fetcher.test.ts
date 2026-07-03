@@ -117,11 +117,11 @@ describe("createSsrfGuardedFetcher", () => {
     );
   });
 
-  // MEDIA-INPUT-SSRF (30uc-20260624 UC-05): a URL whose ORIGIN matches a configured trusted apiRoot
+  // A URL whose ORIGIN matches a configured trusted apiRoot
   // (a self-hosted local Bot API server / the emulator on loopback) is validated leniently
   // (validateLocalServerUrl — loopback permitted) so the file-byte download works; an arbitrary
-  // loopback URL (a different port) still goes through strict validateUrl (the SSRF firewall, UC-10).
-  it("MEDIA-INPUT-SSRF: a TRUSTED-origin URL is validated via validateLocalServerUrl (loopback allowed)", async () => {
+  // loopback URL (a different port) still goes through strict validateUrl (the SSRF firewall).
+  it("a TRUSTED-origin URL is validated via validateLocalServerUrl (loopback allowed)", async () => {
     const logger = createMockLogger();
     const fetcher = createSsrfGuardedFetcher(
       { maxBytes: 1024 * 1024, trustedFetchOrigins: ["http://127.0.0.1:38411"] },
@@ -141,13 +141,13 @@ describe("createSsrfGuardedFetcher", () => {
     expect(mockValidateUrl).not.toHaveBeenCalled();
   });
 
-  it("MEDIA-INPUT-SSRF: an UNtrusted loopback URL (different port) still uses strict validateUrl (UC-10 preserved)", async () => {
+  it("an UNtrusted loopback URL (different port) still uses strict validateUrl (SSRF block preserved)", async () => {
     const logger = createMockLogger();
     const fetcher = createSsrfGuardedFetcher(
       { maxBytes: 1024, trustedFetchOrigins: ["http://127.0.0.1:38411"] },
       logger,
     );
-    // The gateway port (UC-10) is NOT the trusted apiRoot origin → strict validateUrl rejects it.
+    // The gateway port is NOT the trusted apiRoot origin → strict validateUrl rejects it.
     mockValidateUrl.mockResolvedValue(err(new Error("127.0.0.1 is in blocked range (loopback)")));
 
     const result = await fetcher.fetch("http://127.0.0.1:4766/health");

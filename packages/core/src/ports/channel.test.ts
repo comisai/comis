@@ -5,13 +5,13 @@ import type { ChannelPort, ReactionHandler, SendMessageOptions } from "./channel
 import type { NormalizedReaction } from "../domain/normalized-reaction.js";
 
 // ---------------------------------------------------------------------------
-// Agent Transparency — editMessage rich-options widening
+// editMessage — the optional rich-options arg
 //
-// §16.11: ChannelPort.editMessage accepts an optional 4th `options?:
+// ChannelPort.editMessage accepts an optional 4th `options?:
 // SendMessageOptions` arg so activity renderers can update inline keyboards /
 // components / Block Kit, not just text. The hand-built adapter below passes
-// `{ buttons }` to editMessage and must satisfy ChannelPort. On the pre-patch
-// 3-arg signature the 4th param is excess and fails tsc — RED proof.
+// `{ buttons }` to editMessage and must satisfy ChannelPort — a compile-level
+// proof that the 4-arg signature is part of the port contract.
 // ---------------------------------------------------------------------------
 
 /** Records the last editMessage options it was given, for the call assertion. */
@@ -78,14 +78,13 @@ describe("ChannelPort.editMessage rich options", () => {
 });
 
 // ---------------------------------------------------------------------------
-// onReaction? — the OPTIONAL inbound-reaction capability (REACT-01, WS1)
+// onReaction? — the OPTIONAL inbound-reaction capability
 //
 // onReaction is OPTIONAL on ChannelPort so non-binding adapters
 // (iMessage/LINE/IRC/Email/Echo) OMIT it — an honest no-op, NOT a gap, exactly
 // like reactToMessage?. A REQUIRED method would force dummy stubs on those
-// adapters. The pre-patch ChannelPort has no onReaction member, so the typed
-// `port.onReaction?.(handler)` call below is a compile error on pre-patch code
-// (RED via `tsc -p tsconfig.json`).
+// adapters. The typed `port.onReaction?.(handler)` calls below prove the
+// optional member is part of the port contract at the compile level.
 // ---------------------------------------------------------------------------
 
 /** A no-op adapter that OMITS onReaction (e.g. iMessage/IRC/Email) — must still satisfy ChannelPort. */

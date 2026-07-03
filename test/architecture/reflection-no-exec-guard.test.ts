@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SKILL-03 / INV-3 — the PERMANENT no-learned-code-execution guard (Phase 223).
+ * INV-3 — the PERMANENT no-learned-code-execution guard.
  *
- * The v2.31 reflection engine distils successful trajectories into an ADVISORY
+ * The reflection engine distils successful trajectories into an ADVISORY
  * markdown doc (a "mental model") that the agent READS — it then acts through its
- * already-permissioned tools. There is NO learned-code execution path: the v2.26
- * dynamic bwrap sandbox (`runDynamicReplay` / `spawn` / the embedded-`scripts`
- * column) was DELETED in Phase 223 (Plans 02/05/06 dropped the sandbox adapter +
- * the `SkillValidationPort`/`ReplayContext` types; Plan 07 deleted the orphaned
- * core ports). The only admission gate that remains is the STATIC scan
+ * already-permissioned tools. There is NO learned-code execution path: there is no
+ * dynamic bwrap sandbox, no `runDynamicReplay` / `spawn`, and no embedded-`scripts`
+ * column. The only admission gate is the STATIC scan
  * `validateLearnedDocBody` (@comis/core) — a doc is text, not code.
  *
  * This is the STANDING invariant that pins that absence: a future change CANNOT
- * silently re-introduce a learned-code execution surface (the SYNTH-YIELD /
- * T-223-22 EoP class) without tripping this gate. It runs in the `architecture`
+ * silently re-introduce a learned-code execution surface (an elevation-of-privilege
+ * class) without tripping this gate. It runs in the `architecture`
  * vitest project (`pnpm validate`).
  *
  * ## What it asserts (each its own `it`)
@@ -23,16 +21,16 @@
  *      (@comis/core) — contains, IN CODE, none of: `runDynamicReplay`, `spawn` /
  *      `child_process`, `bwrap`, `ALLOWED_SCRIPT_LANGS` (the dynamic-replay surface).
  *   2. The `mental_models` DDL (`schema-mental-models.ts`) has NO `scripts` column
- *      (the executable column was dropped in the generalization — Phase 222).
+ *      (a learned doc carries no executable code).
  *   3. (Reinforcement) No file under `packages/agent/src/memory/` imports from
  *      `@comis/skills` (the package that owned the sandbox) — the closed-graph
- *      SEC-01 cut, asserted at the import site of the learning code itself.
+ *      cut, asserted at the import site of the learning code itself.
  *
  * ## Not self-invalidating (the comment-filter discipline)
  *
  * A grep guard that matches its own forbidden words inside a comment or a doc
  * string would either always fail (if the prose names the word) or be impossible
- * to document (the `autonomy-skill-no-drift.test.ts` / §2.10 self-invalidating-grep
+ * to document (the `autonomy-skill-no-drift.test.ts` self-invalidating-grep
  * pitfall). So `stripNonCode()` removes line comments, block comments, and string
  * literals BEFORE the scan — the assertion counts CODE tokens only. A reflect-path
  * file may freely say "no spawn here" in a comment; only an actual `spawn(` call
@@ -177,7 +175,7 @@ const FORBIDDEN_EXEC_TOKENS: ReadonlyArray<{ token: string; pattern: RegExp }> =
   { token: "ALLOWED_SCRIPT_LANGS", pattern: /\bALLOWED_SCRIPT_LANGS\b/ },
 ];
 
-describe("reflection learning path has NO learned-code execution surface (SKILL-03 / INV-3)", () => {
+describe("reflection learning path has NO learned-code execution surface (INV-3)", () => {
   // RED before the file-set exists: readSource throws here → the whole suite fails.
   const reflectPathCode: ReadonlyArray<{ rel: string; code: string }> =
     REFLECT_PATH_FILES.map((rel) => ({ rel, code: stripNonCode(readSource(rel)) }));
@@ -196,7 +194,7 @@ describe("reflection learning path has NO learned-code execution surface (SKILL-
   });
 
   for (const { token, pattern } of FORBIDDEN_EXEC_TOKENS) {
-    it(`contains no \`${token}\` in code (the dynamic-replay surface is deleted — T-223-22)`, () => {
+    it(`contains no \`${token}\` in code (the dynamic-replay surface is deleted)`, () => {
       const offenders = reflectPathCode
         .filter(({ code }) => pattern.test(code))
         .map(({ rel }) => rel);
@@ -207,7 +205,7 @@ describe("reflection learning path has NO learned-code execution surface (SKILL-
     });
   }
 
-  it("the mental_models DDL has NO executable `scripts` column (a learned doc carries no code — Phase 222 dropped it)", () => {
+  it("the mental_models DDL has NO executable `scripts` column (a learned doc carries no code)", () => {
     // Comments-only strip: the DDL lives inside a `db.exec(`…`)` template literal,
     // so we KEEP string literals here (stripNonCode would erase the SQL itself).
     const ddlCode = stripCommentsOnly(ddlSrc);
@@ -228,7 +226,7 @@ describe("reflection learning path has NO learned-code execution surface (SKILL-
     ).toBe(false);
   });
 
-  it("no file under packages/agent/src/memory/ imports @comis/skills (the sandbox owner — SEC-01 closed-graph cut)", () => {
+  it("no file under packages/agent/src/memory/ imports @comis/skills (the sandbox owner — closed-graph cut)", () => {
     const dir = resolve(REPO_ROOT, AGENT_MEMORY_DIR);
     const tsFiles = readdirSync(dir).filter(
       (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
@@ -239,7 +237,7 @@ describe("reflection learning path has NO learned-code execution surface (SKILL-
     ).toBeGreaterThan(0);
     const offenders: string[] = [];
     for (const f of tsFiles) {
-      // WR-02: scan the COMMENT-ONLY-stripped source (KEEP string literals), mirroring
+      // Scan the COMMENT-ONLY-stripped source (KEEP string literals), mirroring
       // the DDL scan above. `stripNonCode` deletes string literals — and the import
       // specifier `"@comis/skills"` IS a string literal, so it stripped the very token
       // these regexes match (`import … from  ;`) → the assertion was VACUOUS (it passed

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `normalizeOpeningRequest` (Phase 223, D-01 / REFLECT-02) — the deterministic,
- * keyless, **content-light** `topicKey` that REPLACES embedding-cosine clustering.
+ * `normalizeOpeningRequest` — the deterministic, keyless, **content-light**
+ * `topicKey` (deliberately embedding-free).
  *
- * This is the milestone's concentrated risk (the failure mode the dead embedding-cosine
- * clustering had, re-lived from the other direction): the reflection job groups successful
+ * This is the keyless approach's concentrated risk: the reflection job groups successful
  * outcomes by this key, so two genuinely same-topic sessions worded DIFFERENTLY MUST collide
  * on one key — else corroboration never reaches the >=2 distinct (session,sender) gate and
  * `admitted:0` persists forever. The collision-maximizing decision is the order-insensitive
@@ -21,10 +20,10 @@
  *  3. TOKENIZE on whitespace; drop {@link STOPWORDS} and tokens of length <= 1.
  *  4. DE-DUPLICATE into a Set, then SORT — order-insensitive. "deploy the app" and
  *     "app deploy please" carry the same {app,deploy} token set and collide; a
- *     token-SEQUENCE/string hash would NOT (RESEARCH Alternative + Pitfall 3 + A1).
+ *     token-SEQUENCE/string hash would NOT.
  *  5. HASH the sorted-unique join with sha256 (the repo's deterministic-id convention,
  *     mirroring `sqlite-mental-model-store.ts:mentalModelId`) and return the hex —
- *     content-light, NEVER the raw transcript (INV-6). An empty token list returns ""
+ *     content-light, NEVER the raw transcript. An empty token list returns ""
  *     (the reflection job treats "" as ungroupable — a singleton that never corroborates).
  *
  * Pure: no IO, no embedder, no clock/random. The sole consumer is the reflection job
@@ -83,11 +82,10 @@ const STOPWORDS: ReadonlySet<string> = new Set([
 
 /**
  * Recover the RAW user request from a stored inbound message by stripping the
- * executor's injected envelope. LIFTED verbatim (Phase 223 D-07) from
- * `setup-channels-skill-synthesis-deps.ts` (`stripUserSystemContext`) — that deps
- * file's embedding wiring is deleted in Plan 05, but this envelope-strip is the
- * correct PRE-STEP for the topicKey (Pitfall 3), so it is copied here as a private
- * helper. The executor wraps every inbound turn as
+ * executor's injected envelope. Copied verbatim from
+ * `setup-channels-skill-synthesis-deps.ts` (`stripUserSystemContext`) — this
+ * envelope-strip is the correct PRE-STEP for the topicKey, so it is kept here
+ * as a private helper. The executor wraps every inbound turn as
  * `[System context]\n<preamble incl. a VOLATILE timestamp>\n[End system context]\n\n[<channel>] <id> (<time>):\n<actual message>`
  * (envelope-wrapper.ts). Both the system-context preamble AND the channel header
  * carry a per-turn timestamp, so the stored "user message" of two IDENTICAL requests
@@ -123,7 +121,7 @@ export function normalizeOpeningRequest(signature: string): string {
   const uniqueSorted = openingRequestTokens(signature);
   // An empty token list is ungroupable — return "" (the reflection job treats it as a never-corroborating singleton).
   if (uniqueSorted.length === 0) return "";
-  // 5. Hash the canonical join (content-light — never the raw text; INV-6).
+  // 5. Hash the canonical join (content-light — never the raw text).
   return createHash("sha256").update(uniqueSorted.join(" ")).digest("hex");
 }
 
@@ -135,7 +133,7 @@ export function normalizeOpeningRequest(signature: string): string {
  * DIFFERENTLY (e.g. a "fire" vs a "medical" dispatch on the same evening-rush cross-river
  * route) land on SEPARATE topicKeys and never reach the ≥2 corroboration gate. The
  * reflection job merges groups whose token sets are highly similar ({@link jaccardSimilarity}
- * ≥ threshold) — keyless, deterministic, NO embeddings (the v2.31 collapse deleted those on purpose).
+ * ≥ threshold) — keyless, deterministic, NO embeddings (the embedding-free invariant is deliberate).
  *
  * Pure: same pipeline as `normalizeOpeningRequest` steps 1-4, minus the hash.
  *
@@ -143,18 +141,18 @@ export function normalizeOpeningRequest(signature: string): string {
  * @returns the sorted, de-duplicated content tokens (possibly empty).
  */
 export function openingRequestTokens(signature: string): string[] {
-  // 1. Strip the volatile per-turn envelope FIRST (Pitfall 3).
+  // 1. Strip the volatile per-turn envelope FIRST (its timestamps would defeat collision).
   const stripped = stripUserSystemContext(signature);
   // 2. Lowercase; collapse non-alphanumeric runs to a single space; trim.
   const cleaned = stripped
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
-  // 3. Tokenize; drop stopwords and tokens of length <= 1; STEM each survivor (REFLECT-02b: collapse
+  // 3. Tokenize; drop stopwords and tokens of length <= 1; STEM each survivor (collapse
   //    morphological variants so two genuinely-same-task openings worded differently — "deliver"/"delivered"/
   //    "delivering", "package"/"packages", "report"/"reports" — share tokens and reach the corroboration /
-  //    reuse-credit overlap they otherwise miss). Keyless + deterministic + pure (no embeddings — the v2.31
-  //    invariant holds). Stem AFTER the stopword check (stopwords are base forms).
+  //    reuse-credit overlap they otherwise miss). Keyless + deterministic + pure (no embeddings —
+  //    the keyless invariant holds). Stem AFTER the stopword check (stopwords are base forms).
   const tokens =
     cleaned.length === 0
       ? []
@@ -162,12 +160,12 @@ export function openingRequestTokens(signature: string): string[] {
           .split(/\s+/)
           .filter((t) => t.length > 1 && !STOPWORDS.has(t))
           .map(stemToken);
-  // 4. De-duplicate into a Set, then SORT — order-insensitive (the collision-maximizing decision, A1).
+  // 4. De-duplicate into a Set, then SORT — order-insensitive (the collision-maximizing decision).
   return [...new Set(tokens)].sort();
 }
 
 /**
- * A deliberately CONSERVATIVE inflectional stemmer (REFLECT-02b) — collapses the common,
+ * A deliberately CONSERVATIVE inflectional stemmer — collapses the common,
  * low-risk English inflections so morphological variants of the same word land on ONE token,
  * widening the corroboration / reuse-credit overlap beyond byte-identical phrasings WITHOUT
  * re-introducing embeddings (keyless + deterministic + pure). It strips ONLY regular inflections
@@ -180,8 +178,8 @@ export function openingRequestTokens(signature: string): string[] {
  * It is intentionally imperfect (base-vs-inflected like "navigate"/"navigated" may not fully
  * reconcile) — applied UNIFORMLY at admit-core and reuse-turn time, so inflected↔inflected and
  * base↔base variants match; the win is monotone (more true merges, guarded against false ones).
- * NOTE: changing the token shape changes the topicKey hash — skills learned on the PRE-stemming
- * build store an un-stemmed core and re-accrue after an upgrade (a learning system re-learns; not a
+ * NOTE: changing the token shape changes the topicKey hash — skills learned under an older
+ * token shape store a different core and simply re-accrue (a learning system re-learns; not a
  * code regression). Pure: no IO/clock/random.
  */
 export function stemToken(token: string): string {
@@ -257,7 +255,7 @@ export function tokenSetCoverage(core: readonly string[], turn: readonly string[
  *  0.5 credits real reuse without false-crediting an unrelated/adjacent turn. An earlier 0.6 (set
  *  without data) MISSED genuine reuse → the learned skill never promoted on a real behavioral
  *  instance. (HEAVY synonym variation below ~0.4 is the lexical-match ceiling — a semantic /
- *  LLM-topic-tag grouping would be the escalation, deliberately out of the keyless v2.31 scope.) */
+ *  LLM-topic-tag grouping would be the escalation, deliberately out of the keyless design's scope.) */
 export const DEFAULT_TOPIC_MATCH_THRESHOLD = 0.5;
 
 /** Absolute floor: a turn that shares at least this many of a skill's CORE tokens is credited
@@ -272,7 +270,7 @@ export const MIN_ABSOLUTE_CORE_MATCH = 8;
 
 /**
  * The deterministic, keyless TOPIC-MATCH reuse attribution. Skill attribution otherwise
- * requires the agent to explicitly `read` the SKILL.md file (ATTR-01 in pi-event-bridge.ts) —
+ * requires the agent to explicitly `read` the SKILL.md file (the read-attribution path in pi-event-bridge.ts) —
  * a skill the agent APPLIED from the surfaced `<available_skills>` summary / from recall,
  * without opening the file, was never credited, so its `proof_count` never bumped and it
  * never promoted (the reuse leg of the learning loop was LLM-fragile). This credits a SURFACED skill whose
@@ -300,7 +298,7 @@ export function topicMatchedSkillNames(
   // The CREDITED subset of topicMatchScores (de-duplicated, input order) — the carrier the
   // pi-event-bridge merges into the turn's usedSkillIds. Output is byte-identical to the
   // pre-refactor loop; the scoring now lives in topicMatchScores so the NEGATIVE path
-  // (surfaced-but-uncredited) is observable too (finding A).
+  // (surfaced-but-uncredited) is observable too.
   const matched = new Set<string>();
   for (const s of topicMatchScores(turnSignature, surfaced, threshold)) if (s.credited) matched.add(s.name);
   return [...matched];

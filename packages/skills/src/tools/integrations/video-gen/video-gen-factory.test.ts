@@ -2,8 +2,8 @@
 /**
  * Unit tests for the video-generation provider factory.
  *
- * Like the image factory, this legacy skills factory serves ONLY explicit `fal`
- * (the daemon selector resolves auto/google/xai upstream in Plan 04). Verifies
+ * Like the image factory, this skills factory serves ONLY explicit `fal`
+ * (the daemon selector resolves auto/google/xai upstream). Verifies
  * fal selection + graceful degradation when FAL_KEY is absent (ok(undefined)),
  * and that any non-`fal` provider hits the error branch.
  *

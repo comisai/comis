@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SEC-02: per-agent hourly image-generation COST ceiling.
+ * Per-agent hourly image-generation COST ceiling.
  *
  * A daemon-side fixed-window USD accumulator that mirrors the count rate
  * limiter (`@comis/skills` `image-gen/rate-limiter.ts`) byte-for-byte in
@@ -20,7 +20,7 @@
  *   2. AFTER a successful generation — `record(agentId, costUsd)` to accumulate
  *      the actual cost into the agent's bucket for the rest of the window.
  *
- * SOFT CAP — concurrency caveat (WR-01, 186-REVIEW). The two steps straddle the
+ * SOFT CAP — concurrency caveat. The two steps straddle the
  * `await provider.execute`, and `canSpend` is a read-only pre-check with NO
  * reservation. So N concurrent `image.generate` calls for the SAME agent all
  * evaluate `canSpend()` BEFORE any `record()` runs: when the accumulated spend is
@@ -50,12 +50,12 @@
  */
 import { systemNowMs } from "@comis/core";
 
-/** Per-agent hourly USD cost ceiling for image generation (SEC-02). */
+/** Per-agent hourly USD cost ceiling for image generation. */
 export interface ImageCostLimiter {
   /**
    * True if the agent is still UNDER the ceiling for the current window.
    *
-   * BEST-EFFORT under concurrency (WR-01): this is a read-only pre-check with no
+   * BEST-EFFORT under concurrency: this is a read-only pre-check with no
    * reservation, so concurrent same-agent calls can each pass before any records,
    * overshooting the ceiling by up to (concurrency − 1) × per-call cost. The
    * overshoot is bounded by the count rate limit (`maxPerHour`, checked first) —

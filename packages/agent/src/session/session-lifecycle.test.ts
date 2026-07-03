@@ -325,7 +325,7 @@ describe("createSessionLifecycle", () => {
       const hookRunner = makeHookRunner({
         runSessionStart: vi.fn(async () => { throw new Error("Hook blew up"); }),
       });
-      // No logger -- backward compatibility: should not crash
+      // No logger -- the logger is an optional dependency: must not crash
       const mgr = createSessionLifecycle(store, { hookRunner });
 
       // Should not throw
@@ -361,7 +361,7 @@ describe("ComisSessionManager.destroySession", () => {
       cwd: baseDir,
       // destroySession appends a `session_ended` row via appendSessionIndexEntry;
       // point dataDir at the tmp baseDir so the write lands under <baseDir>/logs/
-      // and never the operator's real ~/.comis (D9 test-process write-guard).
+      // and never the operator's real ~/.comis (test-process write-guard).
       dataDir: baseDir,
       fileLock: createFileLock(),
     });
@@ -403,7 +403,7 @@ describe("ComisSessionManager.destroySession", () => {
       cwd: baseDir,
       // destroySession appends a `session_ended` row via appendSessionIndexEntry;
       // point dataDir at the tmp baseDir so the write lands under <baseDir>/logs/
-      // and never the operator's real ~/.comis (D9 test-process write-guard).
+      // and never the operator's real ~/.comis (test-process write-guard).
       dataDir: baseDir,
       fileLock: createFileLock(),
     });
@@ -468,7 +468,7 @@ describe("ComisSessionManager — abnormal-termination cleanup contract via with
       // The destroy-after-abnormal test calls destroySession, which appends a
       // `session_ended` row via appendSessionIndexEntry; point dataDir at the tmp
       // baseDir so the write lands under <baseDir>/logs/ and never the operator's
-      // real ~/.comis (D9 test-process write-guard).
+      // real ~/.comis (test-process write-guard).
       dataDir: baseDir,
       fileLock: createFileLock(),
     });

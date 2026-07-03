@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LINE wrapper elapsed-fallback wiring (§8.5). Regression-locks the LIVE
+ * LINE wrapper elapsed-fallback wiring. Regression-locks the LIVE
  * production path: when the daemon injects a `ClockPort` into the wrapper deps,
  * the wrapper MUST forward it into `createAppendOnlyRenderer({...clock})` so the
  * strategy's first-apply `startedAtMs` capture fires and the opening status
  * carries the "(running N s)" elapsed-time fallback.
  *
- * Previously the LINE wrapper's deps shape ALREADY declared `clock?: ClockPort` (so
- * type-level passing `{ clock }` would compile), but the wrapper destructured ONLY
- * `signCallbackData` and dropped `clock` on the floor at the `createAppendOnlyRenderer`
- * call. The RED form of this test (without the production patch) FAILS at runtime —
- * the captured send text contains no "(running" suffix because clock never reaches
- * the strategy. The production patch (extract + forward `clock` into
- * `createAppendOnlyRenderer({...clock})`) flips it to GREEN.
+ * Merely declaring `clock?: ClockPort` on the wrapper's deps shape is not
+ * enough — passing `{ clock }` compiles either way. If the wrapper drops `clock`
+ * on the floor at the `createAppendOnlyRenderer` call, the failure is
+ * runtime-only: the captured send text contains no "(running" suffix because the
+ * clock never reaches the strategy. This test fails exactly in that case.
  *
  * AppendOnly posts ONCE — the fallback only ever appears on the first (and only)
  * send, exactly when the daemon has wired the wrapper but SEP has not yet emitted
@@ -66,11 +64,11 @@ describe("LINE wrapper forwards deps.clock into AppendOnly", () => {
   it("forwards deps.clock → AppendOnly: opening status carries '(running 0 s)' on the first frame (no SEP plan)", async () => {
     const fake = createFakeLineAdapter();
     const clock = createFakeClock(1000);
-    // The wrapper's deps shape already accepts `clock?: ClockPort` — the new
-    // contract is that `clock` is now destructured AND forwarded into
+    // The wrapper's deps shape accepts `clock?: ClockPort`, and the contract is
+    // that `clock` is destructured AND forwarded into
     // `createAppendOnlyRenderer({...clock})`. Without the forward, startedAtMs
     // would stay undefined in the strategy → elapsedMs undefined → fallback
-    // skipped → this assertion fails. Regression-lock for the wrapper fix.
+    // skipped → this assertion fails.
     const r = createLineActivityRenderer(fake, "chat-1", { clock });
 
     await r.apply(frameNoPlan("running tool"));
@@ -105,8 +103,8 @@ describe("LINE wrapper forwards deps.clock into AppendOnly", () => {
     const clock = createFakeClock(1000);
     const r = createLineActivityRenderer(fake, "chat-1", { clock });
 
-    // The plan header above the events satisfies §8.5's first half — the
-    // elapsed fallback (second half) is suppressed to avoid double-display.
+    // The plan header above the events already shows progress — the elapsed
+    // fallback is suppressed to avoid double-display.
     await r.apply(frameWithPlan("running tool"));
 
     const sends = fake.recorded.calls.filter((c) => c.op === "send");

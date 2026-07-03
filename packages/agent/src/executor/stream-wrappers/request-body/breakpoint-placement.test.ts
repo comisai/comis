@@ -63,12 +63,12 @@ describe("placeCacheBreakpoints — pure", () => {
   });
 });
 
-describe("placeCacheBreakpoints — tail-reaching coverage on long conversations (cache C-FIX-4, 2026-06-18)", () => {
-  // Live evidence superseded C-FIX-2: Anthropic honors at most 4 cache_control breakpoints, and
+describe("placeCacheBreakpoints — tail-reaching coverage on long conversations", () => {
+  // Live evidence: Anthropic honors at most 4 cache_control breakpoints, and
   // TWO are consumed outside placeCacheBreakpoints (the system/tools marker + the SDK's auto-marker
-  // on the LAST message). Placing 3 Comis markers (semi-stable + bridge + recent) pushed the total
-  // to 5 → Anthropic SILENTLY DROPPED the tail-reaching markers → the cache froze at the early
-  // markers and re-wrote the whole growing suffix every turn (O(N²); read frozen at 54961). The fix:
+  // on the LAST message). Placing 3 Comis markers (semi-stable + bridge + recent) pushes the total
+  // to 5 → Anthropic SILENTLY DROPS the tail-reaching markers → the cache freezes at the early
+  // markers and re-writes the whole growing suffix every turn (O(N²); read frozen at 54961). Hence:
   // cap Comis at 2 markers (anchor + recent) so the total stays ≤4 and the RECENT marker reaches
   // the tail (its fresh write caches the whole prefix; live: single-tail read 54961→142941).
   const CACHE_LOOKBACK_WINDOW = 20;
@@ -105,7 +105,7 @@ describe("placeCacheBreakpoints — tail-reaching coverage on long conversations
     expect(idx[idx.length - 1]!).toBe(46);
   });
 
-  it("anchors the first marker to a STABLE block-boundary position as the conversation grows (C-FIX-2b incremental hits)", () => {
+  it("anchors the first marker to a STABLE block-boundary position as the conversation grows (incremental hits)", () => {
     // The markers must NOT drift turn-to-turn: a drifting 50%-token marker lands on different
     // messages each turn, so the cache prefix the previous turn wrote is no longer marked →
     // read-drops + ~18K token re-writes. Anchoring to the latest user at/before block W gives a

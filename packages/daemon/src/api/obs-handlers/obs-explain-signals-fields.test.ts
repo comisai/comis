@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-03 / OBS-04 (Phase 192): `accumulateVideoRecord` seq-aware fold unit tests.
+ * `accumulateVideoRecord` seq-aware fold unit tests.
  *
  * The pure video-turn fold (the `accumulateVisionRecord` twin) that
  * `applyMediaRecord` dispatches `video.*` records to. Mirrors the vision fold's
  * unit coverage: the terminal `video.generated` success carries provider / model
- * / costUsd / durationSecs (the cost rides the terminal record — Route a), a
+ * / costUsd / durationSecs (the cost rides the terminal record), a
  * later `video.delivered` flips the `delivered` latch without clobbering the
  * terminal success, an EARLIER (lower-seq) record never overwrites a higher-seq
- * terminal (IN-04 seq-aware), `video.failed` is the terminal failure (provider +
+ * terminal (seq-aware), `video.failed` is the terminal failure (provider +
  * errorKind, no costUsd), and `video.submitted` carries `jobId` onto the block.
  *
  * Content-free by construction (ids/labels/numbers only — no prompt, no bytes,
- * no provider message; the §2.7 / T-192-06 invariant).
+ * no provider message).
  *
  * @module
  */
@@ -30,7 +30,7 @@ function seed(): VideoFoldState {
   return { signal: undefined, outcomeSeq: -1 };
 }
 
-describe("accumulateVideoRecord — the seq-aware video-turn fold (OBS-04)", () => {
+describe("accumulateVideoRecord — the seq-aware video-turn fold", () => {
   it("video.generated is the terminal success carrying provider/model/costUsd/durationSecs", () => {
     const folded = accumulateVideoRecord(
       seed(),
@@ -67,7 +67,7 @@ describe("accumulateVideoRecord — the seq-aware video-turn fold (OBS-04)", () 
     expect(afterDelivered.outcomeSeq).toBe(3);
   });
 
-  it("IN-04: an EARLIER (lower-seq) video.requested never overwrites a higher-seq terminal", () => {
+  it("an EARLIER (lower-seq) video.requested never overwrites a higher-seq terminal", () => {
     const afterGenerated = accumulateVideoRecord(
       seed(),
       "video.generated",

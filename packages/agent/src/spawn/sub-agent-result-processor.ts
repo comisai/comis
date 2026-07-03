@@ -68,11 +68,11 @@ export function classifyAbortReason(
         severity: "actionable",
       };
     case "spend_exceeded":
-      // WR-3 (177-obs-loop): the dollars kill-switch abort. Reuses the existing
+      // The dollars kill-switch abort. Reuses the existing
       // budget category with the actionable observability.spend.* hint emitSpendAbort
       // (bridge-safety-controls.ts) already uses — NOT the default "check daemon
-      // logs" catch-all (the wrong-way, non-actionable pointer the security review
-      // flagged for a spend-killed sub-agent).
+      // logs" catch-all (a wrong-way, non-actionable pointer for a spend-killed
+      // sub-agent).
       return {
         category: "budget",
         hint: "Spend ceiling exceeded; raise observability.spend.* (perAgentUsd / perTenantUsd / daemonGlobalUsd) or set observability.spend.action:'warn'",
@@ -262,7 +262,7 @@ export async function persistFailureRecord(params: {
 // ---------------------------------------------------------------------------
 
 /**
- * Transport-layer failures are transient (DELIVERY-02): they self-heal on a
+ * Transport-layer failures are transient: they self-heal on a
  * retry-with-backoff in the announcement batcher. The bare Node errno spellings
  * do NOT contain "timeout"/"timed out" (e.g. "ETIMEDOUT".toLowerCase() is
  * "etimedout"), so the existing timeout branch misses them — match these
@@ -270,7 +270,7 @@ export async function persistFailureRecord(params: {
  * (real delivery errors wrap the errno in surrounding text, e.g.
  * "connect ECONNREFUSED 127.0.0.1:443").
  *
- * INFO-CLASSIFIER: deliberately errno-style only, PLUS the errno-less real
+ * The token list is deliberately errno-style only, PLUS the errno-less real
  * phrasings emitted by undici/fetch ("fetch failed", "network request failed",
  * "socket hang up"). The natural-language phrases "connection reset" /
  * "connection refused" are intentionally OMITTED: every genuine Node transport
@@ -332,7 +332,7 @@ export function classifyErrorContext(
         errorType = "ExecutionTimeout";
         retryable = true;
       } else if (TRANSIENT_TRANSPORT_TOKENS.some((token) => lowerMsg.includes(token))) {
-        // DELIVERY-02: transport-layer blips (ECONNRESET/ECONNREFUSED/EPIPE/
+        // Transport-layer blips (ECONNRESET/ECONNREFUSED/EPIPE/
         // "socket hang up"/"fetch failed"/...) are transient — the batcher
         // retries them with backoff before dead-lettering. Placed AFTER the
         // budget/timeout branches (which precede it) so a permanent budget
@@ -525,7 +525,7 @@ export async function deliverAnnouncement(params: {
   batcher?: AnnouncementBatcher;
   deadLetterQueue?: AnnouncementDeadLetterQueue;
   /**
-   * WR-02: shared, bounded delivered-key store. When the batcher is absent the
+   * Shared, bounded delivered-key store. When the batcher is absent the
    * batcher cannot mark the key, so the non-batcher success branches mark this
    * sink instead — keeping the failure-path dedup (`deliverFailureNotification`)
    * correct whether or not a batcher is wired. The daemon wiring injects the
@@ -535,7 +535,7 @@ export async function deliverAnnouncement(params: {
 }): Promise<void> {
   const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
 
-  // DELIVERY-01 / INFO-DRY: build the idempotency key ONCE here via the shared
+  // Build the idempotency key ONCE here via the shared
   // helper (single source of truth — the failure path uses the same builder),
   // then thread it as data through the batcher and the dead-letter entry; never
   // reconstruct it downstream. Undefined for a top-level spawn (no callerSessionKey).
@@ -585,7 +585,7 @@ export async function deliverAnnouncement(params: {
         systemScheduleTimeout,
         "announceToParent",
       );
-      // WR-02: mark delivered on this non-batcher success branch (there is no
+      // Mark delivered on this non-batcher success branch (there is no
       // batcher here to mark) so the failure path dedups. Marked ONLY after the
       // confirmed await — a failed/timed-out injection falls through to the
       // direct send below and stays unmarked.
@@ -608,9 +608,9 @@ export async function deliverAnnouncement(params: {
   const threadId = ctx?.deliveryOrigin?.threadId;
   try {
     const ok = await deps.sendToChannel(announceChannelType, announceChannelId, stripAnnouncementInstruction(announcementText), threadId ? { threadId } : undefined);
-    // WR-02: mark delivered ONLY on a confirmed success (ok === true). A throw
+    // Mark delivered ONLY on a confirmed success (ok === true). A throw
     // or a `false` return (transport refused without throwing) leaves the key
-    // open so the failure path / a retry can re-notify (Pitfall 3).
+    // open so the failure path / a retry can re-notify.
     if (ok && announceKey) deps.deliveryDedup?.mark(announceKey);
   } catch (sendErr) {
     deps.logger?.warn({
@@ -632,7 +632,7 @@ export async function deliverAnnouncement(params: {
         attemptCount: 0,
         lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
         threadId,  // Persist thread context for retried deliveries
-        idempotencyKey: announceKey,  // DELIVERY-01: same key threaded onto the DLQ entry
+        idempotencyKey: announceKey,  // same key threaded onto the DLQ entry
       });
     }
   }
@@ -649,15 +649,15 @@ export async function deliverAnnouncement(params: {
  * the circular dependency when the LLM provider is the cause of the failure.
  * Never throws -- delivery errors are logged as warnings.
  *
- * DEFER-171-01 (WR-04): this path is SINGLE-ATTEMPT by design. DELIVERY-03's
- * requirement was failure-path IDEMPOTENCY (the shared dedup above), NOT the
- * transient retry/DLQ self-healing the SUCCESS fallback got in DELIVERY-02
+ * DELIBERATE ASYMMETRY: this path is SINGLE-ATTEMPT by design. The failure
+ * path's requirement is IDEMPOTENCY (the shared dedup above), NOT the
+ * transient retry/DLQ self-healing the SUCCESS fallback has
  * (`sendWithRetry` in the batcher). Mirroring that here means injecting the
  * classifier/backoff/maxRetries/eventBus (and a DLQ) and a parallel retry loop
- * — a materially restructured failure path, out of scope for P0-B. The
+ * — a materially restructured failure path. The
  * asymmetry with the hardened success path is therefore a documented decision,
- * not an oversight (see the phase deferred-items.md). On a transient transport
- * blip the notification is dropped (logged with a hint), pending that follow-up.
+ * not an oversight. On a transient transport
+ * blip the notification is dropped (logged with a hint).
  */
 export async function deliverFailureNotification(
   params: {
@@ -666,13 +666,13 @@ export async function deliverFailureNotification(
     task: string;
     runtimeMs: number;
     runId: string;
-    /** DELIVERY-03: formatted caller session key — needed to build the shared announceKey. */
+    /** Formatted caller session key — needed to build the shared announceKey. */
     callerSessionKey?: string;
   },
   deps: Pick<SubAgentRunnerDeps, "sendToChannel" | "logger" | "batcher"> & {
     /**
-     * WR-02: shared, bounded delivered-key store. Lets the failure-path dedup
-     * work WITHOUT a batcher (the batcher used to be the only sink). When both a
+     * Shared, bounded delivered-key store. Lets the failure-path dedup
+     * work WITHOUT a batcher. When both a
      * batcher and a dedup are injected they are the SAME underlying set (the
      * batcher delegates to it), so checking/marking either is consistent.
      */
@@ -689,15 +689,15 @@ export async function deliverFailureNotification(
     `Runtime: ${(params.runtimeMs / 1000).toFixed(1)}s`,
   ].join("\n");
 
-  // DELIVERY-03 / INFO-DRY: build the SAME idempotency key as the success path
+  // Build the SAME idempotency key as the success path
   // via the shared `buildAnnounceKey` helper (one source of truth — divergence
   // would silently break the cross-path dedup) and dedup against the SAME
-  // deliveredKeys set (reached via the batcher's hasDelivered/markDelivered,
-  // D-SHAREDDEDUP). A Phase-170 budget-failed node routes here; its failure-key
+  // deliveredKeys set (reached via the batcher's hasDelivered/markDelivered).
+  // A budget-failed graph node routes here; its failure-key
   // == its success-key, so a second sweep does not double-notify. Undefined for
-  // a top-level spawn (no callerSessionKey) → no dedup, behaves as today.
+  // a top-level spawn (no callerSessionKey) → no dedup.
   const announceKey = buildAnnounceKey(params.callerSessionKey, params.runId);
-  // WR-02: dedup against the shared set whether reached via the batcher OR the
+  // Dedup against the shared set whether reached via the batcher OR the
   // directly-injected DeliveryDedup (the no-batcher path). They are the same
   // underlying set in production; checking either suppresses a double-notify.
   const alreadyDelivered = announceKey !== undefined
@@ -717,9 +717,9 @@ export async function deliverFailureNotification(
 
   try {
     await deps.sendToChannel(params.channelType, params.channelId, message, threadId ? { threadId } : undefined);
-    // Mark delivered ONLY after a successful send (Pitfall 3 — a failed send
+    // Mark delivered ONLY after a successful send (a failed send
     // must stay retry-eligible / re-notifiable). Mark BOTH sinks: the batcher
-    // (when wired) and the shared dedup (WR-02 — so dedup holds without a
+    // (when wired) and the shared dedup (so dedup holds without a
     // batcher). Both resolve to the same set in production. No-op without a key.
     if (announceKey) {
       deps.batcher?.markDelivered(announceKey);

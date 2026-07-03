@@ -3,8 +3,8 @@
  * Shared helpers for context engine cleanup layers (evictor + masker).
  *
  * These pure functions are used by both dead-content-evictor and observation-masker
- * to inspect and classify tool result messages. Layers remain separate per user
- * decision -- only shared PURE helpers are extracted here.
+ * to inspect and classify tool result messages. The two layers deliberately stay
+ * separate -- only shared PURE helpers are extracted here.
  *
  * @module
  */

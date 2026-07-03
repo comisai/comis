@@ -89,11 +89,11 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
   // all-zero counts) yields text === "" which .filter(Boolean) drops
   // automatically.
   const capabilityIndexContext = capabilityIndexResult.text;
-  // ISSUE #2 (2026-06-22): on a tight window where the system prompt dominates, the
+  // On a tight window where the system prompt dominates, the
   // capability-index + deferred-tools context (tool-DISCOVERY scaffolding, NOT needed
   // to answer the current message) can be the marginal overflow: the protected fresh
   // tail = preamble + message ships UNCONDITIONALLY, so when S + (preamble + message) +
-  // floorHeadroom > window the pre-flight throws (live turn-14: 5210 + (888 + 1744) +
+  // floorHeadroom > window the pre-flight throws (observed live: 5210 + (888 + 1744) +
   // 768 = 8610 > 8192; WITHOUT the preamble 5210 + 1744 + 768 = 7722 < 8192). Drop the
   // heavy components FIRST — keep the tiny `dynamicPreamble` (date/channel/metadata) and
   // the user's message — so the turn answers instead of exhausting. Only if the message
@@ -122,14 +122,14 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
     messageText = `${inlineMemory}\n${messageText}`;
   }
 
-  // R1: GoalAnchor tail injection — APPENDED after user message text.
-  // SD1 (Phase 158): GoalAnchor capability-gated default.
-  // Effective flag = explicit config ?? capability default (small/nano=true, frontier/mid=false).
+  // GoalAnchor tail injection — APPENDED after user message text.
+  // GoalAnchor has a capability-gated default:
+  // effective flag = explicit config ?? capability default (small/nano=true, frontier/mid=false).
   // Precedence: explicit false on small/nano → stays OFF. explicit true on frontier → turns ON.
   // resolveScaffoldDefaults reads config.goalAnchor?.enabled which is `boolean | undefined`
   // from PerAgentConfig (the block is .optional()); do NOT re-parse through GoalAnchorConfigSchema.
   // Fail-closed when modelProfile is absent (no profile → frontier-equivalent → no injection).
-  // T-153-02a: injection is bounded by maxChars (500 default); no untrusted data.
+  // Injection is bounded by maxChars (500 default); no untrusted data.
   if (
     modelProfile !== undefined &&
     resolveScaffoldDefaults(modelProfile, config).goalAnchorEnabled &&
@@ -148,7 +148,7 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
   const imageContents = Array.isArray(msg.metadata?.imageContents)
     ? (msg.metadata.imageContents as ImageContent[])
     : [];
-  // L4: read supportsVision from the resolved ModelProfile (not directly from
+  // Read supportsVision from the resolved ModelProfile (not directly from
   // resolvedModel.input). Both are set from the same config field in model-profile.ts,
   // but reading from modelProfile ensures the single-resolve-point invariant and
   // makes the vision gate testable independently of the resolved model entry.
@@ -170,7 +170,7 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
       const rawHint = imageContents.length === 1
         ? "[An image is attached to this message and is visible to you. Analyze it directly — do NOT call image_analyze, you can already see it.]"
         : `[${imageContents.length} images are attached to this message and are visible to you. Analyze them directly — do NOT call image_analyze, you can already see them.]`;
-      // S7: flag image-derived hint as untrusted (vision input = injection vector).
+      // Flag the image-derived hint as untrusted (vision input = injection vector).
       // Apply wrapExternalContent ONLY to rawHint (not the full messageText) to
       // avoid double-wrapping already-wrapped content (memory, goal-anchor) in messageText.
       // includeWarning:false avoids visual noise — the real defense is the canary in
@@ -267,7 +267,7 @@ function emitPreambleDebug(
   deferredContext: string | undefined,
 ): void {
   const submoduleLogger = logger.child({ submodule: "executor.capability-index" });
-  // Script-factored estimates (TOK-01) — the preamble can carry non-Latin
+  // Script-factored estimates — the preamble can carry non-Latin
   // content (recalled memories, skills); numbers-only payload, no text logged.
   const fullPreambleText = fullDynamicPreamble ?? "";
   const deferredText = deferredContext ?? "";
@@ -280,7 +280,7 @@ function emitPreambleDebug(
       deferredContextTokens,
       fullPreambleTokens,
       clusterCount: capabilityIndexResult.clusterCount,
-      // W6 (obs-llm-troubleshooting): cluster-view counts get their OWN payload
+      // Cluster-view counts get their OWN payload
       // names — the bare activeToolCount/deferredToolCount keys collided with the
       // executor-wide counts (agent-execute logs activeToolCount=83 while this
       // cluster view logs 24), making the two lines read as contradictory.
@@ -292,14 +292,14 @@ function emitPreambleDebug(
   );
 }
 
-/** Factored token estimate (TOK-01) matching the pre-flight's chars/(3.5×scriptFactor). */
+/** Factored token estimate matching the pre-flight's chars/(3.5×scriptFactor). */
 function factoredTokens(text: string): number {
   if (!text) return 0;
   return Math.ceil(text.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(text)));
 }
 
 /**
- * ISSUE #2 (2026-06-22): when the protected fresh tail (the dynamic preamble + the
+ * When the protected fresh tail (the dynamic preamble + the
  * current message, which the assembler ships UNCONDITIONALLY) would not fit the
  * window's residual room, DROP the heavy tool-DISCOVERY context — the capability index
  * + the `<deferred-tools>` block — keeping only the tiny `dynamicPreamble`
@@ -318,7 +318,7 @@ function factoredTokens(text: string): number {
  * components, never the user's message or the date preamble. When even the message alone
  * still exceeds the residual, dropping is still correct (it minimizes the overflow) and
  * the pre-flight then honest-degrades as oversized_input. No S (frontier/mid wide window,
- * or getSystemTokensEstimate absent) ⇒ skip entirely → byte-identical to pre-ISSUE#2.
+ * or getSystemTokensEstimate absent) ⇒ skip entirely → the preamble ships unchanged.
  */
 function dropHeavyPreambleIfTight(
   parts: {

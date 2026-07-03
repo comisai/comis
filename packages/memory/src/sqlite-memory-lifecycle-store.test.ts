@@ -19,7 +19,7 @@
  * is a full-eviction mis-implementation; the GREEN is the no-op sweep. Live
  * eviction is the deferred operator step.
  *
- * ## The load-bearing security boundary (the §5.2 invariant)
+ * ## The load-bearing security boundary
  *
  * Comis runs many agents and many tenants in ONE DB. Every adapter statement —
  * the candidate SELECT, any read — filters on `(tenant_id, agent_id)`. A sweep
@@ -53,7 +53,7 @@ const memoryConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false,
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall-related config keys nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,
@@ -72,14 +72,14 @@ const DAY_MS = 86_400_000;
 // stale/dormant to the live policy the DORMANT scaffold deliberately does NOT run.
 const T0 = 1_700_000_000_000;
 
-/** The two lifecycle marker columns + the strength side-column this plan adds. */
+/** The two lifecycle marker columns + the strength side-column. */
 const LIFECYCLE_COLS = ["lifecycle_demoted_at", "evicted_at", "strength"];
 
 /**
  * Build a `memories` table at the PRE-112 shape (the observation + typed-
  * observation columns present, the 3 lifecycle marker columns absent) — the shape
- * a live ~/.comis DB has before this phase. Mirrors `createPreObservationTable`
- * in schema.test.ts.
+ * a live ~/.comis DB has before the lifecycle marker columns exist. Mirrors
+ * `createPreObservationTable` in schema.test.ts.
  */
 function createPre112Table(target: Database.Database): void {
   target.exec(`
@@ -163,7 +163,7 @@ function insertMemory(
 }
 
 /**
- * Seed `memory_usefulness.failure_count` for a memory (the FORGET-02 wrongness
+ * Seed `memory_usefulness.failure_count` for a memory (the failure-count wrongness
  * signal the lifecycle sweep reads). Scoped to the same (tenant, agent) + the
  * given intent bucket ('' = global). The sweep SUMs failure_count across intents.
  */
@@ -194,7 +194,7 @@ function seedFailureCount(
 
 /**
  * Seed `memory_usefulness.last_useful_at` (the last-recall recency signal) for a
- * memory — WR-02: the dormancy branch must key off ACTUAL disuse (last recall),
+ * memory — the dormancy branch must key off ACTUAL disuse (last recall),
  * not `occurred_at` (event time). Scoped to the same (tenant, agent) + intent bucket.
  */
 function seedLastUseful(
@@ -532,16 +532,16 @@ describe("createSqliteMemoryLifecycleStore", () => {
     });
   });
 
-  // ── LIVE soft eviction (FORGET-01/02/03/04) — gated on the eviction policy ──
+  // ── LIVE soft eviction — gated on the eviction policy ──
   // The DORMANT scaffold above acts on nothing. With an EVICTION-ENABLED policy
   // the sweep applies REAL soft eviction: it sets evicted_at (never DELETE) on a
   // candidate that is DORMANT past T_max OR corroborated-wrong (failure_count >=
   // failureEvictionFloor), exempts high-proof/system/pinned, and is reversible.
   //
-  // POST-224-02: the FadeMem strength-decay disjunct is DELETED. Eviction is driven
-  // by the two reachable disjuncts ONLY — dormancy and the corroborated-failure
-  // floor. These tests therefore drive wrongness eviction via `failureEvictionFloor`
-  // (NOT a strengthThreshold), matching the post-collapse candidacy form.
+  // There is no strength-decay disjunct. Eviction is driven by the two reachable
+  // disjuncts ONLY — dormancy and the corroborated-failure floor. These tests
+  // therefore drive wrongness eviction via `failureEvictionFloor` (NOT a
+  // strengthThreshold), matching the candidacy form.
   describe("runLifecycleSweep (LIVE soft eviction — eviction policy enabled)", () => {
     let adapter: SqliteMemoryAdapter;
     let db: Database.Database;
@@ -568,7 +568,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       adapter.close();
     });
 
-    it("FORGET-04 keystone: a wrong-but-RECENT memory evicts BEFORE an old-but-CORRECT one", async () => {
+    it("a wrong-but-RECENT memory evicts BEFORE an old-but-CORRECT one", async () => {
       // A: RECENT (1 day → not dormant) but WRONG (failure_count >= floor) →
       //    the corroborated-failure disjunct evicts it.
       // B: OLD (60 days, within T_max) but CORRECT (high proof_count, zero failures).
@@ -592,7 +592,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
     it("recall-exclusion contract: an evicted row is SOFT-closed (evicted_at set, NOT deleted)", async () => {
       // The store side of the recall-exclusion contract: eviction is a marker, the
       // raw row remains in the table (resolvable via a direct/asOf read). The
-      // FORGET-02-reachability describe below proves the recall-exclusion half
+      // reachability describe below proves the recall-exclusion half
       // end-to-end through the real adapter's vec + FTS lanes.
       insertMemory(db, { id: "evict-soft", content: "weak", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null });
       seedLastUseful(db, { memoryId: "evict-soft", lastUsefulAt: T0 - 1 * DAY_MS });
@@ -612,7 +612,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(raw.content).toBe("weak");
     });
 
-    it("FORGET-03 exemption: a single failure does NOT evict a HIGH-proof memory", async () => {
+    it("a single failure does NOT evict a HIGH-proof memory", async () => {
       // The anti-induced-eviction guarantee: a high proof_count memory is exempt
       // from eviction even when a failure is recorded against it. A poisoner cannot
       // evict a well-corroborated memory by inducing one failure (also < floor).
@@ -625,7 +625,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "high-proof"), "high-proof memory must be exempt").toBeNull();
     });
 
-    it("FORGET-03 exemption: pinned + system memories are NEVER evicted (failures >= floor)", async () => {
+    it("pinned + system memories are NEVER evicted (failures >= floor)", async () => {
       // pinned=1 and trust_level='system' are hard exemptions regardless of the
       // corroborated-failure floor (here 9 >> floor 3).
       insertMemory(db, { id: "pinned-weak", content: "pinned", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null, pinned: true });
@@ -641,16 +641,12 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "system-weak"), "system must be exempt").toBeNull();
     });
 
-    it("EVI-STRENGTH-FLOOR (224-02): a recent, recalled, zero-failure aged-event memory is NOT evicted by the (deleted) strength disjunct", async () => {
-      // The GENUINE RED for the strength-disjunct deletion. A `working`-type memory whose
-      // EVENT is 80 days old (within T_max 90 → NOT dormant) but RECALLED yesterday
-      // (disuse ~1 → NOT dormant) with ZERO failures (failure disjunct OFF). On the PRE-patch
-      // 3-disjunct code this memory is evicted SOLELY because its decayed `working`-decay
-      // strength dips below the strengthThreshold — so this assertion (survives) FAILS pre-patch
-      // (RED). POST-patch the strength disjunct is DELETED: neither the dormancy nor the
-      // corroborated-failure disjunct reaches it, so it SURVIVES (GREEN). The strengthThreshold
-      // 0.99 is the value the legacy LIVE suite used to force the strength branch; it is removed
-      // in the GREEN step when the field itself is deleted (the assertion is unchanged).
+    it("a recent, recalled, zero-failure aged-event memory is NOT evicted (no strength-decay disjunct reaches it)", async () => {
+      // A `working`-type memory whose EVENT is 80 days old (within T_max 90 → NOT dormant)
+      // but RECALLED yesterday (disuse ~1 → NOT dormant) with ZERO failures (failure disjunct
+      // OFF). Neither the dormancy nor the corroborated-failure disjunct reaches it, so it
+      // SURVIVES: there is no strength-decay disjunct, so a decayed strength alone can never
+      // evict a recent-recall, zero-failure memory.
       const strengthStore = createSqliteMemoryLifecycleStore({
         db,
         policy: {
@@ -675,7 +671,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       ).toBeNull();
     });
 
-    it("FORGET-02 coupling: two RECENT memories identical except failure_count — only the >=floor one evicts", async () => {
+    it("two RECENT memories identical except failure_count — only the >=floor one evicts", async () => {
       // Both RECENT (not dormant), same proof_count (below the high-proof floor). The
       // ONLY difference is failure_count. The corroborated-failure floor evicts the
       // high-failure one; the zero-failure one survives (no eviction without wrongness).
@@ -692,7 +688,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "fc-zero"), "zero failure_count must survive (no eviction without wrongness)").toBeNull();
     });
 
-    it("reversibility (FORGET-04): unevict clears evicted_at, restoring the row", async () => {
+    it("reversibility: unevict clears evicted_at, restoring the row", async () => {
       insertMemory(db, { id: "revivable", content: "weak then useful", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null });
       seedLastUseful(db, { memoryId: "revivable", lastUsefulAt: T0 - 1 * DAY_MS });
       seedFailureCount(db, { memoryId: "revivable", failureCount: 6 });
@@ -764,7 +760,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "would-evict"), "default policy must not evict").toBeNull();
     });
 
-    it("FORGET-06 per-call policy: a scope.policy override activates eviction on a DORMANT-constructed store (the daemon's per-agent path)", async () => {
+    it("per-call policy: a scope.policy override activates eviction on a DORMANT-constructed store (the daemon's per-agent path)", async () => {
       // The store is built DORMANT (no constructor policy), but the daemon threads the
       // per-agent learningForgetting policy on the SWEEP CALL. The per-call policy must
       // activate eviction so a different agent on the SAME shared store can run with its
@@ -785,7 +781,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "evict-via-call"), "per-call policy must evict").not.toBeNull();
     });
 
-    it("FORGET-06 per-call policy absent → the DORMANT-constructed store still evicts NOTHING (byte-identity preserved)", async () => {
+    it("per-call policy absent → the DORMANT-constructed store still evicts NOTHING (byte-identity preserved)", async () => {
       const dormantStore = createSqliteMemoryLifecycleStore({ db });
       insertMemory(db, { id: "stays-live", content: "weak", memoryType: "working", occurredAt: T0 - 1 * DAY_MS, proofCount: null });
       seedFailureCount(db, { memoryId: "stays-live", failureCount: 9 });
@@ -796,13 +792,13 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "stays-live")).toBeNull();
     });
 
-    // ── WR-02: the dormant-AGE branch must key off DISUSE (last recall), not EVENT age ──
-    // FORGET-04: "wrong fades faster than merely OLD" — a recently-USEFUL memory about an
+    // ── The dormant-AGE branch must key off DISUSE (last recall), not EVENT age ──
+    // "wrong fades faster than merely OLD" — a recently-USEFUL memory about an
     // OLD event must NOT be reaped on event-age alone. The candidacy disjunct bases dormancy
     // on last_useful_at (last-recall recency), so a recently-useful old-event memory is NOT
     // "dormant". With NO failures and NO high-proof exemption, the dormant-age disjunct is the
     // SOLE possible eviction cause here, so the test pins the age path in isolation.
-    describe("WR-02: dormant-age eviction keys off DISUSE, not EVENT age", () => {
+    describe("dormant-age eviction keys off DISUSE, not EVENT age", () => {
       // The post-collapse policy shape: dormancy + failure floor only (no strength fields).
       const AGE_POLICY: MemoryLifecyclePolicy = {
         maxDormantDays: 90,
@@ -811,7 +807,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
         failureEvictionFloor: 3,
       };
 
-      it("a RECENTLY-USEFUL memory about an OLD event is NOT evicted by age alone (FORGET-04)", async () => {
+      it("a RECENTLY-USEFUL memory about an OLD event is NOT evicted by age alone", async () => {
         const ageStore = createSqliteMemoryLifecycleStore({ db, policy: AGE_POLICY });
         // OLD event (200 days ago → dormantDays-by-occurred_at >> 90) but recalled-useful
         // YESTERDAY (last_useful_at = T0 - 1 day). proof below the high-proof floor + NO
@@ -845,21 +841,17 @@ describe("createSqliteMemoryLifecycleStore", () => {
     });
   });
 
-  // ── RC-3: corroborated-failure eviction at the REALISTIC strengthThreshold ──
-  // (EVI-STRENGTH-FLOOR fix, live 2026-06-25). The LIVE tests above use an artificial
-  // strengthThreshold:0.99 — at the DEFAULT 0.2 the recall-shape strength (floored >0.25)
-  // can NEVER drop below threshold, so a failure-implicated memory could only ever evict
-  // via the 90-day dormant-age disjunct (proven inert live). These pin the new
-  // corroborated-failure disjunct: a LOW-proof, non-exempt memory implicated in failures
-  // >= failureEvictionFloor is soft-evicted; a HIGH-proof / pinned / system one NEVER
-  // (the FORGET-03 anti-induced-eviction belt holds — each failure_count increment is
-  // itself corroboration-gated).
-  describe("runLifecycleSweep (RC-3: corroborated-failure eviction at the realistic threshold)", () => {
+  // ── Corroborated-failure eviction at the realistic failure floor ──
+  // The corroborated-failure disjunct is the sole wrongness-eviction path: a LOW-proof,
+  // non-exempt memory implicated in failures >= failureEvictionFloor is soft-evicted; a
+  // HIGH-proof / pinned / system one NEVER (the anti-induced-eviction belt holds — each
+  // failure_count increment is itself corroboration-gated).
+  describe("runLifecycleSweep (corroborated-failure eviction at the realistic threshold)", () => {
     let adapter: SqliteMemoryAdapter;
     let db: Database.Database;
     let store: ReturnType<typeof createSqliteMemoryLifecycleStore>;
-    // POST-224-02: the strength disjunct is DELETED, so the corroborated-failure floor
-    // is the SOLE wrongness-eviction path (the EVI-STRENGTH-FLOOR fix made permanent).
+    // There is no strength disjunct, so the corroborated-failure floor is the SOLE
+    // wrongness-eviction path.
     const REALISTIC_POLICY: MemoryLifecyclePolicy = {
       maxDormantDays: 90, evictionEnabled: true, highProofFloor: 5,
       failureEvictionFloor: 3,
@@ -867,10 +859,10 @@ describe("createSqliteMemoryLifecycleStore", () => {
     beforeEach(() => { adapter = new SqliteMemoryAdapter(memoryConfig); db = adapter.getDb(); store = createSqliteMemoryLifecycleStore({ db, policy: REALISTIC_POLICY }); });
     afterEach(() => { adapter.close(); });
 
-    it("evicts a LOW-proof RECENT memory with corroborated failures >= floor (strength alone could NOT — EVI-STRENGTH-FLOOR)", async () => {
+    it("evicts a LOW-proof RECENT memory with corroborated failures >= floor (strength alone could NOT evict it)", async () => {
       // Recent (1 day → base strength ~1.0) + low-proof + 3 corroborated failures: strength
       // stays >0.25 (>threshold 0.2) and it is NOT dormant → the ONLY eviction path is the
-      // corroborated-failure disjunct. RED pre-fix (no disjunct → the memory survives).
+      // corroborated-failure disjunct (without it, the memory would survive).
       insertMemory(db, { id: "wrong-recent-lowproof", content: "repeatedly wrong", occurredAt: T0 - 1 * DAY_MS, proofCount: 1 });
       seedLastUseful(db, { memoryId: "wrong-recent-lowproof", lastUsefulAt: T0 - 1 * DAY_MS });
       seedFailureCount(db, { memoryId: "wrong-recent-lowproof", failureCount: 3 });
@@ -880,7 +872,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "wrong-recent-lowproof"), "low-proof sustained-wrong must evict").not.toBeNull();
     });
 
-    it("NEVER evicts a HIGH-proof memory with the SAME failures (FORGET-03 anti-induced-eviction holds)", async () => {
+    it("NEVER evicts a HIGH-proof memory with the SAME failures (anti-induced-eviction holds)", async () => {
       insertMemory(db, { id: "wrong-but-corroborated", content: "wrong but well-proven", occurredAt: T0 - 1 * DAY_MS, proofCount: 5 });
       seedLastUseful(db, { memoryId: "wrong-but-corroborated", lastUsefulAt: T0 - 1 * DAY_MS });
       seedFailureCount(db, { memoryId: "wrong-but-corroborated", failureCount: 8 });
@@ -898,8 +890,8 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "wrong-but-pinned"), "pinned memory must survive induced failures").toBeNull();
     });
 
-    it("NEVER evicts a SYSTEM-trust memory with the SAME failures (FORGET-03 direction B)", async () => {
-      // INV-4 direction B: trust_level='system' is a hard exemption. A poisoner who
+    it("NEVER evicts a SYSTEM-trust memory with the SAME failures (system-trust exemption)", async () => {
+      // trust_level='system' is a hard exemption. A poisoner who
       // drives failures >= floor on a system memory still cannot evict it.
       insertMemory(db, { id: "wrong-but-system", content: "wrong but system-trust", occurredAt: T0 - 1 * DAY_MS, proofCount: 1, trustLevel: "system" });
       seedLastUseful(db, { memoryId: "wrong-but-system", lastUsefulAt: T0 - 1 * DAY_MS });
@@ -930,16 +922,16 @@ describe("createSqliteMemoryLifecycleStore", () => {
     });
   });
 
-  // ── FORGET-02 END-TO-END reachability: evicted row gone from BOTH recall lanes ──
-  // The EVI-STRENGTH-FLOOR fix made permanent (224-02). The RC-3 describe above proves
-  // the STORE-side soft-eviction (evicted_at set). This proves the RECONCILIATION
-  // end-to-end through the REAL SqliteMemoryAdapter.search(): a recently-recalled (so the
-  // dormancy disjunct CANNOT fire), corroborated-wrong (failure_count >= floor), LOW-proof,
-  // non-exempt memory ACTUALLY soft-evicts via runLifecycleSweep AND then disappears from
-  // BOTH the vector-only lane (search(sk, number[])) and the FTS/hybrid lane
-  // (search(sk, string)). The `evicted_at IS NULL` exclusion is already wired on both lanes
-  // (hybrid-search.ts + sqlite-memory-adapter.ts) — this drives it, it does NOT add a filter.
-  describe("FORGET-02 reachability: a soft-evicted row is absent from BOTH recall lanes (end-to-end)", () => {
+  // ── END-TO-END reachability: evicted row gone from BOTH recall lanes ──
+  // The corroborated-failure describe above proves the STORE-side soft-eviction (evicted_at
+  // set). This proves the RECONCILIATION end-to-end through the REAL
+  // SqliteMemoryAdapter.search(): a recently-recalled (so the dormancy disjunct CANNOT fire),
+  // corroborated-wrong (failure_count >= floor), LOW-proof, non-exempt memory ACTUALLY
+  // soft-evicts via runLifecycleSweep AND then disappears from BOTH the vector-only lane
+  // (search(sk, number[])) and the FTS/hybrid lane (search(sk, string)). The `evicted_at IS
+  // NULL` exclusion is already wired on both lanes (hybrid-search.ts +
+  // sqlite-memory-adapter.ts) — this drives it, it does NOT add a filter.
+  describe("reachability: a soft-evicted row is absent from BOTH recall lanes (end-to-end)", () => {
     let adapter: SqliteMemoryAdapter;
     let db: Database.Database;
     let store: ReturnType<typeof createSqliteMemoryLifecycleStore>;
@@ -1014,14 +1006,15 @@ describe("createSqliteMemoryLifecycleStore", () => {
     });
   });
 
-  // ── FORGET-01 candidacy PARITY: the two-disjunct form, the strength term was dead ──
+  // ── Candidacy PARITY: the two-disjunct form ──
   // A matrix proving the eviction candidacy equals exactly
   //   !exempt && (disuseDays > maxDormantDays || (liveEviction && failureCount >= floor))
-  // i.e. the deleted `strength < strengthThreshold` disjunct contributed nothing reachable.
-  // We assert the OBSERVABLE candidacy (a non-exempt candidate soft-evicts iff the expected
-  // predicate holds) across a small input matrix — the store has no public candidacy fn, so
-  // the sweep's eviction decision IS the candidacy oracle.
-  describe("FORGET-01 candidacy parity: candidacy === dormancy || (live && failure>=floor), minus exempt", () => {
+  // There is no `strength < strengthThreshold` disjunct — candidacy is exactly these two
+  // disjuncts minus the exemptions. We assert the OBSERVABLE candidacy (a non-exempt
+  // candidate soft-evicts iff the expected predicate holds) across a small input matrix —
+  // the store has no public candidacy fn, so the sweep's eviction decision IS the candidacy
+  // oracle.
+  describe("candidacy parity: candidacy === dormancy || (live && failure>=floor), minus exempt", () => {
     let adapter: SqliteMemoryAdapter;
     let db: Database.Database;
     let store: ReturnType<typeof createSqliteMemoryLifecycleStore>;

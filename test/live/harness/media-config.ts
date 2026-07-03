@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * buildMediaConfig — shared helper for the Phase 142 (MEDIA) scenario tests.
+ * buildMediaConfig — shared helper for the MEDIA scenario tests.
  *
  * Builds a temp YAML config file with an `integrations.media` block for any
  * combination of:

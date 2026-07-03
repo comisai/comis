@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CLI-05 drift gate (§4.7 writable-path-audit arch-test entry): the committed
+ * The comis-agent bound-binary drift gate: the committed
  * `comis-agent-manifest.json` sha256 equals `createHash("sha256")` of the
  * freshly-built `comis-agent-entry.js`. Because the manifest is the trust anchor
- * `resolveJailAgentCli` verifies the `--ro-bind`-bound binary against (Plan 06),
+ * `resolveJailAgentCli` verifies the `--ro-bind`-bound binary against,
  * this gate makes manifest ↔ artifact drift a BUILD failure — a source change to
  * the entry (or its transitive imports) without a regen no longer compiles past
  * CI; the fix is "run `pnpm agent-cli:manifest` and commit".
@@ -15,9 +15,9 @@
  *      file is present).
  *   3. Assert the committed sha256 == the fresh hash. Any mismatch indicates
  *      either the entry changed without a regen, or a tampered committed manifest
- *      (the T-219-22 threat).
+ *      (a supply-chain tamper of the trust anchor).
  *
- * Pitfall 2 — this pins the COMIS-built artifact (deterministic from source via
+ * Note — this pins the COMIS-built artifact (deterministic from source via
  * `tsc`), NOT `process.execPath` (the host node, whose hash is build-machine-
  * specific). The generator NEVER reads `process.execPath`.
  *
@@ -38,7 +38,7 @@ import {
   type ComisAgentManifest,
 } from "../../scripts/orchestrate-sdk/generate-comis-agent-manifest.js";
 
-describe("comis-agent bound-binary manifest drift gate (CLI-05)", () => {
+describe("comis-agent bound-binary manifest drift gate", () => {
   it("the committed manifest sha256 is byte-identical to a fresh hash of the built comis-agent-entry.js", () => {
     // Snapshot the committed manifest.
     const committed = JSON.parse(readFileSync(OUT_PATH, "utf8")) as ComisAgentManifest;

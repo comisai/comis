@@ -3,7 +3,7 @@
  * Unit tests for the orchestrate SDK runtime — the cap-socket CLIENT shim the
  * generated `comis_tools.js` imports (`invoke` + `wrapResultRef`). These run on
  * macOS (no bwrap): the wire is exercised against a REAL in-test unix-socket
- * server that mirrors the Phase-211 capability endpoint's newline-JSON protocol
+ * server that mirrors the capability endpoint's newline-JSON protocol
  * (`{ bearer, method, params }` → `{ result }` / `{ error }`), and the env is
  * injected via `COMIS_ORCH_SOCKET`/`COMIS_CAP_LEASE` (read through the
  * `@comis/core` `systemGetEnv` seam in production).
@@ -26,7 +26,7 @@ interface CapturedRequest {
 }
 
 /**
- * A minimal fake of the Phase-211 cap endpoint: one `{ bearer, method, params }`
+ * A minimal fake of the cap endpoint: one `{ bearer, method, params }`
  * JSON line per connection → one `{ result }` / `{ error }` line back, then end.
  * The `reply` fn maps the parsed request to the wire-reply object.
  */
@@ -155,7 +155,7 @@ describe("orchestrate-sdk-runtime", () => {
     );
   });
 
-  describe("callCapSocket (the generalized arbitrary-method cap-socket wire, CLI-04)", () => {
+  describe("callCapSocket (the generalized arbitrary-method cap-socket wire)", () => {
     it("sends the method THROUGH verbatim (not wrapped in a tool.invoke envelope) and returns the {result}", async () => {
       const captured: CapturedRequest[] = [];
       server = await startFakeCapServer(
@@ -185,14 +185,14 @@ describe("orchestrate-sdk-runtime", () => {
       // The fake server is a node:net unix-socket listener on COMIS_ORCH_SOCKET.
       // A reply only arrives if callCapSocket connected to THAT socket — proving
       // the wire is the lease-authenticated unix cap socket, not a WebSocket to
-      // ws://…:4766/ws (the forbidden gateway client, CLI-04).
+      // ws://…:4766/ws (the forbidden gateway client).
       const out = await callCapSocket("graph.execute", { graph: "g" });
 
       expect(out).toBe("ok");
       expect(captured[0].method).toBe("graph.execute");
     });
 
-    it("rejects loudly naming both env vars and 'jail' when COMIS_ORCH_SOCKET is absent (CLI-06 loud-fail seed)", async () => {
+    it("rejects loudly naming both env vars and 'jail' when COMIS_ORCH_SOCKET is absent", async () => {
       delete process.env.COMIS_ORCH_SOCKET;
 
       const err = await callCapSocket("cron.add", { spec: "* * * * *" }).then(
@@ -271,7 +271,7 @@ describe("orchestrate-sdk-runtime", () => {
     });
   });
 
-  describe("wrapResultRef (REF-02 in-jail extraction)", () => {
+  describe("wrapResultRef (in-jail extraction)", () => {
     it("preserves the ResultRef handle fields (ref/kind/bytes/preview)", () => {
       const wrapped = wrapResultRef({
         ref: "results/abc.jsonl",

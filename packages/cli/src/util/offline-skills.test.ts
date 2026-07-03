@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-02 (Phase 201, P2 skills shadow): tests for the OFFLINE learned-skill
+ * Tests for the OFFLINE learned-skill
  * funnel reader behind `comis memory skills`. Drives the PRODUCTION write path
  * (`createSqliteMentalModelStore.admit` + `promote`/`demote`/`evict`) into a
  * temp `memory.db`, then asserts the counts-only admission funnel — the per-state
@@ -114,7 +114,7 @@ describe("readSkillStatsOffline", () => {
     expect(stats.perAgent[0].demoted).toBe(0);
   });
 
-  it("derives promotion/demotion roll-ups from byState (SURFACE-06; counts only)", async () => {
+  it("derives promotion/demotion roll-ups from byState (counts only)", async () => {
     const dir = tmpDataDir();
     await seed(dir, [
       { input: { name: "cand_1" } }, // candidate (not yet promoted)

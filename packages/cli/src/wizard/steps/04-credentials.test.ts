@@ -88,7 +88,7 @@ vi.mock("../../client/rpc-client.js", () => ({
 }));
 
 // Mock requireDaemonOrExit + DAEMON_PROBE_TIMEOUT_MS. requireDaemonOrExit is
-// no longer used by the encrypted branch (it now probes isDaemonRunning and
+// not used by the encrypted branch (it probes isDaemonRunning and
 // routes daemon-up->RPC / daemon-down->offline); the harmless stub is retained.
 vi.mock("../../util/daemon-required.js", () => ({
   requireDaemonOrExit: vi.fn(async () => undefined),
@@ -401,10 +401,10 @@ describe("credentialsStep", () => {
     );
   });
 
-  // openai is now API-key-only -- the auth-method selector was removed
-  // because OAuth lives exclusively on `openai-codex`. The dispatcher
-  // skips the auth-method select for openai and routes directly to the
-  // standard API-key paste flow.
+  // openai is API-key-only -- there is no auth-method selector because
+  // OAuth lives exclusively on `openai-codex`. The dispatcher skips the
+  // auth-method select for openai and routes directly to the standard
+  // API-key paste flow.
   it("openai uses standard API-key path (no auth-method selector)", async () => {
     const prompter = createMockPrompter();
     vi.mocked(prompter.password).mockResolvedValueOnce(
@@ -422,7 +422,7 @@ describe("credentialsStep", () => {
 
     const result = await credentialsStep.execute(state, prompter);
 
-    // No auth-method picker for openai any more (only anthropic still has one).
+    // No auth-method picker for openai (only anthropic has one).
     expect(prompter.select).not.toHaveBeenCalled();
     expect(result.provider?.validated).toBe(true);
     expect(result.provider?.authMethod).toBeUndefined();
@@ -989,7 +989,7 @@ describe("credentialsStep — OAuth dispatch", () => {
   });
 });
 
-// ---------- Wizard storage-mode branch tests (Plan 04-04) ----------
+// ---------- Wizard storage-mode branch tests ----------
 
 describe("credentialsStep — storage mode branching (encrypted/env)", () => {
   beforeEach(() => {
@@ -1065,8 +1065,8 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
   });
 
   it("encrypted mode: isDaemonRunning is consulted before persistence", async () => {
-    // requireDaemonOrExit was removed from the encrypted branch; the branch now
-    // probes isDaemonRunning to decide RPC (up) vs. offline write (down).
+    // The encrypted branch does not hard-require a daemon; it probes
+    // isDaemonRunning to decide RPC (up) vs. offline write (down).
     vi.mocked(loadConfigFile).mockReturnValue({
       ok: true,
       value: { security: { storage: "encrypted" } },
@@ -1433,20 +1433,19 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// loadWizardStorageMode env-ref resolution (TDD RED tests — Task 1 of plan 260602-rtj)
+// loadWizardStorageMode env-ref resolution
 //
-// Bug 1: loadWizardStorageMode calls loadConfigFile without getSecret so
-// ${VAR} refs are not resolved before validateConfig. A config whose
-// security.storage is "encrypted" but also contains a gateway token with
-// a ${VAR} ref fails Zod validation → falls back to "file" → the
-// handleCodexOAuth encrypted branch (requireDaemonOrExit) is skipped.
+// Regression guard: if loadWizardStorageMode called loadConfigFile without
+// getSecret, ${VAR} refs would not be resolved before validateConfig. A config
+// whose security.storage is "encrypted" but also contains a gateway token with
+// a ${VAR} ref would fail Zod validation → fall back to "file" → the
+// handleCodexOAuth encrypted branch (requireDaemonOrExit) would be skipped.
 //
-// These tests must FAIL on the pre-patch code (RED). After the fix (GREEN),
-// loadWizardStorageMode passes getSecret to loadConfigFile so refs are
+// loadWizardStorageMode must pass getSecret to loadConfigFile so refs are
 // resolved and the encrypted mode is correctly detected.
 // ---------------------------------------------------------------------------
 
-describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
+describe("loadWizardStorageMode env-ref resolution", () => {
   beforeEach(() => {
     vi.mocked(loginOpenAICodexOAuth).mockReset();
     vi.mocked(callTyped).mockReset();
@@ -1474,26 +1473,23 @@ describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
   });
 
   it("loadWizardStorageMode detects encrypted mode when getSecret resolves ${ENV} refs so requireDaemonOrExit is called", async () => {
-    // Simulate the pre-fix scenario:
+    // The guarded failure mode:
     // - loadConfigFile WITHOUT getSecret returns raw config with unresolved refs
     // - validateConfig FAILS on the unresolved ref (simulates the min:32 violation)
     // → loadWizardStorageMode falls back to "file" → requireDaemonOrExit NOT called
     //
-    // POST-FIX (GREEN): loadConfigFile is called WITH getSecret.
+    // Correct behavior: loadConfigFile is called WITH getSecret.
     // The mock detects getSecret and returns a resolved config.
     // validateConfig SUCCEEDS → "encrypted" → requireDaemonOrExit IS called.
-    //
-    // This test asserts the post-fix behavior (requireDaemonOrExit IS called).
-    // It FAILS pre-fix because the fallback to "file" skips requireDaemonOrExit.
     vi.mocked(loadConfigFile).mockImplementation((_path, options) => {
       if (options?.getSecret) {
-        // Post-fix: getSecret provided → simulate resolved config (no ${} refs)
+        // getSecret provided → simulate resolved config (no ${} refs)
         return {
           ok: true as const,
           value: { security: { storage: "encrypted" } },
         };
       }
-      // Pre-fix: no getSecret → unresolved config with ${} ref in secret field
+      // No getSecret → unresolved config with ${} ref in secret field
       return {
         ok: true as const,
         value: {
@@ -1542,9 +1538,9 @@ describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
 
     await credentialsStep.execute(startState, prompter);
 
-    // POST-FIX: loadWizardStorageMode must detect "encrypted" and the branch
-    // probes isDaemonRunning before persisting (daemon UP → RPC path).
-    // PRE-FIX: falls back to "file" → encrypted branch never runs → test FAILS.
+    // loadWizardStorageMode must detect "encrypted" and the branch probes
+    // isDaemonRunning before persisting (daemon UP → RPC path). Without
+    // getSecret it falls back to "file" and the encrypted branch never runs.
     expect(isDaemonRunning).toHaveBeenCalled();
     // And the profile must be persisted via daemon RPC (callTyped), not file store
     expect(callTyped).toHaveBeenCalled();
@@ -1568,9 +1564,9 @@ describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
 //   - config absent + no master key      → file branch (selectOAuthCredentialStore
 //     used, callTyped NOT used).
 //
-// PRE-PATCH (RED): both `return "file"` fallbacks return "file" unconditionally,
-// so even with a master key present the file branch is taken → the
-// "encrypted when master key present" test FAILS.
+// The guarded regression: if both `return "file"` fallbacks returned "file"
+// unconditionally, even with a master key present the file branch would be
+// taken — the "encrypted when master key present" case pins this.
 // ---------------------------------------------------------------------------
 
 describe("loadWizardStorageMode encrypted-default fallback (init, no config)", () => {

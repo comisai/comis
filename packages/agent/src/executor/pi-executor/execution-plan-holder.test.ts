@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the holder-backed ExecutionPlanPort impl (spec §16.7 / §17.1).
- * Fails on pre-patch code: `./execution-plan-holder.js` does not exist.
+ * Tests for the holder-backed ExecutionPlanPort implementation.
  *
  * Behavior under test:
  *   - a freshly-created holder's getCurrentPlan() returns undefined (no ref

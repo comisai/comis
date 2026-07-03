@@ -9,7 +9,9 @@
  * - `signalHealthCheck()` — GET /api/v1/check
  * - `createSignalEventStream()` — SSE async iterator from /api/v1/events
  *
- * Adapted from Comis's signal/client.ts for Comis's Result-based API.
+ * `signalRpcRequest` / `signalHealthCheck` return `Result`; the SSE stream
+ * throws on connection failure and is caught by the adapter (see the
+ * boundary annotation above).
  *
  * @module
  */

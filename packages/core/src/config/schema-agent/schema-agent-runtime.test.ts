@@ -5,14 +5,11 @@ import { PerAgentConfigSchema } from "./schema-agent-runtime.js";
 // ---------------------------------------------------------------------------
 // Agent Transparency — per-agent activity + delivery config
 //
-// §16.3: two NEW per-agent blocks — `activity` (presentation) and `delivery`
-// (final-assistant visibility). Every field defaulted so existing configs
-// validate unchanged. The top-level `verbosity` (response-style
-// VerbosityConfigSchema) is KEPT unchanged and is a distinct concept from the
-// new `activity.verbosity` (no rename, no shim — §16.3).
-//
-// These cases fail on the pre-patch schema (the parsed config lacks `activity`
-// and `delivery`) — RED proof.
+// Two per-agent blocks — `activity` (presentation) and `delivery`
+// (final-assistant visibility). Every field defaulted so a config that omits
+// them validates unchanged. The top-level `verbosity` (response-style
+// VerbosityConfigSchema) is a distinct concept from
+// `activity.verbosity` — they share only the word.
 // ---------------------------------------------------------------------------
 
 describe("per-agent activity config block", () => {
@@ -90,7 +87,7 @@ describe("per-agent delivery.visibleReplies config block", () => {
   });
 });
 
-describe("top-level verbosity stays unchanged alongside activity.verbosity (no-BC)", () => {
+describe("top-level verbosity is a distinct field alongside activity.verbosity", () => {
   it("still parses the response-style top-level verbosity (VerbosityConfigSchema)", () => {
     const cfg = PerAgentConfigSchema.parse({
       verbosity: {
@@ -117,11 +114,8 @@ describe("top-level verbosity stays unchanged alongside activity.verbosity (no-B
 
 // ---------------------------------------------------------------------------
 // The SCAFFOLD-DORMANT memory-lifecycle cron knob wired
-// onto the per-agent RUNTIME config (the memoryOnlineTuning bandit sibling was
-// deleted in Phase 224). `.optional()`
-// so a default agent registers NO lifecycle block (byte-identical) — the cron is
-// default-OFF and even when enabled the dormant adapter evicts nothing.
-// These cases fail on the pre-patch schema (no `memoryLifecycle` field) — RED.
+// onto the per-agent RUNTIME config. Even when enabled the dormant adapter
+// evicts nothing.
 // ---------------------------------------------------------------------------
 describe("per-agent memoryLifecycle config block", () => {
   it("materializes memoryLifecycle ON by default (opt-out — SCAFFOLD-DORMANT, evicts nothing)", () => {
@@ -134,7 +128,7 @@ describe("per-agent memoryLifecycle config block", () => {
     const cfg = PerAgentConfigSchema.parse({ memoryLifecycle: { enabled: true } });
     expect(cfg.memoryLifecycle).toBeDefined();
     expect(cfg.memoryLifecycle!.enabled).toBe(true);
-    // Phase 226 trimmed the schema to {enabled,schedule}; the FadeMem constants were deleted.
+    // The schema carries only {enabled, schedule}; decay tuning is not per-agent config.
     expect(cfg.memoryLifecycle!.schedule).toBe("0 9 * * *");
   });
 
@@ -145,15 +139,14 @@ describe("per-agent memoryLifecycle config block", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DET-02 (v2.22 Multilingual Excellence): agents.<id>.language — the reply
+// agents.<id>.language — the reply
 // language hint for deterministic degraded replies. `.optional()` loose string
-// mirroring the transcription `language` hint (schema-integrations.ts:240):
+// mirroring the transcription `language` hint (schema-integrations.ts):
 // BCP-47 ("he") OR an English display name ("Hebrew"); auto-detect when omitted.
 // A default agent registers NO language (byte-identical). The AGENTS.md §7
 // config-test triplet: defaults (absent) / valid / invalid (non-string).
-// These cases fail on the pre-patch schema (no `language` field) — RED.
 // ---------------------------------------------------------------------------
-describe("DET-02 — agents.<id>.language config key", () => {
+describe("agents.<id>.language config key", () => {
   it("is optional — absent on a bare config (auto-detect, byte-identical default)", () => {
     const cfg = PerAgentConfigSchema.parse({});
     expect(cfg.language).toBeUndefined();
@@ -176,15 +169,15 @@ describe("DET-02 — agents.<id>.language config key", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cross-provider stress enabler (2026-06-22): agents.<id>.capabilityClass —
+// agents.<id>.capabilityClass —
 // an operator pin for the capability class. Without it only codex models are
-// naturally nano-classed, so the small-window context-fit fixes can't be
+// naturally nano-classed, so the small-window context-fit behavior can't be
 // exercised against OpenAI/Anthropic/Google (all resolve to "frontier" with a
 // large window). When set it threads into resolveModelProfile's
 // capabilityClassOverride (the reduced prompt + nano deferral + effectiveContextCap
 // then apply on ANY provider). Mirrors the provider-level enum
-// (provider-capabilities.ts:68). AGENTS.md §7 config-test triplet:
-// default (absent) / valid / invalid. RED on the pre-patch schema (no field).
+// (provider-capabilities.ts). AGENTS.md §7 config-test triplet:
+// default (absent) / valid / invalid.
 // ---------------------------------------------------------------------------
 describe("per-agent capabilityClass pin", () => {
   it("is optional — absent on a bare config (auto-detect heuristic, byte-identical default)", () => {

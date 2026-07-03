@@ -7,8 +7,9 @@
  *   2. stripModelSpecialTokens -- remove <|...|> tokens (GLM, DeepSeek)
  *   3. stripDowngradedToolCallText -- remove [Tool Call: ...] (Gemini replay)
  *   4. extractFinalTagContent (coaching path only, when enforceFinalTag=true)
- *   4. stripReasoningTagsFromText -- SA3 defense-in-depth backstop, runs UNCONDITIONALLY
- *      on ALL paths. SA1+SA2 mean thinking never reaches accumulated for native-reasoning
+ *   4. stripReasoningTagsFromText -- defense-in-depth backstop, runs UNCONDITIONALLY
+ *      on ALL paths. The upstream typed-delta guards (the onDelta kind gate) mean
+ *      thinking never reaches accumulated for native-reasoning
  *      models (SDK-typed path), so this is a no-op for them. Kept as the last-line
  *      confidentiality net for any provider that embeds <think> in a text_delta.
  *
@@ -25,7 +26,7 @@ import { findCodeRegions, isInsideCode } from "../../response-filter/code-region
 import type { ComisLogger } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Inlined strip functions (previously in separate files)
+// Strip functions applied by the pipeline
 // ---------------------------------------------------------------------------
 
 /**
@@ -117,7 +118,7 @@ export interface SanitizeOptions {
   /** When true, only return text inside `<final>` blocks; suppress everything else.
    *  This covers the non-streaming fallback path (coaching path).
    *  When true, `extractFinalTagContent` is applied first. Native-reasoning models
-   *  set this false; their thinking is excluded by the SA2 onDelta kind gate upstream.
+   *  set this false; their thinking is excluded by the onDelta kind gate upstream.
    *  `stripReasoningTagsFromText` runs unconditionally after this branch as defense-in-depth.
    *  Default: false. */
   enforceFinalTag?: boolean;
@@ -146,8 +147,8 @@ export function sanitizeAssistantResponse(
       // Non-streaming equivalent of ThinkingTagFilter "suppressed" initial state.
       cleaned = extractFinalTagContent(cleaned);
     }
-    // SA3 defense-in-depth backstop: stripReasoningTagsFromText runs unconditionally on
-    // ALL paths. SA1+SA2 mean thinking never reaches `accumulated` for native-reasoning
+    // Defense-in-depth backstop: stripReasoningTagsFromText runs unconditionally on
+    // ALL paths. The upstream guards mean thinking never reaches `accumulated` for native-reasoning
     // models (SDK-typed onDelta kind gate), so this is a no-op for them in practice.
     // For coaching models, it runs AFTER extractFinalTagContent — idempotent on clean text.
     // Kept as the last-line confidentiality net for any provider that embeds <think> in

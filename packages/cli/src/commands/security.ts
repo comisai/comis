@@ -119,7 +119,7 @@ function buildAuditContext(configPaths: string[]): AuditContext {
  * Provides:
  * - `comis security audit` -- run security checks
  * - `comis security fix` -- auto-remediate findings (dry-run by default)
- * - `comis security audit-log` -- query the durable security-decision audit log (AUDIT-05)
+ * - `comis security audit-log` -- query the durable security-decision audit log
  *
  * @param program - The root Commander program
  */
@@ -274,7 +274,7 @@ export function registerSecurityCommand(program: Command): void {
       },
     );
 
-  // security audit-log (AUDIT-05) — the durable security-decision audit query.
+  // security audit-log — the durable security-decision audit query.
   // DISTINCT from `security audit` (the local check-runner): this is a REMOTE
   // admin RPC (obs.audit.query) reading the persisted obs_audit_events. The
   // handler lives in the flat `security-audit-log.ts` (the explain.ts/fleet.ts

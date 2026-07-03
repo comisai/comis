@@ -3,13 +3,13 @@
 // WorktreeGitError (carrying a closed-union `errorKind`) so a git failure / a
 // `git`-absent host fails LOUD — a worktree op MUST never silently become a
 // non-worktree spawn or silently treat a failed status-probe as "clean" (that
-// would risk deleting agent work, T-219-09). createWorktree's throw is caught at
+// would risk deleting agent work). createWorktree's throw is caught at
 // the runner/spawn boundary; sweepOrphans CATCHES the predicate's throw and
 // PRESERVES the entry (never aborts the whole sweep) so the conservative-sweep
 // invariant holds.
 /**
  * `worktree-lifecycle` — the net-new git-worktree lifecycle for
- * `comis-agent spawn --worktree` (WT-01/WT-02).
+ * `comis-agent spawn --worktree`.
  *
  * A spawned child can run in an ISOLATED git worktree (its own working tree on a
  * fresh branch) so parallel children never clobber each other's files. A worktree
@@ -23,7 +23,7 @@
  *   3. {@link cleanIfUnchanged}          — remove ONLY a pristine worktree (else preserve+report)
  *   4. {@link sweepOrphans}              — conservative orphan-sweep + `git worktree prune`
  *
- * ## The keystone: the clean-if-unchanged predicate is EXACT (T-219-09, Pitfall 5)
+ * ## The keystone: the clean-if-unchanged predicate is EXACT
  *
  * "Unchanged" means BOTH:
  *   - `git -C <dir> status --porcelain` produces ZERO lines — no staged, no
@@ -59,7 +59,7 @@ import type { ComisLogger } from "@comis/core";
 
 /**
  * The injected git-exec seam. Mirrors the daemon's `execGit` precedent
- * (`workspace-handlers.ts`) but in the plan's `{ stdout, exitCode }` shape so the
+ * (`workspace-handlers.ts`) but in a `{ stdout, exitCode }` shape so the
  * lifecycle never imports `child_process`. The daemon composition root binds a
  * real `execFile("git", args, { cwd })` wrapper; unit tests inject a fake that
  * returns scripted replies per `args`.
@@ -160,7 +160,7 @@ function classifyGitFailure(stdout: string): "internal" | "precondition" {
 }
 
 // ---------------------------------------------------------------------------
-// createWorktree (WT-01)
+// createWorktree
 // ---------------------------------------------------------------------------
 
 /**
@@ -199,7 +199,7 @@ export async function createWorktree(
 }
 
 // ---------------------------------------------------------------------------
-// isWorktreeCleanIfUnchanged — THE PRECISE PREDICATE (T-219-09, Pitfall 5)
+// isWorktreeCleanIfUnchanged — THE PRECISE PREDICATE
 // ---------------------------------------------------------------------------
 
 /**
@@ -347,7 +347,7 @@ function logPreserve(
 }
 
 // ---------------------------------------------------------------------------
-// sweepOrphans — CONSERVATIVE orphan-sweep (WT-02, T-219-09/T-219-10)
+// sweepOrphans — CONSERVATIVE orphan-sweep
 // ---------------------------------------------------------------------------
 
 /**

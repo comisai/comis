@@ -7,20 +7,20 @@ import {
 } from "./multilingual-heuristic.js";
 
 // ---------------------------------------------------------------------------
-// EMB-01 — resolveMultilingual: the pure advisory name heuristic.
+// resolveMultilingual: the pure advisory name heuristic.
 //
 // Classifies an embedder/reranker model id as `true | false | "unknown"` for the
-// `comis fleet` model-health line. Pure (no I/O/clock/env, I9). Advisory ONLY —
-// NO search/recall behavior gates on the result (I4; the FTS trigram floor from
-// Phase 180 carries recall regardless).
+// `comis fleet` model-health line. Pure (no I/O/clock/env). Advisory ONLY —
+// NO search/recall behavior gates on the result (the FTS trigram floor
+// carries recall regardless).
 //
-// Truth-table semantics (A2 / Open Question 3):
+// Truth-table semantics:
 //   - explicit declared boolean WINS over the regex (both directions)
 //   - regex hit on the id        -> true
 //   - no declaration, no hit     -> "unknown" (honest; `false` reserved for an
 //                                    explicit `multilingual: false` declaration)
 //
-// Pitfall 2 (THE real spec bug): the design's literal embedder regex
+// The embedder-regex trap: a literal like
 // `/multilingual|bge-m3|m3e|labse|e5/i` FALSE-NEGATIVES the shipped default
 // reranker `bge-reranker-v2-m3` (it contains `bge-reranker-v2-m3`, NOT `bge-m3`).
 // RERANK_MULTILINGUAL must match that shipped default -> true.
@@ -29,8 +29,8 @@ import {
 const DEFAULT_RERANKER = "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf";
 const DEFAULT_EMBEDDER = "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf";
 
-describe("resolveMultilingual (EMB-01 name heuristic)", () => {
-  it("classifies the SHIPPED default reranker bge-reranker-v2-m3 as multilingual=true (Pitfall 2 — RED on the design's literal /bge-m3/ regex)", () => {
+describe("resolveMultilingual (multilingual name heuristic)", () => {
+  it("classifies the SHIPPED default reranker bge-reranker-v2-m3 as multilingual=true (a bare /bge-m3/ literal would miss it)", () => {
     expect(resolveMultilingual(undefined, DEFAULT_RERANKER, RERANK_MULTILINGUAL)).toBe(true);
   });
 
@@ -46,15 +46,15 @@ describe("resolveMultilingual (EMB-01 name heuristic)", () => {
     expect(resolveMultilingual(undefined, "multilingual-e5-large", EMBED_MULTILINGUAL)).toBe(true);
   });
 
-  it("classifies the English-only intfloat/e5-large-v2 as \"unknown\" — the bare-`e5` substring must NOT fire (WR-01: a false positive SUPPRESSES the embedder_not_multilingual advisory, the harmful direction)", () => {
+  it("classifies the English-only intfloat/e5-large-v2 as \"unknown\" — the bare-`e5` substring must NOT fire (a false positive SUPPRESSES the embedder_not_multilingual advisory, the harmful direction)", () => {
     expect(resolveMultilingual(undefined, "intfloat/e5-large-v2", EMBED_MULTILINGUAL)).toBe("unknown");
   });
 
-  it("classifies the multilingual-E5 family intfloat/multilingual-e5-large as multilingual=true (WR-01: the genuine multilingual family must STAY true via the `multilingual` token)", () => {
+  it("classifies the multilingual-E5 family intfloat/multilingual-e5-large as multilingual=true (the genuine multilingual family must STAY true via the `multilingual` token)", () => {
     expect(resolveMultilingual(undefined, "intfloat/multilingual-e5-large", EMBED_MULTILINGUAL)).toBe(true);
   });
 
-  it("does not let an incidental `e5` substring (type5 / base5) false-positive an English embedder (WR-01)", () => {
+  it("does not let an incidental `e5` substring (type5 / base5) false-positive an English embedder", () => {
     expect(resolveMultilingual(undefined, "some-model-type5-v2", EMBED_MULTILINGUAL)).toBe("unknown");
     expect(resolveMultilingual(undefined, "model-base5-embed", EMBED_MULTILINGUAL)).toBe("unknown");
   });
@@ -79,8 +79,8 @@ describe("resolveMultilingual (EMB-01 name heuristic)", () => {
 describe("RERANK_MULTILINGUAL / EMBED_MULTILINGUAL regexes", () => {
   it("RERANK_MULTILINGUAL matches the bge-reranker-v2-m3 slug the EMBED regex misses", () => {
     expect(RERANK_MULTILINGUAL.test(DEFAULT_RERANKER)).toBe(true);
-    // The design's literal embedder regex would FALSE-NEGATIVE this slug — the
-    // reranker-specific pattern is the Pitfall-2 fix.
+    // The embedder regex FALSE-NEGATIVES this slug — that gap is exactly why the
+    // reranker-specific pattern exists.
     expect(EMBED_MULTILINGUAL.test(DEFAULT_RERANKER)).toBe(false);
   });
 

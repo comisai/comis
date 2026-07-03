@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Context-trace asserter — typed helpers for the Phase-138 CTX test suite.
+ * Context-trace asserter — typed helpers for the CTX test suite.
  *
  * Reads cache-trace NDJSON lines to extract the `stream:context` stage shape
  * (AssembledShape) and provides structural asserters for the A1/A2/A3/O1/P1/P2

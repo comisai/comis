@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Behavioral tests for the WS7-wired memory-cron sentinel handlers, exercising
+ * Behavioral tests for the wired memory-cron sentinel handlers, exercising
  * `handleWireMemoryCronSentinel` DIRECTLY (the neighbor-test invariant — the file
  * carries its own coverage). The end-to-end delegation from `handleMemoryCronSentinel`
  * is covered in setup-channels-memory-crons.test.ts.
  *
- * Phase 226 SIMPLIFY-03: the __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__
+ * The __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__
  * branches were DELETED (dormant crons) — the handler now serves only the KEYLESS
  * __MEMORY_LIFECYCLE__ sweep + the __REFLECT__ engine. createLlmReflectionAdapter /
  * runReflection are mocked — no real LLM, no key.
@@ -18,13 +18,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], inductive: [] })));
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" })));
-// REFLECT-01: the reflection job + adapter the __REFLECT__ handler injects/calls.
+// The reflection job + adapter the __REFLECT__ handler injects/calls.
 const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, distinctTopicKeys: 1, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })));
 const mockCreateLlmReflectionAdapter = vi.hoisted(() => vi.fn(() => ({ reflect: vi.fn() })));
 
 vi.mock("@comis/agent", async (importOriginal) => ({
   // Use the REAL module as the base so PURE helpers (classifyReflectOutcome — the wire's aggregate
-  // verdict classifier, reflect-obs-20260627 OBS-4b) come from source, NOT a drift-prone re-stub
+  // verdict classifier) come from source, NOT a drift-prone re-stub
   // (the green-mock-vs-real-contract anti-pattern). Only the LLM/key-touching exports are overridden.
   ...(await importOriginal<typeof import("@comis/agent")>()),
   resolveOperationModel: mockResolveOperationModel,
@@ -32,7 +32,7 @@ vi.mock("@comis/agent", async (importOriginal) => ({
   createReasoningSeam: mockCreateReasoningSeam,
   runReflection: mockRunReflection,
   createLlmReflectionAdapter: mockCreateLlmReflectionAdapter,
-  // Phase 225 FOLD: the per-kind reflect prompts the __REFLECT__ handler injects as the
+  // The per-kind reflect prompts the __REFLECT__ handler injects as the
   // adapter `systemPrompt` (one engine, varied per-kind prompt). Distinct sentinels so a
   // test can assert which prompt fed which kind's adapter.
   REFLECT_PROMPT: "MOCK_SKILL_REFLECT_PROMPT",
@@ -41,7 +41,7 @@ vi.mock("@comis/agent", async (importOriginal) => ({
   // The other named imports the module pulls (consolidation/reasoning/userrep/tuning)
   // are not on this leaf's code path, but the wholesale mock must satisfy the import list of
   // any transitively-imported module — keep them present as no-op spies. (The social-modeling
-  // exports — runRelationshipBuild / createRelationshipSeam — were DELETED in Phase 226-04.)
+  // exports — runRelationshipBuild / createRelationshipSeam — were DELETED.)
   runMemoryConsolidation: vi.fn(),
   runMemoryReasoning: vi.fn(),
   runUserRepresentationBuild: vi.fn(),
@@ -85,7 +85,7 @@ beforeEach(() => {
 });
 
 /** A reflection cron bundle for the enabled-path tests (the daemon assembles this in credentials.ts).
- *  Phase 225 FOLD: the store Pick carries `supersede` (a profile/topic correction routes through it);
+ *  The store Pick carries `supersede` (a profile/topic correction routes through it);
  *  `buildSourceTrajectories` takes a leading `kind` arg + each source carries BOTH anti-poison axes. */
 function makeReflectionBundle(over: Partial<MemoryCronContext["reflection"]> = {}): NonNullable<MemoryCronContext["reflection"]> {
   return {
@@ -108,12 +108,12 @@ describe("handleWireMemoryCronSentinel", () => {
     expect(handled).toBe(false);
   });
 
-  // ----- DELETE (Phase 226 SIMPLIFY-03): the two DORMANT crons are GONE -----
+  // ----- The two DORMANT crons are GONE (deleted) -----
   // The __USEFULNESS_JUDGE__ (a recordUsage-feeding seam) and __MEMORY_TRIPLE_EXTRACTION__
   // (a no-op scaffold whose `extract` returned []) dispatch branches are DELETED. The handler
   // no longer recognizes either sentinel → it returns false (the caller falls through to the
-  // normal delivery path, the T-226-08 benign no-op for any persisted stale job row). The
-  // FORGET-02 recordUsage reward write lives in setup-learning.ts (a separate seam) and is
+  // normal delivery path, the benign no-op for any persisted stale job row). The
+  // recordUsage reward write lives in setup-learning.ts (a separate seam) and is
   // UNAFFECTED; the TripleStorePort graphSpread recall lane survives (the JOB went, not the port).
   it("__USEFULNESS_JUDGE__ is deleted → returns false (falls through; no judge seam, no write)", async () => {
     const ctx = makeCtx({ agents: { "agent-1": { provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } }, apiKey: "k" });
@@ -130,13 +130,12 @@ describe("handleWireMemoryCronSentinel", () => {
   });
 
   // -------------------------------------------------------------------------
-  // REFLECT-01/02 (v2.31 Reflection, Phase 223 Plan 05): the __REFLECT__ sentinel —
+  // The __REFLECT__ sentinel —
   // the reflect-engine replacement for the dead procedural-synthesis handler. DEFAULT
   // OFF — with learningSkills.enabled:false the handler is a clean ok no-op (NO reflect,
   // NO admit, ZERO behavior change). When enabled it injects the @comis/memory mental-
   // model store + the trusted-origin LCD source + the per-run reflect adapter and runs
-  // runReflection, then RE-EMITS the learning:skill_* counts DAEMON-SIDE (the NAMES are
-  // kept — the reflect:* rename is Phase 226).
+  // runReflection, then RE-EMITS the reflect:* counts DAEMON-SIDE.
   // -------------------------------------------------------------------------
   it("__REFLECT__ disabled-default → clean ok no-op (NO reflect, NO admit, ZERO behavior change)", async () => {
     const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } }, reflection: makeReflectionBundle() });
@@ -151,7 +150,7 @@ describe("handleWireMemoryCronSentinel", () => {
   it("__REFLECT__ enabled → reflects ALL 3 kinds (one engine, looped) injecting the per-kind prompt/source, re-emits the SUMMED learning:skill_* counts", async () => {
     const bundle = makeReflectionBundle();
     const ctx = makeCtx({
-      // Phase 226: the collapsed learning block — reflect.minConfidence (0.6) + reflect.maxDocsPerRun (25).
+      // The collapsed learning block — reflect.minConfidence (0.6) + reflect.maxDocsPerRun (25).
       agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6, maxDocsPerRun: 25 } } } },
       apiKey: "test-key",
       reflection: bundle,
@@ -188,8 +187,8 @@ describe("handleWireMemoryCronSentinel", () => {
     // No validation adapter / approval gate on the reflect path (the synthesis-only belt is gone).
     expect(skillArg.validationAdapter).toBeUndefined();
     expect(skillArg.approvalGate).toBeUndefined();
-    // The config the daemon passed: Phase 226 wires the per-run DoS ceiling + the floor from
-    // the collapsed learning.reflect block (maxDocsPerRun was a hardcoded 10, now config-driven 25).
+    // The config the daemon passed: the per-run DoS ceiling + the floor come from
+    // the collapsed learning.reflect block (maxDocsPerRun is config-driven, 25 here).
     expect((skillArg.config as { maxDocsPerRun: number }).maxDocsPerRun).toBe(25);
     expect((skillArg.config as { minConfidence: number }).minConfidence).toBe(0.6);
     // The PER-KIND source build (skill outcomes / profile+topic memories) — called once per kind.
@@ -197,8 +196,8 @@ describe("handleWireMemoryCronSentinel", () => {
     const builtKinds = (bundle!.buildSourceTrajectories as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort();
     expect(builtKinds).toEqual(["profile", "skill", "topic"]);
     expect(Array.isArray(skillArg.sourceTrajectories)).toBe(true);
-    // The daemon RE-EMITS the SUMMED counts DAEMON-SIDE after the loop (reflect:* names,
-    // renamed Phase 226). With the default all-admit mock returning {selected:2, admitted:1}
+    // The daemon RE-EMITS the SUMMED counts DAEMON-SIDE after the loop (reflect:* names).
+    // With the default all-admit mock returning {selected:2, admitted:1}
     // per kind → sum admitted = 3.
     const emitCalls = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
     const emitted = emitCalls.map((c) => c[0]);
@@ -209,7 +208,7 @@ describe("handleWireMemoryCronSentinel", () => {
     const synthEmit = emitCalls.find((c) => c[0] === "reflect:admitted");
     expect((synthEmit?.[1] as { count: number }).count).toBe(3);
     // The funnel carries the SUMMED reflect mapping: synthesized = sum selected (6 = 3×2),
-    // admitted = 3, maxClusterCardinality = max across kinds (2), the D5 admissionOutcome verdict.
+    // admitted = 3, maxClusterCardinality = max across kinds (2), the admissionOutcome verdict.
     const funnelEmit = emitCalls.find((c) => c[0] === "reflect:funnel");
     const funnel = funnelEmit?.[1] as { maxClusterCardinality: number; admitted: number; admissionOutcome: string; synthesized: number };
     expect(funnel.maxClusterCardinality).toBe(2);
@@ -242,7 +241,7 @@ describe("handleWireMemoryCronSentinel", () => {
   });
 
   it("__REFLECT__ aggregate verdict is the MEANINGFUL per-kind reason, not the LAST kind's no_successes (mixed kinds)", async () => {
-    // Live reflect-obs-20260627: the SKILL kind selected 2 successes but they under-merged on the
+    // The SKILL kind selected 2 successes but they under-merged on the
     // deterministic topicKey (maxCardinality 1 → uncorroborated); the PROFILE + TOPIC kinds had no
     // successes. The old last-non-admitted-kind-wins fold made the SUMMED verdict `no_successes` —
     // self-contradictory next to `selected:2`, and it misdirects the operator to "nothing to learn
@@ -262,7 +261,7 @@ describe("handleWireMemoryCronSentinel", () => {
     const funnel = emitCalls.find((c) => c[0] === "reflect:funnel")?.[1] as { admissionOutcome: string; synthesized: number; admitted: number; distinctTopicKeys: number };
     expect(funnel.synthesized).toBe(2); // sum selected — there WAS trusted-origin signal this run
     expect(funnel.admitted).toBe(0);
-    // OBS-7: the under-merge discriminator summed across kinds (skill 2 + no_successes 0 + no_successes 0).
+    // The under-merge discriminator summed across kinds (skill 2 + no_successes 0 + no_successes 0).
     // synthesized:2 + distinctTopicKeys:2 + maxCard:1 = 2 successes that landed on 2 separate topics.
     expect(funnel.distinctTopicKeys).toBe(2);
     // The aggregate verdict matches its own counts (selected:2, card:1) — NOT the last kind's no_successes.

@@ -35,7 +35,7 @@ export {
   themeForName,
 } from "../activity/index.js";
 
-// ChatType narrowing (§4.6). Surfaced here so the
+// ChatType narrowing. Surfaced here so the
 // orchestrator composition can build `TurnActivityContext.chatType`
 // from a `NormalizedMessage.chatType` via the canonical `narrowChatType` instead
 // of re-hand-rolling the 5→3 fold. Only the `narrowChatType` value is re-exported:

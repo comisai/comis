@@ -7,14 +7,15 @@
  * CSRF `state`, the PKCE `code_verifier`, the resolve/reject, the timeout
  * timer — in function-local / closure scope. ZERO module-scope `let`/`var`.
  *
- * Why this is a dedicated gate: Hermes's Python OAuth manager kept the callback
- * port in a MODULE-GLOBAL (`_oauth_port`). Two concurrent `oauth_login` flows
- * then shared that one variable — the second flow's `listen()` overwrote the
- * port before the first flow read it back, a time-of-check/time-of-use bug that
- * mis-routed (or hijacked) the first flow's authorization code. Mutable module
- * scope is the root cause; this gate forbids it AST-structurally on exactly the
- * one file where the loopback server lives, so a future refactor that "hoists"
- * a port/state var to module scope fails the build with a line number.
+ * Why this is a dedicated gate: keeping the callback port in a MODULE-GLOBAL
+ * (e.g. a shared `_oauth_port`) is a known OAuth-manager footgun. Two concurrent
+ * `oauth_login` flows then share that one variable — the second flow's
+ * `listen()` overwrites the port before the first flow reads it back, a
+ * time-of-check/time-of-use bug that mis-routes (or hijacks) the first flow's
+ * authorization code. Mutable module scope is the root cause; this gate forbids
+ * it AST-structurally on exactly the one file where the loopback server lives,
+ * so a future refactor that "hoists" a port/state var to module scope fails the
+ * build with a line number.
  *
  * Mechanics mirror the `contract-handler-parity.test.ts` and the project-wide
  * `globals.test.ts` AST gates: the TypeScript compiler API

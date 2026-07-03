@@ -52,7 +52,7 @@ export interface ComisSessionManagerDeps {
   /**
    * Optional logger. When provided, structured-cause logging fires before
    * withSessionLock collapses the FileLockPort's discriminated error union
-   * to the legacy 'locked' | 'error' string. Without it, operator triage
+   * to the coarse 'locked' | 'error' string. Without it, operator triage
    * cannot distinguish 'ELOCKED after N retries' from 'EACCES on the lock
    * directory'. The public Result API is unchanged either way.
    */
@@ -61,7 +61,7 @@ export interface ComisSessionManagerDeps {
    * Optional TypedEventBus. When provided, `destroySession` emits a
    * `session:ended` event with `exitReason: "destroyed"` BEFORE unlinking
    * the JSONL transcript (`session.ended`
-   * fires on session-destroy, NOT per-turn). When omitted (legacy / test
+   * fires on session-destroy, NOT per-turn). When omitted (test
    * harnesses, ephemeral sub-agent path), the emit step is a silent no-op
    * and `destroySession` still unlinks the file as before.
    *
@@ -94,7 +94,7 @@ export interface ComisSessionManagerDeps {
    * `<dataDir>/logs/session-index.YYYY-MM-DD.jsonl`.
    *
    * When omitted, defaults to `~/.comis` via `os.homedir()` so existing
-   * callers (tests, legacy harnesses) work without changes.
+   * callers (tests, standalone harnesses) work without changes.
    */
   dataDir?: string;
 }
@@ -124,7 +124,7 @@ export interface SessionMetadata {
   /** Executor-scope run ID; keys cost-tracker / token_usage rows. */
   runId?: string;
   /**
-   * T1.4 (F5): the formatted session key (the SAME value `comis explain` prints as
+   * The formatted session key (the SAME value `comis explain` prints as
    * `Session:`), stored so the metadata file is self-describing — an operator can drive
    * `comis explain '<sessionKey>'` straight from it instead of falling back to the traceId.
    */
@@ -136,7 +136,7 @@ export interface SessionMetadata {
     endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors" | "context_exhausted" | "output_starved" | "narration_stall" | "spend_exceeded";
     durationMs: number;
     totalTokens: number;
-    /** Per-session health rollup (D5/F1) — additive optional on schemaVersion:1. */
+    /** Per-session health rollup — additive optional on schemaVersion:1. */
     degraded?: boolean;
     costUsd?: number;
     toolStats?: Record<string, { ok: number; failed: number }>;
@@ -170,8 +170,8 @@ export interface ComisSessionManager {
    * the same sessionKey are serialized. Different sessions do not block each other.
    *
    * SDK SessionManager.open() reads pre-existing JSONL session files at the
-   * mapped path, ensuring backward compatibility with sessions created by
-   * previous session files.
+   * mapped path, so conversations persisted by earlier daemon runs resume
+   * instead of being recreated.
    *
    * @param sessionKey - Comis session key identifying the conversation
    * @param fn - Callback that receives the SDK SessionManager and returns a result
@@ -347,7 +347,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           exitReason: "destroyed",
           turnCount: 0,
           totalTokens: 0,
-          source: "runtime" as const, // D9 provenance stamp (production rows)
+          source: "runtime" as const, // provenance stamp (production rows)
         },
       );
       if (deps.trajectoryRegistry !== undefined) {

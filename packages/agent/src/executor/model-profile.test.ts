@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * K2 boundary invariant tests for resolveModelProfile().
- *
- * RED state: model-profile.ts does not exist yet — all tests will fail with
- * "Cannot find module './model-profile.js'" until Plan 02 creates the
- * implementation. This failing state is committed intentionally per
- * CLAUDE.md Tests-First.
+ * Boundary invariant tests for resolveModelProfile().
  *
  * Invariants tested:
  *  - Fail-closed: unknown/undefined model → most-locked profile (capabilityClass="nano",
- *    scaffoldLevel="max", securityLevel="locked") [T-151-failclosed]
- *  - capabilityClass ⊥ contextWindow (K2): a 256K window must NOT force
+ *    scaffoldLevel="max", securityLevel="locked")
+ *  - capabilityClass ⊥ contextWindow: a 256K window must NOT force
  *    frontier/mid class; qwen3.6:27b (ollama) → "small" or "nano"
  *  - securityLevel tightens inversely as capabilityClass drops
  *  - capabilityClassOverride in config wins over heuristic
@@ -29,10 +24,10 @@ import {
 import type { ModelProfile, CapabilityClass } from "./model-profile.js";
 
 // ---------------------------------------------------------------------------
-// T-151-failclosed: unknown / undefined model → most-locked profile
+// Fail-closed: unknown / undefined model → most-locked profile
 // ---------------------------------------------------------------------------
-describe("resolveModelProfile — K2 boundary invariants", () => {
-  describe("T-151-failclosed: fail-closed for undefined model", () => {
+describe("resolveModelProfile — capability/capacity boundary invariants", () => {
+  describe("fail-closed profile for an undefined model", () => {
     it("resolveModelProfile(undefined) returns capabilityClass='nano'", () => {
       const profile: ModelProfile = resolveModelProfile(undefined);
       expect(profile.capabilityClass).toBe("nano");
@@ -60,10 +55,10 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // K2 invariant: contextWindow is DECOUPLED from capabilityClass
-  // A 256K window must NOT force frontier or mid class
+  // contextWindow is DECOUPLED from capabilityClass:
+  // a 256K window must NOT force frontier or mid class
   // ---------------------------------------------------------------------------
-  describe("supportsPromptCache — cache_control is Anthropic-only (codex turn-abort regression 2026-06-14)", () => {
+  describe("supportsPromptCache — cache_control is Anthropic-only (codex turn-abort regression)", () => {
     // The catalog `cost.cacheRead > 0` signal must NOT imply Anthropic-style
     // cache_control breakpoints for OpenAI/Google providers — they cache
     // automatically (prompt_cache_key / cachedContent), NOT via cache_control.
@@ -109,7 +104,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
     });
   });
 
-  describe("K2 invariant: capabilityClass is independent of contextWindow", () => {
+  describe("capabilityClass is independent of contextWindow", () => {
     it("qwen3.6:27b (ollama, 256K) resolves capabilityClass to small or nano — NOT frontier or mid", () => {
       const profile = resolveModelProfile({
         id: "qwen3.6:27b",
@@ -354,12 +349,12 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // CR-01: provider alias classification — bedrock/vertex/azure must NOT fall
+  // Provider alias classification — bedrock/vertex/azure must NOT fall
   // through to capabilityClass="small". Tests cover the security-load-bearing
   // path: amazon-bedrock (Anthropic Claude via AWS) and google-vertex
   // (Gemini via GCP Vertex) must resolve to their true capability class.
   // ---------------------------------------------------------------------------
-  describe("CR-01: provider alias classification — bedrock/vertex/azure map to correct family", () => {
+  describe("provider alias classification — bedrock/vertex/azure map to correct family", () => {
     it("amazon-bedrock resolves capabilityClass='frontier' (NOT small)", () => {
       const profile = resolveModelProfile({
         id: "anthropic.claude-sonnet-4-5",
@@ -445,14 +440,14 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SA7: supportsPromptCache enriched with SDK Model.compat.cacheControlFormat
+  // supportsPromptCache enriched with SDK Model.compat.cacheControlFormat
   // and Model.cost.cacheRead. Covers openai-compat providers like
   // Fireworks/OpenRouter that support Anthropic-style caching.
   // Frontier byte-identical: Anthropic/Bedrock MUST still resolve true.
   // Fail-safe direction: prefer false-negative over false-positive.
   // ---------------------------------------------------------------------------
-  describe("SA7 supportsPromptCache SDK enrichment", () => {
-    it("SA7 supportsPromptCache=true for anthropic (frontier byte-identical)", () => {
+  describe("supportsPromptCache SDK enrichment", () => {
+    it("supportsPromptCache=true for anthropic (frontier byte-identical)", () => {
       const profile = resolveModelProfile({
         id: "claude-sonnet-4-5",
         provider: "anthropic",
@@ -464,7 +459,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.supportsPromptCache).toBe(true);
     });
 
-    it("SA7 supportsPromptCache=true for amazon-bedrock (frontier byte-identical)", () => {
+    it("supportsPromptCache=true for amazon-bedrock (frontier byte-identical)", () => {
       const profile = resolveModelProfile({
         id: "anthropic.claude-sonnet-4-5-20250929",
         provider: "amazon-bedrock",
@@ -476,7 +471,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.supportsPromptCache).toBe(true);
     });
 
-    it("SA7 supportsPromptCache=true when Model has compat.cacheControlFormat='anthropic' (openai-compat provider)", () => {
+    it("supportsPromptCache=true when Model has compat.cacheControlFormat='anthropic' (openai-compat provider)", () => {
       const profile = resolveModelProfile({
         id: "accounts/fireworks/models/llama-v3p1-70b-instruct",
         provider: "fireworks",
@@ -489,7 +484,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.supportsPromptCache).toBe(true);
     });
 
-    it("SA7 supportsPromptCache=true when Model has cost.cacheRead>0 (native caching signal)", () => {
+    it("supportsPromptCache=true when Model has cost.cacheRead>0 (native caching signal)", () => {
       const profile = resolveModelProfile({
         id: "accounts/fireworks/models/llama-v3p1-70b-instruct",
         provider: "fireworks",
@@ -502,7 +497,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.supportsPromptCache).toBe(true);
     });
 
-    it("SA7 supportsPromptCache=false for plain non-caching provider (no compat.cacheControlFormat, cost.cacheRead=0)", () => {
+    it("supportsPromptCache=false for plain non-caching provider (no compat.cacheControlFormat, cost.cacheRead=0)", () => {
       const profile = resolveModelProfile({
         id: "gpt-4o",
         provider: "openai",
@@ -517,7 +512,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // CR-02: supportsPromptCache must reflect the REAL provider-family capability.
+  // supportsPromptCache must reflect the REAL provider-family capability.
   // The factory/cache-detection swap reads
   //   `config.modelProfile?.supportsPromptCache ?? isAnthropicFamily(provider)`,
   // whose `??` only falls through on `undefined`. A hardcoded `false` therefore
@@ -525,7 +520,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   // `true` for the anthropic family (anthropic, amazon-bedrock, aliases) and
   // `false` for everything else.
   // ---------------------------------------------------------------------------
-  describe("CR-02: supportsPromptCache reflects provider-family caching capability", () => {
+  describe("supportsPromptCache reflects provider-family caching capability", () => {
     it("anthropic model resolves supportsPromptCache=true", () => {
       const profile = resolveModelProfile({
         id: "claude-sonnet-4-5",
@@ -598,8 +593,8 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
     });
   });
 
-  // TELEM-01 fix (2026-06-19): the standalone provider→capabilityClass heuristic that the
-  // daemon-side resolvers (pipeline:authored tier, AUTHOR-01 repair) fall back to when no
+  // The standalone provider→capabilityClass heuristic that the daemon-side resolvers
+  // (pipeline:authored telemetry tier, authored-model repair) fall back to when no
   // operator override is pinned. Live bug: pipeline:authored emitted capabilityClass:"unknown"
   // for an anthropic agent because the override-only resolver returned undefined.
   describe("capabilityClassFromProvider (provider-family heuristic)", () => {

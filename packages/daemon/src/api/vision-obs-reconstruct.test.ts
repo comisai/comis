@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * VIS-04 offline reconstruction test (Phase 187, the VIS-04 binding bar).
+ * Offline reconstruction test for the vision observability path.
  *
  * Drives the FROZEN `assembleIncidentReportFromSources` pipeline (the same
  * function `comis explain` runs) against an in-memory fixture trajectory
  * containing the `media.vision.*` records the daemon vision handler direct-emits
  * — proving a VISION turn is reconstructable from observability WITHOUT a live
- * daemon (CLAUDE.md: live `comis explain` = operator-UAT). Mirrors
- * `image-obs-reconstruct.test.ts` (186-03) exactly.
+ * daemon. Mirrors `image-obs-reconstruct.test.ts` exactly.
  *
  * The binding assertion is "comis explain shows the vision turn": the assembled
  * report surfaces the turn's provider / mainProvider / model / path / costUsd /
  * outcome reconstructed from the `media.vision.completed` trajectory record
- * (VIS-04 Route a — the cost rides the trajectory, NOT the executor `sessionEnd`
- * cost.costUsd, Pitfall 2). An additive `IncidentReport.vision` block (mirroring
- * `IncidentReport.image`).
+ * (the cost rides the trajectory, NOT the executor `sessionEnd` cost.costUsd —
+ * a vision turn carries no executor rollup). An additive `IncidentReport.vision`
+ * block (mirroring `IncidentReport.image`).
  *
  * @module
  */
@@ -52,7 +51,7 @@ function trajectoryRecord(
 
 /** A reader whose readSessionRecords returns the supplied trajectory records.
  *  The other three sources are empty — a vision turn carries no executor
- *  `sessionEnd` rollup (Pitfall 2). */
+ *  `sessionEnd` rollup. */
 function makeVisionFixtureReader(records: Array<Record<string, unknown>>): IncidentSourceReader {
   return {
     readSessionRecords: async () => records,
@@ -69,7 +68,7 @@ async function assemble(records: Array<Record<string, unknown>>): Promise<Incide
   })) as IncidentReport;
 }
 
-describe("VIS-04 offline reconstruction — comis explain surfaces a vision turn", () => {
+describe("offline reconstruction — comis explain surfaces a vision turn", () => {
   it("reconstructs provider/mainProvider/model/path/costUsd/outcome from media.vision.completed (main-vision)", async () => {
     const report = await assemble([
       trajectoryRecord("media.vision.requested", { provider: "anthropic", mainProvider: "anthropic" }, 1),
@@ -80,9 +79,9 @@ describe("VIS-04 offline reconstruction — comis explain surfaces a vision turn
       ),
     ]);
 
-    // The VIS-04 binding bar: the vision turn is reconstructable from the
-    // trajectory (Route a) via a dedicated additive `vision` block (mirrors the
-    // image block — NOT cost.costUsd, Pitfall 2).
+    // The binding bar: the vision turn is reconstructable from the trajectory
+    // via a dedicated additive `vision` block (mirrors the image block — the
+    // cost is read from the trajectory record, NOT cost.costUsd).
     expect(report.vision).toBeDefined();
     expect(report.vision?.provider).toBe("anthropic");
     expect(report.vision?.mainProvider).toBe("anthropic");
@@ -117,12 +116,12 @@ describe("VIS-04 offline reconstruction — comis explain surfaces a vision turn
     expect(report.vision).toBeDefined();
     expect(report.vision?.outcome).toBe("ok");
     expect(report.vision?.path).toBe("registry");
-    // No costUsd on the registry tier (Pitfall 4) — absent, not 0 / not a crash.
+    // No costUsd on the registry tier — absent, not 0 / not a crash.
     expect(report.vision?.costUsd).toBeUndefined();
   });
 
   it("seq-aware: a stale lower-seq failed does NOT flip a higher-seq completed", async () => {
-    // The fold must be seq-aware (mirror accumulateImageRecord IN-04): a
+    // The fold must be seq-aware (mirror accumulateImageRecord): a
     // media.vision.failed appearing AFTER (in array order) a higher-seq
     // media.vision.completed must NOT overwrite the ok outcome.
     const report = await assemble([

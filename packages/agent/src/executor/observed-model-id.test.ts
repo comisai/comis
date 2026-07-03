@@ -4,7 +4,7 @@
  * observability must reflect the model ACTUALLY in use, never pi-coding-agent's
  * silent default-model fallback when the configured model is unregistered.
  *
- * Live incident (v2.28, 260621): a local daemon with `provider: ollama` +
+ * Live incident: a local daemon with `provider: ollama` +
  * `model: qwen3.6:35b` (a custom model not in pi's `ModelRegistry`) recorded
  * EVERY `comis_tokens_total` / `comis_cost_usd_total` row as
  * `model="gemini-3.1-pro-preview"` — pi's default fallback object — instead of

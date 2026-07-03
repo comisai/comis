@@ -73,7 +73,7 @@ export function sanitizeTelegramHtml(text: string): string {
  * Retry a send operation without `message_thread_id` if the target forum
  * topic has been deleted or closed. Non-thread errors re-throw.
  *
- * Design Section 5.4.8: The `sendFn` receives thread params as an argument
+ * The `sendFn` receives thread params as an argument
  * so the wrapper can retry with `undefined` to strip them on fallback.
  */
 export async function sendWithThreadFallback<T>(

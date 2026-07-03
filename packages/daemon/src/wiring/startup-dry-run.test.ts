@@ -40,9 +40,9 @@ describe("logOperationModelDryRun", () => {
 
     const opNames = ops.map((o) => o.op).sort();
     expect(opNames).toEqual(
-      // Phase 154 (R4/R5) added "verification" + "planning"; Phase 198 Plan 01 (OUTCOME-04)
-      // added "outcomeJudge" (the optional cost-gated outcome judge, fast tier); Phase 201 Plan 01
-      // (SKILL-09) added "skillSynthesis" (the procedural-synthesis op, mid tier).
+      // The full operation-model set the dry-run reports. "outcomeJudge" is the
+      // optional cost-gated outcome judge (fast tier) and "skillSynthesis" is the
+      // procedural-synthesis op (mid tier); the rest are the core pipeline stages.
       ["compaction", "condensation", "cron", "heartbeat", "interactive", "outcomeJudge", "planning", "skillSynthesis", "subagent", "taskExtraction", "verification"].sort(),
     );
   });

@@ -5,11 +5,11 @@
  * POSTs to http://127.0.0.1:<port>/api/chat with bearer auth, parses the
  * `{response: string}` field of the gateway's chat response, and returns a
  * typed `Result<{response}, AgentCallError>`. No SDK deps — `node:http`
- * only ("no axios, no node-fetch" per SPEC §Constraints).
+ * only (no axios, no node-fetch).
  *
  * Failure modes (`AgentCallErrorKind`):
  * - `network`     — ECONNREFUSED / ENOTFOUND / EHOSTUNREACH; emits the
- *                   literal SPEC string "Cannot reach Comis daemon —
+ *                   exact operator-facing string "Cannot reach Comis daemon —
  *                   gateway unreachable. Start the daemon and retry."
  * - `auth`        — HTTP 401; "Unauthorized — check COMIS_GATEWAY_TOKEN".
  * - `timeout`     — request exceeded `timeoutMs` (default 30s).
@@ -56,7 +56,7 @@ export interface AgentCallArgs {
   readonly agentId?: string;
   /** Default 30_000 (30s). */
   readonly timeoutMs?: number;
-  /** Default "127.0.0.1". The gateway is localhost-only by SPEC §Constraints. */
+  /** Default "127.0.0.1". The gateway is localhost-only by design. */
   readonly host?: string;
 }
 
@@ -66,7 +66,7 @@ export interface AgentCallResponse {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-/** Literal SPEC string. Anti-regression grep counts this exact string. */
+/** Exact operator-facing message — tests assert this literal string. */
 const GATEWAY_UNREACHABLE_MSG =
   "Cannot reach Comis daemon — gateway unreachable. Start the daemon and retry.";
 
@@ -217,5 +217,5 @@ export async function callAgent(
   // carries it, and that is constructed inline above.
 }
 
-// Internal export for testability of the literal SPEC string.
+// Internal export so tests can assert the exact gateway-unreachable message.
 export const __TOOLFILL_GATEWAY_UNREACHABLE_MSG = GATEWAY_UNREACHABLE_MSG;

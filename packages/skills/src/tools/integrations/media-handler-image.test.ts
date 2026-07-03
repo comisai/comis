@@ -77,7 +77,7 @@ describe("processImageAttachment", () => {
       expect(result.analysis).toBeUndefined();
     });
 
-    it("MEDIA-TYPE: sniffs the bytes — passes the VERIFIED image/png to sanitize for PNG bytes declared image/jpeg (30uc UC-05)", async () => {
+    it("MEDIA-TYPE: sniffs the bytes — passes the VERIFIED image/png to sanitize for PNG bytes declared image/jpeg", async () => {
       // Telegram's `.jpg` file_path mislabels PNG bytes as image/jpeg; the model vision API 400s on a
       // declared type that mismatches the bytes. The handler must sniff the buffer and use image/png.
       const pngBytes = Buffer.from(

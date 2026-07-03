@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * First-run cost-disclosure notice (v1 opt-out posture — increment 1).
+ * First-run cost-disclosure notice (opt-out posture).
  *
- * On daemon startup, when the master kill switch `memory.enabled` (renamed from
- * `memory.costFeatures.enabled` in Phase 226) is ON (the default) AND at least
+ * On daemon startup, when the master kill switch `memory.enabled`
+ * is ON (the default) AND at least
  * one LLM cost-bearing memory feature is actually active for some agent, the
  * daemon emits ONE prominent WARN that:
  *   - names the active cost features,
@@ -63,8 +63,7 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
     const warn = warns[0]!;
     // Names the active feature.
     expect(JSON.stringify(warn.payload)).toContain("memoryReview");
-    // Gives the exact one-line disable config — the LIVE key (renamed from
-    // memory.costFeatures.enabled in Phase 226; z.strictObject rejects the old one).
+    // Gives the exact one-line disable config — the LIVE key (z.strictObject rejects unknown keys).
     expect(JSON.stringify({ p: warn.payload, m: warn.msg })).toContain(
       "memory.enabled: false",
     );
@@ -90,8 +89,7 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
   });
 
   it("aggregates every active cost feature across agents into the single notice", () => {
-    // The deleted memoryConsolidation/memoryReasoning/memoryUserRepresentation crons (Phase 225-05)
-    // are no longer cost features; the surviving disclosed crons are memoryReview + memoryUsefulnessJudge
+    // The disclosed cost-bearing crons are memoryReview + memoryUsefulnessJudge
     // (+ the query-time dialectic tool).
     const logger = makeMockLogger();
     emitMemoryCostFeatureNotice({
@@ -111,8 +109,6 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
   });
 
   it("does NOT treat the keyless lifecycle sweep as a cost feature", () => {
-    // (The privacy-gated social cron — which this also covered — was DELETED in
-    //  Phase 226-04 with the rest of that subsystem.)
     const logger = makeMockLogger();
     emitMemoryCostFeatureNotice({
       agents: {

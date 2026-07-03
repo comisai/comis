@@ -1,21 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for createSqliteOutwardSendLedger — the Phase-216 three-state
- * exactly-once outward-send ledger (ONCE-01..ONCE-04).
+ * Tests for createSqliteOutwardSendLedger — the three-state exactly-once
+ * outward-send ledger.
  *
- * RED-first: this suite imports `createSqliteOutwardSendLedger` from a module
- * that does not exist until the GREEN patch, so it fails pre-patch. It pins the
- * load-bearing invariants:
+ * Pins the load-bearing invariants:
  *   - the ordered three-state machine (send_attempt_started → unknown_after_send
- *     → committed) (ONCE-01),
+ *     → committed),
  *   - the UNIQUE (rootRunId, stepIndex) collision that makes a duplicate begin an
- *     err the wrap site treats as "already in flight" (ONCE-02, T-216-10),
+ *     err the wrap site treats as "already in flight",
  *   - the no-op replay (a committed row is re-readable so the wrap site
- *     short-circuits) (ONCE-02),
- *   - the per-row recovery scan listUnreconciled (NO blind bulk reset) (ONCE-03,
- *     T-216-09),
- *   - content-free (the row carries content_digest, never a body) (T-216-11),
- *   - corrupt-row-degrades-to-err (createRowMapper, T-216-12).
+ *     short-circuits),
+ *   - the per-row recovery scan listUnreconciled (NO blind bulk reset),
+ *   - content-free (the row carries content_digest, never a body),
+ *   - corrupt-row-degrades-to-err (createRowMapper).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -54,7 +51,7 @@ afterEach(() => {
   db.close();
 });
 
-describe("createSqliteOutwardSendLedger — begin + lookup (ONCE-01)", () => {
+describe("createSqliteOutwardSendLedger — begin + lookup", () => {
   it("begin writes a send_attempt_started row that lookup returns", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
@@ -84,7 +81,7 @@ describe("createSqliteOutwardSendLedger — begin + lookup (ONCE-01)", () => {
   });
 });
 
-describe("createSqliteOutwardSendLedger — ordered three-state machine (ONCE-01)", () => {
+describe("createSqliteOutwardSendLedger — ordered three-state machine", () => {
   it("begin → markUnknown → commit transitions state in order and sets platformMessageId", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
@@ -108,14 +105,14 @@ describe("createSqliteOutwardSendLedger — ordered three-state machine (ONCE-01
   });
 });
 
-describe("createSqliteOutwardSendLedger — UNIQUE (rootRunId, stepIndex) dedup (ONCE-02, T-216-10)", () => {
+describe("createSqliteOutwardSendLedger — UNIQUE (rootRunId, stepIndex) dedup", () => {
   it("a second begin on the SAME (rootRunId, stepIndex) returns err (UNIQUE collision)", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
     const first = await ledger.begin(makeBegin({ contentDigest: "sha256:first" }));
     expect(first.ok).toBe(true);
 
-    // The wrap site (Plan 05) treats this err as "already in flight — do NOT
+    // The wrap site treats this err as "already in flight — do NOT
     // double-send". A different contentDigest must NOT bypass the dedup.
     const second = await ledger.begin(makeBegin({ contentDigest: "sha256:second" }));
     expect(second.ok).toBe(false);
@@ -142,7 +139,7 @@ describe("createSqliteOutwardSendLedger — UNIQUE (rootRunId, stepIndex) dedup 
     await ledger.markUnknown("run-A", 0);
     await ledger.commit("run-A", 0, "tg-msg-777");
 
-    // The wrap site (Plan 05) reads this committed row and short-circuits a
+    // The wrap site reads this committed row and short-circuits a
     // replay to a no-op — it never issues a second platform call.
     const replay = await ledger.lookup("run-A", 0);
     expect(replay.ok).toBe(true);
@@ -152,8 +149,8 @@ describe("createSqliteOutwardSendLedger — UNIQUE (rootRunId, stepIndex) dedup 
   });
 });
 
-describe("createSqliteOutwardSendLedger — failure + reconcile (ONCE-03/ONCE-04)", () => {
-  it("markFailed sets state='failed' and records the errorKind (ONCE-04)", async () => {
+describe("createSqliteOutwardSendLedger — failure + reconcile", () => {
+  it("markFailed sets state='failed' and records the errorKind", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
     const failed = await ledger.markFailed("run-A", 0, "rate_limited");
@@ -166,7 +163,7 @@ describe("createSqliteOutwardSendLedger — failure + reconcile (ONCE-03/ONCE-04
     expect(found.value?.lastError).toBe("rate_limited");
   });
 
-  it("commits the ledger row when reconcile resolves to sent (ONCE-03)", async () => {
+  it("commits the ledger row when reconcile resolves to sent", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
     await ledger.markUnknown("run-A", 0);
@@ -180,7 +177,7 @@ describe("createSqliteOutwardSendLedger — failure + reconcile (ONCE-03/ONCE-04
     expect(found.value?.state).toBe("committed");
   });
 
-  it("resolveReconcile 'not_sent' records the verdict but KEEPS the prior state for replay (Pitfall 2)", async () => {
+  it("resolveReconcile 'not_sent' records the verdict but KEEPS the prior state for replay", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
     await ledger.markUnknown("run-A", 0);
@@ -210,7 +207,7 @@ describe("createSqliteOutwardSendLedger — failure + reconcile (ONCE-03/ONCE-04
   });
 });
 
-describe("createSqliteOutwardSendLedger — listUnreconciled per-row recovery scan (ONCE-03, T-216-09)", () => {
+describe("createSqliteOutwardSendLedger — listUnreconciled per-row recovery scan", () => {
   it("returns ONLY the unknown_after_send + send_attempt_started rows", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
@@ -254,7 +251,7 @@ describe("createSqliteOutwardSendLedger — listUnreconciled per-row recovery sc
   });
 });
 
-describe("createSqliteOutwardSendLedger — content-free + corrupt-row resilience (T-216-11/T-216-12)", () => {
+describe("createSqliteOutwardSendLedger — content-free + corrupt-row resilience", () => {
   it("a corrupt row (bad state outside the union) degrades lookup to err, not a throw", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
@@ -262,7 +259,7 @@ describe("createSqliteOutwardSendLedger — content-free + corrupt-row resilienc
     // Tamper a non-key column to a value the Zod row schema does not allow.
     // SQLite's INTEGER affinity stores a non-numeric string as TEXT, so on read
     // attempt_count comes back a string — OutwardLedgerDbRowSchema's z.number()
-    // rejects it and createRowMapper degrades lookup to err (T-216-12), never a
+    // rejects it and createRowMapper degrades lookup to err, never a
     // throw that aborts the boot recovery scan. (attempt_count, not step_index,
     // so the lookup WHERE still matches the now-corrupt row.)
     db.prepare(
@@ -288,7 +285,7 @@ describe("createSqliteOutwardSendLedger — content-free + corrupt-row resilienc
   });
 });
 
-describe("ensureOutwardLedgerTable wiring — real initSchema layout (Pitfall 5)", () => {
+describe("ensureOutwardLedgerTable wiring — real initSchema layout", () => {
   it("the REAL initSchema creates outward_send_ledger + the UNIQUE idx_osl_idempotency index", () => {
     // A table defined in schema-outward-ledger.ts but not wired into initSchema
     // is MISSING at runtime — assert against the REAL initSchema, not the local

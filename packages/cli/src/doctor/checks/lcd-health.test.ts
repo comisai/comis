@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD store health check unit tests — DOC-01.
+ * LCD store health check unit tests.
  *
  * Tests all six scan classes with seeded corruption fixtures,
  * absent-DB skip behavior, clean-DB pass behavior, and the
@@ -190,15 +190,15 @@ afterEach(() => {
 // ── Test cases ───────────────────────────────────────────────────────────────
 
 describe("lcdHealthCheck", () => {
-  // DOC-01-T-1: absent memory.db → silently skip (empty findings)
-  it("DOC-01-T-1: returns empty findings when memory.db does not exist (new-install safe)", async () => {
+  // Absent memory.db → silently skip (empty findings)
+  it("returns empty findings when memory.db does not exist (new-install safe)", async () => {
     const ctx = makeCtx("/tmp/comis-nonexistent-dir-xyzzy-" + Date.now());
     const findings = await lcdHealthCheck.run(ctx);
     expect(findings).toHaveLength(0);
   });
 
-  // DOC-01-T-2: clean DB → exactly 1 pass finding
-  it("DOC-01-T-2: returns exactly one pass finding on a clean LCD DB with no corruption", async () => {
+  // Clean DB → exactly 1 pass finding
+  it("returns exactly one pass finding on a clean LCD DB with no corruption", async () => {
     const { dataDir, db } = makeTempDb();
     // Seed valid data (no corruption)
     seedMessage(db);
@@ -214,8 +214,8 @@ describe("lcdHealthCheck", () => {
     expect(findings[0]!.status).toBe("pass");
   });
 
-  // DOC-01-T-3: scan class 1 — orphaned lcd_summaries (no matching context_item)
-  it("DOC-01-T-3: detects orphaned lcd_summaries with errorKind lcd_orphaned_summary and count in message", async () => {
+  // Scan class 1 — orphaned lcd_summaries (no matching context_item)
+  it("detects orphaned lcd_summaries with errorKind lcd_orphaned_summary and count in message", async () => {
     const { dataDir, db } = makeTempDb();
     // Seed a summary that has no context_item pointing to it
     seedSummary(db, { summaryId: "orphaned-sum-001" });
@@ -230,8 +230,8 @@ describe("lcdHealthCheck", () => {
     expect(f!.repairable).toBe(false);
   });
 
-  // DOC-01-T-4: scan class 2 — dangling context_item refs
-  it("DOC-01-T-4: detects dangling context_items refs when ref_id points to a non-existent message", async () => {
+  // Scan class 2 — dangling context_item refs
+  it("detects dangling context_items refs when ref_id points to a non-existent message", async () => {
     const { dataDir, db } = makeTempDb();
     // Seed a context_item pointing to a non-existent message
     seedContextItem(db, { id: "ci-dangling", refKind: "message", refId: "non-existent-msg" });
@@ -242,12 +242,12 @@ describe("lcdHealthCheck", () => {
     expect(f).toBeDefined();
     expect(f!.status).toBe("warn");
     expect(f!.message).toMatch(/\b1\b/);
-    // DOC-03 (Phase 171-04): dangling refs are now repairable via repairContextItems
+    // Dangling refs are repairable offline via repairContextItems
     expect(f!.repairable).toBe(true);
   });
 
-  // DOC-01-T-5: scan class 3 — fallback-marker summaries
-  it("DOC-01-T-5: detects fallback-marker lcd_summaries with status warn (repairable:false — offline impossible)", async () => {
+  // Scan class 3 — fallback-marker summaries
+  it("detects fallback-marker lcd_summaries with status warn (repairable:false — offline impossible)", async () => {
     const { dataDir, db } = makeTempDb();
     seedSummary(db, { summaryId: "fallback-sum", fallback: 1 });
     db.close();
@@ -256,16 +256,16 @@ describe("lcdHealthCheck", () => {
     const f = findings.find((x) => x.message.includes("fallback"));
     expect(f).toBeDefined();
     expect(f!.status).toBe("warn");
-    // Option B (Phase 171-04 code-review): fallback-marker repair requires the LLM
-    // summarizer which is unavailable when the daemon is stopped — not repairable offline.
-    // The daemon re-summarizes fallback-marker summaries during normal compaction.
+    // Fallback-marker repair requires the LLM summarizer, which is unavailable
+    // when the daemon is stopped — not repairable offline. The daemon
+    // re-summarizes fallback-marker summaries during normal compaction.
     expect(f!.repairable).toBe(false);
   });
 
-  // DOC-01-T-6: scan class 6 — lcd_ingest_cursor over-count. Corrected (WR-04): the
-  // scan flags ONLY ingested_live_len > persisted msg count (impossible in healthy
-  // operation), NOT the old ingested_live_len=0 premise (a normal fresh epoch).
-  it("DOC-01-T-6: flags a cursor whose ingested_live_len exceeds the persisted message count", async () => {
+  // Scan class 6 — lcd_ingest_cursor over-count. The scan flags ONLY
+  // ingested_live_len > persisted msg count (impossible in healthy operation),
+  // NOT ingested_live_len=0 (a normal fresh epoch).
+  it("flags a cursor whose ingested_live_len exceeds the persisted message count", async () => {
     const { dataDir, db } = makeTempDb();
     // 2 persisted messages, but a cursor claiming 5 ingested — impossible/corrupt.
     seedMessage(db, { id: "m1", seq: 1 });
@@ -282,9 +282,9 @@ describe("lcdHealthCheck", () => {
     expect(f!.repairable).toBe(false);
   });
 
-  // DOC-01-T-6b: a fresh-epoch cursor (ingested_live_len=0 with durable messages) is
-  // NORMAL under the Phase-164 epoch model and must NOT be flagged (the WR-04 guard).
-  it("DOC-01-T-6b: does NOT flag a fresh-epoch cursor (ingested_live_len=0) with durable messages", async () => {
+  // A fresh-epoch cursor (ingested_live_len=0 with durable messages) is
+  // NORMAL under the epoch model and must NOT be flagged.
+  it("does NOT flag a fresh-epoch cursor (ingested_live_len=0) with durable messages", async () => {
     const { dataDir, db } = makeTempDb();
     seedMessage(db, { id: "m1", seq: 1 });
     seedMessage(db, { id: "m2", seq: 2 });
@@ -299,8 +299,8 @@ describe("lcdHealthCheck", () => {
     expect(f).toBeUndefined();
   });
 
-  // DOC-01-T-7: scan class 5 — FTS row-count drift (FTS may or may not be available)
-  it("DOC-01-T-7: detects FTS row-count drift when lcd_messages_fts has fewer rows than lcd_messages", async () => {
+  // Scan class 4 — FTS row-count drift (FTS may or may not be available)
+  it("detects FTS row-count drift when lcd_messages_fts has fewer rows than lcd_messages", async () => {
     const { dataDir, db } = makeTempDb();
     // Seed a message in lcd_messages
     seedMessage(db, { id: "msg-fts-test" });
@@ -346,16 +346,12 @@ describe("lcdHealthCheck", () => {
     }
   });
 
-  // DOC-01-T-8: scan class 6 — R4 scope anomalies (NULL tenant_id or agent_id)
-  it("DOC-01-T-8: detects R4 scope anomalies — messages with NULL tenant_id produce a fail finding", async () => {
+  // Scan class 5 — R4 scope anomalies (NULL tenant_id or agent_id)
+  it("detects R4 scope anomalies — messages with NULL tenant_id produce a fail finding", async () => {
     const { dataDir, db } = makeTempDb();
-    // Bypass CHECK constraint by inserting with pragma off to test the scanner
-    // Actually the CHECK constraint won't trigger for NULL in SQLite without NOT NULL.
-    // The schema has tenant_id TEXT NOT NULL, so we need to drop the constraint.
-    // Instead, insert a message where we force null via a raw SQL trick:
-    // We'll create a different approach — insert directly with NULL using PRAGMA writable_schema
-    // Actually: the NOT NULL constraint will block this. We need to insert without the NOT NULL.
-    // For the test, recreate the table without the NOT NULL to test the scanner:
+    // The real schema declares tenant_id/agent_id NOT NULL, so a NULL scope
+    // value cannot be inserted directly. Recreate the table without those
+    // constraints to seed the exact corruption the scanner must detect.
     db.exec(`DROP TABLE IF EXISTS lcd_messages`);
     db.exec(`
       CREATE TABLE lcd_messages (
@@ -385,8 +381,8 @@ describe("lcdHealthCheck", () => {
     expect(f!.repairable).toBe(false);
   });
 
-  // DOC-01-T-9: content-free discipline — no finding message contains seeded message content
-  it("DOC-01-T-9: finding messages contain only counts/IDs/errorKind strings — no actual message content", async () => {
+  // Content-free discipline — no finding message contains seeded message content
+  it("finding messages contain only counts/IDs/errorKind strings — no actual message content", async () => {
     const { dataDir, db } = makeTempDb();
     const secretContent = "SUPER_SECRET_USER_MESSAGE_CONTENT_xyzzy_12345";
     // Seed a fallback summary whose content contains the secret text

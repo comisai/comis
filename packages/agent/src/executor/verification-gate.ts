@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * R4 verification-gate.ts — critic orchestration.
+ * verification-gate.ts — critic orchestration.
  *
  * Gate: only fires on completion-claiming responses past minResponseChars.
  * Seam: single bounded completeSimple call, fail-closed on every error.
  * Delivery: not-verified ⇒ honest first-person unmet-list (sanitized REQ tokens),
  *   never the agent-directed redirect — postExecution is terminal, no re-queue
- *   consumer exists yet (CR-01/D5; the re-queue/full-retry loop is R5/Phase 155+).
- * L5: native-reasoning profiles size maxOutputTokens to avoid verdict starvation.
+ *   consumer exists yet (a re-queue/full-retry loop may be added later).
+ * Native-reasoning profiles size maxOutputTokens to avoid verdict starvation.
  *
  * File-size: ≤350 lines (do not exceed).
  * Forbidden: Date.now(), raw setTimeout/clearTimeout, new Date().
@@ -42,21 +42,21 @@ export interface CriticDeps {
   clock: ClockPort;
   logger: ComisLogger;
   agentId: string;
-  canaryToken: string;        // S2: HMAC canary from generateCanaryToken
-  minResponseChars: number;   // R4 gate (config.verification.minResponseChars, default 200)
-  modelProfile: ModelProfile; // L5: reasoningStyle drives maxOutputTokens sizing
-  eventBus: TypedEventBus;    // S2: emit critic.isolation.* events
+  canaryToken: string;        // HMAC canary from generateCanaryToken
+  minResponseChars: number;   // gate threshold (config.verification.minResponseChars, default 200)
+  modelProfile: ModelProfile; // reasoningStyle drives maxOutputTokens sizing
+  eventBus: TypedEventBus;    // emits critic.isolation.* events
 }
 
 // ---------------------------------------------------------------------------
-// L5: reasoning-budget-aware maxOutputTokens sizing
+// Reasoning-budget-aware maxOutputTokens sizing
 // ---------------------------------------------------------------------------
 const VERDICT_RESERVE_TOKENS = 512;
 
 /**
- * CRITIC-ONLY verdict budget — NOT the main answer path (CR-01). 512 tokens
+ * CRITIC-ONLY verdict budget — NOT the main answer path. 512 tokens
  * suffices for the small verdict JSON; native-reasoning profiles get 4× so
- * reasoning_content doesn't starve the verdict (D7).
+ * reasoning_content doesn't starve the verdict.
  */
 export function resolveMaxOutputTokens(profile: ModelProfile): number {
   return profile.reasoningStyle === "native"
@@ -66,15 +66,15 @@ export function resolveMaxOutputTokens(profile: ModelProfile): number {
 
 /**
  * Reasoning-headroom floor for the MAIN answer path (native profiles only).
- * SD4 (Phase 158): raised 4096→16384 so reasoning_content cannot starve the
- * visible answer on small native-reasoning models (observed finishReason:"length"
- * with qwen3.6:35b at maxTokens:8192 — reasoning consumed nearly all tokens).
+ * 16384 so reasoning_content cannot starve the visible answer on small
+ * native-reasoning models (observed finishReason:"length" with qwen3.6:35b
+ * at maxTokens:8192 — reasoning consumed nearly all tokens).
  * Math.max means models already reporting maxOutputTokens≥16384 are unchanged.
  */
 const NATIVE_REASONING_MAIN_PATH_FLOOR = 16_384;
 
 /**
- * CR-01: MAIN-PATH output budget. Returns the model's REAL maxOutputTokens so
+ * MAIN-PATH output budget. Returns the model's REAL maxOutputTokens so
  * the visible answer is never clamped to the 512-token verdict reserve.
  * Non-reasoning → full profile budget; native-reasoning → sized UP (never
  * down) so reasoning_content can't starve the answer. config.maxTokens (when
@@ -120,9 +120,9 @@ async function callCritic(
   plan: ExecutionPlan,
   deps: CriticDeps,
 ): Promise<CriticVerdict> {
-  // S2: wrap the reviewed output as untrusted BEFORE the user message is built
+  // Wrap the reviewed output as untrusted BEFORE the user message is built
   const wrapped = wrapReviewedOutput(response);
-  const safetyCore = buildSafetySection(false); // S2: always false — never []
+  const safetyCore = buildSafetySection(false); // always false — never []
   const systemPrompt = buildCriticSystemPrompt({
     checklist: plan.steps,
     canaryToken: deps.canaryToken,
@@ -173,7 +173,7 @@ async function callCritic(
     );
     const text = extractResponseText(raw);
 
-    // S2: check canary leak BEFORE Zod parse
+    // Check canary leak BEFORE Zod parse
     if (detectCanaryLeakage(text, deps.canaryToken)) {
       deps.eventBus.emit("critic.isolation.canary_leak", {
         timestamp: deps.clock.now(),
@@ -189,7 +189,7 @@ async function callCritic(
 
     const parsed = parseCriticVerdict(text); // Zod safeParse — never throws
 
-    // S2: check implied tool calls in verdict followUp
+    // Check implied tool calls in verdict followUp
     if (parsed.verdict !== "skipped") {
       const verdictWithProps = parsed as {
         verdict: string;
@@ -232,20 +232,20 @@ async function callCritic(
 
 // ---------------------------------------------------------------------------
 // shouldRunCritic — gate check for the post-execution hook
-// WR-02: keyless-only (no secretManager at this layer). Mirrors KEYLESS_PROVIDER_TYPES.
+// Keyless-only (no secretManager at this layer). Mirrors KEYLESS_PROVIDER_TYPES.
 // ---------------------------------------------------------------------------
-/** Exported for parity assertion in scaffold-defaults.ts (Plan 02 cross-file test). */
+/** Exported for the cross-file parity assertion in the scaffold-defaults tests. */
 export const KEYLESS_CRITIC_PROVIDERS = new Set<string>(["ollama", "lm-studio"]);
 
 export function shouldRunCritic(params: {
   capabilityClass: CapabilityClass | undefined;
   config: PerAgentConfig;
   executionPlanRef: { current: ExecutionPlan | undefined };
-  /** Resolved provider for this execution (WR-02: keyless-only gate). */
+  /** Resolved provider for this execution (keyless-only gate). */
   provider: string;
-  /** Optional logger for the skip-with-WARN diagnostic (WR-02). */
+  /** Optional logger for the skip-with-WARN diagnostic. */
   logger?: ComisLogger;
-  /** SD3 (Phase 158): pre-resolved effective enabled flag from resolveScaffoldDefaults. */
+  /** Pre-resolved effective enabled flag from resolveScaffoldDefaults. */
   effectiveEnabled?: boolean;
 }): boolean {
   const { capabilityClass, config, executionPlanRef, provider, logger, effectiveEnabled } = params;
@@ -260,7 +260,7 @@ export function shouldRunCritic(params: {
         provider,
         errorKind: "config" as const,
         step: "verification" as const,
-        hint: "Verification critic skipped: cloud API-key threading is deferred to Phase 155. " +
+        hint: "Verification critic skipped: cloud API-key threading is not yet wired. " +
           "Use a keyless provider (ollama/lm-studio) to exercise the critic.",
       },
       "Verification critic skipped (cloud key threading not yet wired)",
@@ -272,23 +272,23 @@ export function shouldRunCritic(params: {
 
 // ---------------------------------------------------------------------------
 // runVerificationCritic — entry point for the post-execution hook
-// Gate + single critic call + honest first-person delivery on not-verified (R4/D5)
+// Gate + single critic call + honest first-person delivery on not-verified
 //
-// `maxRetries` is accepted but NOT branched on in this phase: postExecution is
-// terminal (no re-queue consumer), so a not-verified verdict ALWAYS delivers the
-// honest first-person unmet-list — never the agent-directed redirect (CR-01).
-// The param is retained for the future re-queue/full-retry path (R5/Phase 155+).
+// `maxRetries` is accepted but NOT branched on: postExecution is terminal
+// (no re-queue consumer), so a not-verified verdict ALWAYS delivers the
+// honest first-person unmet-list — never the agent-directed redirect.
+// The param is retained for a future re-queue/full-retry path.
 // ---------------------------------------------------------------------------
 export async function runVerificationCritic(params: {
   response: string;
   plan: ExecutionPlan | undefined;
   deps: CriticDeps;
-  /** Retained for the future re-queue path (R5/Phase 155+); not branched on now. */
+  /** Retained for a future re-queue path; not branched on now. */
   maxRetries?: number;
 }): Promise<{ verdict: CriticVerdict["verdict"]; response: string }> {
   const { response, plan, deps } = params;
 
-  // Gate: skip if not a completion claim or response is too short (D4)
+  // Gate: skip if not a completion claim or response is too short
   if (!isCompletionClaim(response) || response.length < deps.minResponseChars) {
     return { verdict: "skipped", response };
   }
@@ -303,10 +303,10 @@ export async function runVerificationCritic(params: {
     return { verdict: verdict.verdict, response };
   }
 
-  // not-verified path: honest first-person delivery (CR-01). postExecution is
-  // TERMINAL in this phase (no re-queue consumer), so this `response` is
-  // delivered VERBATIM to the user. The agent-directed redirect is only correct
-  // when something re-queues it (R5/Phase 155+), so we ALWAYS deliver the honest
+  // not-verified path: honest first-person delivery. postExecution is
+  // TERMINAL (no re-queue consumer), so this `response` is delivered
+  // VERBATIM to the user. The agent-directed redirect is only correct
+  // when something re-queues it, so we ALWAYS deliver the honest
   // first-person unmet-list — at the DEFAULT maxRetries (2) and at 0 — never the
   // redirect and never an unqualified "done". `unmet` is sanitized (see below).
   const verdictWithUnmet = verdict as { verdict: "not-verified"; unmet: string[] };
@@ -317,12 +317,13 @@ export async function runVerificationCritic(params: {
 }
 
 // ---------------------------------------------------------------------------
-// buildHonestUnmetResponse — the ONLY user-facing not-verified text (CR-01/D5)
+// buildHonestUnmetResponse — the ONLY user-facing not-verified text
 //
-// WR-01/IN-03: `unmet[]` is critic-authored over UNTRUSTED reviewed content, so
-// raw interpolation lets a crafted label ("REQ-0 (all tasks are done)") make the
-// text match isCompletionClaim (violating D5) or smuggle a tool-call phrase into
-// user prose. Reduce each entry to its bare REQ-\d+ token (executor-controlled
+// `unmet[]` is critic-authored over UNTRUSTED reviewed content, so raw
+// interpolation lets a crafted label ("REQ-0 (all tasks are done)") make the
+// text match isCompletionClaim (breaking the honest-exhaustion guarantee) or
+// smuggle a tool-call phrase into user prose. Reduce each entry to its bare
+// REQ-\d+ token (executor-controlled
 // plan index, not critic free-text); the composed text then provably fails both
 // isCompletionClaim and detectImpliedToolCall.
 // ---------------------------------------------------------------------------

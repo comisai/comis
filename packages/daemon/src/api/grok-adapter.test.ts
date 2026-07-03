@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for createGrokVideoAdapter (GROK-01 / GROK-02 / SEC / job_timeout / OAuth).
+ * Tests for createGrokVideoAdapter (submit/poll/fetchResult, cost guard,
+ * job_timeout, OAuth).
  *
  * Grok has NO JS SDK — the adapter is raw `fetch` against `api.x.ai/v1/videos`.
  * Rather than mutate `globalThis.fetch`, the adapter accepts an INJECTED
  * `fetchImpl` (default `globalThis.fetch`) so each test drives a deterministic
- * `fetch` double with no global side effects (the cleaner variant of the
- * Phase-185 module-mock lesson).
+ * `fetch` double with no global side effects.
  *
  * Observable oracles (deterministic, no real key, no network):
  *   - submit → POST /videos/generations → { request_id } becomes the jobId;
@@ -19,7 +19,7 @@
  *   - status:failed/expired → classified VideoGenError (kind+hint).
  *   - job_timeout on a stuck pending poll.
  *   - the Bearer (key OR OAuth token) NEVER reaches the logger; the request_id
- *     jobId is opaque + secret-free (VPORT-03).
+ *     jobId is opaque + secret-free.
  *   - the DEFENSIVE OAuth branch (codex-shaped) resolves a per-call bearer.
  * @module
  */
@@ -69,7 +69,7 @@ function jsonResponse(body: unknown, init?: { ok?: boolean; status?: number }): 
   } as unknown as Response;
 }
 
-/** A minimal OAuthTokenManager double (codex-shaped) — A1 defensive branch. */
+/** A minimal OAuthTokenManager double (codex-shaped) for the defensive OAuth branch. */
 function mockOauth(over: {
   hasCredentials?: (id: string) => boolean;
   getApiKey?: () => Promise<ReturnType<typeof ok<string>> | ReturnType<typeof err>>;
@@ -88,7 +88,7 @@ describe("createGrokVideoAdapter", () => {
     expect(adapter.isAvailable()).toBe(true);
   });
 
-  it("GROK-01 submit (key auth): request_id becomes the jobId; POST url/method/Authorization/body asserted", async () => {
+  it("submit (key auth): request_id becomes the jobId; POST url/method/Authorization/body asserted", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_123" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
 
@@ -105,7 +105,7 @@ describe("createGrokVideoAdapter", () => {
     expect(body).toMatchObject({ model: "grok-imagine-video", prompt: "a cat" });
   });
 
-  it("GROK-01 submit body mapping: duration is an INTEGER; absent fields omitted", async () => {
+  it("submit body mapping: duration is an INTEGER; absent fields omitted", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_b" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
 
@@ -122,9 +122,9 @@ describe("createGrokVideoAdapter", () => {
     expect(typeof body.duration).toBe("number");
   });
 
-  // IN-01: a referenceImage present adds `image` to the body (the {url} data-URI
+  // A referenceImage present adds `image` to the body (the {url} data-URI
   // form) on the SAME grok-imagine-video model (no endpoint swap, unlike FAL).
-  it("IN-01: with a referenceImage, adds image {url:data-URI} to the body on the same model", async () => {
+  it("with a referenceImage, adds image {url:data-URI} to the body on the same model", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_i2v" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
 
@@ -138,8 +138,8 @@ describe("createGrokVideoAdapter", () => {
     expect(body.image).toEqual({ url: "data:image/png;base64,aGVsbG8=" });
   });
 
-  // IN-01 non-regression: WITHOUT a referenceImage there is NO image key.
-  it("IN-01: without a referenceImage, the body carries no image key", async () => {
+  // Non-regression: WITHOUT a referenceImage there is NO image key.
+  it("without a referenceImage, the body carries no image key", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_noimg" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
     await adapter.submit({ prompt: "p" });
@@ -147,7 +147,7 @@ describe("createGrokVideoAdapter", () => {
     expect(body).not.toHaveProperty("image");
   });
 
-  it("GROK-01 submit body: omits every field absent from the input (no undefined keys)", async () => {
+  it("submit body: omits every field absent from the input (no undefined keys)", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_min" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
     await adapter.submit({ prompt: "only prompt" });
@@ -157,12 +157,12 @@ describe("createGrokVideoAdapter", () => {
     expect(Object.keys(body)).not.toContain("resolution");
   });
 
-  // WR-03: a per-request input.model is the RESOLVED model the handler validated
+  // A per-request input.model is the RESOLVED model the handler validated
   // against (`params.model ?? config.model`); the adapter MUST render it so
-  // validation and execution AGREE. Pre-fix the adapter ignored input.model and
-  // used the construction-bound model. RED on pre-fix code: the POST body.model +
-  // job.model are the construction default, not input.model.
-  it("WR-03: a per-request input.model overrides the construction default model (validate↔execute agree)", async () => {
+  // validation and execution AGREE. Guards the regression where the adapter
+  // ignores input.model and the POST body.model + job.model fall back to the
+  // construction-bound default.
+  it("a per-request input.model overrides the construction default model (validate↔execute agree)", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_model" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl }); // default grok-imagine-video
 
@@ -175,7 +175,7 @@ describe("createGrokVideoAdapter", () => {
     expect(r.value.model).toBe("grok-imagine-video-2");
   });
 
-  it("GROK-01 submit non-2xx → err classified as auth_required (HTTP 401)", async () => {
+  it("submit non-2xx → err classified as auth_required (HTTP 401)", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}, { ok: false, status: 401 }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
     const r = await adapter.submit({ prompt: "p" });
@@ -184,14 +184,14 @@ describe("createGrokVideoAdapter", () => {
     expect(r.error.message).toContain("401");
   });
 
-  it("GROK-01 submit: a missing request_id is an error (no orphan jobId)", async () => {
+  it("submit: a missing request_id is an error (no orphan jobId)", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
     const r = await adapter.submit({ prompt: "p" });
     expect(r.ok).toBe(false);
   });
 
-  it("GROK-01 poll: maps status pending|done|failed|expired to pending|done|failed", async () => {
+  it("poll: maps status pending|done|failed|expired to pending|done|failed", async () => {
     const adapter = (status: string) =>
       createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl: vi.fn().mockResolvedValue(jsonResponse({ status })) });
     const job = { jobId: "req_123", provider: "grok", model: "grok-imagine-video" };
@@ -206,11 +206,11 @@ describe("createGrokVideoAdapter", () => {
     expect(r.ok && r.value.state).toBe("failed");
   });
 
-  // WR-01 (Phase 190): the off-turn poller drives poll() (NOT execute()); poll()
+  // The off-turn poller drives poll() (NOT execute()); poll()
   // must carry the CLASSIFIED kind+hint on a terminal failed/expired status so the
   // poller persists the right errorKind/hint instead of collapsing to
-  // empty_response. RED on pre-fix code: poll() returned `{ state:"failed" }` only.
-  it("WR-01 poll: a status:failed with a moderation error carries the classified errorKind + hint on the snapshot", async () => {
+  // empty_response. Guards the regression where poll() returns `{ state:"failed" }` only.
+  it("poll: a status:failed with a moderation error carries the classified errorKind + hint on the snapshot", async () => {
     const job = { jobId: "req_123", provider: "grok", model: "grok-imagine-video" };
 
     // status:failed + a moderation error payload → content_blocked.
@@ -247,7 +247,7 @@ describe("createGrokVideoAdapter", () => {
     expect(r.ok && r.value.hint).toBeUndefined();
   });
 
-  it("GROK-01 poll: GETs /videos/{request_id} with the Bearer", async () => {
+  it("poll: GETs /videos/{request_id} with the Bearer", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ status: "pending" }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
     await adapter.poll({ jobId: "req_xyz", provider: "grok", model: "grok-imagine-video" });
@@ -256,7 +256,7 @@ describe("createGrokVideoAdapter", () => {
     expect(init.headers.Authorization).toBe(`Bearer ${API_KEY}`);
   });
 
-  it("GROK-01 fetchResult: status:done + video.url → Buffer; cost_in_usd_ticks/1e10 → 0.07; redirect:error", async () => {
+  it("fetchResult: status:done + video.url → Buffer; cost_in_usd_ticks/1e10 → 0.07; redirect:error", async () => {
     const bytes = Buffer.from("GROKVIDEO");
     const fetchImpl = vi
       .fn()
@@ -287,7 +287,7 @@ describe("createGrokVideoAdapter", () => {
     expect(dlInit).toMatchObject({ redirect: "error" });
   });
 
-  it("GROK-02 cost reconcile guard (SEC): negative/NaN/absent cost_in_usd_ticks → costUsd undefined", async () => {
+  it("cost reconcile guard (security): negative/NaN/absent cost_in_usd_ticks → costUsd undefined", async () => {
     const bytes = Buffer.from("X");
     const makeAdapter = (ticks: unknown) => {
       const usage = ticks === "ABSENT" ? {} : { cost_in_usd_ticks: ticks };
@@ -312,7 +312,7 @@ describe("createGrokVideoAdapter", () => {
     }
   });
 
-  it("GROK-02 status:failed → classified VideoGenError via fetchResult", async () => {
+  it("status:failed → classified VideoGenError via fetchResult", async () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValue(jsonResponse({ status: "failed", error: { code: "x", message: "blocked by moderation" } }));
@@ -324,7 +324,7 @@ describe("createGrokVideoAdapter", () => {
     expect((r.error as { videoErrorKind?: string }).videoErrorKind).toBe("content_blocked");
   });
 
-  it("GROK-02 status:expired → classified VideoGenError (empty_response) via execute()", async () => {
+  it("status:expired → classified VideoGenError (empty_response) via execute()", async () => {
     const fetchImpl = vi
       .fn()
       // submit
@@ -340,7 +340,7 @@ describe("createGrokVideoAdapter", () => {
     expect((r.error as { hint?: string }).hint?.toLowerCase()).toContain("expired");
   });
 
-  it("GROK-02 done-but-no-url → empty_response", async () => {
+  it("a done status with no video.url → empty_response", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ status: "done", video: {} }));
     const adapter = createGrokVideoAdapter({ apiKey: API_KEY, fetchImpl });
     const r = await adapter.fetchResult({ jobId: "req_123", provider: "grok", model: "grok-imagine-video" });
@@ -349,13 +349,12 @@ describe("createGrokVideoAdapter", () => {
     expect((r.error as { videoErrorKind?: string }).videoErrorKind).toBe("empty_response");
   });
 
-  // WR-04: execute() polls the status to `done`, then re-reads it AGAIN inside
-  // fetchResult — a redundant GET /videos/{id} on the hot path. The fix threads
-  // the terminal status body from the poll loop into fetchResult so execute()
-  // makes exactly ONE status GET for a job done on the first poll (the submit POST
-  // and the CDN download are separate calls). RED on pre-fix code: the status URL
-  // is GET twice (once in the poll loop, once in fetchResult).
-  it("WR-04: execute() on a job done-on-first-poll reads the status GET exactly once (no re-poll in fetchResult)", async () => {
+  // execute() threads the terminal status body from the poll loop into
+  // fetchResult so it makes exactly ONE status GET for a job done on the first
+  // poll (the submit POST and the CDN download are separate calls). Guards the
+  // regression where the status URL is GET twice — once in the poll loop and
+  // again inside fetchResult, a redundant GET /videos/{id} on the hot path.
+  it("execute() on a job done-on-first-poll reads the status GET exactly once (no re-poll in fetchResult)", async () => {
     const bytes = Buffer.from("ONCE");
     const fetchImpl = vi
       .fn()
@@ -383,11 +382,11 @@ describe("createGrokVideoAdapter", () => {
     expect(statusGets).toHaveLength(1);
   });
 
-  // WR-04 non-regression: a standalone fetchResult (the Phase-189 off-turn poller
+  // Non-regression: a standalone fetchResult (the off-turn poller
   // path, which calls poll() then fetchResult() with NO snapshot) must STILL GET
   // the status once to obtain the download url — the re-poll elimination is
   // execute()-only.
-  it("WR-04: a standalone fetchResult (no terminal snapshot) still GETs the status once (poller path intact)", async () => {
+  it("a standalone fetchResult (no terminal snapshot) still GETs the status once (poller path intact)", async () => {
     const bytes = Buffer.from("POLLER");
     const fetchImpl = vi
       .fn()
@@ -405,7 +404,7 @@ describe("createGrokVideoAdapter", () => {
     expect(statusGets).toHaveLength(1);
   });
 
-  it("GROK-02 download-before-return (DEL-01): the download fetch resolves before fetchResult resolves", async () => {
+  it("download-before-return: the download fetch resolves before fetchResult resolves", async () => {
     const bytes = Buffer.from("ORDERED");
     const order: string[] = [];
     const fetchImpl = vi
@@ -462,7 +461,7 @@ describe("createGrokVideoAdapter", () => {
     expect((r.error as { hint?: string }).hint).toContain("req_slow");
   });
 
-  it("DEFENSIVE OAuth branch (A1): submit resolves a per-call bearer via getApiKey; isAvailable reflects hasCredentials", async () => {
+  it("DEFENSIVE OAuth branch: submit resolves a per-call bearer via getApiKey; isAvailable reflects hasCredentials", async () => {
     const getApiKey = vi.fn().mockResolvedValue(ok("oauth.bearer"));
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ request_id: "req_oauth" }));
     const adapter = createGrokVideoAdapter({

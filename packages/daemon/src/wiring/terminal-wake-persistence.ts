@@ -4,8 +4,8 @@
  * Durable per-session wake-state for the recurring wake-dispatch FSM
  * (terminal-wake-dispatch.ts).
  *
- * This is the OPS-09 "survives daemon restart" substrate: the FSM persists
- * its per-session dispatch state on every transition and re-hydrates it on
+ * This is the "survives daemon restart" substrate: the FSM persists its
+ * per-session dispatch state on every transition and re-hydrates it on
  * construction (recover-on-boot), so a session mid-wake before a daemon
  * restart is not spuriously re-woken.
  *
@@ -17,10 +17,10 @@
  * `terminal-wake/{sessionId}.json` subdir (the analogue of
  * `background-tasks/{agentId}/{taskId}.json`).
  *
- * **Daemon-side placement (binding — RESEARCH Open Q1 + Pitfall 3):** the
- * persistence imports `@comis/observability`, which `@comis/skills` MUST NOT
- * value-import. The FSM + this substrate therefore live in the daemon layer
- * (composition-root's to use observability), not in the skills worker.
+ * **Daemon-side placement (binding constraint):** the persistence imports
+ * `@comis/observability`, which `@comis/skills` MUST NOT value-import. The FSM
+ * + this substrate therefore live in the daemon layer (the composition root's
+ * to use observability), not in the skills worker.
  *
  * **Best-effort contract:** a persist failure is swallowed (it must not
  * propagate to the caller, which has already acted on the in-memory state);
@@ -39,7 +39,7 @@ import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 /** Directory name under the data dir for per-session wake-state files. */
 export const WAKE_DIR_NAME = "terminal-wake";
 
-/** The owning origin of a terminal session — `(agentId, sessionKey)` (TR-13). */
+/** The owning origin of a terminal session — `(agentId, sessionKey)`. */
 export interface PersistedWakeOwner {
   agentId: string;
   sessionKey: string;
@@ -125,7 +125,7 @@ export function recoverWakeStates(dataDir: string): PersistedWakeState[] {
   const recovered: PersistedWakeState[] = [];
   // Best-effort: a degenerate dataDir (e.g. a relative "." from a bootstrap/test config)
   // makes safePath throw PathTraversalError — recovery must NOT crash the FSM constructor
-  // (124-07 recovers on construction). Swallow + return [] (mirrors persistWakeStateSync).
+  // (the FSM recovers on construction). Swallow + return [] (mirrors persistWakeStateSync).
   let dir: string;
   try {
     dir = wakeDir(dataDir);

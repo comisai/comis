@@ -13,21 +13,19 @@ import {
 } from "./model-registry-adapter.js";
 
 // ---------------------------------------------------------------------------
-// SA6 RED tests — KEYLESS_PROVIDER_TYPES shared from @comis/core
+// KEYLESS_PROVIDER_TYPES shared from @comis/core
 // ---------------------------------------------------------------------------
 
-describe("SA6 KEYLESS_PROVIDER_TYPES (shared from @comis/core)", () => {
-  it("SA6 KEYLESS_PROVIDER_TYPES includes lm-studio", async () => {
-    // Import KEYLESS_PROVIDER_TYPES from the source under test.
-    // This test fails on the current code because model-registry-adapter.ts
-    // defines a LOCAL const KEYLESS_PROVIDER_TYPES = new Set(["ollama"]) that
-    // does NOT include lm-studio. After SA6b, the file must import from
-    // @comis/core which has the canonical {ollama, lm-studio} set.
+describe("KEYLESS_PROVIDER_TYPES (shared from @comis/core)", () => {
+  it("KEYLESS_PROVIDER_TYPES includes lm-studio, so a keyless lm-studio provider registers", async () => {
+    // model-registry-adapter.ts must consume the canonical
+    // KEYLESS_PROVIDER_TYPES set ({ollama, lm-studio}) from @comis/core,
+    // never a local copy — a local set that omits lm-studio silently drops
+    // keyless lm-studio providers at registration.
     //
     // We verify the behavior indirectly: register an lm-studio provider without
     // an API key — it must succeed (registered=1) because lm-studio is keyless.
-    // On current code it fails (registered=0, WARN) because lm-studio is not
-    // in the local KEYLESS_PROVIDER_TYPES set.
+    // With a set that excludes lm-studio it fails (registered=0, WARN).
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
     const registry = createModelRegistryAdapter(authStorage);
@@ -53,8 +51,7 @@ describe("SA6 KEYLESS_PROVIDER_TYPES (shared from @comis/core)", () => {
       logger,
     );
 
-    // FAILS TODAY: registered=0 (lm-studio not in local keyless set)
-    // GREEN after SA6b: registered=1 (lm-studio in shared @comis/core set)
+    // registered=1 proves lm-studio is in the shared @comis/core keyless set.
     expect(registered).toBe(1);
     expect(warns).toHaveLength(0);
   });
@@ -908,7 +905,7 @@ describe("resolveInitialModel with providerAliases", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LOCAL-3 RED — local OpenAI-compat providers (ollama / lm-studio) expose
+// Local OpenAI-compat providers (ollama / lm-studio) expose
 // their OpenAI-compatible API under `/v1`. A user who configures the bare
 // server root (`http://127.0.0.1:11434`, ollama's documented address) made
 // pi-ai POST to `<root>/chat/completions` and get a cryptic

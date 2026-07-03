@@ -1,26 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The collapsed learning config (SIMPLIFY-01 / SIMPLIFY-05).
+ * The collapsed learning config.
  *
- * Phase 226 folds the 13 per-loop learning/memory schema files (~74 knobs) into
- * ONE `schema-learning.ts` (~10 keys, design §5) with a single `learning.enabled`
- * master gate nested under `memory.enabled`. This suite pins the ground truth of
- * that collapse:
- *  - the ~10-key §5 shape parses with every field defaulted (nested `.default()`);
- *  - `memory.enabled` is the master kill-switch (was `memory.costFeatures.enabled`)
+ * The whole learning layer is configured by ONE `schema-learning.ts` (~10 keys)
+ * with a single `learning.enabled` master gate nested under `memory.enabled` —
+ * no per-loop config flags. This suite pins the ground truth of that shape:
+ *  - the ~10-key shape parses with every field defaulted (nested `.default()`);
+ *  - `memory.enabled` is the master kill-switch
  *    and the recall keepers nest under `memory.recall`;
- *  - `learning.enabled` is the single layer gate (collapses learningSkills.enabled +
- *    learningTuning.enabled + learningForgetting.enabled);
+ *  - `learning.enabled` is the single layer gate (no learningSkills.enabled /
+ *    learningTuning.enabled / learningForgetting.enabled per-loop gates);
  *  - a bare AppConfig loads (the learning layer fully defaults);
- *  - a config carrying a DELETED key (learningSkills/learningTuning/learningForgetting)
- *    is REJECTED at parse (`z.strictObject` unrecognized-key — the D-01a operator-update
+ *  - a config carrying a nonexistent per-loop key (learningSkills/learningTuning/learningForgetting)
+ *    is REJECTED at parse (`z.strictObject` unrecognized-key — the operator-update
  *    path, no compat shim);
- *  - the M-2 keeper `learningOutcome.minConfidenceToLearn` SURVIVES the collapse
+ *  - `learningOutcome.minConfidenceToLearn` is its own key
  *    (the outcome-resolution floor — a SEPARATE consumer from `learning.reflect.minConfidence`).
  *
- * Value imports so the RED state is reproducible from this test commit alone:
- * vitest must RESOLVE `schema-learning.js` at runtime — it does not exist on the
- * pre-collapse code → the import throws and the suite is RED.
+ * Value imports (not type-only) so vitest must RESOLVE `schema-learning.js` at
+ * runtime — a missing or broken module fails the suite loudly instead of
+ * type-checking silently.
  *
  * @module
  */
@@ -32,12 +31,12 @@ import { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
 import { PerAgentConfigSchema } from "./schema-agent/schema-agent-runtime.js";
 import { AppConfigSchema } from "./schema.js";
 
-describe("LearningConfigSchema — the collapsed ~10-key learning layer (design §5)", () => {
-  it("parse({}) fills the documented §5 default block (enabled + reflect + forget, all nested-defaulted)", () => {
+describe("LearningConfigSchema — the collapsed ~10-key learning layer", () => {
+  it("parse({}) fills the documented default block (enabled + reflect + forget, all nested-defaulted)", () => {
     expect(LearningConfigSchema.parse({})).toEqual({
       enabled: true,
       reflect: {
-        // best-out-of-box (reflect-obs-20260627): every-3h cadence + raised doc cap (cost-ignored).
+        // best-out-of-box: every-3h cadence + raised doc cap (cost-ignored).
         schedule: "0 */3 * * *",
         minConfidence: 0.6,
         promoteAtProofCount: 3,
@@ -54,7 +53,7 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer (design 
   it("the nested reflect/forget objects have their own .default() (a partial config fills them in)", () => {
     const parsed = LearningConfigSchema.parse({ enabled: false });
     expect(parsed.enabled).toBe(false);
-    // SIMPLIFY-05: one flag force-disables the whole layer, but the nested defaults still fill.
+    // One flag force-disables the whole layer, but the nested defaults still fill.
     expect(parsed.reflect).toEqual({
       schedule: "0 */3 * * *",
       minConfidence: 0.6,
@@ -64,7 +63,7 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer (design 
     expect(parsed.forget).toEqual({ maxDormantDays: 365, failureEvictionFloor: 3, highProofFloor: 5 });
   });
 
-  it("is strict — a smuggled/unknown knob throws at parse (z.strictObject, SEC-01 / D-01a)", () => {
+  it("is strict — a smuggled/unknown knob throws at parse (z.strictObject)", () => {
     expect(() => LearningConfigSchema.parse({ bogusKnob: 1 })).toThrow();
     expect(() => LearningConfigSchema.parse({ reflect: { bogus: 1 } })).toThrow();
     expect(LearningConfigSchema.safeParse({ forget: { halfLifeDays: 7 } }).success).toBe(false);
@@ -79,8 +78,8 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer (design 
   });
 });
 
-describe("MemoryConfigSchema — memory.enabled master gate + memory.recall nesting (SIMPLIFY-05)", () => {
-  it("memory.enabled is the master kill-switch and defaults true (opt-out posture; was memory.costFeatures.enabled)", () => {
+describe("MemoryConfigSchema — memory.enabled master gate + memory.recall nesting", () => {
+  it("memory.enabled is the master kill-switch and defaults true (opt-out posture)", () => {
     expect(MemoryConfigSchema.parse({}).enabled).toBe(true);
     expect(MemoryConfigSchema.parse({ enabled: false }).enabled).toBe(false);
   });
@@ -94,9 +93,9 @@ describe("MemoryConfigSchema — memory.enabled master gate + memory.recall nest
     });
   });
 
-  it("the deleted master-gate key costFeatures is REJECTED (z.strictObject — renamed to memory.enabled, no compat shim)", () => {
+  it("a costFeatures key is REJECTED (z.strictObject — memory.enabled is the only master gate, no alias)", () => {
     expect(() => MemoryConfigSchema.parse({ costFeatures: { enabled: true } })).toThrow();
-    // The flat recall keys are gone (nested now) — a config using the OLD flat shape is rejected too.
+    // The recall keys only exist nested — a config using a flat shape is rejected too.
     expect(MemoryConfigSchema.safeParse({ embeddingModel: "x" }).success).toBe(false);
   });
 
@@ -112,7 +111,7 @@ describe("MemoryConfigSchema — memory.enabled master gate + memory.recall nest
   });
 });
 
-describe("PerAgentConfigSchema — the learning block collapse + deleted-key rejection (D-01a)", () => {
+describe("PerAgentConfigSchema — the collapsed learning block + per-loop-key rejection", () => {
   it("a parsed agent config exposes a fully-defaulted learning block nested under the agent (NOT top-level)", () => {
     const agent = PerAgentConfigSchema.parse({});
     expect(agent.learning.enabled).toBe(true);
@@ -120,13 +119,13 @@ describe("PerAgentConfigSchema — the learning block collapse + deleted-key rej
     expect(agent.learning.forget.failureEvictionFloor).toBe(3);
   });
 
-  it("rejects each collapsed per-loop key (learningSkills/learningTuning/learningForgetting) — Unrecognized key (z.strictObject)", () => {
+  it("rejects each per-loop key (learningSkills/learningTuning/learningForgetting) — Unrecognized key (z.strictObject)", () => {
     expect(() => PerAgentConfigSchema.parse({ learningSkills: { enabled: true } })).toThrow(/Unrecognized key/);
     expect(() => PerAgentConfigSchema.parse({ learningTuning: { enabled: true } })).toThrow(/Unrecognized key/);
     expect(() => PerAgentConfigSchema.parse({ learningForgetting: { enabled: true } })).toThrow(/Unrecognized key/);
   });
 
-  it("M-2: learningOutcome.minConfidenceToLearn SURVIVES the collapse (the outcome-resolution floor, default 0.6)", () => {
+  it("learningOutcome.minConfidenceToLearn stays its own key (the outcome-resolution floor, default 0.6)", () => {
     // A SEPARATE consumer from learning.reflect.minConfidence — they happen to share 0.6 but
     // are NOT merged (avoids an ambiguous single source). The keeper block stays on the agent.
     const agent = PerAgentConfigSchema.parse({});
@@ -137,16 +136,16 @@ describe("PerAgentConfigSchema — the learning block collapse + deleted-key rej
   });
 });
 
-describe("AppConfigSchema — bare load + the live-config canary (D-01a)", () => {
+describe("AppConfigSchema — bare load + the live-config canary", () => {
   it("AppConfigSchema.parse({}) succeeds — the learning layer fully defaults (bare config loads)", () => {
     const cfg = AppConfigSchema.parse({});
     expect(cfg.memory.enabled).toBe(true);
     expect(cfg.memory.recall.embeddingModel).toBe("text-embedding-3-small");
   });
 
-  it("live-config canary: a fixture mirroring the live ~/.comis/config.yaml shape (no deleted keys) parses cleanly", () => {
+  it("live-config canary: a fixture mirroring the live ~/.comis/config.yaml shape parses cleanly", () => {
     // The live config carries memory.enabled + memory.recall + a per-agent learning block —
-    // none of the deleted keys (learningSkills/learningTuning/learningForgetting/costFeatures).
+    // none of the rejected keys (learningSkills/learningTuning/learningForgetting/costFeatures).
     const live = {
       memory: {
         enabled: true,
@@ -165,7 +164,7 @@ describe("AppConfigSchema — bare load + the live-config canary (D-01a)", () =>
     expect(parsed.agents.default!.learning.reflect.schedule).toBe("0 3 * * *");
   });
 
-  it("D-01a: a live config still carrying a DELETED key is rejected at parse (the documented operator-update path)", () => {
+  it("a live config carrying a per-loop learning key is rejected at parse (the documented operator-update path)", () => {
     expect(() =>
       AppConfigSchema.parse({ agents: { default: { learningSkills: { enabled: true } } } }),
     ).toThrow();

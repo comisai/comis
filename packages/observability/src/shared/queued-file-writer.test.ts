@@ -240,7 +240,7 @@ describe("QueuedFileWriter — failure introspection", () => {
 // parent dirs FIRST under default umask (0o755). mkdir's `mode` arg is
 // silently ignored when the dir already exists (recursive EEXIST). The
 // fix: after mkdirSync, defensively chmod the parent to 0o700 — gated
-// on a non-symlink lstat to preserve the §1.4 confused-deputy invariant.
+// on a non-symlink lstat to preserve the confused-deputy invariant.
 // ---------------------------------------------------------------------------
 describe("QueuedFileWriter — defensive 0o700 chmod on existing parent dir", () => {
   it("chmods an existing parent dir from 0o755 to 0o700 on first write through the writer", async () => {
@@ -268,7 +268,7 @@ describe("QueuedFileWriter — defensive 0o700 chmod on existing parent dir", ()
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-symlink-parent-"));
     // The symlink target is operator-owned shared state OUTSIDE our trust
     // boundary — we must never mutate its mode. The lstat-isSymbolicLink
-    // gate is the §1.4 confused-deputy invariant guard.
+    // gate is the confused-deputy invariant guard.
     const realDir = path.join(tmpDir, "real");
     const linkDir = path.join(tmpDir, "evil-link");
     fs.mkdirSync(realDir);

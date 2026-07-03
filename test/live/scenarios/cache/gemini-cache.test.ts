@@ -74,7 +74,7 @@ describe("CACHE-02 Stage-A — Gemini cache (driver mechanics, no COMIS_LIVE)", 
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // "JSON-RPC method error" is expected in Stage-A: rpc-dispatch.ts emits this
@@ -85,7 +85,7 @@ describe("CACHE-02 Stage-A — Gemini cache (driver mechanics, no COMIS_LIVE)", 
       expectedErrors: ["JSON-RPC method error"],
     });
 
-    // FND-11 persistence oracle — only run if memory.db was created by the turn
+    // Persistence oracle — only run if memory.db was created by the turn
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -180,7 +180,7 @@ describe.skipIf(!isLive)("Live — CACHE-02 Gemini CachedContent (Stage-C)", () 
 
   afterEach(async () => {
     if (!canRun) return;
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
     // Real successful turns emit no ERROR/FATAL lines
     await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });

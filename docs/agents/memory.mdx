@@ -151,9 +151,9 @@ flowchart LR
 ```
 
 1. **SEARCH** -- each retrieval lane runs. The FTS5 keyword lane and the vector
-   (meaning) lane are now **two independent, operator-weighted RRF lanes**
+   (meaning) lane are **two independent, operator-weighted RRF lanes**
    (`rag.lanes.fts.weight`, default `1.0`; `rag.lanes.vector.weight`, default
-   `1.5` — the parity defaults reproduce the prior ranking byte-for-byte). On top
+   `1.5`). On top
    of those two base lanes, three further lanes are fused in **only when enabled**
    — the entity lane, the temporal-spread lane, and the causal lane (all
    **default-OFF**). See [Search](/agents/search).
@@ -321,9 +321,8 @@ agents:
 Higher-order **topic** observations — memories that summarise a cluster of
 supporting entries — are maintained by the **one outcome-gated reflection cron**
 (`agents.<id>.learning.enabled`) as `kind:"topic"` Mental Model docs, in the same
-pass that maintains the learned **skill** docs and the per-user **profile** doc.
-(In v2.31 the standalone consolidation/reasoning crons were folded into this one
-engine — see [Memory configuration › Removed in v2.31](/agents/memory-config#removed-in-v2-31).)
+pass that maintains the learned **skill** docs and the per-user **profile** doc
+(see [Memory configuration](/agents/memory-config#the-one-learning-reflection-engine)).
 Each observation carries:
 
 - a **`proof_count`** and the **`source_ids`** of the memories that support it,
@@ -350,7 +349,7 @@ corroborated across runs out-ranks a one-off mention at recall time.
 The reflection engine is **outcome-gated** (it learns only from trusted-origin
 successful trajectories) and gated by `learning.enabled` under the master
 `memory.enabled` switch. The configuration lives in the
-[Memory configuration](/agents/memory-config#the-one-learning-reflection-engine-v2-31)
+[Memory configuration](/agents/memory-config#the-one-learning-reflection-engine)
 reference; this page describes the concept.
 
 ## DAG context store (the default engine; in-session expansion tools)

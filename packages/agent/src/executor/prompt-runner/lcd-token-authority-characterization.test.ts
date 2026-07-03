@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Characterization (regression-guard) tests for the B-1 token-authority question:
+ * Characterization (regression-guard) tests for the token-authority question:
  * is the LCD budget CEILING (H = W − S − O − M − R − P) computed with the SAME
  * token authority as the history items it bounds?
  *
- * THE TWO AUTHORITIES (the apparent "mismatch" the real-LLM review flagged):
+ * THE TWO AUTHORITIES (the apparent mismatch):
  *   - S and P are produced at the executor call sites
  *     (executor-tool-assembly.ts:518-519 / :530-531) by dividing CHAR counts by
  *     `CHARS_PER_TOKEN_RATIO` = 3.5.
@@ -12,24 +12,23 @@
  *     at ingest by `estimateMessageTokens` = 4:1 for text (and 3:1 for structured
  *     tool content).
  *
- * THE REVIEW'S CLAIM was "H comes out LARGER than the true free budget → overflow
- * risk on small windows". This test makes the DIRECTION executable rather than
- * argued-from-prose, and pins what ACTUALLY holds:
+ * THE PLAUSIBLE-BUT-WRONG CLAIM is "H comes out LARGER than the true free budget →
+ * overflow risk on small windows". This test makes the DIRECTION executable rather
+ * than argued-from-prose, and pins what ACTUALLY holds:
  *
  *   For the SAME text content, dividing by the SMALLER divisor 3.5 yields MORE
  *   tokens than dividing by 4. So S and P (at 3.5) OVER-reserve relative to how the
  *   SAME bytes would be counted as history (at 4:1). The result is that H comes out
- *   SMALLER (more conservative) for text — the OPPOSITE direction from the review.
- *   This is the same reversal the B-4 fix already corrected (260605-ney): the
- *   review's ratio intuition runs backwards.
+ *   SMALLER (more conservative) for text — the OPPOSITE direction from the claim:
+ *   the ratio intuition runs backwards.
  *
- * CONSEQUENCE (the B-1 disposition): the unit mismatch is real but its direction is
+ * CONSEQUENCE: the unit mismatch is real but its direction is
  * CONSERVATIVE — S/P over-reserve, H under-fills, the assembled prompt stays UNDER
  * the real free window. Aligning S/P from 3.5 → 4 would make them SMALLER, WIDENING
  * H — the UNSAFE direction (it is exactly what the recall-dag-budget-partition
- * invariant guards against). So B-1 is a documented NON-ISSUE: this test is the
- * regression guard that pins the safe/conservative direction, plus a code comment at
- * the two S/P production sites. NO behavior change ships; S/P stay at 3.5.
+ * invariant guards against). So the mismatch is a documented NON-ISSUE: this test is
+ * the regression guard that pins the safe/conservative direction, plus a code comment
+ * at the two S/P production sites. NO behavior change ships; S/P stay at 3.5.
  *
  * These tests use the REAL pure functions (the budget algebra + the estimator) — no
  * mocks — so the relationship is exercised, not asserted from comments.
@@ -60,9 +59,9 @@ function textMsg(n: number): Message {
   return { role: "user", content: "x".repeat(n), timestamp: 0 } as Message;
 }
 
-describe("B-1: token authority — the budget ceiling vs the items it bounds (characterization)", () => {
+describe("token authority — the budget ceiling vs the items it bounds (characterization)", () => {
   it("DIRECTION: counting the SAME text at the 3.5 S/P ratio reserves MORE tokens than counting it as 4:1 history (S/P OVER-reserve)", () => {
-    // The crux of the B-1 reversal. Take one body of text. Counted as S/P (÷3.5) it
+    // The crux of the reversal. Take one body of text. Counted as S/P (÷3.5) it
     // costs MORE tokens than the SAME bytes counted as history (÷4 via the
     // estimator). So the ceiling subtracts MORE for system/preamble text than the
     // history items it is compared against contribute — H is conservative, not
@@ -72,8 +71,8 @@ describe("B-1: token authority — the budget ceiling vs the items it bounds (ch
     const asHistoryTokens = estimateMessageTokens(textMsg(CHARS)); // ÷4 (text)
 
     // 3.5 is the smaller divisor → MORE tokens. The over-reservation is real and in
-    // the SAFE direction (it shrinks H). This is the executable proof the review's
-    // "H larger" claim is backwards for text (the B-4 pattern again).
+    // the SAFE direction (it shrinks H). This is the executable proof the
+    // "H larger" claim is backwards for text.
     expect(asSystemTokens).toBeGreaterThan(asHistoryTokens);
     // Sanity on the magnitude: 70000/3.5 = 20000 vs 70000/4 = 17500 → a 2500-token
     // CONSERVATIVE cushion, not an overflow.
@@ -82,10 +81,10 @@ describe("B-1: token authority — the budget ceiling vs the items it bounds (ch
   });
 
   it("SMALL WINDOW: with a large preamble on a 32k window, the assembled tokens at the 4:1/3:1 authority stay UNDER W − OUTPUT_RESERVE (no overflow — H is conservative)", () => {
-    // The review's worst case: a SMALL window with a LARGE system prompt + preamble.
+    // The claimed worst case: a SMALL window with a LARGE system prompt + preamble.
     // Construct it and prove the assembled prompt (S + P at 3.5, plus the history
     // the budget KEEPS at the 4:1 authority) does NOT exceed the real free window
-    // (W − OUTPUT_RESERVE). If H were inflated (the review's claim) this could
+    // (W − OUTPUT_RESERVE). If H were inflated (as the claim asserts) this could
     // overflow; because S/P over-reserve, it cannot.
     //
     // Sizes chosen so H stays POSITIVE (an un-clamped budget) — the clean case that
@@ -123,9 +122,9 @@ describe("B-1: token authority — the budget ceiling vs the items it bounds (ch
     // Push the system + preamble large enough that H clamps to 0 (no room for any
     // history). Even then the assembled prompt is only S + P + 0, and the over-
     // reservation keeps it under the real free window — there is no overflow, the
-    // budget just stops admitting history. This is the case the prior exact-identity
-    // could not cover (the identity only holds un-clamped) and is the worst case the
-    // review worried about — and it is STILL safe.
+    // budget just stops admitting history. This is the case the exact identity
+    // above cannot cover (the identity only holds un-clamped) and is the worst case
+    // the overflow claim worries about — and it is STILL safe.
     const W = 32_000;
     const SYSTEM_CHARS = 40_000;
     const PREAMBLE_CHARS = 30_000;
@@ -140,8 +139,8 @@ describe("B-1: token authority — the budget ceiling vs the items it bounds (ch
     expect(assembledCeiling).toBeLessThanOrEqual(W - OUTPUT_RESERVE_TOKENS);
   });
 
-  it("UNSAFE-DIRECTION GUARD: re-deriving S at 4:1 instead of 3.5 would WIDEN H (the move B-1 must NOT make)", () => {
-    // Pins WHY the fix shape the review implied (move S/P 3.5 → 4) is wrong: it makes
+  it("UNSAFE-DIRECTION GUARD: re-deriving S at 4:1 instead of 3.5 would WIDEN H (the move this file forbids)", () => {
+    // Pins WHY the tempting "alignment" fix (move S/P 3.5 → 4) is wrong: it makes
     // S smaller, so H grows — eroding the very cushion the partition invariant
     // relies on. This guard fails loudly if a future change "aligns" S to 4:1 and
     // someone expects H to stay the same or shrink.
@@ -160,7 +159,7 @@ describe("B-1: token authority — the budget ceiling vs the items it bounds (ch
   });
 });
 
-describe("computeTokenBudgetForProfile — frontier byte-identical guarantee (C1)", () => {
+describe("computeTokenBudgetForProfile — frontier byte-identical guarantee", () => {
   const frontierProfile: ModelProfile = {
     contextWindow: 200_000, maxOutputTokens: 32_768, capabilityClass: "frontier",
     scaffoldLevel: "light", securityLevel: "standard", supportsVision: true,

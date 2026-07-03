@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DeleteAndRepost — delete-previous + post-new on each transition (§7.2 / §7.3
- * row "DeleteAndRepost"). Used by Signal (no edit, has delete).
+ * DeleteAndRepost — delete-previous + post-new on each transition.
+ * Used by Signal (no edit, has delete).
  *
  * State machine:
  *   - `apply(frame)`: delete the previous activity message (if any), then post a
@@ -17,9 +17,9 @@
  *       • silent: delete the placeholder (nothing happened).
  *       • aborted: keep the running activity (diagnostic).
  *
- * Timing goes through the injected `TimerPort` / `ClockPort` (never raw globals,
- * Pitfall 7); cancellation via `handle.cancel()`. Implements the core
- * `ChannelActivityRenderer` port.
+ * Timing goes through the injected `TimerPort` / `ClockPort` (never raw
+ * setTimeout/Date globals, so tests stay deterministic); cancellation via
+ * `handle.cancel()`. Implements the core `ChannelActivityRenderer` port.
  */
 import { ok, type Result } from "@comis/shared";
 import type {
@@ -43,8 +43,8 @@ export interface DeleteAndRepostDeps {
   /** Optional — gates the success delete on `deliveredAtMs`. */
   clock?: ClockPort;
   /**
-   * Build the plain-text approval prompt for a frame's visible events
-   * (§6.4.6). Wired by a button-less channel (Signal) as a closure over
+   * Build the plain-text approval prompt for a frame's visible events.
+   * Wired by a button-less channel (Signal) as a closure over
    * `buildApprovalPrompt`; the reposted message carries the prompt appended after
    * the frame text. Omitted by channels with a button surface. Returns `""` for a
    * non-approval frame (nothing appended).
@@ -61,7 +61,7 @@ export function createDeleteAndRepostRenderer(
 
   let lastActivityId: string | undefined;
   let pendingDelete: TimerHandle | undefined;
-  /** §8.5: first-apply clock snapshot; feeds elapsedMs
+  /** First-apply clock snapshot; feeds elapsedMs
    *  into renderFrameText on EVERY repost so each delete+repost carries the
    *  live "(running N s)" fallback. Undefined → no clock → graceful-degrade. */
   let startedAtMs: number | undefined;

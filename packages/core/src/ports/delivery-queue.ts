@@ -6,10 +6,8 @@
  * The queue uses at-least-once delivery semantics: messages are enqueued before
  * send, acknowledged on success, and retried on failure.
  *
- * Crash-Safe Delivery Queue.
- *
  * The createNoOpDeliveryQueue() factory lives at ../delivery/no-op-delivery-queue.ts;
- * this file is now type-only.
+ * this file is type-only.
  *
  * @module
  */
@@ -146,7 +144,7 @@ export interface DeliveryQueuePort {
   /**
    * Reset all rows with status='in_flight' to status='pending', clearing last_error.
    *
-   * Called once at daemon startup before the existing startup drain. Treats
+   * Called once at daemon startup before the startup drain. Treats
    * 'in_flight' as a process-local lease -- any in_flight row left over from a
    * prior daemon process is by definition stale and must be re-attempted.
    *

@@ -2,13 +2,12 @@
 /**
  * The single source of truth for the website's security story.
  *
- * The audited README deliberately leads with MECHANISMS and never headlines a
+ * The security story deliberately leads with MECHANISMS and never headlines a
  * "layer count" - this module mirrors that. The only locked security numbers
  * are the 18 skill-content-scanner rules and the credential-broker / sandbox
- * mechanisms (CONTEXT "Accuracy contract (LOCKED)"). It does NOT encode
- * a 22/23/24/25 layer tally anywhere, and it carries the corrected cache-
- * architecture wording so compare pages have a ready, accurate replacement for
- * the cache phrasing the accuracy audit retired.
+ * mechanisms. It does NOT encode a 22/23/24/25 layer tally anywhere, and it
+ * carries the canonical cache-architecture wording so every page describes
+ * the cache the same, accurate way.
  *
  * Plain `as const` data - no logic, no derived counts.
  *
@@ -76,8 +75,8 @@ export const SECURITY = {
 
   /**
    * The ONE locked security number, attributed to the content scanner. Import
-   * this wherever the figure is shown so the old 18-misattribution (it was
-   * mis-credited to log redaction) can never come back.
+   * this wherever the figure is shown so it always stays credited to the
+   * content scanner - never to log redaction.
    */
   contentScannerRules: 18,
 
@@ -89,9 +88,8 @@ export const SECURITY = {
     "defense in depth - layered runtime defenses, benchmarked, not a single guardrail",
 
   /**
-   * The CORRECT cache wording - the accurate replacement for the cache phrasing
-   * the accuracy audit retired. Used by: compare pages, context-management /
-   * cost sections.
+   * The canonical cache-architecture wording - import it rather than
+   * paraphrasing. Used by: compare pages, context-management / cost sections.
    */
   cacheArchitecture:
     "a cache-fence index keeps the cached prefix byte-stable while the context engine edits everything after it, with adaptive TTL escalation, two-phase cache-break detection, and sub-agent spawn staggering - 15+ shipped optimizations",

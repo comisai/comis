@@ -5,19 +5,18 @@
  * is the empty string.
  *
  * Why this exists:
- *   The `compactionModel` field used to default to a hardcoded Anthropic
- *   literal ("anthropic:claude-haiku-4-5-20250929"). When operators
- *   switched their primary provider to OpenRouter, Google, etc., compaction
- *   still routed to Claude Haiku, defeating the cost-tiering intent and
- *   causing cross-provider auth confusion (no Anthropic API key configured).
+ *   A hardcoded provider-specific default (e.g. an Anthropic Haiku literal)
+ *   would keep routing compaction to that provider even when an operator's
+ *   primary provider is OpenRouter, Google, etc. — defeating the
+ *   cost-tiering intent and causing cross-provider auth confusion (no
+ *   Anthropic API key configured).
  *
  *   The schema default is "" and the value is resolved at runtime: pick the
  *   fast-tier model from `resolveOperationDefaults(primaryProvider)`, with
  *   `getModels(primaryProvider)[0]` as the catalog-fallback.
  *
- *   Note: explicit `compactionModel` values from existing YAML configs win
- *   unchanged (length > 0 short-circuits the resolver). No backward-compat
- *   shim per `feedback_no_backward_compat.md`.
+ *   Note: explicit `compactionModel` values from YAML configs win unchanged
+ *   (length > 0 short-circuits the resolver).
  *
  * @module
  */

@@ -11,7 +11,7 @@
  * and lets the SAME answer + judge models grade it. If a full-dump baseline
  * ties/beats Comis's ranked recall on a benchmark, the *benchmark* is weak, not
  * Comis (Letta's filesystem agent scored 74.0% on LoCoMo, above Mem0's
- * self-reported 68.5%; .planning/MEMORY_BENCHMARK_CREDIBILITY.md TL;DR).
+ * self-reported 68.5%).
  *
  * THE CONTROL-LABEL DISCIPLINE: this adapter carries
  * `isControl: true` and its result's `manifestRef` embeds the explicit

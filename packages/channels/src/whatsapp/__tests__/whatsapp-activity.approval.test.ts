@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WhatsApp plain-text approval-prompt tests (renderer half; §6.4.6 / §18.2).
+ * WhatsApp plain-text approval-prompt tests (renderer half).
  *
  * WhatsApp has NO button surface (`buttons:"none"`), so a `kind:"approval"` frame
  * appends the plain-text prompt `buildApprovalText(event, { includeShortId })` to
  * the placeholder text: "Reply approve or deny within the approval timeout" for a
  * single pending approval, and the shortId-disambiguated form when more than one is
  * pending in the same session. NO signed buttons are attached — HMAC is skipped for
- * plaintext (§6.4.6); the router's plain-text branch scopes the reply to
+ * plaintext; the router's plain-text branch scopes the reply to
  * `pendingForSession` and replay is blocked by pending-table removal.
  *
  * The fake records `buttons:boolean` on `send` so we can prove `buttons:"none"`.
@@ -94,7 +94,7 @@ describe("WhatsApp plain-text approval prompt (buttons:none, shortId when ambigu
     expect(send?.text).not.toContain("within the approval timeout");
   });
 
-  it("attaches NO buttons — the prompt is plain text (HMAC skipped for plaintext, §6.4.6)", async () => {
+  it("attaches NO buttons — the prompt is plain text (HMAC skipped for plaintext)", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
     const fake = createFakeWhatsAppAdapter();
@@ -110,7 +110,7 @@ describe("WhatsApp plain-text approval prompt (buttons:none, shortId when ambigu
   it("a non-approval frame appends no prompt (byte-stable placeholder, buttons:none)", async () => {
     const timer = createFakeTimers();
     const fake = createFakeWhatsAppAdapter();
-    // Drop the clock so the §8.5 elapsed fallback is skipped — the test asserts
+    // Drop the clock so the "(running N s)" elapsed fallback is skipped — the test asserts
     // the bare "running tool" placeholder byte-stably (no `(running 0 s)` suffix).
     const r = createWhatsAppActivityRenderer(fake, "chat-1", { timer });
 

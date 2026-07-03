@@ -237,7 +237,7 @@ describe("callAgent", () => {
     }
   });
 
-  it("emits the literal gateway-unreachable SPEC string on ECONNREFUSED", async () => {
+  it("emits the exact gateway-unreachable message on ECONNREFUSED", async () => {
     const errno = Object.assign(new Error("connect ECONNREFUSED"), {
       code: "ECONNREFUSED",
     }) as NodeJS.ErrnoException;

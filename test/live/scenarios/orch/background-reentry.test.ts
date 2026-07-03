@@ -148,7 +148,7 @@ describe("ORCH-02 Stage-B — spawn at-most-once + no-orphaned-turns (daemon, du
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // session.spawn with dummy keys: LLM provider failure emits "JSON-RPC method error" ERROR.
@@ -156,7 +156,7 @@ describe("ORCH-02 Stage-B — spawn at-most-once + no-orphaned-turns (daemon, du
       expectedErrors: ["JSON-RPC method error"],
     });
 
-    // FND-11 persistence oracle — only run if memory.db was created.
+    // Persistence oracle — only run if memory.db was created.
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -219,7 +219,7 @@ describe("ORCH-02 Stage-B — spawn at-most-once + no-orphaned-turns (daemon, du
     if (spawnedCount === 0) {
       // session.spawn was not accepted (policy, agentToAgent disabled) — at-most-once
       // invariant cannot be verified without a successful spawn. Skip with explanation
-      // rather than passing vacuously over an empty collection (WR-02 fix).
+      // rather than passing vacuously over an empty collection.
       // The preceding session.spawn test would already have logged the rejection reason.
       return;
     }
@@ -259,7 +259,7 @@ describe("ORCH-02 Stage-B — spawn at-most-once + no-orphaned-turns (daemon, du
     if (spawnedRunIds.length === 0) {
       // No spawned events captured — session.spawn was not accepted (policy, agentToAgent
       // disabled). The no-orphaned-turns invariant requires at least one spawn to be
-      // meaningful. Skip with explanation rather than passing vacuously (WR-02 fix).
+      // meaningful. Skip with explanation rather than passing vacuously.
       return;
     }
 

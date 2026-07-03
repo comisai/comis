@@ -185,8 +185,8 @@ describe("markRead/markConsumed via tryGetContext + drain", () => {
 // request-scope traceId into traceId and keeps executionId in runId.
 // ---------------------------------------------------------------------------
 // A clean (non-degraded) rollup default for the builder tests that only
-// exercise the traceId/runId/endReason mapping — the F1 rollup-spread is
-// asserted separately in the "F1 persist" describe below.
+// exercise the traceId/runId/endReason mapping — the rollup-spread is
+// asserted separately in the health-rollup describe below.
 const cleanRollup: SessionHealthRollup = {
   degraded: false,
   costUsd: 0,
@@ -215,7 +215,7 @@ describe("buildSessionEndMetadata", () => {
     expect(result.traceId).not.toBe(result.runId);
   });
 
-  it("stores the formatted sessionKey so the metadata can drive `comis explain` (T1.4 / F5)", () => {
+  it("stores the formatted sessionKey so the metadata can drive `comis explain`", () => {
     const result = buildSessionEndMetadata(baseArgs);
     expect(result.sessionKey).toBe("default:test-tenant:test-channel");
   });
@@ -241,7 +241,7 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "circuit_open" }).sessionEnd?.endReason).toBe("circuit_open");
   });
 
-  it("WR-02: maps loop_detected and session_reset EXPLICITLY (not via the catch-all fallthrough)", () => {
+  it("maps loop_detected and session_reset EXPLICITLY (not via the catch-all fallthrough)", () => {
     // Both are known, in-union ExecutionResult.finishReason members — they must
     // have explicit END_REASON_MAP entries, not lean on the `?? "error"`
     // defensive bucket reserved for unknown provider strings.
@@ -254,14 +254,11 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "session_reset" }).sessionEnd?.endReason).toBe("error");
   });
 
-  it("LAT-04-E-1: END_REASON_MAP maps prompt_timeout → the (formerly dead) 'timeout' endReason — the WR-02 pin deliberately flipped", () => {
-    // The WR-02 negative pin (`expect(Object.values(END_REASON_MAP)).not.toContain("timeout")`)
-    // existed to prevent ACCIDENTAL re-introduction of the dead literal. LAT-04
-    // (Phase 177) is the deliberate one — the QT2/QT3 named-cause un-flattening
-    // precedent: a PromptTimeoutError terminal now carries its OWN named cause
+  it("END_REASON_MAP maps prompt_timeout → the 'timeout' endReason, its only source", () => {
+    // A PromptTimeoutError terminal carries its OWN named cause
     // instead of flattening into generic "error", so a timeout-heavy session
     // attributes correctly in obs.explain / obs.fleet.health
-    // (HARD_FAILURE_END_REASONS and fleet degradedByCause are pre-wired).
+    // (HARD_FAILURE_END_REASONS and fleet degradedByCause carry "timeout").
     expect(END_REASON_MAP["prompt_timeout"]).toBe("timeout");
     // "timeout" reaches the map through EXACTLY this one entry — no stray
     // mapping re-introduces it for any other finishReason.
@@ -269,19 +266,19 @@ describe("buildSessionEndMetadata", () => {
     expect(timeoutSources).toEqual([["prompt_timeout", "timeout"]]);
   });
 
-  it("LAT-04-E-2: a sessionEnd write with finishReason 'prompt_timeout' produces endReason 'timeout' and degraded:true", () => {
+  it("a sessionEnd write with finishReason 'prompt_timeout' produces endReason 'timeout' and degraded:true", () => {
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "prompt_timeout" }).sessionEnd?.endReason).toBe("timeout");
     // degraded := endReason !== "success" — the named cause is degraded by construction.
     expect(buildSessionHealthRollup({}, "timeout").degraded).toBe(true);
   });
 
-  it("QT2: un-flattens the context-exhaustion cause — context_exhausted and context_loop both name it (not generic error)", () => {
-    // The degradation taxonomy previously collapsed BOTH context-exhaustion
-    // finish reasons to the generic "error" bucket, so a context-exhausted
-    // session was indistinguishable from a tool crash in obs.explain /
-    // obs.fleet.health. QT2 folds the two related reasons into ONE named cause:
+  it("un-flattens the context-exhaustion cause — context_exhausted and context_loop both name it (not generic error)", () => {
+    // Collapsing BOTH context-exhaustion
+    // finish reasons to the generic "error" bucket would make a context-exhausted
+    // session indistinguishable from a tool crash in obs.explain /
+    // obs.fleet.health. The map folds the two related reasons into ONE named cause:
     // context_exhausted (the bridge actively sets finishReason:"context_exhausted"
-    // at the block guard) AND context_loop (the related loop-on-exhaustion abort)
+    // at the block guard) and context_loop (the related loop-on-exhaustion abort)
     // both map to the SINGLE "context_exhausted" endReason.
     expect(END_REASON_MAP.context_exhausted).toBe("context_exhausted");
     expect(END_REASON_MAP.context_loop).toBe("context_exhausted");
@@ -292,7 +289,7 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionHealthRollup({}, "context_exhausted").degraded).toBe(true);
   });
 
-  it("QT3: output_starved is a named terminal cause in END_REASON_MAP (not generic error)", () => {
+  it("output_starved is a named terminal cause in END_REASON_MAP (not generic error)", () => {
     // The chokepoint promotes a terminal output-cap truncation to
     // finishReason:"output_starved"; the map must carry it as its OWN named
     // endReason so the cause survives into the persisted rollup + both lenses.
@@ -302,14 +299,14 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionHealthRollup({}, "output_starved").degraded).toBe(true);
   });
 
-  it("WR-2 (177-obs-loop): spend_exceeded is a named terminal cause in END_REASON_MAP (not the generic 'error' catch-all)", () => {
+  it("spend_exceeded is a named terminal cause in END_REASON_MAP (not the generic 'error' catch-all)", () => {
     // The dollars kill-switch sets finishReason:"spend_exceeded"
-    // (bridge-safety-controls.checkSpendLimit). Before this fix END_REASON_MAP
-    // had NO spend_exceeded key, so the reason fell through the `?? "error"`
-    // catch-all → a spend-killed session was indistinguishable from a tool crash
-    // in obs.explain / obs.fleet.health (the security-review WR-2 finding). It
-    // must carry its OWN named endReason (the prompt_timeout/QT2/QT3 precedent —
-    // an in-union reason mapped EXPLICITLY, never the catch-all).
+    // (bridge-safety-controls.checkSpendLimit). Without its own END_REASON_MAP
+    // key the reason would fall through the `?? "error"`
+    // catch-all → a spend-killed session indistinguishable from a tool crash
+    // in obs.explain / obs.fleet.health. It
+    // must carry its OWN named endReason (an in-union reason mapped
+    // EXPLICITLY, never the catch-all).
     expect(END_REASON_MAP.spend_exceeded).toBe("spend_exceeded");
     // The value reaches sessionEnd.endReason through the real builder.
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "spend_exceeded" }).sessionEnd?.endReason).toBe("spend_exceeded");
@@ -323,14 +320,14 @@ describe("buildSessionEndMetadata", () => {
     expect(result.sessionEnd?.endReason).toBe("error");
   });
 
-  it("CR-01/WR-01: degraded is coupled to END_REASON_MAP over the WHOLE finishReason union (no dual-set drift)", () => {
+  it("degraded is coupled to END_REASON_MAP over the WHOLE finishReason union (no dual-set drift)", () => {
     // The enforced single-source invariant: for EVERY ExecutionResult.finishReason
     // (plus the synthetic completed_with_tool_errors / end_turn that reach the
     // chokepoint), the rollup's degraded MUST equal `mappedEndReason !== "success"`.
     // This converts the prose "mirrors END_REASON_MAP" comment into a test —
-    // adding a new finish reason to the union without an END_REASON_MAP entry can
-    // no longer silently reopen the CR-01 divergence (it falls to "error" ⇒
-    // degraded, never to a stale degraded:false).
+    // adding a new finish reason to the union without an END_REASON_MAP entry
+    // cannot silently reopen a degraded/endReason divergence (it falls to
+    // "error" ⇒ degraded, never to a stale degraded:false).
     const ALL_FINISH_REASONS = [
       "stop", "end_turn", "error", "max_steps",
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
@@ -343,12 +340,12 @@ describe("buildSessionEndMetadata", () => {
       // The chokepoint maps once, then passes the mapped endReason to the rollup.
       expect(buildSessionHealthRollup({}, mappedEndReason).degraded).toBe(expectedDegraded);
     }
-    // Spotlight the two reasons CR-01 was filed for: both map to "error" ⇒ degraded.
+    // Spotlight the two riskiest reasons: both map to "error" ⇒ degraded.
     expect(buildSessionHealthRollup({}, END_REASON_MAP.loop_detected ?? "error").degraded).toBe(true);
     expect(buildSessionHealthRollup({}, END_REASON_MAP.session_reset ?? "error").degraded).toBe(true);
   });
 
-  it("CR-01: the chokepoint maps endReason ONCE and feeds the SAME mapped value to the rollup (single source)", () => {
+  it("the chokepoint maps endReason ONCE and feeds the SAME mapped value to the rollup (single source)", () => {
     // Source-grep the production module: the rollup must be driven by the mapped
     // endReason (END_REASON_MAP[...] ?? "error"), NOT a second closed reason set.
     // A regression that reintroduced a standalone degraded predicate over the raw
@@ -386,10 +383,10 @@ describe("buildSessionEndMetadata", () => {
   });
 });
 
-// Issue-4 (small-model e2e 2026-06-12): a narrate-without-emit terminal the
+// A narrate-without-emit terminal the
 // one bounded nudge could not recover must stop reading as a clean success
-// (live: uc4-uc5-35 recorded degraded:false despite a starved narration answer).
-describe("promoteNarrationStall (Issue 4 — narrate-without-emit soft-false-clean fix)", () => {
+// (previously recorded degraded:false despite a starved narration answer).
+describe("promoteNarrationStall — narrate-without-emit turns stop reading as clean success", () => {
   it("promotes a clean would-be terminal when the nudge fired and did NOT recover", () => {
     expect(promoteNarrationStall("stop", { fired: true, recovered: false })).toBe("narration_stall");
     expect(promoteNarrationStall("end_turn", { fired: true, recovered: false })).toBe("narration_stall");
@@ -415,7 +412,7 @@ describe("promoteNarrationStall (Issue 4 — narrate-without-emit soft-false-cle
   });
 });
 
-describe("promoteOutputStarved (QT3 — conservative terminal-truncation promotion)", () => {
+describe("promoteOutputStarved — conservative terminal-truncation promotion", () => {
   // The SDK-normalized AssistantMessage.stopReason union is
   // "stop" | "length" | "toolUse" | "error" | "aborted" (pi-ai types.d.ts), so
   // "length" is the output-cap truncation signal. m.lastStopReason is captured at
@@ -479,12 +476,12 @@ describe("promoteOutputStarved (QT3 — conservative terminal-truncation promoti
 });
 
 // ---------------------------------------------------------------------------
-// F1/F2: the session-health rollup is computed ONCE and feeds BOTH sinks —
-// the sessionEnd metadata (F1, via buildSessionEndMetadata) and the
-// session:summary event (F2, via emitSessionSummary). The emit is
-// fire-and-forget: a throwing listener must NOT abort the teardown (OQ3).
+// The session-health rollup is computed ONCE and feeds BOTH sinks —
+// the sessionEnd metadata (via buildSessionEndMetadata) and the
+// session:summary event (via emitSessionSummary). The emit is
+// fire-and-forget: a throwing listener must NOT abort the teardown.
 // ---------------------------------------------------------------------------
-describe("F1 persist — buildSessionEndMetadata threads the health rollup into sessionEnd", () => {
+describe("buildSessionEndMetadata threads the health rollup into sessionEnd", () => {
   const rollup: SessionHealthRollup = {
     degraded: true,
     costUsd: 1.45,
@@ -515,7 +512,7 @@ describe("F1 persist — buildSessionEndMetadata threads the health rollup into 
   });
 });
 
-describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget", () => {
+describe("emitSessionSummary emits session:summary, fire-and-forget", () => {
   const rollup: SessionHealthRollup = {
     degraded: true,
     costUsd: 1.45,
@@ -533,7 +530,7 @@ describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget"
     clock: { now: () => 4242, nowDate: () => new Date(4242) },
   };
 
-  it("CARRIES the named endReason cause on the emitted event payload (QT2/QT3 — fleet aggregates by cause)", () => {
+  it("CARRIES the named endReason cause on the emitted event payload (fleet aggregates by cause)", () => {
     // The mapped endReason (e.g. context_exhausted / output_starved) is the
     // headline cause. It must ride the session:summary event so the daemon row
     // (sessionSummaryEventToRow) persists it and obs.fleet.health can aggregate
@@ -565,8 +562,8 @@ describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget"
     expect(payload.timestamp).toBe(4242);
   });
 
-  it("CARRIES topErrorKinds + source:'runtime' on the emitted event payload (A1/A2, Phase 159 — OQ1 reversed)", () => {
-    // OQ1 is reversed: the fleet aggregate (A1/A2) needs topErrorKinds + source
+  it("CARRIES topErrorKinds + source:'runtime' on the emitted event payload", () => {
+    // The fleet aggregate needs topErrorKinds + source
     // on the row, and the row is written from this event payload. Production
     // emits the constant "runtime"; tests inject "test" by building the payload.
     const emit = vi.fn();
@@ -578,7 +575,7 @@ describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget"
     expect(payload.source).toBe("runtime");
   });
 
-  it("a THROWING eventBus listener does NOT propagate out of emitSessionSummary (fire-and-forget, OQ3)", () => {
+  it("a THROWING eventBus listener does NOT propagate out of emitSessionSummary (fire-and-forget)", () => {
     const eventBus = {
       emit: vi.fn().mockImplementation(() => {
         throw new Error("listener blew up");
@@ -598,7 +595,7 @@ describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget"
   });
 });
 
-describe("F1/F2 wiring — postExecution computes the rollup once and feeds both sinks", () => {
+describe("rollup wiring — postExecution computes the rollup once and feeds both sinks", () => {
   function readPostExec(): string {
     return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
   }
@@ -619,11 +616,11 @@ describe("F1/F2 wiring — postExecution computes the rollup once and feeds both
     expect(readPostExec()).toMatch(/import\s*\{\s*buildSessionHealthRollup[\s\S]*?\}\s*from\s*"\.\/session-health-rollup\.js"/);
   });
 
-  it("threads the rollup into the buildSessionEndMetadata call (F1)", () => {
+  it("threads the rollup into the buildSessionEndMetadata call (the persist sink)", () => {
     expect(stripped()).toMatch(/buildSessionEndMetadata\([\s\S]*?rollup[\s\S]*?\}\)/);
   });
 
-  it("emits session:summary via emitSessionSummary at the chokepoint (F2)", () => {
+  it("emits session:summary via emitSessionSummary at the chokepoint (the emit sink)", () => {
     expect(stripped()).toMatch(/emitSessionSummary\(/);
   });
 });
@@ -775,7 +772,7 @@ describe("tool-failure endReason and notice", () => {
   });
 
   // -------------------------------------------------------------------------
-  // HR-01 (v2.19) — the user-facing '[tool failure]' notice must NOT fire for a
+  // The user-facing '[tool failure]' notice must NOT fire for a
   // tool that FAILED then SUCCEEDED on retry in the SAME turn (recovered).
   // Live: pipeline attempt-1 (validation) failed, attempt-2 launched the graph,
   // yet the user still saw "[tool failure] pipeline reported an error". The notice
@@ -794,7 +791,7 @@ describe("tool-failure endReason and notice", () => {
 });
 
 // ---------------------------------------------------------------------------
-// unrecoveredFailedToolNames — recovery-aware failure classification (HR-01)
+// unrecoveredFailedToolNames — recovery-aware failure classification
 // ---------------------------------------------------------------------------
 describe("unrecoveredFailedToolNames", () => {
   it("treats a fail-then-succeed of the SAME tool as recovered (empty result)", () => {
@@ -864,8 +861,8 @@ describe("unrecoveredFailedToolNames", () => {
 });
 
 // recoveredFailedToolNames — the complement: surfaces self-healed failures on the
-// bookend so a recovered turn is distinguishable from a terminal one (hermes-usecases
-// obs-loop 2026-06-25). Does NOT change the degraded classification (HR-01 design).
+// bookend so a recovered turn is distinguishable from a terminal one.
+// Does NOT change the degraded classification (by design).
 describe("recoveredFailedToolNames", () => {
   it("returns failed tools that later succeeded in the same turn", () => {
     expect(
@@ -1000,7 +997,7 @@ describe("recall-usage attribution + memory:recall_used emit", () => {
   // prompt-assembly.ts:818) gated on the SAME queryUnderstanding.intentReweight
   // flag the recall read uses; intentReweight off → the emit omits intent (the
   // subscriber records the global bucket → byte-identical write). classifyIntent
-  // is in-package (NOT publicly exported — Pitfall 2) and the emit stays
+  // is in-package (NOT publicly exported) and the emit stays
   // ids/counts/intent-only + LLM-free. Source-grep is the load-bearing mode here,
   // matching the recall-usage family above (scaffolding all 30+ deps is impractical).
   // -------------------------------------------------------------------------
@@ -1027,7 +1024,7 @@ describe("recall-usage attribution + memory:recall_used emit", () => {
     expect(stripped).not.toMatch(/from\s*"@comis\/memory"/);
   });
 
-  it("classifyIntent is NOT re-exported from the agent public barrel (Pitfall 2 — no daemon caller can drag an LLM in)", () => {
+  it("classifyIntent is NOT re-exported from the agent public barrel (no daemon caller can drag an LLM in)", () => {
     const indexSrc = readFileSync(resolve(here, "..", "index.ts"), "utf-8");
     expect(indexSrc).not.toMatch(/\bclassifyIntent\b/);
   });
@@ -1055,15 +1052,15 @@ describe("recall-usage attribution + memory:recall_used emit", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ATTR-02: postExecution emits a NEW counts/ids-only memory:skill_used event
-// carrying the per-turn usedSkillIds (the carrier the bridge wrote in ATTR-01),
-// mirroring the memory:recall_used write-back precedent. The daemon (Plan 07)
+// postExecution emits a counts/ids-only memory:skill_used event
+// carrying the per-turn usedSkillIds (the carrier the bridge wrote),
+// mirroring the memory:recall_used write-back precedent. The daemon
 // consumes it → observe(usedSkillIds) → the used_skill_ids column. It is NOT
 // routed onto learning:outcome_observed (no usedSkillIds field, daemon-emitted).
 // Source-grep is the load-bearing mode here (same as the recall family above —
 // scaffolding 30+ postExecution deps is impractical).
 // ---------------------------------------------------------------------------
-describe("ATTR-02 skill-use threading + memory:skill_used emit", () => {
+describe("skill-use threading + memory:skill_used emit", () => {
   function readPostExec(): { src: string; stripped: string } {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -1108,7 +1105,7 @@ describe("ATTR-02 skill-use threading + memory:skill_used emit", () => {
   it("emits only when usedSkillIds is non-empty (default-absent → no emit, byte-identical)", () => {
     const { stripped } = readPostExec();
     // The emit is guarded on a non-empty usedSkillIds (length > 0) so the no-skill
-    // default path is byte-identical to pre-patch.
+    // default path emits nothing.
     expect(stripped).toMatch(/usedSkillIds[\s\S]{0,80}length\s*>\s*0/);
   });
 
@@ -1153,7 +1150,7 @@ describe("modelAcknowledgedFailure word-boundary regression", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FIX A — the LCD afterTurn store passes (ingest + leaf + condense) run ONLY
+// The LCD afterTurn store passes (ingest + leaf + condense) run ONLY
 // when the agent's effective context engine is `dag`.
 //
 // Bug: the `if (deps.contextStore)` block was PRESENCE-gated, not version-gated.
@@ -1184,9 +1181,8 @@ describe("modelAcknowledgedFailure word-boundary regression", () => {
 // `shouldRunLcdStorePasses(config)` so the dag-vs-pipeline branch is unit-testable
 // without scaffolding all 30+ postExecution deps (mirrors shouldStorePairedMemory).
 // A source-grep locks the predicate into the `if (deps.contextStore)` gate.
-// All FAIL on the pre-patch tree (the export does not exist) — RED-first.
 // ---------------------------------------------------------------------------
-describe("FIX A — LCD store passes run only when the effective engine is dag", () => {
+describe("LCD store passes run only when the effective engine is dag", () => {
   it("behavior — pipeline version (explicit) does NOT run the store passes", () => {
     // An explicit pipeline agent must NOT ingest/leaf/condense — the store is
     // injected unconditionally but nothing reads it in pipeline mode.
@@ -1233,12 +1229,11 @@ describe("FIX A — LCD store passes run only when the effective engine is dag",
 });
 
 // ---------------------------------------------------------------------------
-// LCD afterTurn leaf-pass wiring (Plan 129-06, C1/C3) — RED-first
+// LCD afterTurn leaf-pass wiring
 //
-// The wiring is PRODUCTION source in packages/agent/src/** (CLAUDE.md
-// Tests-First). It activates the inert contextThreshold config: at the
+// The wiring activates the contextThreshold config: at the
 // afterTurn boundary, INSIDE the same `if (deps.contextStore)` block as the
-// 128-03 ingest, a thin gated call fires `maybeRunLeafPass` (body in
+// ingest, a thin gated call fires `maybeRunLeafPass` (body in
 // lcd-compaction-trigger.ts) when a `getSummarizerDeps` getter is present.
 //
 // The behavioral proof exercises the call-site wiring helper directly
@@ -1246,11 +1241,10 @@ describe("FIX A — LCD store passes run only when the effective engine is dag",
 // path is impractical (see the markRead block above), so the helper that the
 // `if (deps.contextStore)` block invokes is the testable seam. With a real
 // :memory: store (over-threshold) + a STUB getSummarizerDeps, a leaf summary
-// persists; with getSummarizerDeps absent it is gated off (no summary). Both
-// FAIL on pre-patch code (the helper does not exist) — RED-first. A source-grep
-// locks the call into the `if (deps.contextStore)` block.
+// persists; with getSummarizerDeps absent it is gated off (no summary). A
+// source-grep locks the call into the `if (deps.contextStore)` block.
 // ---------------------------------------------------------------------------
-describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
+describe("LCD afterTurn leaf-pass wiring inside the contextStore block", () => {
   function readPostExec(): { src: string; stripped: string } {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -1338,7 +1332,7 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
 
     const logger = createMockLogger();
     // STUB summarizer (no network) returning a fixed short string. The model
-    // window is LARGE (200_000) so the SUMW-01 chunk clamp does not bind — a
+    // window is LARGE (200_000) so the summarizer chunk clamp does not bind — a
     // 1_000-token summarizer window would be degenerate under the clamp
     // (window < leafTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS) and turn
     // this wiring fixture into a floor-clamped single-message drain.
@@ -1361,9 +1355,9 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
         freshTailTurns: 8,
       },
       getSummarizerDeps,
-      // SUMW-02: the threaded budget window is the ARMING denominator (4_000
+      // The threaded budget window is the ARMING denominator (4_000
       // stored / 1_000 = 4.0 ≫ 0.75) — deliberately distinct from the
-      // summarizer model's window above, which keys the SUMW-01 chunk clamp.
+      // summarizer model's window above, which keys the summarizer chunk clamp.
       budgetWindowTokens: 1_000,
       now: 7000,
       logger,
@@ -1424,7 +1418,7 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
         scope,
         contextEngine: undefined,
         getSummarizerDeps: undefined,
-        // SUMW-02: required at the params layer; unused here (the gate returns
+        // Required at the params layer; unused here (the gate returns
         // before the denominator is read — no summarizer deps).
         budgetWindowTokens: 1_000,
         now: 7000,
@@ -1438,28 +1432,27 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04).
+// LCD afterTurn deferral + serializer interlock.
 //
-// C4 makes the leaf + condense passes DEFERRED by default (deferCompaction,
-// seeded in 132-01): they enqueue onto the per-conversation serializer as a
+// The leaf + condense passes are DEFERRED by default (deferCompaction):
+// they enqueue onto the per-conversation serializer as a
 // DETACHED unit so afterTurn returns BEFORE the compaction's store write
-// completes. R3 routes the live ingest write through the SAME serializer
+// completes. The live ingest write routes through the SAME serializer
 // (runOnConversation) so the next turn's ingest and the prior turn's deferred
-// compaction can never interleave (Pitfall 2). A fail-closed rollover emits a
+// compaction can never interleave. A fail-closed rollover emits a
 // content-free context:dag_degraded event.
 //
 // Scaffolding all 30+ postExecution deps is impractical (see the markRead block
-// above), so — mirroring the 129-06 leaf-wiring block — we pair a SOURCE-GREP
+// above), so — mirroring the leaf-wiring block — we pair a SOURCE-GREP
 // (locking the inline wiring invariants the criteria require: runOnConversation
 // ×2 inside the `if (deps.contextStore)` block, the deferCompaction gate, the
 // suppressError-wrapped detached promise, NO bare empty catch) with a BEHAVIOR
 // probe that reproduces the exact inline detached-enqueue pattern against a
 // store double and proves the observable contract (the caller resolves before
 // the deferred queue slot completes; both writers route through the queue; the
-// degraded event is content-free). Both FAIL on pre-patch code (the inline
-// wiring + the event did not exist) — RED-first.
+// degraded event is content-free).
 // ---------------------------------------------------------------------------
-describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", () => {
+describe("LCD afterTurn deferred compaction + serializer interlock", () => {
   function readPostExec(): { stripped: string } {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -1477,7 +1470,7 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
     return stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
   }
 
-  it("source-grep — the ingest AND the deferred compaction both route through runOnConversation (Pitfall 2 interlock)", () => {
+  it("source-grep — the ingest AND the deferred compaction both route through runOnConversation (serializer interlock)", () => {
     const block = contextStoreBlock(readPostExec().stripped);
     // BOTH writers route through the per-conversation serializer → ≥2 calls.
     const calls = block.match(/runOnConversation/g) ?? [];
@@ -1569,7 +1562,7 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
     expect(deferredDone).toBe(false);
 
     // Both writers (ingest + deferred compaction) routed through the queue for
-    // the SAME conversation (Pitfall 2 interlock).
+    // the SAME conversation (the serializer interlock).
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(calls.every((c) => c === "conv-c4")).toBe(true);
 
@@ -1635,7 +1628,7 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
     expect(keys).not.toContain("messages");
   });
 
-  // WR-04: the DEFERRED (C4) compaction closure is enqueued detached and can run
+  // The DEFERRED compaction closure is enqueued detached and can run
   // AFTER postExecution returns + `session.dispose()` tears the session down. The
   // deferred passes resolve the summarizer deps WHEN THEY RUN — and getModel()
   // re-reads `session.agent.state.model` (executor-context-engine-setup.ts:307,
@@ -1645,7 +1638,7 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
   // deferred closure BEFORE returning (snapshotSummarizerDepsForDefer), so the
   // detached pass never re-reads the disposed session — it completes non-fatally
   // and still persists a correct summary against the LIVE store.
-  it("behavior — snapshotSummarizerDepsForDefer captures the model BEFORE dispose so a deferred pass does not re-read a torn-down session and still persists (WR-04)", async () => {
+  it("behavior — snapshotSummarizerDepsForDefer captures the model BEFORE dispose so a deferred pass does not re-read a torn-down session and still persists", async () => {
     const [{ default: Database }, memory, core, trigger, postExecMod, mockLoggerMod] =
       await Promise.all([
         import("better-sqlite3"),
@@ -1673,8 +1666,8 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
     type SummarizerDepsGetter = (
       modelSnapshot?: SnapshotModel,
     ) => import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps;
-    // The new lifetime helper the fix adds — RED on the pre-patch tree (the export
-    // does not exist, so the import is undefined and the call below throws).
+    // The lifetime helper under test — resolved via dynamic import so a
+    // missing export fails loudly at the call below.
     const { snapshotSummarizerDepsForDefer } = postExecMod as unknown as {
       snapshotSummarizerDepsForDefer: (
         getSummarizerDeps: SummarizerDepsGetter | undefined,
@@ -1732,7 +1725,7 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
     // that snapshot on every later resolution.
     let disposed = false;
     const sessionState: { model: SnapshotModel | undefined } = {
-      // LARGE window (200_000) so the SUMW-01 chunk clamp does not bind — the
+      // LARGE window (200_000) so the summarizer chunk clamp does not bind — the
       // arming denominator is the threaded budgetWindowTokens below, not this.
       model: { provider: "anthropic", contextWindow: 200_000, reasoning: true },
     };
@@ -1778,10 +1771,10 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
           freshTailTurns: 8,
         },
         getSummarizerDeps: deferredGetter,
-        // SUMW-02: the threaded budget window — a captured NUMBER, dispose-safe
+        // The threaded budget window — a captured NUMBER, dispose-safe
         // by construction. The ARMING denominator (4_000 stored / 1_000 = 4.0 ≫
         // 0.75) — deliberately distinct from the snapshot model's window above,
-        // which keys the SUMW-01 chunk clamp (large, so the clamp doesn't bind).
+        // which keys the summarizer chunk clamp (large, so the clamp doesn't bind).
         budgetWindowTokens: 1_000,
         now: 9000,
         logger,
@@ -1798,19 +1791,19 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
 });
 
 // ---------------------------------------------------------------------------
-// FIX 1 (HIGH security) — the UNGUARDED paired-conversation ingest path must
+// Security — the paired-conversation ingest path must
 // apply the SAME secret-egress guard the DERIVED-memory writes on this file use
 // (user-representation ~:390, relationship, consolidation all call
-// validateMemoryWrite FIRST). A user who pastes a secret (e.g. an `sk-proj-…`
-// key) into chat had it written VERBATIM to the `memories` table AND embedded
-// into the vector index via the paired store — recallable across sessions — even
-// though the explicit memory_store tool refuses it. The refusal is cosmetic for
-// data-at-rest; the highest-volume write path (every qualifying turn) bypassed
-// the guard entirely.
+// validateMemoryWrite FIRST). Without it a user who pastes a secret (e.g. an
+// `sk-proj-…` key) into chat has it written VERBATIM to the `memories` table AND
+// embedded into the vector index via the paired store — recallable across
+// sessions — even though the explicit memory_store tool refuses it. The refusal
+// is cosmetic for data-at-rest; the highest-volume write path (every qualifying
+// turn) would bypass the guard entirely.
 //
 // validateMemoryWrite REJECTS (returns severity "critical") when the
 // secret-egress scan finds a redaction — it does NOT scrub-and-return-content.
-// So FIX 1 GATES the paired store on it: a non-`clean` verdict SKIPS the write
+// So the guard GATES the paired store: a non-`clean` verdict SKIPS the write
 // (no row, no embedding), with a content-free WARN — byte-identical to the
 // user-representation path (memory-user-representation-job.ts:390-406). Non-secret
 // paired content still stores unchanged.
@@ -1820,13 +1813,12 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
 // / isDuplicatePairedMemory extractions) so the secret-egress decision is unit-
 // testable with a mock memoryPort capturing `.store` inputs — scaffolding all 30+
 // postExecution deps is impractical (see the markRead block above). A source-grep
-// locks the helper into the paired-store call site. ALL FAIL on the pre-patch tree
-// (the export does not exist + the gate is absent) — RED-first.
+// locks the helper into the paired-store call site.
 //
 // IMPORTANT (Pino redaction / §2.7): the skip is CONTENT-FREE — the planted
 // secret value never appears in any log field.
 // ---------------------------------------------------------------------------
-describe("FIX 1 — paired-conversation memory store applies the secret-egress guard", () => {
+describe("paired-conversation memory store applies the secret-egress guard", () => {
   function readPostExec(): { src: string; stripped: string } {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -1848,7 +1840,7 @@ describe("FIX 1 — paired-conversation memory store applies the secret-egress g
     const mod = (await import("./executor-post-execution.js")) as unknown as {
       storePairedConversationMemory?: (args: Record<string, unknown>) => Promise<void>;
     };
-    // RED on the pre-patch tree: the export does not exist yet.
+    // Fail loudly here if the export is missing — the helper is the seam under test.
     expect(typeof mod.storePairedConversationMemory).toBe("function");
     return mod as { storePairedConversationMemory: (args: Record<string, unknown>) => Promise<void> };
   }
@@ -2014,7 +2006,7 @@ function makeSilentLogger(): {
 }
 
 // ---------------------------------------------------------------------------
-// R4 critic hook wiring in executor-post-execution.ts
+// Critic hook wiring in executor-post-execution.ts
 //
 // The critic is invoked via a thin hook — shouldRunCritic guard + one
 // runVerificationCritic call — between the tool-failure notice and the
@@ -2030,7 +2022,7 @@ function makeSilentLogger(): {
 //   - result.response mutation is conditioned on not-verified verdict
 //   - generateCanaryToken is imported (canary is built per-execution)
 // ---------------------------------------------------------------------------
-describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
+describe("critic hook — thin wiring in executor-post-execution.ts", () => {
   function readPostExecSource(): string {
     return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
   }
@@ -2089,7 +2081,7 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
     expect(stripped).toMatch(/\bgenerateCanaryToken\b/);
   });
 
-  // WR-03: the canary salt must be the FORMATTED session key, not String(sessionKey)
+  // The canary salt must be the FORMATTED session key, not String(sessionKey)
   // (a plain Zod object → the constant "[object Object]" for every session, which
   // makes the canary's session-binding dead and the JSDoc claim false).
   it("canary is salted with formattedKey, never String(sessionKey)", () => {
@@ -2116,11 +2108,11 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
     expect(awaitCriticPos).toBeLessThan(sessionMetaPos);
   });
 
-  // WR-01 (Phase 169): CWF-05 guard — critic must be skipped for degraded turns.
+  // Degraded-turn guard — critic must be skipped for degraded turns.
   // Source-grep verifies the explicit isDegradedTurn guard is present and wraps
   // the shouldRunCritic call. This makes the guard structural (not implicit) and
   // catches any future edits that accidentally remove it.
-  it("WR-01 (Phase 169): isDegradedTurn guard wraps shouldRunCritic call (explicit CWF-05 protection)", () => {
+  it("isDegradedTurn guard wraps shouldRunCritic call (explicit degraded-turn protection)", () => {
     const src = strippedSource();
     // The guard variable must be declared with both degraded reasons.
     expect(src).toMatch(/isDegradedTurn\s*=/);
@@ -2130,20 +2122,20 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
     expect(src).toMatch(/!isDegradedTurn.*shouldRunCritic|isDegradedTurn.*&&.*shouldRunCritic/s);
   });
 
-  it("WR-01 (Phase 169): isDegradedTurn guard appears AFTER CWF-05 block (correct ordering)", () => {
+  it("isDegradedTurn guard appears AFTER the degraded-reply block (correct ordering)", () => {
     const src = readPostExecSource();
-    const cwf05Pos = src.indexOf("CWF-05: degrade loudly");
+    const degradeLoudlyPos = src.indexOf("Degrade loudly");
     const degradedGuardPos = src.indexOf("isDegradedTurn");
-    expect(cwf05Pos).toBeGreaterThan(-1);
+    expect(degradeLoudlyPos).toBeGreaterThan(-1);
     expect(degradedGuardPos).toBeGreaterThan(-1);
-    // The isDegradedTurn variable must appear AFTER the CWF-05 block so it
-    // can refer to the already-written result.response.
-    expect(degradedGuardPos).toBeGreaterThan(cwf05Pos);
+    // The isDegradedTurn variable must appear AFTER the degraded-reply block so
+    // it can refer to the already-written result.response.
+    expect(degradedGuardPos).toBeGreaterThan(degradeLoudlyPos);
   });
 });
 
 // ---------------------------------------------------------------------------
-// CWF-05: degraded-reply wiring — source-grep + behavior probes
+// Degraded-reply wiring — source-grep + behavior probes
 //
 // These tests verify that:
 //   (A) executor-post-execution.ts imports and calls buildOutputStarvedAnnotation
@@ -2152,10 +2144,10 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
 //   (D) the gate uses effectiveFinishReason (NOT result.finishReason) for context_exhausted
 //   (E) fail-closed: empty partial text + annotation = non-empty reply
 //   (F) no-regression: healthy reasons return undefined from buildDegradedReply
-//   (G) WR-02 (Phase 169): effectiveFinishReason is emitted in the bookend log
-//   (H) IN-01 (Phase 169): behavioral gate tests — actual result.response mutation
+//   (G) effectiveFinishReason is emitted in the bookend log
+//   (H) behavioral gate tests — actual result.response mutation
 // ---------------------------------------------------------------------------
-describe("CWF-05: degraded-reply wiring", () => {
+describe("degraded-reply wiring", () => {
   function readStripped(): string {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     return src
@@ -2197,7 +2189,7 @@ describe("CWF-05: degraded-reply wiring", () => {
     expect(delivered.trim().length).toBeGreaterThan(0);
   });
 
-  it("W4: the context_exhausted reply is built with capabilityClass + traceId wiring", () => {
+  it("the context_exhausted reply is built with capabilityClass + traceId wiring", () => {
     const stripped = readStripped();
     expect(stripped).toMatch(/buildContextExhaustedReply\(\s*\{[\s\S]*?capabilityClass/);
     expect(stripped).toMatch(/buildContextExhaustedReply\(\s*\{[\s\S]*?traceId/);
@@ -2208,17 +2200,17 @@ describe("CWF-05: degraded-reply wiring", () => {
     expect(buildDegradedReply("end_turn")).toBeUndefined();
   });
 
-  // WR-02 (Phase 169): effectiveFinishReason must appear in the bookend log.
+  // effectiveFinishReason must appear in the bookend log.
   // Source-grep verifies the conditional spread that emits it when it differs
   // from result.finishReason (which stays "stop" for output_starved turns).
-  it("WR-02 (Phase 169): effectiveFinishReason is conditionally emitted in bookend log", () => {
+  it("effectiveFinishReason is conditionally emitted in the bookend log", () => {
     const stripped = readStripped();
     // The bookend must include the conditional effectiveFinishReason spread.
     // Pattern: the conditional spread that only emits it when it differs from result.finishReason.
     expect(stripped).toMatch(/effectiveFinishReason\s*!==\s*result\.finishReason.*effectiveFinishReason/s);
   });
 
-  it("WR-02 (Phase 169): effectiveFinishReason derivation appears BEFORE bookend log", () => {
+  it("effectiveFinishReason derivation appears BEFORE the bookend log", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     // The bookend log is identified by the deps.logger.info call with "Execution complete".
     // Use the call-site marker (the deps.logger.info invocation) rather than the string
@@ -2233,13 +2225,13 @@ describe("CWF-05: degraded-reply wiring", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // IN-01 (Phase 169): behavioral gate tests — actual result.response mutation
+  // Behavioral gate tests — actual result.response mutation
   //
   // These exercise the real gate logic: promoteOutputStarved (the promotion
   // that sets effectiveFinishReason) + buildDegradedReply (the builder that
   // produces the exact strings) + the mutation pattern used at the call site.
   // The "smallest real seam" is the combination of these two pure exported
-  // functions, which together constitute the entire CWF-05 gate without
+  // functions, which together constitute the entire degraded-reply gate without
   // requiring the 30+ postExecution deps.
   //
   // Each test simulates exactly what postExecution does:
@@ -2248,7 +2240,7 @@ describe("CWF-05: degraded-reply wiring", () => {
   //   if context_exhausted: response = buildContextExhaustedReply()
   //   else: response unchanged
   // ---------------------------------------------------------------------------
-  it("IN-01 (a): output_starved with partial text — response ENDS WITH annotation (partial preserved)", () => {
+  it("output_starved with partial text — response ENDS WITH annotation (partial preserved)", () => {
     const partial = "Here is my analysis of the code.";
     const lastStopReason = "length"; // bridge-reported output-cap stop
     const effective = promoteOutputStarved("stop", lastStopReason);
@@ -2266,7 +2258,7 @@ describe("CWF-05: degraded-reply wiring", () => {
     expect(response.endsWith(buildOutputStarvedAnnotation())).toBe(true);
   });
 
-  it("IN-01 (b): output_starved with undefined partial — result.response is non-empty (fail-closed)", () => {
+  it("output_starved with undefined partial — result.response is non-empty (fail-closed)", () => {
     const lastStopReason = "length";
     const effective = promoteOutputStarved("stop", lastStopReason);
     expect(effective).toBe("output_starved");
@@ -2281,7 +2273,7 @@ describe("CWF-05: degraded-reply wiring", () => {
     expect(response).toBe(buildOutputStarvedAnnotation());
   });
 
-  it("IN-01 (c): context_exhausted — response is REPLACED with synthesized reply (not Phase-166 placeholder, not [Stopped:)", () => {
+  it("context_exhausted — response is REPLACED with synthesized reply (no bare placeholder, no [Stopped:)", () => {
     const effective = promoteOutputStarved("context_exhausted", undefined);
     // context_exhausted is NOT a stop/end_turn, so promoteOutputStarved passes it through.
     expect(effective).toBe("context_exhausted");
@@ -2292,14 +2284,14 @@ describe("CWF-05: degraded-reply wiring", () => {
     }
     // Must equal the synthesized reply exactly (REPLACE semantics).
     expect(response).toBe(buildContextExhaustedReply());
-    // Must NOT contain the Phase-166 placeholder or operator redirect.
+    // Must NOT contain a bare [Stopped: placeholder or operator redirect.
     expect(response).not.toContain("[Stopped:");
     expect((response ?? "").toLowerCase()).not.toContain("too large");
     // Must reference context window in user-friendly terms.
     expect((response ?? "").toLowerCase()).toContain("context window");
   });
 
-  it("IN-01 (d): healthy stop turn — result.response is BYTE-IDENTICAL (strict no-op)", () => {
+  it("healthy stop turn — result.response is BYTE-IDENTICAL (strict no-op)", () => {
     const original = "Here is the plan you requested, broken into three steps.";
     const lastStopReason = "stop"; // clean stop, not output-cap
     const effective = promoteOutputStarved("stop", lastStopReason);
@@ -2318,7 +2310,7 @@ describe("CWF-05: degraded-reply wiring", () => {
 });
 
 // ---------------------------------------------------------------------------
-// W4: onCondensed wiring guard (Phase 172-02)
+// onCondensed wiring guard
 //
 // The onCondensed callback on lcd-condense-trigger.ts is the seam that
 // delivers summaryId/content/fallback/depth to the distillation runner.
@@ -2331,7 +2323,7 @@ describe("CWF-05: degraded-reply wiring", () => {
 // appendCondensedSummary), and a structural test to verify the onCondensed
 // callback IS defined on RunCondensePassAfterTurnParams at the type level.
 // ---------------------------------------------------------------------------
-describe("W4 — onCondensed callback seam (built-not-wired guard for Phase 172-02)", () => {
+describe("onCondensed callback seam (built-not-wired guard)", () => {
   it("source-grep: lcd-condense-trigger.ts exposes onCondensed on RunCondensePassAfterTurnParams", () => {
     const src = readFileSync(resolve(here, "lcd-condense-trigger.ts"), "utf-8");
     // The interface must include the onCondensed field
@@ -2368,18 +2360,13 @@ describe("W4 — onCondensed callback seam (built-not-wired guard for Phase 172-
 });
 
 // ---------------------------------------------------------------------------
-// DET-02 tier-2 plumbing: PostExecutionParams.userMdLanguage threads from
-// prompt assembly so the degraded-reply resolver (GEN-02, wired in 181-03) can
-// read the USER.md preferred language. THIS plan adds the param + the wiring
-// only — no resolver call here. The en/undefined path must stay byte-identical
-// (I1): the field is optional, so a config that never sets it is unchanged.
-//
-// RED proof: the type-level pin below references `userMdLanguage` as a key of
-// PostExecutionParams via Pick<>; on the pre-patch interface that key does not
-// exist, so the file FAILS to type-check (tsc -b packages/agent). The
-// source-grep wiring pins fail because the field is not threaded yet.
+// USER.md-language plumbing: PostExecutionParams.userMdLanguage threads from
+// prompt assembly so the degraded-reply resolver can
+// read the USER.md preferred language. The en/undefined path must stay
+// byte-identical: the field is optional, so a config that never sets it is
+// unchanged.
 // ---------------------------------------------------------------------------
-describe("DET-02 tier-2 — userMdLanguage threads into PostExecutionParams", () => {
+describe("userMdLanguage threads into PostExecutionParams", () => {
   it("PostExecutionParams declares userMdLanguage as an optional string (type contract)", () => {
     // expectTypeOf is the repo's type-contract convention (see
     // executor-tool-assembly-types.test.ts); enforced under vitest --typecheck.
@@ -2388,8 +2375,7 @@ describe("DET-02 tier-2 — userMdLanguage threads into PostExecutionParams", ()
   });
 
   it("source-grep — PostExecutionParams interface declares an optional userMdLanguage field", () => {
-    // The enforceable RED: the interface must carry `userMdLanguage?: string`.
-    // On the pre-patch interface this field is absent → fails.
+    // The interface must carry `userMdLanguage?: string`.
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const ifaceBlock = src.match(/export interface PostExecutionParams \{[\s\S]*?\n\}/);
     expect(ifaceBlock, "PostExecutionParams interface must exist").not.toBeNull();
@@ -2422,20 +2408,19 @@ describe("DET-02 tier-2 — userMdLanguage threads into PostExecutionParams", ()
 });
 
 // ---------------------------------------------------------------------------
-// GEN-02 (Phase 181-03): the degraded-reply chokepoint resolves the reply
+// The degraded-reply chokepoint resolves the reply
 // language ONCE (resolveReplyLanguage) and passes the tag to all three
 // builders, so a Hebrew turn yields a Hebrew degraded reply with the knob path
-// and incident ref verbatim. The en/Latin path stays byte-identical (I1).
+// and incident ref verbatim. The en/Latin path stays byte-identical.
 //
 // Strategy (the load-bearing mode here — postExecution has 30+ deps, see the
-// markRead/CWF-05 blocks above): a SOURCE-GREP locks the wiring invariants
+// markRead/degraded-reply blocks above): a SOURCE-GREP locks the wiring invariants
 // (resolveReplyLanguage imported + called once in the degraded block; the tag
 // reaches each of the 3 builders); BEHAVIOR PROBES simulate exactly what the
 // chokepoint does — resolve the language from the same {msg.text, config, USER.md}
 // inputs and build the reply — asserting the localized/byte-identical outputs.
-// All probe assertions FAIL on pre-patch (the builders are called with no tag).
 // ---------------------------------------------------------------------------
-describe("GEN-02: degraded-reply chokepoint resolves language once + passes the tag", () => {
+describe("degraded-reply chokepoint resolves language once + passes the tag", () => {
   function readDegradedBlock(): string {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -2443,11 +2428,11 @@ describe("GEN-02: degraded-reply chokepoint resolves language once + passes the 
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    // Scope to the CWF-05 degraded section (the 3 endReason gates). Anchor on
+    // Scope to the degraded-reply section (the 3 endReason gates). Anchor on
     // CODE that survives comment-stripping: the resolve line is emitted just
-    // before the first gate, so start at the resolveReplyLanguage call (or, as a
-    // pre-patch fallback, the first effectiveFinishReason gate) and end at the
-    // resolveScaffoldDefaults block that follows the loop_detected gate.
+    // before the first gate, so start at the resolveReplyLanguage call (or,
+    // when that call is absent, the first effectiveFinishReason gate) and end
+    // at the resolveScaffoldDefaults block that follows the loop_detected gate.
     const resolveStart = stripped.indexOf("resolveReplyLanguage(");
     const gateStart = stripped.indexOf('effectiveFinishReason === "output_starved"');
     const candidates = [resolveStart, gateStart].filter((p) => p >= 0);
@@ -2456,7 +2441,7 @@ describe("GEN-02: degraded-reply chokepoint resolves language once + passes the 
     return endMarker > startPos ? stripped.slice(startPos, endMarker) : stripped.slice(startPos);
   }
 
-  // A predominantly-Hebrew inbound message → DET-02 tier-3 resolves "he"
+  // A predominantly-Hebrew inbound message → the inbound-script tier resolves "he"
   // (Hebrew letters are non-neutral; ASCII punct/space are excluded from the
   // share denominator, so the Hebrew share is a strict majority).
   const HEBREW_INBOUND = "שלום, אני צריך עזרה עם הקוד שלי";
@@ -2479,7 +2464,7 @@ describe("GEN-02: degraded-reply chokepoint resolves language once + passes the 
 
   it("source-grep — the resolve call threads msg.text, config.language, and userMdLanguage", () => {
     const block = readDegradedBlock();
-    // The three DET-02 tier inputs must all feed the single resolve call.
+    // The three language-tier inputs must all feed the single resolve call.
     expect(block).toMatch(/inboundText\s*:/);
     expect(block).toMatch(/configLanguage\s*:/);
     expect(block).toMatch(/userMdLanguage\s*:/);
@@ -2520,7 +2505,7 @@ describe("GEN-02: degraded-reply chokepoint resolves language once + passes the 
         cause: "oversized_input",
       }),
     );
-    // …and carries the knob path + incident ref verbatim (I5).
+    // …and carries the knob path + incident ref verbatim.
     expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
     expect(reply).toContain("(incident tid-he)");
   });
@@ -2553,7 +2538,7 @@ describe("GEN-02: degraded-reply chokepoint resolves language once + passes the 
     );
   });
 
-  it("behavior probe — I1 regression: no config.language + Latin inbound + no USER.md → English byte-identical", () => {
+  it("behavior probe — no config.language + Latin inbound + no USER.md → English byte-identical", () => {
     const replyLanguage = resolveReplyLanguage({
       inboundText: "Here is the plan you requested.",
       configLanguage: undefined,

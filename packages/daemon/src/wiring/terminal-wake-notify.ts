@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The NOTIFY-01 / NOTIFY-02 user-facing outcome+heartbeat EMIT helpers (166-03) — the thin
- * side-effecting glue between the wake holder's content-free signals and the user's channel.
+ * The user-facing outcome+heartbeat EMIT helpers — the thin side-effecting glue between the
+ * wake holder's content-free signals and the user's channel.
  *
  * Extracted from `setup-terminal-wake.ts` so that file stays well under the 800-line
  * architecture cap (it is at the TIGHT end of the band; `terminal-tools.ts` /
- * `terminal-session-registry.ts` are AT the cap). The PURE decisions live in 166-01's skills
+ * `terminal-session-registry.ts` are AT the cap). The PURE decisions live in the skills
  * siblings (`mapTerminalOutcome` / `shouldNotifyOutcome` / `heartbeatLine`); this module
  * performs the already-decided emit through INJECTED seams — mirroring the
  * `terminal-drive-promote.ts` `emitDrivePromoted` precedent (a STRUCTURAL deps interface, not
@@ -14,21 +14,21 @@
  * Two helpers:
  *   - {@link emitTerminalOutcome} — derive (via `mapTerminalOutcome`) and emit ONE user-facing
  *     terminal outcome (`done` / `failed`; `needs-you` is emitted by the existing escalate()
- *     path, NEVER routed here — I4), gated by `shouldNotifyOutcome(outcome, policy)`, with the
+ *     path, NEVER routed here), gated by `shouldNotifyOutcome(outcome, policy)`, with the
  *     §2.7 record (INFO for `done`, WARN + hint + errorKind for `failed`). The message is
  *     STRUCTURAL only (sessionId + outcome enum + durationMs + interactions + capName) —
- *     NEVER the screen (I3).
- *   - {@link runHeartbeatTick} — the NOTIFY-02 per-tick heartbeat loop body the holder's coarse
- *     timer calls: for each PROMOTED session due at the cadence, emit the content-free
+ *     NEVER the screen.
+ *   - {@link runHeartbeatTick} — the per-tick heartbeat loop body the holder's coarse timer
+ *     calls: for each PROMOTED session due at the cadence, emit the content-free
  *     `heartbeatLine` digest + an INFO record, stamping `lastHeartbeatSentMs`. Kept here (not
- *     inlined in the holder) per the extraction directive.
+ *     inlined in the holder) to keep that holder under the line cap.
  *
- * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors `emitDrivePromoted`):
+ * Architecture invariants (binding — AGENTS.md house style, mirrors `emitDrivePromoted`):
  *   - The I/O rides EXCLUSIVELY through the injected `notify` / `info` / `warn` / `nowMs` seams
  *     — no value-imported bus/logger, no raw clock (the globals + infra-runtime-scope gates).
  *   - TOTAL / fire-and-forget: a `notify` rejection is swallowed to a WARN (a notify fault on a
  *     synchronous bus listener must never become an uncaughtException that crashes the daemon).
- *   - CONTENT-FREE (I3): every message is structural counts/durations + the already-redacted
+ *   - CONTENT-FREE: every message is structural counts/durations + the already-redacted
  *     `lastScreenDigest` (formatted by `heartbeatLine`, never re-expanded) — never raw TUI bytes.
  *
  * @module
@@ -40,12 +40,12 @@ import type { WokenTurnNotify } from "./terminal-wake-turn.js";
 import type { LivenessSignal } from "./terminal-wake-types.js";
 
 /**
- * WR-04 (Phase 166): the explicit "unknown cap" sentinel for an `evicted` outcome that arrives
- * WITHOUT a cap name. Used in place of a fabricated plausible cap (`max_sessions`) so a missing
- * cap reads honestly as "(cap unknown)" in the user message + the `failed` outcome — naming the
- * WRONG cap would violate I9 ("name the cap so it reads as a choice, not a mystery"). In practice
- * the reaper always supplies a cap (events-terminal.ts), so this is a defensive floor, not a hot
- * path. It is a closed structural tag (matches the pure `OutcomeInputs.failure` `cap` widening).
+ * The explicit "unknown cap" sentinel for an `evicted` outcome that arrives WITHOUT a cap name.
+ * Used in place of a fabricated plausible cap (`max_sessions`) so a missing cap reads honestly as
+ * "(cap unknown)" in the user message + the `failed` outcome — naming the WRONG cap would mislead
+ * the user (the cap must read as a deliberate choice, not a mystery). In practice the reaper
+ * always supplies a cap (events-terminal.ts), so this is a defensive floor, not a hot path. It is
+ * a closed structural tag (matches the pure `OutcomeInputs.failure` `cap` widening).
  */
 const CAP_UNKNOWN = "unknown" as const;
 
@@ -54,10 +54,10 @@ const CAP_UNKNOWN = "unknown" as const;
  * their I/O to (a `Pick`-style contract, not the full `SetupTerminalWakeDeps`). The holder
  * binds these to its injected `notify` chain + the bound child logger + its clock + the
  * resolved `drive.notify` policy. `notify` is optional (a sync-API channel with no notify
- * callback → the outcome rides the turn result as today, I1).
+ * callback → the outcome rides the turn result).
  */
 export interface TerminalNotifyDeps {
-  /** The §4.7 channel notify chain (`bgNotifyFn` → NotificationService). Absent ⇒ bus-only (I1). */
+  /** The channel notify chain (`bgNotifyFn` → NotificationService). Absent ⇒ bus-only. */
   notify?: WokenTurnNotify;
   /** A pino-compatible INFO sink (the content-free §2.7 record for `done` / a heartbeat). */
   info(obj: Record<string, unknown>, msg: string): void;
@@ -70,9 +70,9 @@ export interface TerminalNotifyDeps {
 }
 
 /**
- * CR-01 (Phase 166): the GENUINE-DEATH discriminator for a `lost` transition — the pure
- * decision the wake holder's `onStateChange` consumes so the holder stays under the 800-line
- * cap (IN-02) and the I9/I10 invariant is RED-pinnable without a live CLI.
+ * The GENUINE-DEATH discriminator for a `lost` transition — the pure decision the wake holder's
+ * `onStateChange` consumes so the holder stays under the 800-line cap and the fire-`failed`-only-
+ * on-genuine-death invariant is unit-pinnable without a live CLI.
  *
  * `terminal:session_state{state:"lost"}` has TWO indistinguishable-on-the-bus sources: a
  * genuinely unrecoverable death (terminal-durable-wiring.ts `onUnrecoverable` — the durable
@@ -82,7 +82,7 @@ export interface TerminalNotifyDeps {
  *
  * Pure + total — never throws. The SAFE direction is `false` (do NOT fail): an absent /
  * `undefined` / `false` marker is a transient/recoverable lost (a promoted long drive whose
- * worker briefly crashes, or a re-attaching durable drive, is NEVER reported failed — I9/I10).
+ * worker briefly crashes, or a re-attaching durable drive, is NEVER reported failed).
  * ONLY an explicit `true` is a genuine death.
  *
  * @param unrecoverable - The genuine-death discriminator off the `terminal:session_state` event.
@@ -92,25 +92,25 @@ export function shouldFailOnLost(unrecoverable: boolean | undefined): boolean {
   return unrecoverable === true;
 }
 
-/** The content-free outcome the holder derived from a state transition (DUR-02 / NOTIFY-01). */
+/** The content-free outcome the holder derived from a state transition. */
 export interface TerminalOutcomeArgs {
   readonly sessionId: string;
   readonly agentId: string;
   /**
    * The transition the holder observed — `exited` (clean PTY exit → done) or a genuine death:
    * `lost` (durable + unrecoverable → failed) / `evicted` (a NAMED cap → failed naming the cap).
-   * `needs-you` is NEVER passed here (the existing escalate() path owns it — I4). A
+   * `needs-you` is NEVER passed here (the existing escalate() path owns it). A
    * transient/recoverable `lost` never reaches here (the holder gates it via {@link shouldFailOnLost}).
    */
   readonly transition: "exited" | "lost" | "evicted";
   /** Present ONLY for `evicted` — the named cap the reaper tripped (the dropped-reason fix). */
   readonly capName?: EvictReason | undefined;
   /**
-   * WR-03 (Phase 166): present ONLY for a genuine-death `lost` — the content-free unrecoverable
-   * reason (a closed structural tag, e.g. `"tmux_session_gone"`) threaded from the
-   * `terminal:session_state` event so the `failed` message + the §2.7 WARN name the actual cause
-   * (`comis explain` reads it) rather than a generic "session_lost". Absent ⇒ fall back to the
-   * generic reason. Content-free (I3 — a machine tag, never screen bytes).
+   * Present ONLY for a genuine-death `lost` — the content-free unrecoverable reason (a closed
+   * structural tag, e.g. `"tmux_session_gone"`) threaded from the `terminal:session_state` event
+   * so the `failed` message + the §2.7 WARN name the actual cause (`comis explain` reads it)
+   * rather than a generic "session_lost". Absent ⇒ fall back to the generic reason. Content-free
+   * (a machine tag, never screen bytes).
    */
   readonly lostReason?: string | undefined;
   /** The captured cumulative drive duration (`nowMs - driveStartedAtMs`), captured before clear. */
@@ -120,15 +120,14 @@ export interface TerminalOutcomeArgs {
 }
 
 /**
- * Derive + emit ONE user-facing terminal outcome (`done` / `failed`) for a PROMOTED drive —
- * NOTIFY-01. Lands the `failed` outcome deferred from Phase 165.
+ * Derive + emit ONE user-facing terminal outcome (`done` / `failed`) for a PROMOTED drive.
  *
- * The outcome is derived via the pure {@link mapTerminalOutcome} (the I9-safe map): `exited` →
- * `done`; `lost`/`evicted` set `failure` → `failed`. The notify is gated by
+ * The outcome is derived via the pure {@link mapTerminalOutcome}: `exited` → `done`;
+ * `lost`/`evicted` set `failure` → `failed`. The notify is gated by
  * {@link shouldNotifyOutcome} (so `done`/`failed` are suppressed under `drive.notify:"none"`).
  * The §2.7 record fires REGARDLESS of the gate (an operator who silenced the channel still gets
  * the log) — INFO for `done`, WARN + hint + errorKind for `failed`. The channel message is
- * STRUCTURAL only (I3): sessionId + the outcome enum + durationMs + interactions + capName,
+ * STRUCTURAL only: sessionId + the outcome enum + durationMs + interactions + capName,
  * NEVER the screen.
  *
  * Fire-and-forget + total: a `notify` rejection is swallowed to a WARN; never throws.
@@ -137,13 +136,13 @@ export interface TerminalOutcomeArgs {
  * @param args - The content-free outcome the holder captured before onSessionGone.
  */
 export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutcomeArgs): void {
-  // Build the I9-safe outcome inputs: a clean exit → done; a genuine death → failed.
+  // Build the outcome inputs: a clean exit → done; a genuine death → failed.
   // An `evicted` transition ⇒ a cap-eviction (errorKind resource); a `lost` ⇒ unrecoverable
-  // (errorKind dependency). `needs-you` never reaches here (the escalate() path owns it — I4).
+  // (errorKind dependency). `needs-you` never reaches here (the escalate() path owns it).
   //
-  // WR-03: a `lost` failure threads the REAL unrecoverable reason (args.lostReason, e.g.
+  // A `lost` failure threads the REAL unrecoverable reason (args.lostReason, e.g.
   // "tmux_session_gone") so the user message + the §2.7 WARN name the actual cause; absent ⇒ the
-  // generic "session_lost" fallback. WR-04: an `evicted` failure NEVER fabricates a cap name —
+  // generic "session_lost" fallback. An `evicted` failure NEVER fabricates a cap name —
   // the failure's `cap` carries the real capName when present, else an explicit unknown sentinel
   // (CAP_UNKNOWN) so a missing cap reads as "(cap unknown)", not a plausible-but-false cap.
   const failure =
@@ -156,12 +155,12 @@ export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutc
   // The map yields undefined only for the silent middle — which this caller never produces
   // (it is invoked solely on a terminal transition). Defensive: nothing to emit ⇒ return.
   if (outcome === undefined) return;
-  // needs-you must never be routed through this gate (I4). This caller never passes it, but
+  // needs-you must never be routed through this gate. This caller never passes it, but
   // guard defensively so a future caller cannot regress the escalate-always invariant here.
   if (outcome === "needs-you") return;
 
   const errorKind = failure?.kind === "cap" ? ("resource" as const) : ("dependency" as const);
-  // WR-04: the honest cap label — the real cap name, or an explicit unknown sentinel. NEVER a
+  // The honest cap label — the real cap name, or an explicit unknown sentinel. NEVER a
   // fabricated `max_sessions`. Drives both the §2.7 hint and the user message.
   const capLabel = args.capName ?? CAP_UNKNOWN;
 
@@ -178,9 +177,9 @@ export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutc
         agentId: args.agentId,
         outcome,
         errorKind,
-        // WR-04: record the cap ONLY when it is a real cap name (never the unknown sentinel).
+        // Record the cap ONLY when it is a real cap name (never the unknown sentinel).
         ...(args.capName !== undefined ? { capName: args.capName } : {}),
-        // WR-03: record the real unrecoverable reason on a lost failure (a closed structural tag).
+        // Record the real unrecoverable reason on a lost failure (a closed structural tag).
         ...(failure?.kind === "unrecoverable" ? { reason: failure.reason } : {}),
         durationMs: args.durationMs,
         interactions: args.interactions,
@@ -195,10 +194,10 @@ export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutc
   }
 
   // The user-facing channel notify — gated by drive.notify (done/failed suppressed under
-  // "none"; needs-you would always pass but never reaches here). STRUCTURAL message only (I3).
-  if (!deps.notify) return; // bus-only channel (no notify callback) → the log above is the record (I1).
+  // "none"; needs-you would always pass but never reaches here). STRUCTURAL message only.
+  if (!deps.notify) return; // bus-only channel (no notify callback) → the log above is the record.
   if (!shouldNotifyOutcome(outcome, deps.policy)) return;
-  // WR-04: on an evicted failure name the cap honestly — the real cap, or "(cap unknown)" — never
+  // On an evicted failure name the cap honestly — the real cap, or "(cap unknown)" — never
   // a fabricated one. A lost failure carries no cap suffix.
   const failedSuffix = args.transition === "evicted" ? ` (${capLabel})` : "";
   const message =
@@ -215,7 +214,7 @@ export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutc
     });
 }
 
-/** A content-free tail for the outcome message — durations/counts only, never the screen (I3). */
+/** A content-free tail for the outcome message — durations/counts only, never the screen. */
 function describeTail(args: TerminalOutcomeArgs): string {
   const parts: string[] = [];
   if (typeof args.durationMs === "number" && Number.isFinite(args.durationMs) && args.durationMs > 0) {
@@ -229,7 +228,7 @@ function describeTail(args: TerminalOutcomeArgs): string {
 
 /** The per-session read-only views + the dedupe-stamp Map the heartbeat tick reads/writes. */
 export interface HeartbeatTickArgs {
-  /** The promoted-session set (I1 — only promoted drives are heartbeated). */
+  /** The promoted-session set (only promoted drives are heartbeated). */
   readonly promotedSessions: ReadonlySet<string>;
   /** The per-session content-free journal holder (the digest source). */
   readonly driveJournals: ReadonlyMap<string, DriveJournal>;
@@ -250,8 +249,8 @@ export interface HeartbeatTickArgs {
 }
 
 /**
- * The NOTIFY-02 per-tick heartbeat loop body — the holder's coarse timer calls this each tick.
- * For each PROMOTED session (I1 — only long drives) that is DUE at the cadence (`now -
+ * The per-tick heartbeat loop body — the holder's coarse timer calls this each tick.
+ * For each PROMOTED session (only long drives) that is DUE at the cadence (`now -
  * lastHeartbeatSentMs >= heartbeatNotifyMs`), emit the content-free {@link heartbeatLine}
  * digest + an INFO §2.7 record, then stamp `lastHeartbeatSentMs`. A just-promoted drive with
  * no journal yet yields a safe "(no activity yet)" line (heartbeatLine is total). Fire-and-
@@ -267,7 +266,7 @@ export function runHeartbeatTick(args: HeartbeatTickArgs): void {
     if (now - last < args.heartbeatNotifyMs) continue; // not due yet (coarse cadence + dedupe).
     const agentId = args.sessionAgent.get(sessionId) ?? "";
     const j = args.driveJournals.get(sessionId);
-    // The content-free digest — heartbeatLine is total (a missing journal → a safe line, I3).
+    // The content-free digest — heartbeatLine is total (a missing journal → a safe line).
     const message = heartbeatLine(j ?? { elapsedMs: 0, lastScreenDigest: "", interactions: 0, costUsd: 0 });
     // Stamp BEFORE the async notify so a fault does not cause a re-fire storm next tick.
     args.lastHeartbeatSentMs.set(sessionId, now);
@@ -287,21 +286,21 @@ export function runHeartbeatTick(args: HeartbeatTickArgs): void {
 }
 
 /**
- * The LIVE-01 backstop's per-session check — extracted from `setup-terminal-wake.ts` (the timer +
+ * The liveness backstop's per-session check — extracted from `setup-terminal-wake.ts` (the timer +
  * the `promotedSessions` loop stay there) to keep that holder under the 800-line cap. It runs the
- * single injected liveness probe for ONE promoted session (NO screen read, I2) and acts on the
+ * single injected liveness probe for ONE promoted session (NO screen read) and acts on the
  * verdict:
- *   - a wake within the heartbeat window (a normally-progressing drive) → SKIP (Pitfall 7).
+ *   - a wake within the heartbeat window (a normally-progressing drive) → SKIP (no probe needed).
  *   - `hung` → synthesize a `state:"stuck"` wake through the EXISTING terminal:input_needed seam
  *     (NOT a new event) + a §2.7 WARN — at-most-once per silent stretch (the onWakeTransition
  *     listener re-stamps `lastTransitionMs` off the synth).
- *   - DELIVER-01 (#2): `busy` + `awaitingInput` (the drive FINISHED its current work + is idle at
- *     its prompt) → deliver a ONE-TIME completion notification (a backgrounded drive emits no fd3
- *     attention, so the backstop is the only place this is observed), de-duped via
- *     `completionNotified`; the latch is CLEARED when the drive resumes working so a fresh idle
- *     after the user replies re-notifies.
- *   - `busy` + working (still producing) → nothing (the ENDURE-01 unify: the `checkLiveness` status
- *     round-trip already refreshed `lastActivity`, LO-03).
+ *   - `busy` + `awaitingInput` (the drive FINISHED its current work + is idle at its prompt) →
+ *     deliver a ONE-TIME completion notification (a backgrounded drive emits no fd3 attention, so
+ *     the backstop is the only place this is observed), de-duped via `completionNotified`; the
+ *     latch is CLEARED when the drive resumes working so a fresh idle after the user replies
+ *     re-notifies.
+ *   - `busy` + working (still producing) → nothing (the idle-reaper unify: the `checkLiveness`
+ *     status round-trip already refreshed `lastActivity`).
  * Fire-and-forget + total: the caller isolates a per-session fault.
  */
 export interface BackstopSessionCheckArgs {
@@ -309,12 +308,12 @@ export interface BackstopSessionCheckArgs {
   agentId: string;
   now: number;
   heartbeatMs: number;
-  /** `lastTransitionMs.get(sessionId)` — the I2 "a wake landed within the window" skip. */
+  /** `lastTransitionMs.get(sessionId)` — the "a wake landed within the window" skip. */
   lastWakeMs: number | undefined;
   checkLiveness: (sessionId: string, agentId: string) => Promise<LivenessSignal | undefined> | LivenessSignal | undefined;
   /** Synthesize a stuck through the EXISTING `terminal:input_needed` seam (the caller wraps the typed bus). */
   emitStuck: (ev: { sessionId: string; agentId: string; state: "stuck"; reason: string; confidence: "high"; timestamp: number }) => void;
-  /** The DELIVER-01 once-per-idle-stretch latch (caller-owned; reclaimed on session end). */
+  /** The once-per-idle-stretch completion latch (caller-owned; reclaimed on session end). */
   completionNotified: Set<string>;
   notify?: WokenTurnNotify;
   notifyPolicy: NotifyPolicy;
@@ -323,13 +322,13 @@ export interface BackstopSessionCheckArgs {
 }
 
 export async function runBackstopSessionCheck(a: BackstopSessionCheckArgs): Promise<void> {
-  // I2: a wake landed within the heartbeat window → a normally-progressing drive; SKIP (no probe).
+  // A wake landed within the heartbeat window → a normally-progressing drive; SKIP (no probe).
   if (a.lastWakeMs !== undefined && a.now - a.lastWakeMs < a.heartbeatMs) return;
   const signal = await a.checkLiveness(a.sessionId, a.agentId);
   if (signal === undefined) return; // a gone session → skip.
   if (busyOrHung(signal) === "busy") {
     if (signal.awaitingInput === true) {
-      // DELIVER-01 (#2): the drive finished its current work + is idle at its prompt → deliver ONCE.
+      // The drive finished its current work + is idle at its prompt → deliver ONCE.
       if (!a.completionNotified.has(a.sessionId)) {
         a.completionNotified.add(a.sessionId);
         if (a.notify && a.notifyPolicy !== "none") {
@@ -355,7 +354,7 @@ export async function runBackstopSessionCheck(a: BackstopSessionCheckArgs): Prom
       return;
     }
     // Still working (not at a prompt) — clear the completion latch so the NEXT idle re-notifies.
-    // ENDURE-01 unify (I9): lastActivity is already refreshed by the checkLiveness status stamp (LO-03).
+    // The idle-reaper unify: lastActivity is already refreshed by the checkLiveness status stamp.
     a.completionNotified.delete(a.sessionId);
     return;
   }

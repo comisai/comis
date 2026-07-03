@@ -7,7 +7,7 @@
  * cost, latency}; a prior dated entry can NEVER be mutated or overwritten by a
  * later release.
  *
- * THE CORRECTED NEVER-OVERWRITE MECHANISM (verified against
+ * THE NEVER-OVERWRITE MECHANISM (verified against
  * fs-safe.ts:436-452): `writeRegularFile`'s default
  * `unlinkExisting:true` does `fs.unlinkSync(path)` (swallowing ENOENT) and THEN
  * opens with O_EXCL on the now-clean path -- so it SILENTLY OVERWRITES a
@@ -77,9 +77,9 @@ export interface LedgerRow {
   date: string;
   /** The Comis commit SHA the run measured (the other half of the filename). */
   commit: string;
-  /** The git branch the run was taken on (e.g. "v2.8-prove-climb"). */
+  /** The git branch the run was taken on (e.g. "bench/prove-climb"). */
   branch: string;
-  /** Component -> version map (e.g. {comis:"2.8.0", pi:"0.78.0"}); URI values sanitized. */
+  /** Component -> version map (e.g. {comis:"1.0.0", pi:"0.78.0"}); URI values sanitized. */
   systemVersions: Record<string, string>;
   /** The benchmark tier (OPEN string -- e.g. "head-to-head", "longmemeval-v2"). */
   tier: string;
@@ -239,7 +239,7 @@ export interface AppendLedgerRowSuccess {
 }
 
 /**
- * Append a dated row to the ledger -- the corrected NEVER-OVERWRITE writer.
+ * Append a dated row to the ledger -- the NEVER-OVERWRITE writer.
  * Computes the dated path; **refuses** if a file already exists at
  * that path (the explicit `existsSync` guard -- `writeRegularFile`'s default
  * would SILENTLY clobber it, fs-safe.ts:436-452); else writes it confined to
@@ -262,7 +262,7 @@ export function appendLedgerRow(opts: AppendLedgerRowOptions): Result<AppendLedg
     return err(e instanceof Error ? e : new Error(String(e)));
   }
 
-  // THE CORRECTED NEVER-OVERWRITE GUARD: refuse to clobber a prior dated entry.
+  // THE NEVER-OVERWRITE GUARD: refuse to clobber a prior dated entry.
   // writeRegularFile's default unlinkExisting:true would silently overwrite it
   // (the O_EXCL is anti-TOCTOU-symlink, not anti-clobber -- fs-safe.ts:436-452).
   if (existsSync(path)) {

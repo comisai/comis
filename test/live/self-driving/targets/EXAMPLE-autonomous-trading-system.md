@@ -5,10 +5,10 @@
 > real market data). Drive it with **`scripts/setup-trading-system.sh`** (one command on the emulator rig), or
 > paste the §Setup-prompt into any Comis chat (Telegram/etc.) to stand it up on any instance.
 >
-> Live-verified end-to-end 2026-07-01→02 (run: autonomous-trading UC, HEAD `28573f67`+OE-6b, anthropic/claude-opus-4-8):
+> Verified end-to-end (anthropic/claude-opus-4-8):
 > MCP installed from npm → 20 tools → inherited by graph sub-agents (governed) · 4-signal analysis grounded on
 > real data · learn-from-outcome loop persisted in memory · autonomous cron fired unattended (`0 21 * * 1-5`),
-> traded, updated the ledger, and delivered its report. See §Ground-truth oracles + the FINDINGS-LEDGER note.
+> traded, updated the ledger, and delivered its report. See §Ground-truth oracles.
 
 ## Scenario
 An operator asks the agent to stand up an **autonomous paper-trading system**: it manages a $100k paper
@@ -71,7 +71,7 @@ Run TRADING CYCLE 1 now to build the initial portfolio: for each watchlist ticke
 ## Known traps / honest limits (from the live run)
 - **Profitability is NOT session-verifiable** — markets don't move in minutes; report mark-to-market P&L honestly as noise. Real-horizon profitability needs the cron running for weeks (a coverage-gap by nature).
 - **Recording a lesson ≠ applying it** — over 2–3 cycles the discipline lesson may not be honored; the trusted-skill layer (corroborated over many cycles) is what enforces it. Reflection admits 0 until observations corroborate (`admissionOutcome:"uncorroborated"` — correct, not a bug).
-- **Autonomous cron deliveries are NOT in `delivery_mirror`** (`DELIVERY-MIRROR-CRON-BLIND`, FINDINGS-LEDGER) — audit autonomous runs via `cron.runs` / the cron trajectory (`delivery.dispatched`) / the chat, not `delivery_mirror`.
+- **Autonomous cron deliveries are NOT in `delivery_mirror`** — audit autonomous runs via `cron.runs` / the cron trajectory (`delivery.dispatched`) / the chat, not `delivery_mirror`.
 - **The agent's self-written ledger timestamp can be wrong** (no reliable clock) — trust the scheduler's `lastRunAtMs`, not the ledger's `last_update`.
 - **rootRunId / cron session** — a cron cycle runs under `<agent>:<chatId>:cron:<jobId>`, distinct from the interactive peer session.
 

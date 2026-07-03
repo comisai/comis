@@ -16,8 +16,9 @@ import { stableStringify } from "../../../../test/support/stable-stringify.js";
  * surface) and FAILS this test — see managed-sections.ts
  * formatRedirectHint for the error-hint flow that cannot drift.
  *
- * The shared `stableStringify` helper from `test/support/stable-stringify.ts`
- * is byte-identical to a former inline body — snapshots remain stable.
+ * The snapshots pin the exact byte output of the shared `stableStringify`
+ * helper from `test/support/stable-stringify.ts` — a format change there
+ * fails every snapshot here.
  */
 
 describe("section-registry parity", () => {
@@ -99,7 +100,7 @@ describe("section-registry parity", () => {
       { section: "providers", key: undefined },
       { section: "channels", key: undefined },
       { section: "agents", key: undefined },
-      // Negative-case probes — these MUST return undefined post-refactor too.
+      // Negative-case probes — these MUST return undefined.
       { section: "memory", key: undefined },
       { section: "security", key: undefined },
       { section: "nonexistent", key: undefined },

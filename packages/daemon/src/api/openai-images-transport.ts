@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OpenAI Images transport (PRV-01).
+ * OpenAI Images transport.
  *
  * A pi-ai `ImagesApiFunction` over the `openai` SDK. It is registered into
  * pi-ai's module-level IMAGES registry under the `openai-images` api
- * (`registerComisImageProviders()` — Plan 04's PI-02 seam, extended in this
- * phase) and dispatched through the ONE `generateImages()` call site.
+ * (`registerComisImageProviders()`) and dispatched through the ONE
+ * `generateImages()` call site.
  *
- * Call shape (RESEARCH CRITICAL #3, VERIFIED against `openai@6.39.1`):
+ * Call shape (VERIFIED against `openai@6.39.1`):
  *   - text->image: `images.generate({ model, prompt, n, size })`
- *   - reference->image (IN-01): `images.edit({ image, prompt, model, n, size })`,
+ *   - reference->image: `images.edit({ image, prompt, model, n, size })`,
  *     where `image` is the reference wrapped via `toFile(buffer, name, {type})`.
  * GPT image models ALWAYS return base64 in `data[].b64_json` — `response_format`
  * is dall-e-only and is NEVER set here (it errors gpt-image-1).
  *
  * The transport decides generate-vs-edit by whether `context.input` carries an
- * `ImageContent` element (the reference image). Today the handler only ever
- * supplies a text-only context (the IN-01 reference plumbing lands in a later
- * plan), but the edit branch is written and tested here because it is part of
- * the transport's SDK contract.
+ * `ImageContent` element (the reference image). The edit branch is written and
+ * tested here even when a caller supplies a text-only context, because it is
+ * part of the transport's SDK contract.
  *
  * Never-throw discipline (mirrors `codex-images-transport.ts`): EVERY miss (no
  * key, SDK throw, empty data) returns `AssistantImages{ stopReason:"error",
@@ -27,7 +26,7 @@
  * content/quota -> content_blocked/quota_exceeded, else -> empty_response). So
  * this file needs NO `@allow-throw` header.
  *
- * SEC (T-185-01): the api key rides `options.apiKey` -> the SDK client only; it
+ * SECURITY: the api key rides `options.apiKey` -> the SDK client only; it
  * is never interpolated or logged. This transport logs NOTHING (logging happens
  * in the reused `toImageGenOutput`, which carries only {errorKind, imageErrorKind,
  * hint}). The catch surfaces the raw SDK message ONLY on the result's
@@ -42,14 +41,14 @@ import { type AssistantImages, type ImagesApiFunction, type ImagesModel } from "
 import { systemNowMs } from "@comis/core";
 
 /**
- * Hand-built `ImagesModel` for the OpenAI Images path (Pitfall 4 — pi-ai's image
+ * Hand-built `ImagesModel` for the OpenAI Images path (pi-ai's image
  * catalog is openrouter-only, so `getImageModel("openai", …)` has no entry). The
  * 8 fields tsc requires for `ImagesModel<TApi>` are
  * `id,name,api,provider,baseUrl,input,output,cost` (it Omits
  * reasoning/contextWindow/maxTokens/compat). The id defaults to `gpt-image-1`
  * (the folded skills adapter's default; VERIFIED in the `openai@6.39.1`
- * `ImageModel` union) and is overridable by config/tool. `cost: 0` is the
- * Phase-186 placeholder.
+ * `ImageModel` union) and is overridable by config/tool. `cost: 0` is a
+ * placeholder — the adapter maps the real generation cost downstream.
  */
 export const OPENAI_IMAGE_MODEL: ImagesModel<"openai-images"> = {
   id: "gpt-image-1",
@@ -59,11 +58,11 @@ export const OPENAI_IMAGE_MODEL: ImagesModel<"openai-images"> = {
   baseUrl: "https://api.openai.com/v1",
   input: ["text", "image"],
   output: ["image"],
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, // 186: real cost mapping (OBS-03)
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, // placeholder — the adapter maps real cost
 };
 
 /**
- * The `openai-images` transport (PRV-01).
+ * The `openai-images` transport.
  *
  * Reads the api key from `options.apiKey`, constructs an `openai` client per
  * call, and calls `images.generate` (text-only) or `images.edit` (when an
@@ -97,14 +96,14 @@ export const generateImagesOpenAI: ImagesApiFunction = async (model, context, op
     const ref = context.input.find(
       (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image",
     );
-    // WR-04: honor an agent/operator-supplied size threaded through
+    // Honor an agent/operator-supplied size threaded through
     // options.metadata.size (the pi-ai passthrough the adapter sets). OpenAI's
     // images.generate/edit accept `size` (e.g. "1024x1024", "1792x1024").
     // Default to the square preset when unset. Coerced to string; a non-string
     // metadata value falls back to the default.
     const requestedSize = (options.metadata as { size?: unknown } | undefined)?.size;
     const size = typeof requestedSize === "string" && requestedSize.length > 0 ? requestedSize : "1024x1024";
-    // generate vs edit (IN-01) keyed on the presence of a reference image.
+    // generate vs edit keyed on the presence of a reference image.
     // DO NOT set response_format — GPT image models always return base64.
     const resp = ref
       ? await client.images.edit({

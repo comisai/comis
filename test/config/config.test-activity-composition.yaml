@@ -27,7 +27,7 @@ agents:
       halfOpenTimeoutMs: 500
     rag:
       enabled: false
-    # Fail-closed enable map (research §H): the activation test drives an
+    # Fail-closed enable map: the activation test drives an
     # Echo turn for agent `default`, channelType `echo`, channelId `echo-activation`,
     # so the pipeline (execution-pipeline.ts:407) mints the 3-segment rendererKey
     # `default:echo:echo-activation`. Enabling it + emergencyDisabled:false ensures

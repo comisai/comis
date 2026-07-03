@@ -10,7 +10,7 @@
  *     `c.scopes[0]` collapse loop in handler wiring depends on this.
  *   - Per-contract spot-checks: request acceptance + rejection, response
  *     acceptance + rejection on representative shapes (cron.add gets extra
- *     emphasis since the dispatcher transformer relocated into the handler).
+ *     emphasis because its handler normalizes multiple accepted wire shapes).
  *
  * @module
  */
@@ -47,7 +47,7 @@ import {
   SubagentListContract,
   SubagentKillContract,
   SubagentSteerContract,
-  // autonomy-handlers.ts (3) — 213-03 REVOKE-01/03 + 217-04 EVICT-01 admin contracts
+  // autonomy-handlers.ts (3) — admin-scoped autonomy live-control contracts
   LeaseRevokeContract,
   RunKillContract,
   AutonomyEvictContract,
@@ -166,12 +166,12 @@ describe("orchestrator-umbrella domain contracts", () => {
     for (const c of subagents) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
   });
 
-  it("autonomy-handlers: all 3 admin-scoped (REVOKE-01/03 + EVICT-01 → ADMIN_METHODS → deny-by-origin)", () => {
+  it("autonomy-handlers: all 3 admin-scoped (→ ADMIN_METHODS → deny-by-origin)", () => {
     // scopes:["admin"] is LOAD-BEARING: it is what puts each method in the
     // DERIVED ADMIN_METHODS set so assertNotAgentOrigin denies any _agentId-
     // bearing (agent-origin) call automatically — no manual _agentId check.
-    // autonomy.evict (217-04) joins lease.revoke/run.kill: an agent cannot
-    // self-un-evict (T-217-12 elevation-of-privilege).
+    // autonomy.evict joins lease.revoke/run.kill: an agent cannot
+    // self-un-evict (elevation-of-privilege guard).
     const autonomy = [LeaseRevokeContract, RunKillContract, AutonomyEvictContract];
     for (const c of autonomy) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
   });
@@ -237,10 +237,10 @@ describe("orchestrator-umbrella domain contracts", () => {
 });
 
 // ===========================================================================
-// cron.add (extra emphasis — transformer relocated into the handler)
+// cron.add (extra emphasis — the handler normalizes multiple wire shapes)
 // ===========================================================================
 
-describe("CronAddContract (transformer relocation)", () => {
+describe("CronAddContract (handler-normalized wire shapes)", () => {
   it("exposes the canonical method name", () => {
     expect(CronAddContract.method).toBe("cron.add");
   });
@@ -276,7 +276,7 @@ describe("CronAddContract (transformer relocation)", () => {
     ).not.toThrow();
   });
 
-  it("accepts the LEGACY flat shape (schedule_kind + schedule_every_ms + payload_*)", () => {
+  it("accepts the flat chat-tool shape (schedule_kind + schedule_every_ms + payload_*)", () => {
     expect(() =>
       CronAddContract.request.parse({
         name: "heartbeat-check",
@@ -953,7 +953,7 @@ describe("SubagentSteerContract", () => {
 });
 
 // ===========================================================================
-// Autonomy contracts (213-03 — REVOKE-01/03 admin RPC: lease.revoke + run.kill)
+// Autonomy contracts (admin RPC: lease.revoke + run.kill)
 // ===========================================================================
 //
 // The two operator-facing live-control methods. `scopes:["admin"]` is the
@@ -961,10 +961,10 @@ describe("SubagentSteerContract", () => {
 // set (rpc-dispatch.ts:159) so `assertNotAgentOrigin` denies any agent-origin
 // (_agentId-bearing) call automatically — the deny-by-origin guarantee, with NO
 // manual _agentId check anywhere (a manual check would drift). The daemon
-// handlers that drive the LeaseManager revoke fan-outs + the runner's
-// killByRootRun land in Plan 06; these tests pin the CONTRACT surface.
+// handlers drive the LeaseManager revoke fan-outs + the runner's
+// killByRootRun; these tests pin the CONTRACT surface.
 
-describe("LeaseRevokeContract (REVOKE-01 — revoke by leaseId OR rootRunId)", () => {
+describe("LeaseRevokeContract (revoke by leaseId OR rootRunId)", () => {
   it("exposes the canonical method name + admin scope", () => {
     expect(LeaseRevokeContract.method).toBe("lease.revoke");
     expect(LeaseRevokeContract.scopes).toEqual(["admin"]);
@@ -992,7 +992,7 @@ describe("LeaseRevokeContract (REVOKE-01 — revoke by leaseId OR rootRunId)", (
   });
 });
 
-describe("RunKillContract (REVOKE-03 — kill a whole tree by rootRunId)", () => {
+describe("RunKillContract (kill a whole tree by rootRunId)", () => {
   it("exposes the canonical method name + admin scope", () => {
     expect(RunKillContract.method).toBe("run.kill");
     expect(RunKillContract.scopes).toEqual(["admin"]);
@@ -1016,7 +1016,7 @@ describe("RunKillContract (REVOKE-03 — kill a whole tree by rootRunId)", () =>
   });
 });
 
-describe("AutonomyEvictContract (EVICT-01 — demote a whole tree by rootRunId)", () => {
+describe("AutonomyEvictContract (demote a whole tree by rootRunId)", () => {
   it("exposes the canonical method name + admin scope", () => {
     expect(AutonomyEvictContract.method).toBe("autonomy.evict");
     expect(AutonomyEvictContract.scopes).toEqual(["admin"]);

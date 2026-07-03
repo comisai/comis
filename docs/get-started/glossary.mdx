@@ -72,7 +72,7 @@ A higher-level summary in the DAG context engine created by merging multiple lea
 
 ## Context DAG
 
-The lossless context engine (the v2.12 "Lossless Context DAG" release) — the **default** context engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). Unlike pipeline mode (which discards old content), DAG preserves the agent's full conversation history losslessly and reconstructs it verbatim each turn — every message, tool call, and tool result kept and paired by id — plus a verbatim [Fresh Tail](#fresh-tail) of the most recent steps. DAG zoomably compresses the oldest history under a token budget and exposes the in-session `ctx_*` expansion tools to recover compressed detail. See [Context Management](/agents/context-management#dag-mode-the-default-engine).
+The lossless context engine ("Lossless Context DAG", LCD) — the **default** context engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). Unlike pipeline mode (which discards old content), DAG preserves the agent's full conversation history losslessly and reconstructs it verbatim each turn — every message, tool call, and tool result kept and paired by id — plus a verbatim [Fresh Tail](#fresh-tail) of the most recent steps. DAG zoomably compresses the oldest history under a token budget and exposes the in-session `ctx_*` expansion tools to recover compressed detail. See [Context Management](/agents/context-management#dag-mode-the-default-engine).
 
 ## Context Engine
 
@@ -252,7 +252,7 @@ A technique where the agent searches its long-term memory for relevant informati
 
 ## Recall Grant
 
-A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries, governed by a daily quota (`contextEngine.maxRecallsPerDay`, default 10). The recall-grant token/quota subsystem belongs to the DAG (LCD) context engine and lands in a later phase. It is distinct from the agent's own **in-session expansion tools** (`ctx_search`, `ctx_inspect`, `ctx_expand`), which let the agent directly recover compressed detail from the current conversation in DAG mode — see [Context expansion tools](/agent-tools/sessions#context-expansion-tools). See [Compaction](/agents/compaction).
+A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries, governed by a daily quota (`contextEngine.maxRecallsPerDay`, default 10). The recall-grant token/quota subsystem belongs to the DAG (LCD) context engine; the config key is reserved but the subsystem is not yet active. It is distinct from the agent's own **in-session expansion tools** (`ctx_search`, `ctx_inspect`, `ctx_expand`), which let the agent directly recover compressed detail from the current conversation in DAG mode — see [Context expansion tools](/agent-tools/sessions#context-expansion-tools). See [Compaction](/agents/compaction).
 
 ## Result Type
 

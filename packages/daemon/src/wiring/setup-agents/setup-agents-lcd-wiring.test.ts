@@ -2,11 +2,10 @@
 /**
  * Forward-presence test — drives the REAL `setupSingleAgent` boot path and
  * asserts that `lcdStore` from `SingleAgentDeps` is actually forwarded into the
- * `createPiExecutor(...)` deps object literal as `contextStore` (Phase 128, A4).
+ * `createPiExecutor(...)` deps object literal as `contextStore`.
  *
- * The field-plumbing lesson this file guards (the user-representation / relationship
- * / tuned-alpha siblings): a store can be threaded through the TYPES
- * (setup-agents-types.ts, pi-executor-types.ts) yet the `createPiExecutor`
+ * The field-plumbing lesson this file guards: a store can be threaded through the
+ * TYPES (setup-agents-types.ts, pi-executor-types.ts) yet the `createPiExecutor`
  * construction site in setup-agents-runtime.ts can still OMIT it — so in the live
  * daemon `deps.contextStore` is always `undefined`, the `dag` branch in
  * `context-engine.ts` never sees a store, and the LCD engine silently falls back
@@ -20,10 +19,9 @@
  * it (daemon.ts: setupMemory → BootContext → bootAgents → setupAgents) is guarded
  * separately by `daemon-lcd-bootcontext.test.ts`.
  *
- * Mirrors setup-agents-relationship-wiring.test.ts / setup-agents-tuned-alpha-wiring.test.ts
- * 1:1 — the established analog for asserting a deps field reaches the mocked
- * createPiExecutor. RED on pre-fix code (the createPiExecutor object literal omits
- * `contextStore: deps.lcdStore`), GREEN once the forward is added on the
+ * The established pattern for asserting a deps field reaches the mocked
+ * createPiExecutor. Regression guard: without the forward the createPiExecutor
+ * object literal omits `contextStore: deps.lcdStore`; the forward rides the
  * sibling-stores line.
  *
  * @module
@@ -52,7 +50,7 @@ vi.mock("@comis/agent", () => ({
   createAuthRotationAdapter: vi.fn(() => ({})),
   resolveCompactionModel: vi.fn(() => ""),
   resolveOperationDefaults: vi.fn(() => ({ mid: "concrete-model" })),
-  // KNOB-01 + FLOOR-01 (176-05): the boot-honesty block runs unconditionally in
+  // The boot-honesty block runs unconditionally in
   // setupSingleAgent — stubbed inert here (this suite pins a different wire).
   compareServedWindowForProvider: vi.fn(() => undefined),
   collectAgentBootWindowInfo: vi.fn(() => ({})),
@@ -169,11 +167,10 @@ describe("setupSingleAgent forwards lcdStore into createPiExecutor as contextSto
   });
 
   it("passes the SingleAgentDeps.lcdStore through to the executor deps as contextStore", async () => {
-    // RED on pre-fix code: the createPiExecutor object literal omits
+    // Without the forward the createPiExecutor object literal omits
     // `contextStore: deps.lcdStore`, so the executor (and thus the context-engine
     // `dag` branch) never sees the store → the LCD engine silently falls back to
-    // pipeline in the live daemon. GREEN once the forward is added on the
-    // sibling-stores line.
+    // pipeline in the live daemon. The forward rides the sibling-stores line.
     const agentId = "default";
     const container = makeContainer(agentId);
     const deps = makeDeps(container);

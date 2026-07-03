@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the per-node token-budget helpers (BUDGET-02/03; D2/D3/D5).
+ * Unit tests for the per-node token-budget helpers.
  * Covers resolveNodeBudget's 4-way precedence, applyNodeBudgetBreach's record +
  * terminal-fail + event branches, and emitSkipsAndSpawnReady's dedup/spawn paths.
  * @module
@@ -34,7 +34,7 @@ function makeGs(opts: {
   } as unknown as GraphRunState;
 }
 
-describe("resolveNodeBudget — precedence (D3)", () => {
+describe("resolveNodeBudget — precedence", () => {
   it("node.tokenBudget wins over operator default and inherit-share", () => {
     const gs = makeGs({ nodes: [{ nodeId: "n1", tokenBudget: 500 }], graphBudget: { maxTokens: 9_000 } });
     expect(resolveNodeBudget(gs, "n1", 2_000)).toBe(500);
@@ -50,23 +50,23 @@ describe("resolveNodeBudget — precedence (D3)", () => {
     expect(resolveNodeBudget(gs, "n1", null)).toBe(3_333); // floor(10000/3)
   });
 
-  // WR-01 (170-REVIEW): the inherit-share floor(maxTokens / nodeCount) must be
-  // clamped to >= 1. When maxTokens < nodeCount the raw floor is 0, which would
+  // The inherit-share floor(maxTokens / nodeCount) must be clamped to >= 1.
+  // When maxTokens < nodeCount the raw floor is 0, which would
   // flow as the child's per-execution cap (checkBudget breaches on the FIRST
   // call — the child can never run a single step) AND make applyNodeBudgetBreach
   // terminal-fail every node with "exceeded (N > 0)". Clamp at 1 so an
   // under-provisioned graph budget yields a tight-but-usable cap, never 0.
-  it("WR-01: inherit-share clamps to >= 1 when maxTokens < nodeCount (never a 0 cap)", () => {
+  it("inherit-share clamps to >= 1 when maxTokens < nodeCount (never a 0 cap)", () => {
     const gs = makeGs({
       nodes: [{ nodeId: "n1" }, { nodeId: "n2" }, { nodeId: "n3" }],
-      graphBudget: { maxTokens: 2 }, // floor(2/3) = 0 on the old code
+      graphBudget: { maxTokens: 2 }, // floor(2/3) = 0 without the clamp
     });
     expect(resolveNodeBudget(gs, "n1", null)).toBe(1);
   });
 
-  it("WR-01: inherit-share clamps to 1 for a huge graph where maxTokens rounds to 0", () => {
+  it("inherit-share clamps to 1 for a huge graph where maxTokens rounds to 0", () => {
     const nodes = Array.from({ length: 100 }, (_, i) => ({ nodeId: `n${i}` }));
-    const gs = makeGs({ nodes, graphBudget: { maxTokens: 50 } }); // floor(50/100) = 0 on the old code
+    const gs = makeGs({ nodes, graphBudget: { maxTokens: 50 } }); // floor(50/100) = 0 without the clamp
     expect(resolveNodeBudget(gs, "n0", null)).toBe(1);
   });
 
@@ -181,11 +181,11 @@ describe("applyNodeBudgetBreach", () => {
     );
   });
 
-  // IN-02 (170-REVIEW): the breach event + WARN must name WHICH cap source
+  // The breach event + WARN must name WHICH cap source
   // bound the node (the node's own tokenBudget / the operator default / the
   // inherit-share) so an operator can tell why a node was bounded. capSource is
   // a closed-union enum tag — counts/ids-only, safe under §2.7.
-  describe("IN-02: capSource names the resolution source on breach", () => {
+  describe("capSource names the resolution source on breach", () => {
     function findBreach(deps: ReturnType<typeof makeDeps>) {
       const emit = deps.eventBus.emit as unknown as ReturnType<typeof vi.fn>;
       return emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded");

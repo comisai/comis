@@ -3,20 +3,17 @@
  * Dialectic configuration schema.
  *
  * Gates the `memory_ask` agent tool — the grounded, cited Q&A surface over the
- * agent's LLM-free recall pipeline. Enabling it is a COST opt-in: `memory_ask`
+ * agent's LLM-free recall pipeline. It is a COST feature: `memory_ask`
  * makes the ONE allowed query-time LLM call (the bounded synthesis seam that
  * turns trust-filtered + redacted recall output into a cited answer). Recall
  * itself stays deterministic + LLM-free; the dialectic runs ONLY when the agent
  * explicitly invokes the tool, and the tool is registered ONLY when this knob is
  * `enabled`.
  *
- * Default-OFF is a COST gate, NOT back-compat: knob off ⇒ the tool is never
- * registered and there is no behavior change (no spend until an operator opts
- * in). This is a COST gate, not a PRIVACY gate — the dialectic reads only the
+ * The knob is a COST gate, not a PRIVACY gate: when off, the tool is never
+ * registered and there is no spend. The dialectic reads only the
  * already-trust-filtered + redacted recall output, so it carries no privacy
  * sign-off field; the only knobs are `enabled` and the two per-ask cost bounds.
- * (The privacy-gated social-modeling schema this once mirrored was DELETED in
- * Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
  *
  * A small `z.strictObject` + `.default()` schema; kept deliberately minimal.
  *
@@ -29,9 +26,9 @@ import { z } from "zod";
  * DialecticConfigSchema: Zod schema for the per-agent `memory_ask` Q&A tool.
  *
  * Fields:
- * - enabled: opt-in (default false — a COST gate, not back-compat). Enabling
- *   it registers `memory_ask`, the ONE query-time LLM surface in the memory
- *   stack.
+ * - enabled: default true (opt-out posture — a COST gate). When enabled it
+ *   registers `memory_ask`, the ONE query-time LLM surface in the memory
+ *   stack; force-disabled when the master cost switch is off.
  * - maxOutputTokens: per-ask synthesis-LLM output bound (the cost axis; the
  *   DoS bound on a single answer's length).
  * - maxRecall: the grounding-set size — the most recalled memories the

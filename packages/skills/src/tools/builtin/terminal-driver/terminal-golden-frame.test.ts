@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Golden-frame tests for the terminal rendering (spec §2.4 / §11).
+ * Golden-frame tests for the terminal rendering.
  *
- * The §11 "experimental addon-serialize churn" guard: `@xterm/addon-serialize` is
+ * The "experimental addon-serialize churn" guard: `@xterm/addon-serialize` is
  * pinned (0.14.0) but flagged experimental, so a future bump could silently change
  * the serialization. This test REPLAYS each committed byte-stream fixture through a
  * fresh `createSessionEmulator` and asserts `snapshot({format:'ansi'}).screen`
@@ -63,11 +63,11 @@ function readGolden(goldenName: string): string {
   return readFileSync(join(FIXTURES, goldenName), "latin1");
 }
 
-describe("golden-frame — synthetic spinner stream (the §11 serialize-churn guard)", () => {
+describe("golden-frame — synthetic spinner stream (the serialize-churn guard)", () => {
   it("replays spinner.stream.txt and serialize() === the committed golden", async () => {
     const snap = await replayFixture("spinner.stream.txt");
 
-    // The §11 guard: the ansi serialization is byte-for-byte the committed golden.
+    // The churn guard: the ansi serialization is byte-for-byte the committed golden.
     expect(snap.screen).toBe(readGolden("spinner.golden.txt"));
     // The spinner's FINAL `\r`-redrawn frame is what renders (each \r overwrites
     // the prior glyph in place) — the settled line, not a mid-spin glyph.
@@ -85,7 +85,7 @@ describe("golden-frame — synthetic alt-screen stream", () => {
     expect(snap.alt).toBe(true);
     // The drawn banner is in the rendered grid.
     expect(snap.screen).toContain("EDITOR");
-    // The §11 guard: the full ansi serialization equals the committed golden.
+    // The churn guard: the full ansi serialization equals the committed golden.
     expect(snap.screen).toBe(readGolden("altscreen.golden.txt"));
   });
 });
@@ -101,7 +101,7 @@ describe("golden-frame — recorded vim stream (VPS-recorded; skips until the fi
 
       // A real vim session is a full-screen alt-buffer TUI.
       expect(snap.alt).toBe(true);
-      // The §11 guard over the REAL recorded stream: serialize() === the golden.
+      // The churn guard over the REAL recorded stream: serialize() === the golden.
       expect(snap.screen).toBe(readGolden("vim.golden.txt"));
     },
   );

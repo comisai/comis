@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first (P1): the stdio frame-pump is the testable core of the standalone
+ * The stdio frame-pump is the testable core of the standalone
  * worker process entry (`terminal-worker-main.ts`). The pump decodes
  * length-prefixed request frames off the worker's stdin, dispatches each to the
  * in-process `createTerminalWorker().handle`, and writes the encoded reply back
- * to stdout — the SERVER half of the §2.3 worker IPC that was never shipped (the
- * daemon forks `node worker-main.js`, which had no `worker-main.js` to fork).
+ * to stdout — the SERVER half of the worker IPC (the daemon forks
+ * `node worker-main.js`).
  *
  * This is platform-agnostic (no fork, no bwrap) so it runs on the macOS author
  * box; the real separate-process fork + jail is covered by

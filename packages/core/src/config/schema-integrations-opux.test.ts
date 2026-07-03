@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * McpServerEntrySchema additive-field tests.
+ * McpServerEntrySchema per-server field tests.
  *
- * Covers the 5 per-server fields (toolAllowlist, toolBlocklist,
+ * Covers the 5 optional per-server fields (toolAllowlist, toolBlocklist,
  * idleTtlMs, enableResources, enablePrompts). The schema-default assertions
- * require the schema change and these tests to land in one commit.
+ * pin the defaults, so a default change must update these tests with it.
  */
 import { describe, it, expect } from "vitest";
 import { McpServerEntrySchema } from "./schema-integrations.js";
 
 const base = { name: "s", transport: "stdio", command: "x" } as const;
 
-describe("McpServerEntrySchema — OPUX additive fields", () => {
+describe("McpServerEntrySchema — per-server additive fields", () => {
   it("idleTtlMs defaults to 0 when omitted (opt-in eviction)", () => {
     const parsed = McpServerEntrySchema.parse({ ...base });
     expect(parsed.idleTtlMs).toBe(0);
@@ -45,7 +45,7 @@ describe("McpServerEntrySchema — OPUX additive fields", () => {
     expect(() => McpServerEntrySchema.parse({ ...base, idleTtlMs: -1 })).toThrow();
   });
 
-  it("parses a legacy-shape entry unchanged with new fields undefined", () => {
+  it("parses an entry without the additive fields, leaving them all undefined", () => {
     const parsed = McpServerEntrySchema.parse({
       name: "legacy",
       transport: "stdio",
@@ -67,7 +67,7 @@ describe("McpServerEntrySchema — supportsParallelToolCalls", () => {
     expect(parsed.supportsParallelToolCalls).toBe(true);
   });
 
-  it("leaves supportsParallelToolCalls undefined when omitted (no backward-compat break)", () => {
+  it("leaves supportsParallelToolCalls undefined when omitted (absent means unset — no default applied)", () => {
     const parsed = McpServerEntrySchema.parse({ ...base });
     expect(parsed.supportsParallelToolCalls).toBeUndefined();
   });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * `readSessionIndexWindow` — the A3 multi-day session-index aggregate reader.
+ * `readSessionIndexWindow` — the multi-day session-index aggregate reader.
  *
  * The activity half of the fleet lens. It generalizes the single-traceId
  * `resolveTraceToSession` (`obs-explain-resolve.ts`, which reads a 2-day horizon
@@ -16,20 +16,20 @@
  *   - turn / token totals        ← per-session dedup of `session_ended` (authoritative)
  *                                    + `turn_completed` (in-flight fallback)
  *
- * Source of the totals (the note for the Phase-161 FleetHealthReport handler):
+ * Source of the totals (the note for the FleetHealthReport handler):
  * the reader prefers the `session_ended` rows as the AUTHORITATIVE session-level
  * totals (one ended row carries the whole session's `turnCount`/`totalTokens`).
  * For a session that has NO end row yet (an in-flight session — the dominant
  * live case, e.g. a long-lived chat-API session that never destroys), it sums
  * the per-turn `turn_completed.inputTokens + outputTokens` instead. The two are
  * de-duped PER sessionId: a session that DOES have an end row uses the ended
- * totals only (never the live sum), so neither path double-counts. The v1 reader
- * summed only `session_ended` and silently reported 0 turns / 0 tokens for every
+ * totals only (never the live sum), so neither path double-counts. Summing only
+ * `session_ended` would silently report 0 turns / 0 tokens for every
  * still-open session — including the busiest one on most fleets. The reader
- * exposes `daysRead` / `daysMissing` so the R1 coverage block can report an
+ * exposes `daysRead` / `daysMissing` so the coverage block can report an
  * honest partial read.
  *
- * Provenance: `synthetic === true` rows (D9 harness/bench/test sessions) are
+ * Provenance: `synthetic === true` rows (harness/bench/test sessions) are
  * excluded by default — a REAL filter (the field IS present on session-index
  * rows, unlike the diagnostics row). `{ includeSynthetic: true }` is the admin
  * opt-in. The exclusion mirrors the `obs-explain-resolve.ts:81` precedent.
@@ -39,8 +39,8 @@
  *     ESLint-banned); the day-key is a fixed `YYYY-MM-DD` derived from
  *     `systemDateFrom`, never a row field — no user-controlled path component.
  *   - Time: the window upper bound is the INJECTED `nowMs` (the caller's single
- *     clock instant) — so the day-key range is deterministic w.r.t. that clock
- *     (WR-01). It defaults to the sanctioned-root `systemNowMs()` only for
+ *     clock instant) — so the day-key range is deterministic w.r.t. that clock.
+ *     It defaults to the sanctioned-root `systemNowMs()` only for
  *     callers with no clock seam; day-keys are `systemDateFrom(...)` strings,
  *     NEVER `new Date()` / a raw `Date.now()` (the globals gate).
  *   - All reads soft-fail (`continue`, never throw): a missing day-file
@@ -57,8 +57,8 @@
  * soft-fail silently and take no `Deps`/logger). These are pure functional
  * file readers with no injection seam, and importing `@comis/infra` directly is
  * banned (AGENTS §2.4). The soft-fail signal is surfaced STRUCTURALLY via the
- * `daysRead` / `daysMissing` counters the R1 coverage block consumes; the
- * Phase-161 RPC handler logs at the boundary where it has the `Deps` seam.
+ * `daysRead` / `daysMissing` counters the coverage block consumes; the
+ * RPC handler logs at the boundary where it has the `Deps` seam.
  *
  * @module
  */
@@ -87,7 +87,7 @@ const MAX_RECORDS = 5_000;
 
 /**
  * The windowed session-index aggregate. Counts + distinct sets only — no
- * message bodies, no per-session detail (the report is digest-only, V8).
+ * message bodies, no per-session detail (the report is digest-only).
  */
 export interface FleetSessionIndexSummary {
   /** Distinct `agentId`s seen in `session_started` rows, sorted for determinism. */
@@ -151,10 +151,10 @@ function dayKeysInWindow(sinceMs: number, nowMs: number): string[] {
  *   `MAX_DAYS`).
  * @param nowMs - epoch-ms window UPPER bound (the day-key range end). Pass the
  *   caller's injected clock instant so the window is deterministic w.r.t. that
- *   clock (WR-01). Defaults to the sanctioned-root `systemNowMs()` for callers
+ *   clock. Defaults to the sanctioned-root `systemNowMs()` for callers
  *   that genuinely have no clock seam.
  * @param opts.includeSynthetic - when `false` (the default), rows stamped
- *   `synthetic === true` are excluded from every aggregate (D9). `true` includes
+ *   `synthetic === true` are excluded from every aggregate. `true` includes
  *   them (the admin opt-in).
  * @returns the windowed aggregate. Never throws — missing/unreadable/malformed
  *   input soft-fails and is reflected in `daysRead` / `daysMissing`.
@@ -181,8 +181,8 @@ export function readSessionIndexWindow(
   // session) only ever emits `turn_completed` rows. We accumulate BOTH per
   // sessionId and, at the end, prefer the authoritative ended totals when present
   // and fall back to the summed live turns otherwise — so neither is dropped nor
-  // double-counted (the v1 reader summed only ended rows, silently reporting 0
-  // turns / 0 tokens for every still-open session).
+  // double-counted (summing only ended rows would silently report 0 turns /
+  // 0 tokens for every still-open session).
   const endedSessions = new Set<string>();
   const endedTurns = new Map<string, number>();
   const endedTokens = new Map<string, number>();
@@ -224,7 +224,7 @@ export function readSessionIndexWindow(
       }
       linesRead += 1;
 
-      // F-OBS-1b (30uc-20260624): window by the ROW ts, not just the day-key.
+      // Window by the ROW ts, not just the day-key.
       // The day-keyed files are whole-DAY; a `--since 1h` window opens today's
       // file and (pre-fix) counted EVERY session_started channel/agent in it
       // regardless of ts — so a 1-session window reported 39 channels + a
@@ -234,7 +234,7 @@ export function readSessionIndexWindow(
       const rowTsMs = typeof rec.ts === "string" ? Date.parse(rec.ts) : Number.NaN;
       if (Number.isFinite(rowTsMs) && (rowTsMs < sinceMs || rowTsMs > nowMs)) continue;
 
-      // D9 default-exclude — a REAL filter (strict === true; a string "true"
+      // Synthetic default-exclude — a REAL filter (strict === true; a string "true"
       // must NOT truthy-coerce into a spurious exclusion of a real session).
       if (rec.synthetic === true && !includeSynthetic) continue;
 

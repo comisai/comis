@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ActivityTurnCoordinator — owns the turn boundary in the orchestrator
- * (spec §4.5/§4.6).
+ * ActivityTurnCoordinator — owns the turn boundary in the orchestrator.
  *
  * One coordinator is constructed per turn and disposed at turn end. It:
  *   1. subscribes to the canonical activity stream for the turn
@@ -11,14 +10,14 @@
  *      (chat/acp) to build the next `ActivityRenderFrame`, and calls
  *      `renderer.apply(frame)` debounced to one paint per 800ms via the
  *      injected `TimerPort` (`handle.cancel()` for cancellation — never a raw
- *      timer global, Pitfall 7),
+ *      timer global),
  *   3. on `finalize(outcome)` enforces the delete gate:
  *      • any observed `ActivityEvent{status:"failed"}` reclassifies the
  *        outcome to `kind:"failure"` with NO delete branch — even when delivery
  *        itself succeeded,
  *      • a `success` / `success_with_recovered_failures` outcome calls
  *        `renderer.finalize` ONLY after `outcome.delivery.deliveredAtMs` is
- *        acknowledged (delete never precedes the answer; §7.3),
+ *        acknowledged (delete never precedes the answer),
  *      • `failure` / `silent` / `aborted` call `renderer.finalize` with the
  *        renderer's own keep/delete policy (no success-delete forced here),
  *   4. translates any `ActivityRenderError` from `apply`/`finalize` into an
@@ -57,7 +56,7 @@ import { randomUUID } from "node:crypto";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Debounce window for `renderer.apply` — at most one paint per 800ms (§5/§9). */
+/** Debounce window for `renderer.apply` — at most one paint per 800ms. */
 const APPLY_DEBOUNCE_MS = 800;
 
 // ---------------------------------------------------------------------------
@@ -84,7 +83,7 @@ export type ActivityProjection = (
  * Minimal PlanUpdate shape the coordinator's PlanStream subscription expects.
  *
  * Structural type defined LOCALLY here (NOT imported from `@comis/observability`)
- * so the orchestrator preserves its §4.7 boundary: imports ONLY
+ * so the orchestrator preserves its boundary: imports ONLY
  * `@comis/core` and never `@comis/observability` (see src/index.ts:36 and
  * execution-pipeline.ts:131). The observability `createPlanStream(...)` returns
  * a `PlanStream` whose `PlanUpdate` payload structurally satisfies THIS shape;
@@ -123,20 +122,20 @@ export interface PlanStream {
 }
 
 /**
- * Live read of the operator kill switches for the agent owning this turn
- * (§22.2). Returns the per-agent `activity` slice the gate cares about:
+ * Live read of the operator kill switches for the agent owning this turn.
+ * Returns the per-agent `activity` slice the gate cares about:
  * the agent-wide `emergencyDisabled` stop and the per-renderer `channels` enable
  * map (keyed by `TurnActivityContext.rendererKey`). MUST be a getter, not a
  * snapshot — the coordinator reads it on every `flushApply` so an in-memory
- * `config.write` flip hot-reloads without reconstructing the coordinator
- * (Pitfall 4). `undefined` (getter absent, or the agent has no `activity`
+ * `config.write` flip hot-reloads without reconstructing the coordinator.
+ * `undefined` (getter absent, or the agent has no `activity`
  * config) means "no suppression" — the un-wired composition path is unaffected.
  */
 export type ActivityKillSwitch = () =>
   | {
       emergencyDisabled: boolean;
       channels: Record<string, { enabled: boolean }>;
-      /** §22.2 operator opt-in to default-ON: when true, a rendererKey with no
+      /** Operator opt-in to default-ON: when true, a rendererKey with no
        *  explicit `channels` entry is enabled (an explicit entry still wins).
        *  Absent/false preserves the fail-closed Day-0 posture. */
       defaultEnabled?: boolean;
@@ -201,7 +200,7 @@ export interface ActivityTurnCoordinatorDeps {
 }
 
 /**
- * In-process counter snapshot (spec §20.1). Mirrors the observability
+ * In-process counter snapshot. Mirrors the observability
  * ActivityStream pattern — there is no metrics-sink primitive, so counters are
  * surfaced as a snapshot for the daemon scrape + the test harness.
  */
@@ -224,7 +223,7 @@ export interface ActivityTurnCounters {
   circuitBreakerTripped: number;
 }
 
-/** The per-turn coordinator handle (§4.6). */
+/** The per-turn coordinator handle. */
 export interface ActivityTurnCoordinator {
   /** Subscribe for the turn. Call once at turn start. */
   start(ctx: TurnActivityContext): void;
@@ -322,7 +321,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   let disposed = false;
   // The turn's root activity id, minted once at start(). The spawning
   // turn's root is the parent of every sub-agent ActivityEvent (the spawn event
-  // carries parentSessionKey, not a parent activityId — §17.3 / Assumption A2).
+  // carries parentSessionKey, not a parent activityId).
   let turnRootActivityId: string | undefined;
   // Active sub-agent stack (runId-less here — the coordinator keys on the
   // event's own activityId) for nested-spawn parent resolution. The top of the
@@ -354,12 +353,12 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
    * Kill-switch gate. Returns true when this renderer's activity must be
    * suppressed for the current turn. Reads the LIVE getter on every call (no
    * captured snapshot) so an in-memory config.write flip hot-reloads without
-   * reconstructing the coordinator (Pitfall 4 / §22.2):
+   * reconstructing the coordinator:
    *   • emergencyDisabled === true → suppress ALL activity for the agent,
    *   • an explicit channels[ctx.rendererKey] entry always wins: enabled:true
    *     renders, enabled:false suppresses (per-channel opt-out),
-   *   • no explicit entry → suppress UNLESS defaultEnabled === true (§22.2
-   *     operator opt-in to default-ON); fail-closed otherwise.
+   *   • no explicit entry → suppress UNLESS defaultEnabled === true (operator
+   *     opt-in to default-ON); fail-closed otherwise.
    * When the getter is absent or returns undefined, nothing is suppressed (the
    * un-wired composition path is unaffected — daemon injection is the documented
    * follow-on).
@@ -423,8 +422,8 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     if (key !== undefined && deps.breaker?.isTripped(key) === true) return;
 
     // Pass the cached `latestPlanSnapshot` as the projection's
-    // 4th arg so chatProjection threads it onto frame.planSnapshot (Pitfall 6
-    // — supersedes silent forward of prevFrame's stale snapshot).
+    // 4th arg so chatProjection threads it onto frame.planSnapshot
+    // (this supersedes a silent forward of prevFrame's stale snapshot).
     const frame = deps.projection(events, deps.config, prevFrame, latestPlanSnapshot);
     prevFrame = frame;
     const result: Result<void, ActivityRenderError> = await deps.renderer.apply(frame);
@@ -446,7 +445,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   /** Schedule a debounced flush, collapsing rapid events to one apply/800ms. */
   function scheduleApply(): void {
     // Cancel the prior pending paint via the opaque handle — never a raw timer
-    // global (Pitfall 7).
+    // global.
     debounceHandle?.cancel();
     debounceHandle = deps.timer.setTimeout(() => {
       // The apply runs async; render errors are surfaced as WARN inside
@@ -473,7 +472,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   /**
    * Supply `parentActivityId` for a sub-agent event from the active
    * stack. The stream emits sub-agent events WITHOUT a parent link (it has no
-   * turn state); the coordinator (the §4.5 single owner) resolves it here:
+   * turn state); the coordinator (the single owner) resolves it here:
    *   • phase:"start" lacking a parent → parent is the enclosing sub-agent (top
    *     of the stack) for a nested spawn, else the turn's root activity; the
    *     event's own activityId is then pushed so a deeper spawn links to it,
@@ -528,8 +527,8 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     counters.turnDurationMs = deps.clock.now() - startedAtMs;
 
     // (1) Reclassify: any observed failed event flips a non-failure outcome to
-    // failure with NO delete branch — even if delivery itself succeeded
-    // (§19.3). Already-failure / silent / aborted outcomes are left as-is.
+    // failure with NO delete branch — even if delivery itself succeeded.
+    // Already-failure / silent / aborted outcomes are left as-is.
     let effective = outcome;
     if (sawFailedEvent && (outcome.kind === "success" || outcome.kind === "success_with_recovered_failures")) {
       const failedEvents = events.filter((e) => e.status === "failed");
@@ -540,7 +539,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       };
     }
 
-    // (2) Success path: the delete (owned by renderer.finalize per §7.3) must
+    // (2) Success path: the delete (owned by renderer.finalize) must
     // NOT precede the assistant message landing. Gate on deliveredAtMs.
     if (effective.kind === "success" || effective.kind === "success_with_recovered_failures") {
       const deliveredAtMs = effective.delivery.deliveredAtMs;
@@ -587,7 +586,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       // from session A reaching a render of session B. The adapter maps the
       // observability PlanUpdate shape to the core PlanSnapshot shape AND
       // runs redactValue on each description before exposing it as `label`
-      // (Security V9 — SEP descriptions are LLM-extracted from the model
+      // (SEP descriptions are LLM-extracted from the model
       // response and could echo a user message including a secret). On a new
       // snapshot, schedule a debounced apply so the renderer paints the
       // updated checkbox header within one tick.

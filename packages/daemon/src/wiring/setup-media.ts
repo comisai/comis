@@ -13,7 +13,7 @@ import type { AppContainer, TTSPort, TranscriptionPort, VisionProvider, FileExtr
 import { STT_ERR_TO_LOG, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createAudioProviderSelector } from "./setup-audio-provider.js";
-// OBS-03 (196): the resolved-voice-selection shape the daemon RPC handlers consume.
+// The resolved-voice-selection shape the daemon RPC handlers consume.
 // Type-only (erased at runtime — no madge edge); same-package, so no project-ref cycle.
 import type { ResolvedVoiceSelection } from "../api/types.js";
 import {
@@ -82,7 +82,7 @@ export interface MediaResult {
   ssrfFetcher: SsrfGuardedFetcher;
   /** File extractor for document attachment processing (optional -- disabled by config). */
   fileExtractor?: FileExtractionPort;
-  /** OBS-03 (196): the boot-resolved STT/TTS selections (`source`/`keyless`/
+  /** The boot-resolved STT/TTS selections (`source`/`keyless`/
    *  `provider` + the `onSkip` reasons), threaded to the daemon RPC handlers for
    *  the `media.stt.*`/`media.tts.*` trajectory emit. Present only when the audio
    *  selector ran AND resolved (`sel.ok`); undefined otherwise. */
@@ -106,7 +106,7 @@ export interface MediaResult {
  * `dataDir` is a stable boot value (`container.config.dataDir`) captured once and
  * threaded into the in-process `local` adapter's model-cache root on every
  * re-creation — the per-call wrapper rebuilds the adapter but the cache scope is
- * fixed at boot (Plan 02 LOCAL-01).
+ * fixed at boot.
  */
 export function createSTTProviderFactory(
   config: TranscriptionConfig,
@@ -124,7 +124,7 @@ export function createSTTProviderFactory(
  * `dataDir` is a stable boot value (`container.config.dataDir`) captured once and
  * threaded into the in-process `local`/`piper` adapter's model-cache root
  * (`<dataDir>/models/tts/`) on every re-creation — mirrors
- * `createSTTProviderFactory` (TTS-02).
+ * `createSTTProviderFactory`.
  */
 export function createTTSProviderFactory(
   config: TtsConfig,
@@ -173,13 +173,13 @@ export async function setupMedia(deps: {
   /** Optional callback for suspicious content detection */
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /**
-   * The keyless-first audio selector (Phase 193, built in the daemon via
+   * The keyless-first audio selector (built in the daemon via
    * `createAudioProviderSelector`). When present, STT/TTS construction is GATED
    * on `resolveStt()`/`resolveTts()` BEFORE `createSTTProvider`/`createTTSProvider`
    * — an honest-unavailable resolution (`sel.ok===false`) constructs NO adapter
    * (so a Codex/OAuth-only main never builds the empty-bearer OpenAI adapter →
-   * 401; the inbound path skip-don't-throws). Absent (test harnesses) → the
-   * pre-193 behavior (construct directly from config).
+   * 401; the inbound path skip-don't-throws). Absent (test harnesses) →
+   * construct directly from config.
    */
   audioSelector?: ReturnType<typeof createAudioProviderSelector>;
 }): Promise<MediaResult> {
@@ -243,10 +243,10 @@ export async function setupMedia(deps: {
   }
 
   // 6.6.8.pre4.5. SSRF-guarded fetcher — safe remote media downloads.
-  // MEDIA-INPUT-SSRF (30uc-20260624 UC-05): trust the operator-configured channel apiRoot ORIGINS
+  // Trust the operator-configured channel apiRoot ORIGINS
   // (a self-hosted local Bot API server / the test emulator on loopback) so media file-byte
   // downloads from a custom apiRoot are permitted past the loopback block — host:port-scoped, so
-  // the strict SSRF firewall still gates every OTHER URL (UC-10's 127.0.0.1:4766 stays blocked).
+  // the strict SSRF firewall still gates every OTHER URL (e.g. the daemon's own 127.0.0.1:4766 stays blocked).
   const channelsCfg = (container.config.channels ?? {}) as Record<string, { apiRoot?: string } | undefined>;
   const trustedFetchOrigins = Object.values(channelsCfg)
     .map((c) => c?.apiRoot)
@@ -270,10 +270,10 @@ export async function setupMedia(deps: {
 
   // 6.6.8.pre5. STT provider — keyless-first resolution THEN factory construction.
   //
-  // Phase 193 (RES-05 / STEER-01): when the daemon supplies the audio selector,
+  // When the daemon supplies the audio selector,
   // resolve the provider BEFORE constructing any adapter. An honest-unavailable
   // resolution (`!sel.ok` — e.g. a Codex/OAuth-only main with no audio key, or
-  // STT `auto` before the local engine lands in Phase 194) constructs NO adapter:
+  // STT `auto` before the local engine is available) constructs NO adapter:
   // `transcriber` stays undefined, the honest-unavailable is logged once, and the
   // downstream inbound path skip-don't-throws (audio-preflight returns
   // {transcribed:false} — the message still reaches the agent). This replaces the
@@ -293,32 +293,32 @@ export async function setupMedia(deps: {
       "STT unavailable — keyless-first resolution (no adapter constructed)",
     );
   }
-  // The construction-gating predicate, computed in exactly ONE place (WR-03):
+  // The construction-gating predicate, computed in exactly ONE place:
   // blocked ONLY when the selector ran and returned honest-unavailable (`ok ===
   // false`) — that gates construction OFF (no empty-bearer adapter). An undefined
-  // selector (test harnesses / pre-193 callers) is NOT blocked (construct
+  // selector (test harnesses / callers without a selector) is NOT blocked (construct
   // directly). Keeping the gate and the logged-branch derived from this single
   // discriminant prevents a future edit from making them diverge.
   // The scoped model-cache root for the in-process `local` adapters. Resolved
   // ONCE at function scope from `container.config.dataDir` (NEVER process.env) so
-  // BOTH the STT (`<dataDir>/models/whisper/`, Plan 194-02 LOCAL-01) and the TTS
-  // (`<dataDir>/models/tts/`, TTS-02) construct/factory sites thread the identical
+  // BOTH the STT (`<dataDir>/models/whisper/`) and the TTS
+  // (`<dataDir>/models/tts/`) construct/factory sites thread the identical
   // value in lockstep; the `safePath(homedir, ".comis")` fallback mirrors
   // daemon.ts when the config field is unset.
   const dataDir = container.config.dataDir ?? safePath(os.homedir(), ".comis");
 
   const sttBlocked = sttSel?.ok === false;
-  // Construct only when NOT blocked by the resolver. For 193 an approved
+  // Construct only when NOT blocked by the resolver. An approved
   // `sttSel.provider` is openai/groq/deepgram (keyed cases the factory handles) —
-  // `local` resolves only when localEngineAvailable() is true (false in 193, the
-  // Phase 194 seam), so the factory never sees `local` yet; `edge` is TTS-only.
+  // `local` resolves only when localEngineAvailable() is true, so the factory
+  // never sees `local` yet; `edge` is TTS-only.
   if (!sttBlocked) {
-    // WR-01/WR-02: thread the RESOLVED provider (+ its model) into construction
+    // Thread the RESOLVED provider (+ its model) into construction
     // so the factory sees the provider the resolver actually approved (e.g. a
-    // CRED-01 follow-main `auto`→openai), NOT the raw config `provider:"auto"`
+    // credential follow-main `auto`→openai), NOT the raw config `provider:"auto"`
     // which would hit the factory `default` → err. Mirrors the fallback loop
-    // below. Only override when a selector ran (`sttSel?.ok`); preserve pre-193
-    // behavior (construct straight from config) when no selector was supplied.
+    // below. Only override when a selector ran (`sttSel?.ok`); construct straight
+    // from config when no selector was supplied.
     const sttConfig = sttSel?.ok
       ? {
           ...mediaConfig.transcription,
@@ -386,7 +386,7 @@ export async function setupMedia(deps: {
 
   // 6.6.8. TTS adapter — keyless-first resolution THEN factory construction.
   //
-  // Phase 193 (RES-02 / RES-05): when the daemon supplies the audio selector,
+  // When the daemon supplies the audio selector,
   // resolve TTS BEFORE constructing any adapter. `auto`/default resolves to the
   // keyless Edge adapter (no key); an explicit keyed provider with a present key
   // resolves explicit; honest-unavailable (`!sel.ok`) constructs NO adapter +
@@ -398,9 +398,9 @@ export async function setupMedia(deps: {
       {
         err: ttsSel.errorKind,
         // STT_ERR_TO_LOG is intentionally shared: TTS reuses the SttErrorKind
-        // vocabulary + its log bridge (voice-error.ts, design Assumption A3) —
+        // vocabulary + its log bridge (voice-error.ts) —
         // `TtsSelection.errorKind` is typed `SttErrorKind`. The STT-named symbol
-        // here is correct, not a copy-paste (IN-01).
+        // here is correct, not a copy-paste.
         errorKind: STT_ERR_TO_LOG[ttsSel.errorKind],
         hint: ttsSel.hint,
         step: "tts_unavailable",
@@ -408,14 +408,14 @@ export async function setupMedia(deps: {
       "TTS unavailable — keyless-first resolution (no adapter constructed)",
     );
   }
-  // Single discriminant for the construction gate (WR-03) — see the STT note above.
+  // Single discriminant for the construction gate — see the STT note above.
   const ttsBlocked = ttsSel?.ok === false;
   if (!ttsBlocked) {
-    // WR-01: thread the RESOLVED provider into construction (mirrors STT). Today
+    // Thread the RESOLVED provider into construction (mirrors STT). Today
     // `auto`→edge works because the default config already carries
     // `provider:"edge"`, but an operator who disables edge and relies on
     // follow-main would otherwise hit the identical `default`→err trap. Only
-    // override when a selector ran; preserve pre-193 behavior otherwise.
+    // override when a selector ran; construct straight from config otherwise.
     const ttsConfig = ttsSel?.ok
       ? { ...mediaConfig.tts, provider: ttsSel.provider as typeof mediaConfig.tts.provider }
       : mediaConfig.tts;
@@ -562,7 +562,7 @@ export async function setupMedia(deps: {
     );
   }
 
-  // OBS-03 (196): surface the boot-resolved STT/TTS selections so the daemon RPC
+  // Surface the boot-resolved STT/TTS selections so the daemon RPC
   // handlers thread `source`/`keyless`/`provider` + the collected `onSkip` reasons
   // onto the `media.stt.*`/`media.tts.*` trajectory (no re-derivation — the SAME
   // SttSelection/TtsSelection the adapter construction above used). Present only
@@ -571,7 +571,7 @@ export async function setupMedia(deps: {
   // config-derived provider + keyless).
   const voiceSelection: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection } = {};
   if (sttSel?.ok) {
-    // Optional-call `sttSkips` — a selector built before the 196 skip-collection
+    // Optional-call `sttSkips` — a selector without the skip-collection method
     // (or a partial test mock) may not expose it; an absent collector → no onSkip.
     const skips = deps.audioSelector?.sttSkips?.() ?? [];
     voiceSelection.stt = {

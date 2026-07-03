@@ -85,13 +85,13 @@ describe("ToolCapabilityPort interface", () => {
     expect(full.source).toBe("bundled");
   });
 
-  it("PromptSkillCapability.source accepts 'learned' (mirrors the widened SkillSource, SURFACE-01)", () => {
-    // The @comis/skills SkillSource union widened to include 'learned' (v2.26
-    // verified-learning). PromptSkillCapability.source re-declares the literal
+  it("PromptSkillCapability.source accepts 'learned' (mirrors the widened SkillSource)", () => {
+    // The @comis/skills SkillSource union includes 'learned' (the
+    // verified-learning source). PromptSkillCapability.source re-declares the literal
     // union and MUST stay in sync, else a learned skill's SkillMetadata.source
     // cannot flow into capability metadata (skill-registry-cache.ts). The
     // literal-assignability check compiles away under esbuild, so we assert the
-    // declaration via source-grep (reproducible RED from pre-patch source).
+    // declaration via source-grep (fails if the union member is ever dropped).
     const src = fs.readFileSync(
       path.join(__dirname, "tool-capability.ts"),
       "utf-8",

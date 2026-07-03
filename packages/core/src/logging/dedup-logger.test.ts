@@ -5,14 +5,10 @@
  * withDedup wraps a ComisLogger so repeated log lines keyed by the same dedup
  * key fire the underlying logger exactly once. The dedup key is derived from a
  * caller-supplied `dedupKey` object field (else the message string) and hashed
- * via the shared fingerprint() (D10/D4). This is the reusable replacement for
- * the two hand-rolled per-site dedup Sets (tool-result-size-bouncer +
+ * via the shared fingerprint(). It is the shared per-site dedup primitive
+ * (consumers: tool-result-size-bouncer +
  * oauth-token-manager); it lives in @comis/core (NOT @comis/infra) because its
  * consumers are in @comis/agent (agent↛infra).
- *
- * RED+GREEN in one commit: `withDedup` does not exist pre-patch, so this test
- * file does not compile against the prior tree (AGENTS.md §2.10 — combining
- * RED+GREEN is sanctioned when the test cannot compile pre-patch).
  *
  * @module
  */

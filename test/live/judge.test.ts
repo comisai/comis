@@ -77,9 +77,9 @@ describe("judgeAnswer", () => {
 // ---------------------------------------------------------------------------
 // judgeAnswer — the NON-skip path (judge env present), driven by a STUB complete
 // fn so the real qa-judge invocation is exercised WITHOUT a real provider/key.
-// This is the 260606-judge-qa-harness-wiring fix-forward: judgeAnswer must now
-// actually score (pass|fail) when the judge env is present, KEEP the no-env skip,
-// and treat an unparseable judge verdict as skip (never a wrong answer).
+// judgeAnswer must actually score (pass|fail) when the judge env is present,
+// KEEP the no-env skip, and treat an unparseable judge verdict as skip (never a
+// wrong answer).
 // ---------------------------------------------------------------------------
 
 describe("judgeAnswer — non-skip path (env present, stubbed judge)", () => {
@@ -180,7 +180,7 @@ describe("sweepSecrets", () => {
     }
   });
 
-  it("Test 7: sweepSecrets does NOT throw on bare 'apiKey' as a variable name (IN-01 fix)", () => {
+  it("Test 7: sweepSecrets does NOT throw on bare 'apiKey' as a variable name", () => {
     // A TypeScript source file with `const apiKey = process.env[...]` should NOT
     // trigger the pattern — only key-value assignments like apiKey: "realvalue" do.
     const dir = join(TEST_TMP_BASE, "apikey-var-test-" + Date.now());

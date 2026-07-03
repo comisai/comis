@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure PLAT harness for the Phase 146 (PLATFORM) scenario tests.
+ * Pure PLAT harness for the PLATFORM scenario tests.
  *
- * Provides the fixtures + builders the four Phase-146 scenario files consume — all FAKE test
+ * Provides the fixtures + builders the four PLAT scenario files consume — all FAKE test
  * data, typed against the REAL product shapes via `satisfies` so a product drift is a COMPILE
  * error. No daemon, no real key, no network.
  *
@@ -195,10 +195,10 @@ export const QUIET_HOURS_OFF: QuietHoursConfig = {
  * Driven-CLI screen fixtures for decideAutoAnswer. `safe` matches a hintPattern WITHOUT tripping
  * any escalate-always marker. auth/destructive/approval each ALSO match the safe hintPattern
  * ("press enter to continue") AND carry an auth/destructive/approval cue — i.e. the exact
- * phishing shape the SEC-12 escalate-always VETO defends against: a CLI rendering a benign
- * affordance beneath a sensitive prompt. The v2.26 contract scopes that veto to an about-to-
+ * phishing shape the escalate-always VETO defends against: a CLI rendering a benign
+ * affordance beneath a sensitive prompt. The veto is scoped to an about-to-
  * auto-answer screen (a screen with NO safe match is escalated `no_safe_match` regardless, so the
- * broad markers are not run against it — they false-positive on narration, real-VPS 2026-06-16),
+ * broad markers are not run against it — they false-positive on narration),
  * so these fixtures embed the safe hint to exercise the veto firing over a real safe match.
  */
 export const TERMINAL_SCREENS = {

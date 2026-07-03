@@ -54,4 +54,4 @@ The operator YAML in this fixture declares a hint **only** for `operator-config-
 
 ## Forbidden-token guard
 
-The smoke test (`fixture.test.ts`) scans every file in this directory against a regex of excised identifiers and asserts zero matches. Authors editing this fixture: do not name those identifiers (see the regex in `fixture.test.ts`); the guard MUST stay green so the fixture surface cannot regress to the v1 failure mode.
+The smoke test (`fixture.test.ts`) scans every file in this directory against a regex of excised identifiers and asserts zero matches. Authors editing this fixture: do not name those identifiers (see the regex in `fixture.test.ts`); the guard MUST stay green so the fixture surface can never leak the excised tool identifiers back into fixture content.

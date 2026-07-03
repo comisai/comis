@@ -1,37 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-02/03 (Phase 196): the voice-turn (STT/TTS) trajectory direct-emit helper
+ * The voice-turn (STT/TTS) trajectory direct-emit helper
  * + the `wireVoiceObs` handler-wiring closure.
  *
  * The daemon voice RPC handlers (`media.transcribe` / `tts.synthesize` in
  * `media-handlers.ts`) record a voice turn's lifecycle onto the per-session
  * trajectory so `comis explain <sessionKey>` reconstructs it (provider /
  * keyless? / model / durationMs / audioBytes / costUsd / the resolved `source`
- * rung + the `onSkip` reasons / outcome) — the SAME observability image/vision/
- * video got in Phases 186/187/192.
+ * rung + the `onSkip` reasons / outcome) — the SAME observability the image/
+ * vision/video paths get.
  *
  * Extracted to a SIBLING (NOT inlined into `media-handlers.ts`, which is at its
- * 800-line cap with ZERO allowlist cushion) — routing the emits + the §2.7 log
- * lines through `wireVoiceObs` keeps that file shrink-only and the per-handler
- * wiring delta a few lines (Plan 03 calls `wireVoiceObs(...)` + `.completed` /
+ * 800-line cap with ZERO allowlist cushion) — routing the emits + the structured
+ * log lines through `wireVoiceObs` keeps that file shrink-only and the per-handler
+ * wiring delta a few lines (each handler calls `wireVoiceObs(...)` + `.completed` /
  * `.failed`), NOT 20-40 inline lines across two handlers (the file-size gate keys
  * on path).
  *
  * DIVERGENCE FROM `createVisionObsEmitter` (vision-obs-emit.ts): the vision twin
- * FUSES the trajectory record AND the §2.7 log line into one call, because the
- * vision handler had NO prior structured logging. The voice handlers/pipeline
- * ALREADY carry the §2.7 logger floor (Plan 01 / the inbound handler / the
+ * FUSES the trajectory record AND the structured log line into one call, because
+ * the vision handler had NO prior structured logging. The voice handlers/pipeline
+ * ALREADY carry the standard logger floor (the inbound handler / the
  * voice-out pipeline). So `createVoiceObsEmitter` is trajectory-RECORD-focused —
- * it does NOT re-log (a fused log would DOUBLE-emit the §2.7 line). The §2.7 line
+ * it does NOT re-log (a fused log would DOUBLE-emit the line). The log line
  * lives in the SEPARATE `wireVoiceObs` logger closure, BESIDE the record (the
  * video-handler convention), so the handler call-site stays tiny while the record
  * and the log stay decoupled.
  *
- * CONTENT-FREE (T-196-04/05): every recorded payload carries ids / labels /
+ * CONTENT-FREE: every recorded payload carries ids / labels /
  * numbers / booleans / closed-enum reasons ONLY — NEVER the audio bytes, the
  * transcript text, the synthesized audio, or a credential. `costUsd` rides
- * `media.*.completed` presence-conditionally (OBS-05 Route a); the keyless caller
- * passes `0` EXPLICITLY so "free" is visible (FLAG 4), keyed-no-cost omits it. The
+ * `media.*.completed` presence-conditionally; the keyless caller
+ * passes `0` EXPLICITLY so "free" is visible, keyed-no-cost omits it. The
  * domain `SttErrorKind` rides `media.*.failed.errorKind` verbatim; the closed log
  * union (via `STT_ERR_TO_LOG`) + the SANITIZED provider message ride the
  * structured Pino LOG (the `wireVoiceObs` WARN closure), never the trajectory.
@@ -46,19 +46,19 @@ import { STT_ERR_TO_LOG, sanitizeLogString, systemNowMs } from "@comis/core";
 import type { ComisLogger, SttErrorKind } from "@comis/core";
 import type { ObservabilityStore } from "@comis/memory";
 
-/** The resolved STT/TTS selection rung (OBS-03). Mirrors `SttSelection.source`. */
+/** The resolved STT/TTS selection rung. Mirrors `SttSelection.source`. */
 export type VoiceSource = "explicit" | "keyless-local" | "follow-main-key" | "fallback";
 
 /** Which voice family this emitter records — selects the `media.${kind}.*` event names. */
 export type VoiceKind = "stt" | "tts";
 
 /**
- * OBS-05 (Phase 196, WR-02): the SINGLE source of truth for the keyless-cost rule
- * — `keyless ⇒ costUsd:0 explicit` (so "free" is VISIBLE — FLAG 4), `keyed-no-cost
- * ⇒ omit`. Previously this ternary was duplicated inline at the two `media-handlers.ts`
- * voice call sites; a third voice handler could silently omit it and regress the
- * keyless `$0` visibility with no test catching it. Centralized here so every
- * `completed` path (the trajectory record AND the §2.7 log line) derives it once.
+ * The SINGLE source of truth for the keyless-cost rule
+ * — `keyless ⇒ costUsd:0 explicit` (so "free" is VISIBLE), `keyed-no-cost
+ * ⇒ omit`. Duplicating this ternary inline at the `media-handlers.ts`
+ * voice call sites would let a third voice handler silently omit it and regress
+ * the keyless `$0` visibility with no test catching it. Centralized here so every
+ * `completed` path (the trajectory record AND the log line) derives it once.
  * An explicit caller `costUsd` always wins (keyed providers that DO know their cost).
  */
 function effectiveCostUsd(costUsd: number | undefined, keyless: boolean): number | undefined {
@@ -69,16 +69,16 @@ function effectiveCostUsd(costUsd: number | undefined, keyless: boolean): number
 /** A bound voice-trajectory emitter. Returned by `createVoiceObsEmitter` (which
  *  fires `media.${kind}.requested` at construction). The handler calls
  *  `completed` / `failed` on the branch it takes. Every emit is a no-op when no
- *  recorder resolved (off-turn / boot safe) — the offline assembler (Plan 03's
+ *  recorder resolved (off-turn / boot safe) — the offline assembler (the
  *  reconstruct test) is the binding oracle. */
 export interface VoiceObsEmitter {
   /** True when a non-null recorder resolved (a session key + a registry + an open
    *  recorder). False off-turn / boot-without-registry — every method then no-ops. */
   readonly active: boolean;
   /** A transcription/synthesis SUCCEEDED: record `media.${kind}.completed` with the
-   *  cost-carry. The keyless `costUsd:0` is derived centrally (WR-02) — the caller
+   *  cost-carry. The keyless `costUsd:0` is derived centrally — the caller
    *  need NOT pass `0`; an explicit `costUsd` wins, keyless-without-cost ⇒ `0`
-   *  (present, so "free" is visible — FLAG 4), keyed-without-cost ⇒ omitted. */
+   *  (present, so "free" is visible), keyed-without-cost ⇒ omitted. */
   completed(args: {
     provider: string;
     keyless: boolean;
@@ -95,7 +95,7 @@ export interface VoiceObsEmitter {
 
 /**
  * Resolve the per-session recorder by `sessionKey`, fire the
- * `media.${kind}.requested` entry record (with the OBS-03 `onSkip` reasons when
+ * `media.${kind}.requested` entry record (with the `onSkip` reasons when
  * supplied), and return a bound {@link VoiceObsEmitter}. In-turn the handler passes
  * the dispatcher-injected `_callerSessionKey`. When the registry is absent,
  * `getRecorder` returns null/undefined, or there is no session key, the trajectory
@@ -122,7 +122,7 @@ export function createVoiceObsEmitter(args: {
   };
 
   // The `media.${kind}.*` template literal narrows to the six closed
-  // TRAJECTORY_EVENT_TYPES literals (DOT form — FLAG 3) added in Task 1.
+  // TRAJECTORY_EVENT_TYPES literals (the DOT-separated form).
   const REQUESTED = `media.${kind}.requested` as TrajectoryEventType;
   const COMPLETED = `media.${kind}.completed` as TrajectoryEventType;
   const FAILED = `media.${kind}.failed` as TrajectoryEventType;
@@ -137,7 +137,7 @@ export function createVoiceObsEmitter(args: {
   return {
     active: recorder != null,
     completed({ provider, keyless, model, durationMs, audioBytes, costUsd, source }) {
-      // WR-02: derive the keyless `costUsd:0` centrally (the single source of truth).
+      // Derive the keyless `costUsd:0` centrally (the single source of truth).
       const cost = effectiveCostUsd(costUsd, keyless);
       emit(COMPLETED, {
         provider,
@@ -146,7 +146,7 @@ export function createVoiceObsEmitter(args: {
         ...(model !== undefined ? { model } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),
         ...(audioBytes !== undefined ? { audioBytes } : {}),
-        ...(cost !== undefined ? { costUsd: cost } : {}), // keyless ⇒ 0 (present — FLAG 4)
+        ...(cost !== undefined ? { costUsd: cost } : {}), // keyless ⇒ 0 (present — "free" stays visible)
         source,
       });
     },
@@ -156,7 +156,7 @@ export function createVoiceObsEmitter(args: {
   };
 }
 
-/** The handler-wiring helper return shape: the emitter + the two §2.7-logging
+/** The handler-wiring helper return shape: the emitter + the two logging
  *  closures (each does BOTH the trajectory record AND the one log line). */
 export interface WiredVoiceObs {
   obs: VoiceObsEmitter;
@@ -172,7 +172,7 @@ export interface WiredVoiceObs {
   failed(a: { sttErrorKind: SttErrorKind; provider: string; source: VoiceSource; errMessage: string; hint?: string }): void;
 }
 
-/** The default WARN hint per domain kind (the actionable §2.7 remedy). */
+/** The default WARN hint per domain kind (the actionable remedy the operator reads). */
 const HINT_BY_KIND: Record<SttErrorKind, string> = {
   no_keyless_engine: "enable the local whisper engine or set an audio API key (a Codex OAuth login cannot drive audio)",
   auth_required: "set the provider's audio API key, or switch to a keyless provider (local/edge)",
@@ -184,15 +184,15 @@ const HINT_BY_KIND: Record<SttErrorKind, string> = {
 };
 
 /**
- * SEC-01 host-only redaction: strip credentials from a free-text provider error
+ * Host-only redaction: strip credentials from a free-text provider error
  * BEFORE it reaches a log line, and reduce any URL to its HOST (drop path +
  * query, where a token may hide). `sanitizeLogString` (the @comis/core
  * defense-in-depth scrubber) removes Bearer tokens / sk- keys / URL-embedded
  * passwords; the URL→host reduction here removes the path/query a token can ride
- * in. Never log a raw credential-bearing URL or `Bearer` (the §2.7 floor); Pino's
+ * in. Never log a raw credential-bearing URL or `Bearer`; Pino's
  * depth-3 censor is the layer-1 backstop.
  *
- * ORDER MATTERS (Phase 196 CR-02): `sanitizeLogString` must run FIRST, while the
+ * ORDER MATTERS: `sanitizeLogString` must run FIRST, while the
  * literal `Bearer <token>` is still intact — its `BEARER_TOKEN_LOG`
  * (`/Bearer\s+.../`) rule is the ONLY one that catches a GENERIC opaque bearer
  * (a Deepgram/ElevenLabs/custom token that is not `sk-`/hex-40+/a known prefix),
@@ -218,34 +218,33 @@ function redactVoiceLogMessage(message: string): string {
   const sanitized = sanitizeLogString(hostOnly);
   // THEN drop the now-residual `Authorization:` / `Bearer` scheme markers so the
   // line carries no credential CONTEXT at all (the token is already redacted by
-  // this point) — the 196-01 redactErrorMessage precedent.
+  // this point) — the same discipline as @comis/core's `redactErrorMessage`.
   const noScheme = sanitized.replace(/\bAuthorization:/gi, "").replace(/\bBearer\b/gi, "");
   // Strip any BARE keyless-Ollama sentinel value (`ollama-no-auth`) not preceded
   // by `Bearer` (those were caught above): it is a platform-wide credential-
   // position sentinel (the keyless-LLM bearer), so it must never appear in a
-  // voice log line at any level (T-196-08). It is too short for
+  // voice log line at any level. It is too short for
   // `sanitizeLogString`'s long-token rule, so strip it by exact name.
   return noScheme.replace(/\bollama-no-auth\b/gi, "");
 }
 
 /**
- * OBS-04 (Phase 196): emit a CONTENT-FREE `voice_degraded` health_signal
+ * Emit a CONTENT-FREE `voice_degraded` health_signal
  * diagnostic row on a voice failure, so the cross-session `comis fleet`
  * `voice_health` finding (fleet-findings.ts `voiceDegradedFromRow`/`buildFindings`)
  * has a source. The fleet assembler reads `obs_diagnostics` (`health_signal` /
  * `model_health` / `config_posture`) — voice failures emit NO row otherwise (the
  * per-session trajectory record is daemon-context-only; the executor session_summary
  * rollup that feeds the fleet carries only the closed LOG ErrorKinds, which conflate
- * voice with non-voice). This is the route-(b)-minimal emit: the ONLY new emit site,
- * and it lives in THIS obs-layer module (not media-handlers.ts), reading the obsStore
- * already on MediaApiDeps — so no earlier-wave file is touched (the plan's FLAG-7
- * route decision).
+ * voice with non-voice). This is the ONLY voice emit site into the store, and it
+ * lives in THIS obs-layer module (not media-handlers.ts), reading the obsStore
+ * already on MediaApiDeps — so no new dependency is introduced.
  *
  * Details carry the signal label + the closed domain `SttErrorKind` + the voice
- * family ONLY — NEVER the raw provider message, a URL, or a secret (H1 no-body;
- * the fleet finding is safe to paste). Best-effort: an absent store no-ops and a
- * throwing store is swallowed (observability is non-fatal — the §2.7 lines + the
- * trajectory record are the primary obligations; the store DEGRADES SILENTLY).
+ * family ONLY — NEVER the raw provider message, a URL, or a secret (no message
+ * bodies; the fleet finding is safe to paste). Best-effort: an absent store no-ops
+ * and a throwing store is swallowed (observability is non-fatal — the log lines +
+ * the trajectory record are the primary obligations; the store DEGRADES SILENTLY).
  */
 function emitVoiceDegradedSignal(
   obsStore: ObservabilityStore | undefined,
@@ -269,13 +268,13 @@ function emitVoiceDegradedSignal(
 }
 
 /**
- * wireVoiceObs — the PRIMARY handler-wiring path (the WARNING-2 lever for the
- * `media-handlers.ts` 799/800 cap). Bundles {@link createVoiceObsEmitter} with a
- * typed §2.7 logger closure so Plan 03's per-handler delta is a `wireVoiceObs(...)`
+ * wireVoiceObs — the PRIMARY handler-wiring path (what keeps
+ * `media-handlers.ts` under its 800-line cap). Bundles {@link createVoiceObsEmitter}
+ * with a typed logger closure so each handler's delta is a `wireVoiceObs(...)`
  * call + the `.completed` / `.failed` calls — not 20-40 inline lines.
  *
  * - Construction fires the `media.${kind}.requested` record (with `onSkip`).
- * - `completed(a)` → `obs.completed(a)` AND ONE `logger.info` (the §2.7 completion
+ * - `completed(a)` → `obs.completed(a)` AND ONE `logger.info` (the completion
  *   line carrying provider/keyless/model/durationMs/audioBytes/costUsd/source).
  * - `failed(a)` → `obs.failed({ errorKind: a.sttErrorKind, ... })` AND ONE
  *   `logger.warn` carrying `err:` (the SANITIZED host-only message — no Bearer/
@@ -289,10 +288,10 @@ export function wireVoiceObs(args: {
   sessionKey: string | undefined;
   trajectoryRegistry: SessionTrajectoryHandleRegistry | undefined;
   logger: ComisLogger;
-  /** OBS-04 (196): the observability store. When present, `failed()` ALSO inserts a
+  /** The observability store. When present, `failed()` ALSO inserts a
    *  content-free `voice_degraded` health_signal row for the `comis fleet`
    *  voice_health finding. Optional — absent off-turn / on a boot mode without it
-   *  (the row insert then no-ops; the §2.7 line + the trajectory record still fire). */
+   *  (the row insert then no-ops; the log line + the trajectory record still fire). */
   obsStore?: ObservabilityStore;
   agentId: string;
   kind: VoiceKind;
@@ -308,7 +307,7 @@ export function wireVoiceObs(args: {
     obs,
     completed(a) {
       obs.completed(a);
-      // WR-02: the §2.7 line carries the SAME centrally-derived keyless cost as the
+      // The log line carries the SAME centrally-derived keyless cost as the
       // trajectory record (keyless ⇒ 0 visible; an explicit cost wins; keyed ⇒ omit).
       const cost = effectiveCostUsd(a.costUsd, a.keyless);
       logger.info(
@@ -329,7 +328,7 @@ export function wireVoiceObs(args: {
     },
     failed(a) {
       obs.failed({ errorKind: a.sttErrorKind, provider: a.provider, source: a.source });
-      // OBS-04: feed the cross-session fleet voice_health finding (content-free,
+      // Feed the cross-session fleet voice_health finding (content-free,
       // best-effort — never breaks the handler).
       emitVoiceDegradedSignal(obsStore, { kind, errorKind: a.sttErrorKind, agentId });
       logger.warn(

@@ -156,7 +156,7 @@ function requireMethod<TMethod extends (...args: never[]) => unknown>(
 }
 
 /**
- * Phase 213 (QUOTA-01/02): the outward irreversible-action gate for an agent-
+ * The outward irreversible-action gate for an agent-
  * initiated orch:message send. Called AFTER authorizeChannelAccess, BEFORE
  * deliver, for message.send/reply/react. Consults `boundedAutonomy.tryOutward`
  * (origin-only + per-target grant + per-hour + volume); on a deny it throws a
@@ -193,15 +193,15 @@ function enforceOutwardQuota(
 }
 
 /**
- * Phase 216 (ONCE-01/02): resolve the `(rootRunId, outwardStepIndex)` idempotency
+ * Resolve the `(rootRunId, outwardStepIndex)` idempotency
  * key for an outward send from the threaded raw params.
  *
  * `rootRunId` comes from `resolveRootRunId(parseFormattedSessionKey(...))` — the
  * tree-stable run root (present iff a caller session + resolver are wired). The
- * `_outwardStepIndex` is the monotonic step the RPC chokepoint (Plan 07 Task 4)
+ * `_outwardStepIndex` is the monotonic step the RPC chokepoint
  * allocated + injected for EVERY autonomy outward call.
  *
- * HIGH-1: `_outwardStepIndex` is read as-is — `undefined` ⇒ pass-through (no
+ * `_outwardStepIndex` is read as-is — `undefined` ⇒ pass-through (no
  * ledger) in {@link wrapOutwardSend}. It is NEVER defaulted to 0 here (two
  * un-indexed sends would collide on the idempotency key and one would be
  * silently dropped). A non-autonomy / interactive send has no rootRunId and no
@@ -216,7 +216,7 @@ function resolveOutwardLedgerContext(
   // (mirrors graph-coordinator.ts) so a bad key is a pass-through, never a throw.
   const parsedCaller = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
   const rootRunId = parsedCaller ? deps.resolveRootRunId?.(parsedCaller) : undefined;
-  // HIGH-1: read the injected step index verbatim — NEVER `?? 0`.
+  // Read the injected step index verbatim — NEVER `?? 0`.
   const outwardStepIndex = rawParams._outwardStepIndex as number | undefined;
   return { rootRunId, outwardStepIndex };
 }
@@ -229,7 +229,7 @@ function resolveOutwardLedgerContext(
 export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, RpcHandler> {
   return {
     [MessageSendContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // In-process capability gate — the agent loop skips
       // checkScope, so orch:message is enforced here, reading the injected
       // _capabilities from raw params BEFORE the strip.
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
@@ -238,7 +238,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelId = rawParams.channel_id as string;
       const text = rawParams.text as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
-      // QUOTA-01/02: gate the outward send (origin/grant/per-hour/volume) for an
+      // Gate the outward send (origin/grant/per-hour/volume) for an
       // agent origin, before deliver. Volume = the message body length.
       enforceOutwardQuota(deps, rawParams, channelId, typeof text === "string" ? text.length : 1);
 
@@ -252,7 +252,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         ...(rawParams.effects ? { effects: rawParams.effects as RichEffect[] } : {}),
         ...(rawParams.thread_reply !== undefined ? { threadReply: rawParams.thread_reply as boolean } : {}),
       };
-      // Phase 216 (ONCE-01/02): wrap the EXISTING deliverToChannel with the
+      // Wrap the EXISTING deliverToChannel with the
       // three-state ledger (begin→markUnknown→commit). The quota gate above is
       // untouched and there is NO parallel send path — the real delivery still
       // happens inside doSend. A non-autonomy send (no rootRunId/step) is a
@@ -284,7 +284,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageReplyContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      // In-process capability gate (see message.send).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
 
       const channelType = rawParams.channel_type as string;
@@ -292,7 +292,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const text = rawParams.text as string;
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
-      // QUOTA-01/02: gate the outward reply (volume = the reply body length).
+      // Gate the outward reply (volume = the reply body length).
       enforceOutwardQuota(deps, rawParams, channelId, typeof text === "string" ? text.length : 1);
 
       const userParams = stripInternalFields(rawParams);
@@ -305,7 +305,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         ...(rawParams.effects ? { effects: rawParams.effects as RichEffect[] } : {}),
         ...(rawParams.thread_reply !== undefined ? { threadReply: rawParams.thread_reply as boolean } : {}),
       };
-      // Phase 216 (ONCE-01/02): wrap the EXISTING delivery call as in message.send.
+      // Wrap the EXISTING delivery call as in message.send.
       const { rootRunId, outwardStepIndex } = resolveOutwardLedgerContext(deps, rawParams);
       const wrapResult = await wrapOutwardSend({
         ledger: deps.outwardLedger,
@@ -334,7 +334,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageReactContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      // In-process capability gate (see message.send).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
 
       const channelType = rawParams.channel_type as string;
@@ -343,7 +343,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       const emoji = rawParams.emoji as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
-      // QUOTA-01/02: gate the outward reaction as ONE fixed unit (IN-01, 213-REVIEW).
+      // Gate the outward reaction as ONE fixed unit.
       // A reaction is a single irreversible action; counting it as `emoji.length`
       // (1–few chars) made the per-action volumeCap (4000) effectively inert for
       // reactions while giving the unit inconsistent meaning vs send/reply (which
@@ -356,7 +356,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
       const reactToMessage = requireMethod(adapter, "reactToMessage", adapter.reactToMessage);
-      // Phase 216 (ONCE-01/02): wrap the EXISTING reactToMessage with the
+      // Wrap the EXISTING reactToMessage with the
       // three-state ledger. A reaction sends an emoji (not free text), so the
       // emoji is the digest input; it has no platform message id, so doSend
       // returns a fixed "reacted" sentinel on success. Same single path — no

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Forensic events INFO-level architecture test (design §5 D11).
+ * Forensic events INFO-level architecture test.
  *
  * The 7 forensic events that are O(1)/turn MUST emit at INFO so they
  * are visible when production daemons run at logLevel:"info". Any site
  * still at logger.debug for these messages is a regression — operators
- * lose the queue-layer signal needed to diagnose the 2026-05-24 duplicate
- * adapter class of bugs.
+ * lose the queue-layer signal needed to diagnose the duplicate-adapter
+ * class of bugs.
  *
  * Shrink-only: NO allowlist. Every occurrence of each message string
  * must be adjacent to logger.info (allow logger?.info / deps.logger.info).
@@ -215,7 +215,7 @@ describe("forensic-events-info-level -- all 7 forensic events emit at INFO", () 
               snippet: v.snippet,
             })),
             suggestedFix: `Change logger?.debug(...) → logger?.info(...) at the reported site(s). Do NOT change the payload or message string — level change only.`,
-            designRef: "OBSERVABILITY_DESIGN §5 D11 (forensic events O(1)/turn at INFO)",
+            designRef: "forensic O(1)/turn events emit at INFO so operators see them at logLevel:info",
           }),
         ).toEqual([]);
       });
@@ -236,7 +236,7 @@ describe("forensic-events-info-level -- all 7 forensic events emit at INFO", () 
               description: `"${site.message}" (${site.eventName}) must exist as a logger.info call in the specified file(s). The log line is missing entirely.`,
               violations: site.files.map((f) => ({ file: f, line: 0, snippet: `Expected logger.info(..., "${site.message}")` })),
               suggestedFix: `Add a logger.info({...}, "${site.message}") call in the indicated file(s). For "Message dequeued": add it in executeLaneTask after the queue:dequeued bus emit in command-queue.ts.`,
-              designRef: "OBSERVABILITY_DESIGN §5 D11",
+              designRef: "forensic O(1)/turn events emit at INFO",
             }),
           ).toBeGreaterThan(0);
         });

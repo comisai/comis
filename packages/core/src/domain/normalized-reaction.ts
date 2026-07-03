@@ -3,8 +3,7 @@ import { ok, err, type Result } from "@comis/shared";
 import { z } from "zod";
 
 /**
- * NormalizedReaction: Channel-agnostic representation of an inbound reaction
- * (Verified Learning WS1, REACT-01).
+ * NormalizedReaction: Channel-agnostic representation of an inbound reaction.
  *
  * The reaction-capable adapters (Discord/Slack/Telegram) convert their native
  * reaction-add event into this shape before it reaches core logic — the sibling
@@ -13,10 +12,10 @@ import { z } from "zod";
  *
  * UNTRUSTED inbound data: this type carries NO trust/authority field — only the
  * platform ids, the emoji, and the channel. Trust is resolved downstream from
- * config (Phase 199 daemon wiring), never asserted by the reaction. A reaction
+ * config (the daemon wiring), never asserted by the reaction. A reaction
  * can only WEIGHT learning, never write content or raise trust.
  *
- * SECURITY (V5): `z.strictObject` is load-bearing — it rejects smuggled fields
+ * SECURITY: `z.strictObject` is load-bearing — it rejects smuggled fields
  * (e.g. a `trustLevel`/`source` promotion claim) at {@link parseReaction}.
  */
 export const NormalizedReactionSchema = z.strictObject({
@@ -38,7 +37,7 @@ export type NormalizedReaction = z.infer<typeof NormalizedReactionSchema>;
  * Parse unknown input into a NormalizedReaction, returning Result<T, ZodError>.
  *
  * The input is untrusted platform data — `z.strictObject` rejects any field the
- * reactor smuggled in (V5), and the ids are `z.string().min(1)` (platform ids
+ * reactor smuggled in, and the ids are `z.string().min(1)` (platform ids
  * are not UUIDs, but an empty id is never valid).
  */
 export function parseReaction(raw: unknown): Result<NormalizedReaction, z.ZodError> {

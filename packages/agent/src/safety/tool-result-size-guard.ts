@@ -89,9 +89,10 @@ export interface ToolResultSizeGuardOptions {
  * - Exit/return codes (exit code, return code, status code)
  */
 function hasImportantTail(text: string): boolean {
-  // SAFE-01 EXCLUDED: this is a tail INSPECTION read (does the last 500 chars look
-  // important?), not a content-length truncation cut — never persisted/forwarded.
-  // A grapheme-snapped boundary here would change inspection semantics for nothing.
+  // Deliberately NOT grapheme-snapped: this is a tail INSPECTION read (does the
+  // last 500 chars look important?), not a content-length truncation cut — never
+  // persisted/forwarded. A grapheme-snapped boundary here would change inspection
+  // semantics for nothing.
   const tail = text.slice(-500);
 
   // Error indicators
@@ -194,8 +195,8 @@ export function createToolResultSizeGuard(
   const MAX_HINT_CHARS = 100;
 
   function formatMarker(removedChars: number, toolHint?: string): string {
-    // SAFE-01 EXCLUDED: this truncates a bounded ASCII hint string (decoration),
-    // not a content-length cut of ingested text — the design scopes it out, and a
+    // Deliberately NOT grapheme-snapped: this truncates a bounded ASCII hint
+    // string (decoration), not a content-length cut of ingested text — a
     // grapheme-snapped boundary here would only spend cycles for an ASCII no-op.
     const hintSuffix = toolHint
       ? ` Hint: ${toolHint.length > MAX_HINT_CHARS ? toolHint.slice(0, MAX_HINT_CHARS - 3) + "..." : toolHint}`
@@ -244,10 +245,11 @@ export function createToolResultSizeGuard(
     const effectiveHeadSize = Math.min(snappedHeadSize, snappedTailStart);
     const effectiveTailStart = Math.max(snappedTailStart, effectiveHeadSize);
 
-    // SAFE-01: snap each content-length cut back off a split surrogate pair or an
-    // orphaned combining/joiner/VS run so the preview is mojibake-free. The helper
-    // only moves the index backward (≤ original), so it never injects a codepoint —
-    // the marker (below) stays plain English + newline-isolated (no bidi control, I2).
+    // Grapheme safety: snap each content-length cut back off a split surrogate
+    // pair or an orphaned combining/joiner/VS run so the preview is mojibake-free.
+    // The helper only moves the index backward (≤ original), so it never injects a
+    // codepoint — the marker (below) stays plain English + newline-isolated (no
+    // bidi control characters).
     const adjHead = adjustSliceBoundary(text, effectiveHeadSize);
     const adjTailStart = adjustSliceBoundary(text, effectiveTailStart);
     const head = text.slice(0, adjHead);

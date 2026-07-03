@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: wrapSummarizerWithFailover (SUM-03) re-throws the last provider error after the fallback list is exhausted (lcd-leaf-summarizer.ts:746); consumed by the summarizer-spend-breaker safety boundary (packages/agent/src/safety/summarizer-spend-breaker.ts), which catches the throw and records EXACTLY ONE per-tenant breaker failure — the existing summarizer-failure contract (a throw is how a summarization failure is signalled to the breaker).
+// @allow-throw: wrapSummarizerWithFailover re-throws the last provider error after the fallback list is exhausted (lcd-leaf-summarizer.ts:746); consumed by the summarizer-spend-breaker safety boundary (packages/agent/src/safety/summarizer-spend-breaker.ts), which catches the throw and records EXACTLY ONE per-tenant breaker failure — the existing summarizer-failure contract (a throw is how a summarization failure is signalled to the breaker).
 /**
- * LCD leaf summarization unit (Phase 129, C1).
+ * LCD leaf summarization unit.
  *
  * Two pure-ish responsibilities, both proven by a STUB summarizer (no network):
  *
@@ -16,25 +16,25 @@
  *  2. {@link summarizeLeafChunk} — run the mandatory 3-level escalation
  *     (normal → aggressive → deterministic truncation) that ALWAYS reduces
  *     tokens or falls back deterministically. The structural model is
- *     `compactWithFallback` (`llm-compaction.ts:545-607`), but C1 ADDS a
- *     per-level token-reduction assertion (LOSSLESS-CLAW §5: "If output > input,
- *     retry aggressive then truncate") and a BOUNDED Level-3 output (a count-only
+ *     `compactWithFallback` (`llm-compaction.ts:545-607`), but this unit ADDS a
+ *     per-level token-reduction assertion (if output > input, retry aggressive
+ *     then truncate) and a BOUNDED Level-3 output (a count-only
  *     note prefixed with `LEAF_FALLBACK_SUMMARY_MARKER`, capped at
  *     `LEAF_FALLBACK_TARGET_TOKENS`) — the guaranteed-shrink terminator. The
  *     ladder is FINITE (Level 1 ≤ 1+COMPACTION_MAX_RETRIES attempts → Level 2 one
  *     attempt → Level 3 deterministic); it never loops without a floor.
  *
  * The LLM summarizer is INJECTED as ONE function ({@link LeafSummarizer}) so
- * Phase 132 can wrap it with spend governance / a circuit breaker by swapping a
- * single seam (the binding constraint; the Security DoS row T-129-08). 129 calls
- * it inline and non-fatally: an error at Levels 1+2 is caught (WARN, errorKind
+ * the production wiring can wrap it with spend governance / a circuit breaker
+ * by swapping a single seam (the binding DoS-containment constraint). This unit
+ * calls it inline and non-fatally: an error at Levels 1+2 is caught (WARN, errorKind
  * `dependency`) and the pass falls through to the deterministic Level 3 — it
  * NEVER throws out of the pass.
  *
  * Architecture cut (agent↛memory): this file imports ONLY the agent-side token
  * estimators + the escalation constants; it NEVER imports `@comis/memory`. It
  * also NEVER logs `chunkMessages` content or the summary `content` — ids, counts,
- * level, and durations only (AGENTS.md §2.2; T-129-10). It reads NO wall clock of
+ * level, and durations only (AGENTS.md §2.2). It reads NO wall clock of
  * its own — the leaf time-range (`earliestAt`/`latestAt`) is derived purely from
  * the injected `LeafChunkItem.createdAt` values, so there is no globals-gate
  * surface here (the caller's injected clock stamps timestamps upstream).
@@ -72,12 +72,12 @@ import {
  * (`estimateMessageTokens` of a 1–4-char user string), so a chunk must be ≥ 2
  * tokens for any non-empty summary to be strictly smaller. A 1-token chunk is
  * already trivially tiny — there is nothing to gain — so the caller skips the
- * pass entirely (WR-01) rather than emitting a degenerate empty/larger fallback.
+ * pass entirely rather than emitting a degenerate empty/larger fallback.
  */
 export const MIN_SHRINKABLE_LEAF_CHUNK_TOKENS = 2;
 
 /**
- * B-4 (260605-ney): the fraction of a chunk's rendered shrink ceiling used as the
+ * The fraction of a chunk's rendered shrink ceiling used as the
  * EFFECTIVE summarize target. The configured `reserveTokens` (= `leafTargetTokens`
  * / `condensedTargetTokens`) can EXCEED a small chunk — telling the model to write
  * a summary larger than what it compresses → a guaranteed non-reduction → the
@@ -90,7 +90,7 @@ export const MIN_SHRINKABLE_LEAF_CHUNK_TOKENS = 2;
 export const SHRINK_TARGET_FRACTION = 0.5;
 
 /**
- * Compute the self-consistent shrink bounds for a chunk (B-4, 260605-ney). Shared
+ * Compute the self-consistent shrink bounds for a chunk. Shared
  * by {@link summarizeLeafChunk} and `summarizeCondensedChunk` (the rule of three
  * is met — both summarizers need the identical bounding).
  *
@@ -98,9 +98,9 @@ export const SHRINK_TARGET_FRACTION = 0.5;
  *
  *  - `shrinkCeilingTokens` — the accept-test ceiling, measured the SAME way the
  *    candidate summary is (`estimateMessageTokens` of a user string = 4:1 prose):
- *    `ceil(renderedChars / CHARS_PER_TOKEN)`. The prior code compared a 4:1-prose
- *    candidate against the chunk's MIXED-ratio STORED `tokenCount` (3:1 structured
- *    / 4:1 text) — inconsistent units. This makes the comparison like-for-like.
+ *    `ceil(renderedChars / CHARS_PER_TOKEN)`. Comparing a 4:1-prose candidate
+ *    against the chunk's MIXED-ratio STORED `tokenCount` (3:1 structured
+ *    / 4:1 text) would be inconsistent units; this keeps the comparison like-for-like.
  *    NOTE: the STORED Σ `tokenCount` remains the BUDGET / before-size / floor
  *    authority everywhere else (utilization, eviction, the deterministic Level-3
  *    note + its strict ceiling) — only the accept-test ceiling moves here.
@@ -119,7 +119,7 @@ export function computeShrinkBounds(
   renderedChars: number,
   configuredReserveTokens: number,
 ): { shrinkCeilingTokens: number; effectiveReserveTokens: number } {
-  // flat-by-design: shrink-ceiling convergence bound over aggregate renderedChars (correctness comes from the shrink loop, see docstring) (TOK-01)
+  // flat-by-design: shrink-ceiling convergence bound over aggregate renderedChars (correctness comes from the shrink loop, see docstring)
   const shrinkCeilingTokens = Math.ceil(renderedChars / CHARS_PER_TOKEN);
   const effectiveReserveTokens = Math.min(
     configuredReserveTokens,
@@ -137,9 +137,10 @@ export function computeShrinkBounds(
  * and creation timestamp. Keeping the chunk-selection input as a plain array of
  * these (rather than reaching into a store) keeps {@link selectLeafChunk} pure.
  *
- * Token authority (Pitfall 2): the caller sources `tokens` from the STORED
- * `LcdMessage.tokenCount` for store-sourced history (which counts F3 thinking)
- * and from `estimateMessageTokens` only for live/fresh-tail messages.
+ * Token authority: the caller sources `tokens` from the STORED
+ * `LcdMessage.tokenCount` for store-sourced history (which counts persisted
+ * thinking/reasoning blocks) and from `estimateMessageTokens` only for
+ * live/fresh-tail messages.
  */
 export interface LeafChunkItem {
   /** Stable message id (the LCD `lcd_messages.id`) — covered by the leaf. */
@@ -190,7 +191,7 @@ export interface LeafSummarizeOptions {
 }
 
 /**
- * The ONE injected summarizer seam. Production (Phase 132) supplies a function
+ * The ONE injected summarizer seam. Production supplies a function
  * that wraps the SDK `generateSummary` behind spend governance + a circuit
  * breaker; unit tests inject a deterministic stub (no network). Returns the raw
  * summary string (may be too large — the ladder re-checks size and escalates).
@@ -204,8 +205,8 @@ export type LeafSummarizer = (
  * The minimal model-capabilities snapshot the compaction chain resolves
  * (`id`/`provider`/`contextWindow`/`reasoning`). A plain value object with NO
  * reference back to `session.agent.state` — so it can be captured once at the
- * afterTurn boundary and safely read by a DEFERRED (C4) pass that runs AFTER
- * `session.dispose()` (WR-04). `getModel()` returns this shape.
+ * afterTurn boundary and safely read by a DEFERRED pass that runs AFTER
+ * `session.dispose()`. `getModel()` returns this shape.
  */
 export interface CompactionModelSnapshot {
   id?: string;
@@ -216,24 +217,25 @@ export interface CompactionModelSnapshot {
 
 /**
  * Dependencies for the leaf summarizer. Mirrors the `CompactionLayerDeps`-style
- * getters (`getModel` / `getApiKey` / `overrideModel`) so Phase 132 can reuse the
- * same resolution chain; the LLM call itself lives behind {@link LeafSummarizer}.
+ * getters (`getModel` / `getApiKey` / `overrideModel`) so the production wiring
+ * can reuse the same resolution chain; the LLM call itself lives behind
+ * {@link LeafSummarizer}.
  */
 export interface LeafSummarizerDeps {
   /** Structured logger (ids/counts/level/durations only — never content). */
   logger: ComisLogger;
-  /** The injected summarizer (the 132 spend-governance seam). */
+  /** The injected summarizer (the spend-governance seam). */
   summarize: LeafSummarizer;
   /** Getter for the current model's capabilities (for capability reads — NOT the
    *  LLM model arg; the SDK generateSummary needs a real Model, see getRealModel). */
   getModel: () => CompactionModelSnapshot;
   /**
-   * B-5: the REAL pi-ai `Model<any>` for the PRIMARY summarizer path.
+   * The REAL pi-ai `Model<any>` for the PRIMARY summarizer path.
    * `generateSummary` needs a real Model (with the provider-client runtime it
    * invokes), NOT the 4-field {@link CompactionModelSnapshot} (which throws at
    * call time). Sourced from the executor's already-resolved model
    * (pi-executor.ts `resolvedModel` → setupContextEngine `params.resolvedModel`),
-   * captured at setup time BEFORE `session.dispose()` so the WR-04 deferred (C4)
+   * captured at setup time BEFORE `session.dispose()` so the deferred
    * pass — which runs post-dispose — still resolves a real Model. Typed `unknown`
    * end-to-end; the single sanctioned `as any` cast lives at the generateSummary
    * call site (the opaque-SDK Model<any>).
@@ -241,34 +243,34 @@ export interface LeafSummarizerDeps {
   getRealModel: () => unknown;
   /** Getter for the current model's provider API key. */
   getApiKey: () => Promise<string>;
-  /** Optional cheaper override model + key for the leaf pass. INT-W1:
+  /** Optional cheaper override model + key for the leaf pass.
    *  `servedWindow` is the provider-served context window binding THIS override
    *  model — provider-gated AT THE WIRING SITE (executor-context-engine-setup)
-   *  against the Phase-176 `servedContextWindow` pair: set ONLY when the
+   *  against the `servedContextWindow` pair: set ONLY when the
    *  override resolved onto the SAME `providers.entries` key the boot probe
-   *  measured (WR-02 space discipline — config keys, never `model.provider`,
+   *  measured (compared in config-key space, never `model.provider`,
    *  which the registry alias fallback can rename). Riding ON the candidate
    *  model preserves the provider binding structurally: the value can only
    *  ever clamp the model it travels with — a cloud `operationModels.compaction`
    *  override is never clamped by a local provider's served window. */
   overrideModel?: { model: unknown; getApiKey: () => Promise<string>; servedWindow?: number };
-  /** INT-W1: the provider-served context window binding the PRIMARY
+  /** The provider-served context window binding the PRIMARY
    *  (`getRealModel`) summarizer — `windowProvenance.served`, i.e. already
    *  gated `servedContextWindow.providerKey === resolvedProviderKey` by the
-   *  executor reconcile (pi-executor WR-02), so it binds exactly the model
+   *  executor reconcile, so it binds exactly the model
    *  `getRealModel()` returns. A plain number captured at setup time
-   *  (dispose-safe on the WR-04 deferred path). Absent ⇒ no served truth for
+   *  (dispose-safe on the deferred path). Absent ⇒ no served truth for
    *  the primary (non-Ollama provider, probe off/failed, or provider mismatch)
-   *  — the configured window governs, byte-identical pre-INT-W1 behavior. */
+   *  — the configured window governs. */
   primaryServedWindow?: number;
-  // C4/C5: capability-routed compaction
+  // Capability-routed compaction
   /** The agent's capability class. Defaults to "frontier" (unchanged behavior). */
   capabilityClass?: CapabilityClass;
   /** Route small/nano to eviction instead of LLM summarization. Defaults to true. */
   preferEvictionByCapability?: boolean;
   /** If set, small/nano use this stronger model for summarization instead of eviction. */
   strongerSummarizerModel?: string;
-  // S4: security context pinning
+  // Security context pinning
   /** Security pin markers — messages containing these are excluded from chunk selection. */
   securityMarkers?: SecurityPinMarkers;
   /** For context:compaction_routed event (optional). */
@@ -315,13 +317,13 @@ export interface LeafSummaryResult {
  * messages up to the cap, then walks forward past a trailing assistant
  * `tool_use` and its `toolResult`s (never crossing the fresh-tail boundary).
  *
- * S4: if `pinnedMessageIds` is provided, chunks containing ANY pinned message
+ * If `pinnedMessageIds` is provided, chunks containing ANY pinned message
  * are skipped entirely — pinned messages are NEVER selected as eviction candidates.
  *
  * @param history - the evictable history items (seq order, oldest first)
  * @param freshTailSteps - the number of trailing STEPS protected from eviction
  * @param leafChunkTokens - the chunk token cap
- * @param pinnedMessageIds - S4: message ids that must never be selected for eviction
+ * @param pinnedMessageIds - message ids that must never be selected for eviction
  * @returns the selected chunk, or `undefined` when nothing is evictable
  */
 export function selectLeafChunk(
@@ -332,7 +334,7 @@ export function selectLeafChunk(
 ): LeafChunk | undefined {
   if (history.length === 0) return undefined;
 
-  // S4: build a version of history that excludes pinned messages from the selectable set.
+  // Build a version of history that excludes pinned messages from the selectable set.
   // Pinned messages are moved to "protected" — they remain in the store but cannot be
   // selected as eviction candidates. If ALL messages are pinned, return undefined.
   const evictableHistory = pinnedMessageIds && pinnedMessageIds.size > 0
@@ -448,10 +450,11 @@ function roleOf(m: AgentMessage): string | undefined {
 /**
  * Summarize a leaf chunk via the mandatory 3-level escalation. ALWAYS returns a
  * summary whose token count is STRICTLY LESS than the chunk's token count (the
- * C1 invariant) — accepting an LLM summary only when it actually reduces, and
- * otherwise falling through to the deterministic, bounded Level-3 truncation.
+ * strict-shrink invariant) — accepting an LLM summary only when it actually
+ * reduces, and otherwise falling through to the deterministic, bounded Level-3
+ * truncation.
  *
- * B-4 (260605-ney): the EFFECTIVE summarize target is bounded below the chunk's
+ * The EFFECTIVE summarize target is bounded below the chunk's
  * rendered shrink ceiling ({@link computeShrinkBounds}) so the model is never asked
  * to write more than it compresses (the spurious-floor fix), and the accept-test
  * ceiling is the RENDERED 4:1 measure — self-consistent with the candidate's units.
@@ -472,17 +475,18 @@ export async function summarizeLeafChunk(
   const messageIds = chunkItems.map((it) => it.id);
   const createdAts = chunkItems.map((it) => it.createdAt);
   // Before-size authority: the caller's pre-computed per-message tokens (counts
-  // F3 thinking on store-sourced rows, which re-estimation would under-count).
+  // persisted thinking/reasoning on store-sourced rows, which re-estimation
+  // would under-count).
   // This stays the BUDGET / floor authority — the deterministic Level-3 floor must
   // still beat the REAL stored before-size (NOT the smaller rendered ceiling).
   const chunkTokens = chunkItems.reduce((acc, it) => acc + it.tokens, 0);
   const earliestAt = createdAts.length > 0 ? Math.min(...createdAts) : 0;
   const latestAt = createdAts.length > 0 ? Math.max(...createdAts) : 0;
 
-  // B-4: self-consistent shrink bounds from the chunk's RENDERED chars. The
+  // Self-consistent shrink bounds from the chunk's RENDERED chars. The
   // accept ceiling (`shrinkCeilingTokens`) is measured the SAME way the candidate
   // summary is (4:1 prose); the EFFECTIVE target is bounded below the chunk so the
-  // summarizer is never asked to write more than it compresses (the dominant fix).
+  // summarizer is never asked to write more than it compresses (the spurious-floor guard).
   const renderedChars = messages.reduce(
     (acc, m) => acc + estimateMessageChars(m as unknown as Message),
     0,
@@ -516,7 +520,7 @@ export async function summarizeLeafChunk(
   // --- Level 2: aggressive — one best-effort retry. Prefer the oversized-filtered
   //     set (dropping huge messages often lets the model reduce), but when EVERY
   //     message is oversized the filter empties the set; rather than skip Level 2
-  //     and drop straight to the count-only floor (WR-03), make the one aggressive
+  //     and drop straight to the count-only floor, make the one aggressive
   //     attempt on the FULL (unfiltered) set. An aggressive LLM summary — even of
   //     large inputs — is strictly better context than the deterministic floor,
   //     and continuity (`previousSummary`) is forwarded either way.
@@ -567,7 +571,7 @@ export async function summarizeLeafChunk(
 /**
  * Attempt one summarizer call and accept it ONLY when the produced summary is
  * strictly smaller (in tokens) than `shrinkCeilingTokens` — the chunk's RENDERED
- * 4:1 measure (B-4, 260605-ney), so the candidate (a 4:1-prose user string) and
+ * 4:1 measure, so the candidate (a 4:1-prose user string) and
  * the ceiling are like-for-like units. Non-fatal: a throwing summarizer is caught
  * (WARN, errorKind `dependency`) and reported as "not accepted" so the ladder
  * escalates rather than failing.
@@ -583,7 +587,7 @@ async function tryLevel(
     const summary = await deps.summarize(messages, opts);
     const tokenCount = estimateMessageTokens({ role: "user", content: summary } as Message);
     if (tokenCount < shrinkCeilingTokens) return { content: summary, tokenCount };
-    // Non-reduction → escalate (LOSSLESS-CLAW §5).
+    // Non-reduction → escalate (never accept a summary that fails to shrink).
     deps.logger.debug(
       {
         step: "lcd-leaf-escalate",
@@ -614,12 +618,12 @@ async function tryLevel(
  * it NEVER exceeds the chunk and NEVER calls an LLM.
  *
  * The bound is the token ESTIMATOR ITSELF, not a hand-derived chars-per-token
- * ceiling (WR-01 / IN-03): the prior code clamped chars with `CHARS_PER_TOKEN_RATIO`
- * (3.5) while the result is measured by `estimateMessageTokens` (4:1 for a
- * user-role string), and a `Math.max(MARKER.length, …)` floor overrode the clamp
- * for tiny chunks — so a 3-token chunk produced a 19-char marker = 5 tokens,
- * LARGER than the chunk. Truncating the note in a loop that re-measures with the
- * estimator until it is strictly below the chunk removes both the 3.5-vs-4
+ * ceiling: clamping chars with `CHARS_PER_TOKEN_RATIO` (3.5) would disagree
+ * with `estimateMessageTokens` (4:1 for a user-role string), and a
+ * `Math.max(MARKER.length, …)` floor would override the clamp for tiny chunks —
+ * a 3-token chunk would get a 19-char marker = 5 tokens, LARGER than the
+ * chunk. Truncating the note in a loop that re-measures with the
+ * estimator until it is strictly below the chunk avoids both the 3.5-vs-4
  * mismatch and the marker-floor overshoot. The marker survives intact for any
  * normal-size chunk; only a sub-marker chunk truncates it (and a chunk too small
  * to ever shrink with non-empty content is skipped by the {@link summarizeLeafChunk}
@@ -668,11 +672,12 @@ function buildDeterministicFallback(messageCount: number, chunkTokens: number): 
 
 /**
  * Construct the PRODUCTION {@link LeafSummarizer} — the seam that wraps the SDK
- * `generateSummary`. Phase 132 swaps THIS factory's output for a spend-governed /
- * circuit-broken variant; 129 calls `generateSummary` directly. The override
+ * `generateSummary`. The production wiring swaps THIS factory's output for a
+ * spend-governed / circuit-broken variant; the bare factory calls
+ * `generateSummary` directly. The override
  * model + key are used when {@link LeafSummarizerDeps.overrideModel} is present
  * (a cheaper compaction model resolved by the operation-model chain), else the
- * primary REAL model (`getRealModel`) + `getApiKey` (B-5 — a real pi-ai
+ * primary REAL model (`getRealModel`) + `getApiKey` (a real pi-ai
  * `Model<any>`, never the 4-field snapshot). Mirrors `compactWithFallback`'s call shape
  * (`llm-compaction.ts:561`); the 8th param threads `previousSummary` for
  * continuity. The function may return a too-large string — the escalation ladder
@@ -686,7 +691,7 @@ export function buildLeafSummarizeFn(
   deps: Pick<LeafSummarizerDeps, "getRealModel" | "getApiKey" | "overrideModel">,
 ): LeafSummarizer {
   return async (messages: AgentMessage[], opts: LeafSummarizeOptions): Promise<string> => {
-    // B-5: resolve a REAL Model<any> for generateSummary — prefer the cheaper
+    // Resolve a REAL Model<any> for generateSummary — prefer the cheaper
     // override's real Model when the operation chain picked one (parity with
     // getCompactionDeps), else the PRIMARY real model (the executor-resolved
     // `resolvedModel`, threaded via deps.getRealModel). The bare 4-field
@@ -713,16 +718,16 @@ export function buildLeafSummarizeFn(
 }
 
 /**
- * SUM-03: wraps a primary {@link LeafSummarizer} with an ordered fallback list.
+ * Wraps a primary {@link LeafSummarizer} with an ordered fallback list.
  *
  * On primary failure, tries each fallback in sequence (ordered by the caller's
  * `fallbacks` array). Only when ALL providers in the list are exhausted does the
  * wrapper throw the last error — so the per-tenant circuit breaker that wraps the
  * OUTER spend-governed seam records exactly ONE failure per exhausted-list event
- * (Pitfall 4 in 171-RESEARCH: throw-last, not throw-per-provider).
+ * (throw-last, not throw-per-provider).
  *
  * Content-free: logs `providerIndex`, `totalProviders`, and `errorKind: "dependency"`
- * only — NEVER message content, summary text, or provider credentials (T-171-09).
+ * only — NEVER message content, summary text, or provider credentials.
  *
  * @param primary - the primary LeafSummarizer (already spend-governed by the outer seam)
  * @param fallbacks - ordered list of fallback LeafSummarizer callables

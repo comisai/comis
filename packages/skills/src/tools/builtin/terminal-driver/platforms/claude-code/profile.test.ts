@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first tests for the claude-code profile's render transform (RENDER-01, v2.26 Phase 167) —
- * the FINDING-3 dim-autocomplete ghost-strip, RELOCATED here out of the agnostic
- * `terminal-render.ts`. Golden frames per the design §8 ("a frame containing a dim composer
- * suggestion renders without the ghost").
- *
- * RED-first: `profile.ts` does not export `stripGhostFromRow`/`transformSnapshot` when this file is
- * first committed (167-02) — the import + the transform calls are RED until the relocation lands.
+ * Tests for the claude-code profile's render transform — the dim-autocomplete ghost-strip that
+ * lives here rather than in the agnostic `terminal-render.ts`. Golden frames assert that a frame
+ * containing a dim composer suggestion renders without the ghost.
  *
  * `transformSnapshot(snap)` re-renders the cursor row of the plain-text snapshot with the ghost
  * stripped, reading dim attributes from `snap.grid` (the viewport cell grid the engine attaches for
- * text reads). A no-op when `snap.grid` is absent (ansi/html / agnostic) — INV-1.
+ * text reads). A no-op when `snap.grid` is absent (ansi/html / agnostic).
  */
 
 import { describe, it, expect } from "vitest";
@@ -135,7 +131,7 @@ describe("claudeCodeProfile.transformSnapshot — the ghost-strip via the profil
   });
 });
 
-describe("claudeCodeProfile.perception — patterns + end-to-end classification (CLASSIFY-01/02)", () => {
+describe("claudeCodeProfile.perception — patterns + end-to-end classification", () => {
   const perc = claudeCodeProfile.perception!;
   const matches = (patterns: readonly RegExp[] | undefined, s: string) =>
     (patterns ?? []).some((re) => re.test(s));
@@ -157,16 +153,16 @@ describe("claudeCodeProfile.perception — patterns + end-to-end classification 
     expect(matches(perc.menuOrPicker, "Esc to cancel")).toBe(true);
   });
 
-  it("classifies a text-only Select-Model picker (no box/enumerator) → awaiting-input (the v2.11 fix)", () => {
+  it("classifies a text-only Select-Model picker (no box/enumerator) → awaiting-input", () => {
     // A picker the GENERIC structural detector misses (no box, no ≥2 enumerators, no `(y/n)`),
-    // caught via the profile's menuOrPicker → awaiting-input, NOT stuck (the documented v2.11 misread).
+    // caught via the profile's menuOrPicker → awaiting-input, NOT a stuck misread.
     const c = classifyClaude(["Select Model", "the fast one", "the slow one", ""], { x: 0, y: 3 }, 10_000);
     expect(c.state).toBe("awaiting-input");
     expect(c.reason).toBe("dialog_detected");
   });
 
-  it("classifies the LIVE-02 idle-`❯` box with a footer below the cursor → awaiting-input (not stuck)", () => {
-    // The real-VPS LIVE-02 shape: an idle `❯` input line with a dim status footer rendered BELOW
+  it("classifies the idle-`❯` box with a footer below the cursor → awaiting-input (not stuck)", () => {
+    // The real-VPS shape: an idle `❯` input line with a dim status footer rendered BELOW
     // the cursor, settled past the stuck window. The promptAffordance catches the `❯` → awaiting-input.
     const c = classifyClaude(["❯ ", "  /model · ~/proj · 12% context"], { x: 2, y: 0 }, 10_000);
     expect(c.state).toBe("awaiting-input");
@@ -178,26 +174,26 @@ describe("claudeCodeProfile.perception — patterns + end-to-end classification 
     expect(c.reason).toBe("working_line");
   });
 
-  it("does NOT suppress stuck: a frozen spinner PAST the stuck window stays stuck (WR-02 hang hole)", () => {
+  it("does NOT suppress stuck: a frozen spinner PAST the stuck window stays stuck", () => {
     const c = classifyClaude(["✻ Crunching the request", "reading files", "more", "and more"], { x: 4, y: 0 }, 10_000);
     expect(c.state).toBe("stuck");
   });
 
-  it("does NOT over-fire awaiting-input on a mid-turn `⏺` tool-action line (WR-01 — turnEnd excluded)", () => {
+  it("does NOT over-fire awaiting-input on a mid-turn `⏺` tool-action line (turnEnd excluded)", () => {
     // `⏺` is Claude's per-tool-action bullet, not only a turn end. A settled unparked tool-use pause
     // showing it must stay working (settled_cursor_unparked), NOT awaiting-input/dialog_detected.
     const c = classifyClaude(["⏺ Read(src/index.ts)", "reading the file", "more output", "and more"], { x: 4, y: 0 }, 0);
     expect(c.state).toBe("working");
   });
 
-  it("does NOT mark a `·`+gerund prose line working (WR-02a — the middot is dropped from workingLine)", () => {
+  it("does NOT mark a `·`+gerund prose line working (the middot is dropped from workingLine)", () => {
     // A generic middot bullet + gerund is prose, not the spinner — past the stuck window it stays stuck.
     const c = classifyClaude(["· Building the parser", "still going", "more", "and more"], { x: 4, y: 0 }, 10_000);
     expect(c.state).toBe("stuck");
   });
 });
 
-describe("claudeCodeProfile.dialogs — golden frames + safe-only auto-answer (DIALOG-01/02)", () => {
+describe("claudeCodeProfile.dialogs — golden frames + safe-only auto-answer", () => {
   const dialogs = claudeCodeProfile.dialogs!;
   const find = (name: string) => dialogs.find((d) => d.name === name)!;
 
@@ -215,11 +211,10 @@ describe("claudeCodeProfile.dialogs — golden frames + safe-only auto-answer (D
     if (decision.action === "answer") expect(decision.keys).toEqual(["\r"]);
   });
 
-  // REGRESSION (webhook-claude-cli-tdd-20260630, live VPS): Claude Code >= 2.1.x reworded the
-  // first-launch trust gate. The OLD regex `/trust the files in this folder/` matched the pre-2.1
-  // phrasing only, so a driven claude 2.1.196 session STALLED at the gate (auto-answer never fired)
-  // and never reached its prompt — the first-class terminal-driven flow was broken against current
-  // claude. This is the EXACT frame captured from claude 2.1.196 on the box.
+  // REGRESSION: Claude Code >= 2.1.x reworded the first-launch trust gate. A regex matching only the
+  // pre-2.1 phrasing `/trust the files in this folder/` lets a driven claude session STALL at the
+  // gate (auto-answer never fires) and never reach its prompt — breaking the terminal-driven flow
+  // against current claude. This is the EXACT frame captured from claude 2.1.196.
   const CLAUDE_211_TRUST_FRAME = [
     "Quick safety check: Is this a project you created or one you trust? (Like your own code, a",
     "well-known open source project, or work from your team). If not, take a moment to review what's",

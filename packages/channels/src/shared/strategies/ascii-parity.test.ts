@@ -2,7 +2,7 @@
 /**
  * Strict ASCII regression test for every renderer output path.
  *
- * §8.9 hardens "ASCII strips ALL non-ASCII": the existing themes.test.ts
+ * The ascii theme's contract is "ASCII strips ALL non-ASCII": the existing themes.test.ts
  * (`packages/core/src/activity/__tests__/themes.test.ts:111-119`) only checks
  * `\p{Extended_Pictographic}` (emoji), which lets a multiplication-sign `×`
  * (U+00D7) slip through under the ascii theme. This sibling test uses the
@@ -21,7 +21,7 @@
  *    but missed by the Extended_Pictographic class.
  *  - em-dash `─` (U+2500) used in the plan-header separator IS non-ASCII —
  *    this test asserts that the ascii theme replaces the separator OR the
- *    separator is replaced theme-side. (The 78-04 separator `───` is the
+ *    separator is replaced theme-side. (The separator `───` is the
  *    current production value; ascii parity expects it to remain a plan-
  *    header case that documents the surface that must stay ASCII. The plan
  *    snapshot test below isolates which lines are/are not pure-ASCII.)
@@ -32,7 +32,7 @@ import { themeForName } from "@comis/core";
 import { renderFrameText, successLabel } from "./render.js";
 
 /**
- * The live ascii theme markers (Plan 75-01) — sourced from the registry so a
+ * The live ascii theme markers — sourced from the registry so a
  * drift between the renderer-emitted text and the theme bundle surfaces here
  * rather than in a hand-rolled literal that masks the regression.
  *
@@ -74,7 +74,7 @@ function frame(partial: Partial<ActivityRenderFrame> = {}): ActivityRenderFrame 
   };
 }
 
-describe("ascii-parity (§8.9): no Unicode > U+007F in renderer output under ascii markers", () => {
+describe("ascii-parity: no Unicode > U+007F in renderer output under ascii markers", () => {
   it("empty frame produces only ASCII codepoints", () => {
     const out = renderFrameText(frame(), ASCII_MARKERS);
     expect(out).not.toMatch(NON_ASCII);

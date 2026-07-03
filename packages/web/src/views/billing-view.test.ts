@@ -52,18 +52,18 @@ const MOCK_AGENTS = { agents: ["default", "researcher"] };
 /** A planted body/secret marker — must never reach the DOM or the export. */
 const BODY_MARKER = "SECRET_MESSAGE_BODY_DO_NOT_LEAK";
 
-// The REAL obs.billing.byAgent wire shape (179-wiring): the handler projects
-// `tools[]` (CR-01 per-tool even-split, the HG-01 producer) — content-free names
-// + numbers. It does NOT carry `subagents[]`: COST-02's gs.nodeCost is per-graph
-// -run (in-memory, surfaced on graph:completed / the Incident view), NOT persisted
-// to obs_token_usage, so the per-agent billing aggregate has no honest per-subagent
-// source. This mock therefore mirrors the handler exactly — `tools[]` present, NO
-// fabricated `subagents[]` (the fabrication is what hid 179's CR-01 gap).
+// The REAL obs.billing.byAgent wire shape: the handler projects `tools[]`
+// (per-tool even-split) — content-free names + numbers. It does NOT carry
+// `subagents[]`: the per-graph gs.nodeCost is per-graph-run (in-memory, surfaced
+// on graph:completed / the Incident view), NOT persisted to obs_token_usage, so
+// the per-agent billing aggregate has no honest per-subagent source. This mock
+// therefore mirrors the handler exactly — `tools[]` present, NO fabricated
+// `subagents[]` (a fabricated empty would hide the missing per-subagent source).
 const MOCK_AGENT_BILLING = {
   tokensToday: 80_000,
   costToday: 28.5,
   percentOfTotal: 67.1,
-  // CR-01 per-tool (tool_tag, best-effort even-split) — sums to the turn.
+  // Per-tool (tool_tag, best-effort even-split) — sums to the turn.
   tools: [
     { tool: "bash", cost: 18.0, tokens: 50_000, calls: 30 },
     { tool: "read", cost: 10.5, tokens: 30_000, calls: 20 },
@@ -312,7 +312,7 @@ describe("IcBillingView", () => {
   });
 
   /* ---------------------------------------------------------------- */
-  /*  COST-01/02 granularity + export + DSL (Task 3)                   */
+  /*  Per-tool/per-subagent granularity + export + DSL filter         */
   /* ---------------------------------------------------------------- */
 
   /** Access private fields for direct drill/filter manipulation. */
@@ -342,7 +342,7 @@ describe("IcBillingView", () => {
 
     const shadow = el.shadowRoot!;
     const text = shadow.textContent ?? "";
-    // per-tool section present + the best-effort label (N3)
+    // per-tool section present + the best-effort label
     expect(text).toMatch(/per-tool/i);
     expect(text.toLowerCase()).toContain("best-effort");
     // the distinct tools render
@@ -350,7 +350,7 @@ describe("IcBillingView", () => {
     expect(text).toContain("read");
   });
 
-  it("per-subagent section degrades HONESTLY (per-graph-run → Incident view), not a fabricated empty (179-wiring CR-01)", async () => {
+  it("per-subagent section degrades HONESTLY (per-graph-run → Incident view), not a fabricated empty", async () => {
     el = document.createElement("ic-billing-view") as IcBillingView;
     el.rpcClient = createBillingMockRpcClient();
     document.body.appendChild(el);
@@ -361,7 +361,7 @@ describe("IcBillingView", () => {
 
     const shadow = el.shadowRoot!;
     const text = shadow.textContent ?? "";
-    // The per-subagent section is present + names the honest reason: COST-02's
+    // The per-subagent section is present + names the honest reason: the per-graph
     // nodeCost is per-graph-run (not in the per-agent billing aggregate), so it
     // points the operator at the Incident view rather than showing a silent empty
     // or a fabricated row. (The handler emits no subagents[] — see the mock note.)
@@ -477,7 +477,7 @@ describe("IcBillingView", () => {
     expect(shadow.textContent ?? "").not.toContain(BODY_MARKER);
   });
 
-  it("a session-billing row drills to the Incident view keyed on that sessionKey (179-08)", async () => {
+  it("a session-billing row drills to the Incident view keyed on that sessionKey", async () => {
     el = document.createElement("ic-billing-view") as IcBillingView;
     el.rpcClient = createBillingMockRpcClient();
     document.body.appendChild(el);

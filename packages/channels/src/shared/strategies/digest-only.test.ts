@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DigestOnly strategy tests (§7.3 row "DigestOnly").
+ * DigestOnly strategy tests.
  *
  * Used by Email (largest cap, end-of-turn only). On success NO message is sent
  * (the assistant reply IS the activity). On failure exactly one "[FAILED]"
@@ -20,7 +20,7 @@ import type { ActivityStatusMarkers } from "@comis/core";
 import { createDigestOnlyRenderer } from "./digest-only.js";
 import type { ActivityRenderActions } from "./actions.js";
 
-/** The locked `ascii` theme markers (75-01): every glyph is bracketed ASCII. */
+/** The locked `ascii` theme markers: every glyph is bracketed ASCII. */
 const ASCII_MARKERS: ActivityStatusMarkers = {
   success: "[OK]",
   failure: "[ERR]",

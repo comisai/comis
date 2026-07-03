@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A unit tests for the Phase 146 (PLAT) shared harness `plat-config.ts`.
+ * Stage-A unit tests for the PLAT shared harness `plat-config.ts`.
  *
  * Proves each fixture/builder has its INTENDED effect against the REAL product primitives
  * (validateConfig, setupSecrets, TerminalDriverConfigSchema) + shapes (CronStore, HeartbeatSourcePort)
- * — so the Wave-1 PLAT scenarios can rely on "this INVALID_CONFIGS entry WILL fail validateConfig",
+ * — so the PLAT scenarios can rely on "this INVALID_CONFIGS entry WILL fail validateConfig",
  * "TEST_MASTER_KEY_HEX IS accepted as crypto material", "makeValidTerminalConfig DOES parse",
  * "makeInMemoryCronStore round-trips", "OK_HEARTBEAT_TEXT contains the real ok token" without
  * re-deriving it.

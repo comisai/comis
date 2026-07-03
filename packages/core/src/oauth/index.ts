@@ -6,7 +6,7 @@
  * Includes the three CLI-facing public symbols (selectOAuthCredentialStore,
  * loginOpenAICodexOAuth, OAuthError) plus the sibling-dep helpers
  * (createOAuthCredentialStoreFile, loginOpenAICodexDeviceCode) that the
- * relocated files transitively need.
+ * selector and login runner transitively need.
  *
  * @module
  */
@@ -47,7 +47,7 @@ export type {
 
 // The CLI doctor's oauth-health check imports runOAuthTlsPreflight; this
 // symbol lives in core so packages/cli/src/ has zero @comis/agent imports.
-// Pure-function relocation — no imports.
+// Pure function — imports nothing itself.
 export { runOAuthTlsPreflight } from "./oauth-tls-preflight.js";
 export type {
   TlsPreflightResult,

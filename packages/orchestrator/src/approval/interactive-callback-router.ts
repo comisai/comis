@@ -2,7 +2,7 @@
 /**
  * InteractiveCallbackRouter — the single server-side authority that parses,
  * looks-up-THEN-verifies, and dispatches every approval callback to
- * `ApprovalGate.resolveApproval()` (spec §6.4.4).
+ * `ApprovalGate.resolveApproval()`.
  *
  * Channels NEVER call `ApprovalGate` directly and NEVER carry `requestId`/`sessionKey`
  * on the wire — only `shortId`. The router resolves `shortId → requestId` server-side,
@@ -10,9 +10,9 @@
  * `ClockPort`, then constant-time-verifies the HMAC. `render()` delegates to the
  * `core/security` signing primitive so the renderers (which import `@comis/core`) and
  * the router share one signing implementation — no duplicated crypto, no
- * `channels → orchestrator` boundary violation (Pitfall 5).
+ * `channels → orchestrator` boundary violation.
  *
- * The route ORDER is load-bearing (Pitfall 2 — verify-before-lookup defeats
+ * The route ORDER is load-bearing (verify-before-lookup defeats
  * replay rejection): the pending-table lookup proves liveness, enables replay rejection,
  * and provides the server-side `requestId`/`sessionKey`/`expiresAt`. There is NO separate
  * replay store — `resolveApproval` removing the pending entry IS the replay guard (the
@@ -29,7 +29,7 @@ import {
 } from "@comis/core";
 
 /**
- * Inbound approval callback (spec §6.4.4). `rawData` and `inboundUserId` are
+ * Inbound approval callback. `rawData` and `inboundUserId` are
  * attacker-controllable; `sessionKey` is orchestrator-derived from `channelKey`
  * BEFORE `route()` is called (trusted — never read from the wire).
  */
@@ -45,7 +45,7 @@ export type InboundCallback = {
 };
 
 /**
- * Closed result union (spec §6.4.4). `requestId` is returned only to the orchestrator
+ * Closed result union. `requestId` is returned only to the orchestrator
  * caller — never to the wire; channels receive only the resolution `kind`.
  */
 export type CallbackResolution =
@@ -69,24 +69,24 @@ export interface InteractiveCallbackRouterDeps {
   readonly gate: ApprovalGate;
   /** Returns the HMAC signing secret (injected at the daemon composition root). */
   readonly getSecret: () => string;
-  /** Injected clock — expiry uses `clock.now()`, never a wall-clock global (Pitfall §). */
+  /** Injected clock — expiry uses `clock.now()`, never a wall-clock global. */
   readonly clock: ClockPort;
 }
 
 /** Fallback approver identity when the channel did not supply an inbound user id. */
 const UNKNOWN_APPROVER = "chat:unknown";
 
-/** The plain-text verbs accepted on the §6.4.6 branch. */
+/** The plain-text verbs accepted on the plain-text reply branch. */
 const PLAINTEXT_VERBS = new Set<CallbackChoice>(["approve", "deny", "details"]);
 
 /** A 12-char base62 shortId (case-SENSITIVE — base62 distinguishes case). */
 const SHORT_ID_RE = /^[0-9A-Za-z]{12}$/;
 
-/** Marker prefix for a signed callback attempt (spec §6.4.2 `v1.<choice>.<shortId>.<hmac>`). */
+/** Marker prefix for a signed callback attempt (`v1.<choice>.<shortId>.<hmac>`). */
 const SIGNED_PREFIX = "v1.";
 
 /**
- * Parse a plain-text reply (§6.4.6) into a verb + optional shortId suffix, or null.
+ * Parse a plain-text reply into a verb + optional shortId suffix, or null.
  *
  * Split-based (not a single regex) to avoid any ReDoS surface on attacker-controlled
  * `rawData` (`security/detect-unsafe-regex`): the verb is lower-cased for the
@@ -140,7 +140,7 @@ export function createInteractiveCallbackRouter(
   }
 
   function routeSigned(inbound: InboundCallback): CallbackResolution {
-    // ORDER IS LOAD-BEARING (Pitfall 2). Do NOT reorder.
+    // ORDER IS LOAD-BEARING. Do NOT reorder.
     // 1. Strict parse of the signed wire format.
     const parsed = parseCallbackData(inbound.rawData);
     if (!parsed.ok) return { kind: "malformed" };
@@ -168,7 +168,7 @@ export function createInteractiveCallbackRouter(
   }
 
   function routePlainText(inbound: InboundCallback): CallbackResolution {
-    // §6.4.6 — HMAC SKIPPED for this branch only (plain-text channels cannot carry a
+    // Plain-text branch — HMAC SKIPPED for this branch only (plain-text channels cannot carry a
     // signed payload); replay protection still from pending-table removal,
     // and sessionKey scoping still applies via pendingForSession.
     const command = parsePlainText(inbound.rawData);
@@ -197,7 +197,7 @@ export function createInteractiveCallbackRouter(
     // with `v1.` is a signed-callback attempt and routes through routeSigned, where a
     // strict-parse failure yields `malformed` (a corrupted/forged signed payload must
     // NOT silently fall through to the unauthenticated plain-text branch). Only input
-    // without the marker is treated as a plain-text reply (§6.4.6).
+    // without the marker is treated as a plain-text reply.
     const resolution = inbound.rawData.startsWith(SIGNED_PREFIX)
       ? routeSigned(inbound)
       : routePlainText(inbound);

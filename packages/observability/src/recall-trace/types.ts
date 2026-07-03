@@ -3,8 +3,8 @@
  * Recall-trace event v1 schema — ONE rich per-recall record + Zod envelope.
  *
  * Unlike the cache-trace (a per-session stream of per-STAGE events keyed by
- * a `stage` enum), the recall trace is a SINGLE rich record per recall
- * (Assumption A1): all of the recall pipeline's
+ * a `stage` enum), the recall trace is a SINGLE rich record per recall: all of
+ * the recall pipeline's
  * data — lanes fired + candidate counts, fused order, rerank scores
  * pre/post, and the final ranked set with per-memory score breakdowns +
  * include/exclude reasons — lives in ONE `recall()` call, so it is modeled
@@ -20,17 +20,17 @@
  *
  * Security shape: the record explains
  * recall WITHOUT echoing bodies. The query is a `queryDigest` (a fingerprint
- * — NEVER raw query text; supplied by the agent in Plan 03), per-memory data
- * is `id` + numeric `breakdown` (safe) + a closed-union `reason` (safe) + an
- * OPTIONAL short `preview` that the runtime routes through
- * `sanitizeForPersistence` before write. No absolute paths, no raw content.
+ * — NEVER raw query text), per-memory data is `id` + numeric `breakdown` (safe)
+ * + a closed-union `reason` (safe) + an OPTIONAL short `preview` that the runtime
+ * routes through `sanitizeForPersistence` before write. No absolute paths, no raw content.
  *
  * Closed-union invariant (AGENTS.md §2.8): `RECALL_RERANK_OUTCOMES` and
  * `RECALL_INCLUDE_REASONS` are literal `as const` tuples (mirror
  * `CACHE_TRACE_STAGES`) so consumers can enumerate them at test time and the
  * Zod `z.enum(...)` fences reject unknown values at parse time.
  *
- * v1 shape established 2026-05-30; append-only rule applies forward.
+ * v1 shape; the append-only rule applies forward — new fields are added optional
+ * so older trace lines still parse.
  *
  * @module
  */
@@ -90,8 +90,8 @@ export type RecallDegradationKind = (typeof RECALL_DEGRADATION_KINDS)[number];
  * `usefulness` factor is the read-side payoff of the recall-utility
  * feedback loop (1.0 when the per-memory usefulness signal is absent).
  *
- * `usefulnessOutcomeShare` (OBS-02, Verified Learning WS3) is an OPTIONAL annotation —
- * the OUTCOME-attributed usefulness CONTRIBUTION (the signed deviation of the `usefulness`
+ * `usefulnessOutcomeShare` is an OPTIONAL annotation — the OUTCOME-attributed
+ * usefulness CONTRIBUTION (the signed deviation of the `usefulness`
  * factor from its 1.0 neutral), surfaced so `comis explain` shows how much of a memory's
  * rank came from learned recall-utility / outcome feedback, distinct from the lexical `base`.
  * It is NOT a multiplicand (absent from `final`). Optional so older trace lines (and the
@@ -105,7 +105,7 @@ const RecallScoreBreakdownSchema = z.object({
   proof: z.number(),
   trust: z.number(),
   usefulness: z.number(),
-  /** OBS-02 outcome-attributed usefulness contribution (annotation, NOT a multiplicand);
+  /** Outcome-attributed usefulness contribution (annotation, NOT a multiplicand);
    *  optional so older trace lines parse. Signed: + boosts, - demotes, 0 when absent. */
   usefulnessOutcomeShare: z.number().optional(),
   /** FadeMem decay factor surfaced from score.ts; optional (appended after the original
@@ -117,9 +117,8 @@ const RecallScoreBreakdownSchema = z.object({
 /**
  * One entry in the final ranked set. `id` + `reason` are mandatory; the
  * numeric `breakdown` is optional (present for included memories); `preview`
- * is an OPTIONAL short sanitized string (Plan 03 decides id-only vs preview
- * — the redaction proof in runtime.test.ts is authoritative: any preview
- * goes through `sanitizeForPersistence`).
+ * is an OPTIONAL short sanitized string — the redaction proof in runtime.test.ts
+ * is authoritative: any preview goes through `sanitizeForPersistence`.
  */
 const RecallRankedEntrySchema = z.object({
   id: z.string(),
@@ -153,10 +152,10 @@ export const RecallTraceEventSchema = z.object({
   seq: z.number().int().nonnegative(),
   agentId: z.string(),
   sessionId: z.string(),
-  // §7.2 canonical correlation key — required. Auto-derived from the
+  // Canonical correlation key — required. Auto-derived from the
   // AsyncLocalStorage RequestContext when present, falling back to sessionId.
   traceId: z.string(),
-  // §7.2 envelope cluster — optional; the agent wires what's reachable.
+  // Envelope cluster — optional; the agent wires what's reachable.
   sessionKey: z.string().optional(),
   tenantId: z.string().optional(),
   runId: z.string().optional(),

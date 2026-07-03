@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * exec-tool activity-label integration (SPEC-§6.3).
+ * exec-tool activity-label integration.
  *
  * Pins the contract that the `exec` builtin tool registers a LabelSpec whose
- * `transform` hook wires `parseShellCommand` (the deterministic OpenClaw-style
+ * `transform` hook wires `parseShellCommand` (the deterministic
  * shell summarizer). The hook lives on the spec
  * at registration time (the `transform?` field was added to
  * `RegisteredLabelSpec`); this test asserts the full RESOLVE → APPLY pipeline
@@ -17,7 +17,7 @@
  *   1) `parseShellCommand` self-redacts via `redactValue` at
  *      shell-label-parser.ts:53.
  *   2) `applyTemplate` step 4 pipes the transform output through
- *      `redactValue` defense-in-depth (Pitfall 4).
+ *      `redactValue` defense-in-depth.
  *
  * Why side-effect import of the exec-tool module in `beforeAll`: the
  * `registerActivityLabelSpec("exec", ...)` call lives at module top and runs on
@@ -29,7 +29,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { resolveLabelSpec, applyTemplate } from "@comis/core";
 import { parseShellCommand } from "@comis/observability";
 
-describe("exec-tool activity label (SPEC-§6.3)", () => {
+describe("exec-tool activity label", () => {
   beforeAll(async () => {
     // Side-effect import: the exec-tool module's co-located
     // `registerActivityLabelSpec("exec", ...)` call runs on first import,
@@ -83,7 +83,7 @@ describe("exec-tool activity label (SPEC-§6.3)", () => {
     //   1) parseShellCommand → redactValue on the produced "search for `…`"
     //      label (shell-label-parser.ts:53),
     //   2) applyTemplate transform step → redactValue on the transform output
-    //      (template-engine.ts:155, defense-in-depth Pitfall 4).
+    //      (template-engine.ts:155, defense-in-depth).
     // The synthetic key never lives in production source — the regex it
     // triggers is `redact-value.ts`'s secret-shape detector.
     const resolved = resolveLabelSpec("exec");

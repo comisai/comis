@@ -56,7 +56,7 @@ export function registerFleetCommand(program: Command): void {
     .action(async (options: { since: string; format: string; offline?: boolean }) => {
       try {
         const sinceHours = Number.parseFloat(options.since);
-        // W14: same offline contract as `comis explain` — explicit --offline, or
+        // Same offline contract as `comis explain` — explicit --offline, or
         // automatic fallback when the gateway is UNREACHABLE; an auth-rejection
         // surfaces (the daemon is up — masking the token problem hides a
         // misconfiguration).
@@ -93,7 +93,7 @@ export function registerFleetCommand(program: Command): void {
         info(
           `Sessions:   ${report.sessions.total} (${report.sessions.degraded} degraded, ${(report.sessions.degradedRate * 100).toFixed(0)}%)`,
         );
-        // QT2/QT3 — the fleet-level degradation detector: degraded counts by
+        // The fleet-level degradation detector: degraded counts by
         // named endReason cause. Surface it in the TABLE view (not only via
         // --format json) so an operator running `comis fleet` SEES the spread.
         // Sorted deterministically (count desc, then cause name asc) to match the
@@ -109,7 +109,7 @@ export function registerFleetCommand(program: Command): void {
           );
         }
         info(`Breaker:    ${report.breakerTripTotal} trips`);
-        // FLEET-01/02/04 — the cross-run AUTONOMY-health slice. Guarded like
+        // The cross-run AUTONOMY-health slice. Guarded like
         // degradedByCause (above): present ONLY when the daemon ran durable
         // (unattended) runs and the durable store was wired; ABSENT under
         // --offline / a non-durability boot (the assembler omits the block —
@@ -122,7 +122,7 @@ export function registerFleetCommand(program: Command): void {
         // automatically — this is the human-readable table render only.
         if (report.autonomy) {
           const a = report.autonomy;
-          // FLEET-02 (Phase 220-05): `denialBreaker` is the capability-DENIAL breaker
+          // `denialBreaker` is the capability-DENIAL breaker
           // trip count — SEPARATE from `breaker` (the tool-failure breaker). A
           // denial-breaker-aborted run is invisible to every other count (it lands in
           // durable status 'completed'), so this is its only fleet surface.
@@ -133,9 +133,9 @@ export function registerFleetCommand(program: Command): void {
             info(`  → worst run: comis explain ${a.worstRootRunId}`);
           }
         }
-        // WR-03: cost.costUsd is A1-sourced (session-summary store); the token
-        // total is A3-sourced (session-index files) and degrades independently.
-        // When A3 degraded (coverage.sessionIndex.daysMissing > 0) the token
+        // cost.costUsd is sourced from the session-summary store; the token
+        // total is sourced from the session-index files and degrades independently.
+        // When the token read degraded (coverage.sessionIndex.daysMissing > 0) the token
         // figure is an unreliable 0 — printing "$X · 0 tok" alongside a real
         // cost reads as a data bug. Drop the contradictory "0 tok" and surface
         // the honest degraded-coverage signal instead; otherwise the normal line.

@@ -15,7 +15,7 @@ import { registerActivityLabelSpec } from "@comis/core";
 import { createRpcDispatchTool } from "../messaging-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name.
+// Activity label spec. Descriptor name == emitted name.
 registerActivityLabelSpec("image_generate", {
   semanticPhase: "media",
   label: "generating image",

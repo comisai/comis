@@ -64,7 +64,7 @@ export interface ChannelManagerBuildDeps {
   /** Process-singleton circuit breaker (daemon.ts D2), shared across coordinators. */
   activityBreaker?: ActivityBreakerGate;
   /** SHARED ExecutionPlanHolder (DEFAULT agent) from createAcpWiring().holder — SAME ref as
-   *  PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort (Pitfall 1: a parallel holder reads empty).
+   *  PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort (a parallel holder reads empty).
    *  Absent → no chat plan-stream built (frame.planSnapshot undefined; elapsed fallback). */
   executionPlanPort?: ExecutionPlanPort;
   signCallbackData?: import("@comis/channels").SignCallbackData;
@@ -93,7 +93,7 @@ export interface ChannelManagerBuildDeps {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
     destroySession(key: SessionKey): Promise<void>;
   }>;
-  /** Complete three-layer forget for slash /new + /reset (live 2026-06-11: runtime-only destroy left LCD context the DAG re-presented). */
+  /** Complete three-layer forget for slash /new + /reset (runtime-only destroy leaves the LCD context the DAG re-presents). */
   destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
@@ -173,7 +173,7 @@ export async function buildAndStartChannelManager(
         maxTextLength: ttsConfig.maxTextLength,
         outputFormats: ttsConfig.outputFormats,
         providerFormatKey,
-        provider: ttsConfig.provider, // OBS-01 §2.7 voice-identity (INFO line)
+        provider: ttsConfig.provider, // §2.7 voice-identity (INFO line)
         keyless: ttsConfig.provider === "edge" || ttsConfig.provider === "local", // edge/local ⇒ $0
         ...(ttsConfig.model !== undefined ? { model: ttsConfig.model } : {}),
       },
@@ -204,7 +204,7 @@ export async function buildAndStartChannelManager(
   // fallback in the coordinatorFactory below — fires for any channelType the live map does not serve (test-only seam).
   // The per-turn coordinatorFactory the inbound pipeline gate (execution-pipeline.ts:395) needs — over
   // renderers + redacted ActivityStream + breaker + live kill-switch. Built ONLY when stream is injected (absent → gate
-  // false, fail-closed §22.2). Closure lives in the daemon (root importing @comis/orchestrator + observability — Pitfall 1).
+  // false, fail-closed §22.2). Closure lives in the daemon (root importing @comis/orchestrator + observability).
   const activityStream = deps.activityStream;
   // Build the SEP plan-stream ONCE outside the per-turn closure. SHARED across turns;
   // per-turn (agentId, sessionKey) filter inside the coordinator prevents cross-turn snapshot leaks.
@@ -457,7 +457,7 @@ export async function buildAndStartChannelManager(
             maxSteps: execAgentConfig?.maxSteps ?? 10,
           }),
           destroySession: (key) => {
-            // Complete three-layer forget when wired (live 2026-06-11); legacy runtime-only destroy otherwise.
+            // Complete three-layer forget when wired; legacy runtime-only destroy otherwise.
             const adapter = deps.piSessionAdapters?.get(agentId);
             if (deps.destroyConversation) {
               // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget

@@ -80,7 +80,7 @@ export function offlineSecretSet(opts: {
  * @returns ok(SecretMetadata[]) on success, err(Error) when key absent or store fails
  */
 /**
- * W15 (obs-llm-troubleshooting): daemon-free decrypted read of ONE secret.
+ * Daemon-free decrypted read of ONE secret.
  *
  * Breaks the gateway-token chicken-and-egg: `comis secrets get
  * COMIS_GATEWAY_TOKEN` previously required the daemon RPC, which required the

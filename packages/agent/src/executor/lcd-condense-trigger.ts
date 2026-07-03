@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD afterTurn CONDENSE pass (Phase 130, C2) — the mirror of the leaf pass.
+ * LCD afterTurn CONDENSE pass — the mirror of the leaf pass.
  *
  * Where {@link maybeRunLeafPass} (lcd-compaction-trigger.ts) folds a contiguous
  * run of raw MESSAGES into a depth-0 leaf, this pass folds a contiguous run of
  * ≥`condensedMinFanout` same-depth SUMMARIES into one coarser depth+1 condensed
  * summary — turning the single-tier LCD compaction into a multi-tier zoomable
- * hierarchy (C2). It runs AFTER the leaf pass at the afterTurn boundary, so a turn
+ * hierarchy. It runs AFTER the leaf pass at the afterTurn boundary, so a turn
  * that just created the Nth leaf can immediately fold it.
  *
  * It lives in its OWN module (not in lcd-compaction-trigger.ts) to keep that file
@@ -14,37 +14,37 @@
  * ({@link resolveContext}) lives in the trigger and returns BOTH the leaf history
  * and the per-depth contiguous summary-ref runs, so utilization + leaf selection
  * + condense selection all read ONE `getContextItems`/`getMessages`/`getSummaries`
- * snapshot (the CR-01/CR-02 "one resolved view is source of truth" invariant).
+ * snapshot (the "one resolved view is source of truth" invariant).
  *
  * Three load-bearing contracts (mirroring {@link maybeRunLeafPass}):
  *   1. NON-FATAL: a summarizer / store failure must NEVER fail the live turn —
  *      the whole body is wrapped in one try/catch → WARN (errorKind `dependency`)
  *      and returns; the awaiting call site simply awaits a promise that never
- *      rejects (T-130-07). The condense summarizer's own deterministic Level-3
+ *      rejects. The condense summarizer's own deterministic Level-3
  *      truncation is the in-pass degrade; a store failure is the outer degrade.
  *   2. AGENT-SIDE TOKENS: the before-size is the STORED `Σ child.tokenCount` (each
  *      child summary's persisted `tokenCount`); the persisted condensed
  *      `tokenCount` is the condense summarizer's `tokenCount`. The store NEVER
- *      computes tokens (the 127 contract).
+ *      computes tokens (the contract keeps core/memory estimator-free).
  *   3. INJECTED CLOCK: the condensed `createdAt` comes from the supplied `now`,
  *      never the ambient wall-clock global (the globals gate; AGENTS.md §2.2).
  *
- * Pitfall 3 (contiguity) is enforced BY CONSTRUCTION: a {@link SummaryRefRun}
+ * Contiguity is enforced BY CONSTRUCTION: a {@link SummaryRefRun}
  * breaks at any message-ref or depth change, so {@link selectCondensableTier} can
  * only ever pick a CONTIGUOUS same-depth run, and the `[startOrdinal, endOrdinal]`
  * window is the run's own ordinals → the store range-replace cannot corrupt
- * ordering or merge a non-contiguous fanout (T-130-08).
+ * ordering or merge a non-contiguous fanout.
  *
- * Bounded (T-130-06): ONE condense pass per call. 130 fires inline + synchronously
- * (mirrors the 129 leaf pass); deferred/background condensation + bounded spend +
- * a circuit breaker are Phase 132 — so the whole pass lives behind THIS one
- * function for a clean 132 swap (the SAME injected-summarizer seam as the leaf).
+ * Bounded: ONE condense pass per call, fired inline + synchronously at the
+ * afterTurn boundary (mirrors the leaf pass). The whole pass lives behind THIS
+ * one function — the SAME injected-summarizer seam as the leaf — so
+ * deferred/background scheduling or spend/breaker governance can swap in cleanly.
  *
  * Architecture cut (agent↛memory): this module imports ONLY the CORE
  * `ContextStorePort`/`ContextStoreScope` TYPES + the agent-side condense
  * summarizer + the trigger's resolved-view walk. The concrete `createLcdStore` is
  * daemon-injected — this module NEVER imports the memory package directly. It
- * NEVER logs summary content — ids/counts/durations/level only (T-130-09).
+ * NEVER logs summary content — ids/counts/durations/level only.
  *
  * @module
  */
@@ -102,7 +102,7 @@ export interface CondensePassOptions {
 /**
  * The most recent EXISTING summary at `depth` (for continuity) — passed to the
  * condense summarizer as `previousSummary`. Operates on the ALREADY-READ
- * oldest-first `getSummaries` snapshot from `resolveContext` (WR-01: one resolved
+ * oldest-first `getSummaries` snapshot from `resolveContext` (one resolved
  * view is the source of truth — never a second store read), so the LAST
  * same-depth summary is the most recent. `undefined` when none exists yet at the
  * target depth.
@@ -124,9 +124,9 @@ function previousSummaryAtDepth(summaries: LcdSummary[], depth: number): string 
  * @param store          The injected core ContextStorePort (daemon-injected concrete store).
  * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
  * @param opts           The gating + sizing knobs from `config.contextEngine`.
- * @param summarizerDeps The injected summarizer + model getters (the 132 spend-governance seam). Absent ⇒ no-op.
+ * @param summarizerDeps The injected summarizer + model getters (the spend-governance seam). Absent ⇒ no-op.
  * @param now            Injected wall-clock ms (`deps.clock.now()`) — NEVER the ambient time global. Stamps `timestamp`.
- * @param nowFn          Injected clock CALLABLE (`deps.clock.now`) for the two pass-timing reads (O1). Absent ⇒ durationMs 0.
+ * @param nowFn          Injected clock CALLABLE (`deps.clock.now`) for the two pass-timing reads. Absent ⇒ durationMs 0.
  * @param logger         For the completion INFO + the non-fatal WARN.
  * @param eventBus       Optional bus to emit `context:dag_compacted` on a completed pass.
  */
@@ -145,9 +145,9 @@ export async function maybeRunCondensePass(
   // a clean skip, not a fault — mirrors the leaf gate).
   if (summarizerDeps === undefined) return;
   if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) {
-    // Review IN-01: never silently disarm — leave the same one-line DEBUG
+    // Never silently disarm — leave the same one-line DEBUG
     // breadcrumb the leaf gate leaves, so a disarmed condense pass is
-    // diagnosable from logs alone (phase invariant: no silent trigger disarm).
+    // diagnosable from logs alone (invariant: no silent trigger disarm).
     logger.debug(
       { conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-condense-gate", reason: "bad-window", windowTokens: opts.windowTokens },
       "lcd condense pass gate skip",
@@ -156,22 +156,22 @@ export async function maybeRunCondensePass(
   }
 
   const conversationId = scope.conversationId;
-  // O1: capture a pass-START clock read at entry (the injected clock CALLABLE —
+  // Capture a pass-START clock read at entry (the injected clock CALLABLE —
   // NEVER Date.now()/performance.now(), the globals gate). The second read at
   // emit gives the real elapsed; a scalar-only caller degrades to 0.
   const passStart = nowFn?.() ?? now;
   try {
     // Resolve the model-facing context ONCE — the SAME walk the leaf pass uses,
     // now also returning the per-depth contiguous summary-ref runs + the
-    // `getSummaries` snapshot (CR-01/CR-02 + WR-01: one resolved view is the
+    // `getSummaries` snapshot (one resolved view is the
     // source of truth). The condense selection reads `summaryRunsByDepth`; taint
     // rides the selected children; `previousSummary` rides `summaries` — NO
     // second `getSummaries` call observes a possibly-diverged later snapshot.
-    // R4 (132-03): resolveContext reads agent + tenant scoped (WR-02) via `scope`.
+    // Read isolation: resolveContext reads agent + tenant scoped via `scope`.
     const { summaryRunsByDepth, summaries, resolvedTokens } = resolveContext(store, scope);
 
     // Context pressure = resolved-view tokens / W — the SAME utilization the leaf
-    // gate computes (CR-02). Above `contextThreshold` the condense selector drops to
+    // gate computes. Above `contextThreshold` the condense selector drops to
     // the HARD fanout so a pressured tier still drains; at/below it the soft fanout
     // governs. The deepest qualifying run is selected so the hierarchy climbs past
     // depth 1 (depth-1→depth-2 fires once enough contiguous depth-1 summaries exist).
@@ -198,7 +198,7 @@ export async function maybeRunCondensePass(
         },
         "LCD condense pass skipped: ordinal-window divergence",
       );
-      // Phase 160 I1: emit a content-free context:dag_degraded so the inverted-
+      // Emit a content-free context:dag_degraded so the inverted-
       // window divergence persists as a health_signal row (queryable by the
       // fleet lens) instead of being a Pino-only WARN. Identifiers + reason +
       // timing only — NEVER summary content (mirrors the context:dag_compacted
@@ -215,27 +215,27 @@ export async function maybeRunCondensePass(
       return;
     }
 
-    // SUMW-01: prefix-trim the selected run to the LONGEST child prefix whose
+    // Prefix-trim the selected run to the LONGEST child prefix whose
     // Σ tokenCount fits the RESOLVED summarizer's window (override-aware via
     // resolveSummarizerWindowTokens — never the getModel() session-primary
     // snapshot) minus the condense target + prompt-template overhead + the
     // ACTUAL threaded previousSummary, so a condense pass never concatenates
     // more child tokens than the summarizer that actually runs can read.
-    // Ordinal integrity (T-178-10): a prefix of a contiguous run stays
+    // Ordinal integrity: a prefix of a contiguous run stays
     // contiguous, so [startOrdinal, children[keep-1].ordinal] remains a valid
     // range-replace window and the trimmed children survive untouched in the
     // store for a later pass. The no-trim path is byte-identical
     // (effectiveRun === run); pressureHigh and selectCondensableTier are unchanged.
     const summarizerWindow = resolveSummarizerWindowTokens(summarizerDeps);
-    // Review WR-03: the target depth and its previousSummary are knowable
+    // The target depth and its previousSummary are knowable
     // BEFORE the budget — a run's children share ONE depth by construction (a
     // SummaryRefRun breaks on any depth change), so the condensed depth is
     // run.depth + 1 regardless of how the trim lands. Subtract the ACTUAL
     // previousSummary tokens: the flat 2_048 overhead covers only the
     // instruction TEMPLATE, while previousSummary at this depth is
     // ~condensedTargetTokens-sized at defaults (2_000; the knob allows
-    // 10_000) — hoping the flat reserve covered both was short by its own
-    // arithmetic and overflowed near-exactly-filled windows.
+    // 10_000) — a flat reserve alone is short by its own arithmetic and
+    // overflows near-exactly-filled windows.
     const depth = run.depth + 1;
     const previousSummary = previousSummaryAtDepth(summaries, depth);
     const prevTokens = previousSummary === undefined
@@ -254,18 +254,18 @@ export async function maybeRunCondensePass(
       }
       if (keep < run.children.length) {
         if (keep < 2) {
-          // A 1-child condense is meaningless re-summarization — honest skip
-          // (T-178-12): observable via a content-free DEBUG with both numbers
-          // (I7), never WARN spam, never a throw.
+          // A 1-child condense is meaningless re-summarization — honest skip:
+          // observable via a content-free DEBUG with both numbers,
+          // never WARN spam, never a throw.
           logger.debug(
             { conversationId, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, firstChildTokens: run.children[0]!.tokenCount },
             "lcd condense pass skipped: summarizer window cannot fit a 2-child run",
           );
           return;
         }
-        // Review IN-03 (deliberate): the fanout gate governs run SELECTION
+        // Deliberate: the fanout gate governs run SELECTION
         // only — a binding window trim may fold FEWER children than the soft
-        // `condensedMinFanout` that selected the run (SUMW-01-C1 pins fanout 4
+        // `condensedMinFanout` that selected the run (the tests pin fanout 4
         // selecting, 3 folding). Preferable to never condensing under a small
         // summarizer; the trimmed children survive for a later pass.
         effectiveRun = {
@@ -274,7 +274,7 @@ export async function maybeRunCondensePass(
           startOrdinal: run.startOrdinal,
           endOrdinal: run.children[keep - 1]!.ordinal,
         };
-        // Numbers only (I7) — per-pass DEBUG, never WARN (the trim is normal adaptive behavior).
+        // Numbers only — per-pass DEBUG, never WARN (the trim is normal adaptive behavior).
         logger.debug(
           { conversationId, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, keptChildren: keep, trimmedChildren: run.children.length - keep },
           "lcd condense run prefix-trimmed to the resolved summarizer window",
@@ -282,43 +282,43 @@ export async function maybeRunCondensePass(
       }
     }
 
-    // Derive the rest of the condensed node's metadata from the KEPT children
-    // (RESEARCH A6): taint = OR(children.taint); descendantCount / time-range
+    // Derive the rest of the condensed node's metadata from the KEPT children:
+    // taint = OR(children.taint); descendantCount / time-range
     // are recomputed STORE-SIDE from the child rows (advisory here). depth was
     // derived above (run.depth + 1 — identical to max(child depth) + 1, since
     // the run's children share one depth by construction).
     const childSummaryIds = effectiveRun.children.map((c) => c.summaryId);
     // taint = OR(children.taint): read taint off the SELECTED children — the
     // resolved-view `CondenseChildSummary` carries `taint` from the SAME
-    // `getSummaries` snapshot the run was selected from (WR-01). A second
-    // `getSummaries` call could observe a diverged later snapshot (the pass goes
-    // deferred/async in Phase 132) and silently mis-propagate the trust boundary.
-    // A tainted child taints the condensed parent (T-130; enforcement is Phase 132).
+    // `getSummaries` snapshot the run was selected from. A second
+    // `getSummaries` call could observe a diverged later snapshot (the pass may
+    // run deferred/async) and silently mis-propagate the trust boundary.
+    // A tainted child taints the condensed parent.
     const taint = effectiveRun.children.some((c) => c.taint);
 
     // Summarize the child CONTENT via the 3-level escalation (non-fatal inside —
     // always returns a result). The before-size is the STORED Σ child tokenCount.
     // `previousSummary` is the SAME resolved-snapshot read the budget above
-    // already accounted (WR-01/WR-03) — never a re-query.
+    // already accounted — never a re-query.
     const result = await summarizeCondensedChunk(effectiveRun.children, summarizerDeps, {
       reserveTokens: opts.condensedTargetTokens,
       previousSummary,
-      depth, // SUM-01: thread computed depth so d1/d2/d3+ prompt styles actually fire
+      depth, // Thread the computed depth so the d1/d2/d3+ prompt styles actually fire
     });
 
     // Persist + link + range-replace at the run's EXACT [startOrdinal, endOrdinal]
-    // SUMMARY-ref window — one atomic store transaction (C2). The store recomputes
+    // SUMMARY-ref window — one atomic store transaction. The store recomputes
     // descendantCount + time-range from the child summary rows; depth/taint/
     // fallback/tokenCount/content come from here (the agent-side authority).
     // Capture the summaryId returned by appendCondensedSummary for the onCondensed
-    // callback (Phase 172-02: the distillation hook seam).
+    // callback (the distillation hook seam).
     const summaryId = store.appendCondensedSummary({
       scope,
       content: result.content,
       tokenCount: result.tokenCount,
       // Advisory only — the store RECOMPUTES descendantCount (= Σ child
       // descendantCount) + time-range (min/max child earliest/latest) from the
-      // child summary rows (the store is the authority, Plan 01). 0 / `now` are
+      // child summary rows (the store is the authority). 0 / `now` are
       // placeholders the store ignores.
       descendantCount: 0,
       earliestAt: now,
@@ -333,9 +333,9 @@ export async function maybeRunCondensePass(
       depth,
     });
 
-    // Phase 172-02: fire the optional distillation hook immediately after the
+    // Fire the optional distillation hook immediately after the
     // condensed summary is persisted. Non-fatal — errors from the hook MUST NOT
-    // propagate into the condense pass's own error handling (T-130-07).
+    // propagate into the condense pass's own error handling.
     try {
       onCondensed?.(summaryId, result.content, result.fallback, depth);
     } catch (hookErr) {
@@ -352,7 +352,7 @@ export async function maybeRunCondensePass(
       );
     }
 
-    // OBS-01 (Phase 180): the small-model G4 detector at the condense depth — a
+    // The small-model language-mismatch detector at the condense depth — a
     // non-Latin run of children whose condensed summary came back Latin emits
     // context:summary_language_mismatch (depth = this condense depth). Source =
     // the children summaries' concatenated content (the SAME input the condense
@@ -366,7 +366,7 @@ export async function maybeRunCondensePass(
       nowMs: now,
     });
 
-    // O1 (Phase 133): real pass-timing — a SECOND injected-clock read at emit
+    // Real pass-timing — a SECOND injected-clock read at emit
     // minus the pass-entry `passStart`. The injected clock is the only time
     // source (the ambient wall-clock global is banned); a scalar-only caller
     // (no `nowFn`) degrades to 0 (passStart === now). Clamped non-negative.
@@ -402,7 +402,7 @@ export async function maybeRunCondensePass(
       "LCD condensed summary persisted",
     );
   } catch (err) {
-    // Non-fatal (T-130-07): any failure degrades to a WARN + return — the live
+    // Non-fatal: any failure degrades to a WARN + return — the live
     // turn is unaffected (mirror maybeRunLeafPass). errorKind `dependency` (a
     // summarizer/store failure is an external-dependency fault).
     logger.warn(
@@ -438,16 +438,16 @@ export interface RunCondensePassAfterTurnParams {
    * condense pass is gated off cleanly (no trigger, no summary).
    */
   getCondenseSummarizerDeps: (() => LeafSummarizerDeps) | undefined;
-  /** SUMW-02: the turn's budget window — `computeTokenBudgetForProfile().windowTokens`
+  /** The turn's budget window — `computeTokenBudgetForProfile().windowTokens`
    *  = min(reconciled contextWindow, capability class cap), captured at the executor
-   *  BEFORE any dispose (a plain number — dispose-safe on the deferred C4 path). The
+   *  BEFORE any dispose (a plain number — dispose-safe on the deferred-compaction path). The
    *  utilization + pressureHigh denominator: one window truth with assembly +
    *  preflight. REQUIRED — an optional-with-fallback would silently restore the
-   *  configured-window denominator (the DIST-01 4×-late-arming bug class). */
+   *  configured-window denominator, which arms ~4× late on capability-capped small models. */
   budgetWindowTokens: number;
   /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. Stamps `timestamp`. */
   now: number;
-  /** Injected clock CALLABLE (`deps.clock.now`) for the O1 two-read pass timing. Absent ⇒ durationMs 0. */
+  /** Injected clock CALLABLE (`deps.clock.now`) for the two-read pass timing. Absent ⇒ durationMs 0. */
   nowFn?: () => number;
   /** For the trigger's completion INFO + non-fatal WARN. */
   logger: ComisLogger;
@@ -456,7 +456,7 @@ export interface RunCondensePassAfterTurnParams {
   /**
    * Optional callback fired immediately after store.appendCondensedSummary returns.
    * Receives the new summaryId, content, fallback flag, and depth.
-   * Phase 172-02 (DIST-01): this is the distillation hook seam — the runner fires
+   * This is the distillation hook seam — the runner fires
    * after each condensed summary is persisted.
    *
    * Non-fatal: callers MUST NOT depend on this callback throwing — if it throws,
@@ -470,8 +470,8 @@ export interface RunCondensePassAfterTurnParams {
  * Thin afterTurn call-site wiring for the condense pass: resolve the condense
  * summarizer deps, gate on their presence, build {@link CondensePassOptions} from
  * `config.contextEngine` (defaulted via `ContextEngineConfigSchema`) with
- * `windowTokens` taken from the threaded per-turn `budgetWindowTokens` (SUMW-02 —
- * the SAME budget window the assembler + preflight use, NOT the session model's
+ * `windowTokens` taken from the threaded per-turn `budgetWindowTokens` (the
+ * SAME budget window the assembler + preflight use, NOT the session model's
  * configured window), then delegate to {@link maybeRunCondensePass}. Clones
  * `runLeafPassAfterTurn`.
  *
@@ -502,10 +502,10 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
       condensedMinFanoutHard: cfg.condensedMinFanoutHard,
       contextThreshold: cfg.contextThreshold,
       condensedTargetTokens: cfg.condensedTargetTokens,
-      // SUMW-02: the utilization + pressureHigh denominator W is the threaded
+      // The utilization + pressureHigh denominator W is the threaded
       // per-turn budget window (min(reconciled contextWindow, class cap)) —
-      // never the summarizer snapshot's configured window, which kept the hard
-      // fanout from ever firing on capped small models (DIST-01). The
+      // never the summarizer snapshot's configured window, which would keep the
+      // hard fanout from ever firing on capped small models. The
       // maybeRunCondensePass finite-positive gate is unchanged.
       windowTokens: budgetWindowTokens,
     },
@@ -514,7 +514,7 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
     nowFn,
     logger,
     eventBus,
-    // Phase 172-02: thread the onCondensed distillation hook seam through to
+    // Thread the onCondensed distillation hook seam through to
     // maybeRunCondensePass. When present, fires with (summaryId, content, fallback,
     // depth) immediately after store.appendCondensedSummary returns.
     onCondensed,

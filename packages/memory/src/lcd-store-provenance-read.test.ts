@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for buildProvenanceReadStore — the concrete LcdProvenanceReadStore
- * adapter (Phase 173, DIST-03 read side; the C1→C2 carry-in activation).
+ * adapter.
  *
  * The read-mirror of the write-side `lcd-store-provenance.ts` (buildProvenanceWrites).
- * It owns the single R4-scoped SELECT the dormant recall provenance pass
+ * It owns the single scoped SELECT the dormant recall provenance pass
  * (packages/agent/src/rag/recall-provenance.ts) reads to find the EXACT
  * provenance-linked memoryIds a distilled summary subsumes.
  *
- * R4 is the load-bearing security property: the SELECT carries
+ * Tenant + agent isolation is the load-bearing security property: the SELECT carries
  * `WHERE summary_id = ? AND tenant_id = ? AND agent_id = ?` (mirror the write side).
  * A cross-tenant OR cross-agent read MUST return ZERO rows (fail-closed) — a
  * summary_id collision under a different scope can never leak another scope's
@@ -39,7 +39,7 @@ const SCOPE_MATCH: ContextStoreScope = {
   sessionKey: "sess-p",
 };
 
-describe("buildProvenanceReadStore — R4-scoped getProvenanceForSummary", () => {
+describe("buildProvenanceReadStore — tenant/agent-scoped getProvenanceForSummary", () => {
   let db: Database.Database;
   let reader: ReturnType<typeof buildProvenanceReadStore>;
 
@@ -82,7 +82,7 @@ describe("buildProvenanceReadStore — R4-scoped getProvenanceForSummary", () =>
     });
   });
 
-  it("returns ZERO rows for a DIFFERENT tenant (R4 cross-tenant fail-closed)", () => {
+  it("returns ZERO rows for a DIFFERENT tenant (cross-tenant fail-closed)", () => {
     const writes = buildProvenanceWrites(db);
     seedMemoryRow(M);
     writes.appendProvenance({
@@ -101,7 +101,7 @@ describe("buildProvenanceReadStore — R4-scoped getProvenanceForSummary", () =>
     expect(reader.getProvenanceForSummary(crossTenant, S)).toEqual([]);
   });
 
-  it("returns ZERO rows for a DIFFERENT agent (R4 cross-agent fail-closed)", () => {
+  it("returns ZERO rows for a DIFFERENT agent (cross-agent fail-closed)", () => {
     const writes = buildProvenanceWrites(db);
     seedMemoryRow(M);
     writes.appendProvenance({

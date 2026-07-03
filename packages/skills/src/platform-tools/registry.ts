@@ -80,10 +80,10 @@ import { createListResourcesTool, createReadResourceTool } from "./tools/mcp-res
 import { createListPromptsTool, createGetPromptTool } from "./tools/mcp-prompts-tool.js";
 
 // Side-effect import: registers `suppressActivity:true` metadata for the
-// non-§17.6 platform tools. Importing the tool factory modules above
-// already triggers each §17.6 tool's co-located `registerActivityLabelSpec`
-// call; this completes the other side of the coverage contract so every
-// emitted name is classified before any registry walk.
+// platform tools that have no activity-label spec. Importing the tool factory
+// modules above already triggers each activity-label-spec tool's co-located
+// `registerActivityLabelSpec` call; this completes the other side of the
+// coverage contract so every emitted name is classified before any registry walk.
 import "./tools/suppressed-tools-metadata.js";
 
 // Capability-gate helpers + manager type for the resources/prompts descriptor
@@ -145,12 +145,12 @@ export interface PlatformToolBuildContext {
   readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /** `image_generate` tool's conditional predicate signal (truthy when provider wired). */
   readonly imageGenProvider?: unknown;
-  /** `video_generate` tool's conditional predicate signal (truthy when provider wired; daemon sets it in Phase 188 Plan 04). */
+  /** `video_generate` tool's conditional predicate signal (truthy when provider wired; the daemon sets it at boot). */
   readonly videoGenProvider?: unknown;
-  /** `video_status` tool's conditional predicate signal (Phase 189 / JOB-04;
+  /** `video_status` tool's conditional predicate signal:
    *  truthy when the async stack — store + poller — is wired, gated on the SAME
    *  condition `videoGenProvider` uses so video_status activates exactly when
-   *  video_generate does). */
+   *  video_generate does. */
   readonly videoStatusEnabled?: unknown;
   /** `background_tasks` tool's conditional predicate signal (truthy when manager wired). */
   readonly backgroundTaskManager?: unknown;
@@ -158,9 +158,9 @@ export interface PlatformToolBuildContext {
   readonly toolCapabilityPort?: unknown;
   /** Per-agent context-engine version signal (`"pipeline"` | `"dag"`). Set by
    *  setup-tools but currently unconsumed — its only reader, the `unified_context`
-   *  conditional, was removed in Phase 126 (DAG demolition). Retained as a
-   *  harmless optional so the daemon's BuildContext literal stays valid; a
-   *  governed LCD expansion surface re-reads it in Phase 131. */
+   *  conditional, has been removed. Retained as a harmless optional so the
+   *  daemon's BuildContext literal stays valid; a future governed LCD expansion
+   *  surface may re-read it. */
   readonly contextEngineVersion?: string;
   /** `browser` tool's conditional predicate. */
   readonly builtinToolsBrowserEnabled?: boolean;
@@ -380,7 +380,7 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       name: "video_generate",
       category: "media",
       conditional: (ctx) => ctx.videoGenProvider !== undefined,
-      // IN-03 (191): thread the boot-selected videoGenProvider so the tool
+      // Thread the boot-selected videoGenProvider so the tool
       // description is built at registration from the ACTIVE backend's
       // capability matrix (the conditional above guarantees it is present).
       build: (ctx) =>

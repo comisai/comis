@@ -2,7 +2,7 @@
 //
 // Runs `assembleIncidentReportFromSources` off the DEPLOYED dist and prints the diagnostic fields, so you
 // stop hand-writing `node -e 'assembleIncidentReportFromSources(...)'` one-liners — and stop hitting the
-// three traps that cost cycles in memory-learning-stress-catalog-20260629:
+// three traps that cost cycles:
 //   1. .mjs-vs-.cjs   — the dist index is CJS; a `.mjs` + `require` throws (ESM loader).
 //   2. quote-escaping — the deep `ssh → su - comis -c "node -e '…'"` nesting mangles the session key.
 //   3. run-as-root    — HOME=/root → the reader SILENTLY returns 0 records → a clean-looking empty report

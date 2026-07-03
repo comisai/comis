@@ -2,19 +2,19 @@
 /**
  * CLI <-> daemon version-skew check unit tests.
  *
- * Motivating incident: a stale global `comis` (npm i -g comisai v1.0.42)
- * earlier on PATH than a freshly-built ~2.30 daemon validated config with an
+ * Motivating failure mode: a stale global `comis` (from `npm i -g comisai`)
+ * earlier on PATH than a freshly-built daemon validates config with an
  * OLD schema, reporting PHANTOM failures (a valid `agents.default.autonomy`
- * flagged "Unrecognized key", "No OAuth profiles stored"). Nothing flagged that
- * the CLI binary was wildly out of sync with the running daemon, so the
- * diagnosis took a while. This check DETECTS and WARNS on that skew.
+ * flagged "Unrecognized key", "No OAuth profiles stored") — with nothing
+ * flagging that the CLI binary is wildly out of sync with the running daemon.
+ * This check DETECTS and WARNS on that skew.
  *
  * Covers:
  *   - PASS when CLI version == daemon version
  *   - WARN (patch-only mismatch) — versions differ but major.minor agree
  *   - WARN (major.minor mismatch) — stronger "stale global comis" message
  *   - graceful skip when the daemon is unreachable (no throw, never fails)
- *   - graceful skip when the daemon does not report a version (older daemon)
+ *   - graceful skip when the daemon does not report a version (optional field)
  *   - never throws even when the RPC itself rejects
  *
  * @module
@@ -97,7 +97,7 @@ describe("versionSkewHealthCheck", () => {
   });
 
   it("produces a STRONGER WARN on a major.minor mismatch (stale global comis)", async () => {
-    // The real incident: stale global CLI v1.0.42 vs a ~2.30 daemon.
+    // Scenario: a stale global CLI (1.0.42) vs a much newer daemon (2.30.0).
     mockDaemonVersion({ version: "2.30.0" });
     const findings = await versionSkewHealthCheck.run({
       ...baseContext,
@@ -127,8 +127,8 @@ describe("versionSkewHealthCheck", () => {
     expect(rpcClient.withClient).not.toHaveBeenCalled();
   });
 
-  it("skips gracefully when the daemon does not report a version (older daemon)", async () => {
-    // An older daemon's gateway.status response has no `version` field.
+  it("skips gracefully when the daemon does not report a version", async () => {
+    // `version` is optional on the gateway.status contract — this payload omits it.
     mockDaemonVersion({ pid: 1, uptime: 1, nodeVersion: "v22.0.0" });
     const findings = await versionSkewHealthCheck.run({ ...baseContext });
 

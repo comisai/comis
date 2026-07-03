@@ -39,7 +39,7 @@ export function buildSkillsSection(
     if (promptSkillsXml) lines.push("", promptSkillsXml);
     if (activePromptSkillContent) lines.push("", activePromptSkillContent);
   } else if (hasFs) {
-    // Only filesystem skills -- no subsection needed (backward compat)
+    // Only filesystem skills -- flat output, no subsection header needed
     lines.push("", skillsPrompt!);
   } else {
     // Only prompt skills

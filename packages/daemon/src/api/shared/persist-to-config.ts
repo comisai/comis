@@ -212,7 +212,7 @@ export function _pendingConfigMutations(): number {
  * Run `fn` inside a config-mutation fence so any SIGUSR2 restart that a
  * config-mutating tool schedules MID-`fn` is deferred until `fn` settles.
  *
- * RESTART-01 (live VPS 2026-06-20): a config-mutating agent tool
+ * Without the fence, a config-mutating agent tool
  * (heartbeat_manage / config.patch / agents_manage / …) called inside a
  * SYNCHRONOUS chat/responses-API turn triggered a debounced SIGUSR2 that
  * restarted the daemon UNDER the in-flight HTTP request → the request died

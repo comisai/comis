@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * REACT-03 — the WS1 reaction-as-outcome A->B skill-reuse loop, end-to-end
- * (Phase 206, Plan 03 — the KEYSTONE that DRIVES the already-landed
- * Verified-Learning loop through a REAL reaction signal, the path the chat-API
- * structurally cannot reach: there are no reactions in /v1/chat/completions).
+ * REACT-03 — the reaction-as-outcome A->B skill-reuse loop, end-to-end
+ * (the KEYSTONE that DRIVES the already-landed Verified-Learning loop through a
+ * REAL reaction signal, the path the chat-API structurally cannot reach: there
+ * are no reactions in /v1/chat/completions).
  *
  * A thumbs-up on an agent-authored reply becomes a persisted learning signal:
  * adapter on("message_reaction") -> orchestrator channel:reaction_received ->
@@ -17,7 +17,7 @@
  * sessionKey is never used). This scenario ASSERTS the fix end-to-end through a
  * real DDL + the real outcome store; it does NOT re-fix it. ZERO product change.
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): the WIRING
  *     proof. A file-backed memory.db with the REAL outcome_events DDL +
@@ -31,14 +31,14 @@
  *     zero-product-change git-porcelain guard re-asserts ZERO packages source
  *     change.
  *
- *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) drives the full §10A.6 A->B
+ *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) drives the full A->B
  *     loop against a keyless daemon: buildRig(keyless) -> session A 5+-tool task ->
  *     waitForReply (the SYNC POINT) -> react thumbs-up on the ATTRIBUTED botReplyId
  *     -> assert outcome_events source='reaction' success via the readonly oracle ->
  *     force synthesis (rpcRequest cron.run, the WS path) -> learned_skills (the
  *     honest-abstain gate: a keyless ABSTAIN -> synthesized:0 is a BENIGN skip, not
- *     a failure) -> reset (keep memory.db) -> session B reuse. NO-FALSE-SUCCESS
- *     (I5): a non-closing loop emits a reason-coded finding (no row / selected:0 /
+ *     a failure) -> reset (keep memory.db) -> session B reuse. NO-FALSE-SUCCESS:
+ *     a non-closing loop emits a reason-coded finding (no row / selected:0 /
  *     not surfaced / keyless abstain), NEVER a faked "skill reused". SKIPPED
  *     (skip != fail) without COMIS_LIVE + a reachable keyless model.
  *
@@ -77,7 +77,7 @@ const isLive = !!process.env["COMIS_LIVE"];
 const TENANT = "test";
 const AGENT = "default";
 // A per-turn traceId (the trajectory identity outcomes are keyed on — NOT a
-// sessionKey; the §3 invariant the landed identity fix restored).
+// sessionKey; the trajectory-identity invariant the landed identity fix restored).
 const TURN_TRACE_ID = "trace-turn-abc123";
 const SESSION_ID = "telegram:chat-1:111";
 // The reactor's id (the rig's fixed DM reactor; granted trust >= known in the rig config).
@@ -177,7 +177,7 @@ describe("REACT-03 Stage-B — the reaction->outcome WIRING (real DDL + real sto
       const found = idValue.find((r) => r.trajectoryId === TURN_TRACE_ID);
       expect(found, "listTrajectoryIds enumerates the per-turn traceId (the identity-fix source)").toBeDefined();
       expect(found!.sessionId).toBe(SESSION_ID);
-      // The id is the per-turn traceId, NEVER the sessionKey (the §3 invariant).
+      // The id is the per-turn traceId, NEVER the sessionKey (the trajectory-identity invariant).
       expect(found!.trajectoryId).not.toBe(SESSION_ID);
 
       // (b) resolve(traceId) fuses to success with the 'reaction' source — the
@@ -264,8 +264,8 @@ describe("REACT-03 Stage-B — the reaction->outcome WIRING (real DDL + real sto
 describe("REACT-03 Stage-B — the whole phase diff is test/-only (zero production code change)", () => {
   it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
     // REACT-03 drives the already-wired reaction->outcome->synthesis->reuse chain
-    // with NO product edit (the conditional obs fix is a SEPARATE gated plan,
-    // 206-04). If this fails, a product file was touched — STOP.
+    // with NO product edit (the conditional obs fix is a SEPARATE gated plan).
+    // If this fails, a product file was touched — STOP.
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
     const offending = porcelain
@@ -282,7 +282,7 @@ describe("REACT-03 Stage-B — the whole phase diff is test/-only (zero producti
 // Stage-C — the full A->B reaction-gated skill-reuse loop (COMIS_LIVE)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!isLive)("REACT-03 Stage-C — the §10A.6 A->B reaction-gated skill-reuse loop (COMIS_LIVE)", () => {
+describe.skipIf(!isLive)("REACT-03 Stage-C — the A->B reaction-gated skill-reuse loop (COMIS_LIVE)", () => {
   let built: BuiltRig | undefined;
   let memoryDbPath: string | undefined;
 
@@ -330,7 +330,7 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the §10A.6 A->B reaction-gated s
   }
 
   it(
-    "session A 5+-tool task -> thumbs-up -> outcome_events reaction success row -> synthesis -> session B reuse, OR an honest reason-coded finding (no-false-success I5)",
+    "session A 5+-tool task -> thumbs-up -> outcome_events reaction success row -> synthesis -> session B reuse, OR an honest reason-coded finding (no-false-success)",
     async () => {
       const r = built;
       const dbPath = memoryDbPath;
@@ -373,11 +373,11 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the §10A.6 A->B reaction-gated s
       }
       expect(
         reactionRows,
-        "FINDING: no outcome_events source='reaction' success row after the thumbs-up — check the rig learning gotchas (costFeatures/learningOutcome) + the trust floor (defaultTrustLevel: known) + the botReplyId attribution (the ReactionTrajectoryMap key). NOT a faked green (I5).",
+        "FINDING: no outcome_events source='reaction' success row after the thumbs-up — check the rig learning gotchas (costFeatures/learningOutcome) + the trust floor (defaultTrustLevel: known) + the botReplyId attribution (the ReactionTrajectoryMap key). NOT a faked green.",
       ).toBeGreaterThanOrEqual(1);
       if (reactionRows === 0) return;
 
-      // ── Force synthesis over the WS path (rpcRequest, fixed 205-07). Re-confirm
+      // ── Force synthesis over the WS path (rpcRequest). Re-confirm
       // the job name via cron.list at runtime, then run it.
       const cronList = (await rpcRequest(r.gatewayUrl, "cron.list", { agentId: "*" }, r.authToken)) as {
         jobs?: Array<{ name?: string }>;
@@ -400,10 +400,10 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the §10A.6 A->B reaction-gated s
       if (learnedCount === 0) {
         // Honest reason-coded skip — a keyless abstain is expected on a weak model.
         // The WIRING is proven (the reaction row + the resolvable identity); synthesis
-        // ABSTAINED. This is NOT a failure (RESEARCH Open-Q1) — record and pass.
+        // ABSTAINED. This is NOT a failure — record and pass.
         // eslint-disable-next-line no-console -- the operator-facing honest finding
         console.warn(
-          "REACT-03 Stage-C FINDING (benign): the reaction row + resolvable identity are proven, but synthesis admitted 0 learned_skills — a keyless-model ABSTAIN (capability gate). The A->B loop's WRITE+SELECT halves CLOSED; the ADMIT+REUSE half is gated behind a more-capable model. skip != fail (I5).",
+          "REACT-03 Stage-C FINDING (benign): the reaction row + resolvable identity are proven, but synthesis admitted 0 learned_skills — a keyless-model ABSTAIN (capability gate). The A->B loop's WRITE+SELECT halves CLOSED; the ADMIT+REUSE half is gated behind a more-capable model. skip != fail.",
         );
         return;
       }
@@ -416,8 +416,8 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the §10A.6 A->B reaction-gated s
       ).toBeGreaterThanOrEqual(1);
 
       // ── Session B reuse (the loop closes). The surfaced skill rides the NEXT
-      // session's prompt-skills freeze (reflect:admitted -> refresh; renamed Phase 226;
-      // no restart needed at HEAD). reset is NOT needed for the rig's single chat — the
+      // session's prompt-skills freeze (reflect:admitted -> refresh; no restart
+      // needed at HEAD). reset is NOT needed for the rig's single chat — the
       // memory.db persists; an analogous request exercises the reuse path.
       const inboundB = await r.send(
         "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",
@@ -425,7 +425,7 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the §10A.6 A->B reaction-gated s
       const replyB = await r.waitForReply(inboundB, 1_500_000);
       expect(
         replyB,
-        "FINDING: no session B reply (honest no-reply if the model is unreachable) — never a fabricated reuse (I5)",
+        "FINDING: no session B reply (honest no-reply if the model is unreachable) — never a fabricated reuse",
       ).toBeDefined();
       // The skill remains admitted across session B (the surfaced candidate is
       // durable in memory.db; reuse is corroborated via the persisted store — a

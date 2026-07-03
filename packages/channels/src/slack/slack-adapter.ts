@@ -78,7 +78,7 @@ export interface SlackAdapterDeps {
  */
 export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
   const handlers: MessageHandler[] = [];
-  // REACT-01: inbound reaction-add handlers (binder co-located in
+  // Inbound reaction-add handlers (binder co-located in
   // slack-reaction-binder.ts to hold the 800-line cap).
   const reactionHandlers: ReactionHandler[] = [];
   let _channelId = "slack-pending";
@@ -234,8 +234,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           );
         });
 
-        // REACT-01: bind the inbound reaction-add listener beside the message
-        // bind. Co-located in slack-reaction-binder.ts (800-line cap). The
+        // Bind the inbound reaction-add listener beside the message bind.
+        // Co-located in slack-reaction-binder.ts (800-line cap). The
         // own-user id is resolved lazily — it is set above at start() post-auth.
         bindSlackReactions(app, () => _ownUserId, reactionHandlers, deps.logger);
 
@@ -609,8 +609,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
 
     async reconcileSend(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>> {
       // The bolt client throws OR returns {ok:false} on failure. Either way a
-      // failed/partial fetch can NEVER prove the message is absent (Pitfall 2 /
-      // T-216-22) — return unresolved, never not_sent.
+      // failed/partial fetch can NEVER prove the message is absent — return
+      // unresolved, never not_sent.
       let result: {
         ok?: boolean;
         has_more?: boolean;
@@ -656,8 +656,9 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
       }
 
       for (const m of result.messages ?? []) {
-        // author=bot required (T-216-25): a bot_id is set on bot messages, or
-        // the message was posted under our own user id.
+        // author=bot required (spoofing guard): a bot_id is set on bot
+        // messages, or the message was posted under our own user id — a human
+        // message sharing the digest must never count as our send.
         const isBotAuthored = (m.bot_id !== undefined && m.bot_id !== "") || m.user === _ownUserId;
         if (!isBotAuthored) continue;
         const digest = createHash("sha256").update(m.text ?? "").digest("hex").slice(0, 16);

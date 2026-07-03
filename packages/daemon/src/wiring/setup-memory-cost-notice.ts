@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * First-run cost-disclosure notice (v1 opt-out posture — increment 1).
+ * First-run cost-disclosure notice (opt-out posture).
  *
- * On daemon startup, when the master cost-feature kill switch (`memory.enabled`,
- * renamed from `memory.costFeatures.enabled` in Phase 226) is ON (the default)
+ * On daemon startup, when the master cost-feature kill switch (`memory.enabled`)
+ * is ON (the default)
  * AND at least one LLM cost-bearing memory feature is actually active for some
  * agent, emit ONE prominent WARN that:
  *   - names the active cost features,
@@ -16,14 +16,10 @@
  * (today's default bare config), it emits NOTHING. It never logs a secret/key —
  * only feature names and a count.
  *
- * Scope of "cost-bearing" mirrors the kill switch exactly: the surviving crons
+ * Scope of "cost-bearing" mirrors the kill switch exactly: the cost-bearing crons
  * (memoryReview, memoryUsefulnessJudge) and the query-time dialectic tool
- * (`memory_ask`). (memoryOnlineTuning — the bandit cron — was deleted in Phase 224;
- * memoryConsolidation / memoryReasoning / memoryUserRepresentation were deleted in
- * Phase 225-05 — their work folded into the one learningSkills-gated reflection cron.)
- * The $0 keyless memoryLifecycle sweep is NOT a cost feature here (lifecycle is
- * keyless), so it does not trigger the notice. (The privacy-gated socialModeling
- * cron was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
+ * (`memory_ask`). The $0 keyless memoryLifecycle sweep is NOT a cost feature here
+ * (lifecycle is keyless), so it does not trigger the notice.
  *
  * @module
  */
@@ -53,8 +49,7 @@ const COST_FEATURE_CATALOG: ReadonlyArray<{ key: keyof CostFeatureAgentSlice; la
 export interface MemoryCostFeatureNoticeDeps {
   /** All per-agent configs (the same `container.config.agents` map). */
   agents: Record<string, CostFeatureAgentSlice>;
-  /** The master kill switch (`memory.enabled`, renamed from `memory.costFeatures.enabled`
-   *  in Phase 226). When false ⇒ no notice. */
+  /** The master kill switch (`memory.enabled`). When false ⇒ no notice. */
   costFeaturesEnabled: boolean;
   /** Counts/names-only structural logger — never a secret/key. */
   logger: ComisLogger;

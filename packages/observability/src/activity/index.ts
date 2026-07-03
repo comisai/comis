@@ -2,10 +2,10 @@
 /**
  * @comis/observability — activity substrate barrel.
  *
- * The observability-side of the activity pipeline (spec §5): the
+ * The observability-side of the activity pipeline: the
  * `ActivityStream` EventBus subscriber that maps real events to canonical,
  * redacted `ActivityEvent`s, the per-consumer `bounded-queue`, the typed-first
- * `label-resolver`, the OpenClaw `shell-label-parser`, and the SEP `plan-stream`.
+ * `label-resolver`, the `shell-label-parser`, and the SEP `plan-stream`.
  *
  * Boundary: this surface imports `@comis/core` only — never the channels
  * package (the hexagonal constraint, enforced by a durable guard test).

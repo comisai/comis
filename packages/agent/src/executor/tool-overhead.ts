@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The tool-schema char-overhead reduce — extracted from executor-tool-assembly.ts
- * so the turn-time S estimate and the FLOOR-01 boot floor share ONE function
- * (I8/R-3; the extraction IS the drift pin).
+ * so the turn-time S estimate and the boot-time viable floor share ONE function
+ * (the extraction IS the drift pin).
  *
  * Consumers:
  *   - executor-tool-assembly.ts: cachedSystemTokensEstimate (the turn-time S term)
- *   - context-engine/viable-floor.ts: toolSchemaTokens (the FLOOR-01 boot term)
+ *   - context-engine/viable-floor.ts: toolSchemaTokens (the boot-floor term)
  *
  * viable-floor.test.ts pins both sites to this single export by FUNCTION-REFERENCE
- * IDENTITY (FLOOR-01-13) — a re-derived copy at either site cannot pass.
+ * IDENTITY — a re-derived copy at either site cannot pass.
  *
  * @module
  */
@@ -39,17 +39,17 @@ export interface ToolOverheadInput {
 /**
  * Sum of name + description + JSON.stringify(parameters) lengths across the
  * toolset — the char-size basis for the system-token estimate (S) at turn time
- * and for the FLOOR-01 toolSchemaTokens term at boot.
+ * and for the viable-floor toolSchemaTokens term at boot.
  *
- * ROOT-CAUSE context-exhaustion fix (2026-06-22 VPS gpt-5.3-codex): auto-discovery
+ * ROOT-CAUSE context-exhaustion fix (observed live with gpt-5.3-codex): auto-discovery
  * STUBS (those carrying DEFERRAL_STUB_MARKER_KEY) are EXCLUDED. The fit pass defers
  * ~50 of 65 tools, then createAutoDiscoveryStubs pushes a stub per deferred tool
  * into mergedCustomTools so the SDK can resolve their names; createStubFilterInjector
  * strips those stubs from the WIRE (zero request cost). Counting them here made every
  * S estimate over the full mergedCustomTools balloon back to ~all-65-tools size, so
  * the pre-flight saw assembled ≈ 13.7K > the 8192 window and FALSE-exhausted — silently
- * negating the deferral. Skipping marked stubs makes the estimate match the wire (the
- * lead's "skip stubs in toolDefOverheadChars" fix). Non-stub tools are byte-identical.
+ * negating the deferral. Skipping marked stubs makes the estimate match the wire.
+ * Non-stub tools are byte-identical.
  */
 export function toolDefOverheadChars(tools: ReadonlyArray<ToolOverheadInput>): number {
   return tools.reduce((sum, t) => {

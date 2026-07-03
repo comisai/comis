@@ -5,7 +5,7 @@
  * co-location precedent. `initSchema` CALLS these so they run on every boot,
  * AFTER the base `obs_token_usage` CREATE.
  *
- * Two PERSIST-02 / AUDIT-01 migrations:
+ * Two migrations:
  *  - `ensureObsTokenColumns` — the forward-only `obs_token_usage` cost-correctness
  *    column upgrade + the dead `cache_retention` DROP.
  *  - `ensureObsAuditTable` — the dedicated `obs_audit_events` table + indexes.
@@ -16,11 +16,11 @@
 import type Database from "better-sqlite3";
 
 /**
- * Forward-only upgrade of `obs_token_usage` for the cost-correctness work
- * (PERSIST-02 / observability-excellence WS5). Two parts, both idempotent:
+ * Forward-only upgrade of `obs_token_usage` for the cost-correctness work.
+ * Two parts, both idempotent:
  *
- * 1. DROP the dead `cache_retention` column (OQ3 ruling = DROP — no event field
- *    ever populated it; the `retention_changed` cache-break reason is a DIFFERENT
+ * 1. DROP the dead `cache_retention` column (no event field ever populated it;
+ *    the `retention_changed` cache-break reason is a DIFFERENT
  *    table). SQLite has no `DROP COLUMN`, so when the column is still present we run
  *    the standard transactional table-REBUILD (the `memory_usefulness` precedent in
  *    schema.ts): CREATE a `_new` table without it, `INSERT … SELECT` every other
@@ -32,7 +32,7 @@ import type Database from "better-sqlite3";
  * 2. ADD the 6 new columns via the `ensureMemoryColumns` guarded-ALTER idiom
  *    (`warmup_turn`/`cache_eligible` as INTEGER 0/1 flags, `cost_correction`/
  *    `pending_cache_investment_usd` as REAL, `pricing_state` as TEXT, and the
- *    COST-01 `tool_tag` as TEXT — the JSON distinct-tool array). All nullable
+ *    `tool_tag` as TEXT — the JSON distinct-tool array). All nullable
  *    → O(1), no rewrite, no backfill (existing rows get NULL).
  *
  * Net post-condition (fresh OR existing DB): the 6 columns present, `cache_retention`
@@ -106,7 +106,7 @@ export function ensureObsTokenColumns(db: Database.Database): void {
   if (!cols2.has("pending_cache_investment_usd"))
     db.exec(`ALTER TABLE obs_token_usage ADD COLUMN pending_cache_investment_usd REAL`);
   if (!cols2.has("pricing_state")) db.exec(`ALTER TABLE obs_token_usage ADD COLUMN pricing_state TEXT`);
-  // COST-01 (Phase 179): the per-turn tool tag — the IDENTICAL 6th additive,
+  // The per-turn tool tag — the IDENTICAL 6th additive,
   // forward-only, nullable ALTER (no migration framework, no dual-read shim).
   // Stores the JSON-stringified DISTINCT tool array (content-free names only);
   // NULL on existing rows (they survive verbatim) and on no-tool turns.
@@ -114,14 +114,14 @@ export function ensureObsTokenColumns(db: Database.Database): void {
 }
 
 /**
- * Create the dedicated `obs_audit_events` security-audit table + its two indexes
- * (AUDIT-01/02). A DEDICATED table (not `obs_diagnostics`) per the §14 ruling —
- * distinct retention + actor/outcome/severity attribution columns + a regulatory
- * grep surface. The sink (Plan 03) resolves `tenant_id` from the trace context else
- * persists the `''` system-scope sentinel (`tenant_id` is NOT NULL); `agent_id`
- * stays NULL when absent. `refs` is a scrubbed JSON blob. This plan (176-01) owns
- * the DDL + the `AuditEventRow` type; the insert/query methods + JSONL writer land
- * in Plan 03. Idempotent (`CREATE … IF NOT EXISTS`).
+ * Create the dedicated `obs_audit_events` security-audit table + its two indexes.
+ * A DEDICATED table (not `obs_diagnostics`) — distinct retention +
+ * actor/outcome/severity attribution columns + a regulatory grep surface. The
+ * sink resolves `tenant_id` from the trace context else persists the `''`
+ * system-scope sentinel (`tenant_id` is NOT NULL); `agent_id` stays NULL when
+ * absent. `refs` is a scrubbed JSON blob. This module owns the DDL + the
+ * `AuditEventRow` type; the insert/query methods + JSONL writer live elsewhere.
+ * Idempotent (`CREATE … IF NOT EXISTS`).
  *
  * @param db - An open better-sqlite3 Database.
  */

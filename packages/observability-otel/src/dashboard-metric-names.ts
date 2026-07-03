@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The emitted-metric-name SET — the truth set for the Grafana/Prometheus drift
- * guard (PROM-04; design §6 WS7).
+ * guard.
  *
- * Derived ENTIRELY from the single {@link METRIC_CATALOG} (Plan 01) so there is
+ * Derived ENTIRELY from the single {@link METRIC_CATALOG} so there is
  * NO second definition to drift: the dashboards' panel `expr`s and the Prometheus
  * recording/alert rule `expr`s are checked against {@link EMITTED_METRIC_NAMES},
  * which is exactly the set of Prometheus series the exporter can actually emit.
@@ -53,7 +53,7 @@ function buildEmittedMetricNames(): ReadonlySet<string> {
  * their `_total` suffix, gauges/observableGauges by name, and every histogram
  * stem PLUS its `_bucket`/`_sum`/`_count` children. The drift guard asserts every
  * dashboard panel `expr` and every recording/alert rule `expr` references ONLY a
- * name in this set (PROM-04 / PROM-02).
+ * name in this set.
  */
 export const EMITTED_METRIC_NAMES: ReadonlySet<string> = Object.freeze(
   buildEmittedMetricNames(),

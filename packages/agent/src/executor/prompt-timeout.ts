@@ -20,8 +20,8 @@ import type { TimerPort, TimerHandle } from "@comis/core";
  * The `timeoutMs` property is inherited from `TimeoutError` for diagnostics
  * and carries the value of the limit that FIRED.
  *
- * LAT-02 (Phase 177): the optional second argument records WHICH limit fired
- * plus the configured numbers, so classify/hint sites (177-04) can render
+ * The optional second argument records WHICH limit fired
+ * plus the configured numbers, so classify/hint sites can render
  * "stall budget Xms exceeded" vs "makespan ceiling Yms exceeded" with the
  * exact knob values. The message text is unchanged in all cases.
  */
@@ -108,12 +108,12 @@ export interface ResettableTimeout<T> {
 }
 
 /**
- * Optional LAT-02 deadline semantics for {@link withResettablePromptTimeout}.
+ * Optional deadline semantics for {@link withResettablePromptTimeout}.
  */
 export interface ResettablePromptTimeoutOptions {
   /**
-   * Non-resetting whole-call ceiling in milliseconds (LAT-02, R-1
-   * non-optional once stall semantics are wired): a streaming-but-runaway
+   * Non-resetting whole-call ceiling in milliseconds (non-optional
+   * wherever stall semantics are wired): a streaming-but-runaway
    * generation keeps resetting the stall budget forever, so a second timer
    * that `resetTimer()` NEVER touches bounds the turn. Derived as
    * promptTimeoutMs x stallCeilingMultiplier by callers.
@@ -133,22 +133,22 @@ export interface ResettablePromptTimeoutOptions {
  *
  * Same semantics as `withPromptTimeout` but the timer can be reset to a fresh
  * full-budget deadline via the returned `resetTimer` callback. This is designed
- * for agentic execution loops where each tool completion (and, post-LAT-02,
+ * for agentic execution loops where each tool completion (and
  * each stream delta) should reset the timeout so slow MCP tools do not starve
  * subsequent LLM turns.
  *
- * Without `opts` the behavior is identical to the pre-LAT-02 primitive (the
- * only new observable is `limit: "stall"` on the rejection error). With
+ * Without `opts` the behavior is a plain resettable stall timeout (the
+ * only opt-independent observable is `limit: "stall"` on the rejection error). With
  * `opts.makespanMs` a second, non-resetting ceiling timer runs alongside the
  * stall timer; both share ONE `settled` latch and both are cancelled in the
  * single `.finally`, so reset spam after either fire is a no-op and no timer
- * leaks on success (Pitfall 1).
+ * leaks on success.
  *
  * @param promise - The promise to race (typically session.prompt()).
  * @param timeoutMs - Stall budget in milliseconds (full budget per reset).
  * @param abort - Function to call on timeout (typically session.abort()).
  * @param timers - Injected timer port.
- * @param opts - Optional makespan ceiling + first-activity budget (LAT-02).
+ * @param opts - Optional makespan ceiling + first-activity budget.
  */
 export function withResettablePromptTimeout<T>(
   promise: Promise<T>,
@@ -186,7 +186,7 @@ export function withResettablePromptTimeout<T>(
 
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     rejectFn = reject;
-    // First arm: the initial-activity allowance when configured (LAT-02
+    // First arm: the initial-activity allowance when configured (the
     // scaling branch); every restart via resetTimer() uses timeoutMs.
     startTimer(opts?.initialBudgetMs ?? timeoutMs);
     if (opts?.makespanMs !== undefined) {

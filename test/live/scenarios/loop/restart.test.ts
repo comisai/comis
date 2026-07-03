@@ -98,7 +98,7 @@ describe("LOOP-03 Stage-A — restart survival (deterministic, no COMIS_LIVE)", 
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     // After restart(), driver.getHandle() returns the NEW handle.
     await flushDaemonLogs(driver);
 
@@ -110,7 +110,7 @@ describe("LOOP-03 Stage-A — restart survival (deterministic, no COMIS_LIVE)", 
       expectedErrors: ["JSON-RPC method error"],
     });
 
-    // FND-11 persistence oracle — only run if memory.db was created
+    // Persistence oracle — only run if memory.db was created
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -270,7 +270,7 @@ describe.skipIf(!isLive)("Live — LOOP-03 restart survival (Stage-C, real LLM)"
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // Real successful LLM turns emit no ERROR/FATAL lines

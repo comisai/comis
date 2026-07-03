@@ -7,12 +7,12 @@
  * the clock or computes tokens).
  *
  * The write path (`append`) persists one message + its N structured parts
- * atomically in a single `db.transaction` (F1). The read path (`getMessages`)
+ * atomically in a single `db.transaction`. The read path (`getMessages`)
  * reconstructs the ordered `LcdMessage[]` DTOs; the canonical pi-ai Message
- * reconstruction delegates to @comis/core's `partsToMessage` codec (F2/F3) — the
- * single pi-ai-typed seam, consumed by Phase 128 assembly.
+ * reconstruction delegates to @comis/core's `partsToMessage` codec — the
+ * single pi-ai-typed seam, consumed by the assembly layer.
  *
- * Phase 129 (C3) extends the store with the depth-0 leaf-compaction surface:
+ * The depth-0 leaf-compaction surface:
  * `appendLeafSummary` (ONE `db.transaction` that persists the `lcd_summaries`
  * row, links every covered message via `lcd_summary_messages`, and
  * range-replaces the covered `lcd_context_items` message-refs with one
@@ -21,21 +21,20 @@
  * `lcd_messages` on first read; no migration). `lcd_messages` is NEVER deleted
  * (FK RESTRICT enforces losslessness). The store NEVER logs summary `content`.
  *
- * Phase 130 (C2) adds the condensed tier: `appendCondensedSummary` (a sibling
+ * The condensed tier: `appendCondensedSummary` (a sibling
  * clone of `appendLeafSummary` that persists a depth>0 `condensed`-kind summary,
  * links its CHILD SUMMARIES via `lcd_summary_parents` instead of messages, and
  * range-replaces the covered run of SUMMARY-refs — recomputing descendantCount +
  * time-range from the child rows). The child summary rows are NEVER deleted (FK
  * RESTRICT — losslessness for the multi-tier DAG).
  *
- * NO module-level logger in Phase 127 (mirrors createSessionStore exactly): the
+ * NO module-level logger (mirrors createSessionStore exactly): the
  * memory package has no infra-logging dependency and AGENTS.md §2.4 forbids
  * importing the infra logger directly (inject the logger via Deps). The boundary
  * observability line (an injected-logger INFO per append/read with
- * durationMs/err/hint) lands in Phase 128 when the live append-on-turn
- * write-path is wired. The store NEVER logs `metadata.raw` / `tool_output`
- * contents (tool I/O may carry secrets — a Phase-132 concern; Pino redaction is
- * for logs, not the DB).
+ * durationMs/err/hint) lives on the agent-side write path. The store NEVER logs
+ * `metadata.raw` / `tool_output` contents (tool I/O may carry secrets; Pino
+ * redaction is for logs, not the DB).
  *
  * @module
  */
@@ -99,7 +98,7 @@ export { reconstructLcdMessage } from "./lcd-store-mappers.js";
  */
 export function createLcdStore(db: Database.Database): ContextStorePort {
   // Prepare statements once for performance. Static SQL only; bound parameters
-  // for every value; no interpolated identifiers (T-127-09). Column-count ===
+  // for every value; no interpolated identifiers. Column-count ===
   // placeholder-count === arg-count (arg-shift guard — a shift surfaces in the
   // round-trip test).
   const insertMsg = db.prepare(`
@@ -114,10 +113,10 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // R4 (132-03): every base-table read filters by agent_id AND tenant_id in
+  // Every base-table read filters by agent_id AND tenant_id in
   // addition to conversation_id — two agents legitimately share one
   // conversation_id (formatSessionKey omits agentId), so agent A must never read
-  // agent B's rows (WR-02). Bound params for the scope; the conversation_id prefix
+  // agent B's rows. Bound params for the scope; the conversation_id prefix
   // already encodes the tenant, the explicit tenant_id is defense-in-depth.
   const selectMsgs = db.prepare(
     "SELECT * FROM lcd_messages WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? ORDER BY seq",
@@ -127,8 +126,8 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     "SELECT * FROM lcd_message_parts WHERE message_id = ? ORDER BY ordinal",
   );
 
-  // ── Phase 129 (C3) statements: summaries + context_items range-replace ──
-  // Static SQL, bound params, no interpolated identifiers (T-129-03).
+  // ── Summary + context_items range-replace statements ──
+  // Static SQL, bound params, no interpolated identifiers.
 
   // The seq-ordered (id, created_at) projection — the lazy seed AND the
   // range-coverage / time-range source. (We re-select created_at by ordinal
@@ -144,10 +143,10 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     VALUES (?, ?, ?, ?, ?, 'leaf', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Phase 130 (C2): the condensed-tier insert. Unlike insertSummary (which
+  // The condensed-tier insert. Unlike insertSummary (which
   // hardcodes 'leaf'/0), this binds kind ('condensed') + depth as parameters —
-  // 16 placeholders. insertSummary is left UNCHANGED (a SEPARATE method, no
-  // regression risk to the green 129 leaf transaction; RESEARCH A3).
+  // 16 placeholders. insertSummary is a SEPARATE statement so the leaf and
+  // condensed inserts stay independent.
   const insertCondensedSummary = db.prepare(`
     INSERT INTO lcd_summaries
       (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
@@ -159,7 +158,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     "INSERT OR IGNORE INTO lcd_summary_messages (summary_id, message_id) VALUES (?, ?)",
   );
 
-  // Phase 130 (C2): the condensed→child summary edge (lcd_summary_parents).
+  // The condensed→child summary edge (lcd_summary_parents).
   const insertSummaryParent = db.prepare(
     "INSERT OR IGNORE INTO lcd_summary_parents (parent_summary_id, child_summary_id) VALUES (?, ?)",
   );
@@ -176,18 +175,18 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
 
   // Every leaf summary for a (conversation, agent), oldest-first — the assembler
   // keys the result by summaryId to resolve a context_items `summary`-ref to its
-  // content. R4: scoped by agent_id + tenant_id (WR-02).
+  // content. Scoped by agent_id + tenant_id.
   const selectSummaries = db.prepare(
     "SELECT * FROM lcd_summaries WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? ORDER BY created_at, summary_id",
   );
 
-  // ── Phase 131 (E1) region-walk statements: edge-table reads, scoped by
-  //    (conversation_id, agent_id, tenant_id) — R4 132-03. Static SQL, bound
-  //    params, no interpolated identifiers (T-127-09 / T-131-02-01).
+  // ── Region-walk statements: edge-table reads, scoped by
+  //    (conversation_id, agent_id, tenant_id). Static SQL, bound
+  //    params, no interpolated identifiers.
   // The immediate CHILD summaries of a condensed summary (lcd_summary_parents
   // condensed→child edge), joined back to lcd_summaries for the full DTO. Scoped
   // by the child's (conversation_id, agent_id, tenant_id) so a different agent
-  // sharing the conversation cannot walk this condensed edge (WR-02).
+  // sharing the conversation cannot walk this condensed edge.
   const selectSummaryChildren = db.prepare(`
     SELECT s.* FROM lcd_summaries s
     JOIN lcd_summary_parents p ON p.child_summary_id = s.summary_id
@@ -199,7 +198,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // edge), seq-ordered via the join to lcd_messages. The summary is scoped by
   // (conversation_id, agent_id, tenant_id) through the JOIN (the messages carry
   // the scope columns) — a different agent cannot reach another agent's covered
-  // ids within the shared conversation (WR-02).
+  // ids within the shared conversation.
   const selectSummaryMessageIds = db.prepare(`
     SELECT sm.message_id AS message_id
     FROM lcd_summary_messages sm
@@ -213,12 +212,12 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // (mirrors the lcd-store-writes.ts / lcd-fts.ts extractions). Prepares the
   // word-lane + trigram-twin statements ONCE here (the "prepare once" discipline
   // is preserved) and exposes the gated populate methods appendTxn / the summary
-  // write transactions call. Normalization for the twins lives there (the I7
+  // write transactions call. Normalization for the twins lives there (the
   // single call site), so this file never folds search text itself.
   const ftsPopulator = createFtsPopulator(db);
 
   // The covered run [start,end] (inclusive), ordinal-ascending — used to gather
-  // the message refIds the new summary links + to count descendants. R4: the
+  // the message refIds the new summary links + to count descendants. The
   // model-facing view is per (conversation, agent, tenant), so the range ops are
   // agent-scoped — a leaf/condense pass must touch ONLY the acting agent's view
   // (the UNIQUE index is now (conversation_id, agent_id, tenant_id, ordinal)).
@@ -234,7 +233,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // one row at a time (smallest source first → smallest, already-vacated target
   // first) so the UNIQUE (conversation_id, agent_id, tenant_id, ordinal) index
   // never sees a transient duplicate (the delete above vacated the [start,end]
-  // slots). Agent-scoped (R4) so the shift stays within the acting agent's view.
+  // slots). Agent-scoped so the shift stays within the acting agent's view.
   const selectCtxOrdinalsAbove = db.prepare(
     "SELECT ordinal FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? AND ordinal > ? ORDER BY ordinal",
   );
@@ -247,15 +246,15 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
   );
 
-  // CRIT-2: the highest ordinal currently in the (conversation, agent, tenant)
+  // The highest ordinal currently in the (conversation, agent, tenant)
   // view — the per-append insert lands at MAX(ordinal)+1 (0 for the first row).
-  // `MAX` over zero rows is SQL NULL (the nullable mapper handles it). R4: scoped
+  // `MAX` over zero rows is SQL NULL (the nullable mapper handles it). Scoped
   // by agent_id+tenant_id so each agent keeps its OWN dense 0..N-1 sequence.
   const selectMaxCtxOrdinal = db.prepare(
     "SELECT MAX(ordinal) AS maxOrdinal FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
   );
 
-  // CRIT-2 incremental backfill: the seq-ordered (id, created_at) of THIS agent's
+  // Incremental backfill: the seq-ordered (id, created_at) of THIS agent's
   // messages NOT YET represented in the model-facing view — neither a context_items
   // message-ref NOR a leaf/condensed summary_messages link. A message is
   // "represented" once it has a ref OR was collapsed into a summary, so this returns
@@ -263,7 +262,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // for a fully-summarized run (the messages are in lcd_summary_messages) — the
   // backfill is then a clean no-op. It returns the full set only for a PRE-EXISTING
   // (legacy) conversation whose messages predate the per-append insert (zero refs,
-  // zero summaries). R4: agent-scoped throughout (WR-02).
+  // zero summaries). Agent-scoped throughout.
   const selectUnseededMsgs = db.prepare(`
     SELECT m.id AS id, m.created_at AS created_at
     FROM lcd_messages m
@@ -281,12 +280,12 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     ORDER BY m.seq
   `);
 
-  // ── Phase 164 (RR1): durable ingest cursor ──────────────────────────────────
+  // ── Durable ingest cursor ────────────────────────────────────────────────
   // Two prepared statements: an upsert (INSERT … ON CONFLICT DO UPDATE) and a
   // point-select for the two cursor fields. Static SQL, bound params, no
-  // interpolated identifiers (T-127-09). The primary key is the three-column R4
+  // interpolated identifiers. The primary key is the three-column
   // isolation scope (conversation_id, agent_id, tenant_id) — identical to every
-  // other lcd_* table so a cross-tenant/cross-agent wipe is impossible (T-164-01).
+  // other lcd_* table so a cross-tenant/cross-agent wipe is impossible.
   const upsertCursorStmt = db.prepare(
     "INSERT INTO lcd_ingest_cursor (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)" +
     " VALUES (?,?,?,?,?,?)" +
@@ -298,20 +297,20 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     "SELECT epoch_anchor, ingested_live_len FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
   );
 
-  // Phase 172 (DIST-01/DIST-03): lcd_memory_provenance writes (extracted helper).
+  // lcd_memory_provenance writes (extracted helper).
   const provenanceWrites = buildProvenanceWrites(db);
 
-  // ── Phase 164 (RR4) + Phase 180 (FTS-01 / G10): deleteConversationLcd ────────
+  // ── deleteConversationLcd ────────────────────────────────────────────────
   // Deletes ALL lcd_* rows for a (conversation, agent, tenant) scope in FK-safe
   // dependency order. The RESTRICT FK on lcd_summary_messages.message_id →
   // lcd_messages.id REQUIRES deleting lcd_summary_messages rows BEFORE
-  // lcd_messages rows (verified: schema-lcd.ts:138). lcd_message_parts rows ride
-  // the ON DELETE CASCADE on message_id. G10 CLOSE (Phase 180): step 7 wipes the
+  // lcd_messages rows (the RESTRICT FK is defined in schema-lcd.ts). lcd_message_parts
+  // rows ride the ON DELETE CASCADE on message_id. Step 7 wipes the
   // three self-contained FTS objects — the word lane lcd_messages_fts (NO trigger;
   // adapter-populated, so a missed wipe leaves full message text matchable
   // post-reset — the live privacy defect this fixes) PLUS both trigram twins (the
-  // 180-02 AFTER DELETE triggers ALSO fire per-row during steps 4/5 — belt and
-  // braces). Satisfies the v2.17 complete-forget spec: nothing stays matchable in
+  // AFTER DELETE triggers ALSO fire per-row during steps 4/5 — belt and
+  // braces). Satisfies the complete-forget contract: nothing stays matchable in
   // ANY FTS object. Never throws; returns the lcd_messages delete count.
   const deleteConversationLcdTxn = db.transaction((scope: ContextStoreScope): number => {
     // 1. lcd_summary_messages: RESTRICT FK on message_id — must delete BEFORE lcd_messages.
@@ -340,11 +339,11 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     db.prepare(
       "DELETE FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
     ).run(scope.conversationId, scope.agentId, scope.tenantId);
-    // 7. G10 CLOSE (FTS-01): wipe the three self-contained FTS objects. Each is
+    // 7. Wipe the three self-contained FTS objects. Each is
     // guarded — the table is ABSENT on an FTS5-less / trigram-less host (nothing
     // indexed → nothing to wipe); vtables have no FK so the order is free. The
     // scope is TWO-column: the FTS tables carry NO tenant_id — conversation_id
-    // encodes the tenant (lcd-fts.ts:24). The word lane has no AFTER DELETE
+    // encodes the tenant. The word lane has no AFTER DELETE
     // trigger (adapter-populated), so this explicit wipe is the ONLY forget for it.
     try {
       db.prepare(
@@ -371,8 +370,8 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   });
 
   /**
-   * Idempotent INCREMENTAL backfill of the model-facing view from lcd_messages
-   * (CRIT-2). The view is maintained live by `appendTxn` (one message-ref per
+   * Idempotent INCREMENTAL backfill of the model-facing view from lcd_messages.
+   * The view is maintained live by `appendTxn` (one message-ref per
    * append at the next ordinal), so on the live path this finds NOTHING to seed
    * and is a clean no-op. Its only real work is the migration/backfill for a
    * PRE-EXISTING conversation whose messages predate the per-append insert: it
@@ -383,7 +382,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
    * Idempotent: calling it repeatedly seeds only the still-uncovered gap, never
    * duplicating — `selectUnseededMsgs` excludes anything already in the view or
    * already collapsed into a summary, and the running ordinal starts past the
-   * current max. R4 (132-03): every read/write below is agent-scoped, so two
+   * current max. Every read/write below is agent-scoped, so two
    * agents sharing a conversation_id each backfill a DENSE view over their OWN
    * uncovered messages (the UNIQUE index keys on all three scope columns). Caller
    * runs this inside a txn. Skips silently when the agent has nothing to seed.
@@ -406,7 +405,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       scope.tenantId,
     )) {
       const parsed = messageSeedRowMapper.parseOptionalRow(rawMsg);
-      if (!parsed.ok || !parsed.value) continue; // skip only the bad message row (WR-02)
+      if (!parsed.ok || !parsed.value) continue; // skip only the bad message row
       insertCtxItem.run(
         randomUUID(),
         scope.conversationId,
@@ -427,11 +426,11 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
 
   // The leaf + condensed summary write transactions are extracted to
   // ./lcd-store-writes.ts (mirroring the ./lcd-fts.ts extract) so this adapter
-  // stays under the 800-line cap with headroom for the R4 read-filter edits.
+  // stays under the 800-line cap with headroom for the read-filter edits.
   // The prepared statements + mappers + seed helper are passed in so the
   // "prepare once" discipline is preserved — the closures are byte-identical
   // relocations (NO SQL/column/ordering/error-handling change). The condensed
-  // txn's WR-02 tamper-guard throw (the rollback mechanism) lives there now.
+  // txn's tamper-guard throw (the rollback mechanism) lives there now.
   const summaryWriteDeps = {
     seedContextItems,
     selectCtxItemsInRange,
@@ -449,25 +448,25 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     messageSeedRowMapper,
     summaryRowMapper,
     ctxOrdinalRowMapper,
-    // FTS-01 (Phase 180): the normalized summary-twin insert (folds internally, I7).
+    // The normalized summary-twin insert (folds internally).
     insertSummaryTri: ftsPopulator.insertSummaryTri,
   };
   const appendLeafSummaryTxn = buildAppendLeafSummaryTxn(db, summaryWriteDeps);
   const appendCondensedSummaryTxn = buildAppendCondensedSummaryTxn(db, summaryWriteDeps);
 
-  // EFF-01 bounded reads: extracted to ./lcd-store-reads.ts to keep this file
+  // Bounded reads: extracted to ./lcd-store-reads.ts to keep this file
   // under the 800-line cap (mirrors the lcd-store-writes.ts extraction pattern).
   // `selectParts` is passed in so the prepare-once discipline is preserved.
   const boundedReads = createBoundedReads(db, selectParts);
 
-  // R3 (132-04): the per-conversation single-flight serializer the store
+  // The per-conversation single-flight serializer the store
   // exposes via runOnConversation. The store is the single writer BOTH the live
-  // ingest and the deferred (C4) compaction flow through, so the per-conversation
+  // ingest and the deferred compaction flow through, so the per-conversation
   // queue naturally sits at the store boundary. Infra-free (it only orders fns —
   // no logging, no SQL); the agent reaches it through the port method.
   const ingestSerializer = createIngestSerializer();
 
-  // One atomic write: the message row + its N part rows commit together (F1).
+  // One atomic write: the message row + its N part rows commit together.
   const appendTxn = db.transaction((input: AppendMessageInput) => {
     const messageId = randomUUID();
     insertMsg.run(
@@ -499,15 +498,15 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       ordinal++;
     }
 
-    // CRIT-2: maintain the dense model-facing view INCREMENTALLY — insert ONE
+    // Maintain the dense model-facing view INCREMENTALLY — insert ONE
     // message-ref lcd_context_items row at the next ordinal for this message's
     // (conversation, agent, tenant) scope, inside the SAME txn so the message and
     // its context-item commit atomically. This keeps context_items a true 1:1 view
     // that grows with appends (the seed-once read-time guard used to freeze it at
-    // the first read while lcd_messages kept growing — DAG-CRIT-2). The new row
+    // the first read while lcd_messages kept growing). The new row
     // stamps the SAME scope columns as the message row, so two agents sharing a
     // conversation_id each keep their own dense 0..N-1 view (the UNIQUE index keys
-    // on conversation_id+agent_id+tenant_id+ordinal — WR-02). `MAX(ordinal)` over
+    // on conversation_id+agent_id+tenant_id+ordinal). `MAX(ordinal)` over
     // zero rows is NULL → nextOrdinal 0 for the first message.
     const maxRow = ctxMaxOrdinalRowMapper.parseOptionalRow(
       selectMaxCtxOrdinal.get(input.scope.conversationId, input.scope.agentId, input.scope.tenantId),
@@ -524,15 +523,15 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       messageId,
     );
 
-    // E1 (gap #1): populate the CONTENTLESS lcd_messages_fts with the rendered
+    // Populate the CONTENTLESS lcd_messages_fts with the rendered
     // part-text so ctx_search finds this message (extracted to
     // ./lcd-store-fts-populate.ts — byte-identical: same gate on isFtsAvailable,
     // same rowid resolve + insert, same narrow swallow because appendTxn is a
     // db.transaction and the contentless index is best-effort only).
     ftsPopulator.populateMessageFts(messageId, input.parts, input.scope);
-    // FTS-01 (Phase 180): also index the NORMALIZED trigram twin so a
+    // Also index the NORMALIZED trigram twin so a
     // script-routed MATCH reads Hebrew/Arabic/Cyrillic/CJK. The populator applies
-    // the search fold internally (the I7 single call site) at the same base rowid;
+    // the search fold internally (the single call site) at the same base rowid;
     // best-effort (a twin failure never fails this authoritative append).
     ftsPopulator.populateMessageTri(messageId, input.parts, input.scope);
   });
@@ -543,7 +542,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     getMessages(scope: ContextStoreScope): LcdMessage[] {
-      // WR-02: degrade PER ROW, not per result-set. `parseRows` returns err on
+      // Degrade PER ROW, not per result-set. `parseRows` returns err on
       // the first bad row and discards every already-validated row — so one
       // corrupt PART row would null a whole message body (orphaning a
       // downstream tool_result -> provider rejection) and one corrupt MESSAGE
@@ -553,7 +552,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // per field. Ordering is preserved (we iterate the ORDER BY result in
       // order). The skip is silent by design: the memory package has no
       // infra-logging dependency (AGENTS.md §2.4 forbids importing getLogger
-      // directly); the boundary observability line lands in Phase 128 with the
+      // directly); the boundary observability line lives on the agent-side
       // injected-logger write path. A schema-violating row is unreachable via
       // the typed `append` — it requires on-disk corruption / schema drift.
       const out: LcdMessage[] = [];
@@ -602,14 +601,14 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     getContextItems(scope: ContextStoreScope): LcdContextItem[] {
-      // The view is maintained live by appendTxn (CRIT-2), so a live conversation
+      // The view is maintained live by appendTxn, so a live conversation
       // already has its rows here and this gate is a no-op. It still fires for a
       // PRE-EXISTING (legacy) conversation whose messages predate the per-append
       // insert (zero rows) → one incremental backfill in its own txn so the SELECT
       // below sees the inserted rows; thereafter append keeps it current. Gating on
       // `== 0` avoids taking a write transaction on every read of a maintained view.
-      // R4: the count gate + seed are agent-scoped, so each agent gets a dense view
-      // over its OWN messages within a shared conversation (WR-02). The count read
+      // The count gate + seed are agent-scoped, so each agent gets a dense view
+      // over its OWN messages within a shared conversation. The count read
       // goes through ctxCountRowMapper, not a raw count cast (§6.8 untyped-sqlite).
       const countRow = ctxCountRowMapper.parseOptionalRow(
         countCtxItems.get(scope.conversationId, scope.agentId, scope.tenantId),
@@ -618,12 +617,12 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
         seedTxn(scope);
       }
 
-      // WR-02: degrade PER ROW, not per result-set — a corrupt/ drifted
+      // Degrade PER ROW, not per result-set — a corrupt/ drifted
       // context_items row is skipped, its siblings survive (NEVER `parseRows`,
       // which would discard every already-validated row). Ordering is preserved
       // (we iterate the ORDER BY ordinal result in order). The skip is silent by
       // design: the memory package has no infra-logging dependency (AGENTS.md
-      // §2.4); the boundary observability line is agent-side (Plan 05).
+      // §2.4); the boundary observability line is agent-side.
       const out: LcdContextItem[] = [];
       for (const raw of selectCtxItems.all(scope.conversationId, scope.agentId, scope.tenantId)) {
         const parsed = ctxItemRowMapper.parseOptionalRow(raw);
@@ -638,13 +637,13 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     getSummaries(scope: ContextStoreScope): LcdSummary[] {
-      // WR-02: degrade PER ROW, not per result-set — a corrupt/drifted summary
+      // Degrade PER ROW, not per result-set — a corrupt/drifted summary
       // row is skipped, its siblings survive (NEVER `parseRows`, which would
       // discard every already-validated row). The skip is silent by design (the
       // memory package has no infra-logging dependency, AGENTS.md §2.4); the
-      // boundary observability line is agent-side (the assembler, Plan 05). The
-      // store NEVER logs the summary `content` (lossless store; T-129-10). R4:
-      // scoped by agent_id + tenant_id (WR-02).
+      // boundary observability line is agent-side (the assembler). The
+      // store NEVER logs the summary `content` (lossless store). Scoped
+      // by agent_id + tenant_id.
       const out: LcdSummary[] = [];
       for (const raw of selectSummaries.all(scope.conversationId, scope.agentId, scope.tenantId)) {
         const parsed = summaryRowMapper.parseOptionalRow(raw);
@@ -670,25 +669,25 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     getMessagesByIds(scope: ContextStoreScope, ids: string[]): LcdMessage[] {
-      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      // Extracted to ./lcd-store-reads.ts (byte-identical relocation).
       return boundedReads.getMessagesByIds(scope, ids);
     },
 
     countMessages(scope: ContextStoreScope): number {
-      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      // Extracted to ./lcd-store-reads.ts (byte-identical relocation).
       return boundedReads.countMessages(scope);
     },
 
     getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[] {
-      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      // Extracted to ./lcd-store-reads.ts (byte-identical relocation).
       return boundedReads.getSummariesByIds(scope, ids);
     },
 
     getSummaryChildren(scope: ContextStoreScope, parentSummaryId: string): LcdSummary[] {
-      // E1 region walk: the immediate child summaries of a condensed summary
+      // Region walk: the immediate child summaries of a condensed summary
       // (lcd_summary_parents condensed→child edge). Same map-to-DTO discipline as
       // getSummaries — reuse summaryRowMapper, per-row parseOptionalRow +
-      // skip-bad-row (NEVER parseRows — WR-02). R4: scoped by (conversation_id,
+      // skip-bad-row (NEVER parseRows). Scoped by (conversation_id,
       // agent_id, tenant_id) in the JOIN's WHERE (a wrong/stale id OR a different
       // agent → []); the store never logs content.
       const out: LcdSummary[] = [];
@@ -716,9 +715,9 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     getSummaryMessages(scope: ContextStoreScope, summaryId: string): string[] {
-      // E1 region walk: the message ids a LEAF summary covers (lcd_summary_messages
+      // Region walk: the message ids a LEAF summary covers (lcd_summary_messages
       // leaf→message edge), seq-ordered. Per-row parseOptionalRow + skip-bad-row
-      // (NEVER parseRows — WR-02). R4: scoped by (conversation_id, agent_id,
+      // (NEVER parseRows). Scoped by (conversation_id, agent_id,
       // tenant_id) via the JOIN; unknown summaryId OR a different agent → [].
       const out: string[] = [];
       for (const raw of selectSummaryMessageIds.all(summaryId, scope.conversationId, scope.agentId, scope.tenantId)) {
@@ -734,33 +733,33 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       query: string,
       opts: { limit: number; scope?: "messages" | "summaries" | "both" },
     ): LcdSearchResult {
-      // E1 search: delegate the FTS5-MATCH-with-LIKE-fallback branch to lcd-fts.ts
+      // Search: delegate the FTS5-MATCH-with-LIKE-fallback branch to lcd-fts.ts
       // (the extract that keeps this file under the 800-line cap). The `query`
       // arrives pre-sanitized (the tool sanitizes — the cut bars memory from the
-      // skills sanitizer). R4: scoped by (conversation_id, agent_id) — BOTH the
-      // FTS MATCH path AND the LIKE fallback filter agent_id (WR-02, Pitfall 3);
+      // skills sanitizer). Scoped by (conversation_id, agent_id) — BOTH the
+      // FTS MATCH path AND the LIKE fallback filter agent_id;
       // the conversation_id prefix carries the tenant boundary. Never throws.
-      // Returns LcdSearchResult (EFF-03): { hits, cjkZeroHit } — propagated
+      // Returns LcdSearchResult: { hits, cjkZeroHit } — propagated
       // directly from searchLcdImpl; no transformation needed.
       return searchLcdImpl(db, scope.conversationId, scope.agentId, query, opts);
     },
 
     runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
-      // R3 (132-04): serialize the live ingest write and the deferred (C4)
+      // Serialize the live ingest write and the deferred
       // compaction write per conversation so they cannot interleave on the
       // (conversation_id, agent_id, tenant_id, seq) unique index / context_items
-      // ordinals (Pitfall 2). Different conversations run concurrently (the
+      // ordinals. Different conversations run concurrently (the
       // queue is per-conversation). The store does not log here — observability
-      // is agent-side (Plan 132-04 Task 3).
+      // is agent-side.
       return ingestSerializer.runOnConversation(conversationId, fn);
     },
 
-    // ── Phase 164 (RR1): durable ingest cursor ──────────────────────────────
+    // ── Durable ingest cursor ────────────────────────────────────────────────
 
     getIngestCursor(scope: ContextStoreScope): { epochAnchor: string; ingestedLiveLen: number } | null {
       // Point-select the cursor row for this (conversation, agent, tenant) scope.
       // Returns null when no row exists (new conversation or first run after upgrade).
-      // Per-row parseOptionalRow + skip on validation failure (never throws — WR-02).
+      // Per-row parseOptionalRow + skip on validation failure (never throws).
       const row = selectCursorStmt.get(scope.conversationId, scope.agentId, scope.tenantId);
       if (!row) return null;
       const parsed = cursorRowMapper.parseOptionalRow(row);
@@ -785,7 +784,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       );
     },
 
-    // ── Phase 164 (RR4): explicit LCD reset ─────────────────────────────────
+    // ── Explicit LCD reset ─────────────────────────────────────────────────
     deleteConversationLcd(scope: ContextStoreScope): number {
       // Delegate to the db.transaction that deletes in FK-safe dependency order.
       // Must be called inside runOnConversation so it serializes against live ingest.
@@ -793,7 +792,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       return deleteConversationLcdTxn(scope);
     },
 
-    // Phase 172 (DIST-01/DIST-03): provenance writes (extracted helper).
+    // Provenance writes (extracted helper).
     ...provenanceWrites,
   };
 }

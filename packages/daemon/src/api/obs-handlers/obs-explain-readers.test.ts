@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `IncidentSourceReader` + `makeRealReader` tests — the four bounded source
- * readers behind one DI seam (the X3 fixture-injection seam).
+ * readers behind one DI seam (the fixture-injection seam).
  *
  * Production reads real files; tests inject fixture records. The four readers:
  *   1. readSessionRecords    — <dataDir>/sessions/<sessionId>.trajectory.jsonl
@@ -13,10 +13,10 @@
  *                              PRIMARY rollup source).
  *   4. readDiagnosticsRollup — obsStore.queryDiagnostics({category:"session_summary",
  *                              limit:1000}) then SESSION-SCOPED filter by row.sessionKey
- *                              (F2 fallback). The multi-session case is RED-pinned:
+ *                              (F2 fallback). The multi-session case is pinned:
  *                              the MATCHING row is returned, NOT the most-recent;
  *                              and a target behind 200 newer rows is still found
- *                              (WR-01 widened the window from 50 to 1000).
+ *                              (the query window is 1000 rows wide).
  *
  * @module
  */
@@ -235,7 +235,7 @@ describe("makeRealReader REAL production layout (workspace/sessions + pointer)",
   });
 });
 
-describe("makeRealReader webhook (multi-colon userId) resolution — OBS-WEBHOOK-EXPLAIN-RESOLVE", () => {
+describe("makeRealReader webhook (multi-colon userId) resolution via the pointer sessionId", () => {
   // A webhook session is created with SessionKey
   //   {tenantId:"default", userId:"hook:devtask:wh1", channelId:"webhook"}
   // → formatSessionKey ⇒ "default:hook:devtask:wh1:webhook" and sessionKeyToPath
@@ -448,20 +448,20 @@ describe("makeRealReader.readDiagnosticsRollup (session-scoped)", () => {
     expect(rollup).not.toBeNull();
     expect(rollup!.sessionKey).toBe(SESSION_KEY);
     expect(rollup!.message).toBe("our session");
-    // Queried a WINDOW (limit:1000 — WR-01 widened it from 50), not limit:1.
+    // Queried a WINDOW (limit:1000), not limit:1.
     expect(queryDiagnostics).toHaveBeenCalledWith(
       expect.objectContaining({ category: "session_summary", limit: 1000 }),
     );
   });
 
-  it("finds the target row even when many newer session_summary rows precede it (WR-01 window)", async () => {
+  it("finds the target row even when many newer session_summary rows precede it (wide recency window)", async () => {
     // A busy daemon writes many session_summary rows AFTER the target session
     // ends. queryDiagnostics orders timestamp DESC, so the target sits deep in
     // the result. The reader queries a WINDOW then filters by sessionKey — the
     // window must be large enough that a realistically-old target is still
-    // inside it. Pre-fix the window was 50, so a target behind 50+ newer rows
-    // was silently missed (the F2 rollup returned null and the report lost every
-    // field only F2 could supply). This pins a target at depth 200.
+    // inside it (with a window of 50, a target behind 50+ newer rows would be
+    // silently missed: the F2 rollup returns null and the report loses every
+    // field only F2 can supply). This pins a target at depth 200.
     const dataDir = tmpDataDir();
     const newerCount = 200;
     const rows = [

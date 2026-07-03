@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * v2.15 FLEET-HEALTH GA-READINESS — the milestone's terminal shrink-only checklist.
+ * FLEET-HEALTH GA-READINESS — the milestone's terminal shrink-only checklist.
  *
- * This is the Phase-162 P2 durable marker (the analog of v2.14's
+ * This is the durable fleet-health GA marker (the analog of
  * `glass-box-ga-readiness.test.ts`). It does NOT re-run the architecture
  * suite — that is `pnpm test:architecture`'s job (the auto-discovery enforcers:
  * api-contracts-bidirectional, mcp-export-policy, cli-uses-typed-rpc,
  * log-payload-checker, trajectory-event-types-known, contract-codegen-drift,
- * no-prod-datadir-in-tests). Instead it asserts the v2.15 "Fleet Health Lens"
+ * no-prod-datadir-in-tests). Instead it asserts the "Fleet Health Lens"
  * SURFACE ANCHORS are still in place, so a future PR that silently drops the
  * `obs.fleet.health` contract, downgrades the `obs_fleet_health` MCP export
  * policy, removes the `comis fleet` CLI, un-maps the `fleet_health` agent
- * action, drops the 162-01 daemon barrel re-export, deletes the RE-PROVE
- * scenario / RUNBOOK, removes the D9 no-prod-datadir write-guard, or
+ * action, drops the daemon barrel re-export, deletes the RE-PROVE
+ * scenario / RUNBOOK, removes the no-prod-datadir write-guard, or
  * reintroduces the `includeSynthetic` opt-in fails THIS test loudly
  * (deterministic, cheap — fs/string reads only, NO runtime path).
  *
@@ -46,7 +46,7 @@ function readSource(relPath: string): string {
   return readFileSync(abs, "utf8");
 }
 
-describe("v2.15 Fleet-Health GA-readiness — the milestone surfaces are present + gated", () => {
+describe("Fleet-Health GA-readiness — the milestone surfaces are present + gated", () => {
   it("registers the obs.fleet.health admin-scoped RPC contract in the observability barrel", () => {
     // The fleet-lens centerpiece contract lives in fleet-health-report.ts and is
     // re-exported through the observability api-contracts barrel; the
@@ -121,8 +121,8 @@ describe("v2.15 Fleet-Health GA-readiness — the milestone surfaces are present
     ).toContain('.command("fleet")');
   });
 
-  it("reads the 3 I-track diagnostic categories (health_signal / model_health / config_posture)", () => {
-    // The fleet lens surfaces the Phase-160 I-track signals via sqlite
+  it("reads the 3 diagnostic categories (health_signal / model_health / config_posture)", () => {
+    // The fleet lens surfaces these diagnostic signals via sqlite
     // queryDiagnostics — by construction it never greps daemon.log. The three
     // category literals are the load-bearing read keys.
     const fleetHealth = readSource(
@@ -142,8 +142,8 @@ describe("v2.15 Fleet-Health GA-readiness — the milestone surfaces are present
     ).toEqual([]);
   });
 
-  it("re-exports the fleet-health assembler from the @comis/daemon barrel (the 162-01 RE-PROVE seam)", () => {
-    // The 162-01 barrel add lets the live-tier RE-PROVE scenario call the
+  it("re-exports the fleet-health assembler from the @comis/daemon barrel (the RE-PROVE seam)", () => {
+    // The barrel add lets the live-tier RE-PROVE scenario call the
     // assembler over a seeded tmp store via the bare `@comis/daemon` package
     // (the live config aliases only the TOP-LEVEL barrel → daemon/dist/index.js).
     // A refactor that drops it would silently break the milestone's proof harness.
@@ -154,9 +154,9 @@ describe("v2.15 Fleet-Health GA-readiness — the milestone surfaces are present
     ).toContain("assembleFleetHealthReport");
   });
 
-  it("keeps the RE-PROVE scenario + operator RUNBOOK on disk (the 162-01 proof artifacts)", () => {
-    // prettier-ignore — single-line existsSync(resolve(REPO_ROOT, …)) idiom (the v2.14 GA-marker
-    // shape + the 162-02 acceptance grep `existsSync(resolve(REPO_ROOT`); no format gate in `validate`.
+  it("keeps the RE-PROVE scenario + operator RUNBOOK on disk (the proof artifacts)", () => {
+    // prettier-ignore — single-line existsSync(resolve(REPO_ROOT, …)) idiom (the GA-marker
+    // shape + the acceptance grep `existsSync(resolve(REPO_ROOT`); no format gate in `validate`.
     expect(existsSync(resolve(REPO_ROOT, "test/live/scenarios/prove/fleet-reprove.test.ts")),
       "the Phase-162 RE-PROVE scenario (test/live/scenarios/prove/fleet-reprove.test.ts) must exist — the keyless 1-call/0-grep proof",
     ).toBe(true);
@@ -175,8 +175,8 @@ describe("v2.15 Fleet-Health GA-readiness — the milestone surfaces are present
     ).toContain("assertNoSecrets");
   });
 
-  it("H2 — the no-prod-datadir D9 guard + synthetic-exclusion predicate hold", () => {
-    // H2a — the D9 no-prod-datadir write-guard is intact: appendSessionIndexEntry
+  it("the no-prod-datadir write-guard + synthetic-exclusion predicate hold", () => {
+    // The no-prod-datadir write-guard is intact: appendSessionIndexEntry
     // must THROW when a VITEST/NODE_ENV=test process writes under the real
     // ~/.comis (mirror no-prod-datadir-in-tests.test.ts:37-39). Belt-and-suspenders
     // over that existing gate — the guard must use systemGetEnv (NOT process.env,
@@ -197,10 +197,10 @@ describe("v2.15 Fleet-Health GA-readiness — the milestone surfaces are present
       "the D9 guard must resolve the real ~/.comis via os.homedir()",
     ).toBe(true);
 
-    // H2b — synthetic exclusion is a REAL predicate, not a no-op: the fleet
+    // Synthetic exclusion is a REAL predicate, not a no-op: the fleet
     // reducer is called with `excludeSynthetic: true` so synthetic sessions
     // never leak into the operator digest. The `includeSynthetic` opt-in was
-    // REMOVED in 161 (WR-02); the marker locks it out.
+    // removed; the marker locks it out.
     const fleetHealth = readSource(
       "packages/daemon/src/api/obs-handlers/fleet-health.ts",
     );

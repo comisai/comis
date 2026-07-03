@@ -14,8 +14,7 @@ LLM providers charge 10–20x less for cached prompt reads than for cache writes
 A 76-call Claude Opus session in production achieved a **16.9x cache read/write ratio**: 94% of input tokens served from cache at \$0.50/MTok instead of \$15/MTok uncached. (Marketing benchmark — see the README for the exact session.) On a typical Claude Sonnet long-running channel agent, that ratio shaves a daily cost from roughly **\$26 uncached → \$5 cached** for the same conversation volume, just by keeping the prefix stable.
 
 <Note>
-README and marketing copy used to advertise "20 cache optimizations." The
-shipped count is **15+** specific optimizations across the executor, context
+Comis ships **15+** specific cache optimizations across the executor, context
 engine, and provider adapters. They are listed below.
 </Note>
 
@@ -96,7 +95,7 @@ Reported as `cached_tokens` in usage. With the stabilizers on, reads grow monoto
 
 ### Google — explicit CachedContent
 
-Gemini caching is **on by default** for Gemini agents (`geminiCache.enabled: true`). Comis creates a server-side `CachedContent` object holding the system instruction + tool schemas, injects its name into each request, and strips those fields from the body to avoid double-billing. Staleness is detected by comparing a **SHA-256 content hash** — not field presence. (The field-presence check is what previously kept the cache from ever hitting: pi-ai leaves `toolConfig` undefined when no tool choice is set, which the old guard mistook for a change and so it created and evicted the cache on every call.) TTL is fixed at 3600s with a 50%-interval refresh on active sessions.
+Gemini caching is **on by default** for Gemini agents (`geminiCache.enabled: true`). Comis creates a server-side `CachedContent` object holding the system instruction + tool schemas, injects its name into each request, and strips those fields from the body to avoid double-billing. Staleness is detected by comparing a **SHA-256 content hash** — not field presence. (A field-presence check would keep the cache from ever hitting: pi-ai leaves `toolConfig` undefined when no tool choice is set, which such a guard mistakes for a change, creating and evicting the cache on every call.) TTL is fixed at 3600s with a 50%-interval refresh on active sessions.
 
 The explicit cache is **shallow by design** — it covers the system instruction + tools (a guaranteed, stable discount), while Gemini's implicit prefix caching covers the conversation tail. Below the per-model minimum (~4096 tokens for gemini-3-pro / gemini-3.1-pro) the manager passes through uncached and implicit caching still applies. Reported as `cachedContentTokenCount` (constant across turns once the cache is live). Only Google AI Studio providers use the explicit path (not Vertex AI). Set `geminiCache.enabled: false` to opt out — e.g. a system prompt that churns every turn, which would thrash the per-object cache.
 
@@ -198,7 +197,7 @@ JIT guide injection defers them. The guides sit in memory, indexed by tool name.
 The `deliveredGuides` set tracks which guides have been delivered in the current session. Once delivered, the guide is never injected again. On session reset, the set is cleared.
 
 <Note>
-If a tool call errors on its first invocation, the guide is **not** consumed — the delivery slot stays open so a successful retry can fire it. This was a subtle bug in earlier versions that caused some guides to silently disappear.
+If a tool call errors on its first invocation, the guide is **not** consumed — the delivery slot stays open so a successful retry can fire it. Consuming the slot on a failed call would make the guide silently disappear for the rest of the session.
 </Note>
 
 Two guide sources exist independently:

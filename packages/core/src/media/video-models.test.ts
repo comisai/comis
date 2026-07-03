@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for VIDEO_MODELS + listVideoModelCaps + supportedModes + snapDuration
- * (CAP-02 — the per-model video-capability matrix that is the single source of
- * truth the IN-02 validator (Plan 02) and the IN-03 dynamic description (Plan
- * 03) both read). Mirrors the sibling `image-models.test.ts` closed-map-miss +
+ * (the per-model video-capability matrix that is the single source of
+ * truth the param validator and the dynamic tool description
+ * both read). Mirrors the sibling `image-models.test.ts` closed-map-miss +
  * listing structure (a backend absent from the map → `undefined` on lookup,
- * never a crash) and the `video-pricing.ts` SEC-04 guarded-index discipline.
+ * never a crash) and the `video-pricing.ts` guarded-index discipline.
  *
  * The live FAL/Veo/Grok values are pinned here as the contract the impl must
  * satisfy (re-verified 2026-06-15; they drift ~monthly — see the impl's @module
@@ -22,7 +22,7 @@ import {
   snapDuration,
 } from "./video-models.js";
 
-describe("listVideoModelCaps — CAP-02 (a) duration shape per backend", () => {
+describe("listVideoModelCaps — duration shape per backend", () => {
   it("FAL t2v durations are an enum [4,6,8]", () => {
     expect(listVideoModelCaps("fal", "t2v")?.durations).toEqual({
       kind: "enum",
@@ -46,7 +46,7 @@ describe("listVideoModelCaps — CAP-02 (a) duration shape per backend", () => {
   });
 });
 
-describe("listVideoModelCaps — CAP-02 (b) a missing mode key yields undefined", () => {
+describe("listVideoModelCaps — a missing mode key yields undefined", () => {
   it("v2v (the RESERVED, never-populated mode) is undefined for every backend", () => {
     // v2v is RESERVED but wired to no backend (deferred). An omitted mode key →
     // undefined → the handler rejects with the supported-modes list.
@@ -60,7 +60,7 @@ describe("listVideoModelCaps — CAP-02 (b) a missing mode key yields undefined"
   });
 });
 
-describe("listVideoModelCaps — CAP-02 (c) a per-model override wins over the backend default", () => {
+describe("listVideoModelCaps — a per-model override wins over the backend default", () => {
   it("the Veo backend default supports 4k", () => {
     expect(listVideoModelCaps("veo", "t2v")?.resolutions).toContain("4k");
   });
@@ -90,7 +90,7 @@ describe("listVideoModelCaps — CAP-02 (c) a per-model override wins over the b
   });
 });
 
-describe("listVideoModelCaps — SEC-04 proto-pollution guard precedes every index", () => {
+describe("listVideoModelCaps — proto-pollution guard precedes every index", () => {
   it("a poisoned backend key returns undefined (never touches the prototype)", () => {
     expect(listVideoModelCaps("__proto__", "t2v")).toBeUndefined();
     expect(listVideoModelCaps("constructor", "t2v")).toBeUndefined();
@@ -118,7 +118,7 @@ describe("supportedModes", () => {
     expect(supportedModes("nope")).toEqual([]);
   });
 
-  it("a blocked backend key returns [] (SEC-04, never indexes)", () => {
+  it("a blocked backend key returns [] (the guard runs before any index)", () => {
     expect(supportedModes("__proto__")).toEqual([]);
   });
 });
@@ -147,7 +147,7 @@ describe("snapDuration — enum snaps to the nearest member, ties round HALF-UP"
   });
 });
 
-describe("snapDuration — IN-01 non-finite duration fails closed (defense-in-depth)", () => {
+describe("snapDuration — a non-finite duration fails closed (defense-in-depth)", () => {
   const falT2v = listVideoModelCaps("fal", "t2v")!;
   const grokT2v = listVideoModelCaps("grok", "t2v")!;
 
@@ -158,7 +158,7 @@ describe("snapDuration — IN-01 non-finite duration fails closed (defense-in-de
   });
 
   it("a range cell with a NaN duration returns the min, not the raw NaN", () => {
-    // Pre-fix: Math.min(max, Math.max(min, NaN)) → NaN passes straight to the wire.
+    // Without the guard, Math.min(max, Math.max(min, NaN)) → NaN passes straight to the wire.
     expect(snapDuration(grokT2v, Number.NaN)).toBe(1);
   });
 });

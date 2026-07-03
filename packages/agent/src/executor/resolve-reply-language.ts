@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DET-02 — the single pure reply-language resolver for the deterministic
- * consumer (GEN-02 degraded replies). Returns a closed-set table key
+ * The single pure reply-language resolver for the deterministic
+ * consumer (degraded replies). Returns a closed-set table key
  * (en|he|ar|ru) selected by a fixed 4-tier resolution order:
  *
  *   1. `configLanguage` — `agents.<id>.language` (operator-set, tier-1).
@@ -12,29 +12,29 @@
  *      other class) maps to nothing → falls through.
  *   4. `"en"` — the total floor.
  *
- * The resolver is PURE (I9): no I/O, no logging, no clock, no events. It is
+ * The resolver is PURE: no I/O, no logging, no clock, no events. It is
  * TOTAL — it never throws; "en" is the floor for any input. Returns a plain
  * string (the dominantScript/scriptTokenFactor text-primitive convention, NOT
  * Result<T,E>): a total pure value function needs no error channel.
  *
  * ⚠ Tier-3 uses `scriptShares` DIRECTLY with a strict `> 0.5` threshold — it
  * MUST NOT reuse `dominantScript`, whose 0.30 non-Latin floor
- * (script-classes.ts) is tuned for OBS-01's mixed-code tolerance and would
- * return `hebrew` for a 40%-Hebrew message. DET-02 requires a strict majority,
+ * (script-classes.ts) is tuned for mixed code+text tolerance and would
+ * return `hebrew` for a 40%-Hebrew message. This resolver requires a strict majority,
  * so a plurality-but-not-majority Hebrew message resolves to "en", not "he".
  * `scriptShares` already excludes neutral ASCII (digits/punct/space) from its
  * denominator, so its shares ARE "share of non-neutral codepoints" exactly.
  *
- * Model-facing consumers (GEN-01/03) do NOT use this tag — they use
- * content-anchored instructions so detection is sidestepped. Only the
- * deterministic GEN-02 degraded replies consume the resolved key.
+ * Model-facing consumers (the language-directive paths) do NOT use this tag —
+ * they use content-anchored instructions so detection is sidestepped. Only the
+ * deterministic degraded replies consume the resolved key.
  *
  * @module
  */
 
 import { scriptShares, type ScriptClass } from "@comis/core";
 
-/** The closed set of reply-language table keys DET-02 emits. */
+/** The closed set of reply-language table keys the resolver emits. */
 export type ReplyLanguage = "en" | "he" | "ar" | "ru";
 
 /** Inputs for the reply-language resolution (all tiers; only inboundText required). */
@@ -50,7 +50,7 @@ export interface ResolveReplyLanguageInput {
 /**
  * Non-neutral script classes that map to a reply-language table key. `cjk`,
  * `latin`, and every other class deliberately have NO entry → they fall
- * through (latin → en is the floor; cjk → nothing per DET-02).
+ * through (latin → en is the floor; cjk → nothing by design).
  */
 const SCRIPT_TO_LANGUAGE: Partial<Record<ScriptClass, ReplyLanguage>> = {
   hebrew: "he",
@@ -106,7 +106,7 @@ function scriptDefault(inboundText: string): ReplyLanguage | undefined {
 }
 
 /**
- * Resolve the deterministic reply language (DET-02). Pure, total, never throws.
+ * Resolve the deterministic reply language. Pure, total, never throws.
  * @returns one of "en" | "he" | "ar" | "ru".
  */
 export function resolveReplyLanguage(input: ResolveReplyLanguageInput): ReplyLanguage {

@@ -1,21 +1,21 @@
-# FLEET-reprove — Operator RE-PROVE Runbook (P1, the live one-call / 0-grep proof)
+# FLEET-reprove — Operator RE-PROVE Runbook (the live one-call / 0-grep proof)
 
-The **fleet RE-PROVE** is v2.15's reason-to-exist proof: the manual cross-session
-triage the §2 by-hand review ran on `daemon.log` (a severity histogram + a
+The **fleet RE-PROVE** is the reason-to-exist proof: the manual cross-session
+triage the by-hand review ran on `daemon.log` (a severity histogram + a
 group-by-message + a pm2 native model scrape) is replaced by **one
 `obs.fleet.health` call, zero log-greps**. This runbook documents the operator's
 **live costed RUN** — the half the always-on scenario cannot do in CI.
 
-> **KEYLESS.** Unlike v2.14's diagnosis RE-PROVE, the fleet proof is a
+> **KEYLESS.** Unlike the diagnosis RE-PROVE, the fleet proof is a
 > count/structure reproduction — there is **no model, no judge, no API key, no
 > live-gate env flag, and no new environment variable of any kind**. The live RUN
 > only boots the (already-built) daemon and reads its output. If you came here
-> looking for a judge-env block (the v2.14 live-gate apparatus), there isn't one —
+> looking for a judge-env block (the live-gate apparatus), there isn't one —
 > that is by design.
 
 ---
 
-## Two tiers (the Phase-149 Stage-A/B-vs-Stage-C discipline, keyless)
+## Two tiers (the Stage-A/B-vs-Stage-C discipline, keyless)
 
 - **The always-on scenario** (`fleet-reprove.test.ts`, **keyless, in `pnpm
   test:live prove`**) proves the deterministic STRUCTURE: a single
@@ -34,7 +34,7 @@ group-by-message + a pm2 native model scrape) is replaced by **one
 ### Why the live RUN exists — the LOAD-BEARING scope reality
 
 The in-context scenario **SEEDS** the I-track because **the current real `~/.comis`
-predates Phase 160**. It has the A-track (`session_summary`) rows the pre-160
+was produced by an earlier daemon build**. It has the A-track (`session_summary`) rows the earlier
 daemon already wrote, but **NO `health_signal` / `model_health` / `config_posture`
 rows** — those are written **only when the new instrumented daemon RUNS**. So the
 deterministic scenario proves the assembler surfaces those rows *when present*
@@ -136,7 +136,7 @@ log to answer "what's wrong across the fleet right now" — that is the whole po
   flag, no judge-env block, nothing. The live RUN is just "boot the daemon,
   exercise it, call the fleet lens".
 
-This is the **161-HUMAN-UAT item #4** live costed RUN (the v2.14 Phase-156 Stage-C
+This is the live costed RUN (the diagnosis RE-PROVE's Stage-C
 operator-RUN precedent — minus the judged apparatus). The in-context proof does
 **not** require a running daemon.
 

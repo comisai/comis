@@ -591,10 +591,10 @@ export class IcSessionDetail extends LitElement {
   }
 
   /**
-   * Drill to the native Incident view (the E7 twin): the deterministic
-   * `obs.explain` IncidentReport keyed on this session's `sessionKey` (a valid
-   * obs.explain ref). Navigates via the hash router — no RPC on this view
-   * (the `obs.explain` call lives on `ic-incident-view`).
+   * Drill to the native Incident view: the deterministic `obs.explain`
+   * IncidentReport keyed on this session's `sessionKey` (a valid obs.explain
+   * ref). Navigates via the hash router — no RPC on this view (the
+   * `obs.explain` call lives on `ic-incident-view`).
    */
   private _explainIncident(): void {
     if (!this.sessionKey) return;

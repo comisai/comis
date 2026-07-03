@@ -2,7 +2,7 @@
 /**
  * Unit tests for the channels + message + platform-action contract registry.
  *
- * Mirrors the per-domain test pattern established in Plans 35-06..35-16:
+ * Follows the shared per-domain contract-registry test pattern:
  *   - Aggregator sanity: count + method-name presence + scope assignments.
  *   - INTERNAL_FIELD_NAMES paired sanity (no contract request schema declares
  *     a dispatcher-injected `_X` key).
@@ -79,8 +79,8 @@ describe("CHANNELS_CONTRACTS aggregator", () => {
         .filter((c) => c.scopes.includes("rpc"))
         .map((c) => c.method),
     );
-    // 210-GAP CR-01: message.send/reply/react re-scoped admin→rpc — the
-    // genuinely-outward send subset (§3.5) is the orchestration surface
+    // message.send/reply/react are rpc-scoped, not admin — the
+    // genuinely-outward send subset is the orchestration surface
     // governed by orch:message, not control plane.
     expect(rpcMethods).toEqual(new Set([
       "channels.health",
@@ -98,7 +98,7 @@ describe("CHANNELS_CONTRACTS aggregator", () => {
         .filter((c) => c.scopes.includes("admin"))
         .map((c) => c.method),
     );
-    // 210-GAP / §3.5: message.edit/delete/fetch/attach STAY admin-only
+    // message.edit/delete/fetch/attach STAY admin-only
     // (deny-by-origin) — NOT part of orch:message.
     expect(adminMethods).toEqual(new Set([
       "channels.list",

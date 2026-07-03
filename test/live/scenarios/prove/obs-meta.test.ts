@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PROVE-01 — Observability meta-validation: validate the §5 observability ORACLE
+ * PROVE-01 — Observability meta-validation: validate the observability ORACLE
  * ITSELF over a Stage-B run. This is the §2.7 litmus test enforced AS A TEST.
  *
  * Three deterministic assertions (the substrate is model-independent — schema,
@@ -22,7 +22,7 @@
  *       unexplained ERROR / orphaned traceId / missing hint FAILS. This is the oracle
  *       validating ITSELF over a run.
  *
- * Stage-B idiom (the 136–146 pattern): boot the echo ConversationDriver with dummy
+ * Stage-B idiom: boot the echo ConversationDriver with dummy
  * keys; the LLM errors fast but the daemon fires real streams; the afterEach
  * runLogOracle declares the dummy-key expectedErrors (["JSON-RPC method error"]).
  *
@@ -71,14 +71,14 @@ describe("PROVE-01(c) Stage-B — no ERROR/WARN without hint+errorKind across a 
   });
 
   afterEach(async () => {
-    // Flush the daemon log buffer before snapshotting (T-134-flush).
+    // Flush the daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
     // "JSON-RPC method error" is the expected Stage-A ERROR: rpc-dispatch.ts emits
     // it when agent.execute fails at the dummy-key LLM provider call.
     await runLogOracle(driver.capturedLogLines(), {
       expectedErrors: ["JSON-RPC method error"],
     });
-    // FND-11 persistence oracle — only if memory.db was created.
+    // Persistence oracle — only if memory.db was created.
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -106,7 +106,7 @@ describe("PROVE-01(c) Stage-B — no ERROR/WARN without hint+errorKind across a 
     // (c2) the universal oracle over the run: parse+schema, no UNEXPECTED ERROR
     // (subtracting the declared dummy-key error), traceId continuity (no orphaned
     // traceId), secret residency. A clean functional turn with broken logs would
-    // FAIL here — that is exactly the §5.1 standing rule, run as the SUBJECT.
+    // FAIL here — that is exactly the observability standing rule, run as the SUBJECT.
     await expect(
       runLogOracle(logLines, { expectedErrors: ["JSON-RPC method error"] }),
     ).resolves.toBeUndefined();
@@ -119,7 +119,7 @@ describe("PROVE-01(c) Stage-B — no ERROR/WARN without hint+errorKind across a 
 //   traceId (scanSessionIndexByTrace) / by messageId (the LRU seed). Asserted on
 //   the handler's data shape (pure-over-file) — the factory is NOT import-reachable
 //   from test/live (not in @comis/daemon's index); its wiring is covered by the
-//   daemon's own obs-trace.test.ts. Here we assert the §5 "reconstructable from
+//   daemon's own obs-trace.test.ts. Here we assert the "reconstructable from
 //   trace" PROPERTY, deterministically.
 // ===========================================================================
 
@@ -167,7 +167,7 @@ describe("PROVE-01(b) — a turn is fully reconstructable from the obs.trace ses
   it("the turn reconstructs from the session-index by traceId (scanSessionIndexByTrace contract)", () => {
     // Mirror the handler's scanSessionIndexByTrace: read the day's index file,
     // parse JSONL, keep rows whose traceId matches. The PROPERTY: a turn's full
-    // record set is reconstructable from trace alone (the §5 litmus test).
+    // record set is reconstructable from trace alone (the observability litmus test).
     const today = new Date().toISOString().slice(0, 10);
     const file = join(dir, "logs", `session-index.${today}.jsonl`);
     const parsed = readFileSync(file, "utf-8")
@@ -209,7 +209,7 @@ describe("PROVE-01(b) — a turn is fully reconstructable from the obs.trace ses
 //   equality is the Stage-C it.skip.
 // ===========================================================================
 
-describe("PROVE-01(a) — billed tokens = response tokens (the §5 cross-stream token-agreement invariant)", () => {
+describe("PROVE-01(a) — billed tokens = response tokens (the cross-stream token-agreement invariant)", () => {
   it("obs.billing totalTokens agrees with the response/cache-trace token sum", async () => {
     // The same turn's tokens captured from the two sources MUST agree. Model the
     // billing snapshot (obs.billing.bySession shape) and the response/cache-trace
@@ -222,7 +222,7 @@ describe("PROVE-01(a) — billed tokens = response tokens (the §5 cross-stream 
     await expect(
       expectBillingTokens({ minTokens: responseTokenSum }, billing),
     ).resolves.toBeUndefined();
-    // ... and the EXACT agreement (billed == response) — the §5 "billed tokens =
+    // ... and the EXACT agreement (billed == response) — the "billed tokens =
     // response tokens" invariant. A divergence here would mean the billing stream
     // disagrees with the response, a production-readiness defect.
     expect(billing.totalTokens).toBe(responseTokenSum);

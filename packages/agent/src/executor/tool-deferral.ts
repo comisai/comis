@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unified tool deferral engine: replaces the MCP-only applyMcpToolDeferral()
- * with rule-based, budget-based, and small-model deferral, plus BM25-scored
- * discover_tools for searching deferred tools.
+ * Unified tool deferral engine: rule-based, budget-based, and small-model
+ * deferral, plus BM25-scored discover_tools for searching deferred tools.
  *
  * Deferral model (exclude model): Deferred tools are removed from the tools
  * parameter entirely and partitioned into a DeferredToolEntry list. A
@@ -10,7 +9,7 @@
  * LLM to search and fetch full schemas on demand. Discovered tools (tracked
  * via DiscoveryTracker) are re-included in the active context with their
  * original schemas. This achieves ~81% token savings for 100 tools compared
- * to the previous description-swap (pre-register) model.
+ * to shipping every full schema inline.
  *
  * @module
  */
@@ -97,7 +96,7 @@ export interface DeferralContext {
    *  queries re-ask for loaded MCPs. Must NOT include names that were
    *  deferred -- pass the post-deferral set, not mergedCustomTools. */
   activeToolNames?: ReadonlySet<string>;
-  /** SD7 (Phase 159): capability-class active-tool ceiling.
+  /** Capability-class active-tool ceiling.
    *  When set, the active tool count is capped to this value after all other
    *  deferral passes. Only CORE_TOOLS and recently-used tools are guaranteed
    *  active; the cold long-tail is deferred behind discover_tools until the
@@ -184,8 +183,8 @@ export const CORE_TOOLS = new Set([
 ]);
 
 /**
- * CWF-04 (Phase 168): orchestration entry primitives that stay active for `small`-class
- * models even under the SD7 tool-ceiling. Only `small` — nano's aggressive CORE_TOOLS-only
+ * Orchestration entry primitives that stay active for `small`-class
+ * models even under the active-tool ceiling. Only `small` — nano's aggressive CORE_TOOLS-only
  * path fires before the ceiling block, so nano retains its own deliberate policy (nano is
  * below the NL→DAG comprehension cliff; promoting pipeline for nano gives it a tool it
  * cannot use and needlessly expands its manifest). frontier/mid: ceiling never fires.
@@ -196,12 +195,11 @@ export const CORE_TOOLS = new Set([
  * pipeline schema ~6052 chars ÷ 3.5 = ~1729 tokens.
  *
  * Pre-deferral systemTokens estimate (cachedSystemTokensEstimate) remains stale for the
- * CURRENT turn (it's computed before deferral fires) — this is a pre-existing known
- * subtlety (Pitfall 4), not introduced by Phase 168. Budget algebra will accurately reflect
- * the post-ceiling manifest on the NEXT assembly.
+ * CURRENT turn (it's computed before deferral fires) — a known subtlety. Budget algebra
+ * will accurately reflect the post-ceiling manifest on the NEXT assembly.
  *
- * Extend only when O2 DAG templates demand it (future milestone); never add all four
- * orchestration primitives — each extra schema fights the ceiling this fix pursues.
+ * Extend only when DAG templates demand it; never add all four orchestration
+ * primitives — each extra schema fights the ceiling this set exists to protect.
  *
  * Exported for test access (mirrors the `CORE_TOOLS` convention); no non-test external
  * caller currently consumes this constant.
@@ -277,7 +275,7 @@ export function extractRecentlyUsedToolNames(
 export function resolveToolDescription(tool: ToolDefinition): string {
   const entry = LEAN_TOOL_DESCRIPTIONS[tool.name];
   if (typeof entry === "function") {
-    // WR-01 / TODO(Phase-152): pass capabilityClass when small-model lean
+    // TODO: pass capabilityClass when small-model lean
     // descriptions are introduced. Until then, "large" is the correct safe
     // default — it produces the same output as the current behavior, and
     // DeferralContext.capabilityClass is not threaded to this function yet.
@@ -310,7 +308,7 @@ export function resolveToolDescription(tool: ToolDefinition): string {
  * Anthropic regex tool. Naming the tool explicitly gives the model a
  * concrete next step.
  *
- * C3 (Plan 152-04): optional `maxEntries` cap truncates the formatted list
+ * The optional `maxEntries` cap truncates the formatted list
  * and appends a "[+N more deferred tools — use discover_tools to list all]"
  * suffix. Frontier/mid: uncapped (options undefined or {}). Small/nano: caller
  * passes `{ maxEntries: DEFERRED_TOOLS_MAX_BY_CLASS[capabilityClass] }`.
@@ -326,7 +324,7 @@ export function buildDeferredToolsContext(
 ): string {
   if (entries.length === 0) return "";
 
-  // C3: apply maxEntries cap before formatting
+  // Apply the maxEntries cap before formatting
   const maxEntries = options?.maxEntries;
   let effectiveEntries = entries;
   let truncatedCount = 0;
@@ -365,7 +363,7 @@ export function buildDeferredToolsContext(
     lines.push(`[${server}] (${tools.length} tools): ${shortNames.join(", ")}`);
   }
 
-  // C3: append truncation notice when entries were capped
+  // Append a truncation notice when entries were capped
   if (truncatedCount > 0) {
     lines.push(`[+${truncatedCount} more deferred tools — use discover_tools to list all]`);
   }
@@ -447,9 +445,9 @@ export function applyToolDeferral(
   // xAI, etc.) were already exempt from MCP deferral and remain so -- the
   // flip means the Anthropic/Google branch now matches their behavior.
 
-  // Aggressive deferral for nano-class models (behavior-neutral: old modelTier="small" at <=32K maps to capabilityClass="nano")
-  // Phase 159/SD7: 'small' class ceiling policy implemented via DeferralContext.activeToolCeiling.
-  // nano retains its own aggressive CORE_TOOLS-only path below.
+  // Aggressive deferral for nano-class models. The 'small' class ceiling policy
+  // is implemented via DeferralContext.activeToolCeiling; nano retains its own
+  // aggressive CORE_TOOLS-only path here.
   if (deferralContext.capabilityClass === "nano") {
     for (const t of tools) {
       if (!deferredSet.has(t.name) && !CORE_TOOLS.has(t.name) && !deferralContext.recentlyUsedToolNames.has(t.name)) {
@@ -458,9 +456,9 @@ export function applyToolDeferral(
     }
   }
 
-  // SD7 (Phase 159): active-tool ceiling for small class (fills Phase-152/SD7 deferred TODO).
-  // Only fires when DeferralContext.activeToolCeiling is set — undefined guard preserves
-  // the Phase-151 regression test (makeContext without activeToolCeiling → skipped).
+  // Active-tool ceiling for the small capability class.
+  // Only fires when DeferralContext.activeToolCeiling is set — undefined means
+  // no ceiling (a DeferralContext without activeToolCeiling skips this pass).
   // CRITICAL: mirrors the nano path — CORE_TOOLS and recently-used tools are NEVER deferred.
   // Deferred tools remain fully reachable via discover_tools (no capability removal).
   if (deferralContext.activeToolCeiling !== undefined) {
@@ -472,12 +470,12 @@ export function applyToolDeferral(
         if (remaining <= 0) break;
         if (deferredSet.has(t.name)) continue;
         if (CORE_TOOLS.has(t.name)) continue;
-        // CWF-04 (Phase 168): pipeline (and future orchestration entries) stays active for
+        // pipeline (and future orchestration entries) stays active for
         // small-class models. Only fires in this ceiling block — which only runs for small
         // (activeToolCeiling is undefined for nano/frontier/mid). The capabilityClass check
         // is technically redundant (the block only runs for small) but makes the SMALL-ONLY
-        // intent unambiguous. Nano's aggressive path above is unaffected — nano stays
-        // byte-identical (pipeline still deferred for nano, test :485 GREEN).
+        // intent unambiguous. Nano's aggressive path above is unaffected — pipeline is
+        // still deferred for nano.
         if (deferralContext.capabilityClass === "small" && SMALL_CLASS_ORCHESTRATION_TOOLS.has(t.name)) continue;
         if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
         deferredSet.add(t.name);
@@ -580,7 +578,7 @@ export function applyToolDeferral(
  *  term). ONE ceil over the summed chars. */
 function toolCorpusTokens(tools: ReadonlyArray<ToolDefinition>): number {
   // tool name + description + JSON.stringify(parameters) is machine-emitted Latin
-  // flat-by-design: JSON (scriptTokenFactor 1.0) — mirrors estimateSystemTokensFactored's toolOverheadChars (TOK-01)
+  // flat-by-design: JSON (scriptTokenFactor 1.0) — mirrors estimateSystemTokensFactored's toolOverheadChars
   return Math.ceil(toolDefOverheadChars(tools) / CHARS_PER_TOKEN_RATIO);
 }
 
@@ -665,7 +663,7 @@ export interface EnforceToolBudgetFitParams {
   /** The system prompt text WITHOUT tool schemas — the non-evictable fixed
    *  overhead the fit budget must reserve. Passed as TEXT (not a char count) so
    *  the token estimate applies scriptTokenFactor over the actual script, exactly
-   *  as estimateSystemTokensFactored does (TOK-01). */
+   *  as estimateSystemTokensFactored does. */
   systemPromptText: string;
   /** Effective context window in tokens (min(configured, served, capabilityCap)). */
   contextWindow: number;
@@ -738,7 +736,7 @@ export function enforceToolBudgetFit(
     discoverToolName, logger,
   } = params;
 
-  // TOK-01: the system-prompt term divides chars by the SAME script factor as
+  // The system-prompt term divides chars by the SAME script factor as
   // estimateSystemTokensFactored (a dense Hebrew/CJK prompt carries ~2-3× tokens
   // per char) so the residual budget is not over-stated for non-Latin prompts —
   // under-counting here would let tools through that then overflow the window.
@@ -1067,8 +1065,8 @@ const DEFAULT_TOOL_DISCOVERY_SCORES: ToolDiscoveryScoreConfig = {
  * BM25 scores are normalized to [0, 1] (fraction of top match) BEFORE the
  * score-floor filter applies, matching the semantics of hybrid-mode scoring.
  * This ensures the top match always clears any floor <= 1.0 whenever any
- * positive signal exists (fixes the srv1593437 08:06:39Z "install MCP"
- * regression where raw BM25 ~0.74 was dropped by the 0.8 raw-score floor).
+ * positive signal exists (fixes a live regression where an "install MCP"
+ * query's raw BM25 ~0.74 was dropped by the 0.8 raw-score floor).
  *
  * @param scoreConfig Optional score-floor override (defaults to 0.8 BM25 /
  *   0.35 hybrid). Zero or negative floors disable the filter.
@@ -1473,7 +1471,7 @@ export function createAutoDiscoveryStubs(
       name: entry.name,
       label: originalLabel ?? entry.name,
       description: entry.description,
-      // ROOT-CAUSE context-exhaustion fix (2026-06-22 VPS gpt-5.3-codex): the stub
+      // ROOT-CAUSE context-exhaustion fix (observed live with gpt-5.3-codex): the stub
       // carries a MINIMAL placeholder schema, NOT entry.original.parameters (the
       // full ~195-tok schema). The stub exists ONLY so the SDK's agent-loop
       // RESOLVES the deferred tool's NAME (prevents "Tool X not found" when a skill

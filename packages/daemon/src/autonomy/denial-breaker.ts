@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `createDenialBreaker` — the per-`rootRunId` consecutive-floor-block counter
- * (Phase 217-02, BREAK-01) with trip-once semantics (BREAK-02).
+ * with trip-once semantics.
  *
  * The "never loop" guarantee: after N CONSECUTIVE floor-blocks a self-driving run
- * trips the breaker so the chokepoint (Plan 05) aborts + escalates rather than
- * retry-looping and burning the aggregate budget (T-217-05 DoS-on-self; the §8.7
+ * trips the breaker so the chokepoint aborts + escalates rather than
+ * retry-looping and burning the aggregate budget (a DoS-on-self; the
  * per-root budget stays the independent backstop).
  *
  * This is a daemon-internal sibling of {@link createBoundedAutonomy}, modeled on
@@ -19,15 +19,16 @@
  *     content-free trip log).
  *
  * CONSECUTIVE, not cumulative: {@link DenialBreaker.recordAllow} resets the
- * counter, so a single deny inside a productive loop never accumulates to a trip
- * (T-217-07). The trip fires on the EXACT crossing of `denialBreakerN` (`===`,
- * never `>=`) so a later deny does not re-trip — the tool-retry-breaker.ts:559
- * trip-once discipline (a `>=` verdict would inflate Phase 153's breakerTimeline
- * and re-abort an already-aborting run).
+ * counter, so a single deny inside a productive loop never accumulates to a trip.
+ * The trip fires on the EXACT crossing of `denialBreakerN` (`===`,
+ * never `>=`) so a later deny does not re-trip — the same trip-once
+ * discipline as `tool-retry-breaker.ts` (a `>=` verdict would inflate the
+ * breakerTimeline and re-abort an already-aborting run).
  *
  * Trust boundary: the chokepoint (trusted, in-daemon) is the SOLE driver. It calls
  * recordDenial ONLY on a `CapabilityDeniedError` floor-block (NOT generic
- * RPC/validation errors — the tool-retry-breaker.ts:214-269 lesson), recordAllow
+ * RPC/validation errors, which would trip the breaker on noise — the same
+ * classification discipline as `tool-retry-breaker.ts`), recordAllow
  * on the allow branch of a gated method, and {@link DenialBreaker.evict} at run
  * termination. So the breaker holds no untrusted input (rootRunId is a
  * daemon-minted id) and counts only genuine floor-blocks.
@@ -73,8 +74,8 @@ export function createDenialBreaker(deps: { denialBreakerN: number; logger: Comi
   const logger = deps.logger.child({ submodule: "denial-breaker" });
 
   // rootRunId → consecutive floor-block count. Reset on recordAllow, dropped on
-  // evict (the WR-05 per-root cleanup discipline — prevents a per-cron-fire-root
-  // map leak under a storm of distinct roots, T-217-06).
+  // evict (the per-root cleanup discipline — prevents a per-cron-fire-root
+  // map leak under a storm of distinct roots).
   const consecutiveByRoot = new Map<string, number>();
 
   return {
@@ -89,10 +90,10 @@ export function createDenialBreaker(deps: { denialBreakerN: number; logger: Comi
       const tripped = consecutive === denialBreakerN;
 
       if (tripped) {
-        // Content-free trip WARN (T-217-08): errorKind + an operator hint naming
+        // Content-free trip WARN: errorKind + an operator hint naming
         // the knob + the count + the rootRunId (an id, not a body). NO message
         // body — the denied action's args/content never leak here. The eventBus
-        // abort + killByRootRun belong to the chokepoint (Plan 05), not here.
+        // abort + killByRootRun belong to the chokepoint, not here.
         logger.warn(
           {
             rootRunId,
@@ -109,15 +110,15 @@ export function createDenialBreaker(deps: { denialBreakerN: number; logger: Comi
     },
 
     recordAllow(rootRunId: string): void {
-      // A real allowed step happened → reset. Per the research anti-pattern, ONLY
+      // A real allowed step happened → reset. ONLY
       // an ACTUAL allowed gated call resets; the chokepoint guarantees this is
       // called only on the allow branch of a gated method (never on a deny).
       consecutiveByRoot.delete(rootRunId);
     },
 
     evict(rootRunId: string): void {
-      // Run-end / evict / kill cleanup (the WR-05 discipline). Idempotent —
-      // deleting an absent key is a no-op.
+      // Run-end / evict / kill cleanup (the per-root cleanup discipline).
+      // Idempotent — deleting an absent key is a no-op.
       consecutiveByRoot.delete(rootRunId);
     },
   };

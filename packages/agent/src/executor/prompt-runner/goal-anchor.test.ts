@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED tests for the GoalAnchor builder (153-01 R1).
- *
- * Tests import from ./goal-anchor.js — file does not exist yet.
- * All tests FAIL until the GREEN implementation is committed.
+ * Tests for the GoalAnchor builder.
  *
  * Behavior under test:
  *   - buildGoalAnchorBlock returns the header + pending/in_progress steps

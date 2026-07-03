@@ -154,16 +154,15 @@ describe("clearStaleThinkingBlocks (pure)", () => {
   });
 });
 
-describe("stripReplayThinking (pure) — cache break #C1/#C2", () => {
-  // Thinking blocks are cached in-memory WITH thinking on the active tool cycle (the
-  // last assistant in the outgoing request, kept by the earlier C-FIX-6 design), but
-  // the LCD (parts-codec F3) reconstructs assistant messages WITHOUT thinking. So the
-  // active assistant is cached WITH thinking and re-sent WITHOUT it the next call (when
-  // it becomes historical and gets stripped) → the cached prefix mutates → cache-read
+describe("stripReplayThinking (pure) — replayed-thinking cache stability", () => {
+  // A keep-last exception would cache the active tool cycle (the last assistant in the
+  // outgoing request) WITH its thinking blocks, but
+  // the LCD parts-codec reconstructs assistant messages WITHOUT thinking. So the
+  // active assistant would be cached WITH thinking and re-sent WITHOUT it the next call
+  // (when it becomes historical and gets stripped) → the cached prefix mutates → cache-read
   // collapse on thinking-heavy (coding) turns, re-written every turn boundary.
   //
-  // cache #C2 (2026-06-19): the residual collapse was the keep-LAST exception itself —
-  // it cached one assistant WITH thinking that the next call always strips. Fix: strip
+  // Hence: strip
   // thinking from EVERY replayed assistant message (no keep-last exception), making the
   // cached form byte-identical to the durable LCD form (zero historical thinking).
   // Anthropic tolerates a tool-use assistant with no thinking block as the active cycle
@@ -279,9 +278,9 @@ describe("stripTransientRecallFromHistory (pure)", () => {
   });
 });
 
-describe("deferRecallToUncachedTail (pure) — cache #C4", () => {
+describe("deferRecallToUncachedTail (pure) — recall off the cached prefix", () => {
   // The current turn's recall block is cached (pi-ai marks the last user block) then
-  // stripped when it goes historical (C-FIX-3) → cached-prefix mutation. Fix: split the
+  // stripped when it goes historical → cached-prefix mutation. Fix: split the
   // recall out of the cache-marked query block and append it as a SEPARATE trailing block
   // with NO cache_control, so it rides the uncached tail (visible to the model, never cached).
 
@@ -322,7 +321,7 @@ describe("deferRecallToUncachedTail (pure) — cache #C4", () => {
       { role: "user", content: [{ type: "text", text: recall("new") + "new query", cache_control: { type: "ephemeral" } }] },
     ];
     expect(deferRecallToUncachedTail(messages)).toBe(1);
-    // Historical user (idx 0) untouched (C-FIX-3 handles that one separately).
+    // Historical user (idx 0) untouched (the history strip handles that one separately).
     expect((messages[0]!.content as Array<Record<string, unknown>>).length).toBe(1);
     // Latest user (idx 2) split into query + trailing recall.
     expect((messages[2]!.content as Array<Record<string, unknown>>).length).toBe(2);
@@ -337,7 +336,7 @@ describe("deferRecallToUncachedTail (pure) — cache #C4", () => {
   });
 });
 
-describe("stripTransientRecallFromResponsesInput (pure) — cache #C4-OAI (OpenAI Responses input)", () => {
+describe("stripTransientRecallFromResponsesInput (pure) — OpenAI Responses input recall strip", () => {
   // OpenAI auto-cache collapses to the instructions+tools floor when a historical user input
   // item's recall block is stripped inconsistently. Fix: strip recall from ALL historical
   // user-message items (keep the latest), so the Responses `input` prefix is byte-stable.
@@ -394,7 +393,7 @@ describe("stripTransientRecallFromResponsesInput (pure) — cache #C4-OAI (OpenA
   });
 });
 
-describe("deferRecallToTrailingResponsesItem (pure) — cache #C4-OAI (latest-item recall defer)", () => {
+describe("deferRecallToTrailingResponsesItem (pure) — latest-item recall defer", () => {
   const recallStr = (c: string) => `[Relevant context from memory: ${c} (recorded 2026-06-18)]\n`;
 
   it("moves recall off the latest user item (array content) into a trailing user item", () => {
@@ -491,7 +490,7 @@ describe("deferRecallToTrailingResponsesItem (pure) — cache #C4-OAI (latest-it
   });
 });
 
-describe("stripReplayReasoningFromResponsesInput (pure) — cache #C5-OAI (reasoning replay)", () => {
+describe("stripReplayReasoningFromResponsesInput (pure) — reasoning replay strip", () => {
   it("removes contentless reasoning placeholders, keeps everything else (prefix-stable)", () => {
     const input: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "input_text", text: "q1" }] },
@@ -531,14 +530,14 @@ describe("stripReplayReasoningFromResponsesInput (pure) — cache #C5-OAI (reaso
   });
 });
 
-describe("clearStaleToolResults COMPACTABLE_TOOL_NAMES (pure) — EFF-02 emitted-name fix", () => {
-  // The latent bug (221-RESEARCH Pitfall 1): COMPACTABLE_TOOL_NAMES listed provider/SDK
+describe("clearStaleToolResults COMPACTABLE_TOOL_NAMES (pure) — emitted-name matching", () => {
+  // The latent bug class: COMPACTABLE_TOOL_NAMES listing provider/SDK
   // names (file_read/glob/exec_tool/list_dir/search_files) that match NONE of Comis's
   // emitted builtin tool names. The emitted names (from the builtin registrations) are
-  // read / grep / find / ls / exec / web_fetch / web_search — so the heaviest results
-  // (read/find/ls/exec) were NEVER cleared. EFF-02 fixes the set to the emitted names.
+  // read / grep / find / ls / exec / web_fetch / web_search — the set must hold the
+  // emitted names or the heaviest results (read/find/ls/exec) are NEVER cleared.
   //
-  // INVARIANT (EFF-02, T-221-EFF-01): clearStaleToolResults only ever rewrites role:"tool"
+  // INVARIANT: clearStaleToolResults only ever rewrites role:"tool"
   // results whose tool_use_id maps to a COMPACTABLE name — NEVER user / assistant / thinking
   // / recalled-memory content, and never a non-compactable tool result (edit/write/message).
 

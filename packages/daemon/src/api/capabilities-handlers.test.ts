@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for the `capabilities.introspect` handler (Phase 215-04,
- * INTRO-01/INTRO-02) — the self-scoped, read-only, NO-cap `comis whoami` read.
+ * Contract tests for the `capabilities.introspect` handler — the self-scoped,
+ * read-only, NO-cap `comis whoami` read.
  *
  * Tests drive the handler in isolation against a mock BoundedAutonomy + an
  * agents map:
@@ -14,11 +14,11 @@
  *     (in-process, pre-spawn) both are ABSENT (optional, honest — never a
  *     fabricated zero snapshot).
  *   - Test 3: the handler reads the CALLER's `_agentId` ONLY — an arbitrary
- *     `agentId` REQUEST param is IGNORED (self-scope, the session-read precedent
- *     — T-215-11). `stripInternalFields` runs before the parse (no `_trustLevel`
- *     smuggling — T-215-12).
+ *     `agentId` REQUEST param is IGNORED (self-scope, the session-read
+ *     precedent). `stripInternalFields` runs before the parse (no `_trustLevel`
+ *     smuggling).
  *   - Test 4: NO `requireCapability` is invoked — the handler is reachable with
- *     no cap (INTRO-02). The mock BoundedAutonomy carries no capability gate; the
+ *     no cap. The mock BoundedAutonomy carries no capability gate; the
  *     handler resolving caps from the agents map (not a gate) is the proof.
  *
  * @module
@@ -68,7 +68,7 @@ function createMockDeps(
   } as unknown as CapabilitiesHandlerDeps;
 }
 
-describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)", () => {
+describe("createCapabilitiesHandlers — capabilities.introspect", () => {
   let deps: CapabilitiesHandlerDeps;
   let handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>>;
 
@@ -128,9 +128,10 @@ describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)",
     expect(deps.boundedAutonomy!.snapshot).not.toHaveBeenCalled();
   });
 
-  // Finding E (30uc-20260624): introspect must be registered + WORK even when bounded-autonomy is
-  // NOT wired (no agent resolves to an autonomy profile) — a clean disabled-state, never the
-  // "Unknown RPC method" the conditional registration produced under autonomy.profile:assistant.
+  // Introspect must be registered + WORK even when bounded-autonomy is
+  // NOT wired (no agent resolves to an autonomy profile) — a clean disabled-state,
+  // never an "Unknown RPC method" error (which registration conditional on
+  // bounded-autonomy would produce under autonomy.profile: assistant).
   it("returns a disabled-state ({enabled, caps}) with NO budget when bounded-autonomy is unwired", async () => {
     const depsNoAutonomy = { ...createMockDeps(), boundedAutonomy: undefined } as unknown as CapabilitiesHandlerDeps;
     const noAutonomyHandlers = createCapabilitiesHandlers(depsNoAutonomy) as Record<
@@ -144,17 +145,17 @@ describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)",
     })) as { agentId: string; enabled: boolean; caps: string[]; budget?: unknown };
 
     expect(result.agentId).toBe("default");
-    expect(result).toHaveProperty("enabled"); // explicit enabled flag (finding E)
+    expect(result).toHaveProperty("enabled"); // explicit enabled flag, never an RPC error
     expect(typeof result.enabled).toBe("boolean");
     expect(result.caps).toEqual([]); // assistant profile → no orch caps
     expect(result.budget).toBeUndefined(); // no bounded-autonomy → no snapshot, honest (no crash)
   });
 
   // -------------------------------------------------------------------------
-  // Test 3: self-scope — an arbitrary agentId request param is IGNORED
-  // (T-215-11); stripInternalFields runs before the parse (T-215-12).
+  // Test 3: self-scope — an arbitrary agentId request param is IGNORED;
+  // stripInternalFields runs before the parse.
   // -------------------------------------------------------------------------
-  it("ignores an arbitrary agentId request param and self-scopes to _agentId only (T-215-11)", async () => {
+  it("ignores an arbitrary agentId request param and self-scopes to _agentId only", async () => {
     const result = (await handlers["capabilities.introspect"]!({
       _agentId: "agent-a",
       // A caller trying to introspect another agent — MUST be ignored.
@@ -179,12 +180,12 @@ describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)",
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: NO requireCapability (INTRO-02) — reachable with no cap. The
+  // Test 4: NO requireCapability — reachable with no cap. The
   // handler resolves caps from the agents map; it never calls a cap gate, so an
   // assistant-profile agent (zero caps) still gets an honest empty list, not a
   // CapabilityDeniedError.
   // -------------------------------------------------------------------------
-  it("is reachable with NO capability (INTRO-02) — a zero-cap caller gets an empty caps list, not a denial", async () => {
+  it("is reachable with NO capability — a zero-cap caller gets an empty caps list, not a denial", async () => {
     const result = (await handlers["capabilities.introspect"]!({ _agentId: "default" })) as {
       agentId: string;
       caps: string[];
@@ -197,14 +198,14 @@ describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)",
   });
 
   // -------------------------------------------------------------------------
-  // WR-04: report the AUTHORITATIVE caps the in-process gate injected
+  // Report the AUTHORITATIVE caps the in-process gate injected
   // (_capabilities — the exact set requireCapability enforces), so introspect can
-  // never diverge from enforcement. The prior re-resolution applied a CROSS-AGENT
-  // default fallback (agents[agentId] ?? agents[defaultAgentId]), so a stale/typo'd
-  // _agentId not in the map was reported with the DEFAULT agent's caps under its
+  // never diverge from enforcement. A re-resolution with a CROSS-AGENT default
+  // fallback (agents[agentId] ?? agents[defaultAgentId]) would report a
+  // stale/typo'd _agentId not in the map with the DEFAULT agent's caps under its
   // OWN id — a mislabeled (chimeric) posture the project guards against.
   // -------------------------------------------------------------------------
-  it("reports the injected _capabilities for an _agentId NOT in the map — never the default agent's caps (WR-04)", async () => {
+  it("reports the injected _capabilities for an _agentId NOT in the map — never the default agent's caps", async () => {
     const result = (await handlers["capabilities.introspect"]!({
       _agentId: "ghost-agent", // renamed/removed — NOT in AGENTS
       _capabilities: ["orch:read", "orch:web"], // the gate's actual enforced set for this run
@@ -216,7 +217,7 @@ describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)",
     expect(result.caps).toEqual(["orch:read", "orch:web"]);
   });
 
-  it("treats an injected EMPTY _capabilities as authoritative (a genuinely zero-cap run), not a fallback trigger (WR-04)", async () => {
+  it("treats an injected EMPTY _capabilities as authoritative (a genuinely zero-cap run), not a fallback trigger", async () => {
     const result = (await handlers["capabilities.introspect"]!({
       _agentId: "agent-a", // agent-a has orch:read/orch:web in the map…
       _capabilities: [], // …but the gate enforced ZERO this run — report the truth.

@@ -47,15 +47,15 @@ describe("setup-agents-runtime wiring", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Learned-skill surface seam wiring (SURFACE-01/03 + WR-01/WR-03)
+// Learned-skill surface seam wiring
 //
 // The getPromptSkillsXml seam must delegate to renderLearnedSkillsXml (the
 // merge-INTO-the-seam keystone so the per-session freeze captures the merged
 // listing) reading the per-agent surface cache, NOT the bare
-// skillRegistry.getSnapshot().prompt. WR-03: the cache is built via
+// skillRegistry.getSnapshot().prompt. The cache is built via
 // wireAgentLearnedSkillSurface gated on learningSkills.enabled × the master cost
-// switch, so a default-off agent does ZERO surface work (no list()/rmSync). WR-01:
-// it registers into the shared learnedSkillSurfaceRegistry so the promote/demote
+// switch, so a default-off agent does ZERO surface work (no list()/rmSync). It
+// registers into the shared learnedSkillSurfaceRegistry so the promote/demote
 // loop can re-refresh the agent's surface.
 // ---------------------------------------------------------------------------
 
@@ -75,7 +75,7 @@ describe("setupSingleAgent learned-skill surface wiring", () => {
     expect(depsBlock).toContain("learnedSkills: learnedSurface.current");
   });
 
-  it("WR-03/WR-01: builds the surface via wireAgentLearnedSkillSurface, gated on learning.enabled × cost + registered for re-refresh", () => {
+  it("builds the surface via wireAgentLearnedSkillSurface, gated on learning.enabled × cost + registered for re-refresh", () => {
     const fnStart = source.indexOf("export async function setupSingleAgent(");
     const fnBody = source.slice(fnStart);
     // The cache is built via the gated helper (NOT the ungated createLearnedSkillSurfaceCache).
@@ -83,14 +83,14 @@ describe("setupSingleAgent learned-skill surface wiring", () => {
     expect(fnBody).not.toContain("createLearnedSkillSurfaceCache({"); // ungated form is gone
     const callStart = fnBody.indexOf("wireAgentLearnedSkillSurface({");
     const callWindow = fnBody.slice(callStart, callStart + 420);
-    // WR-03 gate (Phase 226): the collapsed learning.enabled AND the renamed master cost switch.
+    // The gate: the collapsed learning.enabled AND the master cost switch.
     expect(callWindow).toContain("effectiveConfig.learning?.enabled === true");
     expect(callWindow).toContain("memory?.enabled !== false");
     // Threaded store + resolved (tenant, agent) scope.
     expect(callWindow).toContain("learnedSkillStore: deps.learnedSkillStore");
     expect(callWindow).toContain("tenantId: container.config.tenantId");
     expect(callWindow).toContain("workspaceDir: dir");
-    // WR-01: registered into the shared registry for the promote/demote re-refresh.
+    // Registered into the shared registry for the promote/demote re-refresh.
     expect(callWindow).toContain("registry: deps.learnedSkillSurfaceRegistry");
   });
 
@@ -354,7 +354,7 @@ describe("setupSingleAgent recall-trace config wiring", () => {
   const source = readRuntimeSource();
 
   it("threads container.config.diagnostics.recallTrace into createPiExecutor deps as recallTraceConfig", () => {
-    // Production-wiring regression guard. RED on pre-patch code: the
+    // Production-wiring regression guard. Before this wiring existed, the
     // createPiExecutor deps block carried cacheTraceConfig but NOT
     // recallTraceConfig, so the recall trace was structurally unreachable
     // from operator YAML. The assertion is scoped to the deps block (not the
@@ -387,11 +387,11 @@ describe("setupSingleAgent recall-trace config wiring", () => {
   });
 });
 
-describe("setupSingleAgent GBNF compat threading (175-04 wiring guard)", () => {
+describe("setupSingleAgent GBNF compat threading (production wiring guard)", () => {
   const source = readRuntimeSource();
 
   it("passes getProviderType and getModelCompat resolvers in createPiExecutor deps", () => {
-    // Production-wiring regression guard (GBNF-01). RED on pre-patch code:
+    // Production-wiring regression guard. Before this wiring existed,
     // providers.entries.<key>.models[].comisCompat validated in config but
     // was consumed by NOTHING -- pi-executor's normalizeModelCompat call
     // received only {provider, id}, so the explicit gbnf opt-in and the
@@ -409,7 +409,7 @@ describe("setupSingleAgent GBNF compat threading (175-04 wiring guard)", () => {
   });
 
   it("pins the resolver bodies so the deps keys cannot be wired to stubs", () => {
-    // The milestone's #1 failure class is built-but-not-wired: a key present
+    // A recurring failure class is built-but-not-wired: a key present
     // but resolving nothing. getProviderType must read the provider entry's
     // declared config `type`; getModelCompat must look the model up in
     // models[] and return its comisCompat.
@@ -521,11 +521,10 @@ describe("setupSingleAgent rerank auto-on precedence", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AuthStorage hot-swap RED tests
+// AuthStorage hot-swap wiring guards
 //
-// These tests describe behaviour that will be wired into
-// setup-agents-runtime.ts (or setup-agents-registry.ts). They MUST fail
-// RED because the subscription does not exist in production code yet.
+// These tests assert the secret-rotation hot-swap subscription is present in
+// the wiring source (setup-agents-runtime.ts or setup-agents-registry.ts).
 //
 // Design: the subscription fires when secret:changed { action: "upserted" }
 // and the changed key maps to a known provider (e.g. ANTHROPIC_API_KEY →
@@ -534,7 +533,7 @@ describe("setupSingleAgent rerank auto-on precedence", () => {
 // A non-provider key (e.g. MY_DATABASE_URL) is a no-op.
 // ---------------------------------------------------------------------------
 
-describe("AuthStorage secret:changed hot-swap wiring (RED — not yet implemented)", () => {
+describe("AuthStorage secret:changed hot-swap wiring", () => {
   const runtimeSrc = readFileSync(
     join(__dirname, "setup-agents-runtime.ts"),
     "utf-8",
@@ -544,21 +543,19 @@ describe("AuthStorage secret:changed hot-swap wiring (RED — not yet implemente
     "utf-8",
   );
 
-  it("secret:changed subscription is wired in setup-agents wiring source (RED)", () => {
-    // Asserts that the production source contains the hot-swap subscription.
-    // Fails RED because the subscription has not landed yet.
-    // Once wired, one of these sources will subscribe to secret:changed.
+  it("secret:changed subscription is wired in setup-agents wiring source", () => {
+    // Asserts that the production source contains the hot-swap subscription:
+    // one of these sources subscribes to secret:changed.
     const runtimeContains = runtimeSrc.includes('"secret:changed"');
     const registryContains = registrySrc.includes('"secret:changed"');
     expect(runtimeContains || registryContains).toBe(true);
   });
 
-  it("setup-agents wiring calls setRuntimeApiKey in response to secret:changed upserted event (RED)", () => {
+  it("setup-agents wiring calls setRuntimeApiKey in response to secret:changed upserted event", () => {
     // When secret:changed fires for a provider key (e.g. ANTHROPIC_API_KEY),
     // the wiring must call piAuthStorage.setRuntimeApiKey(provider, newValue).
-    // Fails RED because the wiring-level hot-swap call is not implemented yet.
-    // Currently only auth-rotation-adapter.ts calls setRuntimeApiKey at runtime
-    // (not at boot wiring). The composition-root subscription will add it.
+    // The composition-root subscription adds this at boot wiring;
+    // auth-rotation-adapter.ts also calls setRuntimeApiKey at runtime.
     const runtimeContains = runtimeSrc.includes("secret:changed") && runtimeSrc.includes("setRuntimeApiKey");
     const registryContains = registrySrc.includes("secret:changed") && registrySrc.includes("setRuntimeApiKey");
     expect(runtimeContains || registryContains).toBe(true);

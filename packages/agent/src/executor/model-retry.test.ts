@@ -1040,7 +1040,7 @@ describe("runWithModelRetry", () => {
   });
 
   // -------------------------------------------------------------------
-  // model:* turn-scoping ids on the emit sites (§16.9)
+  // model:* turn-scoping ids on the emit sites
   // -------------------------------------------------------------------
   describe("model:* turn-scoping ids", () => {
     function emitOf(eventBus: ReturnType<typeof makeEventBus>, name: string) {
@@ -1160,17 +1160,17 @@ describe("runWithModelRetry", () => {
   });
 
   // -------------------------------------------------------------------
-  // tool_schema_unsupported ladder short-circuit (GBNF-02)
+  // tool_schema_unsupported ladder short-circuit
   // -------------------------------------------------------------------
   //
   // A grammar-compile/schema 400 is deterministic — rotating auth keys or
   // burning fallback models cannot fix a tool schema the provider can't
   // compile. The ladder must return { succeeded: false } immediately and
   // leave the single repair attempt to the executor's withSession-scoped
-  // strip-retry (silent-failure-handlers.ts, Plan 05).
-  describe("tool_schema_unsupported ladder short-circuit (GBNF-02)", () => {
+  // strip-retry (silent-failure-handlers.ts).
+  describe("tool_schema_unsupported ladder short-circuit", () => {
     // Verbatim llama-server grammar-400 body (llama.cpp #19716). The wrapper
-    // embeds `invalid_request_error`; since GBNF-02 it classifies
+    // embeds `invalid_request_error`; the classifier maps it to
     // tool_schema_unsupported (ordered before client_request).
     const llamaServerBody =
       '{"error":{"code":400,"message":"JSON schema conversion failed:\\nUnrecognized schema: {\\"description\\":\\"Value for add/replace/test operations\\"}","type":"invalid_request_error"}}';
@@ -1204,7 +1204,7 @@ describe("runWithModelRetry", () => {
       expect(session.setModel).not.toHaveBeenCalled();
       expect(authRotation.rotateKey).not.toHaveBeenCalled();
 
-      // Guard WARN carries the §2.7 fields: hint naming the durable knob
+      // Guard WARN carries the AGENTS.md §2.7 fields: hint naming the durable knob
       // (comisCompat.toolSchemaProfile) + errorKind "validation".
       const warnCalls = vi.mocked(logger.warn).mock.calls;
       const guardLog = warnCalls.find(
@@ -1250,19 +1250,19 @@ describe("runWithModelRetry", () => {
   });
 
   // -------------------------------------------------------------------
-  // LAT-02 / LAT-04 wiring matrix (177-03)
+  // Stall/makespan timeout wiring matrix
   // -------------------------------------------------------------------
   //
-  // The 177-01 primitive matrix proved the stall/makespan semantics on
+  // The prompt-timeout primitive tests prove the stall/makespan semantics on
   // withResettablePromptTimeout in isolation. This block is the wiring half:
   // model-retry must thread makespanMs = promptTimeoutMs × stallCeilingMultiplier
-  // into the primary race (R-1 non-optional wherever stall semantics apply —
-  // gate_scope: all-providers per the 177-01 DECISION), split providerHealth
-  // recording by limit (makespan-kill suppressed, stall-kill kept — Pitfall 6
+  // into the primary race (non-optional wherever stall semantics apply,
+  // for every provider), split providerHealth
+  // recording by limit (makespan-kill suppressed, stall-kill kept — pinned in
   // both directions), enrich the execution:prompt_timeout payload with the
   // attribution fields, and flip the timeout WARN errorKind to "timeout".
-  // Retry/fallback prompts stay whole-turn (Open Q2 pin: LAT-02-W-6).
-  describe("LAT-02 / LAT-04 wiring matrix (177-03)", () => {
+  // Retry/fallback prompts stay whole-turn (pinned below).
+  describe("stall/makespan timeout wiring matrix", () => {
     beforeEach(() => {
       vi.useFakeTimers();
     });
@@ -1304,7 +1304,7 @@ describe("runWithModelRetry", () => {
     }
 
     /**
-     * LAT-02-6 shape: resets every 170s (inside the 180s stall budget) ×10
+     * Runaway-generation shape: resets every 170s (inside the 180s stall budget) ×10
      * → t=1_700_000 with the run still alive. A pure stall budget never
      * kills this; only the non-resetting makespan ceiling can.
      */
@@ -1315,7 +1315,7 @@ describe("runWithModelRetry", () => {
       }
     }
 
-    it("LAT-02-W-5: delta-driven resets survive the stall budget but the makespan ceiling kills at EXACTLY promptTimeoutMs × multiplier (limit makespan)", async () => {
+    it("delta-driven resets survive the stall budget but the makespan ceiling kills at EXACTLY promptTimeoutMs × multiplier (limit makespan)", async () => {
       const session = makeHungSession();
       let captured: (() => void) | undefined;
       const params = makeParams({
@@ -1353,7 +1353,7 @@ describe("runWithModelRetry", () => {
       expect(session.abort).toHaveBeenCalledTimes(1);
     });
 
-    it("LAT-04-1: a makespan-kill is SUPPRESSED from providerHealth (model runaway ≠ provider unhealth) and logs a content-free DEBUG", async () => {
+    it("a makespan-kill is SUPPRESSED from providerHealth (model runaway ≠ provider unhealth) and logs a content-free DEBUG", async () => {
       const session = makeHungSession();
       const providerHealth = { recordFailure: vi.fn() };
       const logger = createMockLogger();
@@ -1381,10 +1381,10 @@ describe("runWithModelRetry", () => {
       expect((result.error as PromptTimeoutError).limit).toBe("makespan");
       // The suppress direction: a runaway model that keeps streaming is NOT a
       // provider failure — booking it would let 3 slow-prefill turns trip the
-      // safety gate into provider_degraded skips (Critical Finding 6).
+      // safety gate into provider_degraded skips.
       expect(providerHealth.recordFailure).not.toHaveBeenCalled();
 
-      // Content-free suppression DEBUG (knob/step/errorKind only — T-177-09).
+      // Content-free suppression DEBUG (knob/step/errorKind only).
       const suppression = vi.mocked(logger.debug).mock.calls.find(
         (c: unknown[]) => c[1] === "Provider-health recording suppressed for makespan kill",
       );
@@ -1397,7 +1397,7 @@ describe("runWithModelRetry", () => {
       );
     });
 
-    it("LAT-04-2: a stall-kill KEEPS providerHealth.recordFailure (a true hang IS what the registry exists to catch) and the error carries the configured makespan", async () => {
+    it("a stall-kill KEEPS providerHealth.recordFailure (a true hang IS what the registry exists to catch) and the error carries the configured makespan", async () => {
       const session = makeHungSession();
       const providerHealth = { recordFailure: vi.fn() };
       const params = makeParams({
@@ -1408,7 +1408,7 @@ describe("runWithModelRetry", () => {
 
       const resultPromise = runWithModelRetry(params);
       // No resets: a genuinely silent provider dies at the 180s stall budget —
-      // hang-detection latency stays 3 minutes, not 30 (LAT-02-5 cost cell).
+      // hang-detection latency stays 3 minutes, not 30.
       await vi.advanceTimersByTimeAsync(180_000);
       const result = await resultPromise;
 
@@ -1426,7 +1426,7 @@ describe("runWithModelRetry", () => {
       expect(providerHealth.recordFailure).toHaveBeenCalledWith("anthropic", "test-agent");
     });
 
-    it("LAT-04-3: the stall-kill execution:prompt_timeout payload carries full attribution (durationMs, limit, source, bindingKnob, budgets)", async () => {
+    it("the stall-kill execution:prompt_timeout payload carries full attribution (durationMs, limit, source, bindingKnob, budgets)", async () => {
       const session = makeHungSession();
       const eventBus = makeEventBus();
       const params = makeParams({
@@ -1459,7 +1459,7 @@ describe("runWithModelRetry", () => {
       expect(payload.durationMs).toBeGreaterThanOrEqual(180_000);
     });
 
-    it("LAT-04-3: a makespan-kill emit carries limit makespan", async () => {
+    it("a makespan-kill execution:prompt_timeout emit carries limit makespan", async () => {
       const session = makeHungSession();
       const eventBus = makeEventBus();
       let captured: (() => void) | undefined;
@@ -1489,7 +1489,7 @@ describe("runWithModelRetry", () => {
       );
     });
 
-    it("LAT-04-4: the primary-failure WARN logs errorKind timeout for PromptTimeoutError and keeps dependency for non-timeout errors", async () => {
+    it("the primary-failure WARN logs errorKind timeout for PromptTimeoutError and keeps dependency for non-timeout errors", async () => {
       // Timeout case: the WARN must say errorKind "timeout" — pre-patch it
       // logs "dependency", misclassifying every prompt timeout in fleet/explain
       // errorKind rollups.
@@ -1531,7 +1531,7 @@ describe("runWithModelRetry", () => {
       expect(dependencyWarn![0]).toEqual(expect.objectContaining({ errorKind: "dependency" }));
     });
 
-    it("LAT-02-W-6: retry/fallback prompts stay whole-turn under retryPromptTimeoutMs — a reset during the fallback does NOT extend it (Open Q2 pin) and the retry-site emit is attribution-enriched with limit ABSENT", async () => {
+    it("retry/fallback prompts stay whole-turn under retryPromptTimeoutMs — a reset during the fallback does NOT extend it and the retry-site emit is attribution-enriched with limit ABSENT", async () => {
       const session = makeSession();
       session.prompt
         .mockReturnValueOnce(new Promise(() => {})) // primary hangs → stall-kill at 180s
@@ -1559,7 +1559,7 @@ describe("runWithModelRetry", () => {
 
       // 30s into the fallback, attempt to extend via the captured (primary)
       // resetTimer — settled latch makes it a no-op; the retry window is
-      // deliberately non-resettable (research Open Q2: pin-and-document).
+      // deliberately non-resettable (pinned by this test).
       await vi.advanceTimersByTimeAsync(30_000);
       captured?.();
       await vi.advanceTimersByTimeAsync(29_999);
@@ -1578,7 +1578,7 @@ describe("runWithModelRetry", () => {
       expect(err.limit).toBeUndefined(); // whole-turn semantics (non-resettable path)
 
       // Retry-site emit: attribution-enriched, limit ABSENT (absent ⇒ whole-turn).
-      // RED (pre-patch): the emit carries only the 4 legacy fields.
+      // RED (pre-patch): the emit carries only the 4 original fields.
       const emits = vi.mocked(eventBus.emit).mock.calls.filter(
         (c: unknown[]) => c[0] === "execution:prompt_timeout",
       );
@@ -1587,14 +1587,13 @@ describe("runWithModelRetry", () => {
       expect(fallbackPayload.timeoutMs).toBe(60_000);
       expect(fallbackPayload.limit).toBeUndefined();
       expect(typeof fallbackPayload.durationMs).toBe("number");
-      // 177-REVIEW WR-01: the kill that fired was the retryPromptTimeoutMs
+      // The kill that fired was the retryPromptTimeoutMs
       // whole-turn race — the payload must name the RETRY knob, not the
-      // promptTimeoutMs binding that timeoutConfig.source describes (the
-      // original pin codified the wrong knob).
+      // promptTimeoutMs binding that timeoutConfig.source describes.
       expect(fallbackPayload.bindingKnob).toBe("agents.test-agent.promptTimeout.retryPromptTimeoutMs");
     });
 
-    it("177-REVIEW WR-01: the rotated-key whole-turn kill emits the retryPromptTimeoutMs bindingKnob (limit absent ⇒ retry semantics, never the stall knob)", async () => {
+    it("the rotated-key whole-turn kill emits the retryPromptTimeoutMs bindingKnob (limit absent ⇒ retry semantics, never the stall knob)", async () => {
       const session = makeSession();
       session.prompt
         .mockRejectedValueOnce(new Error("upstream 500")) // primary fails fast (non-timeout)
@@ -1626,7 +1625,7 @@ describe("runWithModelRetry", () => {
       expect(payload.bindingKnob).toBe("agents.test-agent.promptTimeout.retryPromptTimeoutMs");
     });
 
-    it("177-REVIEW IN-03: a terminal LKW-fallback timeout emits the enriched execution:prompt_timeout — the LAST record must describe the LKW attempt, not the prior kill", async () => {
+    it("a terminal LKW-fallback timeout emits the enriched execution:prompt_timeout — the LAST record must describe the LKW attempt, not the prior kill", async () => {
       const session = makeSession();
       const authError = Object.assign(new Error("401 unauthorized"), { status: 401 });
       session.prompt
@@ -1662,7 +1661,7 @@ describe("runWithModelRetry", () => {
       expect(payload.bindingKnob).toBe("agents.test-agent.promptTimeout.retryPromptTimeoutMs");
     });
 
-    it("177-REVIEW WR-02: a makespan product past Node's 2^31-1 timer cap is clamped at the derivation site — the ceiling does NOT collapse to an instant 1ms kill", async () => {
+    it("a makespan product past Node's 2^31-1 timer cap is clamped at the derivation site — the ceiling does NOT collapse to an instant 1ms kill", async () => {
       const session = makeHungSession();
       const params = makeParams({
         session,

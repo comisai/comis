@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit coverage for `channel-trace.ts` — the ORACLE-01/02 dual-oracle
- * cross-check (Phase 205, ORACLE-01 + ORACLE-02).
+ * cross-check.
  *
  * Two deterministic units, NO daemon:
  *   1. `readMirrorText` — the direct readonly `delivery_mirror` read (Task 1).
@@ -18,7 +18,7 @@
  * production code change. Run ONLY under the live config:
  *   pnpm vitest run -c test/live/vitest.config.ts test/live/assert/channel-trace.test.ts
  * (a bare `pnpm vitest run` resolves the ROOT config, which EXCLUDES test/live/
- * → 0 files, exit 0 — a false green; see the Phase 204 SUMMARY).
+ * → 0 files, exit 0 — a false green).
  *
  * @module
  */
@@ -138,7 +138,7 @@ describe("readMirrorText — the direct readonly delivery_mirror read (ORACLE-02
     expect(readMirrorText(dbPath, "s")).toBe("acked-text");
   });
 
-  it("opens the DB readonly — a write against the same path-opened handle is rejected (T-134-12)", () => {
+  it("opens the DB readonly — a write against the same path-opened handle is rejected", () => {
     const dbPath = freshMirrorDb();
     insertMirrorRow(dbPath, { id: "r1", sessionKey: "s", text: "hello", createdAt: 1000 });
 
@@ -173,7 +173,7 @@ describe("assertChannelTrace — the HARD dual-oracle cross-check (ORACLE-01 + O
   /**
    * A minimal channel-oracle fake (the structural subset — channel-agnostic, NOT
    * the whole TgEmulator). A hand-built object: NO daemon booted (the live
-   * cross-check is exercised by the DELIV-01 scenario in 205-06).
+   * cross-check is exercised by the DELIV-01 delivery scenario).
    */
   function fakeEmulator(text: string | undefined): {
     lastBotReply(chat: { chatId: number }): { text?: string } | undefined;

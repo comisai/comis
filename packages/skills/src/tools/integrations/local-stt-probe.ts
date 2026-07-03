@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * One-shot boot probe for the keyless local STT engine (LOCAL-02).
+ * One-shot boot probe for the keyless local STT engine.
  *
  * `detectLocalSttEngine` answers, ONCE at daemon boot, the question the
- * Phase-193 resolver predicate `localEngineAvailable()` needs: can the `local`
+ * resolver predicate `localEngineAvailable()` needs: can the `local`
  * STT rung actually transcribe? It NEVER throws and it NEVER downloads a model
  * — it only checks cheap signals (a short-timeout reachability fetch to a
  * configured server, OR engine-importability + ffmpeg presence). The boolean
  * result is captured by the daemon wiring and closed over as a synchronous
- * `() => boolean` (Plan 03), so the resolver does no per-call I/O.
+ * `() => boolean`, so the resolver does no per-call I/O.
  *
- * Availability rule (CONTEXT decision I6):
+ * Availability rule:
  *   1. `baseUrl` set + reachable  → available, mode "baseUrl" (the in-process
  *      engine is NOT consulted — a reachable local OpenAI-compatible whisper
  *      server is sufficient).
@@ -18,14 +18,14 @@
  *      importable → available, mode "in-process".
  *   3. otherwise → not available, mode "none".
  *
- * Security (SEC-02): the configured `baseUrl` is validated by
+ * Security: the configured `baseUrl` is validated by
  * `validateLocalServerUrl` (the inverse SSRF guard — ALLOW loopback + an
  * explicit allowlist, DENY public/private egress, keep the cloud-metadata deny)
  * BEFORE the reachability fetch fires. A non-loopback/unconfigured baseUrl is
  * treated as not-reachable (the guard rejects it and the probe falls through to
  * the in-process path) so a mis/maliciously-configured URL can never drive an
  * SSRF fetch from the boot probe. The reachability check itself is a
- * short-timeout fetch wrapped in a try (any error → not-reachable), and (CR-01)
+ * short-timeout fetch wrapped in a try (any error → not-reachable), and it
  * is PINNED to the IP the guard resolved (undici dispatcher) so a hostname that
  * passed as loopback cannot be rebound to a different IP at connect time
  * (DNS-rebinding/TOCTOU). No credential-bearing URL is logged.
@@ -49,7 +49,7 @@ export interface LocalSttProbeResult {
 
 /** Dependencies for the one-shot local STT boot probe. */
 export interface LocalSttProbeDeps {
-  /** Optional local OpenAI-compatible whisper server URL (LOCAL-03). */
+  /** Optional local OpenAI-compatible whisper server URL. */
   readonly baseUrl?: string;
   /** Whether ffmpeg is available (the in-process path needs it to decode). */
   readonly ffmpegAvailable: boolean;
@@ -73,9 +73,9 @@ export interface LocalSttProbeDeps {
  * (refused, DNS, timeout, non-2xx is still "reachable") resolves `false`. The
  * SSRF guard (`validateLocalServerUrl`) has already run in `detectLocalSttEngine`
  * BEFORE this fetch — so this only ever fetches a loopback/explicitly-allowed
- * host (SEC-02).
+ * host.
  *
- * CR-01: the fetch is PINNED to `pinnedIp` (the IP the guard already resolved)
+ * The fetch is PINNED to `pinnedIp` (the IP the guard already resolved)
  * via an undici dispatcher, so a hostname that resolved to loopback at
  * validation cannot be rebound to a different IP at connect time (the
  * DNS-rebinding/TOCTOU gap a plain re-resolving fetch left open). TLS SNI is
@@ -132,8 +132,8 @@ export async function detectLocalSttEngine(
 ): Promise<LocalSttProbeResult> {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
 
-  // 1. A reachable configured server is sufficient (I6) — do NOT consult the
-  //    in-process engine. SEC-02: the baseUrl is SSRF-guarded BEFORE the
+  // 1. A reachable configured server is sufficient — do NOT consult the
+  //    in-process engine. The baseUrl is SSRF-guarded BEFORE the
   //    reachability check fires (guard-before-fetch). validateLocalServerUrl
   //    ALLOWS loopback + an explicit allowlist and DENIES public/private egress
   //    (keeping the cloud-metadata deny); a rejected URL is treated as
@@ -144,7 +144,7 @@ export async function detectLocalSttEngine(
   if (baseUrl) {
     const guard = await validateLocalServerUrl(baseUrl);
     if (guard.ok) {
-      // CR-01: the default reachability fetch pins the connection to the IP the
+      // The default reachability fetch pins the connection to the IP the
       // guard just resolved (guard.value.ip). An injected `fetchProbe` test seam
       // bypasses the real fetch entirely (the guard still gates it above).
       const validatedIp = guard.value.ip;

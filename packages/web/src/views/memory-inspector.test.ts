@@ -178,10 +178,11 @@ describe("IcMemoryInspector", () => {
     expect(priv(el)._mode).toBe("browse");
   });
 
-  it("enables Browse-All Next and pages forward when the total exceeds the page size (P4)", async () => {
+  it("enables Browse-All Next and pages forward when the total exceeds the page size", async () => {
     // A full first page (25 of 383). The Next button must be ENABLED and a click
-    // advances the offset by the page size — the old bug reported total === page
-    // length, leaving '1-25 of 25' with Next disabled (no way past 25).
+    // advances the offset by the page size. The pager must read the FULL total, not
+    // the page length; otherwise it shows '1-25 of 25' with Next disabled and no way
+    // past the first page.
     const page = Array.from({ length: 25 }, (_, i) => ({
       id: `m-${i}`,
       content: `entry ${i}`,
@@ -219,7 +220,7 @@ describe("IcMemoryInspector", () => {
     expect(browseMemory.mock.calls.length).toBe(callsBefore + 1);
   });
 
-  it("renders exactly one pager in browse mode (no duplicate from the inner table) (P5)", async () => {
+  it("renders exactly one pager in browse mode (no duplicate from the inner table)", async () => {
     const page = Array.from({ length: 25 }, (_, i) => ({
       id: `m-${i}`,
       content: `entry ${i}`,

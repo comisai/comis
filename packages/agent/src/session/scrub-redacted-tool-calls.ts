@@ -10,8 +10,8 @@
  *   JSONL is also what the SDK reads to rebuild the LLM context on the next
  *   turn. A model that sees its own prior `env_set` tool_use with
  *   `env_value: "[REDACTED]"` pattern-matches on it and sends "[REDACTED]"
- *   as the value on the NEXT env_set — which the daemon persists verbatim.
- *   Observed in production: CLOUDFLARE_ACCOUNT_ID stored as literal
+ *   as the value on the NEXT env_set — which the daemon persists verbatim,
+ *   leaving a real key (e.g. CLOUDFLARE_ACCOUNT_ID) stored as the literal
  *   "[REDACTED]" in ~/.comis/.env after an env_set-triggered daemon restart.
  *
  * Fix shape:

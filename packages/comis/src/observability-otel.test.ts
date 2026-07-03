@@ -6,8 +6,8 @@
  * the mirror exports the same key set, the sentinel `METRIC_CATALOG` is the
  * frozen catalog array, and the mirror re-export is identity-equal (`===`) to
  * the direct import. Catches `prepack.js` bundling regressions and silent
- * re-export shadowing for the FIRST opt-in extension package now that it is
- * bundled into the `comisai` umbrella (decision A1).
+ * re-export shadowing for this opt-in extension package, which is bundled
+ * into the `comisai` umbrella like every other sub-package.
  *
  * @module
  */

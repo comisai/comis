@@ -18,7 +18,7 @@ framework, the emulator, the rig, and the `chan`/`tg` CLI all live under the tes
 <Note>
 This is a **developer / contributor** tool, not an operator feature. Nothing here ships in the
 published `comisai` package — the harness is forbidden from `bundledDependencies` and is never a
-`comis` CLI subcommand (see [SEC-02, below](#sec-02-the-harness-never-ships)). Everything it
+`comis` CLI subcommand (see [the harness never ships, below](#the-harness-never-ships)). Everything it
 touches in `@comis/*` is consumed from each package's built `dist/`, so **run `pnpm build`
 first** — a stale `dist/` silently masks `src/` changes.
 </Note>
@@ -150,7 +150,7 @@ exact model wording — content-sensitive checks use pass-at-k with N at least 3
 hook is fire-and-forget, so a synchronous read right after send races it.
 </Warning>
 
-## The webhook flag (AUTO-05)
+## The webhook flag
 
 The emulator supports a **webhook-POST mode**: instead of queuing an inbound `Update` for the
 adapter's `getUpdates` long-poll, it POSTs the grammy `Update` to a configured `webhookUrl`
@@ -216,7 +216,7 @@ default) that the lifecycle verbs honestly reason-code as `lifecycle_in_process_
 `down_not_owned_in_process` from a cold shell — never a faked cross-process success.
 </Note>
 
-## SEC-02: the harness never ships
+## The harness never ships
 
 The harness is a contributor tool and is **forbidden from the published package**:
 

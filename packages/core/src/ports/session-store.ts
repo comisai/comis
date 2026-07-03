@@ -3,8 +3,8 @@
  * SessionStorePort: hexagonal architecture boundary for session persistence.
  *
  * Type-only mirror of @comis/memory's SessionStore. The declaration covers
- * every public method memory's SessionStore exposes, so memory's
- * createSessionStore return-type swap is a pure rename.
+ * every public method memory's SessionStore exposes, so the two types stay
+ * interchangeable.
  *
  * Row DTOs (SessionData, SessionListEntry, SessionDetailedEntry) live in
  * core/src/ports/session-store-types.ts.
@@ -34,7 +34,7 @@ import type {
  *   - Mutation        (2 methods: delete, deleteStale)
  *
  * Total: 7 methods. The structural shape MUST match memory's interface
- * exactly so the retarget is a pure name swap.
+ * exactly so the port and the implementation stay interchangeable.
  */
 export interface SessionStorePort {
   save(key: SessionKey, messages: unknown[], metadata?: Record<string, unknown>): void;

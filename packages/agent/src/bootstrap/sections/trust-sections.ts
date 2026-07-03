@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Trust section builders: sender display resolution and trust-level grouping
- * for system prompt injection ().
+ * for system prompt injection.
  *
  * Pure functions -- all I/O (HMAC secret resolution, config loading) happens
  * in the caller (prompt-assembly.ts).

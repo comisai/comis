@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * I3 — record a config-posture SNAPSHOT at boot.
+ * Record a config-posture SNAPSHOT at boot.
  *
  * Captures the three log-file-only security-posture FINDINGS as a single
- * point-in-time `obs_diagnostics` row at startup, so the fleet lens (Phase 161)
+ * point-in-time `obs_diagnostics` row at startup, so the fleet lens
  * can query a daemon's posture without grepping `daemon.log`:
  *   - `tlsOff`               — the gateway is running without TLS (recomputed
  *                              from `gateway.{tls, allowInsecureHttp}` at the
@@ -27,9 +27,9 @@
  *
  * This is a boot-time SNAPSHOT — a direct `insertDiagnostic`, NOT an event. An
  * event would imply recurrence/streaming and go stale; a once-per-boot record
- * is the correct point-in-time model (RESEARCH Pitfall 4). Because the snapshot
+ * is the correct point-in-time model. Because the snapshot
  * is recorded once per boot regardless of WARN frequency, the recurrence gate
- * does not gate I3 away.
+ * does not gate this snapshot away.
  *
  * `details` carries ONLY booleans + counts + closed stranded labels — no secret
  * values, no cert paths, no canary secrets, no free text. The stranded findings
@@ -44,11 +44,11 @@ import type { ObservabilityStore } from "@comis/memory";
 import type { StrandedFinding } from "../wiring/setup-storage-mismatch-warn.js";
 
 /**
- * RESOLVE-01: count configured agents whose NATIVE provider family disagrees with
- * their model id's family (the `ffe11736` chimera). Conservative — gateway/custom
+ * Count configured agents whose NATIVE provider family disagrees with
+ * their model id's family (the provider/model chimera). Conservative — gateway/custom
  * providers + an unknown model family never flag (see `isProviderModelChimera`).
  * Lives here (not inline in daemon.ts) to keep daemon.ts under its 3000-line cap.
- * Count only — the caller persists the COUNT, never agent ids/model names (I3).
+ * Count only — the caller persists the COUNT, never agent ids/model names.
  */
 export function countChimericModels(
   agents: Readonly<Record<string, { provider?: string; model?: string }>>,
@@ -59,7 +59,7 @@ export function countChimericModels(
 }
 
 /**
- * OBS-7 (openclaw-usecases 2026-06-25): is the gateway bound to a LOOPBACK address?
+ * Is the gateway bound to a LOOPBACK address?
  *
  * A loopback-bound gateway has no off-host network exposure, so running it WITHOUT
  * TLS is benign — it matches the `gateway-exposure` security check, which flags only
@@ -79,15 +79,15 @@ export function isLoopbackHost(host: string | undefined): boolean {
 }
 
 /**
- * SPEND-05: count configured agents burning tokens on remote-unknown-priced models
+ * Count configured agents burning tokens on remote-unknown-priced models
  * — those whose configured `provider`+`model` resolves to the `"unknown"` pricing
- * state (a NATIVE single-family provider with NO catalog rate — the `ffe11736`
+ * state (a NATIVE single-family provider with NO catalog rate — the
  * fail-open where `resolveModelPricing` silently returns $0, masking a phantom cost
  * as free). A `"free"` local/gateway provider (honest $0) and a `"priced"` agent are
  * NOT counted — so a local-first deployment is never false-flagged. Consumes the
  * shipped 3-state {@link resolvePricingState} directly, NEVER a catalog-presence
  * boolean. Lives here (not inline in daemon.ts) to keep daemon.ts under its 3000-line
- * cap. Count only — the caller persists the COUNT, never agent ids/model names (I3).
+ * cap. Count only — the caller persists the COUNT, never agent ids/model names.
  */
 export function countPricingGaps(
   agents: Readonly<Record<string, { provider?: string; model?: string }>>,
@@ -116,15 +116,15 @@ export interface ConfigPostureInputs {
    */
   canaryFallbackActive: boolean;
   /**
-   * KNOB-03 (Phase 176): providers whose Ollama-served window < configured at
+   * Providers whose Ollama-served window < configured at
    * this boot — a COUNT, never provider names (the no-free-text contract).
-   * Derived in daemon.ts from the SAME comparison results the KNOB-01 boot
+   * Derived in daemon.ts from the SAME comparison results the served-window boot
    * WARN used (one comparison, two surfaces — no drift).
    */
   servedBelowConfiguredCount: number;
   /**
-   * RESOLVE-01 (observability-excellence): number of configured agents whose
-   * NATIVE provider family disagrees with their model id's family (the `ffe11736`
+   * Number of configured agents whose
+   * NATIVE provider family disagrees with their model id's family (the provider/model
    * chimera — e.g. `provider: anthropic` + a qwen model → phantom profile). A
    * COUNT, never agent ids or model names (the no-free-text contract). Computed in
    * daemon.ts via `isProviderModelChimera` over the configured agents at boot.
@@ -132,19 +132,19 @@ export interface ConfigPostureInputs {
    */
   chimericModelCount?: number;
   /**
-   * SPEND-05 (observability-excellence): number of configured agents burning tokens
+   * Number of configured agents burning tokens
    * on remote-unknown-priced models (`resolvePricingState == "unknown"` — a NATIVE
-   * provider with no catalog rate, the `ffe11736` fail-open where spend is silently
+   * provider with no catalog rate, the fail-open where spend is silently
    * under-counted as $0). A COUNT, never agent ids or model names (the no-free-text
    * contract). Computed in daemon.ts via `countPricingGaps` over the configured
    * agents at boot. Optional (defaults to 0 in the record).
    */
   pricingGapCount?: number;
   /**
-   * RELAX-SURFACE (30uc-20260624, Track-M): `true` when the operator set
+   * `true` when the operator set
    * `security.agentToAgent.sandboxNoDowngrade: false` — a RELAXED security default
-   * (a spawned child may run with a weaker sandbox posture than its parent). The
-   * Track-M relaxation-surfacing rule wants a relaxed default surfaced at boot, not
+   * (a spawned child may run with a weaker sandbox posture than its parent). A
+   * relaxed security default should be surfaced at boot, not
    * silent. A boolean, never config bodies. Optional (defaults to `false`).
    */
   sandboxNoDowngradeDisabled?: boolean;
@@ -154,8 +154,8 @@ export interface ConfigPostureInputs {
  * Write a one-shot `config_posture` row to `obs_diagnostics` at boot.
  *
  * No-ops when `obsStore` is `undefined` (observability persistence disabled) —
- * the `?.` is mandatory so a disabled-persistence boot cannot crash shutdown
- * (Pitfall 5). Severity is `"warning"` when ANY posture issue is present
+ * the `?.` is mandatory so a disabled-persistence boot cannot crash shutdown.
+ * Severity is `"warning"` when ANY posture issue is present
  * (`tlsOff` OR a stranded finding OR `canaryFallbackActive` OR
  * `servedBelowConfiguredCount > 0`), else `"info"`. The timestamp comes from
  * the injected `ClockPort` — never `Date.now()` (globals gate).
@@ -188,13 +188,13 @@ export function buildConfigPostureRecord(
       stranded: inputs.strandedFindings,
       canaryFallbackActive: inputs.canaryFallbackActive,
       servedBelowConfiguredCount: inputs.servedBelowConfiguredCount,
-      // RESOLVE-01: agents booted with a NATIVE provider + a foreign model family
-      // (the ffe11736 chimera). A COUNT, never agent ids/model names (no free text).
+      // Agents booted with a NATIVE provider + a foreign model family
+      // (the provider/model chimera). A COUNT, never agent ids/model names (no free text).
       chimericModelCount,
-      // SPEND-05: agents burning tokens on remote-unknown-priced models
+      // Agents burning tokens on remote-unknown-priced models
       // (resolvePricingState == "unknown"). A COUNT, never agent ids/model names.
       pricingGapCount,
-      // RELAX-SURFACE: the no-downgrade sandbox invariant is DISABLED (relaxed
+      // The no-downgrade sandbox invariant is DISABLED (relaxed
       // default surfaced at boot, not silent). A boolean, never config bodies.
       sandboxNoDowngradeDisabled,
     }),

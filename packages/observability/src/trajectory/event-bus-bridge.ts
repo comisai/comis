@@ -54,10 +54,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "tool:executed": "tool.result",
   "tool:timeout": "tool.timeout",
   "tool:policy_filtered": "tool.policy_filtered",
-  // D3 breaker transitions (Phase 151).
+  // Breaker transitions.
   "tool:breaker_opened": "tool.breaker_opened",
   "tool:breaker_reset": "tool.breaker_reset",
-  // D7 result offload (Phase 151).
+  // Result offload.
   "tool:result_offloaded": "tool.result_offloaded",
 
   // ---- Model lifecycle ----
@@ -75,112 +75,104 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // ---- Skill observability ----
   "skill:prompt_loaded": "skill.prompt_loaded",
   "skill:prompt_invoked": "skill.prompt_invoked",
-  // IMP-3 / PD-OBS-1 (package-delivery-20260628): the per-turn used-skill attribution (ATTR-02) — the
-  // INLINE-surfaced reuse credit. Previously DB-only (outcome_events.used_skill_ids, allowlisted in
-  // EVENTS_NOT_TRAJECTORY_MAPPED), so explain.skillsUsed was [] for an inline reuse while skillsPromoted>0.
-  // Now bridged so the credit shows on a one-call `comis explain`. AGENT-emitted (postExecution) → it IS
-  // arch-scanned, so REMOVED from the arch allowlist (the disjoint invariant). Content-free: opaque skill
-  // ids + count ONLY (same id-class as skill.prompt_invoked.skillName; never a procedure body — SEC-01).
+  // The per-turn used-skill attribution — the INLINE-surfaced reuse credit.
+  // Bridged so the credit shows on a one-call `comis explain`. AGENT-emitted (postExecution) → it IS
+  // arch-scanned, so it is NOT in the arch allowlist (the disjoint invariant). Content-free: opaque skill
+  // ids + count ONLY (same id-class as skill.prompt_invoked.skillName; never a procedure body).
   "memory:skill_used": "memory.skill_used",
 
-  // Finding A (obs-sweep package-delivery-20260628): the full per-turn topic-match reuse CENSUS,
+  // The full per-turn topic-match reuse CENSUS,
   // so a surfaced-but-uncredited NEAR-MISS is diagnosable (memory:skill_used only fires on a
   // credit). Content-free: skill NAMES (id-class) + coverage/sharedCount NUMBERS + flags — never a
-  // procedure body (SEC-01). Mapped → REMOVED from the arch NOT-MAPPED allowlist (disjoint invariant).
+  // procedure body. Mapped, so NOT in the arch NOT-MAPPED allowlist (disjoint invariant).
   "memory:skill_surfaced": "memory.skill_surfaced",
 
   // ---- Session + prompt lifecycle ----
   "prompt:submitted": "prompt.submitted",
   "session:started": "session.started",
   "session:ended": "session.ended",
-  // F2 (D5): per-session health rollup emitted once at agent-end.
+  // Per-session health rollup emitted once at agent-end.
   "session:summary": "session.summary",
   "memory:injected": "memory.injected",
-  // RECALL-01 (observability-excellence): the per-recall lane/candidate/final counts +
-  // rerank outcome — previously emitted but UNMAPPED (invisible to comis explain/trace,
-  // the #1 troubleshooting blind spot). Content-free (counts/booleans only — H1).
+  // The per-recall lane/candidate/final counts +
+  // rerank outcome. Content-free (counts/booleans only).
   "memory:recalled": "memory.recalled",
   "memory:reranked": "memory.reranked",
 
-  // GENQ-01 (observability-excellence): a memory-generation pass (consolidation /
+  // A memory-generation pass (consolidation /
   // reasoning / user-representation) produced output whose quality diverged from
-  // its source — the F-ML1 class. Emitted only on an issue. Content-free (closed
-  // enums + booleans — H1); the source/generated body never crosses the bus.
+  // its source. Emitted only on an issue. Content-free (closed
+  // enums + booleans); the source/generated body never crosses the bus.
   "memory:generation_quality": "memory.generation_quality",
 
-  // PERSIST-01 (Phase 176 Plan 04, observability-excellence): a detected prompt-cache
-  // break (15 CacheBreakReason values) — emitted in packages/agent but previously
-  // UNMAPPED (allowlisted as a daemon-level rollup), invisible to `comis explain`. Now
-  // bridged so the cost-relevant break shows on the per-session timeline beside the
+  // A detected prompt-cache
+  // break (15 CacheBreakReason values), emitted in packages/agent. Bridged so the
+  // cost-relevant break shows on the per-session timeline beside the
   // obs_diagnostics category:'cache_break' row. Content-free (the closed reason + the
-  // tokenDrop/relative counts + a changed-dims DIGEST — H1/I3); the translator drops
+  // tokenDrop/relative counts + a changed-dims DIGEST); the translator drops
   // the toolsAdded/Removed/SchemaChanged tool-NAME arrays and the system text entirely.
   "observability:cache_break": "cache.break",
 
-  // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
+  // A `pipeline` tool invocation was authored —
   // counts-only (action / capabilityClass tier / schemaValid / repaired). Mapped
   // here for trajectory-type ARCH closure (every EventMap member is mapped-or-
   // allowlisted) and to reserve the `pipeline.authored` trajectory type. The live
-  // per-session recordEvent emit is a DEFERRED follow-up: at P1 `getRecorder` is
+  // per-session recordEvent emit is a DEFERRED follow-up: `getRecorder` is
   // NOT reachable on the graph-handler deps (it rides the image-handler slice, not
-  // the createGraphHandlers spread) — the P1 path is the FLEET aggregate (Plan
-  // 03/04), which needs only eventBus. Content-free (closed enums + booleans —
-  // H1); no pipeline body / type_config value / node task crosses the bus.
+  // the createGraphHandlers spread). Content-free (closed enums + booleans);
+  // no pipeline body / type_config value / node task crosses the bus.
   "pipeline:authored": "pipeline.authored",
 
-  // AUTHOR-01/02 (v2.27 P2, Phase 174): the two authoring-AUDIT events Plans 03/04
-  // emit DAEMON-SIDE on a conservative repair / intent-synthesis (the repair +
-  // synthesis producers the P1 pipeline:authored.repaired flag documented as
-  // deferred). APPEND-ONLY beside pipeline:authored. Mapped here for trajectory-type
+  // The two authoring-AUDIT events
+  // emitted DAEMON-SIDE on a conservative repair / intent-synthesis.
+  // APPEND-ONLY beside pipeline:authored. Mapped here for trajectory-type
   // ARCH closure (every EventMap member is mapped-or-allowlisted) + to reserve the
   // graph.repaired / graph.synthesized_from_intent trajectory types. NOTE: these
   // emit from @comis/daemon (graph-helpers.ts), so the trajectory-event-types-known
   // arch gate — which walks only packages/agent + packages/orchestrator — does not
   // require them; the registration is for consistency with pipeline:authored AND
   // arch-test closure of the keyof TrajectoryBridgedEventName. Content-free (closed
-  // enums + numbers — H1); no graph body / type_config / node task / intent text
+  // enums + numbers); no graph body / type_config / node task / intent text
   // crosses the bus.
   "graph:repaired": "graph.repaired",
   "graph:synthesized_from_intent": "graph.synthesized_from_intent",
 
-  // STEER-01 (v2.27 P3, Phase 175): a running sub-agent was steered IN-FLIGHT (a
+  // A running sub-agent was steered IN-FLIGHT (a
   // high-priority message injected at the child's next step boundary, transcript
   // preserved) instead of kill+respawn. Emitted DAEMON-SIDE at the inject site
-  // (Plan 02, subagent-handlers.ts), so the trajectory-event-types-known arch gate
+  // (subagent-handlers.ts), so the trajectory-event-types-known arch gate
   // — which walks only packages/agent + packages/orchestrator — does NOT require it
   // (the unmapped subagent:budget_exceeded precedent); the registration here is
   // purely for OPERATOR TRAJECTORY VISIBILITY (a steer is a meaningful per-session
   // event in `comis explain`), mirroring the graph:repaired entry above. Content-free
-  // (runId + the closed-union mode steer|followup — H1); the steer MESSAGE BODY never
+  // (runId + the closed-union mode steer|followup); the steer MESSAGE BODY never
   // crosses the bus.
   "subagent:steered": "subagent.steered",
 
-  // ORCH-OBS (orchestration-observability): three previously-dark sub-agent-lifecycle
+  // Three sub-agent-lifecycle
   // events bridged for per-session `comis explain` visibility (the subagent:steered
   // precedent). security:sandbox_downgrade_refused is agent-emitted (sub-agent-runner.ts)
   // and fires WITHIN the spawning session → lands cleanly in that trajectory;
   // subagent:delivery_deadlettered (orchestrator) + subagent:budget_exceeded (daemon
   // coordinator) ride whichever session bridge is active. Content-free translators
   // (translate-orchestration-payload.ts) forward closed labels/ids/numbers ONLY — never
-  // a path/host/uid value, an announcement body, or a task (§2.7 / H1). These ALSO feed
+  // a path/host/uid value, an announcement body, or a task. These ALSO feed
   // the fleet lens via obs-persistence-wiring (the daemon-wide aggregate surface).
   "security:sandbox_downgrade_refused": "security.sandbox_downgrade_refused",
   "subagent:delivery_deadlettered": "subagent.delivery_deadlettered",
-  // OE-6b (orchestration-excellence-20260701-fullregression): the self-healing transient RETRY
-  // — the sibling of subagent:delivery_deadlettered. It was emitted by the announcement-batcher
-  // via `?.emit` (which the trajectory-event-types-known arch regex missed pre-fix), so it was
-  // bridged to NOTHING while its terminal sibling was fully wired — P0-B's self-heal was invisible
-  // to `comis explain` (spec §7/§10 + the "all 7 events bridged/surfaced" claim). Bridged here for
+  // The self-healing transient RETRY
+  // — the sibling of subagent:delivery_deadlettered. Emitted by the announcement-batcher
+  // via `?.emit`. Bridged here for
   // per-session visibility (how many retries a completion took before landing). Content-free
   // (translate-orchestration-payload.ts): runId + closed channelType + attempt count + transient tag
   // ONLY. NOTE: unlike its deadlettered sibling, retried is trajectory-only for now (NOT yet a fleet
-  // health_signal/finding — a self-healed retry as a daemon-wide aggregate is a follow-up; §10).
+  // health_signal/finding — a self-healed retry as a daemon-wide aggregate is a follow-up).
   "subagent:delivery_retried": "subagent.delivery_retried",
   "subagent:budget_exceeded": "subagent.budget_exceeded",
 
-  // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-capability authorization
+  // The per-capability authorization
   // decision for a gated call (allow + deny) — the spawn-tree's per-node
-  // producer (Plan 03's TREE fold groups these by leaseId). DAEMON-emitted
+  // producer (the tree fold groups these by leaseId). DAEMON-emitted
   // (rpc-dispatch.ts / setup-capability-endpoint.ts), so the trajectory-event-
   // types-known arch gate — which walks only packages/agent + packages/
   // orchestrator — does NOT require it (the subagent:budget_exceeded daemon-
@@ -188,10 +180,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // VISIBILITY (`comis explain` spawn tree) + arch closure of the keyof
   // TrajectoryBridgedEventName. Content-free (translate-orchestration-payload.ts):
   // caps + tool NAME + decision + lease/root ids ONLY — NEVER the tool.invoke
-  // args, a message body, or a secret name (§2.7 / H1 / T-215-01).
+  // args, a message body, or a secret name.
   "capability:audited": "capability.audited",
 
-  // TREE-01 (finding D, 30uc-20260624): a graph DAG node spawn — the spawn-tree's
+  // A graph DAG node spawn — the spawn-tree's
   // per-graph-node producer. A graph node spawns in-process (gatedSpawn) and never
   // crosses the socket chokepoint that emits capability:audited, so without this the
   // `comis explain` spawn-tree showed only the root. DAEMON-emitted (graph-node-
@@ -201,74 +193,63 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // + rootRunId + the per-node token cap ONLY — NEVER a node task or output.
   "graph:node_spawned": "graph.node_spawned",
 
-  // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
+  // A finished trajectory's resolved net
   // task-outcome, emitted DAEMON-SIDE after OutcomeSignalPort.resolve (learningOutcome.
   // enabled-gated, default OFF). DAEMON emit (NOT agent/orchestrator) so the arch
-  // emit-scanner does not require it; mapped here so OBS-02 `comis explain` can
-  // reconstruct it. Content-free: ids/counts/closed-enums ONLY (no body/alpha — SEC-01).
+  // emit-scanner does not require it; mapped here so `comis explain` can
+  // reconstruct it. Content-free: ids/counts/closed-enums ONLY (no body/alpha).
   "learning:outcome_observed": "learning.outcome_observed",
 
-  // FORGET-06 (v2.26 Verified Learning WS4, Phase 200): the lifecycle-sweep soft-eviction
+  // The lifecycle-sweep soft-eviction
   // telemetry. learning:memory_* are daemon emit (NOT arch-scanned). Counts/ids/closed-enums
-  // ONLY — never a memory body (SEC-01). Mapped here so OBS-02 `comis explain` can reconstruct
-  // them. (The RANK-06 memory:online_tuning_applied bandit event was removed in Phase 224 —
-  // the UCB online-tuning bandit was deleted; recall is fixed-RRF.)
+  // ONLY — never a memory body. Mapped here so `comis explain` can reconstruct
+  // them.
   "learning:memory_demoted": "learning.memory_demoted",
   "learning:memory_evicted": "learning.memory_evicted",
   "learning:memory_failure_attributed": "learning.memory_failure_attributed",
 
-  // REFLECT (v2.31, Phase 226 SIMPLIFY-04): the reflection-run funnel telemetry,
-  // RENAMED from the old synthesis-funnel events to reflect:admitted / reflect:funnel.
+  // The reflection-run funnel telemetry (reflect:admitted / reflect:funnel).
   // Both DAEMON-emitted (the reflection cron
   // handler, NOT agent/orchestrator) after runReflection → the arch emit-scanner does
-  // not require them; mapped here so OBS-02 `comis explain` can reconstruct a
+  // not require them; mapped here so `comis explain` can reconstruct a
   // reflection run. The forget (learning:memory_*) + outcome (learning:outcome_observed)
-  // events KEEP their learning:* names (Pitfall 6). Content-free: counts (synthesized/
+  // events KEEP their learning:* names. Content-free: counts (synthesized/
   // validated/admitted) + maxClusterCardinality + the admissionOutcome closed-enum ONLY
-  // — NEVER a doc body, a script, or a finding (SEC-01 §7). The vestigial
-  // sandbox-validation event (0-emit, sandbox deleted in 223) was REMOVED here.
+  // — NEVER a doc body, a script, or a finding.
   "reflect:admitted": "reflect.admitted",
   "reflect:funnel": "reflect.funnel",
 
-  // SURFACE-06 (v2.26 Verified Learning WS2, Phase 202 Plan 03): the promote/demote
-  // telemetry. Both DAEMON-emitted (the promote/demote loop, Plan 05 — NOT agent/
-  // orchestrator) so the arch emit-scanner does not require them; mapped here so OBS-02
+  // The skill promote/demote
+  // telemetry. Both DAEMON-emitted (the promote/demote loop — NOT agent/
+  // orchestrator) so the arch emit-scanner does not require them; mapped here so
   // `comis explain` can reconstruct a promotion/demotion. Content-free: the COUNT ONLY —
-  // NEVER an id-list, a procedure body, or a script (SEC-01 §7). They fold into the
+  // NEVER an id-list, a procedure body, or a script. They fold into the
   // shared { count } translator case (translate-payload.ts).
   "learning:skill_promoted": "learning.skill_promoted",
   "learning:skill_demoted": "learning.skill_demoted",
 
-  // Phase 226 SIMPLIFY-04: the REVISE-/GENERAL- entries (the user-rep-revision +
-  // generalization events) were DELETED — both grep-confirmed 0-emit at HEAD (those paths
-  // were folded into the reflection engine in Phase 225). Their translator cases, type
-  // members, and obs folds/verdicts went with them in the same lockstep.
-
-  // ---- Background task lifecycle (T2.2 / F9) ----
+  // ---- Background task lifecycle ----
   // The promote/complete/fail transitions of a long-running tool detached past the
-  // execute() boundary — previously emitted but UNMAPPED (invisible to comis explain; a
-  // backgrounded wait's lifecycle could only be inferred from a rollup counter). Content-
-  // free: closed ids (taskId/toolName) + durationMs ONLY — never a result/error body;
-  // agentId/origin are envelope correlation ids (§2.7 / H1).
+  // execute() boundary. Content-free: closed ids (taskId/toolName) + durationMs ONLY —
+  // never a result/error body; agentId/origin are envelope correlation ids.
   "background_task:promoted": "background_task.promoted",
   "background_task:completed": "background_task.completed",
   "background_task:failed": "background_task.failed",
 
   // ---- Terminal drive lifecycle ----
-  // DRIVE-02: a long coding-CLI drive backgrounded at the inline→detached boundary
-  // (the unattended abandoned-drive blind spot — was daemon-log-only). Content-free
-  // (the reason enum only — see translate-payload). Emitted from packages/skills,
+  // A long coding-CLI drive backgrounded at the inline→detached boundary.
+  // Content-free (the reason enum only — see translate-payload). Emitted from packages/skills,
   // which the trajectory-event arch test does NOT scan (it walks agent+orchestrator),
-  // so this was previously neither mapped nor allowlisted and the bridge dropped it.
+  // so this mapping is what the bridge relies on to record it.
   "terminal:drive_promoted": "terminal.drive_promoted",
 
-  // EVICT-01: the reaper evicted a durable drive (idle-TTL / max_sessions / wall_clock /
-  // max_interactions cap). Was a daemon WARN only — invisible to `explain`, so a
-  // reaper-killed autonomous drive root-caused NOTHING (the webhook-claude-gsd-snake
-  // idle-reap that stranded a producing drive). Content-free (reason enum + durationMs —
-  // see translate-payload). Emitted from the daemon reaper wiring (setup-terminal-tools)
-  // AND packages/skills, both OUTSIDE the agent/orchestrator emit-scanner, so — like
-  // drive_promoted — no arch allowlist entry is needed; this mapping is the bridge.
+  // The reaper evicted a durable drive (idle-TTL / max_sessions / wall_clock /
+  // max_interactions cap). Bridged so `explain` can name a reaper-killed autonomous
+  // drive (otherwise an idle-reap that stranded a producing drive root-caused nothing).
+  // Content-free (reason enum + durationMs — see translate-payload). Emitted from the
+  // daemon reaper wiring (setup-terminal-tools) AND packages/skills, both OUTSIDE the
+  // agent/orchestrator emit-scanner, so — like drive_promoted — no arch allowlist entry
+  // is needed; this mapping is the bridge.
   "terminal:session_evicted": "terminal.session_evicted",
 
   // ---- Delivery lifecycle ----
@@ -299,8 +280,8 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // Maps to "execution.replay_recovered" (NOT "execution.signed_replay_recovered")
   // per canonical name.
   "execution:signed_replay_recovered": "execution.replay_recovered",
-  // GBNF-02 strip-retry self-heal (Phase 175). Payload is already content-free
-  // (tool + keyword NAMES only, I7) — translator forwards all 4 data fields.
+  // GBNF strip-retry self-heal. Payload is already content-free
+  // (tool + keyword NAMES only) — translator forwards all 4 data fields.
   "execution:tool_schema_unsupported": "execution.tool_schema_unsupported",
 
   // Security + Sender (scanned subset)
@@ -344,7 +325,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // Context engine internals (events-messaging.ts; emitters in packages/agent — arch-scanned)
   // 5 of 6 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged.
   // context:integrity uses optional chaining (?.emit) — not in arch-test scope; no allowlist change needed.
-  // W2 (obs-llm-troubleshooting): per-LLM-call budget equation from the LCD
+  // Per-LLM-call budget equation from the LCD
   // pre-flight — lets obs.explain reconstruct a context_exhausted abort.
   "context:budget_computed": "context.budget",
   "context:evicted": "context.evicted",
@@ -353,8 +334,8 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "context:overflow": "context.overflow",
   "context:integrity": "context.integrity",
   "context:rehydrated": "context.rehydrated",
-  // OBS-01 (Phase 180): the two multilingual signals on the explain path. Not
-  // yet emitted (emit sites land in 180-08) — declared/mapped here so the
+  // The two multilingual signals on the explain path — declared/mapped here
+  // (ahead of the emit sites) so the
   // trajectory bridge records them the moment they fire. NOT added to
   // EVENTS_NOT_TRAJECTORY_MAPPED (these are mapping entries, not allowlist entries).
   "context:script_zero_hit": "context.script_zero_hit",
@@ -362,7 +343,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
 
   // Approval / human-in-the-loop (events-infra.ts; emitter packages/core/approval — not arch-scanned)
   // SECURITY INVARIANT: approval:requested.params is raw unconstrained tool arguments
-  // (file paths, message bodies, credentials — HIGHEST risk field in the phase).
+  // (file paths, message bodies, credentials — the highest-risk field here).
   // Translator MUST omit params entirely — sanitizeForPersistence is defense-in-depth only.
   "approval:requested": "approval.requested",
   "approval:resolved": "approval.resolved",
@@ -375,41 +356,41 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // timestamp is envelope-only — stripped from data.
   "health:budget_exceeded": "health.budget_exceeded",
 
-  // ---- Image generation (OBS-04, Phase 186; events-media.ts) ----
+  // ---- Image generation (events-media.ts) ----
   // DIRECT-emitted by the daemon image RPC handler via the per-session recorder
   // (the daemon RPC context has NO bus bridge — the comis-session-manager.ts:298
   // precedent), NOT through an eventBus.emit in packages/agent/orchestrator. The
   // mapping is declared here for trajectory-type ARCH closure (the arch test
   // enumerates it) and so a future bus emitter is wired. The `observability:
   // token_usage → model.completed` cost-carry precedent (:69) is mirrored here:
-  // image.generated carries `costUsd` (OBS-03 Route a). Content-free translators
+  // image.generated carries `costUsd`. Content-free translators
   // (translate-payload.ts) forward only ids/labels/numbers/booleans.
   "image:requested": "image.requested",
   "image:generated": "image.generated",
   "image:delivered": "image.delivered",
   "image:failed": "image.failed",
 
-  // ---- Vision analysis (VIS-04, Phase 187; events-media.ts) ----
-  // APPEND-ONLY alongside the image:* section above — never a rename (Pitfall 5;
-  // the v2.17-merge gate cascade). Like image.*, these are DIRECT-emitted by the
+  // ---- Vision analysis (events-media.ts) ----
+  // APPEND-ONLY alongside the image:* section above — never a rename. Like image.*,
+  // these are DIRECT-emitted by the
   // daemon vision RPC handler (image.analyze / media.describe_video) via the
   // per-session recorder (NO bus bridge in the daemon RPC context); declared here
   // for trajectory-type ARCH closure + a future bus emitter. media.vision.completed
-  // carries `costUsd` (VIS-04 Route a — optional, absent on registry/gemini-video).
+  // carries `costUsd` (optional, absent on registry/gemini-video).
   // Content-free translators (translate-payload.ts) forward only the
   // ids/labels/path/numbers/outcome/errorKind.
   "media.vision:requested": "media.vision.requested",
   "media.vision:completed": "media.vision.completed",
   "media.vision:failed": "media.vision.failed",
 
-  // ---- Video generation (OBS-04, Phase 192; events-media.ts) ----
+  // ---- Video generation (events-media.ts) ----
   // APPEND-ONLY alongside the image:*/media.vision:* sections above — never a
-  // rename (Pitfall 8; the v2.17-merge gate cascade). Like image.*/media.vision.*,
+  // rename. Like image.*/media.vision.*,
   // these are DIRECT-emitted by the daemon video RPC handler (in-turn) AND the
   // off-turn background poller via the per-session recorder (NO bus bridge in the
   // daemon RPC/poller context); declared here for trajectory-type ARCH closure +
-  // a future bus emitter ONLY. video.generated carries `costUsd` (OBS-03 Route a —
-  // FAL/Veo estimate, Grok actual, optional). Content-free translators
+  // a future bus emitter ONLY. video.generated carries `costUsd` (FAL/Veo estimate,
+  // Grok actual, optional). Content-free translators
   // (translate-payload.ts) forward only the ids/labels/numbers/outcome/errorKind.
   "video:requested": "video.requested",
   "video:submitted": "video.submitted",
@@ -417,14 +398,14 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "video:delivered": "video.delivered",
   "video:failed": "video.failed",
 
-  // ---- Voice STT/TTS (OBS-02/03, Phase 196; events-media.ts) ----
+  // ---- Voice STT/TTS (events-media.ts) ----
   // APPEND-ONLY alongside the image:*/media.vision:*/video:* sections above —
-  // never a rename (Pitfall 8). Like those, these are DIRECT-emitted by the
+  // never a rename. Like those, these are DIRECT-emitted by the
   // daemon voice RPC handler (media.transcribe / tts.synthesize) via the
   // per-session recorder (NO bus bridge in the daemon RPC context); declared here
   // for trajectory-type ARCH closure + a future bus emitter ONLY.
-  // media.*.completed carries `costUsd` (keyless = 0 explicit — OBS-05 Route a);
-  // media.*.requested carries the `onSkip` reasons (OBS-03). Content-free
+  // media.*.completed carries `costUsd` (keyless = 0 explicit);
+  // media.*.requested carries the `onSkip` reasons. Content-free
   // translators (translate-voice-payload.ts) forward only the
   // ids/labels/numbers/booleans/closed-enum-reasons. KEY is COLON, VALUE is DOT.
   "media.stt:requested": "media.stt.requested",
@@ -434,16 +415,14 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "media.tts:completed": "media.tts.completed",
   "media.tts:failed": "media.tts.failed",
 
-  // WR-4 (177-obs-loop): the spend kill-switch's three signals. AGENT-emitted
-  // (pi-event-bridge.ts), so they ARE arch-scanned — previously allowlisted in
-  // EVENTS_NOT_TRAJECTORY_MAPPED as fleet-only rollups, which made a spend-killed
-  // session UNDIAGNOSABLE via `comis explain` (the security-review WR-4 blind spot
-  // — directly violating this milestone's thesis). Mapped here + REMOVED from the
-  // arch allowlist (the disjoint invariant). The terminal ABORT is ALSO on the
+  // The spend kill-switch's three signals. AGENT-emitted
+  // (pi-event-bridge.ts), so they ARE arch-scanned. Mapped here (and NOT in the
+  // arch allowlist — the disjoint invariant) so a spend-killed session is
+  // diagnosable via `comis explain`. The terminal ABORT is ALSO on the
   // trajectory via execution:aborted(reason:"spend_exceeded"); these carry the
   // per-scope $ counts the verdict needs. Content-free translators forward the
   // closed SpendScopeKind enum + dollar NUMBERS + provider/model config ids ONLY
-  // — never a message/prompt/query body (§2.7 / H1; the milestone invariant).
+  // — never a message/prompt/query body.
   "observability:spend_warning": "spend.warning",
   "observability:spend_exceeded": "spend.exceeded",
   "observability:spend_unpriceable": "spend.unpriceable",

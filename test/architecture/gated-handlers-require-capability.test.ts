@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CAP-04 (v8 §3.7 / T-210-12 / T-210-13) — every capability-gated orchestration
+ * Every capability-gated orchestration
  * handler ACTUALLY calls `requireCapability`, and the registry-derived
  * orchestration-mutating surface is fully classified in HANDLER_CAPABILITY_MAP.
  *
- * The in-process bypass (v8 §3.1): the agent loop reaches RPC handlers WITHOUT
+ * The in-process bypass: the agent loop reaches RPC handlers WITHOUT
  * passing `checkScope`, so the capability gate lives IN the handler, reading the
  * injected `_capabilities`. A handler that is classified to an `AgentCapability`
  * in `HANDLER_CAPABILITY_MAP` but forgets the `requireCapability(...)` call is a
  * silent privilege-widening hole — this test fails the build on that.
  *
- * TWO assertions (the two halves of T-210-13's "added later without a gate"):
+ * TWO assertions (the two halves of the "added later without a gate" gap):
  *
  *   (a) MAPPED-AND-GATED. AST-walk every `packages/daemon/src/api/*-handlers.ts`
  *       file (and the `*-handlers/` subdir leaves — `graph-handlers/`,
@@ -62,7 +62,7 @@ const REPO_ROOT = resolve(here, "../..");
 const HANDLER_DIR = resolve(REPO_ROOT, "packages/daemon/src/api");
 const CONTRACT_DIR = resolve(REPO_ROOT, "packages/core/src/api-contracts");
 
-const DESIGN_REF = "v8 §3.7 CAP-04 / §3.1 (in-process bypass) / T-210-12,13";
+const DESIGN_REF = "every capability-gated orchestration handler calls requireCapability (the in-process bypass skips checkScope)";
 
 /** The closed `orch:*` capability set, as a runtime Set (no typo'd-cap lookups). */
 const CAP_SET: ReadonlySet<string> = new Set<string>(AGENT_CAPABILITIES);
@@ -305,7 +305,7 @@ function collectHandlers(relFile: string): LocatedHandler[] {
   return out;
 }
 
-describe("CAP-04 — every mapped orchestration handler calls requireCapability", () => {
+describe("every mapped orchestration handler calls requireCapability", () => {
   const handlerFiles = listHandlerFiles(HANDLER_DIR);
   const located: LocatedHandler[] = handlerFiles.flatMap(collectHandlers);
   const locatedByMethod = new Map<string, LocatedHandler>(located.map((h) => [h.method, h]));

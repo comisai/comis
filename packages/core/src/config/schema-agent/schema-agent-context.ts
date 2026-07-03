@@ -9,7 +9,7 @@
  *     escalation; post-batch continuation).
  *   - Context guard: ContextPruningConfig, SourceGateConfig.
  *
- * Imports `CircuitBreakerConfigSchema` from the model leaf (the R1 summarizer
+ * Imports `CircuitBreakerConfigSchema` from the model leaf (the summarizer
  * breaker REUSES it — DRY, mirrors the embedding-resilience breaker) but nothing
  * else from sibling leaves; the dependency graph stays one-directional and
  * acyclic (model has no reverse import of context). The top-level
@@ -175,7 +175,7 @@ export const ContextEngineConfigSchema = z.strictObject({
 
   /** Master toggle for the context engine pipeline (enabled by default). */
   enabled: z.boolean().default(true),
-  /** Operating mode: "dag" (= the v2.12 LCD engine) is the DEFAULT
+  /** Operating mode: "dag" (= the LCD engine) is the DEFAULT
    *  working-context engine — it keeps a lossless verbatim history (full faithful
    *  reconstruction via the parts codec + a verbatim fresh tail of the last N
    *  steps + transcript repair, multi-tier zoomable compaction, and the in-session
@@ -193,7 +193,8 @@ export const ContextEngineConfigSchema = z.strictObject({
   thinkingKeepTurns: z.number().int().min(1).max(50).default(10),
   /** Idle gap (ms) above which signed thinking state is treated as drifted and
    *  scrubbed pre-send to avoid provider replay-rejection. Default 30 min —
-   *  below long-TTL caches and below the 74-min production incident gap. Also
+   *  below long-TTL caches and below the 74-min idle gap observed to trigger
+   *  replay rejection in production. Also
    *  triggers on model id / provider / api change (those checks are
    *  unconditional regardless of this idle threshold). Range: 1 min .. 24 h. */
   replayDriftIdleMs: z.number().int().min(60_000).max(24 * 60 * 60_000).default(30 * 60_000),
@@ -226,7 +227,7 @@ export const ContextEngineConfigSchema = z.strictObject({
   /** Turns to wait before re-triggering LLM compaction after a successful compaction. */
   compactionCooldownTurns: z.number().int().min(1).max(50).default(5),
   /** Number of user-turn cycles at the head of conversation to preserve during
-   *  LLM compaction for cache prefix stability. 0 = old behavior
+   *  LLM compaction for cache prefix stability. 0 disables the anchor
    *  (summarize everything, keep tail only). */
   compactionPrefixAnchorTurns: z.number().int().min(0).max(10).default(2),
 
@@ -241,14 +242,14 @@ export const ContextEngineConfigSchema = z.strictObject({
   // --- DAG mode ---
 
   /** Number of most recent STEPS (assistant + tool round-trips, NOT user-turns)
-   *  always included verbatim in the dag/LCD context (A1). A step = one assistant
+   *  always included verbatim in the dag/LCD context. A step = one assistant
    *  message plus the tool results it triggered; the last N steps are kept as the
    *  ORIGINAL structured blocks (never reconstructed-from-text) and are never
-   *  evicted. Default 8 is a safe production floor; the tuned value comes from
-   *  real-LLM measurement in a later phase. */
+   *  evicted. Default 8 is a safe production floor pending a tuned value from
+   *  real-LLM measurement. */
   freshTailTurns: z.number().int().min(1).max(50).default(8),
   /** Context utilization fraction that triggers DAG leaf summarization (0.1 to
-   *  0.95). LIVE in dag/LCD mode (Phase 129): at the end of a turn, when total
+   *  0.95). LIVE in dag/LCD mode: at the end of a turn, when total
    *  context tokens / model window exceeds this fraction, the oldest out-of-tail
    *  chunk is summarized into a leaf summary + the context is assembled under the
    *  token budget. Inert in pipeline mode. */
@@ -284,17 +285,15 @@ export const ContextEngineConfigSchema = z.strictObject({
   /** Optional provider override for DAG summary generation. */
   summaryProvider: z.string().optional(),
 
-  // --- DAG robustness / spend / deferred compaction (Phase 132 C4 + R1) ---
+  // --- DAG robustness / spend / deferred compaction ---
 
   /** When true (default), the afterTurn leaf + condense passes are deferred onto
-   *  the per-conversation serializer and never block the turn's afterTurn hook
-   *  (C4). When false, they run inline (the pre-132 behaviour) for deterministic
-   *  tests. */
+   *  the per-conversation serializer and never block the turn's afterTurn hook.
+   *  When false, they run inline for deterministic tests. */
   deferCompaction: z.boolean().default(true),
-  /** Per-tenant rolling-window ceilings on summarizer LLM input+output tokens
-   *  (R1). When a ceiling is exceeded the summarizer seam is bypassed →
-   *  truncation-only assembly (no LLM call), NOT a turn failure. Consumed by
-   *  plans 132-05/132-06. */
+  /** Per-tenant rolling-window ceilings on summarizer LLM input+output tokens.
+   *  When a ceiling is exceeded the summarizer seam is bypassed →
+   *  truncation-only assembly (no LLM call), NOT a turn failure. */
   summarizerSpend: z.strictObject({
     /** Rolling-hour per-tenant summarizer token ceiling. 0 disables the hourly
      *  cap. Default 500_000 — a few hundred-thousand tokens/hour, well below the
@@ -309,7 +308,7 @@ export const ContextEngineConfigSchema = z.strictObject({
     // in this file. Zod uses a `.default(value)` verbatim and does NOT re-parse it
     // through the inner field defaults, so `{}` would leave the ceilings undefined.
   }).default({ maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 }),
-  /** Circuit breaker for the per-tenant summarizer seam (R1). N consecutive
+  /** Circuit breaker for the per-tenant summarizer seam. N consecutive
    *  summarizer failures open the breaker → truncation-only assembly until
    *  resetTimeoutMs elapses. Mirrors the embedding-resilience breaker
    *  (setup-memory.ts); REUSES CircuitBreakerConfigSchema (failureThreshold /
@@ -322,13 +321,12 @@ export const ContextEngineConfigSchema = z.strictObject({
     halfOpenTimeoutMs: 30_000,
   }),
 
-  // --- Post-batch continuation (replaces SEP nudge enforcement) ---
+  // --- Post-batch continuation ---
 
   /** Post-batch continuation handler: when the LLM emits an empty final
    *  turn after a successful tool batch, fire a directive followUp with
-   *  multi-shot retry. Replaces the legacy SEP one-shot completeness nudge
-   *  (whose enforcement role was superseded; SEP plan extraction + step
-   *  counting remain intact for observability). */
+   *  multi-shot retry. This is the completeness-enforcement path — SEP plan
+   *  extraction + step counting are observability-only and do not enforce. */
   postBatchContinuation: z.strictObject({
     /** Master toggle. When false, handler returns
      *  {recovered: false, outcome: "disabled"} without calling followUp. */
@@ -338,9 +336,9 @@ export const ContextEngineConfigSchema = z.strictObject({
     maxRetries: z.number().int().min(0).max(5).default(2),
   }).default({ enabled: true, maxRetries: 2 }),
 
-  // --- Phase 152: Capacity + Prompt-Security (C1, C2/S1, C4/S4) ---
+  // --- Capacity + Prompt-Security ---
 
-  /** C1: Effective-context cap by capability class. For small/nano models with a large
+  /** Effective-context cap by capability class. For small/nano models with a large
    *  contextWindow, caps effective context before computing H to prevent 256K overfill.
    *  frontier/mid always receive the full contextWindow. Config-driven so operators can
    *  tune per their model's measured comprehension limit. */
@@ -349,18 +347,18 @@ export const ContextEngineConfigSchema = z.strictObject({
     effectiveContextCapSmall: z.number().int().nonnegative().default(32_000),
     /** Max effective context tokens for capabilityClass="nano". 0 = no cap. */
     effectiveContextCapNano:  z.number().int().nonnegative().default(16_000),
-    /** Fix 3 / Phase 166 CWF-02: minimum visible output tokens guaranteed on every LLM
+    /** Minimum visible output tokens guaranteed on every LLM
      *  dispatch — the non-reasoning floor (answer/tool-call body after the thinking block).
      *  Runtime override for the compile-time constant MIN_VISIBLE_OUTPUT_TOKENS=768.
      *  Values below 256 are rejected by the schema (too small to be useful).
      *  Used by: lcd-assembler.ts headroom check + config-resolver.ts max_tokens clamp.
-     *  Design ref: design/small-model-context-fidelity.md §4 Fix 3. */
+     *  Design ref: design/small-model-context-fidelity.md. */
     minVisibleOutputTokens: z.number().int().min(256).max(8_192).default(768),
     // Fully-populated default object (NOT `.default({})`) — see summarizerSpend pattern above.
     // Zod does NOT re-parse inner field defaults from `.default({})`.
   }).default({ effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 }),
 
-  /** C4: Capability-routed compaction. For small/nano capabilityClass, prefer eviction
+  /** Capability-routed compaction. For small/nano capabilityClass, prefer eviction
    *  or a configured stronger summarizer over same-model LLM summarization (which degrades). */
   compaction: z.strictObject({
     /** When true (default): small/nano → eviction-first (or strongerSummarizerModel if set).
@@ -369,15 +367,14 @@ export const ContextEngineConfigSchema = z.strictObject({
     /** Optional "provider:modelId" string for a stronger summarizer for small/nano.
      *  Empty string (default) = pure eviction/deterministic fallback. */
     strongerSummarizerModel: z.string().default(""),
-    /** SUM-03: ordered list of fallback "provider:modelId" strings for the summarizer
+    /** Ordered list of fallback "provider:modelId" strings for the summarizer
      *  seam. When the primary summarizer throws, each entry is tried in sequence.
      *  The per-tenant breaker wraps the OUTER seam and records a failure only when
-     *  ALL providers in the list are exhausted. Default [] = zero behavior change
-     *  for existing deployments. */
+     *  ALL providers in the list are exhausted. Default [] = no fallback attempts. */
     summarizerFallbackProviders: z.array(z.string()).default([]),
   }).default({ preferEvictionByCapability: true, strongerSummarizerModel: "", summarizerFallbackProviders: [] }),
 
-  /** C2/S1: Compact-secure prompt for small/nano. Retains safety core + sender-trust +
+  /** Compact-secure prompt for small/nano. Retains safety core + sender-trust +
    *  config-secret; drops interactive-only sections. NEVER uses buildSafetySection(true). */
   compactPrompt: z.strictObject({
     /** Enable compact-secure promptMode for small/nano capabilityClass. Default: true. */
@@ -386,7 +383,7 @@ export const ContextEngineConfigSchema = z.strictObject({
     targetTokens: z.number().int().min(500).max(8_000).default(3_000),
   }).default({ enabled: true, targetTokens: 3_000 }),
 
-  // ── Phase 172: LCD→LTM distillation (DIST-01/04/05) ───────────────────
+  // ── LCD→LTM distillation ───────────────────────────────────────────────
   // Fully-populated default object (NOT `.default({})`) so an empty config
   // resolves to the real defaults — Zod uses .default(value) verbatim and does
   // NOT re-parse it through the inner field defaults (mirrors compaction above).
@@ -406,20 +403,20 @@ export const ContextEngineConfigSchema = z.strictObject({
     }).default({ enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 }),
   }).default({ distillFromLcd: { enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 } }),
 
-  // ── Phase 173: Unified-retrieval relevance policy (RETR-03) ────────────
-  /** RETR-03: the relevance-first vs recency-first assembly policy gate. When
-   *  `relevance-first` is active the margin arbiter (RETR-02) allocates the
+  // ── Unified-retrieval relevance policy ─────────────────────────────────
+  /** The relevance-first vs recency-first assembly policy gate. When
+   *  `relevance-first` is active the margin arbiter allocates the
    *  discretionary history pool across tiers by fused rank; otherwise the
    *  existing recency-first eviction runs verbatim (frontier/mid byte-identical).
    *
    *  Precedence: explicit > capability-default > off. The capability default is
    *  resolved in scaffold-defaults.ts — small/nano on a NON-caching model
    *  (supportsPromptCache=false) default relevance-first; frontier/mid + caching
-   *  models default recency-first (byte-identical, LOCKED #2). The small/nano
-   *  default-on flip is MEASUREMENT-GATED (the Phase-171 harness) — this flag
+   *  models default recency-first (byte-identical). The small/nano
+   *  default-on flip is MEASUREMENT-GATED — this flag
    *  ships the mechanism; the live default flip is an operator step.
    *
-   *  CRITICAL (Pitfall 1 — the schema re-parse trap): the WHOLE block is
+   *  CRITICAL (the schema re-parse trap): the WHOLE block is
    *  `.optional()` and `firstByDefault` is an OPTIONAL boolean with NO `.default()`.
    *  An omitted field stays `undefined` (NOT `false`) so the resolver's
    *  `config.contextEngine?.relevance?.firstByDefault ?? (capability gate)` survives.

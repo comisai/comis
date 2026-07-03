@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * N2 invariant — the opt-in extension never forces the always-on build.
+ * The opt-in extension never forces the always-on build.
  *
- * `@comis/observability-otel` is the monorepo's FIRST opt-in extension package
- * (design §6 WS2; ROADMAP phase 178). Its whole reason to exist is that core and
+ * `@comis/observability-otel` is the monorepo's FIRST opt-in extension package.
+ * Its whole reason to exist is that core and
  * the daemon stay OpenTelemetry/Prometheus-free: `pnpm --filter @comis/core
  * build:clean` and `pnpm --filter @comis/daemon build:clean` MUST succeed with
  * `packages/observability-otel/dist` absent. That holds only if NO production
@@ -19,8 +19,8 @@
  * `packages/*\/src` tree (other than the runtime `await import`, which is not a
  * static ImportDeclaration) trips it.
  *
- * The clean-room half of N2 — `rm -rf packages/observability-otel/dist` then
- * `build:clean` core+daemon — is exercised by the plan's verification command +
+ * The clean-room half of this invariant — `rm -rf packages/observability-otel/dist` then
+ * `build:clean` core+daemon — is exercised by the clean-room build check +
  * `pnpm cycles:refs` (no tsconfig project-reference forces the build); this test
  * is the deterministic, macOS-verifiable static guard that keeps a value-import
  * from ever landing.
@@ -40,20 +40,20 @@ const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 const EXTENSION_PACKAGE = "@comis/observability-otel";
 
 // The published `comisai` umbrella facade bundles EVERY @comis/* package
-// (including this opt-in extension — decision A1) and namespace-re-exports each
+// (including this opt-in extension) and namespace-re-exports each
 // from `packages/comis/src/index.ts` + a per-package mirror file. Those
 // value-imports are the umbrella's whole job and are REQUIRED by the
-// umbrella-bundling 5-way alignment gate; they do NOT violate N2 because the
+// umbrella-bundling 5-way alignment gate; they do NOT violate this invariant because the
 // umbrella is the published bundle, NOT part of the always-on core/daemon build
-// (core + daemon build:clean with the extension dist absent — proven by the plan
-// verification). Allowlisted exactly as composition-root.test.ts allowlists the
+// (core + daemon build:clean with the extension dist absent — proven by the
+// clean-room build). Allowlisted exactly as composition-root.test.ts allowlists the
 // umbrella facade re-exports (FACADE_REEXPORT_ALLOWLIST).
 const UMBRELLA_FACADE_ALLOWLIST: readonly string[] = [
   "packages/comis/src/index.ts",
   "packages/comis/src/observability-otel.ts",
 ] as const;
 
-describe("build-without-extension — N2: no static value-import of the opt-in extension", () => {
+describe("build-without-extension — no static value-import of the opt-in extension", () => {
   it(`no packages/*/src production file (outside the comisai umbrella facade) value-imports ${EXTENSION_PACKAGE}`, () => {
     const { violations, checkedFiles } = findForbiddenImports({
       rootDir: PACKAGES_ROOT,
@@ -81,7 +81,7 @@ describe("build-without-extension — N2: no static value-import of the opt-in e
           snippet: v.snippet,
         })),
         suggestedFix: `Use a type-only \`import type { OtelExporterDeps }\` from the extension for types, and a config-gated runtime dynamic-import (try/catch) for the runtime registration. Never a static named/namespace value-import of the extension. (The comisai umbrella facade is allowlisted — it bundles every package.)`,
-        designRef: "observability-excellence-implementation.md §6 WS2 (N2 — core/daemon build with the extension absent)",
+        designRef: "core and daemon build cleanly with the opt-in extension's dist absent",
       }),
     ).toEqual([]);
 

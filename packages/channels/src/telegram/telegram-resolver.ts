@@ -45,8 +45,8 @@ export interface TelegramResolverDeps {
    * Bot API root override (production: undefined → real Telegram). When set (a self-hosted local
    * Bot API server, or the test emulator), the file-DOWNLOAD URL must use this base too — `getFile`
    * already honors it via the grammy client, but the byte download is a manual fetch. Without this
-   * the download hardcoded `https://api.telegram.org/file/…` and 404'd against real Telegram while
-   * getFile pointed at the override (30uc-20260624 UC-05).
+   * the download would hardcode `https://api.telegram.org/file/…` and 404 against real Telegram
+   * while getFile pointed at the override.
    */
   apiRoot?: string;
 }
@@ -130,7 +130,7 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
 
         const { buffer, mimeType: fetchedMime, sizeBytes } = fetchResult.value;
 
-        // MEDIA-TYPE (30uc-20260624 UC-05): the MediaResolverPort contract specifies a VERIFIED
+        // The MediaResolverPort contract specifies a VERIFIED
         // (sniffed, not declared) MIME type. Telegram's getFile `file_path` / the file-server
         // content-type can mislabel the bytes (e.g. a `.jpg` path / `image/jpeg` header for PNG
         // bytes), and the model vision API rejects a declared type that mismatches the actual bytes

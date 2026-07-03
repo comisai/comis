@@ -269,43 +269,41 @@ describe("withResettablePromptTimeout", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LAT-02 decision fixture matrix (Phase 177 Plan 01).
+// Timeout-semantics decision fixture matrix.
 //
-// The four ROADMAP cells -- (a) silent-prefill-then-stream, (b) true hang,
+// The four scenario cells -- (a) silent-prefill-then-stream, (b) true hang,
 // (c) streaming runaway, (d) tool-completion reset -- under BOTH budget
 // readings (default 180_000 and the documented-local 300_000) and BOTH
 // scaling branches (uniform stall vs first-activity allowance). resetTimer()
-// calls stand in for stream-delta resets (the delta->reset wiring is plan
-// 177-03). The matrix is permanent regression evidence: the Task-3 DECISION
-// (gate scope + first-activity scaling) is read FROM these cells, not taste
-// (design/local-model-last-mile.md S11 step 3; 177-RESEARCH Critical
-// Finding 4 / Pattern 3).
+// calls stand in for stream-delta resets (the delta->reset wiring lives at
+// the race call site). The matrix is permanent regression evidence: the
+// chosen semantics (gate scope + first-activity scaling) is read FROM these
+// cells, not taste.
 //
-// LAT-02 DECISION (177-01): stall semantics ALL-PROVIDERS, first-activity
+// CHOSEN SEMANTICS: stall semantics ALL-PROVIDERS, first-activity
 // scaling NONE, fixture-(a) read as documented-local-config (300000).
 // Canonical (a)-(d) regression cells for the chosen semantics:
-//   (a) LAT-02-2  -- 200s prefill survives under the documented local budget
-//                    with pure stall semantics (LAT-02-1 documents WHY the
-//                    reading matters: (a) at DEFAULT cannot pass pure stall);
-//   (b) LAT-02-4  -- true hang dies at the stall budget (180s), makespan
-//                    carried;
-//   (c) LAT-02-6 + LAT-02-7 -- runaway dies at exactly the makespan (R-1);
-//                    reset-after-fire is a no-op;
-//   (d) LAT-02-8 + the resetTimer suite above -- tool-completion resets
-//                    unchanged;
-//   back-compat/leak: LAT-02-9, LAT-02-10.
+//   (a) the documented-local stall cell -- 200s prefill survives under the
+//       documented local budget with pure stall semantics (the default-budget
+//       cell documents WHY the reading matters: (a) at DEFAULT cannot pass
+//       pure stall);
+//   (b) the true-hang cell -- dies at the stall budget (180s), makespan
+//       carried;
+//   (c) the runaway + latch cells -- runaway dies at exactly the makespan;
+//       reset-after-fire is a no-op;
+//   (d) the tool-completion cell + the resetTimer suite above -- resets
+//       unchanged;
+//   back-compat/leak: the no-opts and fast-completion cells.
 // UNCHOSEN-branch cells STAY as documented evidence (do not delete):
-//   LAT-02-3a/3b prove first-activity scaling executable; LAT-02-5 pins its
-//   cost -- true-hang detection degrades from 180s to the makespan (30 min
-//   at defaults), which is what ruled the scaling branch out given
-//   LAT-02-2's documented-config pass. Gate scope is all-providers because
-//   the timer is client-side (request bytes untouched -- I3 pins request
-//   construction) and the LAT-02-6 ceiling ADDS a bound cloud turns lack
-//   today; graph nodes keep their own 600s x layer governor which fires
-//   first (research Pitfall 8). Consumed by 177-03 (wiring) and 177-06
-//   (docs) via the 177-01-SUMMARY DECISION block.
+//   the first-activity-scaling cells prove that branch executable; the
+//   scaling-cost cell pins its cost -- true-hang detection degrades from 180s
+//   to the makespan (30 min at defaults), which is what ruled the scaling
+//   branch out given the documented-config pass. Gate scope is all-providers
+//   because the timer is client-side (request bytes untouched) and the
+//   makespan ceiling ADDS a bound cloud turns lack today; graph nodes keep
+//   their own 600s x layer governor which fires first.
 // ---------------------------------------------------------------------------
-describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => {
+describe("withResettablePromptTimeout -- timeout-semantics decision fixture matrix", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -316,7 +314,7 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
 
   // -- Fixture (a): silent prefill then stream ------------------------------
 
-  it("LAT-02-1: [stall-only @ default 180000] a 200s silent prefill dies at the 180s stall budget (limit 'stall')", async () => {
+  it("[stall-only @ default 180000] a 200s silent prefill dies at the 180s stall budget (limit 'stall')", async () => {
     // Documents the arithmetic that forces the decision: fixture (a) at
     // DEFAULT config CANNOT pass under a pure stall budget (200s silence >
     // 180s budget) -- exactly as it exceeds today's whole-turn race.
@@ -335,11 +333,11 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
     expect(abort).toHaveBeenCalledTimes(1);
   });
 
-  it("LAT-02-2: [stall-only @ documented-local 300000] 200s silence then stream resets -> completes, abort never called", async () => {
-    // Evidence cell (passes pre-patch too -- keep as regression): under the
-    // ALREADY-documented local config (config-yaml.mdx local guidance, 300s)
-    // pure stall semantics survive the 200s prefill AND the post-first-token
-    // stream, with no new semantics.
+  it("[stall-only @ documented-local 300000] 200s silence then stream resets -> completes, abort never called", async () => {
+    // Evidence cell (keep as regression): under the documented local config
+    // (config-yaml.mdx local guidance, 300s) pure stall semantics survive
+    // the 200s prefill AND the post-first-token stream, with no extra
+    // semantics needed.
     const abort = vi.fn();
     const promise = new Promise<string>((resolve) => {
       setTimeout(() => resolve("completed after slow prefill"), 280_000);
@@ -365,7 +363,7 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
     expect(abort).not.toHaveBeenCalled();
   });
 
-  it("LAT-02-3a: [first-activity scaling @ default 180000] 200s silence survives under initialBudgetMs; a 180s gap AFTER first activity kills with limit 'stall'", async () => {
+  it("[first-activity scaling @ default 180000] 200s silence survives under initialBudgetMs; a 180s gap AFTER first activity kills with limit 'stall'", async () => {
     const abort = vi.fn();
     const hung = new Promise<never>(() => {});
     const { promise: raced, resetTimer } = withResettablePromptTimeout(
@@ -373,8 +371,8 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
       180_000,
       abort,
       testTimers,
-      // The derived no-new-key allowance: promptTimeoutMs x 10 (never a
-      // Hermes constant -- design S7).
+      // The derived no-new-key allowance: promptTimeoutMs x 10 — always
+      // derived from the existing knob, never a separate hardcoded constant.
       { initialBudgetMs: 1_800_000 },
     );
     const caught = raced.catch((e: unknown) => e);
@@ -397,7 +395,7 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
     expect(abort).toHaveBeenCalledTimes(1);
   });
 
-  it("LAT-02-3b: [first-activity scaling @ default 180000] 200s silence then 1/s resets -> completes at 280s", async () => {
+  it("[first-activity scaling @ default 180000] 200s silence then 1/s resets -> completes at 280s", async () => {
     const abort = vi.fn();
     const promise = new Promise<string>((resolve) => {
       setTimeout(() => resolve("scaled prefill completed"), 280_000);
@@ -424,7 +422,7 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
 
   // -- Fixture (b): true hang ------------------------------------------------
 
-  it("LAT-02-4: [true hang @ default] with makespanMs present, a dead call dies at the 180s stall budget (stall fires FIRST)", async () => {
+  it("[true hang @ default] with makespanMs present, a dead call dies at the 180s stall budget (stall fires FIRST)", async () => {
     const abort = vi.fn();
     const hung = new Promise<never>(() => {});
     const { promise: raced } = withResettablePromptTimeout(hung, 180_000, abort, testTimers, {
@@ -438,14 +436,14 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
     expect(err).toBeInstanceOf(PromptTimeoutError);
     expect(err.limit).toBe("stall");
     expect(err.stallBudgetMs).toBe(180_000);
-    expect(err.makespanMs).toBe(1_800_000); // ceiling carried for hint rendering (177-04)
+    expect(err.makespanMs).toBe(1_800_000); // ceiling carried for hint rendering
     expect(err.timeoutMs).toBe(180_000);
     expect(abort).toHaveBeenCalledTimes(1);
   });
 
-  it("LAT-02-5: [scaling-branch cost cell] initialBudgetMs delays true-hang detection from 180s to the makespan (1_800_000)", async () => {
-    // THE cost the Task-3 decision weighs (research Critical Finding 4): with
-    // first-activity scaling, a genuinely dead local Ollama takes 30 minutes
+  it("[scaling-branch cost cell] initialBudgetMs delays true-hang detection from 180s to the makespan (1_800_000)", async () => {
+    // THE cost that ruled out first-activity scaling: with
+    // it, a genuinely dead local Ollama takes 30 minutes
     // to detect instead of 3.
     const abort = vi.fn();
     const hung = new Promise<never>(() => {});
@@ -472,11 +470,11 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
     expect(err.timeoutMs).toBe(1_800_000);
   });
 
-  // -- Fixture (c): streaming runaway (the R-1 cell) -------------------------
+  // -- Fixture (c): streaming runaway (the makespan-ceiling cell) ------------
 
-  it("LAT-02-6: [streaming runaway] 1/s resets forever -> survives the stall budget, dies at EXACTLY the makespan with limit 'makespan' (R-1)", async () => {
-    // RED pre-patch: the current primitive NEVER kills this -- a pure
-    // stall-reset deadline is unbounded while the stream keeps producing
+  it("[streaming runaway] 1/s resets forever -> survives the stall budget, dies at EXACTLY the makespan with limit 'makespan'", async () => {
+    // A makespan-less primitive NEVER kills this -- a pure stall-reset
+    // deadline is unbounded while the stream keeps producing
     // (gemma4 16x/810s runaway receipt, scripts/bench-small-model/README.md).
     const abort = vi.fn();
     const hung = new Promise<never>(() => {}); // generation streams forever, never resolves
@@ -515,7 +513,7 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
     expect(err.timeoutMs).toBe(1_800_000);
   });
 
-  it("LAT-02-7: [Pitfall 1 latch] resetTimer spam after the makespan fired is a no-op (no second abort, no timer restart)", async () => {
+  it("[settled latch] resetTimer spam after the makespan fired is a no-op (no second abort, no timer restart)", async () => {
     const abort = vi.fn();
     const hung = new Promise<never>(() => {});
     const { promise: raced, resetTimer } = withResettablePromptTimeout(hung, 100, abort, testTimers, {
@@ -546,9 +544,9 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
 
   // -- Fixture (d): tool-completion reset unchanged --------------------------
 
-  it("LAT-02-8: [tool-completion reset] with makespanMs present, a reset at 170s extends the stall deadline exactly as without opts", async () => {
+  it("[tool-completion reset] with makespanMs present, a reset at 170s extends the stall deadline exactly as without opts", async () => {
     // Guard pin: the makespan opt must NOT change reset semantics (the
-    // :204-268 suite above stays green untouched as fixture (d)'s baseline).
+    // resetTimer suite above stays green untouched as fixture (d)'s baseline).
     const abort = vi.fn();
     const promise = new Promise<string>((resolve) => {
       setTimeout(() => resolve("done after resets"), 340_000);
@@ -572,7 +570,7 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
 
   // -- Frontier / back-compat pins -------------------------------------------
 
-  it("LAT-02-9: [back-compat] no opts -> message byte-identical to pre-patch; limit 'stall' is the only new observable", async () => {
+  it("[no-opts baseline] no opts -> message keeps the pinned shape; limit 'stall' is the only added observable", async () => {
     const abort = vi.fn();
     const hung = new Promise<never>(() => {});
     const { promise: raced } = withResettablePromptTimeout(hung, 50, abort, testTimers);
@@ -582,7 +580,7 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
 
     const err = (await caught) as PromptTimeoutError;
     expect(err).toBeInstanceOf(PromptTimeoutError);
-    // The :32 message pin shape holds -- bridge/log greps depend on it.
+    // The pinned message shape holds -- bridge/log greps depend on it.
     expect(err.message).toBe("Prompt execution timed out after 50ms");
     expect(err.timeoutMs).toBe(50);
     expect(err.limit).toBe("stall");
@@ -591,7 +589,7 @@ describe("withResettablePromptTimeout -- LAT-02 decision fixture matrix", () => 
     expect(abort).toHaveBeenCalledTimes(1);
   });
 
-  it("LAT-02-10: fast completion with makespanMs -> resolves, both timers cancelled in the single .finally, no late fire", async () => {
+  it("[fast completion] with makespanMs -> resolves, both timers cancelled in the single .finally, no late fire", async () => {
     const abort = vi.fn();
     const promise = new Promise<string>((resolve) => {
       setTimeout(() => resolve("fast"), 30_000);

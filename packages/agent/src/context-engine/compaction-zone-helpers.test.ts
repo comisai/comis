@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the pure compaction zone helpers extracted from llm-compaction.ts
- * (file-size invariant split, Phase 179 wave-2 post-merge gate). Behavior is
+ * (file-size invariant split). Behavior is
  * additionally exercised end-to-end through llm-compaction.test.ts — these
  * pins hold the helpers' contracts directly.
  */

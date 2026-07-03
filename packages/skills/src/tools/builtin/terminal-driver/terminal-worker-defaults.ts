@@ -2,7 +2,7 @@
 /**
  * terminal-worker-defaults -- the worker's production-default ports + the small
  * scrollback/stuck/bracketed-paste constants, extracted from
- * `terminal-worker-entry.ts` (165-REVIEW BL-01) so that file keeps headroom under the
+ * `terminal-worker-entry.ts` so that file keeps headroom under the
  * 800-line architecture cap once the `reattach` dispatch path lands.
  *
  * BEHAVIOR-NEUTRAL: pure code movement. The factory defaults (`defaultLoadPty`,
@@ -14,8 +14,8 @@
  *
  * INFRA-FREE (like every worker-side sibling): value-imports ONLY node builtins, and
  * type-imports the worker's structural contracts from the neutral leaf
- * `terminal-worker-types.ts`; never `@comis/infra` / `@comis/observability` (Shared
- * Pattern A; the worker MUST NOT cross into those layers).
+ * `terminal-worker-types.ts`; never `@comis/infra` / `@comis/observability` (the
+ * worker MUST NOT cross into those layers).
  *
  * @module
  */
@@ -39,7 +39,7 @@ import type { PipeChildLike, PtyModuleLike, WorkerFsPort } from "./terminal-work
 export const SCROLLBACK_DEFAULT = 1000;
 
 /**
- * The default operator stuck threshold (OPS-04) the classifier compares to a session's
+ * The default operator stuck threshold the classifier compares to a session's
  * no-progress window when `deps.stuckMs` is omitted. The daemon threads the config
  * `worker.stuckMs`; this is the safety-net default.
  */

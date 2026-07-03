@@ -12,7 +12,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 
-// --- Schema normalization (formerly schema-normalizer.ts) ---
+// --- Schema normalization ---
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -167,7 +167,7 @@ export function normalizeToolSchema(
   return { schema: cloned, strippedKeywords: [...stripped].sort() };
 }
 
-// --- Schema pruning (formerly schema-pruning.ts) ---
+// --- Schema pruning ---
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -307,7 +307,8 @@ export function pruneToolSchemas(
     return { ...tool, parameters: cloned } as ToolDefinition;
   });
 
-  // flat-by-design: chars-REMOVED aggregate stat (TOK-01)
+  // An aggregate stat over chars REMOVED across many schemas — no single
+  // source string exists to script-factor (flat-by-design).
   const estimatedTokensSaved = Math.ceil(
     totalCharsRemoved / CHARS_PER_TOKEN_RATIO,
   );

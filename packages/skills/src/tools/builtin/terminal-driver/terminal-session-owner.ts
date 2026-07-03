@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The origin key that scopes a terminal session's visibility (spec §2.1, §4.7).
+ * The origin key that scopes a terminal session's visibility.
  *
  * A `SessionOwner` is the pair `(agentId, sessionKey)`. The `sessionId` stays the
  * opaque worker handle; OWNERSHIP — not the handle — is the authorization gate the
@@ -11,8 +11,8 @@
  * MUTUALLY INVISIBLE: a cross-owner read/get returns the not-found minimal view /
  * `undefined`, never the other owner's bytes.
  *
- * Net-new vs `ProcessRegistry` (which keys per-`agentId` only) — the spec §2.1
- * calls the origin key net-new. Extracted to its OWN module (zero imports) so the
+ * Net-new vs `ProcessRegistry` (which keys per-`agentId` only). Extracted to its OWN
+ * module (zero imports) so the
  * registry stays under the 800-line architecture cap; the worker is owner-agnostic
  * (it only knows `sessionId`).
  *

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs.cacheBreaks.byReason` handler acceptance tests (WEBUI-02, Phase 179 Plan 04).
+ * `obs.cacheBreaks.byReason` handler acceptance tests.
  *
  * Drives the REAL handler over a seeded `:memory:` ObservabilityStore (the real
  * `insertDiagnostic` + the extended `queryCacheBreaksByReason` read), mirroring the
@@ -8,7 +8,7 @@
  *
  * Cases pinned:
  *   1. ROUND-TRIP — seeded cache_break rows come back per-reason with the $-lost SUM.
- *   2. H1 admin gate — a non-admin `_trustLevel` is rejected.
+ *   2. Admin gate — a non-admin `_trustLevel` is rejected.
  *   3. WINDOW — the since/until filter narrows the scan.
  *   4. CONTENT-FREE — the rows carry reason(enum)+count+estCostUsd ONLY; a planted
  *      body marker never surfaces.
@@ -54,7 +54,7 @@ function makeHandler(store?: ObservabilityStore) {
   return bindObsCacheBreaksHandlers(deps)["obs.cacheBreaks.byReason"];
 }
 
-describe("obs.cacheBreaks.byReason handler (WEBUI-02)", () => {
+describe("obs.cacheBreaks.byReason handler", () => {
   it("round-trips per-reason cache breaks with the $-lost SUM (admin)", async () => {
     const store = makeStore();
     insertCacheBreak(store, "tools_changed", 1_000, 0.002);
@@ -73,7 +73,7 @@ describe("obs.cacheBreaks.byReason handler (WEBUI-02)", () => {
     expect(byReason.get("system_changed")?.estCostUsd).toBeCloseTo(0.01, 10);
   });
 
-  it("rejects a non-admin _trustLevel (H1 dual-layer admin gate)", async () => {
+  it("rejects a non-admin _trustLevel (dual-layer admin gate)", async () => {
     const store = makeStore();
     insertCacheBreak(store, "tools_changed", 1_000, 0.001);
     const handler = makeHandler(store);

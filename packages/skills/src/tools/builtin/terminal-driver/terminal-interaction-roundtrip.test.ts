@@ -3,7 +3,7 @@
  * The end-to-end INTERACTION round-trip: the four implemented
  * interaction tools (send_text / send_key / resize / wait) driven through the
  * REAL TerminalSessionRegistry (the forwarding layer) + the REAL Terminal Worker
- * (the handlers + the Wave-1 grammar/settle) + a REAL bash subprocess.
+ * (the handlers + the key-grammar/settle leaves) + a REAL bash subprocess.
  *
  * This is the consumer-half integration proof: it composes the
  * whole stack (tool -> registry.sendText/sendKey/resize/wait -> encodeFrame ->

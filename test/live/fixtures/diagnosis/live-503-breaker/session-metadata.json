@@ -5,5 +5,5 @@
   "provider": "openai-codex",
   "failingTool": "web_fetch",
   "classifierCategory": "overloaded",
-  "note": "Synthesized via the makeFaultInjector/classifyError product path: an HTTP 503 fault classifies to category 'overloaded' (retryable=true) — confirmed against @comis/agent classifyError. Repeated 503s on web_fetch trip the per-tool retry breaker. This is the still-live class the Phase-156 G1(b) re-prove targets (breaker_opened_repeated_failure)."
+  "note": "Synthesized via the makeFaultInjector/classifyError product path: an HTTP 503 fault classifies to category 'overloaded' (retryable=true) — confirmed against @comis/agent classifyError. Repeated 503s on web_fetch trip the per-tool retry breaker. This is the still-live class the re-prove targets (breaker_opened_repeated_failure)."
 }

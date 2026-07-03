@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * E2E-01 — the zod-validated `UserStory` schema + journey types (§7.7).
+ * E2E-01 — the zod-validated `UserStory` schema + journey types.
  *
  * The schema IS the platform's living, machine-checked acceptance spec: a story
  * is DATA, validated at registration (registry.ts), interpreted by ONE generic
@@ -8,16 +8,16 @@
  * a journey = one declarative spec file + one import line — zero harness change
  * (open/closed).
  *
- * Faithful to the §7.7 `UserStory` interface:
+ * The `UserStory` interface:
  *   { id, story, tags: CategoryTag[], dimensions: ConfigDimValue[],
  *     requires: { providers?, capabilities?, platform?, channelAccounts?, components?, seed? },
  *     profile?, costTier, determinism: { runs, passRateThreshold, models? },
  *     steps: JourneyStep[], acceptance: AcceptanceSpec, status }
  *
- * `CategoryTag` = the §8 component-catalog rows A..V (the subsystems a journey
+ * `CategoryTag` = the component-catalog rows A..V (the subsystems a journey
  * composes → feeds the story-coverage view). `components` (in requires) is the
  * Stage-C-cert gate (e.g. "MEM-StageC"): a journey's real-LLM execution is gated
- * behind the relevant component certs (136–146) — unmet ⇒ skip-with-reason.
+ * behind the relevant component certs — unmet ⇒ skip-with-reason.
  *
  * @module
  */
@@ -26,7 +26,7 @@ import type { BillingSnapshot } from "../assert/observe.js";
 import type { Capability } from "../credentials.js";
 
 // ---------------------------------------------------------------------------
-// CategoryTag — the §8 component-catalog rows A..V (design lines 331-352).
+// CategoryTag — the component-catalog rows A..V.
 // A journey tags the subsystems it composes; tags feed storyCoverageContributions().
 // ---------------------------------------------------------------------------
 
@@ -38,8 +38,8 @@ export type CategoryTag = z.infer<typeof CategoryTagSchema>;
 
 // ---------------------------------------------------------------------------
 // ConfigDimValue — a config mode-value string a journey exercises
-// (e.g. "security.storage=encrypted"). The §7.2 dimensions themselves are owned
-// + settled by the depth phases 136–146; a journey just NAMES which it touches,
+// (e.g. "security.storage=encrypted"). The coverage dimensions themselves are owned
+// + settled by the depth suites; a journey just NAMES which it touches,
 // so this stays a free string (no enum coupling to the matrix).
 // ---------------------------------------------------------------------------
 
@@ -69,7 +69,7 @@ type _CapabilityCoherence = Capability extends z.infer<typeof CapabilitySchema>
 const _capabilityCoherenceCheck: _CapabilityCoherence = true;
 
 // ---------------------------------------------------------------------------
-// JourneyStep — the shared, channel-agnostic step vocabulary (§7.7).
+// JourneyStep — the shared, channel-agnostic step vocabulary.
 // A discriminated union over `verb` so an unknown verb rejects at parse and the
 // interpreter switch is exhaustive (steps.ts uses a `never` default).
 // ---------------------------------------------------------------------------
@@ -127,7 +127,7 @@ export const JourneyStepSchema = z.discriminatedUnion("verb", [
 export type JourneyStep = z.infer<typeof JourneyStepSchema>;
 
 // ---------------------------------------------------------------------------
-// Requires — gating → skip-with-reason, never fail (§7.7).
+// Requires — gating → skip-with-reason, never fail.
 // ---------------------------------------------------------------------------
 
 export const RequiresSchema = z.object({
@@ -139,7 +139,7 @@ export const RequiresSchema = z.object({
   platform: z.enum(["linux", "macos", "any"]).optional(),
   /** Real channel accounts the journey binds (else it runs on echo). */
   channelAccounts: z.array(z.string()).optional(),
-  /** Component Stage-C certs (136–146) the journey is gated behind (e.g. "MEM-StageC"). */
+  /** Component Stage-C certs the journey is gated behind (e.g. "MEM-StageC"). */
   components: z.array(z.string()).optional(),
   /** Pre-store a memory / workspace file (a Stage-D seed spec; shape left open). */
   seed: z.unknown().optional(),
@@ -147,7 +147,7 @@ export const RequiresSchema = z.object({
 export type Requires = z.infer<typeof RequiresSchema>;
 
 // ---------------------------------------------------------------------------
-// Determinism — §7.5 N-run pass-rate + (scenario×model) grid.
+// Determinism — N-run pass-rate + (scenario×model) grid.
 // `runs`/`passRateThreshold` feed test/live/stats.ts computePassRate at Stage-D.
 // ---------------------------------------------------------------------------
 
@@ -177,7 +177,7 @@ export const AcceptanceSpecSchema = z.object({
 export type AcceptanceSpec = z.infer<typeof AcceptanceSpecSchema>;
 
 // ---------------------------------------------------------------------------
-// UserStory — the §7.7 declarative spec.
+// UserStory — the declarative spec.
 // ---------------------------------------------------------------------------
 
 export const UserStorySchema = z.object({
@@ -187,18 +187,18 @@ export const UserStorySchema = z.object({
   story: z.string().min(1),
   /** Subsystems composed (Cat A–V) → feeds the story-coverage view. */
   tags: z.array(CategoryTagSchema).nonempty(),
-  /** Config mode-values exercised → named (the matrix cells are 136–146-owned). */
+  /** Config mode-values exercised → named (the matrix cells are owned by the depth suites). */
   dimensions: z.array(ConfigDimValueSchema),
   /** Gating → skip-with-reason, never fail. */
   requires: RequiresSchema,
-  /** Which §7.1 config profile to boot under (optional). */
+  /** Which config profile to boot under (optional). */
   profile: z.string().optional(),
   costTier: z.enum(["$0", "¢", "$", "$$"]),
   determinism: DeterminismSchema,
   /** Multi-turn / multi-session interaction script. */
   steps: z.array(JourneyStepSchema).nonempty(),
   acceptance: AcceptanceSpecSchema,
-  /** Flake hygiene (§7.5): active runs + blocks; quarantined is measured-non-blocking; deprecated excluded. */
+  /** Flake hygiene: active runs + blocks; quarantined is measured-non-blocking; deprecated excluded. */
   status: z.enum(["active", "quarantined", "deprecated"]),
 });
 export type UserStory = z.infer<typeof UserStorySchema>;

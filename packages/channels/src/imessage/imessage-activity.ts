@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * iMessage AppendOnly activity renderer (§7.2 / §18.3 row "AppendOnly").
+ * iMessage AppendOnly activity renderer.
  * iMessage is send-only — no in-place edit, no delete — so it wires the
  * `createAppendOnlyRenderer`: ONE opening status (the first non-trivial frame),
  * later frames are no-ops, the closing follow-up is SUPPRESSED on success (the
@@ -17,8 +17,8 @@
  *      not started")`), with NO structured numeric code to read. There is no
  *      reliable structural signal to disambiguate a retryable/permission case on
  *      this send-only channel, so the classifier DEFAULTS to
- *      `{kind:"internal", cause:e}` (KISS — Pitfall 4; no invented rich
- *      classifier). Per §19.3, the wrapped "Failed to send …" message is read
+ *      `{kind:"internal", cause:e}` (KISS — no invented rich
+ *      classifier). The wrapped "Failed to send …" message is read
  *      for NOTHING user-facing — it selects the variant only and is NEVER rendered
  *      or logged as activity text. The S4 fixture proves the failure text is
  *      `❌ {errorKind}` (from `failureLabel`), not the bridge error body.
@@ -36,7 +36,7 @@
  *   3. `createIMessageActivityRenderer` — wires the
  *      {@link createAppendOnlyRenderer}. AppendOnly has no delete to sequence, so
  *      its deps are `{ actions }` ONLY — there is NO TimerPort / ClockPort (the
- *      strategy schedules nothing; Pitfall 5). It does NOT re-implement any
+ *      strategy schedules nothing). It does NOT re-implement any
  *      sequencing — the strategy owns the opening-once + suppress-on-success +
  *      one-closing-on-failure finalize table. This is the signature the daemon
  *      wiring constructs.
@@ -61,7 +61,7 @@ import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
  * union. The live adapter wraps send/not-started failures in a bare `Error` with
  * no structured numeric code to read, so this DEFAULTS to `internal` carrying the
  * cause. The error is consulted for NOTHING that reaches the user — it selects the
- * variant only and is never rendered or logged as activity text (§19.3).
+ * variant only and is never rendered or logged as activity text.
  */
 export function classifyIMessageError(e: unknown): ActivityRenderError {
   // The iMessage bridge offers no structured code for send failures; there is no
@@ -108,9 +108,9 @@ export function makeIMessageRenderActions(
  * Create the iMessage AppendOnly activity renderer — wires the
  * {@link createAppendOnlyRenderer} with the per-channel render-actions adapter.
  *
- * AppendOnly has no delete to sequence — NO TimerPort. Pitfall 5 was about
- * the delete-sequencing TimerPort, NOT a read-only clock for elapsed display.
- * The optional `deps.clock` (§8.5) is forwarded into
+ * AppendOnly has no delete to sequence — NO TimerPort (a scheduling
+ * TimerPort is a different concern from a read-only clock for elapsed display).
+ * The optional `deps.clock` is forwarded into
  * the strategy so the "(running N s)" fallback lights up when no SEP plan is
  * active; `clock.now()` is read-only display arithmetic (no scheduling, no
  * I/O). The optional `deps.markers` is forwarded to the strategy's
@@ -125,15 +125,15 @@ export function createIMessageActivityRenderer(
 ): ChannelActivityRenderer {
   return createAppendOnlyRenderer({
     actions: makeIMessageRenderActions(adapter, channelId),
-    // §8.5 wiring: forward the
-    // daemon-injected ClockPort so AppendOnly's first-apply startedAtMs
-    // capture + elapsedMs feeds renderFrameText's "(running N s)" fallback.
-    // Without this forward, §8.5 would be silently inert in iMessage.
+    // Forward the daemon-injected ClockPort so AppendOnly's first-apply
+    // startedAtMs capture + elapsedMs feeds renderFrameText's "(running N s)"
+    // fallback. Without this forward, the elapsed fallback would be silently
+    // inert in iMessage.
     clock: deps.clock,
     markers: deps.markers,
     // iMessage has no button surface, so an approval frame appends the plain-text
     // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
-    // opening status (§6.4.6). A non-approval frame yields "" (no append).
+    // opening status. A non-approval frame yields "" (no append).
     buildPrompt: buildApprovalPrompt,
   });
 }

@@ -2,9 +2,9 @@
 /**
  * Video-generation provider factory (mirrors the image-gen factory).
  *
- * This legacy skills factory serves ONLY explicit `fal` (CFG-01 explicit-config
- * back-compat). The `auto`/`google`/`xai` selection modes are resolved by the
- * daemon's video-provider selector upstream (Plan 04) — they are NOT served by a
+ * This skills factory serves ONLY explicit `fal` (the explicit-config path).
+ * The `auto`/`google`/`xai` selection modes are resolved by the
+ * daemon's video-provider selector upstream — they are NOT served by a
  * second skills adapter — so any non-`fal` provider hits the `default` error
  * branch here.
  *

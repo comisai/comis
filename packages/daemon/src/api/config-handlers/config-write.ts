@@ -14,8 +14,8 @@
  *
  * Rate limiter: the `patchBucket` is constructed in `index.ts` (the composition
  * root) and passed to both `config-write` and `config-export` bundles so the
- * 5-patches-per-60s budget covers patch + apply combined (the merged limit
- * pre-split).
+ * 5-patches-per-60s budget covers patch + apply combined (one shared budget,
+ * not one per method).
  *
  * @module
  */
@@ -117,9 +117,9 @@ export function bindConfigWriteHandlers(
 
       const startMs = systemNowMs();
       // Bespoke pre-Zod: require `section` BEFORE contract parse so the
-      // error message is more actionable than Zod's. Legacy `path: "a.b.c"`
-      // shape was removed; callers must send the canonical
-      // {section, key, value} shape.
+      // error message is more actionable than Zod's. A dot-notation
+      // `path: "a.b.c"` shape is not accepted; callers must send the
+      // canonical {section, key, value} shape.
       const section = rawParams.section as string | undefined;
       if (!section) {
         throw new Error('Missing required parameter "section" for config.patch');
@@ -139,8 +139,8 @@ export function bindConfigWriteHandlers(
       // patch still surfaces in the JSONL log. When
       // deps.auditEnabled === false, skip the build —
       // appendConfigAuditWithOutcome no-ops on base === undefined, so the
-      // gate covers both halves of the two-phase pattern. Default-true
-      // semantics preserve prior behavior.
+      // gate covers both halves of the two-phase pattern. An unset
+      // auditEnabled defaults to true (audit on).
       const localPathForAudit = deps.configPaths.length > 0
         ? deps.configPaths[deps.configPaths.length - 1]!
         : deps.defaultConfigPaths[deps.defaultConfigPaths.length - 1]!;
@@ -148,10 +148,10 @@ export function bindConfigWriteHandlers(
         deps.auditEnabled === false ? undefined : buildConfigAuditBase(localPathForAudit);
       let wroteFile = false;
       let writeError: { code?: string; message?: string } | undefined;
-      // Track the validator's rejection message so the `finally` block
-      // can thread it into the audit outcome. Previously the message was
-      // scoped to the `catch` block and the `rejected` audit record
-      // carried no reason.
+      // Track the validator's rejection message at this scope so the
+      // `finally` block can thread it into the audit outcome — a message
+      // scoped to the `catch` block would leave the `rejected` audit
+      // record with no reason.
       let rejectionMessage: string | undefined;
 
       try {
@@ -308,7 +308,7 @@ export function bindConfigWriteHandlers(
 
         const durationMs = systemNowMs() - startMs;
 
-        // AUDIT-04 / H1: a content-free indicator (sha256 prefix + length), NEVER the raw `value`.
+        // A content-free indicator (sha256 prefix + length), NEVER the raw `value`.
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
@@ -364,7 +364,7 @@ export function bindConfigWriteHandlers(
         // the audit outcome carries it.
         rejectionMessage = errMsg;
 
-        // AUDIT-04 / H1: same content-free indicator — a rejected patch's value is just as secret-bearing.
+        // Same content-free indicator — a rejected patch's value is just as secret-bearing.
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",

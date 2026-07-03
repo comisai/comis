@@ -40,9 +40,9 @@ import type {
 } from "@comis/core";
 import type { DoctorCheck, DoctorContext, DoctorFinding } from "../types.js";
 import { formatRelativeExpiry } from "../../output/relative-time.js";
-// OBS-4 (live VPS 2026-06-19): in encrypted mode the CLI can't bootstrap the
-// store, but a RUNNING daemon can — so the profile-expiry check routes through
-// the daemon's auth.list RPC (token-free projection) instead of skipping.
+// In encrypted mode the CLI can't bootstrap the store, but a RUNNING daemon
+// can — so the profile-expiry check routes through the daemon's auth.list RPC
+// (token-free projection) instead of skipping.
 import { isDaemonRunning } from "../../sync-tooling/daemon-guard.js";
 import { withClient, callTyped } from "../../client/rpc-client.js";
 
@@ -51,8 +51,8 @@ const NEAR_EXPIRY_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const REFRESH_TEST_TIMEOUT_MS = 10_000;
 const TLS_PREFLIGHT_TIMEOUT_MS = 5_000;
 
-// Public OpenAI Codex client_id — same value pi-ai uses; using our own
-// would fingerprint Comis traffic in OpenAI's logs.
+// Public OpenAI Codex client_id shared by Codex-compatible clients — using
+// a Comis-specific value would fingerprint Comis traffic in OpenAI's logs.
 const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
 
@@ -108,9 +108,9 @@ async function checkProfiles(
     // SECRETS_MASTER_KEY), but a RUNNING daemon reads it — so route the
     // per-profile expiry check through the daemon's auth.list RPC (the same
     // token-free projection `comis auth list` uses). Only skip when the daemon
-    // is unreachable (then doctor genuinely cannot read from the CLI). OBS-4:
-    // doctor used to skip unconditionally in encrypted mode, so OAuth expiry
-    // health was invisible in the production posture — exactly when you'd want it.
+    // is unreachable (then doctor genuinely cannot read from the CLI).
+    // Skipping unconditionally in encrypted mode would make OAuth expiry
+    // health invisible in the production posture — exactly when you'd want it.
     const daemonUp = await isDaemonRunning(1000);
     if (!daemonUp) {
       return [

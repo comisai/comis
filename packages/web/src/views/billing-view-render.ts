@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure presentational templates for the billing view's COST-01/02 granularity
- * sections + the typed-query DSL filter bar.
+ * Pure presentational templates for the billing view's per-tool/per-subagent
+ * granularity sections + the typed-query DSL filter bar.
  *
- * Extracted from `billing-view.ts` to hold the ≤800-line file-size cap (the
- * WEBUI-03 landmine) — these are pure `html` factories that take their data +
- * formatters + callbacks as arguments and touch no component state or DOM.
+ * Extracted from `billing-view.ts` to hold the ≤800-line file-size cap — these
+ * are pure `html` factories that take their data + formatters + callbacks as
+ * arguments and touch no component state or DOM.
  *
  * @module
  */
@@ -36,8 +36,8 @@ export interface BillingRenderDeps {
 }
 
 /**
- * Per-tool cost section (COST-01 tool_tag). Labeled "(best-effort)" — the N3
- * even-split caveat. Empty list renders nothing (honest degradation).
+ * Per-tool cost section (tool_tag). Labeled "(best-effort)" — the even-split
+ * caveat. Empty list renders nothing (honest degradation).
  */
 export function renderToolCosts(
   toolCosts: ReadonlyArray<ToolCostBreakdown>,
@@ -72,10 +72,10 @@ export function renderToolCosts(
 }
 
 /**
- * Per-subagent cost section (COST-02 corrected-$ subtree rollup). Exact within
+ * Per-subagent cost section (corrected-$ subtree rollup). Exact within
  * the graph (no best-effort caveat).
  *
- * 179-wiring CR-01 — HONEST degradation when empty: per-subagent cost is COST-02's
+ * HONEST degradation when empty: per-subagent cost comes from the per-graph
  * `gs.nodeCost`, which is PER-GRAPH-RUN (in-memory, surfaced on `graph:completed` /
  * the Incident view), NOT persisted to `obs_token_usage` — so the per-agent billing
  * aggregate has no honest per-subagent source. Rather than render `nothing` (a

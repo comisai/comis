@@ -166,9 +166,9 @@ describe("providerStep", () => {
     expect(result.flow).toBe("advanced");
   });
 
-  // ---------- A1-A4: catalog-driven menu regression tests ----------
+  // ---------- Catalog-driven menu regression tests ----------
 
-  it("A1: renders all catalog providers + synthetic Custom (last)", async () => {
+  it("renders all catalog providers + synthetic Custom (last)", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
       "anthropic",
       "openai",
@@ -193,7 +193,7 @@ describe("providerStep", () => {
     });
   });
 
-  it("A2: renders only synthetic Custom when catalog returns []", async () => {
+  it("renders only synthetic Custom when catalog returns []", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([]);
 
     const prompter = createMockPrompter({ select: "custom" });
@@ -206,7 +206,7 @@ describe("providerStep", () => {
     expect(selectCall.options[0].value).toBe("custom");
   });
 
-  it("A3: unknown catalog provider renders with capitalize-fallback label", async () => {
+  it("unknown catalog provider renders with capitalize-fallback label", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
       "vercel-ai-gateway",
     ]);
@@ -223,9 +223,10 @@ describe("providerStep", () => {
     expect(vercel!.hint).toBeUndefined();
   });
 
-  it("A4: SUPPORTED_PROVIDERS does not appear in any wizard source file", () => {
+  it("SUPPORTED_PROVIDERS does not appear in any wizard source file", () => {
     // Source-grep regression pin: walk the wizard tree and assert none of
-    // the .ts (non-test) files contains the dropped constant.
+    // the .ts (non-test) files contains the forbidden constant (the provider
+    // menu must stay catalog-driven, never a hardcoded list).
     const here = dirname(fileURLToPath(import.meta.url));
     const wizardRoot = resolve(here, "..");
 

@@ -2,10 +2,10 @@
 /**
  * Deterministic constructed-scenario builders -- the
  * adversarial / contradiction / redaction / learning fixtures the 4 Comis-unique
- * Tier-3 harnesses (poisoning, trust-contradiction, redaction,
+ * harnesses (poisoning, trust-contradiction, redaction,
  * recall-learning) ingest WITHOUT any external corpus.
  *
- * WHY CONSTRUCTED: the 4 Tier-3 benchmarks measure
+ * WHY CONSTRUCTED: these 4 benchmarks measure
  * shipped properties (trust filter, write-time secret downgrade, FEED loop)
  * over scenarios that need no download. Each builder returns hard-coded
  * deterministic literals -- so the same call is byte-identical across runs and

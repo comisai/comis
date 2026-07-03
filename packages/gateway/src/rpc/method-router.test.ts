@@ -12,7 +12,7 @@ const RPC_CTX: RpcContext = { clientId: "client-a", scopes: ["rpc"] };
 /**
  * Build a minimal RpcMethodMap for a test. Seeds only the methods the test
  * actually exercises so we do not re-introduce the dead `createStubMethods`
- * shape via the back door (RESEARCH Pitfall 3).
+ * shape via the back door.
  */
 function makeInlineStubs(methods: readonly RpcMethodName[]): RpcMethodMap {
   const map: RpcMethodMap = {};
@@ -262,19 +262,19 @@ describe("createDynamicMethodRouter trace logging", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701, GATEWAY layer).
+  // Typed-refusal classification at the GATEWAY trace wrapper.
   //
-  // Live-test found the daemon-side fix (typed PreconditionError/SandboxDowngradeError
-  // classified warn in rpc-dispatch's classifyRpcError) was INCOMPLETE: this trace
-  // wrapper is a SECOND, independent error classifier that still logged the same
-  // refusal at error(50) — so `logscan --level 50,60` STILL surfaced an intentional
-  // policy/security refusal as an ERROR (module:gateway, "RPC call failed: <method>").
+  // This trace wrapper is a SECOND, independent error classifier (separate from
+  // rpc-dispatch's classifyRpcError). Without recognizing them here, a typed
+  // PreconditionError / SandboxDowngradeError — an intentional policy/security
+  // refusal — is logged at error(50), so a `logscan --level 50,60` surfaces it
+  // as an ERROR (module:gateway, "RPC call failed: <method>") rather than a warn.
   //
   // The typed errors propagate up to this wrapper with their `.name` intact; this
   // package cannot `instanceof` the daemon/@comis/agent classes (dep direction), so
   // it must recognize them by the stable `.name`. The messages below are the EXACT
-  // live shapes and match NONE of the substring branches, so pre-fix they fell
-  // through to internal/error(50) — that is the RED.
+  // runtime shapes and match NONE of the substring branches, so they must be
+  // classified by `.name`.
   // ---------------------------------------------------------------------------
   it("classifies a typed PreconditionError (by .name) as precondition/warn — not internal/error(50)", async () => {
     const { logger, calls } = makeLogger();

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Durable resume subsystem wiring (Phase 216 — the composition root for the
+ * Durable resume subsystem wiring (the composition root for the
  * durability engine). Mirrors `setup-delivery.ts`'s two-phase STRUCTURE:
  *
  *   1. `setupDurableResume()` constructs the two SQLite stores (against the SHARED
@@ -10,7 +10,7 @@
  *      adapters (the boot-order constraint — the engine's reconcile + replay need
  *      LIVE adapters), exactly like the delivery queue's `drainAndStart()`. It
  *      runs the bounded boot recovery (`engine.resumeAll()`) THEN starts a single
- *      daemon-wide watchdog interval (HB-01) that sweeps lapsed heartbeats.
+ *      daemon-wide watchdog interval that sweeps lapsed heartbeats.
  *   3. `shutdown()` cancels the watchdog interval — no leaked timer.
  *
  * GATING: when `config.enabled` is false (the default, OR no autonomy-bearing
@@ -19,9 +19,9 @@
  * NO watchdog timer) so a default install is byte-identical — mirroring
  * `setup-delivery.ts`'s inert-when-disabled return.
  *
- * The engine itself is PURE / I/O-free (Plan 04); this wiring binds it to the
+ * The engine itself is PURE / I/O-free; this wiring binds it to the
  * real stores + the injected LeaseManager re-mint / run-resume / send-replay /
- * channel-adapter / notify closures (Task 3 supplies those). The watchdog uses
+ * channel-adapter / notify closures. The watchdog uses
  * the INJECTED TimerPort (never the interval-scheduler global — the
  * globals.test.ts arch-gate).
  *
@@ -44,22 +44,22 @@ import { detectStaleRuns } from "../autonomy/durable-watchdog.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 import { isDagSpawnTree } from "../graph/graph-durable-checkpoint.js";
 
-/** The resolved `autonomy.durability` config the wiring reads (Plan 07-Task-1 schema). */
+/** The resolved `autonomy.durability` config the wiring reads. */
 export interface DurableResumeConfig {
   /** Master gate — already folds in `autonomy.durability.enabled AND an autonomy agent`. */
   readonly enabled: boolean;
   /** The lapsed-heartbeat threshold (ms) — the watchdog interval period + the stale cutoff. */
   readonly staleHeartbeatMs: number;
-  /** The wall-clock recovery budget (ms) for one boot/watchdog pass (HB-02). */
+  /** The wall-clock recovery budget (ms) for one boot/watchdog pass. */
   readonly recoveryBudgetMs: number;
 }
 
-/** The deps `setupDurableResume` closes over (Task 3 binds the real closures). */
+/** The deps `setupDurableResume` closes over. */
 export interface SetupDurableResumeDeps {
   /**
    * The durable-run + outward-send stores. The daemon builds these EARLY (before
    * the cap layer, so the jail-leg chokepoint can thread the durable store for the
-   * HIGH-1 _outwardStepIndex allocation) and passes them here. When omitted AND
+   * _outwardStepIndex allocation) and passes them here. When omitted AND
    * `config.enabled`, they are constructed from `db` (the standalone/test path).
    */
   durableRunStore?: DurableRunPort;
@@ -68,7 +68,7 @@ export interface SetupDurableResumeDeps {
   db: unknown;
   /** The resolved `autonomy.durability` posture (gate + thresholds). */
   config: DurableResumeConfig;
-  /** Narrow content-free event emitter (Task 3 adapts the real TypedEventBus). */
+  /** Narrow content-free event emitter (adapts the real TypedEventBus). */
   eventBus: DurableEventEmitter;
   logger: ComisLogger;
   /** Resolve a LIVE channel adapter by channel type (undefined when none) — populated post-setupChannels. */
@@ -79,7 +79,7 @@ export interface SetupDurableResumeDeps {
   resumeRun: (record: DurableRunRecord, leaseId: string) => Promise<Result<void, Error>>;
   /** Re-deliver a not_sent ledger row exactly once. */
   replaySend: (row: OutwardSendRecord) => Promise<Result<{ platformMessageId: string }, Error>>;
-  /** Content-free operator notification for an orphan / unresolved reconcile (HB-03). */
+  /** Content-free operator notification for an orphan / unresolved reconcile. */
   notify: NotifyFn;
   clock: ClockPort;
   timers: TimerPort;
@@ -142,7 +142,7 @@ export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeR
 
   const resumeAndStart = async (): Promise<void> => {
     // 1. Boot recovery: reconcile crashed-mid-send rows + resume-or-orphan, bounded
-    //    by recoveryBudgetMs (HB-02 — a backlog larger than the budget is deferred).
+    //    by recoveryBudgetMs (a backlog larger than the budget is deferred).
     const startMs = clock.now();
     const result = await engine.resumeAll();
     if (result.ok) {
@@ -157,7 +157,7 @@ export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeR
       );
     }
 
-    // 2. Start the single daemon-wide watchdog (HB-01). It fires at the stale
+    // 2. Start the single daemon-wide watchdog. It fires at the stale
     //    threshold cadence, detects lapsed-heartbeat runs, and feeds the engine.
     //    .unref() so it never blocks event-loop exit (mirrors the delivery drain timer).
     watchdog = timers.setInterval(() => {
@@ -190,10 +190,10 @@ export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeR
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Daemon composition helpers (Phase 216) — extracted from daemon.ts to hold its
+// Daemon composition helpers — extracted from daemon.ts to hold its
 // 3000-line cap, co-located with the engine wiring. buildDurableStores resolves
 // the gate + builds the stores EARLY (before the cap layer — the jail-leg
-// chokepoint shares the SAME store for the HIGH-1 _outwardStepIndex allocation);
+// chokepoint shares the SAME store for the _outwardStepIndex allocation);
 // buildDurableResume builds the engine (after the cap layer — BoundedAutonomy
 // reachable) + the boot/facts seams.
 // ───────────────────────────────────────────────────────────────────────────
@@ -266,8 +266,8 @@ export function buildDurableResume(deps: {
   clock: ClockPort;
   timers: TimerPort;
   /**
-   * Phase 216 Plan 12 (DUR-02/LOW-2): the graph coordinator's `resumeGraph(record)`
-   * entry (Plan 11). The resume engine's `resumeRun` dispatch routes a DAG-shaped run
+   * The graph coordinator's `resumeGraph(record)`
+   * entry. The resume engine's `resumeRun` dispatch routes a DAG-shaped run
    * record (spawn_tree entries are OBJECTS with a `status` field — {@link isDagSpawnTree})
    * to this for node re-entry; a flat run (string[] spawn_tree) takes the flat re-anchor.
    * Late-bound: the daemon constructs the coordinator AFTER buildDurableResume, so it is
@@ -289,14 +289,14 @@ export function buildDurableResume(deps: {
     logger,
     // channelFor reads the LIVE registry (populated by reference post-setupChannels).
     channelAdapters: (type: string) => channelAdaptersRef?.get(type) as ChannelPort | undefined,
-    // remintLease: re-mint from the persisted attenuated caps VERBATIM (DUR-02/03).
+    // remintLease: re-mint from the persisted attenuated caps VERBATIM.
     remintLease: (input) => sharedLeaseManager.mintLease(input),
     // resumeRun: re-anchor the root with BoundedAutonomy so the re-minted lease is
     // bounded (budget/kill reach). The checkpoint carries caps/tree/budget, not a
-    // full re-spawnable task spec, so M1 resumes-as-anchored (a richer re-spawn from
-    // the checkpoint is a future enhancement — see the SUMMARY known limitation).
+    // full re-spawnable task spec, so a run resumes-as-anchored (a richer re-spawn
+    // from the checkpoint is a future enhancement).
     resumeRun: async (record: DurableRunRecord, leaseId: string): Promise<Result<void, Error>> => {
-      // LOW-2 DAG-vs-flat dispatch (Plan 12): a DAG record (spawn_tree entries are
+      // DAG-vs-flat dispatch: a DAG record (spawn_tree entries are
       // OBJECTS with a `status` field) routes to the graph coordinator's resumeGraph
       // for node re-entry; a flat sub-agent run (string[] spawn_tree) takes the flat
       // re-anchor below and can NEVER mis-route. The discriminator is the explicit
@@ -319,16 +319,16 @@ export function buildDurableResume(deps: {
     },
     // replaySend: the content-free ledger row has no body, so a replay that lacks
     // the original message is an err — the engine parks it unresolved rather than
-    // double-sending a wrong body (Pitfall 2 honesty over a fabricated replay).
+    // double-sending a wrong body (honesty over a fabricated replay).
     replaySend: async (_row: OutwardSendRecord) =>
       err(new Error("durable replay requires the original message body, which the content-free ledger does not retain; parked unresolved")),
-    // notify: content-free operator escalation (HB-03). The engine also emits durable:orphaned.
+    // notify: content-free operator escalation. The engine also emits durable:orphaned.
     notify: (opts) => logger.warn({ kind: opts.kind, rootRunId: opts.rootRunId, hint: opts.hint, errorKind: "internal" as const }, `Durable resume: ${opts.reason}`),
     clock,
     timers,
   });
   const startAndResumeDurable = (): Promise<void> => durableResume.resumeAndStart();
-  // durableRunFacts (DUR-01): the runner's checkpoint reads the correlated leaseIds
+  // durableRunFacts: the runner's checkpoint reads the correlated leaseIds
   // from BoundedAutonomy (caps come from the spawn param; budgetConsumed is
   // informational — the meter exposes remaining, not consumed, so 0 here).
   const durableRunFacts = durableResume.durableRunStore

@@ -29,7 +29,7 @@ agents:
       halfOpenTimeoutMs: 500
     # The throughput test bursts 100 notification.send RPCs. They all resolve to
     # the DEFAULT agent's per-agent rate limiter (the gateway strips the test's
-    # per-call _agentId as a forgeable internal field — ORIGIN-02), so the 30/hour
+    # per-call _agentId as a forgeable internal field), so the 30/hour
     # default would reject ~70. Raise the ceiling well above the burst.
     notification:
       maxPerHour: 100000

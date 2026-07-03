@@ -170,7 +170,7 @@ describe("setHintFields — commentBefore preservation", () => {
       replacesPackages: ["yfinance", "yahoo-finance2"],
     });
     const out = doc.toString();
-    // Acceptance criterion: explicit grep for the literal comment string.
+    // The operator-authored comment must survive verbatim — assert the literal string.
     expect(out).toContain("# TODO: list packages this MCP/skill replaces");
     // And the comment is immediately above the (now-populated) replacesPackages block.
     const commentIdx = out.indexOf("# TODO: list packages this MCP/skill replaces");

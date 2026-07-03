@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the pure safe-only auto-answer policy
- * (terminal-auto-answer.ts) — SEC-12, spec §4.5/§4.6.
+ * Unit tests for the pure safe-only auto-answer policy
+ * (terminal-auto-answer.ts).
  *
  * `decideAutoAnswer(mode, screen, hintPatterns)` is a PURE typed decision: it never
- * sends a keystroke and never throws. The woken turn (124-09) acts on the verdict —
- * an `answer` keystroke goes through the P4 `enforceSendCapsThenAudit` send path; an
+ * sends a keystroke and never throws. The woken turn acts on the verdict —
+ * an `answer` keystroke goes through the `enforceSendCapsThenAudit` send path; an
  * `escalate` raises a `terminal:escalated` audit. These tests pin the FULL policy:
  *
  *   - safe-only ALLOWLISTS the safe: a screen matching an operator `hintPatterns`
@@ -15,11 +15,11 @@
  *   - the ESCALATE-ALWAYS gate WINS over a hintPattern match: an auth/login,
  *     destructive, or approval prompt escalates even when a hintPattern would
  *     otherwise match it (a CLI cannot phish a canned answer by rendering a fake
- *     "(y/n)" under an auth/destructive prompt — SEC-12, T-124-08).
+ *     "(y/n)" under an auth/destructive prompt).
  *   - mode `none` → always escalate (the policy is OFF).
  *   - OPERATOR-ONLY signature: the decision reads only (mode, screen, hintPatterns) —
  *     there is NO caller/model-supplied input path (operator-dialable, never
- *     model-dialable — T-124-09).
+ *     model-dialable).
  *
  * The decision is deterministic (no clock, no I/O) so it pins exactly under a fixture.
  *
@@ -34,7 +34,7 @@ import {
 } from "./terminal-auto-answer.js";
 import type { PlatformDialog } from "./platforms/index.js";
 
-describe("decideAutoAnswer — SEC-12 safe-only allowlist (Test 1: safe match → answer)", () => {
+describe("decideAutoAnswer — safe-only allowlist (a safe match → answer)", () => {
   it("answers an operator safe-pattern prompt with a canned keystroke + the matched index", () => {
     // A benign "continue?" style prompt the operator explicitly allowlisted.
     const screen = ["Build complete.", "Press enter to continue ❯ "].join("\n");
@@ -49,7 +49,7 @@ describe("decideAutoAnswer — SEC-12 safe-only allowlist (Test 1: safe match �
   });
 });
 
-describe("decideAutoAnswer — the SAFE default (Test 2: no match → escalate, no keystroke)", () => {
+describe("decideAutoAnswer — the SAFE default (no match → escalate, no keystroke)", () => {
   it("escalates no_safe_match when the screen matches no operator hintPattern", () => {
     const screen = "Some unrecognized prompt that nobody allowlisted: respond?";
     const decision = decideAutoAnswer("safe-only", screen, ["Press enter to continue"]);
@@ -61,7 +61,7 @@ describe("decideAutoAnswer — the SAFE default (Test 2: no match → escalate, 
   });
 });
 
-describe("decideAutoAnswer — ESCALATE-ALWAYS wins over a hintPattern (Test 3: auth/login)", () => {
+describe("decideAutoAnswer — ESCALATE-ALWAYS wins over a hintPattern (auth/login)", () => {
   it("escalates auth_login for a login prompt EVEN when a hintPattern matches it", () => {
     // The CLI renders a login prompt that ALSO contains the operator's safe pattern —
     // the escalate-always gate must win (a fake "(y/n)" must never auto-answer a login).
@@ -83,7 +83,7 @@ describe("decideAutoAnswer — ESCALATE-ALWAYS wins over a hintPattern (Test 3: 
   });
 });
 
-describe("decideAutoAnswer — ESCALATE-ALWAYS wins over a hintPattern (Test 4: destructive/approval)", () => {
+describe("decideAutoAnswer — ESCALATE-ALWAYS wins over a hintPattern (destructive/approval)", () => {
   it("escalates destructive for a destructive prompt even when a hintPattern matches", () => {
     const screen = ["This will DELETE all files. Continue?", "(y/n) ❯ "].join("\n");
     const decision = decideAutoAnswer("safe-only", screen, ["(y/n)"]);
@@ -106,8 +106,8 @@ describe("decideAutoAnswer — ESCALATE-ALWAYS wins over a hintPattern (Test 4: 
   });
 });
 
-describe("decideAutoAnswer — a VETTED profile dialog: APPROVAL tier does NOT veto, AUTH/DESTRUCTIVE floors STILL do (webhook-claude-cli-tdd-20260630)", () => {
-  // Live VPS: claude 2.1.x reworded its trust gate to add an "Enter to confirm · Esc to cancel"
+describe("decideAutoAnswer — a VETTED profile dialog: APPROVAL tier does NOT veto, AUTH/DESTRUCTIVE floors STILL do", () => {
+  // Observed live: claude 2.1.x reworded its trust gate to add an "Enter to confirm · Esc to cancel"
   // footer. The bare APPROVAL veto ("confirm") then escalated the documented trust-gate auto-answer,
   // stalling a driven claude session at the gate. A profile dialog is operator-vetted (selected by
   // allowId, classified destructive:false), so the generic APPROVAL tier must not veto it — but the
@@ -144,8 +144,8 @@ describe("decideAutoAnswer — a VETTED profile dialog: APPROVAL tier does NOT v
   });
 });
 
-describe("decideAutoAnswer — narration is NOT a prompt: a marker with no safe-pattern match must not force destructive (real-VPS 2026-06-16)", () => {
-  // Live Telegram drive: gpt-5.5 launched claude to build a Python app. claude NARRATED a TODO
+describe("decideAutoAnswer — narration is NOT a prompt: a marker with no safe-pattern match must not force destructive", () => {
+  // Observed on a live Telegram drive: gpt-5.5 launched claude to build a Python app. claude NARRATED a TODO
   // app ("add a todo, list, mark done, delete a todo by id, clear all completed") and queued
   // `! python -m unittest` to run its tests. No operator safe pattern matched, but the
   // destructive WORDS in claude's narration tripped the escalate-always gate → a FALSE
@@ -176,7 +176,7 @@ describe("decideAutoAnswer — narration is NOT a prompt: a marker with no safe-
   });
 });
 
-describe("decideAutoAnswer — mode none (Test 5: always escalate)", () => {
+describe("decideAutoAnswer — mode none always escalates", () => {
   it("escalates regardless of a matching hintPattern when the policy is off", () => {
     const screen = "Press enter to continue ❯ ";
     const decision = decideAutoAnswer("none", screen, ["Press enter to continue"]);
@@ -188,7 +188,7 @@ describe("decideAutoAnswer — mode none (Test 5: always escalate)", () => {
   });
 });
 
-describe("decideAutoAnswer — operator-only signature (Test 6)", () => {
+describe("decideAutoAnswer — operator-only signature", () => {
   it("takes only (mode, screen, hintPatterns) — there is NO model-supplied input path", () => {
     // Type-level/signature assertion: the function arity is exactly three, and the
     // third argument is the operator-configured pattern list (a readonly string[]).
@@ -202,18 +202,18 @@ describe("decideAutoAnswer — operator-only signature (Test 6)", () => {
   });
 });
 
-describe("decideAutoAnswer — CLASS-01 I4 no-bypass: a dialog_detected frame still escalates (SEC-12 wins)", () => {
-  // CLASS-01 makes a full-screen dialog classify `awaiting-input`/`dialog_detected`
+describe("decideAutoAnswer — dialog-detection no-bypass: a dialog_detected frame still escalates (escalate-always wins)", () => {
+  // The dialog detector makes a full-screen dialog classify `awaiting-input`/`dialog_detected`
   // instead of `stuck`. Classification and the answer-decision are ORTHOGONAL: the
-  // classifier says "this is a prompt"; SEC-12 says "a human must answer THIS one".
-  // These pin that the dialog-detection change cannot bypass escalate-always (I4) —
+  // classifier says "this is a prompt"; the escalate-always gate says "a human must answer
+  // THIS one". These pin that the dialog-detection change cannot bypass escalate-always —
   // a dialog screen carrying an auth/destructive cue still escalates BEFORE any
   // hintPattern auto-answer. The dialog frame flows through this SAME decideAutoAnswer
   // the wake-turn already calls (terminal-wake-turn.ts) — no new wiring.
 
   it("a boxed permission DIALOG with an auth-login cue escalates auth_login even though it is dialog_detected", () => {
     // The exact dialog SHAPE the classifier now reads as dialog_detected: a box-drawing
-    // permission prompt with a selector — but the prompt text is a login, so SEC-12
+    // permission prompt with a selector — but the prompt text is a login, so
     // escalate-always wins over the operator's allowlisted (y/n) cue.
     const dialogScreen = [
       "╭──────────────────────────────────────────╮",
@@ -267,7 +267,7 @@ describe("decideAutoAnswer — mode all still escalate-always (trusted-input onl
   });
 });
 
-describe("decideAutoAnswer — consumes profile.dialogs (DIALOG-01/02, v2.26 Phase 169)", () => {
+describe("decideAutoAnswer — consumes the selected platform profile's dialogs", () => {
   const trustGate: PlatformDialog = {
     name: "trust-gate",
     detect: /Do you trust the files in this folder/i,
@@ -299,7 +299,7 @@ describe("decideAutoAnswer — consumes profile.dialogs (DIALOG-01/02, v2.26 Pha
     expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "destructive" });
   });
 
-  it("the escalate-always veto WINS over a non-destructive dialog safeAnswer (SEC-12 hard floor)", () => {
+  it("the escalate-always veto WINS over a non-destructive dialog safeAnswer (the hard floor)", () => {
     // A trust-gate that ALSO carries an auth cue on the same screen → escalate, never auto-answer.
     const screen = ["Do you trust the files in this folder?", "Please sign in to continue"].join("\n");
     const decision = decideAutoAnswer("safe-only", screen, [], [trustGate]);
@@ -312,7 +312,7 @@ describe("decideAutoAnswer — consumes profile.dialogs (DIALOG-01/02, v2.26 Pha
     expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "no_safe_match" });
   });
 
-  it("no dialogs (default) ⇒ byte-identical to today — a non-matching screen escalates (INV-1)", () => {
+  it("no dialogs (default) ⇒ exactly the hintPattern-only behavior — a non-matching screen escalates", () => {
     const decision = decideAutoAnswer("safe-only", "some unrecognized prompt", ["nope"]);
     expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "no_safe_match" });
   });
@@ -323,14 +323,14 @@ describe("decideAutoAnswer — consumes profile.dialogs (DIALOG-01/02, v2.26 Pha
     expect(decision.action).toBe("answer"); // the hintPattern path still works (canned Enter)
   });
 
-  it("tags a dialog answer source 'dialog' and a hint answer source 'hint' (audit provenance, M1/L1)", () => {
+  it("tags a dialog answer source 'dialog' and a hint answer source 'hint' (audit provenance)", () => {
     const dialogDec = decideAutoAnswer("safe-only", "Do you trust the files in this folder?", [], [trustGate]);
     expect(dialogDec.action === "answer" && dialogDec.source).toBe("dialog");
     const hintDec = decideAutoAnswer("safe-only", "Press enter to continue", ["Press enter to continue"], []);
     expect(hintDec.action === "answer" && hintDec.source).toBe("hint");
   });
 
-  it("a destructive dialog escalates even when a non-destructive dialog matches the screen FIRST (order-independent, L2)", () => {
+  it("a destructive dialog escalates even when a non-destructive dialog matches the screen FIRST (order-independent)", () => {
     const benignFirst: PlatformDialog = { name: "benign", detect: /run command/i, safeAnswer: ["\r"], destructive: false };
     const destructiveLater: PlatformDialog = { name: "danger", detect: /run command/i, safeAnswer: ["\r"], destructive: true };
     // Both match; benign is listed FIRST — the destructive floor must still win (not order-dependent).

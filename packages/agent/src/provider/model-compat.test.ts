@@ -98,7 +98,7 @@ describe("normalizeModelCompat - gbnf auto-detection", () => {
   });
 
   it("returns an explicit gbnf opt-in as-is on a non-ollama provider (LM Studio/llama.cpp/vLLM path)", () => {
-    // Explicit opt-in needs no providerType -- GBNF-01's zero-new-config-keys path.
+    // Explicit opt-in needs no providerType -- the zero-new-config-keys path.
     const result = normalizeModelCompat({
       provider: "my-lmstudio",
       id: "m",
@@ -110,8 +110,9 @@ describe("normalizeModelCompat - gbnf auto-detection", () => {
 
 describe("normalizeModelCompat - custom-keyed xAI (generalized gate)", () => {
   it("applies the full xai profile when providerType is xai under a custom provider key", () => {
-    // RED pre-patch: detection was name-only (provider === "xai"), so a
-    // custom-keyed xAI provider ("my-xai", type "xai") got NO profile.
+    // Guards the generalized gate: with name-only detection
+    // (provider === "xai") a custom-keyed xAI provider ("my-xai", type "xai")
+    // would get NO profile.
     const result = normalizeModelCompat({
       provider: "my-xai",
       id: "grok-3",
@@ -144,10 +145,10 @@ describe("normalizeModelCompat - custom-keyed xAI (generalized gate)", () => {
   });
 });
 
-describe("normalizeModelCompat - D-08 baseUrl never consulted", () => {
+describe("normalizeModelCompat - baseUrl never consulted", () => {
   it("ignores an ollama-looking baseUrl when no providerType is declared", () => {
     // Detection keys ONLY on declared config type / explicit profile -- a
-    // provider must not self-elect into a profile via its endpoint (D-08).
+    // provider must not self-elect into a profile via its endpoint.
     const result = normalizeModelCompat({
       provider: "p",
       id: "m",

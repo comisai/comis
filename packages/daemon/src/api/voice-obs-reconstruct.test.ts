@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-02 offline reconstruction test (Phase 196, THE binding OBS-02 oracle).
+ * Offline reconstruction test for the voice observability path (THE binding oracle).
  *
  * Drives the FROZEN `assembleIncidentReportFromSources` pipeline (the same
  * function `comis explain` runs) against an in-memory fixture trajectory
  * containing the `media.stt.*` / `media.tts.*` records the daemon voice RPC
  * handlers (`media.transcribe` / `tts.synthesize`) direct-emit — proving a VOICE
- * turn is reconstructable from observability WITHOUT a live daemon (CLAUDE.md:
- * live `comis explain` = operator-UAT). Mirrors `video-obs-reconstruct.test.ts`
- * (192) + `vision-obs-reconstruct.test.ts` (187) + `image-obs-reconstruct.test.ts`
- * (186) — voice is wholly IN-TURN (no background-completion sequence like video).
+ * turn is reconstructable from observability WITHOUT a live daemon.
+ * Mirrors `video-obs-reconstruct.test.ts`
+ * + `vision-obs-reconstruct.test.ts` + `image-obs-reconstruct.test.ts`
+ * — voice is wholly IN-TURN (no background-completion sequence like video).
  *
  * THE binding assertion: the assembler reconstructs a voice turn into a dedicated
  * additive `voice` block — provider / keyless? / model / durationMs / costUsd /
- * the resolved `source` rung / outcome. OBS-05's keyless `costUsd:0` is VISIBLE on
+ * the resolved `source` rung / outcome. The keyless `costUsd:0` is VISIBLE on
  * the block (not absent). This is OFFLINE (no live daemon, no live recorder); we
  * do NOT assert `recorder.recordEvent` was called (that couples to the
  * best-effort live emit, which is NOT the binding contract).
@@ -31,7 +31,7 @@ const DATA_DIR = "/tmp/voice-obs-reconstruct";
 /** A trajectory event record as written by the recorder (the
  *  `traceSchema: "comis-trajectory"` EVENT shape `toIncidentSignals` reads,
  *  keyed on `type` with the content-free payload under `data`). All records
- *  carry the SAME sessionKey + traceId — one voice turn (the OBS-02 stitch). */
+ *  carry the SAME sessionKey + traceId — one voice turn stitched together. */
 function trajectoryRecord(
   type: string,
   data: Record<string, unknown>,
@@ -55,8 +55,8 @@ function trajectoryRecord(
 
 /** A reader whose readSessionRecords returns the supplied trajectory records.
  *  The other three sources are empty — a voice turn carries no executor
- *  `sessionEnd` rollup (Pitfall 2 — the voice RPC handlers run in the daemon
- *  context, not the executor; the cost rides the trajectory, Route a). */
+ *  `sessionEnd` rollup (the voice RPC handlers run in the daemon
+ *  context, not the executor; the cost rides the trajectory). */
 function makeVoiceFixtureReader(records: Array<Record<string, unknown>>): IncidentSourceReader {
   return {
     readSessionRecords: async () => records,
@@ -73,8 +73,8 @@ async function assemble(records: Array<Record<string, unknown>>): Promise<Incide
   })) as IncidentReport;
 }
 
-describe("OBS-02 offline reconstruction — comis explain surfaces a voice turn", () => {
-  it("keyless STT: reconstructs provider/keyless/model/durationMs/costUsd:0/source/outcome (OBS-05 keyless $0 visible)", async () => {
+describe("offline reconstruction — comis explain surfaces a voice turn", () => {
+  it("keyless STT: reconstructs provider/keyless/model/durationMs/costUsd:0/source/outcome (keyless $0 visible)", async () => {
     const report = await assemble([
       trajectoryRecord(
         "media.stt.requested",
@@ -88,21 +88,21 @@ describe("OBS-02 offline reconstruction — comis explain surfaces a voice turn"
       ),
     ]);
 
-    // The OBS-02 binding bar: the voice turn is reconstructable from the
-    // trajectory (Route a) via a dedicated additive `voice` block.
+    // The binding bar: the voice turn is reconstructable from the
+    // trajectory via a dedicated additive `voice` block.
     expect(report.voice).toBeDefined();
     expect(report.voice?.provider).toBe("local");
     expect(report.voice?.keyless).toBe(true);
     expect(report.voice?.model).toBe("base");
     expect(report.voice?.durationMs).toBe(1200);
-    // OBS-05: keyless records costUsd:0 EXPLICITLY — "free" is VISIBLE, not absent.
+    // Keyless records costUsd:0 EXPLICITLY — "free" is VISIBLE, not absent.
     expect(report.voice?.costUsd).toBe(0);
-    // OBS-03: the resolved selection rung reconstructs onto the block.
+    // The resolved selection rung reconstructs onto the block.
     expect(report.voice?.source).toBe("keyless-local");
     expect(report.voice?.outcome).toBe("ok");
   });
 
-  it("keyed TTS: reconstructs provider/keyless:false/outcome with NO costUsd (FLAG 4 — keyed cost omitted, no per-call source)", async () => {
+  it("keyed TTS: reconstructs provider/keyless:false/outcome with NO costUsd (keyed cost omitted, no per-call source)", async () => {
     const report = await assemble([
       trajectoryRecord(
         "media.tts.requested",
@@ -121,7 +121,7 @@ describe("OBS-02 offline reconstruction — comis explain surfaces a voice turn"
     expect(report.voice?.keyless).toBe(false);
     expect(report.voice?.source).toBe("follow-main-key");
     expect(report.voice?.outcome).toBe("ok");
-    // FLAG 4: a keyed path has no per-call cost source today → costUsd omitted
+    // A keyed path has no per-call cost source today → costUsd omitted
     // (NOT a fabricated number). The block exists; the cost is simply absent.
     expect(report.voice?.costUsd).toBeUndefined();
   });
@@ -148,7 +148,7 @@ describe("OBS-02 offline reconstruction — comis explain surfaces a voice turn"
     expect(report.voice?.costUsd).toBeUndefined();
   });
 
-  it("seq-aware (IN-04): a STALE lower-seq requested arriving AFTER a completed does NOT overwrite the ok outcome", async () => {
+  it("seq-aware fold: a STALE lower-seq requested arriving AFTER a completed does NOT overwrite the ok outcome", async () => {
     // The terminal completed lands at seq 2 (outcomeSeq=2). A stale `requested`
     // re-arrives at seq 1 (< 2). The seq-aware fold must NOT downgrade the ok
     // outcome back to the conservative requested seed (the video seq precedent).

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for classifyGrokVideoError (GROK error classification — GROK-02).
+ * Tests for classifyGrokVideoError (xAI Grok video-error classification).
  *
  * Unlike FAL (which has NO "failed" status — failure is a THROW) and like Veo,
- * the xAI Grok status union ALSO carries a terminal `failed`/`expired` status
- * (190-RESEARCH §Pattern 2 + Pitfall 3). The classifier therefore takes an
+ * the xAI Grok status union ALSO carries a terminal `failed`/`expired`
+ * status. The classifier therefore takes an
  * `opts.status` ("failed" | "expired") in addition to the FAL/Veo `emptyResult`:
  *   - `status:"expired"` (render expired before download) → empty_response with
  *     an "expired" hint, UNLESS an error payload substring-matches auth/quota/
@@ -85,13 +85,13 @@ describe("classifyGrokVideoError", () => {
     }
   });
 
-  it("GROK-02 expired: status:'expired' with no error payload → empty_response with an expired hint", () => {
+  it("classifies status:'expired' with no error payload as empty_response with an expired hint", () => {
     const r = classifyGrokVideoError(undefined, { status: "expired" });
     expect(r.videoErrorKind).toBe("empty_response");
     expect(r.hint.toLowerCase()).toContain("expired");
   });
 
-  it("GROK-02 failed (moderation message) → content_blocked via the error substring", () => {
+  it("classifies status:'failed' with a moderation message as content_blocked via the error substring", () => {
     const r = classifyGrokVideoError(
       { code: "x", message: "render failed: blocked by moderation" },
       { status: "failed" },
@@ -99,12 +99,12 @@ describe("classifyGrokVideoError", () => {
     expect(r.videoErrorKind).toBe("content_blocked");
   });
 
-  it("GROK-02 failed (generic message) → empty_response", () => {
+  it("classifies status:'failed' with a generic message as empty_response", () => {
     const r = classifyGrokVideoError({ code: "x", message: "render failed" }, { status: "failed" });
     expect(r.videoErrorKind).toBe("empty_response");
   });
 
-  it("GROK-02 expired but the error payload matches auth → auth_required still wins", () => {
+  it("classifies status:'expired' with an auth-matching error payload as auth_required — the substring wins", () => {
     // expired-with-an-auth-error: the substring classification takes precedence
     // over the bare expired→empty_response default.
     const r = classifyGrokVideoError({ message: "401 unauthorized" }, { status: "expired" });

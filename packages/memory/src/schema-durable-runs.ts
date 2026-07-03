@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `durable_runs` table DDL — the durable checkpoint spine the Phase-216
- * resume engine scans on boot (DUR-01/DUR-02/DUR-03). A long-running agent run
+ * The `durable_runs` table DDL — the durable checkpoint spine the resume engine
+ * scans on boot. A long-running agent run
  * writes its `{spawnTree, caps, leaseIds, budgetConsumed, cronOrigin, stepIndex,
  * status, lastHeartbeatAt}` here so a daemon RESTART can find it
  * (`listResumable`), keep it alive (`touchHeartbeat`), and refuse to re-mint a
@@ -10,25 +10,25 @@
  * the in-memory `BoundedAutonomy`/`LeaseManager` are rebuilt FROM it on resume.
  *
  * Forward-only, re-run-safe: create-if-not-exists only, no destructive or
- * reverse DDL (design §9). Extracted from `schema.ts` (which is at the 800-line
- * cap) — `initSchema` CALLS this so the table exists on every boot (Pitfall 5:
- * a table defined here but not wired into initSchema is MISSING at runtime).
+ * reverse DDL. Extracted from `schema.ts` (which is at the 800-line
+ * cap) — `initSchema` CALLS this so the table exists on every boot (a table
+ * defined here but not wired into initSchema is MISSING at runtime).
  *
- * SECURITY (T-216-05, mirrors video_jobs T-189-02): there is NO secret / bearer
+ * SECURITY (mirrors video_jobs): there is NO secret / bearer
  * / token / api_key column. The lease credential is NEVER persisted — only the
  * ATTENUATED `caps` (the result of `attenuateCaps`, never a superset) and the
  * `lease_ids` correlation are stored, and the credential is re-minted FRESH on
  * resume (`data-directory.mdx` invariant). A hand-edited `caps` column is gated by the
- * Plan-01 `parseDurableRunRecord` Zod union before any resume re-mint (T-216-06),
+ * `parseDurableRunRecord` Zod union before any resume re-mint,
  * so a tampered `caps:["admin"]` orphans the run rather than escalating.
  *
- * NEW-1 (the dedicated outward counter): `outward_step` is the SOLE monotonic
+ * The dedicated outward counter: `outward_step` is the SOLE monotonic
  * outward-send counter column, owned ENTIRELY by `allocateOutwardStep`. It seeds
  * at the `-1` 'no outward send yet' sentinel (the value the domain schema permits
- * via `.min(-1)`, NEW-5) so the first `allocateOutwardStep` yields 0.
+ * via `.min(-1)`) so the first `allocateOutwardStep` yields 0.
  * `upsertCheckpoint` MUST NEVER write this column, or a checkpoint between two
- * outward sends would reset the counter and re-introduce HIGH-1. (LOW-1: there
- * is NO coarse per-step index column — the runner is a spawn-orchestrator with
+ * outward sends would reset the counter and re-introduce the duplicate-send bug.
+ * (There is NO coarse per-step index column — the runner is a spawn-orchestrator with
  * no per-step loop, so a coarse marker would be dead state.)
  *
  * `better-sqlite3` durability is WAL + path-based chmod (never fd-based file
@@ -65,7 +65,7 @@ export function ensureDurableRunTable(db: Database.Database): void {
       updated_at_ms      INTEGER NOT NULL
     )
   `);
-  // Partial index for the boot-resume scan (DUR-02) + the heartbeat watchdog's
+  // Partial index for the boot-resume scan + the heartbeat watchdog's
   // stale-running sweep: both filter status='running' and order by the heartbeat.
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_durable_runs_resumable ON durable_runs (status, last_heartbeat_at) WHERE status = 'running'`,

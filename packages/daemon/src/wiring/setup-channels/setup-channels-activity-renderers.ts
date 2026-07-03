@@ -31,9 +31,9 @@
  * selectStrategy can route to now produces a live per-channelId factory.
  *
  * NOTE: the activity kill-switch (per-channel runtime toggle + global
- * emergency override) is enforced in a later phase — this function wires the
- * renderer UNCONDITIONALLY (capability-driven only via selectStrategy). Do NOT
- * add any config-toggle gate here; absence is intentional.
+ * emergency override) is enforced downstream in the turn coordinator — this
+ * function wires the renderer UNCONDITIONALLY (capability-driven only via
+ * selectStrategy). Do NOT add any config-toggle gate here; absence is intentional.
  *
  * The returned map feeds the orchestrator's per-turn `coordinatorFactory`
  * (ExecutionPipelineDeps), keyed by channelType. Threading the

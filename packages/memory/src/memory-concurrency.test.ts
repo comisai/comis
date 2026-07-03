@@ -67,7 +67,7 @@ function createWalConfig(dbPath: string): MemoryConfig {
     enabled: true,
     dbPath,
     walMode: true,
-    // Phase 226: the recall keepers nest under memory.recall (design §5).
+    // The recall keepers nest under memory.recall.
     recall: {
       embeddingModel: "test",
       embeddingDimensions: 4,

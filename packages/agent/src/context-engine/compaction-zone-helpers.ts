@@ -9,7 +9,7 @@
  *   assistant tool_use and its tool_results never split across zones
  * - `estimateRangeChars` — char total for a half-open message range
  * - `clampFactorText` — the text of one message used to compute its
- *   scriptTokenFactor at the SUMW-01 span-clamp walk (TOK-01, Phase 179)
+ *   scriptTokenFactor at the compaction span-clamp walk
  *
  * @module
  */
@@ -75,8 +75,8 @@ export function estimateRangeChars(
 }
 
 /**
- * TOK-01 (Phase 179): the text of one message used to compute its
- * scriptTokenFactor at the SUMW-01 span-clamp walk — string content, or for
+ * The text of one message used to compute its
+ * scriptTokenFactor at the compaction span-clamp walk — string content, or for
  * array content the concatenated text/thinking fields plus JSON.stringify of
  * toolCall arguments, mirroring what estimateContextCharsWithDualRatio counts.
  * A plain concat is sufficient for the FACTOR; the dual-ratio CHAR COUNT stays
@@ -112,20 +112,21 @@ export function clampFactorText(m: AgentMessage): string {
 }
 
 /**
- * OBS-01 (Phase 180): the small-model G4 detector. Compare the dominant script
+ * The small-summarizer language-drift detector. Compare the dominant script
  * of a completed summary against its source chunk; when a NON-Latin source
  * produced a Latin summary, emit `context:summary_language_mismatch` (a weak
  * local summarizer silently writing English summaries of Hebrew chunks becomes
  * a counted `comis fleet` finding with the `strongerSummarizerModel` remedy hint).
  *
  * VISIBILITY ONLY — no gating, no rejection, no behavior change to the summarize
- * paths (design §8 REJECTs validation-gating: a mixed code-heavy chunk legitimately
- * skews Latin via the 0.3 dominance threshold in `dominantScript`, so this is a
- * count an operator reviews, not an error to block). The emit is strictly
- * additive and GUARDED: a throwing subscriber NEVER fails the summarize/compaction
- * pass (the `onCondensed` non-fatal contract). The payload carries the closed
- * `ScriptClass` enums + a depth count + ids ONLY — NEVER the summary or source
- * body (I8 / §2.7); `dominantScript` reads the text locally and nothing leaks.
+ * paths (validation-gating is deliberately rejected: a mixed code-heavy chunk
+ * legitimately skews Latin via the 0.3 dominance threshold in `dominantScript`,
+ * so this is a count an operator reviews, not an error to block). The emit is
+ * strictly additive and GUARDED: a throwing subscriber NEVER fails the
+ * summarize/compaction pass (the `onCondensed` non-fatal contract). The payload
+ * carries the closed `ScriptClass` enums + a depth count + ids ONLY — NEVER the
+ * summary or source body (log/event payloads never carry message content);
+ * `dominantScript` reads the text locally and nothing leaks.
  *
  * @param eventBus - the site's typed bus (absent ⇒ a silent no-op via the `?.`)
  * @param logger   - structured logger for the guarded-emit failure WARN
@@ -146,7 +147,7 @@ export function emitSummaryLanguageMismatch(
     nowMs: number;
   },
 ): void {
-  // One O(n) dominantScript pass each (SCRIPT-01). Fire ONLY on the predictable
+  // One O(n) dominantScript pass each. Fire ONLY on the predictable
   // small-summarizer failure: a non-Latin source whose summary came back Latin.
   const sourceScript = dominantScript(args.sourceText);
   if (sourceScript === "latin") return; // Latin (or code-heavy ⇒ latin) source — silent.
@@ -164,7 +165,7 @@ export function emitSummaryLanguageMismatch(
     });
   } catch (err) {
     // Guarded-emit (the onCondensed isolation pattern): observability NEVER
-    // fails the summarize/compaction pass. Content-free WARN (§2.7).
+    // fails the summarize/compaction pass. Content-free WARN — no message bodies.
     logger.warn(
       {
         err: err instanceof Error ? err.message : String(err),

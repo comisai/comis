@@ -4,17 +4,17 @@
 // developer shipped a malformed profile (an allowId collision or a ReDoS-prone hot-path pattern) —
 // caught at load / by the registry test, NEVER a runtime user path and never a silent mis-selection.
 /**
- * The platform-profile REGISTRY (design §4/§7) — `getPlatformProfile(allowId)`.
+ * The platform-profile REGISTRY — `getPlatformProfile(allowId)`.
  *
  * Selection is by the operator-declared `allowId` (exact-string match, unique). `undefined` ⇒ the
- * agnostic default (§3). The driven program cannot pick its own profile (no content-sniffing —
- * §5/INV-3): only an allowId the operator declared in the allowlist resolves a profile.
+ * agnostic default. The driven program cannot pick its own profile (no content-sniffing):
+ * only an allowId the operator declared in the allowlist resolves a profile.
  *
  * Two load-time guards run ONCE at module import over `ALL_PROFILES`, so a malformed profile set
  * FAILS AT LOAD (never a silent mis-selection):
- *   - `assertUniqueAllowIds` — no allowId maps to >1 profile (D3).
+ *   - `assertUniqueAllowIds` — no allowId maps to >1 profile.
  *   - `assertSafeProfilePatterns` — every perception/dialog regex is free of nested unbounded
- *     quantifiers (the ReDoS shapes); patterns run on every read/settle frame (hot path — D1).
+ *     quantifiers (the ReDoS shapes); patterns run on every read/settle frame (hot path).
  *
  * @module
  */
@@ -31,7 +31,8 @@ export type {
 } from "./terminal-platform-profile.js";
 
 /**
- * Throw when two profiles claim the same `allowId` — the D3 1:1 invariant. Called at module load
+ * Throw when two profiles claim the same `allowId` — each allowId must map to exactly one
+ * profile. Called at module load
  * over the shipped set AND exported for the registry test. The message names the colliding allowId.
  */
 export function assertUniqueAllowIds(profiles: readonly TerminalPlatformProfile[]): void {
@@ -56,7 +57,7 @@ export function assertUniqueAllowIds(profiles: readonly TerminalPlatformProfile[
  * could stall the worker, so the registry rejects it at LOAD rather than at the first hostile screen.
  *
  * Implemented as a paren-matching scan (not a single-level regex — which misses nested and brace/
- * alternation shapes, WR-01): walk the source skipping escaped chars + character classes, and for each
+ * alternation shapes): walk the source skipping escaped chars + character classes, and for each
  * group whose CLOSING paren is followed by an unbounded quantifier (`*`/`+`/`{`), flag it if its BODY
  * contains an inner unbounded quantifier (`*`/`+`/`{n,}`) OR an alternation (`|`). Conservative by
  * design — it favors rejection (an author rewrites a flagged pattern), but it does NOT trip on the
@@ -142,8 +143,8 @@ const BY_ALLOW_ID: ReadonlyMap<string, TerminalPlatformProfile> = (() => {
 
 /**
  * Resolve the read-side platform profile for an operator-declared `allowId`. Exact-string match;
- * `undefined` ⇒ the agnostic default (§3). This is the SOLE selection path — by allowId, never by
- * content (§5/INV-3).
+ * `undefined` ⇒ the agnostic default. This is the SOLE selection path — by allowId, never by
+ * content.
  */
 export function getPlatformProfile(allowId: string): TerminalPlatformProfile | undefined {
   return BY_ALLOW_ID.get(allowId);

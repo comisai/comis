@@ -6,15 +6,15 @@
  * Direct-injection (NOT the RPC `session_search`/`memory_search` recall path):
  *   1. SCOPE: the conversation is derived per-call from `tryGetContext().sessionKey`
  *      and rejected (`permission_denied`) when there is no live session. NEVER
- *      cached in the factory closure; NEVER a caller-supplied id (E2 isolation).
+ *      cached in the factory closure; NEVER a caller-supplied id (conversation isolation).
  *   2. SANITIZE: the raw query is run through `sanitizeFts5Query` (the skills-side
- *      sanitizer) BEFORE it reaches `store.searchLcd` (PATTERNS gap #2 — the store
+ *      sanitizer) BEFORE it reaches `store.searchLcd` (the store
  *      trusts a pre-sanitized query).
  *   3. TAINT: every returned hit snippet is recovered/untrusted content, so it is
  *      wrapped via `wrapExternalContent({ source: "unknown" })` before it leaves
  *      the tool (the prompt-injection surface).
  *   4. OBSERVABILITY: logs ids/counts/durationMs/step ONLY — never the query text
- *      or a snippet body (Pitfall 2 / log-payload-checker gate).
+ *      or a snippet body (the log-payload-checker gate).
  *
  * @module
  */
@@ -28,7 +28,7 @@ import { sanitizeFts5Query } from "../../../platform-tools/tools/fts5-sanitizer.
 import { emitExpansionMetric, emitScriptZeroHit, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
 
 /**
- * OBS-01 scan-floor cap note surfaced to the model when the bounded normalized
+ * Scan-floor cap note surfaced to the model when the bounded normalized
  * scan reached its row cap (`lane === "scan" && scanCapped`). Content-free
  * (no query text) — names the SCAN_ROW_CAP (`@comis/memory` `SCAN_ROW_CAP = 2000`)
  * so the model knows older messages were not scanned. Pinned by the tool test.
@@ -89,8 +89,8 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
 
     async execute(_toolCallId: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
       // (1) SCOPE — build the (conversation, agent, tenant) read scope from the
-      //     LIVE context per-call (R4 / WR-02); fail closed without a fully-scoped
-      //     session. NEVER a wiring closure (multi-agent-safe, Pitfall 4).
+      //     LIVE context per-call; fail closed without a fully-scoped
+      //     session. NEVER a wiring closure (multi-agent-safe).
       const ctxScope = requireCtxScope();
       const conversationId = ctxScope.conversationId;
 
@@ -101,7 +101,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       const limit = Math.min(Math.max(1, requested), 30);
 
       const t0 = deps.nowMs();
-      // OBS-01: searchLcd returns the 180-05-widened LcdSearchResult
+      // searchLcd returns the widened LcdSearchResult
       // { hits, scriptZeroHit?, lane, matchErrored, scanCapped? } — preserve the
       // hits array for downstream processing and surface the script-health signals
       // at THIS logging/emit boundary (infra-free seam: @comis/memory has no logger).
@@ -110,7 +110,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
 
       // (3) SCRUB + TAINT — scrub secrets out of every recovered snippet, THEN wrap
       //     it as untrusted before it leaves the tool. A snippet can legitimately
-      //     contain a credential (the F1 lossless store keeps the raw conversation);
+      //     contain a credential (the lossless store keeps the raw conversation);
       //     the egress copy must never carry it to the model context (mirrors the
       //     ctx_expand egress scrub). The base store is untouched.
       const safeHits = hits.map((h) => ({
@@ -121,11 +121,11 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       }));
 
       // (4) OBSERVABILITY — ids/counts/durationMs/step ONLY; never the query or a snippet.
-      // WR-03: read the end-instant ONCE and reuse it for the DEBUG durationMs, the
+      // Read the end-instant ONCE and reuse it for the DEBUG durationMs, the
       // emit durationMs, AND the emit timestamp, so the three are a single
       // consistent clock snapshot (the afterTurn triggers' one-read pattern).
       const endMs = deps.nowMs();
-      // OBS-01 signal purity (RESEARCH Pitfall 9): the 180-05 store sets
+      // Signal purity: the store sets
       // `scriptZeroHit` ONLY on a CLEAN zero-hit (`!matchErrored`); a swallowed
       // FTS5 MATCH error surfaces as `matchErrored` instead and must NEVER count
       // as a lane gap.
@@ -145,14 +145,11 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
           "lcd search MATCH errored (degraded)",
         );
       } else if (result.scriptZeroHit) {
-        // OBS-01: a clean non-Latin zero-hit. Promote the §14.4 instrumented
-        // trigger (the old DEBUG-only CJK-zero-hit line, now replaced) to a
-        // content-free event-bus signal — onto the `comis explain` timeline AND
-        // `comis fleet`
-        // health_signal (plan 180-03's dual-path plumbing). Guarded: a throwing
-        // subscriber can NEVER fail the already-completed search. Payload carries
-        // the closed `scriptClass`/`lane` enums + ids + timestamp ONLY (I8) —
-        // the query string is intentionally ABSENT.
+        // A clean non-Latin zero-hit → emit a content-free event-bus signal onto
+        // the `comis explain` timeline AND the `comis fleet` health_signal.
+        // Guarded: a throwing subscriber can NEVER fail the already-completed
+        // search. Payload carries the closed `scriptClass`/`lane` enums + ids +
+        // timestamp ONLY — the query string is intentionally ABSENT.
         emitScriptZeroHit(deps, {
           conversationId: ctxScope.conversationId,
           agentId: ctxScope.agentId,
@@ -173,9 +170,9 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         },
         "ctx_search complete",
       );
-      // O1: content-free expansion-hit metric (ids/counts/durationMs only —
+      // Content-free expansion-hit metric (ids/counts/durationMs only —
       // NEVER the query or a snippet; the lossless store, AGENTS.md §2.2/§2.7).
-      // WR-02: GUARD the emit. TypedEventBus.emit delegates to Node's
+      // GUARD the emit. TypedEventBus.emit delegates to Node's
       // EventEmitter.emit, which propagates the first subscriber exception
       // synchronously to the emitter — so a throwing subscriber (a trajectory
       // writer, a metrics sink) would unwind out of execute() and convert this
@@ -192,7 +189,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         timestamp: endMs,
       });
 
-      // OBS-01: surface the lane to the model (which path served the query) and,
+      // Surface the lane to the model (which path served the query) and,
       // when the bounded normalized scan floor hit its row cap, the cap note (the
       // "cap noted in result" criterion) — so the model knows older messages were
       // not searched and can narrow/retry. Content-free (no query text). The cap

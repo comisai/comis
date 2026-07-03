@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `chan` / `tg` — the standalone channel-driver CLI (Phase 205, Plan 05).
+ * `chan` / `tg` — the standalone channel-driver CLI.
  *
  * `tg` is the alias `chan --channel telegram`. This is the agent/shell driver
  * that replaces the ad-hoc `/tmp/chat.sh` + `/tmp/vps.sh` scripts for the
  * channel surface: a THIN client over the three surfaces the handle records —
  * the emulator `/control/*` (drive verbs: send / react / last / history), the
- * gateway `/rpc` (the `tg rpc` AUTO-01 verbatim passthrough + the curated
+ * gateway `/rpc` (the `tg rpc` verbatim passthrough + the curated
  * explain / fleet + the `tg trigger` cron/heartbeat/wake fire-now over WS), and
  * the rig lifecycle (up / down / status / restart / reset --deep / reconfigure —
- * the AUTO-04 Track-K model sweep).
+ * the model sweep).
  *
  * The LOAD-BEARING property is the NO-FALSE-SUCCESS honest-exit contract
- * (CLI-04, the prime directive): every verb is `--json`-able and exits NON-ZERO
+ * (the prime directive): every verb is `--json`-able and exits NON-ZERO
  * + reason-coded on a no-reply timeout / RPC error / dead handle / malformed
  * json — a no-reply is an honest empty, NEVER a fabricated success.
  *
- * SEC-02 (Dimension 3): `chan`/`tg` is a STANDALONE tsx entry under the test
+ * SEC-02: `chan`/`tg` is a STANDALONE tsx entry under the test
  * tree (`test/live/bin/chan.ts`), NEVER a `comis` CLI subcommand. There is no
  * `chan.ts`/`tg.ts` under the cli package's commands and no `.command("chan"|
  * "tg")` registration — the harness-never-published guard forward-protects
@@ -55,29 +55,29 @@ export interface ParsedArgs {
   readonly endpoint?: string;
   /** `--model <id>` — the model `tg up` boots the rig with (default keyless). */
   readonly model?: string;
-  /** `--event <type>` — the `tg wait` trajectory event to block on (AUTO-03). */
+  /** `--event <type>` — the `tg wait` trajectory event to block on. */
   readonly event?: string;
-  /** `--tool <name>` — the `tg wait` tool-result name to block on (AUTO-03). */
+  /** `--tool <name>` — the `tg wait` tool-result name to block on. */
   readonly tool?: string;
   /** `--timeout <ms>` — the `tg wait` hard ceiling (parsed; non-finite is dropped). */
   readonly timeout?: number;
   /** `--deep` — the `tg reset --deep` clean-slate boolean sub-flag. */
   readonly deep?: boolean;
-  /** `--agent <id>` — the target agent for `tg trigger` (TARGET-01 multi-agent). */
+  /** `--agent <id>` — the target agent for `tg trigger` (multi-agent). */
   readonly agent?: string;
-  /** `--restart` — the `tg reconfigure --restart` re-boot sub-flag (AUTO-04). */
+  /** `--restart` — the `tg reconfigure --restart` re-boot sub-flag. */
   readonly restart?: boolean;
   /**
-   * `--detached` — `tg up --detached` spawns a DETACHED-subprocess rig (Plan
-   * 208-08, Option A) that OUTLIVES this `tg up` process, so a SEPARATE-shell
+   * `--detached` — `tg up --detached` spawns a DETACHED-subprocess rig that
+   * OUTLIVES this `tg up` process, so a SEPARATE-shell
    * `tg send`/`tg down` can drive it (the cold-shell, shell-only-unattended path).
    * Without it, `tg up` boots an IN-PROCESS rig (the certified spine) that dies
    * when `tg up` exits.
    */
   readonly detached?: boolean;
   /**
-   * `--set k=v` (REPEATABLE) — the `tg reconfigure` config overrides (AUTO-04, the
-   * Track-K model sweep). Each `--set agents.default.model=qwen3.6:14b` adds one
+   * `--set k=v` (REPEATABLE) — the `tg reconfigure` config overrides (the
+   * model sweep). Each `--set agents.default.model=qwen3.6:14b` adds one
    * `key→value` pair. A malformed `--set` (no `=`) is dropped (never a crash).
    */
   readonly set?: Record<string, string>;
@@ -98,7 +98,7 @@ function stripQuotes(s: string): string {
  * The string-valued flags (consume the NEXT token as their value). These MUST
  * be captured into typed {@link ParsedArgs} fields — NOT dropped as "unknown
  * boolean flags" — or the verb that reads them (e.g. `tg wait --event …`) gets
- * neither the flag nor its value (CR-01 / WR-01: the masked flag-strip).
+ * neither the flag nor its value (the masked flag-strip bug this avoids).
  */
 const STRING_FLAGS = new Set(["--channel", "--endpoint", "--model", "--event", "--tool", "--agent"]);
 
@@ -113,7 +113,7 @@ const BOOLEAN_FLAGS = new Set(["--json", "--deep", "--restart", "--detached"]);
  * consumes a numeric next token (non-finite is dropped). Resolving the value
  * flags into TYPED fields here (rather than carrying them through as
  * positionals) keeps a verb's trajectory-file positional unambiguous regardless
- * of flag order (CR-01 / IN-01). The channel defaults to "telegram".
+ * of flag order. The channel defaults to "telegram".
  */
 export function parseArgs(argv: string[]): ParsedArgs {
   let channel = "telegram";
@@ -149,7 +149,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
     if (tok === "--set") {
-      // `--set k=v` (REPEATABLE — AUTO-04 reconfigure overrides). Split on the
+      // `--set k=v` (REPEATABLE — reconfigure overrides). Split on the
       // FIRST `=` (a value may itself contain `=`); a malformed pair (no `=`) is
       // dropped, never a crash. The reconfigure verb reads the merged map.
       const value = argv[i + 1];
@@ -198,10 +198,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 // ---------------------------------------------------------------------------
-// The honest-exit contract (CLI-04, the prime directive). A CLOSED union of
+// The honest-exit contract (the prime directive). A CLOSED union of
 // failure kinds, each mapped to a DISTINCT non-zero exit code. A no-reply is an
 // honest empty; an RPC throw is rpc_error; a dead handle is dead_handle; a
-// malformed rpc json is bad_json (validated BEFORE any passthrough — V5).
+// malformed rpc json is bad_json (validated BEFORE any passthrough).
 // ---------------------------------------------------------------------------
 
 /** The closed set of honest-failure classes the CLI can exit with. */
@@ -248,7 +248,7 @@ export type ParseJsonResult =
   | { readonly ok: false; readonly detail: string };
 
 /**
- * Validate a `tg rpc` json arg BEFORE any passthrough (V5 / T-205-15). An empty
+ * Validate a `tg rpc` json arg BEFORE any passthrough. An empty
  * / whitespace string is the empty-params default `{}`. Valid JSON resolves
  * `{ ok: true, value }`; malformed JSON resolves `{ ok: false, detail }` —
  * NEVER a throw / crash. The caller turns `ok:false` into `toFailure("bad_json")`
@@ -269,11 +269,11 @@ export function tryParseJson(s: string): ParseJsonResult {
 }
 
 // ---------------------------------------------------------------------------
-// runVerb dispatch (Task 2). The seams are injected via `ctx` so the dispatch
+// runVerb dispatch. The seams are injected via `ctx` so the dispatch
 // is unit-testable WITHOUT a daemon. `runVerb` THROWS a VerbFailure on any
 // honest failure; `runMain` catches it → prints the body → process.exit with
 // the distinct non-zero code. A no-reply is an honest empty, never a fabricated
-// success (CLI-04, the prime directive).
+// success (the prime directive).
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from "node:fs";
@@ -290,7 +290,7 @@ import {
   type StandaloneRigDeps,
 } from "../harness/rig.js";
 import { readMirrorText } from "../assert/channel-trace.js";
-// The per-channel capability descriptors (FIX #2: the caps gate reads these to
+// The per-channel capability descriptors (the caps gate reads these to
 // decide whether a verb is even attempted on the resolved channel). Both are
 // `@comis/*`-FREE (they import only the flat `ChannelCaps` type from the shared
 // harness port), so chan.ts stays runnable via a bare `tsx` shell.
@@ -317,7 +317,7 @@ const NOT_IMPLEMENTED_EXIT = 6;
 
 /**
  * The exit code for the honest `unsupported_on_channel` caps-degrade (distinct,
- * non-zero — FIX #2 / §3A.4). A verb whose required capability the resolved
+ * non-zero). A verb whose required capability the resolved
  * channel does not support (e.g. `tap`/`edit` on Signal — `buttons:false`/
  * `edits:false`) exits with THIS code + an `unsupported_on_channel` reason
  * BEFORE any POST — never a silent no-op, never a fabricated success. Distinct
@@ -329,7 +329,7 @@ const UNSUPPORTED_ON_CHANNEL_EXIT = 7;
 
 /**
  * An honest, reason-coded verb failure. Carries the closed {@link FailureKind}
- * (one of the four CLI-04 runtime classes) and the `--json` body. `runMain`
+ * (one of the four runtime classes) and the `--json` body. `runMain`
  * maps it to `exitCodeFor(kind)` (a distinct non-zero exit) — a thrown
  * VerbFailure can NEVER become a false success.
  *
@@ -341,7 +341,7 @@ const UNSUPPORTED_ON_CHANNEL_EXIT = 7;
  * A CAPS-UNSUPPORTED verb is likewise a distinct honest failure
  * (`unsupported_on_channel`, exit {@link UNSUPPORTED_ON_CHANNEL_EXIT}) built via
  * {@link VerbFailure.unsupportedOnChannel} — the resolved channel does not
- * support the verb's required capability (FIX #2 / §3A.4). It too stays OUTSIDE
+ * support the verb's required capability. It too stays OUTSIDE
  * the four-class `FailureKind` runtime union, so that contract stays pure.
  */
 export class VerbFailure extends Error {
@@ -373,9 +373,9 @@ export class VerbFailure extends Error {
   }
 
   /**
-   * An honest deferral: the verb is owned by a LATER phase (207/208). Exits
+   * An honest deferral: the verb is owned by a later phase. Exits
    * non-zero (never a silent no-op) with `error: "not_implemented_in_phase"`,
-   * the verb, and the owning phase. The Deferred-Ideas boundary.
+   * the verb, and the owning phase. The honest-deferral boundary.
    */
   static notImplemented(verb: string, phase: string): VerbFailure {
     return new VerbFailure("not_implemented_in_phase", {
@@ -386,7 +386,7 @@ export class VerbFailure extends Error {
   }
 
   /**
-   * An honest caps-degrade (FIX #2 / §3A.4): the resolved `channel` does not
+   * An honest caps-degrade: the resolved `channel` does not
    * support the `cap` that `verb` requires (e.g. `tap` needs `buttons`, `edit`
    * needs `edits` — both `false` on Signal). Exits non-zero (never a silent
    * no-op, never a fabricated success) with `error: "unsupported_on_channel"`,
@@ -415,9 +415,9 @@ export interface VerbContext {
   /**
    * The resolved channel key (default "telegram", the `tg` alias). Resolved by
    * {@link parseArgs} from `--channel`. Threaded into `up`'s
-   * {@link StandaloneRigOptions} (FIX #1: `chan --channel signal up` boots a
+   * {@link StandaloneRigOptions} (`chan --channel signal up` boots a
    * Signal rig, not the hard-coded Telegram one) AND read by the caps gate
-   * (FIX #2: a button/edit-dependent verb honest-degrades on a channel that
+   * (a button/edit-dependent verb honest-degrades on a channel that
    * lacks the capability — `unsupported_on_channel`).
    */
   readonly channel?: string;
@@ -447,21 +447,21 @@ export interface VerbContext {
   readonly waitFn?: (opts: WaitSignalOptions) => Promise<WaitSignalResult>;
   /** The mirror reader (default {@link readMirrorText}) — `mirror`. */
   readonly readMirror?: (dbPath: string, sessionKey: string) => string | undefined;
-  /** The `--event <type>` to block on — `wait` (AUTO-03). Resolved by {@link parseArgs}. */
+  /** The `--event <type>` to block on — `wait`. Resolved by {@link parseArgs}. */
   readonly event?: string;
-  /** The `--tool <name>` to block on — `wait` (AUTO-03). Resolved by {@link parseArgs}. */
+  /** The `--tool <name>` to block on — `wait`. Resolved by {@link parseArgs}. */
   readonly tool?: string;
-  /** The `--timeout <ms>` hard ceiling — `wait` (AUTO-03). Resolved by {@link parseArgs}. */
+  /** The `--timeout <ms>` hard ceiling — `wait`. Resolved by {@link parseArgs}. */
   readonly timeoutMs?: number;
   /** The `--deep` clean-slate sub-flag — `reset --deep`. Resolved by {@link parseArgs}. */
   readonly deep?: boolean;
-  /** The `--agent <id>` target — `trigger` (TARGET-01). Resolved by {@link parseArgs}. */
+  /** The `--agent <id>` target — `trigger`. Resolved by {@link parseArgs}. */
   readonly agent?: string;
-  /** The `--restart` sub-flag — `reconfigure` (AUTO-04). Resolved by {@link parseArgs}. */
+  /** The `--restart` sub-flag — `reconfigure`. Resolved by {@link parseArgs}. */
   readonly restart?: boolean;
-  /** The `--detached` sub-flag — `up` (Plan 208-08, the cold-shell rig). Resolved by {@link parseArgs}. */
+  /** The `--detached` sub-flag — `up` (the cold-shell rig). Resolved by {@link parseArgs}. */
   readonly detached?: boolean;
-  /** The `--set k=v` overrides — `reconfigure` (AUTO-04). Resolved by {@link parseArgs}. */
+  /** The `--set k=v` overrides — `reconfigure`. Resolved by {@link parseArgs}. */
   readonly set?: Record<string, string>;
 }
 
@@ -470,7 +470,7 @@ export interface VerbContext {
  * {@link VerbContext} (everything but the seam fns + the FS-resolved handle).
  * This is the SINGLE source of truth for the flag → ctx mapping, so the real
  * `parseArgs → contextFromParsed → runVerb` path is exercised end-to-end by the
- * unit tests (closing the CR-01 masking gap) and re-used by `resolveContext`.
+ * unit tests (closing the flag-masking gap) and re-used by `resolveContext`.
  * The handle is supplied by the caller (the FS read lives in `resolveContext`).
  */
 export function contextFromParsed(
@@ -480,7 +480,7 @@ export function contextFromParsed(
   return {
     ...(handle !== undefined ? { handle } : {}),
     // Thread the parsed channel (default "telegram") so `up` spawns the RIGHT
-    // rig (FIX #1) and the caps gate (FIX #2) keys on the resolved channel.
+    // rig and the caps gate keys on the resolved channel.
     channel: parsed.channel,
     ...(parsed.endpoint !== undefined ? { flagEndpoint: parsed.endpoint } : {}),
     json: parsed.json,
@@ -506,7 +506,7 @@ interface OutboundLine {
 const REQUIRES_HANDLE = new Set([
   "send",
   "react",
-  // Phase 207 interactive/media drive verbs (each POSTs the control routes).
+  // Interactive/media drive verbs (each POSTs the control routes).
   "tap",
   "edit",
   "send-photo",
@@ -514,7 +514,7 @@ const REQUIRES_HANDLE = new Set([
   "last",
   "history",
   "rpc",
-  // AUTO-04 — `tg trigger` reaches the gateway RPCs over WS (needs the handle token).
+  // `tg trigger` reaches the gateway RPCs over WS (needs the handle token).
   "trigger",
   "explain",
   "fleet",
@@ -526,15 +526,14 @@ const REQUIRES_HANDLE = new Set([
   "status",
   "restart",
   "reset",
-  // AUTO-04 — `tg reconfigure` is a lifecycle verb (in-process-only across processes).
+  // `tg reconfigure` is a lifecycle verb (in-process-only across processes).
   "reconfigure",
 ]);
 
 /**
  * The deferred verbs → the phase that owns them. Each exits with an HONEST
  * `not_implemented_in_phase` carrying the owning phase — never a silent no-op
- * (the Deferred-Ideas boundary). Phase 207 wired send-photo/send-voice/tap/edit
- * to the control routes; only `group` remains (Phase 208).
+ * (the honest-deferral boundary). Only `group` remains deferred.
  */
 const DEFERRED_VERBS: Record<string, string> = {
   group: "208",
@@ -544,7 +543,7 @@ const DEFERRED_VERBS: Record<string, string> = {
 const SEND_WAIT_MS = 45_000;
 
 // ---------------------------------------------------------------------------
-// Cold-shell DETACHED-rig lifecycle helpers (Plan 208-08, Option A). A separate
+// Cold-shell DETACHED-rig lifecycle helpers. A separate
 // process reads the handle (pid + rigControlEndpoint) and drives / reaps the
 // detached rig. NO half-down / half-restart — honest non-zero on failure.
 // ---------------------------------------------------------------------------
@@ -678,7 +677,7 @@ async function readOutbound(
     `${handle.controlEndpoint}/control/chats/${handle.chatId}/outbound` +
     `?afterMessageId=${afterMessageId}&waitMs=${waitMs}`;
   const res = await doFetch(url);
-  // WR-03 (false-success-adjacent): verify the HTTP status AND shape BEFORE
+  // Verify the HTTP status AND shape BEFORE
   // treating the body as outbounds. A non-2xx (e.g. the control-api's 400
   // `{ok:false,error}` or a 404 object) or any NON-array body would otherwise
   // make `outbounds.length` undefined → the last element undefined → `send`
@@ -725,9 +724,9 @@ function resolveMediaBase64(arg: string | undefined): string {
 /**
  * POST a media inbound (`send-photo`/`send-voice`) to the `/media` control route,
  * then reply-wait like `send`. Shares the `send` shape: the media POST returns a
- * minted `messageId` (the §4.6 `{ ok, messageId }` shape — the new media message
+ * minted `messageId` (the `{ ok, messageId }` shape — the new media message
  * id), which becomes the reply-wait watermark; a no-reply is an honest `no_reply`,
- * NEVER a fabricated success (CLI-04 / I5). Honest-exits on a control `!ok` /
+ * NEVER a fabricated success. Honest-exits on a control `!ok` /
  * non-numeric messageId before waiting.
  */
 async function sendMedia(
@@ -747,10 +746,10 @@ async function sendMedia(
       body: JSON.stringify({ kind, fromUserId: 111, fileBase64 }),
     },
   );
-  // WR-03: verify the POST status + that a numeric messageId came back BEFORE
+  // Verify the POST status + that a numeric messageId came back BEFORE
   // waiting — a 400/500 (or a body without a numeric messageId) would make the
   // watermark undefined → the reply-wait filter always false → a misleading 45s
-  // no_reply. Fail fast + honestly instead (no false exit-0, T-207-14).
+  // no_reply. Fail fast + honestly instead (no false exit-0).
   if (!postRes.ok) {
     throw new VerbFailure("dead_handle", { reason: "control_post_error", status: postRes.status });
   }
@@ -774,7 +773,7 @@ async function sendMedia(
 /**
  * Resolve the threaded channel (`ctx.channel`, default `"telegram"`) into a
  * known {@link RigChannel}. The channel is the discriminator `up` boots the rig
- * by (FIX #1) and the caps gate keys on (FIX #2). An UNKNOWN channel (one the
+ * by and the caps gate keys on. An UNKNOWN channel (one the
  * harness has no rig/caps registration for) is an honest `bad_json` usage error
  * — never a silent fallthrough to telegram (which would mask the typo as a
  * Telegram rig / Telegram caps). The default (no `--channel`) is `"telegram"`,
@@ -791,17 +790,17 @@ function resolveRigChannel(ctx: VerbContext): RigChannel {
 }
 
 // ---------------------------------------------------------------------------
-// FIX #2 — the GENERAL caps gate (§3A.4 honest-degradation, the no-false-success
+// The GENERAL caps gate (honest-degradation, the no-false-success
 // directive applied to capability coverage). A verb whose required OUTBOUND
 // capability the resolved channel does not support honest-degrades to a distinct
 // non-zero exit + `unsupported_on_channel` reason BEFORE any control POST —
 // never a silent no-op, never a fabricated success. The gate is a verb→cap
 // LOOKUP keyed on the channel's caps descriptor — NOT a `verb === "tap"` special
-// case — so ANY button/edit-dependent verb degrades the same honest way (RESEARCH
-// A5). A verb with no required-cap entry (send/react/last/…) is unconstrained.
+// case — so ANY button/edit-dependent verb degrades the same honest way. A verb
+// with no required-cap entry (send/react/last/…) is unconstrained.
 // ---------------------------------------------------------------------------
 
-/** The per-channel capability descriptors the gate reads (the FOUND-03 flat shape). */
+/** The per-channel capability descriptors the gate reads (the flat shape). */
 const CHANNEL_CAPS: Record<string, ChannelCaps> = {
   telegram: tgCaps,
   signal: signalCaps,
@@ -858,7 +857,7 @@ export async function runVerb(
     throw VerbFailure.notImplemented(verb, deferredPhase);
   }
 
-  // WR-04: `down --endpoint <url>` REFUSES — we only tear down a rig we own,
+  // `down --endpoint <url>` REFUSES — we only tear down a rig we own,
   // never one addressed by an explicit endpoint. This refusal is INDEPENDENT of
   // whether a local handle file resolved, so it must precede the generic
   // dead-handle guard below; otherwise a `down --endpoint` with no handle file
@@ -874,7 +873,7 @@ export async function runVerb(
 
   // `up` is the ONLY verb that may run without a resolved handle (it discovers-
   // or-spawns one). Every other handle-requiring verb fails honestly as a dead
-  // handle when none resolved — NEVER a silent spawn (T-205-08).
+  // handle when none resolved — NEVER a silent spawn.
   if (verb !== "up" && REQUIRES_HANDLE.has(verb) && ctx.handle === undefined) {
     throw new VerbFailure("dead_handle", {
       endpoint: ctx.flagEndpoint ?? null,
@@ -882,7 +881,7 @@ export async function runVerb(
     });
   }
 
-  // FIX #2 (§3A.4): the GENERAL caps gate. A button/edit-dependent verb on a
+  // The GENERAL caps gate. A button/edit-dependent verb on a
   // channel that lacks the capability (Signal `buttons:false`/`edits:false`)
   // honest-degrades to a distinct non-zero exit + `unsupported_on_channel`
   // BEFORE any control POST — never a silent no-op, never a fabricated success.
@@ -895,14 +894,14 @@ export async function runVerb(
     case "up": {
       const launcher = ctx.startStandaloneRigFn ?? startStandaloneRig;
       const opts: StandaloneRigOptions = {
-        // FIX #1: thread the PARSED channel (default "telegram") — NOT the
-        // pre-patch hard-coded literal. `chan --channel signal up` boots a
-        // Signal rig via the RIG_CHANNELS map (209-05); the default + explicit
+        // Thread the PARSED channel (default "telegram") — NOT a hard-coded
+        // literal. `chan --channel signal up` boots a
+        // Signal rig via the RIG_CHANNELS map; the default + explicit
         // `--channel telegram` stay byte-identical (telegram rig).
         channel: resolveRigChannel(ctx),
         model: ctx.model ?? "keyless",
         ...(ctx.baseDir !== undefined ? { baseDir: ctx.baseDir } : {}),
-        // --detached (Plan 208-08, Option A): spawn a DETACHED subprocess rig that
+        // --detached: spawn a DETACHED subprocess rig that
         // OUTLIVES this `tg up` process so a SEPARATE-shell `tg send`/`tg down` can
         // drive it (the cold-shell, shell-only-unattended path). The launcher
         // returns once the detached rig reports healthy; this process then exits and
@@ -922,12 +921,12 @@ export async function runVerb(
     }
 
     case "down": {
-      // The `down --endpoint` REFUSAL is handled by the early guard above (WR-04)
+      // The `down --endpoint` REFUSAL is handled by the early guard above
       // — it fires before the dead-handle guard so the reason is precisely
       // `refused` regardless of handle resolution. Reaching here means no
       // --endpoint was given.
       const handle = ctx.handle as ChanliveHandle;
-      // DETACHED rig (Plan 208-08, Option A): the handle carries a `pid` (the
+      // DETACHED rig: the handle carries a `pid` (the
       // detached subprocess's process-group leader). Tear it down for real from a
       // COLD SHELL — SIGTERM the GROUP (the rig-daemon + its daemon grandchild),
       // confirm the rig PROCESS is gone, then remove the handle. NO half-down rig.
@@ -947,8 +946,8 @@ export async function runVerb(
         }
         return { status: "down", detached: true, pid: handle.pid, reaped: true };
       }
-      // In-process scope (W1): the rig is owned by its in-process launcher (the
-      // 205-06 / 208-07 scenario), NOT a separate process — report honestly rather
+      // In-process scope: the rig is owned by its in-process launcher, NOT a
+      // separate process — report honestly rather
       // than fake it. (Use `tg up --detached` for a cold-shell-teardownable rig.)
       return {
         status: "down_not_owned_in_process",
@@ -969,11 +968,11 @@ export async function runVerb(
 
     case "restart":
     case "reset": {
-      // WR-01: branch on the TYPED `--deep` flag (resolved by parseArgs into
+      // Branch on the TYPED `--deep` flag (resolved by parseArgs into
       // `ctx.deep`), NOT `args[0]` — parseArgs strips the flag from positionals.
       const resetVerb = verb === "reset" && ctx.deep === true ? "reset --deep" : verb;
       const handle = ctx.handle as ChanliveHandle;
-      // DETACHED rig (Plan 208-08, Option A): drive the cold-shell lifecycle for
+      // DETACHED rig: drive the cold-shell lifecycle for
       // real by POSTing the detached rig-control endpoint (owner-checked with the
       // gateway token). `restart` → /restart; `reset --deep` → /reset (the isolated
       // clean-slate). An honest non-zero exit on a failed POST / unhealthy re-boot.
@@ -982,7 +981,7 @@ export async function runVerb(
         const body = await postRigControl(ctx, handle, route);
         return { status: route === "/reset" ? "reset" : "restarted", verb: resetVerb, detached: true, ...body };
       }
-      // In-process scope (W1): a cold-shell restart/reset against an IN-PROCESS rig
+      // In-process scope: a cold-shell restart/reset against an IN-PROCESS rig
       // is not served (its controller dies with its launcher). Reason-code it.
       return {
         status: "lifecycle_in_process_only",
@@ -992,7 +991,7 @@ export async function runVerb(
     }
 
     case "reconfigure": {
-      // AUTO-04 (the Track-K model sweep) — rewrite the throwaway config with the
+      // The model sweep — rewrite the throwaway config with the
       // `--set` overrides + restart.
       const overrides = ctx.set ?? {};
       if (Object.keys(overrides).length === 0) {
@@ -1001,7 +1000,7 @@ export async function runVerb(
         });
       }
       const handle = ctx.handle as ChanliveHandle;
-      // DETACHED rig (Plan 208-08, Option A): drive the cold-shell sweep for real —
+      // DETACHED rig: drive the cold-shell sweep for real —
       // POST the rig-control /reconfigure endpoint with the overrides (the detached
       // rig rewrites its throwaway config + restarts on the same gateway port). An
       // honest non-zero exit on a failed POST / unhealthy re-boot.
@@ -1009,10 +1008,10 @@ export async function runVerb(
         const body = await postRigControl(ctx, handle, "/reconfigure", { overrides });
         return { status: "reconfigured", verb: "reconfigure", detached: true, overrides, ...body };
       }
-      // In-process scope (W1): a cold-shell reconfigure against an IN-PROCESS rig
+      // In-process scope: a cold-shell reconfigure against an IN-PROCESS rig
       // cannot re-pin COMIS_DATA_DIR + re-boot it — ECHO what WOULD have applied so a
       // driving agent sees it (never a silent / fabricated success). The in-proc
-      // scenario (208-05 Stage-C) drives `controller.reconfigure(overrides)` directly.
+      // scenario drives `controller.reconfigure(overrides)` directly.
       return {
         status: "lifecycle_in_process_only",
         verb: "reconfigure",
@@ -1035,7 +1034,7 @@ export async function runVerb(
           body: JSON.stringify({ fromUserId: 111, text }),
         },
       );
-      // WR-03: verify the POST status + that a numeric messageId came back BEFORE
+      // Verify the POST status + that a numeric messageId came back BEFORE
       // waiting. A 400 body (or any body without a numeric messageId) would make
       // `inboundId` undefined, and the reply-wait's `messageId > undefined`
       // filter is always false → an eventual no_reply after the full 45s wait
@@ -1054,7 +1053,7 @@ export async function runVerb(
       // Wait once for the reply outbound.
       const outbounds = await readOutbound(ctx, handle, inboundId, SEND_WAIT_MS);
       if (outbounds.length === 0) {
-        // Honest no-reply — NEVER a fabricated success (CLI-04).
+        // Honest no-reply — NEVER a fabricated success.
         throw new VerbFailure("no_reply", { waitedMs: SEND_WAIT_MS, inboundId });
       }
       const reply = outbounds[outbounds.length - 1];
@@ -1062,13 +1061,13 @@ export async function runVerb(
     }
 
     case "react": {
-      // REACT-02 — drive an inbound reaction at the ATTRIBUTED bot reply. The
+      // Drive an inbound reaction at the ATTRIBUTED bot reply. The
       // `botReplyId` arg is the agent-authored reply's minted id from `tg send`'s
       // reply-wait return (the `{ inboundId, botReplyId, reply }` above), which is
       // the exact id `recordOutboundMessage` keyed the ReactionTrajectoryMap on
       // (setup-delivery.ts). We react to the ARG, NOT a re-read `tg last` — a
       // re-read could pick a non-attributed message in a multi-message reply, so
-      // the 👍 must carry the id the caller passes (the attribution keystone, #5).
+      // the 👍 must carry the id the caller passes (the attribution keystone).
       const handle = ctx.handle as ChanliveHandle;
       const botReplyId = Number(args[0]);
       const emoji = args[1];
@@ -1079,7 +1078,7 @@ export async function runVerb(
       }
       const doFetch = ctx.controlFetch ?? fetch;
       // POST the reaction on the attributed reply. `fromUserId: 111` is the rig's
-      // fixed reactor id (Plan 03 grants 111 trust ≥ known so the happy path
+      // fixed reactor id (111 has trust ≥ known so the happy path
       // persists; an external reactor under-gates at the production write-floor).
       const res = await doFetch(
         `${handle.controlEndpoint}/control/chats/${handle.chatId}/reactions`,
@@ -1089,8 +1088,8 @@ export async function runVerb(
           body: JSON.stringify({ fromUserId: 111, botMessageId: botReplyId, emoji }),
         },
       );
-      // WR-03 honest-exit: a control !ok is NOT a success — reason-code it as a
-      // dead_handle non-zero exit (no false exit-0 on a failed react, I5).
+      // Honest-exit: a control !ok is NOT a success — reason-code it as a
+      // dead_handle non-zero exit (no false exit-0 on a failed react).
       if (!res.ok) {
         throw new VerbFailure("dead_handle", { reason: "control_post_error", status: res.status });
       }
@@ -1098,13 +1097,13 @@ export async function runVerb(
     }
 
     case "tap": {
-      // INTERACT-01 — drive an inbound callback (button tap) at the ATTRIBUTED bot
+      // Drive an inbound callback (button tap) at the ATTRIBUTED bot
       // reply. Copied from `react` almost verbatim (the attribution keystone is
       // identical): the `botReplyId` arg is the agent-authored reply's minted id
       // from `tg send`'s reply-wait return (the `{ inboundId, botReplyId, reply }`
       // above). We tap the ARG, NOT a re-read `tg last` — a re-read could pick a
       // non-attributed message in a multi-message reply, so the callback must carry
-      // the id the caller passes (T-207-15, the react attribution keystone, #5).
+      // the id the caller passes (the react attribution keystone).
       const handle = ctx.handle as ChanliveHandle;
       const botReplyId = Number(args[0]);
       const data = args[1];
@@ -1124,8 +1123,8 @@ export async function runVerb(
           body: JSON.stringify({ fromUserId: 111, botMessageId: botReplyId, data }),
         },
       );
-      // WR-03 honest-exit: a control !ok is NOT a success — reason-code it as a
-      // dead_handle non-zero exit (no false exit-0 on a failed tap, T-207-14).
+      // Honest-exit: a control !ok is NOT a success — reason-code it as a
+      // dead_handle non-zero exit (no false exit-0 on a failed tap).
       if (!res.ok) {
         throw new VerbFailure("dead_handle", { reason: "control_post_error", status: res.status });
       }
@@ -1133,12 +1132,12 @@ export async function runVerb(
     }
 
     case "edit": {
-      // INTERACT-02 — drive an `edited_message` for an EXISTING message id. The
-      // edits route mints no id (the §4.6 `{ ok: true }` shape — the edited
+      // Drive an `edited_message` for an EXISTING message id. The
+      // edits route mints no id (the `{ ok: true }` shape — the edited
       // message already exists), so we return `{ edited: { messageId } }` on a 2xx
       // rather than reply-waiting on a watermark we don't have. (An edit DOES
       // re-ingest through the inbound handler and MAY trigger a reply, but the
-      // edit verb's honest contract is the edit landing; the 207-05 scenario reads
+      // edit verb's honest contract is the edit landing; the edit scenario reads
       // any resulting reply via the outbound oracle / `tg last`.)
       const handle = ctx.handle as ChanliveHandle;
       const messageId = Number(args[0]);
@@ -1157,7 +1156,7 @@ export async function runVerb(
           body: JSON.stringify({ messageId, newText }),
         },
       );
-      // WR-03 honest-exit: a control !ok is NOT a success (no false exit-0, T-207-14).
+      // Honest-exit: a control !ok is NOT a success (no false exit-0).
       if (!res.ok) {
         throw new VerbFailure("dead_handle", { reason: "control_post_error", status: res.status });
       }
@@ -1165,13 +1164,13 @@ export async function runVerb(
     }
 
     case "send-photo": {
-      // MEDIA-01 — POST a photo media inbound (base64) then reply-wait like `send`.
+      // POST a photo media inbound (base64) then reply-wait like `send`.
       const handle = ctx.handle as ChanliveHandle;
       return sendMedia(ctx, handle, "photo", args);
     }
 
     case "send-voice": {
-      // MEDIA-01 — POST a voice media inbound (base64) then reply-wait like `send`.
+      // POST a voice media inbound (base64) then reply-wait like `send`.
       const handle = ctx.handle as ChanliveHandle;
       return sendMedia(ctx, handle, "voice", args);
     }
@@ -1198,7 +1197,7 @@ export async function runVerb(
       if (method === undefined || method.length === 0) {
         throw new VerbFailure("bad_json", { detail: "tg rpc <method> [json] — method is required." });
       }
-      // V5: validate the json BEFORE any passthrough.
+      // Validate the json BEFORE any passthrough.
       const parsed = tryParseJson(args[1] ?? "{}");
       if (!parsed.ok) {
         throw new VerbFailure("bad_json", { detail: parsed.detail, arg: args[1] });
@@ -1207,7 +1206,7 @@ export async function runVerb(
     }
 
     case "trigger": {
-      // AUTO-04 — fire a time-based event NOW (no real-time wait) via the gateway
+      // Fire a time-based event NOW (no real-time wait) via the gateway
       // RPCs the daemon registers, over the SAME WS `invokeRpc` seam `tg rpc` uses:
       //   • cron <id> [--agent A] → cron.run { jobName, agentId? }  (force-mode; an
       //     id is required — force resolves a job BY NAME, "Job not found" otherwise)
@@ -1276,7 +1275,7 @@ export async function runVerb(
         throw new VerbFailure("bad_json", { detail: "tg mirror <sessionKey> — a session key is required." });
       }
       const reader = ctx.readMirror ?? readMirrorText;
-      // WR-02: a missing/locked memory.db makes the readonly reader throw a raw
+      // A missing/locked memory.db makes the readonly reader throw a raw
       // sqlite/fs error. That is an oracle-read I/O condition, NOT an RPC
       // failure — reason-code it as a dead_handle so a driving agent branching
       // on the error never confuses it with a gateway/rpc fault.
@@ -1301,7 +1300,7 @@ export async function runVerb(
       }
       // Lazy import: wait.ts pulls @comis/observability (see the top-of-file note).
       const { resolveTrajectoryFile } = await import("../harness/wait.js");
-      // WR-02: resolveTrajectoryFile soft-fails an absent pointer, but a path/fs
+      // resolveTrajectoryFile soft-fails an absent pointer, but a path/fs
       // error is still possible — classify it honestly as a dead_handle read
       // condition rather than letting it bubble to the generic rpc_error branch.
       let trajFile: string;
@@ -1323,7 +1322,7 @@ export async function runVerb(
       if (sql === undefined || sql.length === 0) {
         throw new VerbFailure("bad_json", { detail: 'tg db "<sql>" — a SQL query is required.' });
       }
-      // WR-02: a missing/locked memory.db makes `new Database(...)` throw
+      // A missing/locked memory.db makes `new Database(...)` throw
       // "unable to open database file" — an oracle I/O condition, not an RPC
       // fault. Map the OPEN failure to dead_handle (the rig isn't live for
       // reads) and a MALFORMED SQL to bad_json (a usage error) — never the
@@ -1349,13 +1348,13 @@ export async function runVerb(
     }
 
     case "wait": {
-      // CR-01: `--event`/`--tool`/`--timeout` are resolved by parseArgs into
+      // `--event`/`--tool`/`--timeout` are resolved by parseArgs into
       // TYPED ctx fields — NOT re-scraped from `args` (parseArgs strips the flag
-      // tokens from positionals, so the old `args.indexOf("--event")` was always
-      // -1 and the verb could never receive a signal through the real CLI path).
+      // tokens from positionals, so an `args.indexOf("--event")` would always
+      // be -1 and the verb could never receive a signal through the real CLI path).
       const { event, tool, timeoutMs } = ctx;
       // The trajectory file is the first positional (now unpolluted by flags —
-      // IN-01: resolve the first NON-flag positional so flag order never shadows it).
+      // resolve the first NON-flag positional so flag order never shadows it).
       const trajFile = args.find((a) => !a.startsWith("--"));
       if (trajFile === undefined) {
         throw new VerbFailure("bad_json", { detail: "tg wait <trajectoryFile> --event <type>|--tool <name>" });
@@ -1420,7 +1419,7 @@ async function resolveContext(parsed: ParsedArgs): Promise<VerbContext> {
   const handle = readHandle(parsed.channel);
   // Delegate the flag → ctx projection to the SINGLE source of truth so the real
   // `runMain` path threads `--event`/`--tool`/`--timeout`/`--deep` exactly as the
-  // unit tests do (CR-01: the live `tg wait`/`reset --deep` now receive them).
+  // unit tests do (the live `tg wait`/`reset --deep` now receive them).
   return contextFromParsed(parsed, handle);
 }
 
@@ -1439,7 +1438,7 @@ async function runMain(): Promise<void> {
     process.exit(0);
   } catch (err: unknown) {
     if (err instanceof VerbFailure) {
-      // Honest, reason-coded non-zero exit — NEVER a false success (CLI-04).
+      // Honest, reason-coded non-zero exit — NEVER a false success.
       console.error(JSON.stringify(err.body));
       process.exit(err.exitCode);
       return;

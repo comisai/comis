@@ -4,15 +4,15 @@
  *
  * The adapter is an `ImageGenerationPort` that resolves the OAuth bearer PER
  * `execute()` via `oauthManager.getApiKey("openai-codex", {oauthProfiles})`
- * (so an expired token refreshes inside getApiKey — CDX-01), builds the CF
- * headers from that same freshly-resolved JWT (CDX-02), and drives the ONE
+ * (so an expired token refreshes inside getApiKey), builds the CF
+ * headers from that same freshly-resolved JWT, and drives the ONE
  * `generateImages()` call site.
  *
  * Determinism: the `OAuthTokenManager` is a `vi.fn()` mock (that IS the refresh
  * seam — refresh internals are tested in oauth-token-manager.test.ts). A FAKE
  * `openai-codex-images` transport is registered in `beforeEach` (capturing its
  * `options.{apiKey,headers}`) so `generateImages` dispatches to it WITHOUT a
- * network call (183-03 fake-provider precedent; Pitfall 6). NEVER the network,
+ * network call. NEVER the network,
  * NEVER a real ChatGPT login.
  * @module
  */
@@ -105,10 +105,10 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — CDX-01: per-call getApiKey + refresh seam
+// Per-call getApiKey + refresh seam
 // ---------------------------------------------------------------------------
 
-describe("createCodexImageAdapter — per-call bearer (CDX-01)", () => {
+describe("createCodexImageAdapter — per-call bearer", () => {
   it("resolves the bearer per execute() via getApiKey('openai-codex', {oauthProfiles})", async () => {
     const { manager, getApiKey } = mockOauth(async () => ok(VALID_BEARER));
     const adapter = createCodexImageAdapter({
@@ -143,10 +143,10 @@ describe("createCodexImageAdapter — per-call bearer (CDX-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — 401 / no-cred → auth_required + hint
+// 401 / no-cred → auth_required + hint
 // ---------------------------------------------------------------------------
 
-describe("createCodexImageAdapter — auth failures (success-criterion 3)", () => {
+describe("createCodexImageAdapter — auth failures", () => {
   const codes: OAuthError["code"][] = [
     "REFRESH_FAILED",
     "NO_CREDENTIALS",
@@ -176,10 +176,10 @@ describe("createCodexImageAdapter — auth failures (success-criterion 3)", () =
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — CDX-02: CF headers reach the transport from the resolved JWT
+// CF headers reach the transport from the resolved JWT
 // ---------------------------------------------------------------------------
 
-describe("createCodexImageAdapter — CF headers (CDX-02)", () => {
+describe("createCodexImageAdapter — CF headers", () => {
   it("forwards originator + ChatGPT-Account-ID + codex User-Agent built from the bearer JWT", async () => {
     const { manager } = mockOauth(async () => ok(VALID_BEARER));
     const adapter = createCodexImageAdapter({ oauthManager: manager, logger: logger as never });
@@ -193,7 +193,7 @@ describe("createCodexImageAdapter — CF headers (CDX-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — success / empty mapping (reuses the shipped toImageGenOutput)
+// Success / empty mapping (reuses the shipped toImageGenOutput)
 // ---------------------------------------------------------------------------
 
 describe("createCodexImageAdapter — result mapping", () => {
@@ -228,7 +228,7 @@ describe("createCodexImageAdapter — result mapping", () => {
     expect((result.error as { imageErrorKind?: string }).imageErrorKind).toBe("empty_response");
   });
 
-  it("OBS surfaces the transport's raw failure cause (e.g. an HTTP status) at WARN — it was invisible (troubleshooting-feedback-loop)", async () => {
+  it("surfaces the transport's raw failure cause (e.g. an HTTP status) at WARN so it is diagnosable from logs", async () => {
     const { manager } = mockOauth(async () => ok(VALID_BEARER));
     // The transport saw a fast non-2xx → errorMessage "codex 400": the REAL
     // cause the shipped classifier collapses into a generic "non-image response"
@@ -244,7 +244,7 @@ describe("createCodexImageAdapter — result mapping", () => {
     expect(logged).toContain("codex_image_failed");
   });
 
-  // WR-04 (184-REVIEW): a response.failed message surfaced by the transport must
+  // A response.failed message surfaced by the transport must
   // classify to the CAUSE-specific ImageErrorKind via the shipped
   // classifyImageError — NOT a generic empty_response. These assert the full
   // chain (transport errorMessage -> toImageGenOutput -> classifyImageError).
@@ -252,7 +252,7 @@ describe("createCodexImageAdapter — result mapping", () => {
     { label: "content policy block", message: "Your request was rejected by the content policy", kind: "content_blocked" },
     { label: "quota / rate limit", message: "You exceeded your current quota, please check your plan", kind: "quota_exceeded" },
     { label: "auth / 401", message: "401 Unauthorized: invalid bearer", kind: "auth_required" },
-    // The HTTP-400 incident: a permanent contract 4xx (invalid model / missing
+    // A live HTTP 400 incident: a permanent contract 4xx (invalid model / missing
     // instructions / store) must classify NON-retryable (bad_request), NOT the
     // retryable empty_response — else the agent retries a permanent error
     // (verified live: "the provider returned no image twice").
@@ -279,17 +279,17 @@ describe("createCodexImageAdapter — result mapping", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02 (184-REVIEW): timeoutMs must wire a real AbortSignal — a hung stream
+// timeoutMs must wire a real AbortSignal — a hung stream
 // must time out, not block forever.
 // ---------------------------------------------------------------------------
 
-describe("createCodexImageAdapter — timeout (WR-02)", () => {
+describe("createCodexImageAdapter — timeout", () => {
   it("aborts a hung transport after timeoutMs and maps it to timeout", async () => {
     vi.useFakeTimers();
     try {
       // A transport that NEVER completes until its abort signal fires — the
-      // hung-stream failure mode WR-02 describes. It resolves only when the
-      // adapter's timeout AbortController aborts the passed signal.
+      // hung-stream failure mode this suite guards against. It resolves only when
+      // the adapter's timeout AbortController aborts the passed signal.
       registerImagesApiProvider({
         api: "openai-codex-images",
         generateImages: (model, _context, options?: ProviderImagesOptions) =>
@@ -354,7 +354,7 @@ describe("createCodexImageAdapter — timeout (WR-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — isAvailable + the hand-built model
+// isAvailable + the hand-built model
 // ---------------------------------------------------------------------------
 
 describe("createCodexImageAdapter — isAvailable + model", () => {
@@ -399,10 +399,10 @@ describe("createCodexImageAdapter — isAvailable + model", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — SEC-03 subset: no secret in any log payload
+// No secret in any log payload
 // ---------------------------------------------------------------------------
 
-describe("createCodexImageAdapter — secret-logging discipline (SEC-03 subset)", () => {
+describe("createCodexImageAdapter — secret-logging discipline", () => {
   it("never logs the bearer / account-id / headers object on the auth failure path", async () => {
     const { manager } = mockOauth(async () =>
       err({ code: "REFRESH_FAILED", message: "x", providerId: "openai-codex" }),

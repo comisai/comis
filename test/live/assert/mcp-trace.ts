@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MCP-trace asserter — typed helpers for Phase-140 MCP scenario tests.
+ * MCP-trace asserter — typed helpers for MCP scenario tests.
  *
  * Validates that an MCP tools/call round-trip result has the expected
  * security properties: taint markers from wrapExternalContent, rate-limit

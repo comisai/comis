@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Deterministic intent → ExecutionGraph synthesizer (AUTHOR-02 / Phase 174-04).
+ * Deterministic intent → ExecutionGraph synthesizer.
  *
  * Expands a one-line intent — `{ pattern, agents|tasks, budget? }` — into a
  * VALIDATED ExecutionGraph by mapping `pattern` to one of the
  * CANONICAL_DAG_TEMPLATES (research-fanout / debate / vote / map-reduce),
  * deriving the template's slot values from `agents`/`tasks`, filling via
- * fillDagTemplate (which JSON-escapes weak-model slot values, CR-03), then
+ * fillDagTemplate (which JSON-escapes weak-model slot values), then
  * re-running the SAME governance a hand-authored graph takes
  * (parseExecutionGraph + validateAndSortGraph).
  *
- * WR-02: the synthesized graph is TEMPLATE-shaped — plain `{ nodeId, task,
+ * The synthesized graph is TEMPLATE-shaped — plain `{ nodeId, task,
  * dependsOn }` nodes, NOT the typed orchestration drivers. A synthesized
  * "debate" is a one-shot pro/con fan-in approximation, not the multi-round
  * `type_id: debate` driver; the typed drivers are authored via define/execute
@@ -20,7 +20,7 @@
  * + a few names) rather than the nested type_config union the raw pipeline
  * schema requires.
  *
- * GOVERNANCE (D-GOVERNANCE / §9): the synthesizer is PURE — it RETURNS a graph
+ * GOVERNANCE: the synthesizer is PURE — it RETURNS a graph
  * and NEVER executes one. The caller (the pipeline tool's from_intent action)
  * dispatches the returned graph through the EXISTING graph.execute path, so the
  * synthesized graph hits define-time governance (parse / topo-sort /
@@ -29,8 +29,7 @@
  * constructed-and-ran a graph directly would bypass all of it — forbidden.
  *
  * Returns err on an unknown pattern or a missing required slot input (e.g.
- * debate without 2 agents) — NEVER a partial or invalid graph
- * (T-174-SYNTH-INPUT).
+ * debate without 2 agents) — NEVER a partial or invalid graph.
  *
  * No daemon import — this lives in @comis/agent. The pipeline tool imports
  * synthesizeFromIntent; the synthesized graph then travels in-band on the
@@ -72,7 +71,7 @@ const DEFAULT_TOPIC = "the requested task";
  */
 function slotsForPattern(intent: SynthesisIntent): Result<Record<string, string>, string> {
   const topic = intent.tasks?.[0]?.trim() || DEFAULT_TOPIC;
-  // IN-02: trim + drop blank entries BEFORE any count/use. A blank agent name
+  // Trim + drop blank entries BEFORE any count/use. A blank agent name
   // is garbage-in — `["", ""]` would otherwise pass the debate length gate and
   // fill PRO_AGENT="" / CON_AGENT="" (a "...Agent: " blank-role graph). Filtering
   // here makes blank agents trip the same "requires 2 agents" err as `[]`, and
@@ -120,13 +119,13 @@ export function synthesizeFromIntent(intent: SynthesisIntent): Result<ExecutionG
   const slots = slotsForPattern(intent);
   if (!slots.ok) return slots;
 
-  // Fill the template slots — JSON-escapes weak-model values (CR-03) and err's
+  // Fill the template slots — JSON-escapes weak-model values and err's
   // on any unresolved ${VAR} so a partial graph is never produced.
   const filled = fillDagTemplate(template, slots.value);
   if (!filled.ok) return filled;
 
-  // Build the raw graph and run the SAME governance a hand-authored graph takes
-  // (D-SAME-VALIDATION §9): the label carries the user's one-line intent.
+  // Build the raw graph and run the SAME governance a hand-authored graph
+  // takes: the label carries the user's one-line intent.
   const rawGraph = {
     nodes: filled.value,
     label: template.label,

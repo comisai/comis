@@ -75,7 +75,7 @@ export interface SingleAgentDeps {
    *  shared db handle; the entity lane stays dormant until an operator enables
    *  `agents.<id>.rag.entityLane.enabled` (default OFF). */
   entityStore?: import("@comis/core").MemoryEntityStore;
-  /** LCD lossless context store (Phase 128 dag-mode write-path + assembly).
+  /** LCD lossless context store (dag-mode write-path + assembly).
    *  Threaded into each per-agent createPiExecutor as `contextStore` (the
    *  PiExecutorDeps.contextStore landing site) — flows on to setupContextEngine
    *  -> the `dag` branch in context-engine.ts. Built in setup-memory on the shared
@@ -84,18 +84,18 @@ export interface SingleAgentDeps {
    *  @comis/memory). Absent ⇒ the `dag` branch falls back to pipeline. The `dag`
    *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline. */
   lcdStore?: import("@comis/core").ContextStorePort;
-  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. Threaded
+  /** The daemon-owned per-tenant summarizer spend+breaker. Threaded
    *  into each per-agent createPiExecutor (PiExecutorDeps.summarizerSpendBreaker)
    *  -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant.
    *  ONE daemon instance partitions by tenantId (aggregate per-tenant spend across
    *  sessions/agents); absent ⇒ the raw seam. */
   summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker;
-  /** Phase 177: the single daemon-wide spend accumulator (the dollars
+  /** The single daemon-wide spend accumulator (the dollars
    *  kill-switch). ONE instance (constructed in setupObservability); threaded
    *  into each per-agent createPiExecutor so every bridge holds the SAME
    *  reference (Pitfall 4). Absent ⇒ the bridge's spend path is a no-op. */
   spendAccumulator?: import("@comis/agent").SpendAccumulator;
-  /** Phase 213-08 (BUDGET-01/02): the late-bound per-root budget holder + the
+  /** The late-bound per-root budget holder + the
    *  run's rootRunId resolver. ONE daemon-wide holder created early (before
    *  setupAgents) and populated by the cap layer after construction (the
    *  onCronWake late-bind pattern); threaded into each per-agent createPiExecutor
@@ -134,30 +134,27 @@ export interface SingleAgentDeps {
    *  Supplied HERE as the segregated `MemoryPinnedStore` port so each per-agent
    *  createPiExecutor can inject it into createMemoryRecall's Step-0 pinned-first lane.
    *  Without this field, the lane gate (`cfg_pinned?.enabled === true && deps.pinnedStore !== undefined`)
-   *  is always false and pinned memories are silently absent from every recall result (R6 blocker).
+   *  is always false and pinned memories are silently absent from every recall result (a blocking defect).
    *  DEFAULT-OFF BYTE-IDENTITY: with `rag.pinned.enabled=false` (the default), no pinnedStore
    *  query runs even when the store is injected. The segregated port TYPE is from @comis/core
    *  (the agent↛memory cut) — the agent package never imports @comis/memory. */
   pinnedStore?: import("@comis/core").MemoryPinnedStore;
-  /** LCD provenance READ store (Phase 173, DIST-03 read side). Supplied to each
+  /** LCD provenance READ store (read side). Supplied to each
    *  per-agent createPiExecutor so createMemoryRecall's post-fusion provenance
-   *  down-weighting pass fires (gate `deps.provenanceStore != null`) — it was BUILT
-   *  but never injected in Phase 172 (the built-but-not-wired class the milestone
-   *  hit 3×). Byte-identical no-op when absent OR when no lcd_distilled result is
+   *  down-weighting pass fires (gate `deps.provenanceStore != null`).
+   *  Byte-identical no-op when absent OR when no lcd_distilled result is
    *  present. The core LcdProvenanceReadStore TYPE only (the agent↛memory cut). */
   provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
-  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
-  //  social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
-  /** Learned-skill store (v2.26 SURFACE-01/03). Threaded into setupSingleAgent so the
+  /** Learned-skill store. Threaded into setupSingleAgent so the
    *  `getPromptSkillsXml` seam can surface promoted read-only learned procedures
    *  (append-after-platform, materialized read-only). The segregated `MentalModelStorePort`
    *  TYPE from @comis/core (the agent↛memory cut); the daemon injects the concrete
    *  @comis/memory adapter. Default-OFF byte-identity: absent ⇒ the listing is the
    *  platform-only snapshot, unchanged. */
   learnedSkillStore?: import("@comis/core").MentalModelStorePort;
-  /** WR-01: the shared per-agent learned-skill SURFACE registry. setupSingleAgent
+  /** The shared per-agent learned-skill SURFACE registry. setupSingleAgent
    *  registers this agent's surface refresh closure into it (only when learningSkills
-   *  is enabled — WR-03); the resolve-seam promote/demote loop (wireLearningOutcome,
+   *  is enabled); the resolve-seam promote/demote loop (wireLearningOutcome,
    *  wired earlier in setup-memory) calls `refresh(agentId)` on it after a real
    *  transition so the next session sees the new active set. Absent ⇒ no re-refresh. */
   learnedSkillSurfaceRegistry?: import("./learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry;
@@ -238,15 +235,15 @@ export interface SingleAgentDeps {
    * drain open recorders.
    */
   trajectoryRegistry: import("@comis/observability").SessionTrajectoryHandleRegistry;
-  /** Ollama served context-window probe result from bootAgents (CWF-03).
+  /** Ollama served context-window probe result from bootAgents.
    *  Map from provider config key (e.g. "qwen36-local") to discovered num_ctx.
    *  Absent → probe not run or all failed; executors fall back to configured window. */
   servedWindowByProvider?: Map<string, number>;
-  /** KNOB-01/03: daemon-owned collector — one served-vs-configured comparison per
+  /** Daemon-owned collector — one served-vs-configured comparison per
    *  provider; daemon.ts derives servedBelowConfiguredCount from it at the posture
    *  write (one comparison, two surfaces — no drift). */
   servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
-  /** FLOOR-01: daemon-owned collector of per-agent boot window info (registry-mirrored
+  /** Daemon-owned collector of per-agent boot window info (registry-mirrored
    *  configured window + reconciled effective window + profile) — consumed by the
    *  daemon's viable-floor loop after setupTools. */
   agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
@@ -278,7 +275,7 @@ export interface SingleAgentResult {
    */
   executionPlanPort: ExecutionPlanPort;
   /**
-   * Per-agent OAuthTokenManager (184). The SAME instance consumed for the
+   * Per-agent OAuthTokenManager. The SAME instance consumed for the
    * executor's OAuth resolution — surfaced so the registry collects it into
    * AgentsResult.oauthManagers and the image path can resolve the Codex bearer
    * through the agent's exact manager (no second instance). Undefined when the
@@ -286,7 +283,7 @@ export interface SingleAgentResult {
    */
   oauth?: OAuthTokenManager;
   /**
-   * FLAG-3: the per-agent pi AuthStorage (piAuthStorage). The SAME instance the executor's
+   * The per-agent pi AuthStorage (piAuthStorage). The SAME instance the executor's
    * model auth uses — surfaced so the registry collects it into AgentsResult.authStorages and the
    * memory.ask dialectic OAuth resolver can call resolveProviderApiKey → authStorage.setRuntimeApiKey
    * (the runtime-override the dialectic's pi model reads). Always present (every runtime builds one).

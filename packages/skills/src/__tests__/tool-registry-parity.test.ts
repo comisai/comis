@@ -93,13 +93,13 @@ describe("platform-tool registry parity", () => {
       "tokens_manage",
       "transcribe_audio",
       "tts",
-      // The video-generation tool (188-02). Registered as a CONDITIONAL
+      // The video-generation tool. Registered as a CONDITIONAL
       // descriptor (gated on ctx.videoGenProvider, mirroring image_generate's
-      // imageGenProvider gate) — the daemon populates the signal in Plan 04.
+      // imageGenProvider gate) — the daemon populates the signal at boot.
       "video_generate",
-      // The video-status query tool (189-03 / JOB-04). CONDITIONAL descriptor
+      // The video-status query tool. CONDITIONAL descriptor
       // (gated on ctx.videoStatusEnabled — the async store+poller stack, set on
-      // the SAME condition video_generate uses). never-export (SEC-01).
+      // the SAME condition video_generate uses). Never exported.
       "video_status",
       "whatsapp_action",
     ]);
@@ -169,15 +169,15 @@ describe("platform-tool registry parity", () => {
     });
   });
 
-  // video_generate IN-03 build-signature non-regression (191-03). The 191 seam
-  // threads ctx.videoGenProvider into the build callback so the description is
+  // video_generate build-signature non-regression. The build callback
+  // threads ctx.videoGenProvider so the description is
   // runtime-built from the active backend matrix. The parity STUB_CTX has NO
   // videoGenProvider, so the build runs with provider=undefined → it MUST still
-  // construct (the STATIC_FALLBACK path, never throws) and MUST NOT change the
-  // captured params (CFG-02 is description-only — the description is NOT in the
+  // construct (the static-fallback path, never throws) and MUST NOT change the
+  // captured params (the provider affects only the description — the description is NOT in the
   // snapshot, so the snapshot stays byte-identical). Specifically: NO new param
-  // and NO reference_images param (the LOCKED multi-ref deferral).
-  describe("video_generate IN-03 build is provider-optional (CFG-02 description-only)", () => {
+  // and NO reference_images param (multi-ref support is deliberately deferred).
+  describe("video_generate build is provider-optional and only affects the description", () => {
     const videoDescriptor = REGISTRY.find((d) => d.name === "video_generate");
 
     it("is registered as a CONDITIONAL descriptor gated on videoGenProvider", () => {
@@ -211,7 +211,7 @@ describe("platform-tool registry parity", () => {
       ]) {
         expect(schema.properties[p], `param ${p} must exist`).toBeDefined();
       }
-      // The LOCKED multi-ref deferral — NO reference_images param this phase.
+      // Multi-ref support is deliberately deferred — NO reference_images param.
       expect(schema.properties.reference_images).toBeUndefined();
     });
   });

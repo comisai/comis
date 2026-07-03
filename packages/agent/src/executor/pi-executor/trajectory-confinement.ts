@@ -16,8 +16,9 @@
  *    sidecar still advertises the (never-created) file, blinding `obs.explain`.
  *    Only when no dataDir is resolved at all do we fall back to `~/.comis`.
  *
- * Same bug class as the 260611 session-index-writer fix (which also fell back
- * to the real `~/.comis` and silently diverged from custom installs).
+ * The session-index writer applies the same rule for the same reason: it
+ * confines writes to the resolved `dataDir` rather than the real `~/.comis`,
+ * which would silently diverge on custom-dataDir installs.
  *
  * @module
  */

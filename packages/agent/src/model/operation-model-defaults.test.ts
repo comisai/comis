@@ -192,11 +192,11 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
   // Synthetic-input corner cases below validate `pickFromCohort` shape behavior
   // through the public function by selecting providers whose live catalog hits
   // the relevant shapes — but we also surface a tie-break guarantee via the
-  // surveyed-providers loop above. Two further behaviors are pinned by the
-  // pre-existing suite and intentionally not duplicated here:
-  //   - All-free provider fallback: covered by the existing
+  // surveyed-providers loop above. Two further behaviors are pinned by other
+  // tests in this file and intentionally not duplicated here:
+  //   - All-free provider fallback: covered by the
   //     "falls back to first text-capable id when all models are free" test.
-  //   - Single-model clamp & ranking property: covered by the existing
+  //   - Single-model clamp & ranking property: covered by the
   //     "covers every native pi-ai provider" + "fast tier total cost <= mid tier
   //     total cost (ranking property)" tests.
 
@@ -272,11 +272,11 @@ describe("OPERATION_TIER_MAP", () => {
     expect(OPERATION_TIER_MAP.interactive).toBe("primary");
   });
 
-  it("outcomeJudge is mapped to the fast tier (OUTCOME-04: optional cost-gated judge)", () => {
+  it("outcomeJudge is mapped to the fast tier (optional cost-gated judge)", () => {
     expect(OPERATION_TIER_MAP.outcomeJudge).toBe("fast");
   });
 
-  it("skillSynthesis is mapped to the mid tier (SKILL-09: a synthesis op, not a fast classify)", () => {
+  it("skillSynthesis is mapped to the mid tier (a synthesis op, not a fast classify)", () => {
     expect(OPERATION_TIER_MAP.skillSynthesis).toBe("mid");
   });
 
@@ -304,18 +304,18 @@ describe("OPERATION_TIER_MAP", () => {
     expect(OPERATION_TIER_MAP.condensation).toBe("fast");
   });
 
-  // R4/R5: verification + planning (Phase 154)
-  it("verification is mapped to primary tier (R4: self-check on local-only, cheap-model on configured)", () => {
+  // verification + planning tiers
+  it("verification is mapped to primary tier (self-check on local-only, cheap-model on configured)", () => {
     expect(OPERATION_TIER_MAP["verification"]).toBe("primary");
   });
 
-  it("planning is mapped to primary tier (R5: same resolution path)", () => {
+  it("planning is mapped to primary tier (same resolution path as verification)", () => {
     expect(OPERATION_TIER_MAP["planning"]).toBe("primary");
   });
 });
 
 // ---------------------------------------------------------------------------
-// OPERATION_TIMEOUT_DEFAULTS — unchanged
+// OPERATION_TIMEOUT_DEFAULTS — per-operation timeout table
 // ---------------------------------------------------------------------------
 
 describe("OPERATION_TIMEOUT_DEFAULTS", () => {
@@ -347,14 +347,13 @@ describe("OPERATION_TIMEOUT_DEFAULTS", () => {
     expect(OPERATION_TIMEOUT_DEFAULTS).not.toHaveProperty("interactive");
   });
 
-  // R4: verification timeout (Phase 154)
   it("has correct timeout for verification (120000ms — matches LLM_TIMEOUT_MS ceiling)", () => {
     expect(OPERATION_TIMEOUT_DEFAULTS["verification"]).toBe(120_000);
   });
 });
 
 // ---------------------------------------------------------------------------
-// OPERATION_CACHE_DEFAULTS — unchanged
+// OPERATION_CACHE_DEFAULTS — per-operation cache-retention table
 // ---------------------------------------------------------------------------
 
 describe("OPERATION_CACHE_DEFAULTS", () => {
@@ -378,7 +377,6 @@ describe("OPERATION_CACHE_DEFAULTS", () => {
     expect(OPERATION_CACHE_DEFAULTS.cron).toBe("short");
   });
 
-  // R4/R5: verification + planning cache defaults (Phase 154)
   it("verification cache retention is none (critic responses must not be cached)", () => {
     expect(OPERATION_CACHE_DEFAULTS["verification"]).toBe("none");
   });

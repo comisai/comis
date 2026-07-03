@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LearningEvents: verified-learning (v2.26) write-back + telemetry events.
+ * LearningEvents: verified-learning write-back + telemetry events.
  *
  * Composed into `EventMap` (events.ts) as a sibling of `AgentEvents` — the
- * dedicated file keeps `events-agent.ts` under its 799-line cap (Plan 07 adds
- * its `learning:skill_*` telemetry keys to THIS same interface, not events-agent).
+ * dedicated file keeps `events-agent.ts` under its 799-line cap (the
+ * `learning:skill_*` telemetry keys live on THIS same interface, not events-agent).
  *
- * Closed-graph discipline (the agent↛memory cut, SEC-01): the AGENT emits these
+ * Closed-graph discipline (the agent↛memory cut): the AGENT emits these
  * events; the DAEMON write-back subscriber does the memory store write. Mirrors
  * the `memory:recall_used → setup-memory-usefulness-wiring.ts → recordUsage`
  * precedent — the agent never imports `@comis/memory`.
@@ -21,14 +21,14 @@
 
 /**
  * The CLOSED set of acute reasons a reflection run admitted nothing (or did) —
- * the content-free verdict carried on `reflect:funnel.admissionOutcome` (INV-6).
+ * the content-free verdict carried on `reflect:funnel.admissionOutcome`.
  *
- * Canonical HERE in `@comis/core` (IN-02): the event payload that uses it lives in
+ * Canonical HERE in `@comis/core`: the event payload that uses it lives in
  * this file, and `@comis/agent` cannot be imported by core (the agent→core direction
  * only). `@comis/agent`'s reflection-job re-exports THIS type and its
  * `classifyReflectOutcome` returns it, so the daemon emit (which assigns the value)
  * and this event contract share one closed union — a free-form string assigned into
- * the funnel field is a compile error, not a silent INV-6 drift.
+ * the funnel field is a compile error, not a silent contract drift.
  *
  * Precedence/meaning is documented at the reflection classifier
  * (`@comis/agent` reflection-job.ts `classifyReflectOutcome`):
@@ -46,17 +46,17 @@ export type ReflectAdmissionOutcome =
 
 export interface LearningEvents {
   /**
-   * ATTR-02: skill-use attribution complete for one turn. MINIMAL payload —
+   * Skill-use attribution complete for one turn. MINIMAL payload —
    * the per-turn used-skill ids + count ONLY, NEVER procedure bodies, the agent
    * response, or the read path. The bridge attributes a `read` whose path
-   * matches a frozen learned-skill `<location>` to a skill (ATTR-01) and
+   * matches a frozen learned-skill `<location>` to a skill and
    * accumulates the ids in a per-turn carrier; `postExecution` emits this event
    * with those ids. Emit site: `postExecution` (executor-post-execution.ts),
-   * gated on a non-empty `usedSkillIds` (absent/empty ⇒ no emit, byte-identical
-   * to pre-patch). The daemon subscriber (setup-learning.ts, Plan 07) threads
+   * gated on a non-empty `usedSkillIds` (absent/empty ⇒ no emit).
+   * The daemon subscriber (setup-learning.ts) threads
    * `usedSkillIds` into `observe()` → the `used_skill_ids` column. Mirrors the
-   * counts/ids-only `memory:recall_used`. Trajectory-bridged → `memory.skill_used`
-   * since IMP-3/PD-OBS-1 (package-delivery-20260628), so `explain.learning.skillsUsed`
+   * counts/ids-only `memory:recall_used`. Trajectory-bridged → `memory.skill_used`,
+   * so `explain.learning.skillsUsed`
    * surfaces the inline-credited ids without a DB hand-join.
    */
   "memory:skill_used": {
@@ -72,10 +72,10 @@ export interface LearningEvents {
   };
 
   /**
-   * The full per-turn topic-match reuse-attribution CENSUS (finding A, obs-sweep
-   * package-delivery-20260628). `memory:skill_used` fires only when ≥1 skill is CREDITED, so a
+   * The full per-turn topic-match reuse-attribution CENSUS.
+   * `memory:skill_used` fires only when ≥1 skill is CREDITED, so a
    * surfaced skill that JUST missed the bar (coverage under threshold, or below the absolute
-   * floor) or a legacy doc with no topicTokens left NO signal — "why wasn't my skill reused?"
+   * floor) or a doc with no topicTokens left NO signal — "why wasn't my skill reused?"
    * needed a debugger. Emitted per turn when ≥1 learned skill is surfaced for topic-match, with a
    * content-free score per surfaced skill (the NAME is an opaque id; the rest are numbers — never
    * a procedure body). Bridged to the `memory.skill_surfaced` trajectory record; folded into
@@ -95,15 +95,15 @@ export interface LearningEvents {
   };
 
   /**
-   * REFLECT (v2.31, Phase 226 SIMPLIFY-04): a reflection run admitted N candidate
+   * A reflection run admitted N candidate
    * docs. Emitted DAEMON-SIDE (plain `eventBus.emit`, never `?.`) by the reflection
    * cron handler (setup-channels-memory-crons-wire.ts) AFTER `runReflection` returns
    * — the daemon emit (not the agent job) keeps the trajectory-bridge entry landing
-   * with the emit (no agent-side gate trip). RENAMED from `learning:skill_synthesized`
-   * to `reflect:admitted` (the reflection funnel rename — the forget/outcome events
-   * KEEP their `learning:*` names, Pitfall 6). COUNT ONLY — the reflected doc body is
-   * a compile error here (the §2.7 / SEC-01 firewall). Bridged
-   * (TRAJECTORY_BRIDGE_MAPPING) for `comis explain` / OBS-02.
+   * with the emit (no agent-side gate trip). The `reflect:*` prefix covers the
+   * reflection funnel only — the forget/outcome events carry `learning:*` names.
+   * COUNT ONLY — the reflected doc body is
+   * a compile error here (the §2.7 counts-only firewall). Bridged
+   * (TRAJECTORY_BRIDGE_MAPPING) for `comis explain`.
    */
   "reflect:admitted": {
     agentId: string;
@@ -113,16 +113,16 @@ export interface LearningEvents {
   };
 
   /**
-   * REFLECT (v2.31, Phase 226 SIMPLIFY-04): the reflection-run FUNNEL — counts ONLY,
+   * The reflection-run FUNNEL — counts ONLY,
    * emitted DAEMON-SIDE alongside `reflect:admitted` after `runReflection` returns (the
    * reflection cron wire maps the reflect result onto these fields). Where
    * `reflect:admitted.count` is only the ADMITTED tail, this carries the whole funnel so
    * `comis explain` answers "why didn't a doc get learned" WITHOUT a DEBUG-log grep — the
    * load-bearing field is `maxClusterCardinality` (the distinct (session,sender)
    * corroboration size; a value of 1 = a single uncorroborated instance, so admission
-   * CORRECTLY refused; the same conservatism that defeats poisoning). RENAMED from the
-   * old synthesis-funnel event to `reflect:funnel`. COUNT ONLY — a reflected doc
-   * body is a compile error here (the §2.7 / SEC-01 firewall). Bridged
+   * CORRECTLY refused; the same conservatism that defeats poisoning).
+   * COUNT ONLY — a reflected doc
+   * body is a compile error here (the §2.7 counts-only firewall). Bridged
    * (TRAJECTORY_BRIDGE_MAPPING) for `comis explain`.
    */
   "reflect:funnel": {
@@ -168,7 +168,7 @@ export interface LearningEvents {
      */
     totalSourceChars: number;
     /**
-     * RC-4: the acute reason this run admitted nothing (or `admitted`) — a content-free
+     * The acute reason this run admitted nothing (or `admitted`) — a content-free
      * closed enum so `comis explain` answers "why was 0 admitted" from ONE field. The
      * reflect verdict (classifyReflectOutcome): `no_successes` (no trusted-origin success
      * cleared SELECT) / `untrusted_origin` (all successes dropped at SELECT for an
@@ -176,19 +176,19 @@ export interface LearningEvents {
      * `empty_reflection` / `rejected_name_length` (doc name over MAX_DOC_NAME_LENGTH) /
      * `rejected_validation` / `admitted`.
      *
-     * IN-02: typed to the CLOSED {@link ReflectAdmissionOutcome} union (was `string`) so
+     * Typed to the CLOSED {@link ReflectAdmissionOutcome} union so
      * the closed-enum contract is type-enforced — a free-form string into the funnel field
-     * is a compile error, not a silent INV-6 drift.
+     * is a compile error, not a silent contract drift.
      */
     admissionOutcome: ReflectAdmissionOutcome;
     timestamp: number;
   };
 
   /**
-   * SURFACE-06: an attributed successful reuse promoted N candidate skills this
+   * An attributed successful reuse promoted N candidate skills this
    * resolve (candidate→active past promoteAtProofCount). Emitted DAEMON-SIDE
-   * (setup-learning.ts, Plan 05) — counts ONLY, never a procedure body/script/id-list.
-   * Bridged for comis explain / OBS-02.
+   * (setup-learning.ts) — counts ONLY, never a procedure body/script/id-list.
+   * Bridged for comis explain.
    */
   "learning:skill_promoted": {
     agentId: string;
@@ -198,22 +198,23 @@ export interface LearningEvents {
   };
 
   /**
-   * SURFACE-06: a corroboration-gated decay-aware-trend WEAKENING demoted N skills
+   * A corroboration-gated decay-aware-trend WEAKENING demoted N skills
    * this resolve (active→stale→archived). Emitted DAEMON-SIDE.
    *
-   * Finding C (obs-sweep package-delivery-20260628): carries the demoted skill NAMES + the
+   * Carries the demoted skill NAMES + the
    * trigger trajectory id alongside the count, so `explain` answers "WHICH skill demoted and WHY"
-   * in one call (it was count-only → "2 demoted" with no name, forcing a daemon.log + mental_models
-   * hand-join). Content-free: skill NAMES are the same opaque id-class as `skill.prompt_invoked.skillName`
-   * + a trajectory id — never a procedure body/script (SEC-01).
+   * in one call (a count-only payload — "2 demoted" with no name — would force a daemon.log +
+   * mental_models hand-join). Content-free: skill NAMES are the same opaque id-class as
+   * `skill.prompt_invoked.skillName`
+   * + a trajectory id — never a procedure body/script.
    */
   "learning:skill_demoted": {
     agentId: string;
     /** How many skills were demoted (active→stale→archived) this resolve (count only). */
     count: number;
-    /** The demoted skill NAMES (id-class; == count entries). Finding C. */
+    /** The demoted skill NAMES (id-class; == count entries). */
     demotedSkillNames?: string[];
-    /** The trajectory whose failure/correction outcome drove this demote (the WHY). Finding C. */
+    /** The trajectory whose failure/correction outcome drove this demote (the WHY). */
     triggerTrajectoryId?: string;
     timestamp: number;
   };
@@ -225,7 +226,7 @@ export interface LearningEvents {
    * `learning:skill_demoted`) so `wireLearningOutcome` (which owns the gated skill-transition + its
    * corroboration/trend state) can RE-RUN the skill transition for that trajectory's credited skills
    * with a `corrected` verdict → a corroborated correction flips the wrong skill active/candidate→stale
-   * (kept, not deleted). Content-free: ids + a confidence scalar ONLY, never a body (INV-6).
+   * (kept, not deleted). Content-free: ids + a confidence scalar ONLY, never a body.
    */
   "learning:correction_observed": {
     agentId: string;
@@ -238,10 +239,8 @@ export interface LearningEvents {
     timestamp: number;
   };
 
-  // Phase 226 SIMPLIFY-04: three vestigial learning telemetry events were DELETED here —
-  // the sandbox-validation event (the dynamic sandbox was deleted in 223), the
-  // user-rep-revision event, and the consolidation-generalization event (both folded into
-  // the reflection engine in 225). All three were grep-confirmed 0-emit at HEAD; their
-  // trajectory-bridge entries, translator cases, type members, and obs folds/verdicts were
-  // removed in the same lockstep change (no compat alias, I1).
+  // Deliberately absent: there is no sandbox-validation, user-rep-revision, or
+  // consolidation-generalization telemetry event — those paths are handled by the
+  // reflection engine, so such keys would have zero emitters. A guard test
+  // (events-learning.test.ts) pins that they stay out of this interface.
 }

@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the pure named-key grammar (spec §5 send_key).
- *
- * RED-first: `terminal-key-grammar.ts` does not exist when this file is first
- * committed — the import fails, every case is RED. The production module then
- * turns them GREEN.
+ * Unit tests for the pure named-key grammar behind `send_key`.
  *
  * Every expected value uses EXPLICIT hex/literal escapes so a wrong byte is a
  * visible diff (a wrong control byte is an invisible, load-bearing bug — the

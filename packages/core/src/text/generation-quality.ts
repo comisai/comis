@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * GENQ-01: the pure, single-source (I7) generation-quality classifier.
+ * The pure, single-source generation-quality classifier.
  *
- * Generalizes the v2.22 OBS-01 `dominantScript(source) vs dominantScript(output)`
+ * Generalizes the `dominantScript(source) vs dominantScript(output)`
  * check — which the context-engine summary path already runs to emit
  * `context:summary_language_mismatch` — into one shared classifier consumed by
  * EVERY memory-generation pass (consolidation, reasoning, user-representation).
  * A weak local model that silently translates non-Latin source memories into a
- * Latin output (F-ML1: the user-representation pass translated Hebrew facts into
- * an English profile, found offline not via obs) becomes a counted fleet signal.
+ * Latin output (e.g. a user-representation pass translating Hebrew facts into
+ * an English profile — a failure otherwise invisible to observability) becomes
+ * a counted fleet signal.
  *
- * VISIBILITY ONLY — pure function, NO gating, no rejection (the v2.22 §8 REJECT:
- * a mixed code-heavy chunk legitimately skews Latin via the 0.3 dominance
- * threshold in `dominantScript`, so a rejection rule over-fires). NO imports from
+ * VISIBILITY ONLY — pure function, NO gating, no rejection (a mixed code-heavy
+ * chunk legitimately skews Latin via the 0.3 dominance threshold in
+ * `dominantScript`, so a rejection rule would over-fire). NO imports from
  * any @comis package beyond the pure `dominantScript` data table; no I/O, clock,
- * or env (I9). Reads the text locally and returns enums/booleans — nothing leaks.
+ * or env. Reads the text locally and returns enums/booleans — nothing leaks.
  * @module
  */
 import { dominantScript, type ScriptClass } from "./script-classes.js";
@@ -28,7 +29,7 @@ export interface GenerationQualityClassification {
   readonly sourceScript: ScriptClass;
   /** Dominant script of the generated OUTPUT. */
   readonly outputScript: ScriptClass;
-  /** A non-Latin source whose output came back Latin (the F-ML1 regression class).
+  /** A non-Latin source whose output came back Latin (the silent-translation regression class).
    *  False whenever the output is empty — `emptyOutput` owns that case. */
   readonly languageMismatch: boolean;
   /** The output is empty / whitespace-only (the pass produced nothing usable). */
@@ -37,7 +38,7 @@ export interface GenerationQualityClassification {
 
 /**
  * Classify one generation pass's (source, output) text pair. Two O(n)
- * `dominantScript` passes (SCRIPT-01) plus a trim. Pure and deterministic:
+ * `dominantScript` passes plus a trim. Pure and deterministic:
  * the same pair always yields the same result.
  *
  * `languageMismatch` mirrors the summary detector's predictable small-model

@@ -35,12 +35,11 @@ describe("InfraEvents payload structure", () => {
   // -------------------------------------------------------------------------
   // Agent Transparency — approval:requested shortId/traceId
   //
-  // §4.2 / §6.4.1: the gate mints a short, renderer-safe id and emits it on
-  // approval:requested. shortId is REQUIRED (spec §17.1); traceId is
+  // The gate mints a short, renderer-safe id and emits it on
+  // approval:requested. shortId is REQUIRED; traceId is
   // optional because restorePending() preserves shortId but may omit traceId.
   // The SOLE emit site (approval-gate.ts) supplies shortId — this schema only
-  // declares the required field. These cases fail to compile on the pre-patch
-  // type (shortId absent) — RED proof.
+  // declares the required field.
   // -------------------------------------------------------------------------
 
   it("approval:requested requires shortId and accepts an optional traceId", () => {
@@ -71,7 +70,7 @@ describe("InfraEvents payload structure", () => {
   it("approval:requested restored shape carries shortId without traceId", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
-    // restorePending() preserves shortId but may omit traceId (§4.2).
+    // restorePending() preserves shortId but may omit traceId.
     const restored: EventMap["approval:requested"] = {
       requestId: "req-restored",
       shortId: "ZYX987zyx654",
@@ -411,12 +410,12 @@ describe("InfraEvents payload structure", () => {
     expect(received.activeHandles).toBe(42);
   });
 
-  // The "system:shutdown" event was removed from InfraEvents — it had
-  // production subscribers but zero production emitters, so every teardown
-  // silently no-op'd until systemd KillMode reaped the process. Teardown
-  // wiring now flows directly through setupShutdown's ShutdownDeps (see
-  // packages/daemon/src/wiring/setup-shutdown.ts). The payload-shape test
-  // that used to live here was deleted with the event declaration.
+  // There is deliberately NO "system:shutdown" event in InfraEvents — a bus
+  // event here invites subscriber-without-emitter drift, where every teardown
+  // silently no-ops until systemd KillMode reaps the process. Teardown
+  // wiring flows directly through setupShutdown's ShutdownDeps (see
+  // packages/daemon/src/wiring/setup-shutdown.ts), so no payload-shape test
+  // exists for it.
 
   it("system:error delivers Error instance and source string", () => {
     const bus = new TypedEventBus();

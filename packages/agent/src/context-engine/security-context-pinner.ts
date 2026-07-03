@@ -2,7 +2,7 @@
 /**
  * Security context pinning for eviction/compaction passes.
  *
- * S4: identifies stored messages that contain security-critical markers
+ * Identifies stored messages that contain security-critical markers
  * (canary token, wrapExternalContent delimiters, sender-trust prefixes,
  * safety reinforcement text) and marks them as ineligible for eviction.
  * Fail-closed: uncertain → treat as security-relevant (pin it).
@@ -22,7 +22,7 @@ export interface SecurityPinMarkers {
    * Sender-trust section prefix for messages injected by buildSenderTrustSection
    * (canonical value: "## Authorized Senders"). When set, messages containing
    * this prefix are pinned — the trust table must survive compaction so the model
-   * always knows which senders are authorized. S4: one of the four pinned categories.
+   * always knows which senders are authorized. One of the four pinned categories.
    */
   senderTrustPrefix?: string;
 }
@@ -31,7 +31,7 @@ export interface SecurityPinMarkers {
  * Returns true if the message text contains any security-critical marker.
  * Fail-closed: empty/undefined message text → true (pin it).
  *
- * S4: pinned messages are excluded from eviction/summarization chunk selection
+ * Pinned messages are excluded from eviction/summarization chunk selection
  * in BOTH the pipeline llm-compaction layer AND the LCD leaf-summarizer.
  */
 export function isSecurityRelevantMessage(

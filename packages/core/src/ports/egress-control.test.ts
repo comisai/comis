@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Port-surface test for {@link EgressControlPort} (§3.5) — the type-only
- * no-secret host-allowlist egress filter, DISTINCT from the credential broker
- * (§3.9). This file proves the interface SHAPE (a value fixture must satisfy
+ * Port-surface test for {@link EgressControlPort} — the type-only
+ * no-secret host-allowlist egress filter, DISTINCT from the credential broker.
+ * This file proves the interface SHAPE (a value fixture must satisfy
  * the contract) and that the type resolves on the public `@comis/core` surface;
  * the runtime behaviour (the allowlist proxy + the in-jail relay) lives in
  * @comis/daemon / @comis/skills and is tested there.

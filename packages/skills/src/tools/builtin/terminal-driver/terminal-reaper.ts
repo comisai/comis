@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The terminal-driver reaper (spec §4.6).
+ * The terminal-driver reaper.
  *
  * Bounds the per-worker/cgroup session footprint with THREE caps, each evicting
  * with an audited reason:
@@ -78,17 +78,17 @@ export interface ReaperDeps {
   /** Called for every eviction with the audited reason — the registry drops + cleans + emits. */
   onEvict: (sessionId: string, reason: EvictReason) => void;
   /**
-   * OPTIONAL alive-and-busy predicate (ENDURE-01 / I9 — the endurance invariant).
+   * OPTIONAL alive-and-busy predicate (the endurance invariant).
    * When supplied, a session the idle sweep would otherwise reap is EXCLUDED while
    * this returns `true`, so a quiet-but-busy multi-hour compile is never killed for
    * its quietness — the load-bearing fix for the documented pitfall that
    * `lastActivity` does NOT advance for a backgrounded drive that quietly compiles
    * (no tool round-trip lands), making a naive lastActivity-only idle sweep evict a
-   * healthy 2h build. The DECISION lives in `terminal-busy-predicate.ts` (165-02,
-   * `busyOrHung(...) === "busy"`); the daemon (165-07) binds it over the session's
+   * healthy 2h build. The DECISION lives in `terminal-busy-predicate.ts`
+   * (`busyOrHung(...) === "busy"`); the daemon binds it over the session's
    * worker progress and injects it here — the reaper stays a thin sweep and the
-   * heuristic stays unit-testable in isolation. ABSENT ⇒ today's behavior (idle
-   * eviction on quietness alone, I1). It gates ONLY the idle branch — the deliberate
+   * heuristic stays unit-testable in isolation. ABSENT ⇒ the plain behavior (idle
+   * eviction on quietness alone). It gates ONLY the idle branch — the deliberate
    * `wall_clock`/`max_interactions` caps are NOT a quietness signal and STILL fire
    * (a named operator bound, not a mystery).
    */
@@ -118,7 +118,7 @@ export function createTerminalReaper(deps: ReaperDeps): TerminalReaper {
    * One sweep pass: evict each session at most once, idle taking precedence over
    * wall-clock. A `0` cap is "disabled" so each cap can be exercised in isolation.
    *
-   * ENDURE-01 / I9: the idle branch is GATED on `!isBusy` — a session quiet past
+   * The idle branch is GATED on `!isBusy` — a session quiet past
    * `idleTtlMs` but alive-and-busy (recent worker progress) is EXCLUDED from idle
    * eviction (no death for quietness alone). The wall-clock branch is UNCHANGED: a
    * deliberate operator bound that fires even for a busy session, carrying its cap
@@ -129,8 +129,8 @@ export function createTerminalReaper(deps: ReaperDeps): TerminalReaper {
   function sweep(): void {
     const now = deps.nowMs();
     for (const s of deps.listSessions()) {
-      // I9: skip idle eviction while the drive is alive-and-busy (a quiet compile is
-      // not idle). `isBusy` absent ⇒ `false` ⇒ today's quietness-only behavior (I1).
+      // Skip idle eviction while the drive is alive-and-busy (a quiet compile is
+      // not idle). `isBusy` absent ⇒ `false` ⇒ the quietness-only behavior.
       if (deps.idleTtlMs > 0 && now - s.lastActivity > deps.idleTtlMs && !(deps.isBusy?.(s) ?? false)) {
         deps.onEvict(s.sessionId, "idle");
         continue;
@@ -200,10 +200,10 @@ export interface ReaperCaps {
   timers?: TimerPort; // injected TimerPort (daemon: createSystemTimers); type-only @comis/core. Absent ⇒ no reaper.
   onEvict?: (info: ReaperEvictInfo) => void; // daemon emits terminal:session_evicted + _state(lost) + a WARN.
   onCapForget?: (sessionId: string) => void; // daemon wires caps.forget (no cap-map leak on the reap path).
-  // ENDURE-01 / I9: the alive-and-busy idle exclusion. The daemon (165-07) binds this
+  // The alive-and-busy idle exclusion. The daemon binds this
   // to `busyOrHung(...) === "busy"` over the session's worker progress (the decision
   // lives in terminal-busy-predicate.ts); it is threaded onto the reaper's idle gate
-  // so a quiet-but-busy compile is never idle-evicted. Absent ⇒ today's behavior (I1).
+  // so a quiet-but-busy compile is never idle-evicted. Absent ⇒ quietness-only eviction.
   isBusy?: (s: ReaperSession) => boolean;
 }
 
@@ -233,7 +233,8 @@ export interface RegistryReaperWiring<H extends ReaperSessionHandle> {
  * reuses the registry's `evictInternal` (the kill drop + `cleanupSessionWorkspace`,
  * never duplicated), FORGETS the per-session cap state via `onCapForget` (no
  * SessionCaps Map leak on the reap path), emits the audited reason via
- * `onEvict`, and logs a WARN (`hint` + `errorKind: "resource"`, §2.7). The
+ * `onEvict`, and logs a WARN (`hint` + `errorKind: "resource"`, per the AGENTS.md
+ * logging matrix). The
  * `max_interactions` eviction reuses this exact `evict`. The reaper is undefined when
  * `timers`/`maxSessions` are not both provided — `checkOverflow`/`stop` then no-op.
  */
@@ -274,8 +275,8 @@ export function wireRegistryReaper<H extends ReaperSessionHandle>(w: RegistryRea
               startedAtMs: s.startedAt,
             })),
           onEvict: (sessionId, reason) => evict(sessionId, reason),
-          // ENDURE-01 / I9: thread the daemon-bound alive-busy predicate onto the
-          // sweep's idle gate (undefined ⇒ today's quietness-only eviction, I1).
+          // Thread the daemon-bound alive-busy predicate onto the
+          // sweep's idle gate (undefined ⇒ quietness-only eviction).
           isBusy: w.caps.isBusy,
         })
       : undefined;

@@ -10,7 +10,7 @@
  * covers both the missing-entry and the explicit-false cases).
  *
  * Observable: the `renderer.apply` spy is NOT called when the rendererKey is
- * absent from the map. RED on the un-gated coordinator (apply always fires).
+ * absent from the map. Without the gate, apply always fires.
  */
 import type {
   ActivityEvent,

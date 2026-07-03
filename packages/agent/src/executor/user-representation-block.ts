@@ -1,24 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The PURE deterministic per-user-profile formatter (the v2.31 FOLD-01 read path).
+ * The PURE deterministic per-user-profile formatter (the profile read path).
  * The read-path analog of {@link buildTemporalGuidanceBlock} (rag/temporal-guidance.ts):
  * a pure function over a `kind:"profile"` {@link MentalModel} that returns a FIXED-shape
- * system-prompt block (a `<user_profile>` block, the §7.3-guidance analog), or
+ * system-prompt block (a `<user_profile>` block), or
  * `undefined` when there is nothing to inject. When it returns `undefined` the caller
  * pushes NOTHING onto `memorySections` — that is the default-OFF byte-identity no-op
- * (a user with no profile leaves the prompt byte-identical to today's).
+ * (a user with no profile leaves the prompt byte-identical to the no-profile form).
  *
  * Wiring: prompt-assembly reads the profile LLM-FREE
  * (`mentalModelStore.list(scope, "profile")`, a deterministic store read — NO model
  * call) and pushes this block onto `memorySections`, exactly like the
- * temporal-guidance block. This is the milestone's #1 binding constraint: the
+ * temporal-guidance block. The binding constraint: the
  * recall HOT PATH stays LLM-free — the read is a deterministic store.list + this
  * pure format, never a recall lane / reasoning seam.
- *
- * v2.31 Phase 225-05: the legacy `buildUserRepresentationBlock(UserRepresentationEntry[])`
- * formatter (the old `userRepresentationStore.read` path) was DELETED with the standalone
- * user-representation subsystem. `buildProfileBlock` is the sole survivor — it renders the
- * SAME `<user_profile>` envelope from the folded kind:"profile" doc.
  *
  * Imports ONLY @comis/core TYPES — the agent-package production source must not
  * import the memory package (architecture.test.ts "agent -> memory cut"). The
@@ -31,9 +26,8 @@
 
 import type { MentalModel } from "@comis/core";
 
-/** The four PREFIX-TYPE section ids the `PROFILE_REFLECT_PROMPT` emits (the fold's
- *  profile-doc section vocabulary). A code-local literal union — the deleted
- *  `UserRepresentationType` taxonomy folded into these section ids. */
+/** The four PREFIX-TYPE section ids the `PROFILE_REFLECT_PROMPT` emits (the
+ *  profile-doc section vocabulary). A code-local literal union. */
 type ProfileSectionId = "identity" | "preference" | "relationship" | "instruction";
 
 /**
@@ -59,20 +53,17 @@ const GROUP_HEADING: Readonly<Record<ProfileSectionId, string>> = {
 
 /**
  * Build the per-user profile system-prompt block from a `kind:"profile"`
- * {@link MentalModel} — the FOLD-01 (Phase 225) read-path replacement for the
- * deleted legacy `buildUserRepresentationBlock`. The fold rewired the `<user_profile>`
- * source from the deleted `userRepresentationStore` (a `UserRepresentationEntry[]`)
- * to the mental-model store (a `kind:"profile"` doc whose `structuredBody.sections`
+ * {@link MentalModel}. The `<user_profile>` source is the mental-model store
+ * (a `kind:"profile"` doc whose `structuredBody.sections`
  * are keyed by the four PREFIX-TYPE ids the `PROFILE_REFLECT_PROMPT` emits —
  * `identity` / `preference` / `relationship` / `instruction`).
  *
- * PURE + byte-stable (the legacy formatter's contract): it
+ * PURE + byte-stable: it
  * takes ONLY the doc and returns `string | undefined`, with NO store call, no
  * wall-clock read, no model, no `Result` wrapper (the sanctioned pure format
- * carve-out). It maps each prefix-type section onto the SAME fixed
- * {@link GROUP_ORDER} groups + the SAME code-pinned {@link GROUP_HEADING} prose +
- * the SAME `<user_profile>` wrapper as the legacy formatter — so the block is
- * EQUIVALENT-OR-BETTER (FOLD-03): same wrapper, same facts, same fixed group order
+ * carve-out). It maps each prefix-type section onto the fixed
+ * {@link GROUP_ORDER} groups + the code-pinned {@link GROUP_HEADING} prose +
+ * the `<user_profile>` wrapper
  * (the heading is taken from CODE, never the doc's own — so it cannot drift from
  * the pinned prose). A section whose id is not a known prefix type is ignored
  * (forward-compatible); a section with an empty body contributes no heading.
@@ -80,7 +71,7 @@ const GROUP_HEADING: Readonly<Record<ProfileSectionId, string>> = {
  * Returns `undefined` when the doc has NO usable section content (no
  * structuredBody, or every prefix-type section is empty/absent) — the caller then
  * pushes NOTHING onto `memorySections`, the default-OFF byte-identity no-op (a user
- * with no profile leaves the prompt byte-identical to today's). The doc's `content`
+ * with no profile leaves the prompt byte-identical to the no-profile form). The doc's `content`
  * was redaction-checked + `validateLearnedDocBody`-clean + high-trust at WRITE time;
  * this read-side formatter does not re-validate.
  */

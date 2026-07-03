@@ -284,14 +284,13 @@ describe("estimateMessageTokens", () => {
 // estimateContextTokens (content-aware estimation)
 // ---------------------------------------------------------------------------
 
-describe("malformed content blocks (defensive — LCD/codex turn-abort regression 2026-06-14)", () => {
+describe("malformed content blocks — estimation must never throw", () => {
   // A malformed/undefined content block must NEVER throw out of token/char
   // estimation. The LCD context-engine assembler calls these inside
   // transformContext BEFORE the LLM call, so a throw aborts the entire turn
   // and surfaces to the user as a silent "AI didn't produce a response"
-  // (root cause of the openai-codex turn failures on a fresh VPS install:
-  // computeMessageTokens did `block.type` / `block.text.length` on an
-  // undefined block).
+  // (reading `block.type` / `block.text.length` on an undefined block is
+  // exactly such a throw).
   const malformed = [
     undefined,
     null,
@@ -398,38 +397,40 @@ describe("estimateWithAnchor", () => {
 });
 
 // ---------------------------------------------------------------------------
-// estimateMessageTokens — script-aware factors (TOK-01)
+// estimateMessageTokens — script-aware factors
 // ---------------------------------------------------------------------------
 
 // Dense non-Latin scripts tokenize at far fewer chars/token than the flat
 // CHARS_PER_TOKEN=4 heuristic assumes (Hebrew chat measured ~2.2-2.9
-// chars/token vs the 4.0 the divisor uses), so the estimator stores roughly
+// chars/token vs the 4.0 the divisor uses), so a flat estimator stores roughly
 // half of Hebrew's true token weight. The bounds below divide by
 // `ratio * scriptTokenFactor(text)` — the exact string whose `.length` is
 // divided, one rule at every site (no second "structured" factor; the 3 vs 4
 // ratio already encodes structured-ness).
 //
-// Pre-patch: estimateMessageTokens divides by the bare ratio (chars/4,
-// structured chars/3) with no script awareness -> every Hebrew bound FAILS
-// (RED). The I1 pins and the I3 property pass pre-patch and must keep
-// passing post-patch (the conservative direction is structural).
-describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
+// Without script awareness (dividing by the bare ratio: chars/4, structured
+// chars/3) every Hebrew bound below fails. The exact pins and the
+// never-below-flat property hold either way — the conservative direction is
+// structural (the factor only ever lowers the divisor).
+describe("estimateMessageTokens — script-aware factors", () => {
   // 22 Hebrew letters + 5 neutral spaces = 27 UTF-16 units. The shipped
-  // hebrew-letters factor is 0.50 (lowered by the TOK-02 corpus, same-commit
-  // rule; pinned exactly in core's token-factor.test.ts) — the lower bounds
-  // below were computed at the pre-lowering 0.55 and are deliberately LOOSER
-  // than the shipped value (0.50 estimates exceed 0.55 bounds).
+  // hebrew-letters factor is 0.50 (derived from the measured fixture corpus —
+  // see token-conservativeness.test.ts; pinned exactly in core's
+  // token-factor.test.ts) — the lower bounds below were computed at 0.55 and
+  // are deliberately LOOSER than the shipped value (0.50 estimates exceed
+  // 0.55 bounds).
   const he = "שלום עולם זה מבחן ארוך מאוד";
 
   it("bounds Hebrew string content from below by chars/(4*0.55) instead of flat chars/4", () => {
-    // Pre-patch: ceil(27/4) = 7 < ceil(27/(4*0.55)) = 13 -> RED.
+    // Flat chars/4 gives ceil(27/4) = 7 < ceil(27/(4*0.55)) = 13, so this
+    // bound discriminates the factored estimate from the flat one.
     expect(estimateMessageTokens(userMsg(he))).toBeGreaterThanOrEqual(
       Math.ceil(he.length / (4 * 0.55)),
     );
   });
 
   it("bounds Hebrew text blocks from below by chars/(4*0.55)", () => {
-    // Pre-patch: the text-block site divides by the bare ratio -> RED.
+    // Guards the text-block site: dividing by the bare ratio fails this bound.
     const msg = assistantMsg([{ type: "text", text: he }]);
     expect(estimateMessageTokens(msg)).toBeGreaterThanOrEqual(
       Math.ceil(he.length / (4 * 0.55)),
@@ -437,7 +438,8 @@ describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
   });
 
   it("bounds Hebrew thinking blocks from below by chars/(4*0.55)", () => {
-    // Pre-patch: the thinking site divides by bare CHARS_PER_TOKEN -> RED.
+    // Guards the thinking-block site: dividing by bare CHARS_PER_TOKEN fails
+    // this bound.
     const msg = assistantMsg([{ type: "thinking", thinking: he }]);
     expect(estimateMessageTokens(msg)).toBeGreaterThanOrEqual(
       Math.ceil(he.length / (4 * 0.55)),
@@ -446,9 +448,9 @@ describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
 
   it("bounds toolCall arguments carrying Hebrew payload values via the stringified-JSON blend", () => {
     // The factor scans the STRINGIFIED JSON itself — Hebrew payload values
-    // and Latin JSON syntax blend harmonically (Pitfall 6: never a second
-    // factor for structured-ness).
-    // Pre-patch: ceil(len/3) with no factor -> RED.
+    // and Latin JSON syntax blend harmonically (never a second factor for
+    // structured-ness; the 3 vs 4 ratio already encodes it).
+    // An unfactored ceil(len/3) fails this bound.
     const msg = assistantMsg([
       { type: "toolCall", id: "t1", name: "echo", arguments: { msg: he } },
     ]);
@@ -458,13 +460,13 @@ describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
     );
   });
 
-  it("keeps pure-ASCII user content byte-identical to ceil(len/4) (I1 exact pin)", () => {
+  it("keeps pure-ASCII user content byte-identical to ceil(len/4) (latin factor is exactly 1.0)", () => {
     for (const t of ["hello world", "a".repeat(100), "GET /api/users?id=42"]) {
       expect(estimateMessageTokens(userMsg(t))).toBe(Math.ceil(t.length / 4));
     }
   });
 
-  it("keeps pure-ASCII toolResult string content byte-identical to ceil(len/3) (I1 exact pin)", () => {
+  it("keeps pure-ASCII toolResult string content byte-identical to ceil(len/3) (latin factor is exactly 1.0)", () => {
     const content = "ls -la /var/log && echo done";
     const msg: ToolResultMessage = {
       role: "toolResult",
@@ -477,7 +479,7 @@ describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
     expect(estimateMessageTokens(msg)).toBe(Math.ceil(content.length / 3));
   });
 
-  it("never estimates below the flat chars/4 heuristic for any script fixture (I3 property)", () => {
+  it("never estimates below the flat chars/4 heuristic for any script fixture (conservativeness property)", () => {
     const fixtures = [
       he,
       "Привет, как дела сегодня?",
@@ -501,29 +503,31 @@ describe("estimateMessageTokens — script-aware factors (TOK-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// estimateMessageTokens — memo keyed on content identity (review WR-01)
+// estimateMessageTokens — memo keyed on content identity
 // ---------------------------------------------------------------------------
 
-// The "Message objects are never mutated post-construction" premise the
-// original memo relied on is FALSE: four in-repo pipeline layers reassign
-// `msg.content` in place on live Message objects (observation-masker
-// placeholder swap at :198, microcompaction-guard empty-toolResult
-// normalization at :249, schema-stripping at :82, tool-result-clearing TTL
-// clears). A memo keyed on object identity alone returns STALE counts after
-// those swaps — and a stale-LOW count after a content-GROWING reassignment
-// is exactly the anti-conservative under-count class TOK-01 exists to close.
+// "Message objects are never mutated post-construction" is a FALSE premise:
+// four in-repo pipeline layers reassign `msg.content` in place on live
+// Message objects (observation-masker placeholder swap at :198,
+// microcompaction-guard empty-toolResult normalization at :249,
+// schema-stripping at :82, tool-result-clearing TTL clears). A memo keyed on
+// object identity alone returns STALE counts after those swaps — and a
+// stale-LOW count after a content-GROWING reassignment is exactly the
+// anti-conservative under-count class the script-aware estimator exists to
+// close.
 //
-// Pre-fix: both tests below FAIL (the second estimate returns the memoized
-// pre-mutation count). Post-fix: the memo records the content reference it
-// was computed from and recomputes when `msg.content` no longer matches.
-describe("estimateMessageTokens — memo invalidation on content reassignment (WR-01)", () => {
+// The memo therefore records the content reference it was computed from and
+// recomputes when `msg.content` no longer matches; keyed on object identity
+// alone, both tests below fail (the second estimate returns the memoized
+// pre-mutation count).
+describe("estimateMessageTokens — memo invalidation on content reassignment", () => {
   it("recomputes after string content is reassigned to LONGER content (no stale anti-conservative under-count)", () => {
     const msg = userMsg("short");
     const before = estimateMessageTokens(msg);
     const grown = "a much longer replacement that a stale memo would silently under-count";
     msg.content = grown;
     const after = estimateMessageTokens(msg);
-    // Pure ASCII -> exact ceil(len/4); pre-fix returns the stale `before`.
+    // Pure ASCII -> exact ceil(len/4); a stale memo returns `before` instead.
     expect(after).toBe(Math.ceil(grown.length / 4));
     expect(after).toBeGreaterThan(before);
   });
@@ -535,7 +539,8 @@ describe("estimateMessageTokens — memo invalidation on content reassignment (W
     const placeholder = "[masked placeholder]";
     msg.content = [{ type: "text", text: placeholder }];
     const after = estimateMessageTokens(msg);
-    // Structured ratio, pure ASCII -> exact ceil(len/3); pre-fix returns 1000.
+    // Structured ratio, pure ASCII -> exact ceil(len/3); a stale memo returns
+    // 1000 (the pre-swap count) instead.
     expect(after).toBe(Math.ceil(placeholder.length / 3));
     expect(after).toBeLessThan(before);
   });

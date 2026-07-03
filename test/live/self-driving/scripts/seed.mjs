@@ -1,5 +1,5 @@
 // seed.mjs — read-WRITE seeder for ~/.comis/memory.db (db.mjs is read-only). The companion to db.mjs.
-// Born from reflect-obs-20260627: the reuse→promote (LIVE-03) and eviction/INV-4 (LIVE-05) oracles
+// The reuse→promote (LIVE-03) and eviction/INV-4 (LIVE-05) oracles
 // REQUIRE seeding — a grounded `mental_models` skill at a chosen proof_count, and `memory_usefulness`
 // failure_count rows — and the runbook endorses it but shipped no helper, so they were hand-written on
 // the box every run. This makes them one deterministic line. Uses the daemon's better-sqlite3 (a
@@ -30,7 +30,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 // COMIS_SRC overrides the better-sqlite3 resolution root (VPS default /root/comis-src; set to a local
 // checkout for a LOCAL daemon run). COMIS_DB_PATH / COMIS_DATA_DIR target a non-default data dir; VPS
-// default stays ~/.comis/memory.db. (package-delivery-20260628 — seed.mjs was missed in the first pass.)
+// default stays ~/.comis/memory.db.
 const SRC = process.env.COMIS_SRC || "/root/comis-src";
 const require = createRequire(SRC + "/packages/daemon/package.json");
 const Database = require("better-sqlite3");
@@ -39,7 +39,7 @@ const Database = require("better-sqlite3");
 // (commonCoreTokens → openingRequestTokens). Without these tokens a seeded skill SURFACES but is
 // NEVER reuse-credited (topic-key.ts:246 skips a doc with no topicTokens), so the reuse→promote
 // AND the memory:skill_used obs oracles silently can't fire — the helper's "is reusable" contract
-// (line 12) was a lie until this. (package-delivery-20260628 IMP-3 live-verify exposed the gap.)
+// (line 12) was a lie until this.
 const { openingRequestTokens } = await import(SRC + "/packages/agent/dist/memory/topic-key.js");
 const dbpath = process.env.COMIS_DB_PATH
   || (process.env.COMIS_DATA_DIR ? process.env.COMIS_DATA_DIR + "/memory.db" : (process.env.HOME || "/home/comis") + "/.comis/memory.db");

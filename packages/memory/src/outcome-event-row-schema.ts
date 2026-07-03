@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Zod row schema for the `outcome_events` `resolve()` projection — the v2.26
- * Verified Learning (WS1) outcome ledger (OUTCOME-01). Consumed by the
+ * Zod row schema for the `outcome_events` `resolve()` projection — the durable
+ * ledger recording each finished trajectory's net task-outcome. Consumed by the
  * `createRowMapper` in `sqlite-outcome-store.ts`.
  *
  * Lives in its OWN module (NOT `row-schemas.ts`) because that file is at the
@@ -17,9 +17,9 @@
  * confidence, sender_trust, recalled_ids, used_skill_ids, observed_at FROM
  * outcome_events WHERE tenant_id=? AND agent_id=? AND trajectory_id=?` read.
  * `tenant_id`/`agent_id` are NOT projected — the WHERE pins them, the load-bearing
- * SEC-01 isolation boundary (mirror the usefulness-row JSDoc). `outcome`/`source`
+ * tenant/agent isolation boundary (mirror the usefulness-row JSDoc). `outcome`/`source`
  * are NOT NULL (the DDL CHECK pins the closed enums); `recalled_ids`/`used_skill_ids`
- * are JSON TEXT parsed downstream (NULL when absent — empty in P0 for skills).
+ * are JSON TEXT parsed downstream (NULL when absent — empty when no skills recorded).
  *
  * @module
  */
@@ -43,7 +43,7 @@ export const OutcomeEventRowSchema = z.strictObject({
   sender_trust: z.string().nullable(),
   /** JSON-encoded string[] of recalled-memory ids; NULL when absent. */
   recalled_ids: z.string().nullable(),
-  /** JSON-encoded string[] of used-skill ids; NULL/empty in P0 (populated Phase 201). */
+  /** JSON-encoded string[] of used-skill ids; NULL/empty when none are recorded. */
   used_skill_ids: z.string().nullable(),
   /** Epoch ms the observation was made (part of the idempotency tuple). */
   observed_at: z.number(),

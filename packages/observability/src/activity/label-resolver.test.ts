@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the typed-first label-resolver (spec §6.1).
- *
- * Fails on pre-patch code: `./label-resolver.js` does not exist.
+ * Unit tests for the typed-first label-resolver.
  *
  * Behavior under test:
  *   - typed-first: a registered `mcp_manage` LabelSpec + `applyTemplate` yields
@@ -22,7 +20,7 @@ import { resolveLabel, resolveLabelDetailed } from "./label-resolver.js";
 // Each test registers a UNIQUE tool name so there is zero cross-test
 // interference without needing a registry clear.
 
-describe("resolveLabel (spec §6.1 — typed-first)", () => {
+describe("resolveLabel (typed-first)", () => {
   it("resolves mcp_manage(action=set, name=X) to the typed template label", () => {
     registerActivityLabelSpec("mcp_manage", {
       semanticPhase: "tool",

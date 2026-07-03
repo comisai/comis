@@ -62,7 +62,7 @@ describe("createMemoryPinningHandlers", () => {
         _trustLevel: "admin",
       });
 
-      // IN-02: response now includes `found` to distinguish pinned vs id not found.
+      // The response includes `found` to distinguish pinned vs id not found.
       expect(result).toEqual({ pinned: true, found: true, id: "mem-123" });
     });
 
@@ -104,10 +104,10 @@ describe("createMemoryPinningHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CR-01: handler must forward agent_id to memoryApi.pin / unpin
+  // Handler must forward agent_id to memoryApi.pin / unpin
   // -------------------------------------------------------------------------
 
-  describe("CR-01: handler forwards agent_id from request params", () => {
+  describe("handler forwards agent_id from request params", () => {
     it("memory.pin forwards agent_id to memoryApi.pin when provided", async () => {
       const pinMock = vi.fn(async () => ok(true));
       const deps = makeDeps({
@@ -149,10 +149,10 @@ describe("createMemoryPinningHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // IN-02: response surfaces found flag
+  // Response surfaces found flag
   // -------------------------------------------------------------------------
 
-  describe("IN-02: pin/unpin response surfaces found flag", () => {
+  describe("pin/unpin response surfaces found flag", () => {
     it("memory.pin response includes found:true when memoryApi.pin returns ok(true)", async () => {
       const deps = makeDeps({
         memoryApi: {

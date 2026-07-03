@@ -204,8 +204,8 @@ describe("buildCacheTraceWrapper", () => {
     ).toThrow("synchronous-throw-from-streamfn");
   });
 
-  it("wrapper_emits_assembledShape_with_toolResult_pairing_even_when_includeMessages_false (O2)", async () => {
-    // O2: the stream:context payload must carry a SMALL assembled-array
+  it("wrapper_emits_assembledShape_with_toolResult_pairing_even_when_includeMessages_false", async () => {
+    // The stream:context payload must carry a SMALL assembled-array
     // shape descriptor (counts/flags + tool_use<->tool_result id pairing)
     // that survives even when includeMessages is OFF — so a test can assert
     // tool_use<->tool_result pairing WITHOUT shipping the full messages array.
@@ -247,7 +247,7 @@ describe("buildCacheTraceWrapper", () => {
     }
     // totalCount reflects the assembled array length.
     expect(shape!.totalCount).toBe(3);
-    // WR-01: the count fields mirror the small case (no truncation here). Read
+    // The count fields mirror the small case (no truncation here). Read
     // via a raw record so this asserts on what landed on disk regardless of the
     // typed schema shape.
     const rawSmall = readLines(filePath).find(
@@ -259,8 +259,8 @@ describe("buildCacheTraceWrapper", () => {
     expect(rawSmall.assembledShape.idsTruncated).toBe(false);
   });
 
-  it("wrapper_assembledShape_keeps_pairing_counts_above_the_64_item_array_cap (O2 / WR-01)", async () => {
-    // WR-01: on a large tool fan-out (>64 tool_use / tool_result ids), the
+  it("wrapper_assembledShape_keeps_pairing_counts_above_the_64_item_array_cap", async () => {
+    // On a large tool fan-out (>64 tool_use / tool_result ids), the
     // sampled `toolUseIds` / `toolResultIds` arrays must NOT trip the 64-item
     // payload limiter (which would replace them with an opaque
     // `{ __bounded__: … }` sentinel and silently defeat the pairing/orphan

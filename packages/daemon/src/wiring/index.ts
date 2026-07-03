@@ -41,7 +41,7 @@ export { setupHeartbeat, type HeartbeatSetupDeps, type HeartbeatSetupResult } fr
 export { setupShutdown, type ShutdownResult } from "./setup-shutdown.js";
 export { setupGateway, type GatewayDeps, type GatewayResult, setupRpcBridge, type RpcBridgeResult } from "./setup-gateway/index.js";
 export { setupDeliveryQueue, type DeliveryQueueResult, setupDeliveryMirror, type DeliveryMirrorResult } from "./setup-delivery.js";
-// Phase 216: the durable-run + resume engine wiring (stores + boot recovery +
+// The durable-run + resume engine wiring (stores + boot recovery +
 // watchdog + shutdown) + the daemon composition helpers. Gated behind
 // autonomy.durability.enabled.
 export {

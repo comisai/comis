@@ -229,7 +229,7 @@ function assertCwdWithinScope(cwd: string, scope: TerminalScope, workspace: stri
  * @throws JailUnavailableError when `bwrapPath` is undefined (never an unjailed
  * fallback) or when `network: listed-hosts` has no injected egress port.
  * @throws CwdOutsideScopeError when the resolved `cwd` is not contained by the scope's
- * bound paths (fail-clean before any spawn — §4.8), instead of an opaque chdir crash.
+ * bound paths (fail-clean before any spawn), instead of an opaque chdir crash.
  */
 export async function buildSpawnPlan(
   input: SpawnPlanInput,
@@ -245,7 +245,7 @@ export async function buildSpawnPlan(
     composers.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch;
 
   const { scope } = input;
-  // §4.8 fail-closed: the agent-supplied cwd (the jail --chdir target) MUST sit within a
+  // Fail-closed: the agent-supplied cwd (the jail --chdir target) MUST sit within a
   // path the scope binds — reject typed + EARLY (before any egress socket / spawn), not
   // as an opaque `bwrap: Can't chdir`. filesystem:full binds everything → no check.
   assertCwdWithinScope(input.cwd, scope, input.workspace, input.home);

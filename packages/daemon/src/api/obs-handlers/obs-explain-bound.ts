@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs.explain` report-level bounding pass (X2) — the NEW bounding discipline.
+ * `obs.explain` report-level bounding pass.
  *
- * `boundIncidentReport(report, depth)` enforces the X2 budget on a §6.3
+ * `boundIncidentReport(report, depth)` enforces the report budget on an
  * {@link IncidentReport} before it leaves the daemon:
  *
  *   - **summary budget** — `depth:"summary"` serializes to ≤ 6144 bytes
@@ -26,15 +26,15 @@
  *     field that exceeds `MAX_INLINE_STRING` is replaced with its
  *     {@link fingerprint} (a 12-hex digest), guaranteeing the 678 fixture's
  *     50 KB `web_fetch` body + its prompt-injection block ("SECURITY NOTICE")
- *     never survives — regardless of any upstream leak (threat T-153-10). The
+ *     never survives — regardless of any upstream leak. The
  *     sweep covers `summary`, `failures[].errorPreview`, `offloads[].pointer`
- *     AND (WR-03) the report-level free-text scalars `channel.type`/`channel.id`
+ *     AND the report-level free-text scalars `channel.type`/`channel.id`
  *     /`agentId`/`traceId`/`endReason` plus oversized `toolStats` KEYS — all of
  *     which carry untrusted session/peer-derived data and were otherwise bounded
  *     only by the 32 KB structural floor.
  *   - **honest lossiness** — every cap that fires pushes a `TruncationEntry`
  *     onto the `truncations[]` ledger so the consumer can trust the report is
- *     lossy-but-honest, not silently trimmed (threat T-153-12).
+ *     lossy-but-honest, not silently trimmed.
  *
  * `limitPayloadValue` (from `@comis/observability`) runs LAST as the structural
  * backstop (32 KB / 64-item / depth-6 with `{__bounded__}` sentinels). It is a
@@ -79,9 +79,9 @@ import {
 } from "./obs-explain-bound-caps.js";
 
 // ---------------------------------------------------------------------------
-// X2 report-level caps (distinct from limitPayloadValue's PAYLOAD_BOUNDS) live
-// in the sibling obs-explain-bound-caps.ts (file-size-cap-driven extraction,
-// 176-05). REPORT_ARRAY_FIELDS stays here (it is consumed only by this module).
+// The report-level caps (distinct from limitPayloadValue's PAYLOAD_BOUNDS) live
+// in the sibling obs-explain-bound-caps.ts (file-size-cap-driven extraction).
+// REPORT_ARRAY_FIELDS stays here (it is consumed only by this module).
 // ---------------------------------------------------------------------------
 
 /**
@@ -94,7 +94,7 @@ const REPORT_ARRAY_FIELDS: ReadonlySet<string> = new Set([
   "failures",
   "breakerTimeline",
   "offloads",
-  // CR-01: spawnTree is report-level-capped below (SUMMARY/FULL_MAX_SPAWN_NODES,
+  // spawnTree is report-level-capped below (SUMMARY/FULL_MAX_SPAWN_NODES,
   // both can exceed the backstop's 64-item cap), so exempt it from the structural
   // backstop — otherwise a >64-lease fan-out becomes a {__bounded__} sentinel and
   // the typed `SpawnTreeNode[]` slot fails IncidentReportSchema.parse.
@@ -102,12 +102,12 @@ const REPORT_ARRAY_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 // `TruncationEntry`, `capNewestFirst`, and `digestIfOversized` live in the
-// sibling `obs-explain-bound-helpers.ts` (file-size-cap-driven extraction, CR-01).
+// sibling `obs-explain-bound-helpers.ts` (file-size-cap-driven extraction).
 // Re-export the type so the module's public surface is unchanged.
 export type { TruncationEntry };
 
 /**
- * Apply the X2 report-level bounding pass, then the structural backstop.
+ * Apply the report-level bounding pass, then the structural backstop.
  *
  * Order matters (see the algorithm comments inline):
  *   1. seed `truncations` from any upstream entries (preserve assembly's ledger),
@@ -144,9 +144,9 @@ export function boundIncidentReport(
     });
   }
 
-  // 2b. Cap breakerTimeline[] and offloads[] newest-first — the CR-01 fix. These
-  //     arrays were exempt from the structural cap (REPORT_ARRAY_FIELDS) AND
-  //     never length-capped here, so a flapping breaker / heavily-offloading
+  // 2b. Cap breakerTimeline[] and offloads[] newest-first. These
+  //     arrays are exempt from the structural cap (REPORT_ARRAY_FIELDS), so
+  //     without a length cap here a flapping breaker / heavily-offloading
   //     session could blow the ≤6144-byte summary budget (a 2000-event timeline
   //     yielded a ~150 KB summary report). Cap them the same way failures is:
   //     newest-first (highest seq), with an honest truncations[] ledger entry
@@ -157,7 +157,7 @@ export function boundIncidentReport(
   const cappedOffloads = capNewestFirst(report.offloads, maxOffloads, "offloads", truncations);
 
   // 3+4. Per-failure errorPreview bounding — digest-only FIRST, then the
-  //    200-char cap. The order is load-bearing for T-153-10: a grossly
+  //    200-char cap. The order is load-bearing: a grossly
   //    oversized preview (raw-body territory, > MAX_INLINE_STRING) is replaced
   //    WHOLESALE with a fingerprint digest. Slicing it to 200 chars first would
   //    let a head-of-string injection marker ("SECURITY NOTICE" at offset 0)
@@ -204,15 +204,15 @@ export function boundIncidentReport(
   }
 
   // Defensive digest-only sweep for the remaining free-text string fields —
-  // the PRIMARY control for T-153-10. Any string > MAX_INLINE_STRING (a raw
+  // the PRIMARY control against inlining a raw body. Any string > MAX_INLINE_STRING (a raw
   // body that escaped assembly) is replaced with its fingerprint, so a 50 KB
   // injection body can never be emitted. STRING→string keeps the typed shape.
   const summary = digestIfOversized(report.summary, "summary", truncations);
 
-  // WR-03: the SAME digest sweep over the remaining report-level free-text
+  // The SAME digest sweep over the remaining report-level free-text
   // scalars (channel.type/id, agentId, traceId, endReason). These flow from
   // session metadata into the report with no per-field cap; channel.id is
-  // channel/peer-derived (attacker-influenced). Without this they were bounded
+  // channel/peer-derived (attacker-influenced). Without this they are bounded
   // only by limitPayloadValue's 32 KB floor — a 32 KB channel.id would serialize
   // verbatim into a "summary" report. The digest keeps the `string` shape the
   // schema requires (lowering the structural cap would emit a {__bounded__}
@@ -229,7 +229,7 @@ export function boundIncidentReport(
     endReason: digestIfOversized(report.outcome.endReason, "outcome.endReason", truncations),
   };
 
-  // WR-03: digest oversized toolStats KEYS (tool names). The keys are untrusted
+  // Digest oversized toolStats KEYS (tool names). The keys are untrusted
   // free-text too, and an object key cannot carry a {__bounded__} sentinel, so
   // the structural backstop cannot bound it — only this report-level sweep can.
   // A digested key collides-safely (fingerprint is per-string) and stays short.
@@ -248,7 +248,7 @@ export function boundIncidentReport(
     toolStats = rekeyed;
   }
 
-  // OBS-TOOLSTATS-SENTINEL: cap the NUMBER of tools. `toolStats` is a RECORD (not an
+  // Cap the NUMBER of tools. `toolStats` is a RECORD (not an
   // array), so it is NOT exempted from the structural backstop's plain-object KEY cap —
   // a >maxObjectKeys(64) session (long, or a multi-workload trajectory) would have its
   // WHOLE toolStats replaced with a `{__bounded__, originalKeyCount}` sentinel whose
@@ -284,7 +284,7 @@ export function boundIncidentReport(
     return { ...o, pointer: `[digest:${fingerprint(o.pointer)}]` };
   });
 
-  // PERSIST-01 (176-05): cap cacheBreaks? highest-count-first (arrives count-desc
+  // Cap cacheBreaks? highest-count-first (arrives count-desc
   // from the signals collapse), recording a truncations[] entry for the dropped tail.
   let cacheBreaks = report.cacheBreaks;
   const maxCacheBreaks = depth === "summary" ? SUMMARY_MAX_CACHE_BREAKS : FULL_MAX_CACHE_BREAKS;
@@ -297,7 +297,7 @@ export function boundIncidentReport(
     cacheBreaks = cacheBreaks.slice(0, maxCacheBreaks);
   }
 
-  // CR-01 (TREE-01/02): cap spawnTree first-seen (the fold's materialization
+  // Cap spawnTree first-seen (the fold's materialization
   // order — slicing the HEAD keeps the topology head: root + earliest children),
   // recording a truncations[] entry for the dropped tail. Combined with the
   // REPORT_ARRAY_FIELDS exemption above, this keeps the typed `SpawnTreeNode[]`
@@ -435,7 +435,7 @@ export function boundIncidentReport(
         continue;
       }
 
-      // ORCH-OBS: halve the per-node budget breaches last (optional + typically
+      // Halve the per-node budget breaches last (optional + typically
       // tiny — a graph has few nodes; only a pathological run needs trimming).
       if (bounded.nodeBudgetBreaches !== undefined && bounded.nodeBudgetBreaches.length > 1) {
         const half = Math.max(1, Math.floor(bounded.nodeBudgetBreaches.length / 2));
@@ -454,7 +454,7 @@ export function boundIncidentReport(
         continue;
       }
 
-      // CR-01: halve the spawnTree (first-seen retained) — the pre-loop cap
+      // Halve the spawnTree (first-seen retained) — the pre-loop cap
       // already brings it to ≤40 at summary, so this is the convergence backstop
       // for a tree whose nodes are individually large (many caps/tools per node).
       if (bounded.spawnTree !== undefined && bounded.spawnTree.length > 1) {
@@ -479,7 +479,7 @@ export function boundIncidentReport(
       break;
     }
 
-    // Honest-lossiness backstop (threat T-153-12): if discretionary shedding
+    // Honest-lossiness backstop: if discretionary shedding
     // could not get the report under budget, record ONE residual-overage entry
     // so the consumer is never silently handed an over-budget report. Reachable
     // whenever the fixed fields alone exceed the budget.

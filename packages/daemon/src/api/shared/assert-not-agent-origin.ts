@@ -4,7 +4,7 @@
 // gateway/method-router converts it to a JSON-RPC error response (mirrors the
 // existing `_trustLevel === "admin"` admin-gate throws in *-handlers.ts).
 /**
- * ORIGIN-01 deny-by-origin guard (v8 §3.1 / §22.3 floor item 1).
+ * Deny-by-origin guard for admin-scoped control-plane methods.
  *
  * The confused-deputy mitigation for the control plane: the in-process agent
  * loop dispatches straight through `createRpcDispatch` (bypassing
@@ -12,7 +12,7 @@
  * call may reach an admin-scoped method (`secrets.*`/`tokens.*`/`config.*`/
  * `agents.*`/`mcp.*`/…).
  *
- * **Trust-tiered (30uc-20260624 decision):** an agent turn operating on behalf
+ * **Trust-tiered:** an agent turn operating on behalf
  * of an **admin-trust** user INHERITS that user's control-plane privileges — so
  * an admin-trust agent origin is ALLOWED through to the admin handler (which
  * re-checks `_trustLevel === "admin"`, defense-in-depth). A **non-admin** agent
@@ -23,10 +23,10 @@
  * (resolved per-message in `execution-pipeline`, default `"user"`).
  *
  * Soundness of the two signals:
- *   - `_agentId` — Plan 03 strips inbound `INTERNAL_FIELD_NAMES` (incl. `_agentId`)
- *     from external WS/REST callers before dispatch, so its *presence* here is an
- *     unforgeable agent-origin signal; the sole legitimate injector is
- *     `createAgentRpcCall` (ORIGIN-03).
+ *   - `_agentId` — the gateway strips inbound `INTERNAL_FIELD_NAMES` (incl.
+ *     `_agentId`) from external WS/REST callers before dispatch, so its *presence*
+ *     here is an unforgeable agent-origin signal; the sole legitimate injector is
+ *     `createAgentRpcCall`.
  *   - `_trustLevel` — ALSO in `INTERNAL_FIELD_NAMES` (external-stripped) AND
  *     re-injected by `createAgentRpcCall` from the framework ALS trust
  *     (post-spread, so a tool- or agent-supplied value cannot override the

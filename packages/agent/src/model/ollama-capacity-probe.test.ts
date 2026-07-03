@@ -30,15 +30,15 @@ function jsonResponse(body: unknown, status = 200): Response {
 // ---------------------------------------------------------------------------
 
 describe("deriveOllamaNativeBase", () => {
-  it("CWF-03-K-1: no suffix — passthrough unchanged", () => {
+  it("a bare host baseUrl passes through unchanged", () => {
     expect(deriveOllamaNativeBase("http://localhost:11434")).toBe("http://localhost:11434");
   });
 
-  it("CWF-03-K-2: strips /v1 suffix", () => {
+  it("strips a trailing /v1 suffix", () => {
     expect(deriveOllamaNativeBase("http://localhost:11434/v1")).toBe("http://localhost:11434");
   });
 
-  it("CWF-03-K-3: strips /v1/ trailing-slash suffix", () => {
+  it("strips a /v1/ trailing-slash suffix", () => {
     expect(deriveOllamaNativeBase("http://localhost:11434/v1/")).toBe("http://localhost:11434");
   });
 });
@@ -66,7 +66,7 @@ describe("probeOllamaServedWindow", () => {
     };
   }
 
-  it("CWF-03-probe-1: /api/ps returns context_length=32768 → ok({servedWindow:32768, source:'api/ps'})", async () => {
+  it("/api/ps returns context_length=32768 → ok({servedWindow:32768, source:'api/ps'})", async () => {
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({
@@ -91,7 +91,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("CWF-03-probe-2: /api/ps empty; /api/show returns context_length=65536 → ok({servedWindow:65536, source:'api/show'})", async () => {
+  it("/api/ps empty; /api/show returns context_length=65536 → ok({servedWindow:65536, source:'api/show'})", async () => {
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({ models: [] });
@@ -111,7 +111,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("CWF-03-J: /api/ps model not found; /api/show no context_length → err({errorKind:'internal'})", async () => {
+  it("/api/ps model not found; /api/show no context_length → err({errorKind:'internal'})", async () => {
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({ models: [] });
@@ -131,7 +131,7 @@ describe("probeOllamaServedWindow", () => {
   });
 
   // -------------------------------------------------------------------------
-  // IN-02 (Phase 176 review): third-party input hardening. The served value
+  // Third-party input hardening. The served value
   // drives EVERY turn's budget (the reconcile min race), so a buggy or
   // misconfigured Ollama returning a fractional or absurdly small
   // context_length (e.g. a bad Modelfile `PARAMETER num_ctx`) must not flow
@@ -139,7 +139,7 @@ describe("probeOllamaServedWindow", () => {
   // /api/show fallback, then to the existing fail-open err/WARN path).
   // -------------------------------------------------------------------------
 
-  it("IN-02-1: a fractional /api/ps context_length is floored to an integer servedWindow", async () => {
+  it("a fractional /api/ps context_length is floored to an integer servedWindow", async () => {
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({
@@ -158,7 +158,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("IN-02-2: an absurdly small /api/ps context_length (<512) is rejected — the probe falls through to /api/show", async () => {
+  it("an absurdly small /api/ps context_length (<512) is rejected — the probe falls through to /api/show", async () => {
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({
@@ -180,7 +180,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("IN-02-3: a fractional /api/show context_length is floored to an integer servedWindow", async () => {
+  it("a fractional /api/show context_length is floored to an integer servedWindow", async () => {
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({ models: [] });
@@ -200,10 +200,10 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("IN-02-4: bogus values at BOTH endpoints err out (the fail-open path) — a sub-512 window never escapes the probe", async () => {
-    // IN-05 refined the failure classification: a PRESENT-but-rejected value
-    // is "validation" (bad third-party input), no longer the absent-field
-    // "internal" — see the IN-05 tests below for the message/hint contract.
+  it("bogus values at BOTH endpoints err out (the fail-open path) — a sub-512 window never escapes the probe", async () => {
+    // Failure classification: a PRESENT-but-rejected value is "validation"
+    // (bad third-party input), not the absent-field "internal" — see the
+    // presence-vs-absence tests below for the message/hint contract.
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({
@@ -225,15 +225,15 @@ describe("probeOllamaServedWindow", () => {
   });
 
   // -------------------------------------------------------------------------
-  // IN-05 (Phase 176 review, iteration 2): a PRESENT-but-rejected
-  // context_length must not be reported as ABSENT. The IN-02 sanitization
-  // routed a bogus value (e.g. a typo'd Modelfile `PARAMETER num_ctx 100`)
-  // into the both-endpoints-exhausted err, whose "No context_length found"
-  // message + the orchestrator's "start Ollama" hint pointed the operator the
-  // wrong way — Ollama was up and DID return a value; it was implausible.
+  // A PRESENT-but-rejected context_length must not be reported as ABSENT.
+  // The sanitization used to route a bogus value (e.g. a typo'd Modelfile
+  // `PARAMETER num_ctx 100`) into the both-endpoints-exhausted err, whose
+  // "No context_length found" message + the orchestrator's "start Ollama"
+  // hint pointed the operator the wrong way — Ollama was up and DID return a
+  // value; it was implausible.
   // -------------------------------------------------------------------------
 
-  it("IN-05-1: a rejected-implausible context_length errs with the implausible-value message naming the Modelfile knob, never 'No context_length found'", async () => {
+  it("a rejected-implausible context_length errs with the implausible-value message naming the Modelfile knob, never 'No context_length found'", async () => {
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({
@@ -257,7 +257,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("IN-05-2: a genuinely ABSENT context_length keeps the byte-identical absent message and errorKind internal", async () => {
+  it("a genuinely ABSENT context_length keeps the byte-identical absent message and errorKind internal", async () => {
     const deps = makeDeps(async (url) => {
       if (url.endsWith("/api/ps")) {
         return jsonResponse({ models: [] }); // model not loaded — nothing present
@@ -278,10 +278,10 @@ describe("probeOllamaServedWindow", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Fail-open matrix (CWF-03-C/D/E)
+  // Fail-open matrix
   // -------------------------------------------------------------------------
 
-  it("CWF-03-C: fetch throws AbortError (timeout) → err({errorKind:'timeout'})", async () => {
+  it("fetch throws AbortError (timeout) → err({errorKind:'timeout'})", async () => {
     const deps = makeDeps(async () => {
       const abortErr = new DOMException("The operation was aborted", "AbortError");
       throw abortErr;
@@ -295,7 +295,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("CWF-03-D: fetch throws TypeError ECONNREFUSED → err({errorKind:'dependency'})", async () => {
+  it("fetch throws TypeError ECONNREFUSED → err({errorKind:'dependency'})", async () => {
     const deps = makeDeps(async () => {
       throw new TypeError("fetch failed: ECONNREFUSED");
     });
@@ -308,7 +308,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("CWF-03-D-2: /api/ps returns HTTP 503 → err({errorKind:'dependency'})", async () => {
+  it("/api/ps returns HTTP 503 → err({errorKind:'dependency'})", async () => {
     const deps = makeDeps(async () => jsonResponse({ error: "Service Unavailable" }, 503));
 
     const result = await probeOllamaServedWindow("http://localhost:11434", "qwen3.6:35b", deps);
@@ -319,7 +319,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("CWF-03-E: /api/ps returns HTTP 200 but invalid JSON → err({errorKind:'internal'})", async () => {
+  it("/api/ps returns HTTP 200 but invalid JSON → err({errorKind:'internal'})", async () => {
     const deps = makeDeps(async () => {
       return new Response("NOT JSON { invalid", {
         status: 200,
@@ -335,7 +335,7 @@ describe("probeOllamaServedWindow", () => {
     }
   });
 
-  it("CWF-03-E-2: /api/ps returns HTTP 200 valid JSON but missing .models → err({errorKind:'internal'})", async () => {
+  it("/api/ps returns HTTP 200 valid JSON but missing .models → err({errorKind:'internal'})", async () => {
     const deps = makeDeps(async () => jsonResponse({ data: "unexpected" }));
 
     const result = await probeOllamaServedWindow("http://localhost:11434", "qwen3.6:35b", deps);
@@ -393,7 +393,7 @@ describe("probeAllOllamaProviders", () => {
     };
   }
 
-  it("CWF-03-I: probeServedWindow=false → no fetchFn call for that provider", async () => {
+  it("probeServedWindow=false → no fetchFn call for that provider", async () => {
     const providerEntries = {
       myOllama: {
         type: "ollama",
@@ -409,8 +409,8 @@ describe("probeAllOllamaProviders", () => {
     expect(fetchCalls.length).toBe(0);
   });
 
-  it("CWF-03-modelid: resolves the probe model id from models[0].id when defaultModel is absent (real config shape)", async () => {
-    // Live incident (v2.20 distillation validation, 2026-06-10): ProviderEntrySchema
+  it("resolves the probe model id from models[0].id when defaultModel is absent (real config shape)", async () => {
+    // Live incident: ProviderEntrySchema
     // has NO `defaultModel` field — the model lives under `models[].id`. The probe
     // read `entry.defaultModel ?? ""`, so modelId was ALWAYS "" → at cold-start (no
     // model loaded → /api/ps empty → /api/show fallback) Ollama returned HTTP 400
@@ -444,7 +444,7 @@ describe("probeAllOllamaProviders", () => {
     expect(result.get("myOllama")).toBe(65536); // served window discovered (no fall-through to configured)
   });
 
-  it("W12: an HTTP-status probe failure hints at the model/payload, not 'start Ollama' (the server responded)", async () => {
+  it("an HTTP-status probe failure hints at the model/payload, not 'start Ollama' (the server responded)", async () => {
     // Live: HTTP 400 from /api/show while Ollama was up — the hint said
     // "start Ollama", pointing the operator away from the actual cause.
     const warn = vi.fn();
@@ -463,9 +463,9 @@ describe("probeAllOllamaProviders", () => {
     expect(hint).toContain("model");
   });
 
-  it("IN-05-3: a rejected-implausible served value hints at the Modelfile num_ctx, not 'start Ollama' (the server responded with a value)", async () => {
-    // IN-05 (Phase 176 review, iteration 2): the W12 hint-branching doctrine
-    // extended to the rejected-value class — Ollama is up and returned a
+  it("a rejected-implausible served value hints at the Modelfile num_ctx, not 'start Ollama' (the server responded with a value)", async () => {
+    // The hint-branching doctrine extended to the rejected-value class —
+    // Ollama is up and returned a
     // context_length; it was rejected as implausible (< 512). "start Ollama"
     // points the operator away from the actual lever (the Modelfile).
     const warn = vi.fn();
@@ -494,7 +494,7 @@ describe("probeAllOllamaProviders", () => {
     expect(hint).toContain("falling back to configured contextWindow");
   });
 
-  it("W12: a network-level probe failure keeps the start-Ollama hint", async () => {
+  it("a network-level probe failure keeps the start-Ollama hint", async () => {
     const warn = vi.fn();
     const logger = { info: () => {}, warn, debug: () => {}, error: () => {}, child() { return this; } } as any;
     const providerEntries = {
@@ -510,7 +510,7 @@ describe("probeAllOllamaProviders", () => {
     expect((warnCall![0] as { hint: string }).hint).toContain("start Ollama");
   });
 
-  it("CWF-03-F: type='lm-studio' → not probed (no fetchFn call)", async () => {
+  it("type='lm-studio' → not probed (no fetchFn call)", async () => {
     const providerEntries = {
       myLmStudio: {
         type: "lm-studio",
@@ -526,7 +526,7 @@ describe("probeAllOllamaProviders", () => {
     expect(fetchCalls.length).toBe(0);
   });
 
-  it("CWF-03-F-2: type='ollama', probeServedWindow=undefined → probe RUNS", async () => {
+  it("type='ollama', probeServedWindow=undefined → probe RUNS", async () => {
     const providerEntries = {
       myOllama: {
         type: "ollama",
@@ -600,7 +600,7 @@ describe("probeAllOllamaProviders", () => {
     expect(result.has("failingProvider")).toBe(false);
   });
 
-  it.skip("CWF-03-L: live: probe returns finite servedWindow ≤ native max — operator step", async () => {
+  it.skip("live: probe returns finite servedWindow ≤ native max — operator step", async () => {
     // Requires live Ollama instance. Run manually: OLLAMA_BASE=http://localhost:11434 pnpm test:integration
     const result = await probeOllamaServedWindow("http://localhost:11434", "", {
       fetchFn: fetch as unknown as (url: string, init: RequestInit) => Promise<Response>,
@@ -615,16 +615,16 @@ describe("probeAllOllamaProviders", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolveProbedModelId — the single shared probed-model expression (KNOB-01)
+// resolveProbedModelId — the single shared probed-model expression
 // ---------------------------------------------------------------------------
 
 describe("resolveProbedModelId", () => {
-  it("KNOB-01-10: resolves defaultModel ?? models[0].id ?? '' — single source shared with the served-window comparator", async () => {
-    // Dynamic import: in the RED state (export not yet present) only THIS test
-    // fails — a static named import would break the whole file's module link
-    // and take the existing probe tests down with it. The 17fdd1e5 bug class
-    // was two sites deriving the probed-model expression differently; this pin
-    // keeps the probe and the KNOB-01 comparator on ONE exported helper.
+  it("resolves defaultModel ?? models[0].id ?? '' — single source shared with the served-window comparator", async () => {
+    // Dynamic import: if the export goes missing only THIS test fails — a
+    // static named import would break the whole file's module link and take
+    // the existing probe tests down with it. Two sites once derived the
+    // probed-model expression independently and disagreed; this pin keeps the
+    // probe and the served-window comparator on ONE exported helper.
     const mod = (await import("./ollama-capacity-probe.js")) as unknown as {
       resolveProbedModelId?: (
         entry: { defaultModel?: string; models?: Array<{ id?: string }> } | undefined,
@@ -639,13 +639,13 @@ describe("resolveProbedModelId", () => {
 });
 
 // ---------------------------------------------------------------------------
-// prewarmOllamaModel — IMP-2a (package-delivery-20260628): a cold local model's
+// prewarmOllamaModel — a cold local model's
 // FIRST inference (prompt-processing the full tool-corpus prompt) can exceed the
 // per-inference stall budget → the first user turn after a daemon (re)start aborts
 // "request took too long" BEFORE any tool call. A boot-time load-only warm-up loads
 // the model in the background so the first real turn runs warm.
 // ---------------------------------------------------------------------------
-describe("prewarmOllamaModel (IMP-2a)", () => {
+describe("prewarmOllamaModel", () => {
   it("POSTs /api/generate with the model + keep_alive (load-only) to warm a cold model", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> | undefined }> = [];
     const fetchFn = createMockFetch(async (url, init) => {
@@ -691,7 +691,7 @@ describe("prewarmOllamaModel (IMP-2a)", () => {
     expect(calls.some((u) => u.endsWith("/api/generate")), "prewarm:true must POST /api/generate").toBe(true);
   });
 
-  it("probeAllOllamaProviders WITHOUT prewarm issues NO warm-up (byte-identical to pre-IMP-2a)", async () => {
+  it("probeAllOllamaProviders WITHOUT prewarm issues NO warm-up (flag unset → no warm-up traffic)", async () => {
     const calls: string[] = [];
     const fetchFn = createMockFetch(async (url) => {
       calls.push(url);

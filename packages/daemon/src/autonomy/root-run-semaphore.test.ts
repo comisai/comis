@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for the per-`rootRunId` spawn semaphore (Phase 213-04, CEIL-01).
+ * Contract for the per-`rootRunId` spawn semaphore.
  *
  * The structural runaway-bound of the bounded-autonomy floor: a unified ceiling
  * keyed on `rootRunId` so a `for(;;) spawn()` is bounded TREE-WIDE (not per-caller),
@@ -42,7 +42,7 @@ function makeSemaphore(
   });
 }
 
-describe("root-run-semaphore — per-rootRunId atomic spawn bound (CEIL-01)", () => {
+describe("root-run-semaphore — per-rootRunId atomic spawn bound", () => {
   it("admits up to maxConcurrentSelfAgents then denies with reason concurrency, and a release frees one slot", () => {
     const sem = makeSemaphore({ maxConcurrentSelfAgents: 2 });
 
@@ -115,12 +115,12 @@ describe("root-run-semaphore — per-rootRunId atomic spawn bound (CEIL-01)", ()
   });
 
   // -------------------------------------------------------------------------
-  // WR-05 (213-REVIEW): the per-root map must not grow unbounded under a
+  // The per-root map must not grow unbounded under a
   // for(;;)spawn / cron storm. When a root's last slot is released (active
   // floors to 0), its map entry is EVICTED so a fresh root per spawn does not
-  // accumulate forever (the DoS vector the brief calls out).
+  // accumulate forever (the unbounded-key DoS vector).
   // -------------------------------------------------------------------------
-  it("evicts a root's map entry once its active count returns to zero (WR-05)", () => {
+  it("evicts a root's map entry once its active count returns to zero", () => {
     const sem = makeSemaphore({ maxConcurrentSelfAgents: 4 });
 
     // Two trees acquire; the map holds exactly two entries.
@@ -139,7 +139,7 @@ describe("root-run-semaphore — per-rootRunId atomic spawn bound (CEIL-01)", ()
     expect(sem.size()).toBe(0);
   });
 
-  it("simulated for(;;) spawn of FRESH roots does not grow the map without bound when each releases (WR-05)", () => {
+  it("simulated for(;;) spawn of FRESH roots does not grow the map without bound when each releases", () => {
     const sem = makeSemaphore({ maxConcurrentSelfAgents: 4 });
 
     // 1000 distinct roots each acquire one slot then release — mirroring a storm

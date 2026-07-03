@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * QRY-02 supply-chain guard (T-221-QRY-03): the `jsonpath` ResultRef query core
+ * No-eval JSONPath supply-chain guard: the `jsonpath` ResultRef query core
  * MUST NOT introduce an eval-based JSONPath library. `jsonpath` (uses
  * `static-eval`) and `jsonpath-plus` (RCE via `eval` — CVE-2024-21534,
  * CVE-2025-1302) both violate AGENTS.md §2.2 (no `eval`/`Function`), and the
- * class of bug recurs. QRY-02 deliberately maps JSONPath onto DuckDB
+ * class of bug recurs. The query core deliberately maps JSONPath onto DuckDB
  * `json_extract` (no new dependency) instead, so NONE of these may ever appear
  * in any `package.json` manifest or in the pnpm lockfile.
  *
@@ -28,7 +28,7 @@ const REPO_ROOT = resolve(here, "../..");
  * Banned eval-based JSONPath packages. Matched as exact dependency KEYS in the
  * manifests, and as the lockfile's quoted-key form so a benign domain mention
  * (e.g. "jsonpath" in prose) elsewhere never trips. `jmespath` is included
- * because it is the other "expression engine as a dep" QRY-02 must not reach for.
+ * because it is the other "expression engine as a dep" the query core must not reach for.
  */
 const BANNED_JSONPATH_PACKAGES = ["jsonpath", "jsonpath-plus", "static-eval", "jmespath"] as const;
 
@@ -47,7 +47,7 @@ function ownedManifests(): string[] {
   return out;
 }
 
-describe("QRY-02 no-eval JSONPath supply-chain guard (T-221-QRY-03)", () => {
+describe("no-eval JSONPath supply-chain guard", () => {
   it("declares no eval-based JSONPath library in any owned package.json", () => {
     const violations: string[] = [];
     for (const manifestPath of ownedManifests()) {

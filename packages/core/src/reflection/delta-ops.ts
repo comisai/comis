@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Reflection delta-ops APPLY — the v2.31 Reflection engine's byte-stable
- * doc-refresh primitive (REFLECT-04, Hindsight's drift-killer). The runtime
+ * Reflection delta-ops APPLY — the Reflection engine's byte-stable
+ * doc-refresh primitive (the drift-killer). The runtime
  * counterpart to the type-only `../ports/reflection-port.ts` (the runtime values
  * live HERE because `core/src/ports/*.ts` is type-only by the port-shape rule —
  * the no-op-factory / `profile-id` precedent). Re-exported on the public
@@ -13,7 +13,7 @@
  * reference** — the same object survives into the result. Reference identity IS
  * the byte-identity guarantee: an untouched section is never re-serialized, so a
  * one-section refresh produces a one-section diff and the slow drift a
- * full-rewrite causes (Hindsight's failure mode) cannot happen. The function is
+ * full-rewrite causes cannot happen. The function is
  * PURE (no IO, no clock, no randomness) and TOTAL (an op whose target id does not
  * exist is a no-op for that op — never a throw, never a doc-corruption), and it
  * never mutates `prev`.
@@ -30,7 +30,7 @@ import type { DocSection, StructuredBody, DeltaOp } from "../ports/reflection-po
 /**
  * Apply a list of {@link DeltaOp}s to a structured body, returning the NEXT body.
  *
- * THE DRIFT-KILLER (REFLECT-04): every section NOT targeted by an op is copied
+ * THE DRIFT-KILLER: every section NOT targeted by an op is copied
  * **by reference** — `result.sections[i] === prev.sections[i]` for an untouched
  * section. Only an `add`'s/`replace`'s `section` object is new. Pure (never
  * mutates `prev`), total (a target id that does not exist is a no-op for that op,

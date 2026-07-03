@@ -6,13 +6,13 @@
  * raw params (the frame is already projected + redacted upstream).
  * `eventLabel` picks the best available short label; `failureLabel`
  * formats the closing failure form from the `TurnOutcome` errorKind (the kept
- * diagnostic, §7.3). Pure functions: no I/O, no logger.
+ * diagnostic). Pure functions: no I/O, no logger.
  *
  * Subagent parent line: a `kind:"subagent"` event's `defaultLabel`
  * already carries the `🤖` marker the projection set (activity-stream),
  * so `renderFrameText`/`eventLabel` paint it verbatim — Discord/Slack key the
  * thread shell off that marker in the sent text. `subagentLine` lets a
- * plain-text, depth-aware renderer (IRC, §18.3) prepend a `↳ ` depth prefix;
+ * plain-text, depth-aware renderer (IRC) prepend a `↳ ` depth prefix;
  * the prefix is a renderer concern, not data baked into the event here.
  */
 import type {
@@ -30,7 +30,7 @@ import { renderPlan } from "../plan-renderer.js";
  * are not), so a local `Pick` keeps the intent tight and avoids a runtime
  * dependency on the `default` theme bundle from the channels tier. These two
  * literals MUST mirror the `default` theme's markers so a marker-less
- * call stays byte-identical to the historical cross/check closing lines.
+ * call stays byte-identical to the default theme's cross/check closing lines.
  */
 const DEFAULT_MARKERS: Pick<ActivityStatusMarkers, "success" | "failure"> = {
   success: "✓",
@@ -42,16 +42,17 @@ const DEFAULT_MARKERS: Pick<ActivityStatusMarkers, "success" | "failure"> = {
  * the failure branch). Kept here — not exported — so a markerless `eventLabel`
  * call stays byte-identical to the `default` theme's `🔧`.
  *
- * Pre-quick-260528-nsv: the running marker was baked into START events at the
- * activity-stream emit site only (by design per Pitfall 7).
- * Post-quick-260528-mch: coalesce.ts Step 1.5 prefers `phase:"end"` events (so
- * failed end events get the ❌ prefix via Bug C). Slow-completed end events
- * (>=1500ms, exempt from isDroppableFastSuccess) survive Step 1 AND are kept
- * by Step 1.5 → their bare defaultLabel reached `eventLabel` with no baked-in
- * marker → asymmetric render (fast tool calls show 🔧 because the marked start
- * survives; slow tool calls render bare). The kept-end re-derivation branch
- * below restores SPEC §3.1 / §3.11 per-step running-glyph symmetry regardless
- * of duration. Idempotent on already-marked start events.
+ * The running marker is baked into START events only, at the activity-stream
+ * emit site (by design — the marker conveys in-flight status). coalesce.ts
+ * Step 1.5 prefers `phase:"end"` events (failed end events get the ❌ prefix
+ * in `eventLabel`'s failure branch). Slow-completed end events (>=1500ms,
+ * exempt from isDroppableFastSuccess) survive Step 1 AND are kept by
+ * Step 1.5 → their bare defaultLabel reaches `eventLabel` with no baked-in
+ * marker → without re-derivation the render would be asymmetric (fast tool
+ * calls show 🔧 because the marked start survives; slow tool calls render
+ * bare). The kept-end re-derivation branch below keeps the per-step
+ * running-glyph symmetric regardless of duration. Idempotent on
+ * already-marked start events.
  */
 const DEFAULT_RUNNING_MARKER = "🔧";
 
@@ -65,7 +66,7 @@ const DEFAULT_RUNNING_MARKER = "🔧";
  *     exemption in {@link eventLabel}; the label-level guard catches the test
  *     shorthand where a `kind:"tool"` event carries a `🤖 …` label.
  *   - `↳ ` — IRC depth prefix (applied by `subagentLine` in the IRC renderer
- *     for nested subagent lines, §18.3). Catches the same test shorthand.
+ *     for nested subagent lines). Catches the same test shorthand.
  *
  * Match the `"${marker} "` prefix INCLUDING the trailing space — the running
  * marker is baked space-delimited at the activity-stream START emit
@@ -88,10 +89,10 @@ function withRunningMarker(base: string, runningMarker: string): string {
  *   1. `status === "failed"` — prefix the themed failure marker (default: ❌,
  *      ascii: [ERR]). The kept end event of a failed call arrives bare (the
  *      running 🔧 is only baked into start events at the activity-stream emit
- *      site, by design per Pitfall 7), so the renderer is the right place to
- *      surface the final status. Bug C from quick-260528-mch.
+ *      site, by design — the marker conveys in-flight status), so the renderer
+ *      is the right place to surface the final status.
  *   2. Boundary / structural-ask kinds (`subagent`, `approval`, `clarify`) —
- *      return the label verbatim. These are NOT in-flight tool steps (§3.1):
+ *      return the label verbatim. These are NOT in-flight tool steps:
  *      - subagent: the projection bakes the `🤖` boundary marker; that glyph
  *        is the semantic signal (render.ts:14-17 docblock — Discord/Slack key
  *        thread shells off it).
@@ -103,9 +104,9 @@ function withRunningMarker(base: string, runningMarker: string): string {
  *   3. Otherwise — prepend the themed running marker (default: 🔧, ascii: [..])
  *      via {@link withRunningMarker}. Idempotent on labels that already carry
  *      the same marker (baked-in START events pass through
- *      unchanged). Fixes Bug 2 from quick-260528-nsv: kept slow-completed end
- *      events (>=1500ms) arrived bare; now they get the per-step glyph for
- *      symmetry with fast-completed calls.
+ *      unchanged). Kept slow-completed end events (>=1500ms) arrive bare;
+ *      they get the per-step glyph here for symmetry with fast-completed
+ *      calls.
  *
  * Default-theme parity: markerless call falls back to {@link DEFAULT_MARKERS}
  * for failure and {@link DEFAULT_RUNNING_MARKER} for running, byte-identical
@@ -123,12 +124,12 @@ export function eventLabel(event: ActivityEvent, markers?: ActivityStatusMarkers
 }
 
 /**
- * Render a frame to text: SPEC §8.3 plan-state header (when SEP is active) +
- * SPEC §8.5 bounded `(step N of M)` counter + a `───` separator + one status
- * line per visible event. SPEC-§9 appends `×N` (default) /
+ * Render a frame to text: a plan-state header (when SEP is active) +
+ * a bounded `(step N of M)` counter + a `───` separator + one status
+ * line per visible event. Appends `×N` (default) /
  * `xN` (ascii) to any visible event that represents a coalesced surrogate
- * (`frame.groupedActivityIds[event.activityId].length > 1`). SPEC-§8.5 (second
- * half) appends `(running N s)` as an elapsed-time fallback
+ * (`frame.groupedActivityIds[event.activityId].length > 1`). Appends
+ * `(running N s)` as an elapsed-time fallback
  * when no plan is active AND the caller supplies `elapsedMs`.
  *
  * The 3 in-scope strategies (EditPlace, AppendOnly, DeleteAndRepost) capture
@@ -143,13 +144,14 @@ export function renderFrameText(
 ): string {
   const lines: string[] = [];
 
-  // SPEC §8.3: plan-state checkbox header above the event list when SEP is
+  // Plan-state checkbox header above the event list when SEP is
   // active. renderPlan emits ALL entries regardless of visibility filter —
   // by-design (the plan is meta-context, not an event); descriptions are
-  // redacted upstream at the adapter site (Security V9 mitigation).
+  // redacted upstream at the adapter site, so plan text never carries
+  // unredacted content into a channel.
   if (frame.planSnapshot !== undefined && frame.planSnapshot.entries.length > 0) {
     lines.push(renderPlan(frame.planSnapshot));
-    // SPEC §8.5 (first half): bounded `(step N of M)` counter from the
+    // Bounded `(step N of M)` counter from the
     // in_progress entry's 1-based index. When no entry is in_progress (all
     // done or all pending), the counter is omitted (the header + separator
     // still render).
@@ -161,7 +163,7 @@ export function renderFrameText(
     lines.push("───");
   }
 
-  // SPEC-§9: per-event line + coalescing surrogate count.
+  // Per-event line + coalescing surrogate count.
   // `frame.groupedActivityIds[event.activityId]` is the constituents array;
   // a length > 1 marks this event as a coalesced surrogate (the head id is
   // the surrogate's activityId, the array carries the underlying ids the
@@ -180,8 +182,8 @@ export function renderFrameText(
   for (const event of frame.visibleEvents) {
     // Thread `markers` so a failed event picks up the themed failure glyph
     // (default: ❌, ascii: [ERR]) — see eventLabel's docstring for the
-    // rationale (kept end events of failed calls arrive bare; emit-site
-    // marker only conveys in-flight status, Pitfall 7).
+    // rationale (kept end events of failed calls arrive bare; the emit-site
+    // marker only conveys in-flight status).
     const base = eventLabel(event, markers);
     const constituents = grouped[event.activityId];
     const groupCount = constituents !== undefined ? constituents.length : 0;
@@ -197,11 +199,11 @@ export function renderFrameText(
     }
   }
 
-  // SPEC-§8.5 (second half): elapsed-time fallback when no
+  // Elapsed-time fallback when no
   // SEP plan is active. Fires when `elapsedMs` is supplied (`!== undefined`,
   // so `elapsedMs === 0` legitimately produces `(running 0 s)` on the first
   // apply()) AND `frame.planSnapshot === undefined` (the plan header above
-  // would otherwise satisfy SPEC-§8.5's first half — no double-display).
+  // already conveys progress — no double-display).
   if (frame.planSnapshot === undefined && elapsedMs !== undefined) {
     const seconds = Math.floor(elapsedMs / 1000);
     lines.push(`(running ${seconds} s)`);
@@ -213,7 +215,7 @@ export function renderFrameText(
 /**
  * Render a subagent (or any) event line with an optional depth prefix.
  *
- * The IRC LinePerEvent renderer (§18.3) calls this with `depthPrefix: "↳ "` to
+ * The IRC LinePerEvent renderer calls this with `depthPrefix: "↳ "` to
  * mark a nested subagent line; surfaces that paint the `🤖`-marked
  * `defaultLabel` directly call it with no prefix (the default). Pure: returns
  * `${depthPrefix}${eventLabel(event)}` with no truncation — line caps stay the
@@ -224,7 +226,7 @@ export function subagentLine(event: ActivityEvent, opts?: { depthPrefix?: string
 }
 
 /**
- * Append a plain-text approval prompt under the frame text (§6.4.6).
+ * Append a plain-text approval prompt under the frame text.
  *
  * The button-less channels (WhatsApp / Signal / iMessage) paint the redacted frame
  * label and, when the frame carries a `kind:"approval"` event, the prompt on the
@@ -241,15 +243,15 @@ export function appendPrompt(text: string, prompt?: string): string {
 /**
  * Closing failure marker carrying the (closed-union) errorKind; themed when
  * markers are supplied. With no markers (or the default theme's markers) the
- * output is byte-identical to the historical cross-prefixed `"<marker> {errorKind}"`;
+ * output is the cross-prefixed `"<marker> {errorKind}"`;
  * the ascii theme yields `"[ERR] {errorKind}"` with no emoji. Interpolates
  * ONLY the closed-union `errorKind` plus the fixed one-line `reason` (a
  * named-constant string from the abort mapper) — never raw outcome internals.
  *
  * When `outcome.reason` is present (a resource abort: step limit / loop), the
  * label reads `"<marker> {errorKind} — {reason}"` so a stopped turn renders
- * truthfully instead of the bare errorKind. Absent reason → byte-identical to
- * the historical output (preserves every prior failure render).
+ * truthfully instead of the bare errorKind. Absent reason → the bare
+ * `"<marker> {errorKind}"` form.
  */
 export function failureLabel(
   outcome: Extract<TurnOutcome, { kind: "failure" }>,
@@ -261,13 +263,13 @@ export function failureLabel(
 }
 
 /**
- * Closing success marker for the windowed-edit success line (§7.3); themed when
+ * Closing success marker for the windowed-edit success line; themed when
  * markers are supplied. With no markers (or the default theme's markers) the
- * output is byte-identical to the historical check-prefixed `"<marker> done"`; the
+ * output is the check-prefixed `"<marker> done"`; the
  * ascii theme yields `"[OK] done"` with no emoji. The success line carries
  * no errorKind, so `successLabel` takes no outcome.
  *
- * SPEC-§8.6 — the optional 2nd arg `recoveredFailures` (the
+ * The optional 2nd arg `recoveredFailures` (the
  * count from `TurnOutcome.success_with_recovered_failures.recoveredFailures.length`)
  * appends `(with N recovered failure[s])` after the base label when N > 0,
  * with English singular/plural agreement. 0 or undefined → base label only.

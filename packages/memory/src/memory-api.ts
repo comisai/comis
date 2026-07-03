@@ -291,7 +291,7 @@ export function createMemoryApi(
       if (!scope.trustLevel) {
         conditions.push("trust_level != 'system'");
       }
-      // WR-01: pin immunity is UNCONDITIONAL — pinned entries survive any scoped clear,
+      // Pin immunity is UNCONDITIONAL — pinned entries survive any scoped clear,
       // regardless of whether a trustLevel filter is active. An operator explicitly
       // clearing by trustLevel (e.g. "flush all external") must not inadvertently
       // delete a pinned standing instruction.

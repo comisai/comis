@@ -3,7 +3,7 @@
  * Statistical-significance layer -- the N + confidence-interval + significance
  * computations every published benchmark number must carry.
  *
- * THE BELIEVABILITY REQUIREMENT (.planning/MEMORY_BENCHMARK_CREDIBILITY.md):
+ * THE BELIEVABILITY REQUIREMENT:
  * every headline number reports N + a significance flag; a single-judge,
  * no-N, no-significance number is not credible. This module supplies (1) a
  * Wilson 95% confidence interval for a single accuracy over integer counts, and

@@ -37,7 +37,7 @@ import * as ts from "typescript";
  * throw `PreconditionError` and
  * the dispatcher classifies caller-state mismatches at warn-level
  * (errorKind: "precondition") rather than escalating to error/internal.
- * `sandbox_unavailable` was added (v2.26 Verified Learning, SKILL-07) for the
+ * `sandbox_unavailable` covers the
  * fail-closed dynamic skill-validation path: no materializable bwrap jail
  * degrades to `static-only` coverage (honest degradation, NOT a fault) — it
  * must NOT inflate failure metrics (Defer ≠ Retry).
@@ -79,7 +79,7 @@ interface CacheEntry {
  */
 interface CacheFile {
   // Bumped 1 → 2 when `precondition` joined the closed ErrorKind union;
-  // 2 → 3 when `sandbox_unavailable` joined (v2.26 Verified Learning, SKILL-07).
+  // 2 → 3 when `sandbox_unavailable` joined.
   // Older caches contain stale flags for files that legitimately use the
   // new literal — drop them on read so the next walker pass recomputes
   // against the updated VALID_ERROR_KINDS.

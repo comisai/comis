@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the FORGET-03 corroboration gate (`failureCorroborated`) — extracted from
+ * Tests for the corroboration gate (`failureCorroborated`) — extracted from
  * setup-learning.ts into its own leaf to keep that file under the 800-line cap. The
  * gate logic is byte-identical to the pre-extraction code; these tests pin its branches.
  *
@@ -14,7 +14,7 @@ import {
   MAX_TRACKED_FAILURE_MEMORIES,
 } from "./setup-learning-corroboration.js";
 
-describe("failureCorroborated — FORGET-03 anti-induced-eviction gate", () => {
+describe("failureCorroborated — anti-induced-eviction gate", () => {
   it("corroborates immediately on a DETERMINISTIC source (one tool/pipeline failure suffices)", () => {
     const tally = new Map<string, Set<string>>();
     expect(failureCorroborated("mem-1", "session-a", ["tool"], tally)).toBe(true);
@@ -35,7 +35,7 @@ describe("failureCorroborated — FORGET-03 anti-induced-eviction gate", () => {
     expect(failureCorroborated("mem-1", "session-b", ["correction"], tally)).toBe(true);
   });
 
-  it("stops growing the inner distinct-session set at CORROBORATION_MIN_INDEPENDENT (WR-01)", () => {
+  it("stops growing the inner distinct-session set at CORROBORATION_MIN_INDEPENDENT", () => {
     const tally = new Map<string, Set<string>>();
     for (let i = 0; i < 10; i++) failureCorroborated("mem-hot", `session-${i}`, ["reaction"], tally);
     expect(tally.get("mem-hot")!.size).toBeLessThanOrEqual(CORROBORATION_MIN_INDEPENDENT);
@@ -43,7 +43,7 @@ describe("failureCorroborated — FORGET-03 anti-induced-eviction gate", () => {
     expect(failureCorroborated("mem-hot", "session-final", ["reaction"], tally)).toBe(true);
   });
 
-  it("caps the outer tally Map and evicts the OLDEST-touched memoryId (WR-01 bound)", () => {
+  it("caps the outer tally Map and evicts the OLDEST-touched memoryId (bounded growth)", () => {
     const tally = new Map<string, Set<string>>();
     const maxTracked = 3;
     for (let i = 0; i < 5; i++) {

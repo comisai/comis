@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# `seccomp-orchestrate.bpf` — the bwrap seccomp profile (JAIL-01)
+# `seccomp-orchestrate.bpf` — the bwrap seccomp profile
 
 bwrap `--seccomp N` takes an **open file descriptor to raw BPF bytecode** — NOT a
 JSON profile name/path (that is Docker/runc). `seccomp-profile.ts`
@@ -56,5 +56,5 @@ build copies it into `dist/` and `loadSeccompProfileFd()` starts returning its f
 `bwrap-hardening.linux.test.ts` is the gate that PROVES the blob blocks the
 dangerous syscalls (TIOCSTI etc.) on the VPS (`pnpm validate:full`). Until the
 blob is committed, `loadSeccompProfileFd()` returns `null`, `buildArgs` omits
-`--seccomp`, and the OTHER §4.7 controls (`--new-session`, `--die-with-parent`,
+`--seccomp`, and the OTHER hardening controls (`--new-session`, `--die-with-parent`,
 `--unshare-net`, the bind-mount validator) still apply.

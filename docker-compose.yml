@@ -32,9 +32,9 @@ services:
       # Mounted at /home/comis/.comis (the comis user's home/.comis) so the
       # daemon's two path-resolution mechanisms — config.dataDir / COMIS_DATA_DIR
       # *and* os.homedir() + "/.comis" — converge on the same host directory.
-      # Mounting at /data instead used to silently split the daemon's data
-      # across two paths inside the container (logs/workspace stayed
-      # container-only at /home/comis/.comis while memory.db went to /data).
+      # Mounting at /data instead would silently split the daemon's data
+      # across two paths inside the container (logs/workspace staying
+      # container-only at /home/comis/.comis while memory.db goes to /data).
       - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
 
       # Config files. Mounted read-write so the daemon can write its
@@ -44,7 +44,8 @@ services:
 
       # Optional: override the .env source path. Mounted read-write so the
       # daemon's env.set RPC (used by the agent's `gateway` env_set action,
-      # `comis configure`, etc.) can persist new credentials in legacy mode.
+      # `comis configure`, etc.) can persist new credentials in plain
+      # env-file mode.
       # If you point COMIS_ENV_FILE at an externally-managed file you don't
       # want the daemon to modify, change this to :ro yourself.
       #

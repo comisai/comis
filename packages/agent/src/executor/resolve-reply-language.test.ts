@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// DET-02 — the pure resolveReplyLanguage resolution-order matrix.
+// The pure resolveReplyLanguage resolution-order matrix.
 //
-// Resolution order (design/multilingual-excellence.md §4 DET-02):
+// Resolution order:
 //   1. agents.<id>.language config value (tier-1, operator-set) → normalized.
 //   2. USER.md preferred language (tier-2, already placeholder-filtered by the
 //      call site's extractUserLanguage) → normalized.
@@ -10,11 +10,9 @@
 //      majority (>0.5) of NON-NEUTRAL codepoints. cjk maps to nothing.
 //   4. "en" (the total floor — the resolver never throws).
 //
-// THE keystone (Pitfall 4): tier-3 uses scriptShares with a strict >0.5 check,
+// THE keystone: tier-3 uses scriptShares with a strict >0.5 check,
 // NOT dominantScript's 0.30 non-Latin floor. A plurality-but-not-majority
 // Hebrew message resolves to "en", never "he".
-//
-// These cases fail on the pre-patch tree (the module does not exist) — RED.
 
 import { describe, it, expect } from "vitest";
 import { resolveReplyLanguage } from "./resolve-reply-language.js";
@@ -111,10 +109,10 @@ describe("resolveReplyLanguage — tier-3 (inbound message script, strict >0.5 m
     );
   });
 
-  it("resolves plurality-but-not-majority Hebrew to en, not he (THE KEYSTONE, Pitfall 4)", () => {
+  it("resolves plurality-but-not-majority Hebrew to en, not he (THE KEYSTONE)", () => {
     // Construct a string where Hebrew is the plurality of non-neutral codepoints
     // but NOT a strict majority. dominantScript (0.30 non-Latin floor) would
-    // return "hebrew"; DET-02's strict >0.5 rule must fall through to "en".
+    // return "hebrew"; the resolver's strict >0.5 rule must fall through to "en".
     //
     // "שלום שלום docker test 12345":
     //   Hebrew letters (non-neutral): "שלום" + "שלום" = 8 letters
@@ -139,7 +137,7 @@ describe("resolveReplyLanguage — tier-3 (inbound message script, strict >0.5 m
 
   it("cjk-dominant text → en (cjk maps to nothing), even at a >0.5 CJK share", () => {
     // All-Japanese: CJK share is 1.0 (>0.5) but cjk has no language mapping →
-    // fall through to en. This is the explicit DET-02 'cjk → nothing' rule.
+    // fall through to en. This is the explicit 'cjk → nothing' rule.
     expect(resolveReplyLanguage({ inboundText: "これはテストです" })).toBe("en");
   });
 

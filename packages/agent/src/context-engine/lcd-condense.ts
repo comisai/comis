@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD condensation unit (Phase 130, C2) — the depth>0 summary-of-summaries.
+ * LCD condensation unit — the depth>0 summary-of-summaries.
  *
  * The SIBLING of `lcd-leaf-summarizer.ts`. Where the leaf pass condenses a
  * contiguous run of raw MESSAGES into a depth-0 leaf, this module condenses a
@@ -18,33 +18,33 @@
  *     depth-0 folds until a tier of contiguous depth-1 summaries reaches fanout,
  *     then THAT tier folds into depth-2, and so on. Returns `undefined` when no
  *     depth meets the effective fanout (the pass is a no-op). A run split by a
- *     message-ref is TWO separate runs (Pitfall 3): only a single contiguous run
- *     of length ≥ fanout qualifies — so the selected window can never span a
+ *     message-ref is TWO separate runs: only a single contiguous run of length
+ *     ≥ fanout qualifies — so the selected window can never span a
  *     non-contiguous fanout.
  *
  *  2. {@link summarizeCondensedChunk} — run the SAME mandatory 3-level escalation
  *     contract as `summarizeLeafChunk` (normal → aggressive → deterministic
  *     truncation), but with two differences: (a) the before-size is the STORED
- *     `Σ children.tokenCount` (NEVER a re-estimate of the concatenation — Pitfall
- *     2/5: the stored counts include F3 thinking the child leaves budgeted), and
+ *     `Σ children.tokenCount` (NEVER a re-estimate of the concatenation — the
+ *     stored counts include the thinking tokens the child leaves budgeted), and
  *     (b) the summarizer input is the child `content` strings (fed as ONE pseudo
  *     `user` message so the injected seam summarizes summaries-of-summaries). The
  *     produced `tokenCount` is ALWAYS strictly < `Σ children.tokenCount` (the
  *     escalation invariant) — an oversized/throwing summarizer falls through to a
  *     bounded, marker-prefixed Level-3 floor that re-uses the leaf's proven
- *     estimator-measured truncation loop (the WR-01/IN-03 fix: the BOUND is the
- *     token estimator itself, not a hand-derived chars-per-token ratio).
+ *     estimator-measured truncation loop (the BOUND is the token estimator
+ *     itself, not a hand-derived chars-per-token ratio).
  *
  * The LLM summarizer is INJECTED via the SAME {@link LeafSummarizerDeps} seam the
  * leaf pass uses (the `summarize` function summarizes whatever messages it is
- * given — a leaf chunk OR a single concatenated summary-of-summaries), so Phase
- * 132 swaps spend governance / a circuit breaker in ONE place for both tiers and
- * the trigger threads no new daemon dependency.
+ * given — a leaf chunk OR a single concatenated summary-of-summaries), so spend
+ * governance / a circuit breaker swap in at ONE place for both tiers and the
+ * trigger threads no new daemon dependency.
  *
  * Architecture cut (agent↛memory): this file imports ONLY agent-side modules +
- * the SDK + core TYPES; it NEVER imports `@comis/memory` (the build cut, Pitfall
- * 7). It NEVER logs child `content` or the produced summary `content` — ids,
- * counts, level, and durations only (AGENTS.md §2.2; T-130-09). It reads NO wall
+ * the SDK + core TYPES; it NEVER imports `@comis/memory` (the build cut). It
+ * NEVER logs child `content` or the produced summary `content` — ids,
+ * counts, level, and durations only (AGENTS.md §2.2). It reads NO wall
  * clock of its own — timestamps are derived purely upstream from the child rows.
  *
  * @module
@@ -78,7 +78,7 @@ import {
  * {@link LeafSummarizer} (the function summarizes whatever `AgentMessage[]` it is
  * handed — for condensation that is ONE pseudo-`user` message concatenating the
  * child summary content). Aliased (not re-declared) so the trigger can pass the
- * SAME `LeafSummarizerDeps` for both the leaf and condense passes (the Phase-132
+ * SAME `LeafSummarizerDeps` for both the leaf and condense passes (the
  * spend-governance swap point is shared).
  */
 export type CondenseSummarizer = LeafSummarizer;
@@ -106,8 +106,8 @@ export interface CondenseChildSummary {
   /**
    * Untrusted-content flag — propagated to the condensed parent (`taint = OR`).
    * Carried on the unit from the SINGLE resolved-view `getSummaries` snapshot so
-   * the trigger derives `taint` WITHOUT a second store read (WR-01: the one
-   * resolved view is the source of truth — a later, possibly-diverged snapshot
+   * the trigger derives `taint` WITHOUT a second store read (the one resolved
+   * view is the source of truth — a later, possibly-diverged snapshot
    * must never re-decide taint propagation).
    */
   taint: boolean;
@@ -116,8 +116,8 @@ export interface CondenseChildSummary {
 /**
  * One CONTIGUOUS same-depth run of summary-refs in the resolved `context_items`
  * view. A run BREAKS at any message-ref or at a depth change, so every run is a
- * single contiguous window `[startOrdinal, endOrdinal]` — the structural Pitfall-3
- * guard (a non-contiguous fanout can never form one run).
+ * single contiguous window `[startOrdinal, endOrdinal]` — the structural
+ * guarantee that a non-contiguous fanout can never form one run.
  */
 export interface SummaryRefRun {
   /** The shared depth of every child in this run. */
@@ -156,13 +156,13 @@ export interface CondenseSummaryResult {
  * the soft `condensedMinFanout` normally, dropping to the hard
  * `condensedMinFanoutHard` lower bound when context pressure is HIGH
  * (`pressureHigh`) — mirroring the leaf side's soft/hard knobs. Ties (multiple
- * qualifying runs at the same deepest depth — a Pitfall-3 layout where one depth
+ * qualifying runs at the same deepest depth — a layout where one depth
  * has several disjoint runs) break by the OLDEST run (lowest `startOrdinal`).
  * Returns `undefined` when no run meets the effective fanout (the pass is a no-op).
  *
- * DEEPEST, not shallowest (the FIX): selecting the shallowest always re-folded the
+ * DEEPEST, not shallowest: selecting the shallowest would always re-fold the
  * depth-0 leaves a turn keeps producing, so an accumulated contiguous run of
- * depth-1 summaries was never folded into depth-2 — max depth stuck at 1 forever.
+ * depth-1 summaries would never fold into depth-2 — max depth stuck at 1 forever.
  * Preferring the deepest QUALIFYING run means depth-0 keeps folding until a tier of
  * ≥fanout contiguous depth-1 summaries exists, at which point THAT tier (now the
  * deepest qualifying run) folds into depth-2, and so on — a bounded, monotone climb
@@ -171,8 +171,7 @@ export interface CondenseSummaryResult {
  * Because every {@link SummaryRefRun} is contiguous by construction (the
  * resolved-view walk breaks a run at any message-ref or depth change), the
  * returned run's `[startOrdinal, endOrdinal]` is always a contiguous
- * `context_items` window — a non-contiguous fanout can NEVER be selected
- * (Pitfall 3 / T-130-08).
+ * `context_items` window — a non-contiguous fanout can NEVER be selected.
  *
  * @param runs - the per-depth contiguous summary-ref runs from the resolved view
  * @param condensedMinFanout - the SOFT minimum run length (relaxed-pressure trigger)
@@ -211,19 +210,19 @@ export function selectCondensableTier(
 /**
  * Condense a contiguous run of child summaries via the mandatory 3-level
  * escalation. ALWAYS returns a summary whose token count is STRICTLY LESS than
- * the run's `Σ children.tokenCount` (the C2 escalation invariant) — accepting an
+ * the run's `Σ children.tokenCount` (the escalation invariant) — accepting an
  * LLM summary only when it actually reduces, and otherwise falling through to the
  * deterministic, bounded Level-3 truncation.
  *
  * Unlike `summarizeLeafChunk`, the summarizer input is the child `content`
  * strings concatenated into ONE pseudo-`user` message (a summary OF summaries)
  * and the before-size is the STORED `Σ children.tokenCount` — NEVER a re-estimate
- * of the concatenation (Pitfall 2/5: the stored counts include the F3 thinking
+ * of the concatenation (the stored counts include the thinking tokens
  * the child leaves budgeted at their own write time).
  *
- * B-4 (260605-ney): the EFFECTIVE summarize target is bounded below the run's
+ * The EFFECTIVE summarize target is bounded below the run's
  * rendered shrink ceiling ({@link computeShrinkBounds}) so the model is never asked
- * to write more than it compresses (the spurious-floor fix mirrored from the leaf),
+ * to write more than it compresses (the same spurious-floor guard as the leaf tier),
  * and the accept-test ceiling is the RENDERED 4:1 measure — self-consistent with
  * the candidate's units. The STORED `Σ children.tokenCount` stays the budget /
  * floor authority: the deterministic Level-3 floor must still beat it.
@@ -238,8 +237,8 @@ export async function summarizeCondensedChunk(
   deps: LeafSummarizerDeps,
   opts: { reserveTokens: number; previousSummary?: string; depth?: number },
 ): Promise<CondenseSummaryResult> {
-  // Before-size authority: the STORED per-child tokenCounts (Pitfall 2/5) — NOT a
-  // re-estimate of the concatenation (which would exclude the F3 thinking the
+  // Before-size authority: the STORED per-child tokenCounts — NOT a
+  // re-estimate of the concatenation (which would exclude the thinking tokens the
   // child leaves counted, under-stating the chunk and risking a non-shrinking
   // "reduction" that is actually larger than the real covered tokens). This stays
   // the BUDGET / floor authority — the deterministic Level-3 floor still beats it.
@@ -248,11 +247,11 @@ export async function summarizeCondensedChunk(
   // content strings, clearly separated. A summary OF summaries.
   const pseudoMessage = buildCondenseInput(children);
 
-  // B-4 (260605-ney): self-consistent shrink bounds from the run's RENDERED chars
+  // Self-consistent shrink bounds from the run's RENDERED chars
   // (the one concatenated pseudo-message — already prose). The accept ceiling is
   // measured the SAME way the candidate is (4:1), and the EFFECTIVE target is
   // bounded below the run so the summarizer is never asked to write more than it
-  // compresses (the dominant fix mirrored from the leaf tier).
+  // compresses (the same spurious-floor guard the leaf tier applies).
   const renderedChars = estimateMessageChars(pseudoMessage as unknown as Message);
   const { shrinkCeilingTokens, effectiveReserveTokens } = computeShrinkBounds(
     renderedChars,
@@ -331,7 +330,7 @@ function buildCondenseInput(children: CondenseChildSummary[]): AgentMessage {
 /**
  * Attempt one condensation summarizer call and accept it ONLY when the produced
  * summary is strictly smaller (in tokens) than `shrinkCeilingTokens` — the run's
- * RENDERED 4:1 measure (B-4, 260605-ney), so the candidate (a 4:1-prose user
+ * RENDERED 4:1 measure, so the candidate (a 4:1-prose user
  * string) and the ceiling are like-for-like units. Non-fatal: a throwing
  * summarizer is caught (WARN, errorKind `dependency`) and reported as "not
  * accepted" so the ladder escalates rather than failing. Mirrors `tryLevel` in
@@ -380,8 +379,8 @@ async function tryCondenseLevel(
  * LLM.
  *
  * The bound is the token ESTIMATOR ITSELF, not a hand-derived chars-per-token
- * ceiling (the WR-01 / IN-03 fix — copied from `buildDeterministicFallback` in
- * `lcd-leaf-summarizer.ts:476-507`): truncate the note in a loop that re-measures
+ * ceiling (matching `buildDeterministicFallback` in
+ * `lcd-leaf-summarizer.ts`): truncate the note in a loop that re-measures
  * with `estimateMessageTokens` until it is strictly below the ceiling. The marker
  * survives intact for any normal-size run; only a sub-marker run truncates it
  * (and a run too small to ever shrink is unreachable here — the trigger gates on
@@ -450,12 +449,12 @@ function buildCondenseInstructions(aggressive: boolean): string {
 /**
  * Construct the PRODUCTION {@link CondenseSummarizer} — the seam that wraps the
  * SDK `generateSummary` for the condense tier. Clones `buildLeafSummarizeFn`
- * (`lcd-leaf-summarizer.ts:576-604`) verbatim, swapping ONLY the instructions
+ * (`lcd-leaf-summarizer.ts`) verbatim, swapping ONLY the instructions
  * builder; the `generateSummary` 8-arg call shape is unchanged (`previousSummary`
- * is the 8th param). Phase 132 swaps THIS factory's output for a spend-governed /
- * circuit-broken variant — the same single seam as the leaf.
+ * is the 8th param). THIS factory's output is the single seam where a
+ * spend-governed / circuit-broken variant swaps in — the same seam as the leaf.
  *
- * B-5 twin (260605-ney): `generateSummary` needs a REAL pi-ai `Model<any>` (with
+ * `generateSummary` needs a REAL pi-ai `Model<any>` (with
  * the provider-client runtime it invokes), NOT the 4-field
  * {@link CompactionModelSnapshot} (which lacks that runtime and throws at call
  * time). The primary path resolves `deps.getRealModel()` — the executor-resolved
@@ -471,7 +470,7 @@ export function buildCondenseSummarizeFn(
   deps: Pick<LeafSummarizerDeps, "getRealModel" | "getApiKey" | "overrideModel">,
 ): CondenseSummarizer {
   return async (messages: AgentMessage[], opts: LeafSummarizeOptions): Promise<string> => {
-    // B-5: resolve a REAL Model<any> for generateSummary — prefer the cheaper
+    // Resolve a REAL Model<any> for generateSummary — prefer the cheaper
     // override's real Model when present; else the PRIMARY real model (the
     // executor-resolved `resolvedModel`, via deps.getRealModel). The bare 4-field
     // CompactionModelSnapshot is NEVER passed to generateSummary (it lacks the

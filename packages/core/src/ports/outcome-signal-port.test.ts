@@ -4,17 +4,17 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { ok, type Result } from "@comis/shared";
-// Side-effecting (value) import so the RED state is reproducible from this
-// test commit alone: vitest must RESOLVE `./outcome-signal-port.js` at runtime.
+// Side-effecting (value) import so a missing module fails at runtime:
+// vitest must RESOLVE `./outcome-signal-port.js` when the test runs.
 // The module is type-only (mirrors memory-usefulness-store.ts) so it resolves to
 // an empty namespace; the types are pulled via the `import type` below. A bare
-// `import type` would be stripped by the transform and never resolve, hiding RED
-// if the symbols were missing.
+// `import type` would be stripped by the transform and never resolve, hiding a
+// missing module or symbols.
 //
 // Because this port is type-only, the type-level assertions below erase at
-// runtime (vitest does not type-check). The runtime RED proof is therefore the
-// source-grep guard in the first test: it FAILS on the absent/empty
-// `outcome-signal-port.ts` (the interfaces + methods do not exist yet) and the
+// runtime (vitest does not type-check). The runtime enforcement is therefore
+// the source-grep guard in the first test: it FAILS on an absent/empty
+// `outcome-signal-port.ts` (interfaces + methods missing) and asserts the
 // type-only port stays type-only (no zod, no @comis/memory import).
 import "./outcome-signal-port.js";
 import type {
@@ -29,20 +29,20 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./outcome-signal-port.ts"), "utf8");
 
 /**
- * The OutcomeSignalPort: the SEGREGATED hexagonal boundary for the v2.26
- * outcome-signal feature (WS1). An implementer must expose `observe(obs)`
+ * The OutcomeSignalPort: the SEGREGATED hexagonal boundary for the
+ * outcome-signal feature. An implementer must expose `observe(obs)`
  * (idempotent WRITE), `resolve(trajectoryId, scope)` (precedence-first READ),
  * and `prune(retentionDays)` (age-based housekeeping). `observe`/`resolve`
  * return `Promise<Result<T, Error>>`. The `(tenant, agent)` scope (`LearningScope
  * = { tenantId, agentId, now? }`) is the SQL-baked isolation boundary the sole
- * adapter enforces. This is a NEW segregated port — it does NOT widen the
+ * adapter enforces. This is a deliberately segregated port — it does NOT widen the
  * security-reviewed `MemoryPort`. There is NO `MemoryError` type — `Result<T,
  * Error>` only.
  */
 describe("OutcomeSignalPort — outcome-signal contract (observe/resolve/prune)", () => {
   it("declares the port + DTO interfaces and stays a type-only port (no zod, no @comis/memory)", () => {
-    // Runtime RED proof: fails on the absent/empty source where the interfaces
-    // + methods do not exist yet.
+    // Runtime guard: fails on an absent/empty source missing the interfaces
+    // + methods.
     expect(portSrc, "OutcomeSignalPort interface must be declared").toMatch(
       /export\s+interface\s+OutcomeSignalPort\b/,
     );
@@ -107,7 +107,7 @@ describe("OutcomeSignalPort — outcome-signal contract (observe/resolve/prune)"
       expect(read.value.outcome).toBe("success");
       expect(read.value.sources).toContain("tool");
       expect(read.value.recalledIds).toEqual(["m1", "m2"]);
-      // usedSkillIds is an EMPTY sink in P0 (populated Phase 201).
+      // The stub resolved outcome carries no attributed skill ids.
       expect(read.value.usedSkillIds).toEqual([]);
     }
 

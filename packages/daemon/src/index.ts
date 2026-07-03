@@ -88,7 +88,7 @@ export {
 // Consumer: test/integration/mcp-config-refresh.test.ts.
 export { _resetConfigMutatedCoalescer } from "./api/mcp-config-mutated-coalescer.js";
 
-// Phase 216 Plan 08 (MED-6) test seam: the exactly-once chaos test
+// Test seam for the exactly-once chaos test
 // (test/integration/durable-resume-e2e.test.ts) arms a crash-injection hook in
 // the REAL wrapOutwardSend so a live autonomy-originated send crashes in the
 // invariant-#12 window (between markUnknown and commit), leaving a genuine
@@ -116,8 +116,8 @@ export { setupSkillBundles, buildSkillRegistriesForBundles } from "./wiring/setu
 export type { SetupSkillBundlesDeps } from "./wiring/setup-skill-bundles.js";
 
 // Resolve-seam learned-skill promote/demote loop body + the in-process
-// decay-aware trend tracker, surfaced through the daemon barrel so the Phase-222
-// MODEL-04 source-agnostic characterization
+// decay-aware trend tracker, surfaced through the daemon barrel so the
+// source-agnostic characterization
 // (test/integration/mental-model-readonly-lifecycle.test.ts) can drive the REAL
 // transition path — a hand-authored (no-synthesis) mental_models doc promotes via
 // promoteByName EXACTLY as a synthesized skill — instead of a store-only fallback.
@@ -151,26 +151,26 @@ export { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
 export type { StartupInvariantsDeps, StartupInvariants } from "./wiring/setup-startup-invariants.js";
 
 // Obs-explain assembler + reader DI seam — re-exported so the RE-PROVE
-// scenario (test/live) can call the FROZEN Phase-153 assembler over a fixture
+// scenario (test/live) can call the FROZEN assembler over a fixture
 // reader without a deep daemon-internal dist path. Read-only; the admin gate
 // stays on bindObsExplainHandlers (obs-explain.ts:188) — this exports ONLY the
-// gate-free assembler the X3 tests + the obs_explain MCP tool already call with
+// gate-free assembler the live-scenario tests + the obs_explain MCP tool already call with
 // no _trustLevel, NEVER the admin-gated handler.
 // Consumer: test/live/scenarios/prove/diagnosis-reprove.test.ts
 export { assembleIncidentReportFromSources } from "./api/obs-handlers/obs-explain.js";
 export { makeRealReader } from "./api/obs-handlers/obs-explain-readers.js";
 export type { IncidentSourceReader } from "./api/obs-handlers/obs-explain-readers.js";
 
-// Fleet-health assembler RE-PROVE seam (v2.15 — mirrors the v2.14 obs-explain
-// precedent above). Re-exported from the TOP-LEVEL barrel so the keyless fleet
+// Fleet-health assembler RE-PROVE seam — mirrors the obs-explain
+// precedent above. Re-exported from the TOP-LEVEL barrel so the keyless fleet
 // RE-PROVE scenario (test/live) can `import { assembleFleetHealthReport } from
 // "@comis/daemon"` — the live config aliases ONLY the top-level @comis/daemon ->
 // daemon/dist/index.js (no obs-handlers subpath alias). The gate-free assembler
-// only; the H1 admin gate stays on bindFleetHealthHandlers (fleet-health.ts).
+// only; the admin gate stays on bindFleetHealthHandlers (fleet-health.ts).
 // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
 export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";
 
-// pi-ai image shim (Phase 183, I1 keystone): `createPiImageAdapter` +
+// pi-ai image shim: `createPiImageAdapter` +
 // `registerComisImageProviders` + `resolveImageApiKey` + the typed cross-plan
 // `ImageGenError` live in `./api/pi-image-adapter.js`. They are daemon-internal
 // — consumed via relative imports (`wiring/setup-image-provider`,
@@ -178,14 +178,14 @@ export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";
 // cross-package consumer exists (public-export-consumers gate). A future-phase
 // transport that genuinely needs one cross-package re-exports it here then.
 
-// DENYLISTED_RPC_METHODS (Phase 219, CLI-02/03 RE-PROVE seam) — the cap-socket's
+// DENYLISTED_RPC_METHODS (RE-PROVE seam) — the cap-socket's
 // method-precise closed-door set (the `skills_manage`/admin-management methods the
 // endpoint's pre-check throws on BEFORE `validate()`). Re-exported from the
 // top-level barrel so the `comis-agent-same-gate` / `comis-agent-no-admin`
 // arch-tests DERIVE the denylisted-method set from the SAME source the endpoint
 // uses (no hand-maintained literal that drifts). Pure additive `export` — the
 // const + its `SUB_AGENT_TOOL_DENYLIST` soundness loop are unchanged; the daemon
-// runtime behavior is byte-identical. @comis/core cannot import this (it would be
+// runtime behavior is unaffected. @comis/core cannot import this (it would be
 // a package cycle), so the cross-check lives in the architecture-suite arch-test.
 // Consumer: test/architecture/comis-agent-same-gate.test.ts + comis-agent-no-admin.test.ts
 export { DENYLISTED_RPC_METHODS } from "./wiring/setup-capability-endpoint.js";

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * INTEGRATION (Phase 223 / SKILL-04, success criterion #4): the **live A→B drive**
- * — the full Hindsight loop that has NEVER run end-to-end before this phase, driven
- * in-process through the PUBLIC `@comis/memory` + `@comis/agent` + `@comis/daemon`
- * dist barrels against a real temp SQLite database (NOT `~/.comis`):
+ * INTEGRATION: the **live A→B drive** — the full reflect→reuse→promote loop
+ * driven end-to-end in-process through the PUBLIC `@comis/memory` + `@comis/agent`
+ * + `@comis/daemon` dist barrels against a real temp SQLite database (NOT
+ * `~/.comis`):
  *
  *   A. ACCUMULATE + REFLECT
  *      observe 2 corroborating `success` outcomes on ONE topic from DISTINCT
@@ -20,11 +20,11 @@
  *      `proof_count` increments (GROUND TRUTH: a `learning:skill_promoted` event AND
  *      `store.get` shows `state:"active"`).
  *
- * This closes the headline gap: `SYNTH-EMBED-DEAD` made the OLD embedding-clustering
- * admission NEVER fire (every success became a singleton cluster → `admitted:0`
- * forever); the reflection engine (Plan 04) + the deterministic `topicKey`
- * (Plan 01) make admission fire on 2 corroborating, differently-worded successes,
- * and the source-agnostic reuse loop (proven by MODEL-04 at 222-03) promotes it.
+ * This closes the headline gap in the prior embedding-clustering admission, which
+ * NEVER fired (every success became a singleton cluster → `admitted:0` forever):
+ * the reflection engine + the deterministic `topicKey` make admission fire on 2
+ * corroborating, differently-worded successes, and the source-agnostic reuse loop
+ * promotes it.
  *
  * WHAT IS REAL vs MOCKED
  *  - REAL: the SQLite `mental_models` + `outcome_events` stores (same db); the
@@ -32,10 +32,10 @@
  *    deterministic `normalizeOpeningRequest` topicKey; the `validateLearnedDocBody`
  *    static guard; the `applySkillOutcomeTransitions`→`promoteByName` transition loop.
  *  - MOCKED: ONLY the reflection LLM `reflect` adapter (a fixed playbook) — the
- *    real-provider VPS drive is Phase 227 (LIVE-03). The standard test doubles
+ *    real-provider VPS drive runs separately. The standard test doubles
  *    (a captured `eventBus`, a fixed `clock`, a no-op logger) carry no behavior.
  *
- * FALSE-GREEN DEFENSE (T-223-25 / the 0-row-write-lies guard): the test reads
+ * FALSE-GREEN DEFENSE (the 0-row-write-lies guard): the test reads
  * GROUND TRUTH at every assertion (`store.get` + the emitted `learning:skill_promoted`
  * payload), NEVER a chat reply. Part B asserts the row ACTUALLY MOVED
  * (candidate→active AND `proofCount` strictly increased past its admitted value) —
@@ -62,8 +62,8 @@ import {
 } from "@comis/memory";
 // The REAL reflection engine (the ONLY thing we mock is its injected `reflect`).
 import { runReflection } from "@comis/agent";
-// The REAL resolve-seam promote loop (NOT a store-only shortcut) — the @comis/daemon
-// barrel export added by 222-03 for exactly this characterization.
+// The REAL resolve-seam promote loop (NOT a store-only shortcut) — surfaced on the
+// @comis/daemon barrel so this characterization can call it directly.
 import { applySkillOutcomeTransitions, createSkillTrendTracker } from "@comis/daemon";
 import type {
   ClockPort,
@@ -89,8 +89,8 @@ const MIN_CONFIDENCE = 0.5;
 /**
  * Two genuinely same-topic requests, worded DIFFERENTLY. The deterministic
  * `normalizeOpeningRequest` token-SET hash MUST collapse them to ONE topicKey
- * (the SYNTH-EMBED-DEAD risk from the other direction — if they did NOT collide,
- * corroboration never reaches ≥2 and `admitted:0` persists). We assert the
+ * (if they did NOT collide, corroboration never reaches ≥2 and `admitted:0`
+ * persists). We assert the
  * collision explicitly below before relying on it.
  */
 const SIGNATURE_ALICE = "please deploy the staging service";
@@ -100,7 +100,7 @@ const SIGNATURE_BOB = "deploy staging service"; // same {deploy, service, stagin
 function docNameFor(signature: string): string {
   // Mirror reflection-job.ts `docNameForTopic("skill", normalizeOpeningRequest(signature))`:
   // lowercase → strip non-alphanumerics → drop stopwords + len<=1 → STEM each survivor
-  // (REFLECT-02b) → de-dupe + sort → sha256. Kept in sync with topic-key.ts
+  // → de-dupe + sort → sha256. Kept in sync with topic-key.ts
   // (`openingRequestTokens` + `stemToken`); these signatures carry no executor envelope,
   // so the envelope-strip pre-step is a no-op and is omitted here.
   const tokens = signature
@@ -111,12 +111,12 @@ function docNameFor(signature: string): string {
     .filter((t) => t.length > 1 && !STOPWORDS.has(t))
     .map(stemToken);
   const topicKey = createHash("sha256").update([...new Set(tokens)].sort().join(" ")).digest("hex");
-  // WR-01: the FULL topicKey (not a 16-char truncation) — name↔topicKey is bijective,
+  // The FULL topicKey (not a 16-char truncation) — name↔topicKey is bijective,
   // so `(tenant, agent, name)` is unique (no 64-bit-truncation collision can coexist).
   return `skill-${topicKey}`;
 }
 
-/** MIRROR of topic-key.ts `stemToken` (REFLECT-02b) — keep in sync. A conservative
+/** MIRROR of topic-key.ts `stemToken` — keep in sync. A conservative
  *  inflectional stemmer collapsing regular -ing/-ed/-ies/-(s|x|z|ch|sh)es/-s inflections
  *  (5+-char tokens only; never -ss/-us/-is) so morphological variants share one topicKey token. */
 function stemToken(token: string): string {
@@ -158,7 +158,7 @@ function source(over: { trajectoryId: string; sessionId: string; sender: string;
     sender: over.sender,
     text: `[transcript ${over.trajectoryId}] deployed staging successfully`, // UNTRUSTED; the (mocked) adapter wraps it
     signature: over.signature,
-    trustedOrigin: true, // INV-5/D-04: trusted-origin (the daemon derives this; here it is fixed)
+    trustedOrigin: true, // trusted-origin (the daemon derives this; here it is fixed)
   };
 }
 
@@ -186,7 +186,7 @@ const noopLogger = {
   child: () => noopLogger,
 } as unknown as ComisLogger;
 
-describe("INTEGRATION: SKILL-04 — the live A→B reflect+reuse+promote drive (the never-run loop)", () => {
+describe("INTEGRATION: the live A→B reflect+reuse+promote drive", () => {
   let tmpDir: string;
   let db: ReturnType<typeof openSqliteDatabase>;
   let skillStore: ReturnType<typeof createSqliteMentalModelStore>;
@@ -219,7 +219,7 @@ describe("INTEGRATION: SKILL-04 — the live A→B reflect+reuse+promote drive (
   it("A: observe 2 corroborating successes → reflect a candidate doc; B: reuse → the REAL loop promotes candidate→active (GROUND TRUTH)", async () => {
     // PRECONDITION: the two differently-worded same-topic signatures MUST collapse
     // to ONE topicKey (the deterministic-key risk; if this fails, corroboration can
-    // never reach ≥2 and the whole loop is dead — exactly the SYNTH-EMBED-DEAD shape).
+    // never reach ≥2 and the whole loop is dead (admission never fires).
     const docName = docNameFor(SIGNATURE_ALICE);
     expect(docNameFor(SIGNATURE_BOB)).toBe(docName); // same token set ⇒ same name
 
@@ -250,7 +250,7 @@ describe("INTEGRATION: SKILL-04 — the live A→B reflect+reuse+promote drive (
       outcomeSignal: outcomeStore, // the REAL resolve seam
       mentalModelStore: skillStore, // the REAL admit/get target
       clock: { now: () => 1_000 },
-      eventBus: { emit: () => {} }, // the job emits NO learning:* event (the daemon does, Plan 05)
+      eventBus: { emit: () => {} }, // the job emits NO learning:* event (the daemon does)
       logger: noopLogger,
     });
 
@@ -269,9 +269,9 @@ describe("INTEGRATION: SKILL-04 — the live A→B reflect+reuse+promote drive (
     const candidate = afterAdmit.ok ? afterAdmit.value : undefined;
     expect(candidate, "the reflected doc must exist in the REAL store").toBeDefined();
     expect(candidate!.state).toBe("candidate");
-    expect(candidate!.trustLevel).toBe("learned"); // SEC-01 ceiling: never `system`
+    expect(candidate!.trustLevel).toBe("learned"); // trust ceiling: never `system`
     expect(candidate!.kind).toBe("skill");
-    expect(candidate!.mutating).toBe(false); // advisory / read-only (INV-3)
+    expect(candidate!.mutating).toBe(false); // advisory / read-only
     expect(candidate!.structuredBody?.sections.length).toBe(FIXED_SECTIONS.length); // the AST round-tripped
     const admittedProof = candidate!.proofCount;
     expect(admittedProof).toBe(1); // LOW_PROOF_COUNT — the anti-domination cap, regardless of cardinality
@@ -287,7 +287,7 @@ describe("INTEGRATION: SKILL-04 — the live A→B reflect+reuse+promote drive (
       confidence: 0.9,
       sources: ["tool", "judge"],
       recalledIds: [],
-      usedSkillIds: [docName], // attribute the REFLECTED doc (ATTR-01: skill NAME)
+      usedSkillIds: [docName], // attribute the REFLECTED doc by skill NAME
     };
 
     await applySkillOutcomeTransitions(
@@ -317,10 +317,10 @@ describe("INTEGRATION: SKILL-04 — the live A→B reflect+reuse+promote drive (
     expect(promoted).toBeDefined();
     expect(promoted!.state).toBe("active"); // candidate→active crossed the proof bar
     expect(promoted!.proofCount).toBeGreaterThan(admittedProof); // proof_count STRICTLY increased (the row moved)
-    expect(promoted!.trustLevel).toBe("learned"); // SEC-01 holds through promote
+    expect(promoted!.trustLevel).toBe("learned"); // trust ceiling holds through promote
   });
 
-  it("INVERSION (false-green guard, T-223-25): the loop driven with a NON-EXISTENT name emits nothing and leaves the real doc untouched", async () => {
+  it("INVERSION (false-green guard): the loop driven with a NON-EXISTENT name emits nothing and leaves the real doc untouched", async () => {
     // Admit the SAME candidate via the real reflect path so there IS a real doc to (not) move.
     expect((await outcomeStore.observe(successObservation({ sessionId: "sess_1", trajectoryId: "traj_a" }))).ok).toBe(true);
     expect((await outcomeStore.observe(successObservation({ sessionId: "sess_2", trajectoryId: "traj_b" }))).ok).toBe(true);
@@ -375,12 +375,12 @@ describe("INTEGRATION: SKILL-04 — the live A→B reflect+reuse+promote drive (
     expect(after.ok && after.value?.proofCount).toBe(1); // proof_count unchanged (no 0-row write fakery)
   });
 
-  it("CORROBORATION counter-case (INV-2 end-to-end): a SINGLE (sessionId, sender) repeated admits NO doc", async () => {
+  it("CORROBORATION counter-case (end-to-end): a SINGLE (sessionId, sender) repeated admits NO doc", async () => {
     // A single (sess_1, alice) repeated TWICE on the same topic — two DISTINCT
     // trajectories, but the SAME (sessionId, sender), so distinctSenderCardinality
     // counts 1, the anti-domination gate refuses, and NO doc is admitted. The belt
     // an attacker would attack by replaying ONE successful session, proven at the
-    // integration layer (reinforces REFLECT-03 / INV-2).
+    // integration layer.
     expect((await outcomeStore.observe(successObservation({ sessionId: "sess_1", trajectoryId: "traj_a" }))).ok).toBe(true);
     expect((await outcomeStore.observe(successObservation({ sessionId: "sess_1", trajectoryId: "traj_b" }))).ok).toBe(true);
 

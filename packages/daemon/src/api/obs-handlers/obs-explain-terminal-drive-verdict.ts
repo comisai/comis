@@ -8,7 +8,7 @@
  * under the 500-line `obs-handlers/*` subdir cap. PURE: no LLM, no I/O, no globals —
  * same signals ⇒ same verdict forever.
  *
- * Live r3tdd/r3terse (webhook-claude-cli-tdd 2026-06-30): an agent driven by a
+ * The failure mode this verdict makes visible (seen live): an agent driven by a
  * webhook opened a coding-CLI terminal drive (`terminal_session_create`, e.g.
  * `claude`), cleared the launch gate, then `terminal_session_wait`'d — and the
  * durable terminal backgrounded the drive at the post-gate idle BEFORE the agent
@@ -51,7 +51,7 @@ export const terminalDriveNoTaskVerdict = (s: IncidentSignals): TerminalDriveVer
   // A task WAS delivered (send_text succeeded) → the drive ran; not this cause.
   const sentText = s.toolStats["terminal_session_send_text"];
   if (sentText !== undefined && sentText.ok > 0) return null;
-  // DRIVE-02: when the bridged terminal.drive_promoted signal is present, name the
+  // When the bridged terminal.drive_promoted signal is present, name the
   // backgrounding reason + count explicitly (else a generic clause). Makes the
   // log-only mode_detached promotion visible in the one-call `explain` verdict.
   const backgrounding =

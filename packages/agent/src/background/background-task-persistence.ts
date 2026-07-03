@@ -52,11 +52,10 @@ function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedT
  * `0o700` and the file at `0o600` (file-mode invariants). `dataDir`
  * is passed as `confinedBaseDir` for the ancestor-symlink defense.
  *
- * Result errors are intentionally swallowed — this writer's existing
- * contract is best-effort persistence: a failure to persist must not
- * propagate to the caller (which already returned a placeholder to the
- * agent). The subsequent recovery scan will simply miss this task,
- * matching the pre-migration semantics.
+ * Result errors are intentionally swallowed — this writer's contract is
+ * best-effort persistence: a failure to persist must not propagate to the
+ * caller (which already returned a placeholder to the agent). The
+ * subsequent recovery scan will simply miss this task.
  */
 export function persistTaskSync(dataDir: string, task: BackgroundTask | PersistedTaskState): void {
   const agentDir = safePath(dataDir, task.origin.agentId);
@@ -129,7 +128,7 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
         // Shape guard — skip completely malformed files. Tasks always carry
         // id + toolName + origin; the producer-side persistTaskSync writes
         // all three unconditionally. A file failing this guard is either
-        // truncated mid-write or a legacy artifact operators should clean
+        // truncated mid-write or a stale artifact operators should clean
         // up manually.
         if (!parsed.id || !parsed.toolName || !parsed.origin) {
           continue;

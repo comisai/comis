@@ -73,7 +73,7 @@ export interface EnsureWorkspaceOptions {
    * (`[not_read]`) gate.
    *
    * Left undefined at daemon startup (no session yet) — the seeded files will
-   * be registered lazily on first read, same as before.
+   * be registered lazily on first read.
    */
   tracker?: WorkspaceSeedTracker;
 }
@@ -125,10 +125,10 @@ function sha256Hex(input: string): string {
  * supplied, the post-rename `tracker.recordRead` call is sufficient observability
  * for the session-aware path (the tracker is consumed by `write` tools).
  *
- * 2026-05-20 lineage: prior to this helper, `ensureWorkspace` only wrote files
- * with the `wx` (exclusive-create) flag. Every existing install kept its
- * pre-fix template forever, including the false-promise venv prose in AGENTS.md
- * that triggered the 06:18-06:25 sub-agent exec cascade. The codebase's own
+ * Without this helper, `ensureWorkspace` would only write files with the `wx`
+ * (exclusive-create) flag, so every existing install would keep its stale
+ * template forever — including drifted prose that promises behavior no code
+ * provides. The workspace's own
  * AGENTS.md prose declares "This file is read-only" -- this helper makes that
  * contract real for the three platform-owned files.
  *
@@ -166,7 +166,7 @@ async function refreshPlatformFiles(
     }
 
     // BOOTSTRAP.md empty-guard: preserve the post-onboarding cleared state.
-    // 2026-05-20 lineage: the agent clears BOOTSTRAP.md via `write` once
+    // The agent clears BOOTSTRAP.md via `write` once
     // onboarding completes; resurrecting it would re-run onboarding on the
     // next ensureWorkspace call.
     if (name === "BOOTSTRAP.md" && onDiskContent.length === 0) {
@@ -271,8 +271,8 @@ export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<
           const stat = await fs.stat(filePath);
           tracker.recordRead(filePath, stat.mtimeMs, 0, undefined, Buffer.from(template, "utf-8"));
         } catch {
-          // stat failure is non-fatal: skip registration, fall back to
-          // pre-fix behavior (caller will need to read before overwriting).
+          // stat failure is non-fatal: skip registration -- the caller will
+          // need to read the file before overwriting it.
         }
       }
     }
@@ -283,8 +283,8 @@ export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<
     // Heal stale platform-owned files (SOUL.md, AGENTS.md, non-empty stale
     // BOOTSTRAP.md) whose on-disk sha256 differs from the canonical template.
     // No-op on first-run (writeIfMissing just seeded them at canonical hash).
-    // 2026-05-20: closes the architectural gap where wx-only seeding let stale
-    // pre-fix templates persist forever.
+    // Closes the architectural gap where wx-only seeding would let stale
+    // templates persist forever.
     await refreshPlatformFiles(dir, tracker);
   }
 
@@ -318,9 +318,8 @@ export interface RegisterWorkspaceResult {
  * (before any session tracker exists) and seeds the agent's own workspace
  * files. Every subsequent session's first `write` to those paths would
  * otherwise hit a read-before-write gate. Call this right after the
- * per-session tracker is created (or per-turn, before the session-lifetime
- * registry existed) so the agent's first `write` to its own workspace
- * passes the gate.
+ * per-session tracker is created so the agent's first `write` to its own
+ * workspace passes the gate.
  *
  * Idempotency: when the tracker already records a matching-mtime entry
  * for a path (via the optional `getReadState` method), the helper skips

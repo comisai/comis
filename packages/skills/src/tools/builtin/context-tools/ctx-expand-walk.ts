@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `ctxExpandWalk` — DEPTH-02 bounded in-process multi-hop walk over a compressed
- * region of THIS conversation. The single-hop `ctx_expand` recovered ONE leaf
- * summary's messages; this BFS descends the summary-parent (T2) hierarchy
+ * `ctxExpandWalk` — a bounded in-process multi-hop walk over a compressed
+ * region of THIS conversation. A single-hop expansion would recover only ONE
+ * leaf summary's messages; this BFS descends the summary-parent (T2) hierarchy
  * (condensed → child summaries → leaf summaries → messages) and, when a
  * knowledge-graph lane is injected, fuses bounded KG (T4) hops — returning a
  * RANKED CITED evidence bundle bounded by depth, token, and node-visit caps.
@@ -14,19 +14,19 @@
  *   - The walk is READ-ONLY (getSummaryChildren / getSummaryMessages / getMessages
  *     only — no append/upsert). The tool runs it INSIDE
  *     `store.runOnConversation` (the single-flight serializer) so a deferred
- *     compaction write cannot rewrite the DAG mid-walk (Pitfall 5).
- *   - R4 scope-inheritance: EVERY edge read passes the per-call `scope` the
+ *     compaction write cannot rewrite the DAG mid-walk.
+ *   - Scope-inheritance: EVERY edge read passes the per-call `scope` the
  *     caller derived from `requireCtxScope()` — an out-of-scope summary/message
- *     is unreachable by construction (WR-02). The scope is NEVER a wiring closure.
+ *     is unreachable by construction. The scope is NEVER a wiring closure.
  *
  * T2-only floor (the live default): `spreadLane` is OPTIONAL. When it is absent,
  * returns an empty lane, OR errors, the walk SUCCEEDS T2-only — the KG is NEVER a
- * precondition (the design's §15 degradation; `spreadLane` is a skeleton
+ * precondition (graceful degradation; `spreadLane` is a skeleton
  * returning [] in production today, and no TripleStorePort is threaded into the
  * tool deps). A failing lane is non-fatal — logged content-free, the walk
  * continues T2-only (mirrors recall-graph-spread-lane.ts:72-85).
  *
- * NO sub-agent, NO grant lifecycle — EXPF-01 (frontier sub-agent escalation) is
+ * NO sub-agent, NO grant lifecycle — frontier sub-agent escalation is
  * explicitly DEFERRED. This walk is in-process and deterministic.
  *
  * @module
@@ -130,7 +130,7 @@ interface QueueNode {
  * lane), seeded by `seedSummaryId`. Read-only; every edge read passes `scope`.
  *
  * @param store           The injected core `ContextStorePort` TYPE (read-only here).
- * @param scope           The per-call R4 read scope (from `requireCtxScope()`).
+ * @param scope           The per-call read scope (from `requireCtxScope()`).
  * @param seedSummaryId   The summaryId to zoom into (from ctx_search / ctx_inspect).
  * @param caps            depth / token / node-visit caps (depth is tier-gated).
  * @param opts            Optional T4 spreadLane + logger (T2-only when absent).
@@ -152,8 +152,8 @@ export async function ctxExpandWalk(
   let unrecoverable = 0;
   let capped = false;
 
-  // Lazy id→message map — built once on the first leaf encountered (the
-  // single-summary tool's id-keyed re-join, kept O(referenced) by deferring it).
+  // Lazy id→message map — built once on the first leaf encountered (an
+  // id-keyed re-join, kept O(referenced) by deferring it).
   let messageById: Map<string, LcdMessage> | undefined;
   const getMessageMap = (): Map<string, LcdMessage> => {
     if (messageById === undefined) {
@@ -176,7 +176,7 @@ export async function ctxExpandWalk(
     if (node.depth > depthReached) depthReached = node.depth;
 
     // A condensed summary has children; a leaf summary covers messages. Read both
-    // edges R4-scoped — a drifted id simply yields [] (never throws).
+    // edges scoped — a drifted id simply yields [] (never throws).
     const children = store.getSummaryChildren(scope, node.summaryId);
     const messageIds = store.getSummaryMessages(scope, node.summaryId);
 

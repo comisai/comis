@@ -100,7 +100,7 @@ vi.mock("@comis/skills", () => ({
     coding: ["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"],
     messaging: ["message", "session_status"],
     supervisor: ["agents_manage", "obs_query", "sessions_manage", "memory_manage", "channels_manage", "tokens_manage", "models_manage"],
-    // COORD-01 (218-01): the lean-coordinator orchestration surface. Mirrors the
+    // The lean-coordinator orchestration surface. Mirrors the
     // real entry's shape (orchestration + orch:read drill-in + obs_query, NO
     // exec/edit/write/browser) so the assembly-narrowing test can observe a
     // role:coordinator lead stripped to it. The real profile is unit-tested in
@@ -118,7 +118,7 @@ vi.mock("@comis/skills/tools", () => ({
   createProcessTool: mockCreateProcessTool,
   createProcessRegistry: mockCreateProcessRegistry,
   createApplyPatchTool: mockCreateApplyPatchTool,
-  // STREAM-03: the sleep pacing primitive pushed into the toolset next to the
+  // The sleep pacing primitive pushed into the toolset next to the
   // other always-on builtins (createExecTool/createProcessTool/createApplyPatchTool).
   createSleepTool: mockCreateSleepTool,
   createFileStateTracker: mockCreateFileStateTracker,
@@ -158,18 +158,18 @@ vi.mock("@comis/skills/tools", () => ({
     checkWallClock: vi.fn(() => undefined),
     forget: vi.fn(),
   })),
-  // In-session expansion-loop ctx_* factories (Phase 131, E1/E2). The real
+  // In-session expansion-loop ctx_* factories. The real
   // wireContextTools (imported relatively from ./setup-context-tools.js — NOT
   // mocked) resolves these from @comis/skills/tools, so the dag-gated wiring
   // pushes named tools the gate test can assert on.
   createCtxSearchTool: vi.fn(() => ({ name: "ctx_search", execute: vi.fn() })),
   createCtxInspectTool: vi.fn(() => ({ name: "ctx_inspect", execute: vi.fn() })),
   createCtxExpandTool: vi.fn(() => ({ name: "ctx_expand", execute: vi.fn() })),
-  // DEPTH-02: the tier→multi-hop-depth map consumed by resolveCtxExpandDepth at the
+  // The tier→multi-hop-depth map consumed by resolveCtxExpandDepth at the
   // ctx_expand wiring site. A pure map (nano1/small2/mid3/frontier4) — the gate test
   // only needs it to return a number; the real mapping is unit-tested in skills.
   depthForTier: vi.fn((c: string) => ({ nano: 1, small: 2, mid: 3, frontier: 4 })[c] ?? 1),
-  // Phase 212 Gap 3: the orchestrate runner + its ResultRef store the dormancy
+  // The orchestrate runner + its ResultRef store the dormancy
   // activation assembles for an autonomy-bearing agent. Named-tool doubles so the
   // assembly gate test can assert `orchestrate` is present/absent.
   createOrchestrateTool: vi.fn(() => ({ name: "orchestrate", execute: vi.fn() })),
@@ -246,13 +246,13 @@ vi.mock("@comis/core", () => ({
   // the agent's own workspace files in the per-turn tracker. Tests don't
   // exercise real workspace files, so a no-op stub is sufficient.
   registerWorkspaceFilesInTracker: vi.fn(async () => {}),
-  // CAP-03: createAgentRpcCall resolves the agent's held caps via
+  // createAgentRpcCall resolves the agent's held caps via
   // resolveAutonomy(agents[agentId]?.autonomy).capabilities. The mock returns
   // the `standard` floor set (the zero-config default) so the injection test
   // can assert _capabilities carries orch:spawn. The resolver itself is unit-
   // tested against the real schema in schema-agent-autonomy.test.ts.
   //
-  // COORD-01 (218-01): the mock honors the input `role` exactly as the real
+  // The mock honors the input `role` exactly as the real
   // resolver does — `coordinator` expands into `coordinatorToolGroups:
   // ["coordinator"]`, `worker` (the default) omits it. The cap set is
   // role-invariant (narrows-only), so the same caps are returned either way.
@@ -273,13 +273,13 @@ vi.mock("@comis/core", () => ({
       message: { channels: ["origin"], maxPerHour: 20 },
     };
   }),
-  // PROFILE-05/JAIL-03: buildAutonomyToolWiring degrades the resolved posture via
+  // buildAutonomyToolWiring degrades the resolved posture via
   // degradeAutonomy(resolved, {namespacePreflightOk}) before gating the orchestrate
   // surface. These tests don't pass namespacePreflightOk (→ defaults to true →
   // preflight OK), so the faithful mock is a no-op pass-through here; it still
   // downshifts to assistant on an explicit false (mirroring the real shipped fn,
   // unit-tested in schema-agent-autonomy.test.ts). The pass-through preserves the
-  // full resolved posture (incl. role + coordinatorToolGroups) for the COORD-01 path.
+  // full resolved posture (incl. role + coordinatorToolGroups) for the coordinator-narrowing path.
   degradeAutonomy: vi.fn((resolved: { profile?: string }, preflight?: { namespacePreflightOk?: boolean }) =>
     preflight?.namespacePreflightOk === false && resolved?.profile !== "assistant"
       ? { resolved: { ...resolved, profile: "assistant", enabled: false, capabilities: [] }, downshift: { downshiftedFrom: resolved?.profile, downshiftedTo: "assistant", reason: "namespace_preflight_failed" } }
@@ -294,7 +294,7 @@ vi.mock("@comis/core", () => ({
 
 vi.mock("@comis/agent", () => ({
   sessionKeyToPath: mockSessionKeyToPath,
-  // DEPTH-02: the ctx_expand wiring resolves a tier-gated multi-hop depth via
+  // The ctx_expand wiring resolves a tier-gated multi-hop depth via
   // resolveModelProfile(...).capabilityClass (through resolveCtxExpandDepth). The
   // mock returns a minimal profile so the dag-gated wiring path runs; the depth
   // value itself is asserted in setup-context-tools.test.ts against the real resolver.
@@ -491,7 +491,7 @@ describe("setupTools", () => {
     expect(toolNames).toContain("gateway");
     expect(toolNames).toContain("skills_manage");
     expect(toolNames).toContain("providers_manage");
-    // STREAM-03: the sleep pacing primitive is an always-on builtin.
+    // The sleep pacing primitive is an always-on builtin.
     expect(toolNames).toContain("sleep");
     expect(mockCreateSleepTool).toHaveBeenCalled();
   });
@@ -555,11 +555,11 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 3c. COORD-01 (218-01): autonomy.role: coordinator narrows the lead's tool
+  // 3c. autonomy.role: coordinator narrows the lead's tool
   // surface to the coordinator TOOL_PROFILE via resolveAutonomy().coordinatorToolGroups.
   // assembleToolsForAgent selects effectiveGroups = coordinatorToolGroups when
   // role:coordinator AND no explicit tool_groups; an explicit tool_groups (or
-  // "full") still wins (operator intent, T-218-04).
+  // "full") still wins (operator intent).
   // -------------------------------------------------------------------------
 
   it("narrows a role:coordinator lead (no explicit tool_groups) to the coordinator orchestration surface, excluding heavy-work tools", async () => {
@@ -589,7 +589,7 @@ describe("setupTools", () => {
     expect(toolNames).toContain("message");
     expect(toolNames).toContain("obs_query");
     // Heavy-work tools are stripped even though builtinTools enabled them —
-    // the coordinator profile has nowhere for inline heavy work to run (COORD-02).
+    // the coordinator profile has nowhere for inline heavy work to run.
     expect(toolNames).not.toContain("exec");
     expect(toolNames).not.toContain("browser");
     expect(toolNames).not.toContain("gateway");
@@ -622,7 +622,7 @@ describe("setupTools", () => {
     expect(toolNames).toContain("gateway");
   });
 
-  it("an explicit tool_groups wins over the coordinator role default (operator intent — T-218-04)", async () => {
+  it("an explicit tool_groups wins over the coordinator role default (operator intent)", async () => {
     const deps = createMinimalDeps({
       agents: {
         "agent-1": {
@@ -1038,14 +1038,13 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 13b. Agent-scoped rpcCall injects _capabilities (CAP-03)
+  // 13b. Agent-scoped rpcCall injects _capabilities
   //
   // createAgentRpcCall resolves the agent's held capability set via
   // resolveAutonomy(agents[agentId]?.autonomy).capabilities and injects it as
   // the internal _capabilities field alongside _agentId. A zero-config agent
   // resolves to `standard`, whose floor set includes orch:spawn — so the gated
   // orchestration handlers downstream see the caps the agent legitimately holds.
-  // (RED on pre-patch: createAgentRpcCall does not inject _capabilities yet.)
   // -------------------------------------------------------------------------
 
   it("injects _capabilities (resolved from the agent autonomy config) into rpcCall params", async () => {
@@ -1398,7 +1397,7 @@ describe("setupTools", () => {
       expect(resolvedShared).toEqual([]);
       // readOnlyPaths is routed through resolveSkillDiscoveryPaths, which force-includes the
       // bundled-skill install target <dataDir>/skills (so a surfaced skill's SKILL.md is readable
-      // even when discoveryPaths omits ./skills — the 5ba0aa76 Issue-A fix).
+      // even when discoveryPaths omits ./skills).
       expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/test/data/skills", "/test/data/logs"]);
       expect(sandboxArg.configReadOnlyPaths).toEqual(["/test/data/logs"]);
     });
@@ -1567,7 +1566,7 @@ describe("setupTools", () => {
       const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       // The bundled-skill install target <dataDir>/skills is force-included (lowest precedence),
-      // even with a custom absolute discoveryPaths that omits it (5ba0aa76 Issue-A fix).
+      // even with a custom absolute discoveryPaths that omits it.
       expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/abs/skills", "/test/data/skills", "/test/data/logs"]);
     });
 
@@ -1642,7 +1641,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 19. Admin cross-workspace sharedPaths (Quick 165)
+  // 19. Admin cross-workspace sharedPaths
   // -------------------------------------------------------------------------
 
   describe("admin cross-workspace sharedPaths", () => {
@@ -1940,7 +1939,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 131-05: dag-gated ctx_* in-session expansion-loop wiring (E1/E2)
+  // dag-gated ctx_* in-session expansion-loop wiring
   // -------------------------------------------------------------------------
 
   describe("ctx_* in-session expansion tools (dag-gated wiring)", () => {
@@ -2017,13 +2016,12 @@ describe("setupTools", () => {
       }
     });
 
-    // WR-05 (Phase 174-04): a BARE agent config (no explicit contextEngine.version) writes
+    // A BARE agent config (no explicit contextEngine.version) writes
     // the LCD store by default (shouldRunLcdStorePasses defaults missing version → "dag"), so
     // the ctx_* recovery tools MUST be wired under the SAME default — otherwise the agent
     // writes durable history it can never read back in-session. Aligns the ctx-tool gate
-    // default to "dag" to match the store-writes default. Fails on the pre-patch
-    // `?? "pipeline"` default (tools not wired for a bare config).
-    it("WR-05: wires the ctx_* tools for a BARE agent config (no contextEngine.version) when a store is present", async () => {
+    // default to "dag" to match the store-writes default.
+    it("wires the ctx_* tools for a BARE agent config (no contextEngine.version) when a store is present", async () => {
       const deps = createMinimalDeps({
         agents: {
           "agent-1": {
@@ -2052,10 +2050,10 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 19. Phase 212 Gap 3 — orchestrate tool assembly + capMint (dormancy activation)
+  // 19. Orchestrate tool assembly + capMint (dormancy activation)
   // -------------------------------------------------------------------------
 
-  describe("orchestrate tool assembly + cap lease mint (Phase 212 Gap 3)", () => {
+  describe("orchestrate tool assembly + cap lease mint (dormancy activation)", () => {
     function mockSandbox() {
       return { name: "mock-sandbox", available: vi.fn(() => true), buildArgs: vi.fn(() => ["--sandbox"]), wrapEnv: vi.fn((e: Record<string, string>) => e) };
     }
@@ -2065,7 +2063,7 @@ describe("setupTools", () => {
         endpoint: { handleCapCall: vi.fn(), startSocket: vi.fn(), stopSocket: vi.fn() },
         capSocketPath: "/test/data/cap.sock",
         outputGuard: { scan: vi.fn(), registerSecret: vi.fn() },
-        // Phase 213: buildAutonomyToolWiring anchors the tree root here after the mint.
+        // buildAutonomyToolWiring anchors the tree root here after the mint.
         boundedAutonomy: { registerRoot: vi.fn() },
       } as any;
     }
@@ -2126,7 +2124,7 @@ describe("setupTools", () => {
       await assembleToolsForAgent("agent-1");
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
       // buildBrokerSpawnEnv(deps.brokerContext, agentId, capMint) ran the mint → the
-      // bearer was minted + registered (Pitfall 1: never logged).
+      // bearer was minted + registered with the output guard so it can never be logged.
       expect(handle.leaseManager.mintLease).toHaveBeenCalledTimes(1);
       expect(handle.outputGuard.registerSecret).toHaveBeenCalledWith("lease-bearer-xyz");
     });

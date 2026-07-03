@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The §17.9 "day-4" composition acceptance test: the activity pipe works
+ * The composition acceptance test: the activity pipe works
  * end-to-end IN-MEMORY.
  *
- * This is the terminus of the activity-pipe workstream. It proves a typed,
- * redacted `ActivityEvent` flows the whole way:
+ * This is the end-to-end acceptance proof for the activity pipe. It proves a
+ * typed, redacted `ActivityEvent` flows the whole way:
  *
  *   EventBus emit (tool:*) → ActivityStream (observability substrate, redacts +
  *   validates) → bounded queue → per-turn ActivityTurnCoordinator (orchestrator)
  *   → chatProjection (core) → Echo TestSink renderer (channels) `apply(frame)` +
  *   `finalize(outcome)`.
  *
- * It asserts the four §17.7 conditions:
+ * It asserts four conditions:
  *   1. ActivityStream is instantiated and subscribed to the EventBus.
  *   2. Exactly ONE coordinator is constructed for the turn and disposed at end
  *      (subscribe→unsubscribe lifecycle once).
@@ -25,14 +25,14 @@
  *   • Part A (in-memory composition) wires the REAL production factories
  *     (`createActivityStream` + `createActivityTurnCoordinator` + `createTestSink`
  *     over a real `TypedEventBus`) with deterministic fake timer/clock. This is
- *     the authoritative §17.9 Echo-end-to-end-in-memory proof — no channel API.
+ *     the authoritative Echo-end-to-end-in-memory proof — no channel API.
  *   • Part B boots the real daemon via the existing `startTestDaemon` harness and
  *     proves the DAEMON-level wiring: the ActivityStream is
  *     constructed + subscribed to the EventBus at boot, and a clean shutdown
  *     drains it (the EventBus handler is detached; no long-running timer leaks).
  *
- * KEEP the `__tests__/` path: the daemon dir convention — this is the
- * one place that keeps `__tests__/` per the §17.1 test table.
+ * KEEP the `__tests__/` path: it is the daemon package's test-directory
+ * convention, and this file must stay alongside the other composition tests.
  *
  * @module
  */
@@ -75,7 +75,7 @@ function makeEchoCtx(overrides: Partial<TurnActivityContext> = {}): TurnActivity
 }
 
 // ---------------------------------------------------------------------------
-// Part A — in-memory composition (the §17.9 day-4 Echo-end-to-end proof)
+// Part A — in-memory composition (the Echo-end-to-end proof)
 // ---------------------------------------------------------------------------
 
 describe("activity composition: Echo renderer end-to-end in-memory", () => {
@@ -202,7 +202,7 @@ describe("activity composition: Echo renderer end-to-end in-memory", () => {
   });
 
   it("builds exactly one coordinator per turn that delivers events then stops painting after dispose", () => {
-    // Lifecycle-only proof of §17.7 assertion 2 (subscribe→unsubscribe ONCE).
+    // Lifecycle-only proof of header assertion 2 (subscribe→unsubscribe ONCE).
     const bus = new TypedEventBus();
     // Pre-stream baseline (no handlers yet) — stream.dispose() must return here.
     const baseline = bus.listenerCount("tool:executed");
@@ -280,7 +280,7 @@ describe("activity composition: Echo renderer end-to-end in-memory", () => {
 // the EventBus at boot, and detaches every handler on shutdown — using the
 // REAL daemon code path, not a re-implementation.
 //
-// A FULL `startTestDaemon` boot of the activity pipe (the §17.7 "boots a fake
+// A FULL `startTestDaemon` boot of the activity pipe (the "boots a fake
 // daemon" smoke) lives in the integration tier at
 // test/integration/activity-composition.test.ts — the daemon-harness dynamically
 // imports `@comis/daemon`, which only resolves under the integration vitest
@@ -295,8 +295,8 @@ describe("activity composition: daemon constructs and drains the ActivityStream"
     // Pre-wiring baseline: no tool:* handler before setupObservability runs.
     const baseline = bus.listenerCount("tool:executed");
 
-    // The REAL daemon composition-root function (async since Phase 178 — the
-    // config-gated OTel await-import seam).
+    // The REAL daemon composition-root function (async — it awaits the
+    // config-gated OTel dynamic-import seam).
     const obs = await setupObservability({
       eventBus: bus,
       _createTokenTracker: createTokenTracker,

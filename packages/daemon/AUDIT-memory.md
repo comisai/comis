@@ -29,7 +29,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | entityStore | optional | memory.entities throws "entity store not wired"; the entity-graph diagnostic is unavailable until setup-memory threads the store | packages/daemon/src/api/types.ts:150 |
 | recallCounters | optional | memory.recall_stats returns a zeroed counter snapshot (the gauge is process-lifetime; absent ⇒ no live counts) when wireRecallCounters has not been wired | packages/daemon/src/api/types.ts:155 |
 | dataDir | optional | memory.recall_trace resolves the JSONL artifact under ~/.comis by default (safePath fallback) when no explicit data dir is threaded | packages/daemon/src/api/types.ts:160 |
-| recallTraceEnabled | optional | memory.recall_trace reports the recorder gate as `tracingEnabled` and explains an empty result (recorder disabled vs no matching traces) instead of a silent `{records: []}` (live finding 2026-06-11); absent reads as false — the schema default for the opt-in recorder | packages/daemon/src/api/types.ts:199 |
+| recallTraceEnabled | optional | memory.recall_trace reports the recorder gate as `tracingEnabled` and explains an empty result (recorder disabled vs no matching traces) instead of a silent `{records: []}`; absent reads as false — the schema default for the opt-in recorder | packages/daemon/src/api/types.ts:199 |
 | dialecticSeam | optional | memory.ask returns the abstain sentinel `{ answer:"", citations:[], abstained:true }` (the dialectic is not wired / no key) — the injected query-time synthesis seam | packages/daemon/src/api/types.ts:173 |
 | buildDialecticRecall | optional | memory.ask returns the abstain sentinel (the per-agent recall factory is not wired) — the createMemoryRecall builder over the daemon store set | packages/daemon/src/api/types.ts:184 |
 | dialecticMaxRecall | optional | memory.ask falls back to the schema-default grounding ceiling (10) when the per-agent `dialectic.maxRecall` resolver is not wired (a per-agent `(agentId) => number`; the handler clamps `limit` to `[1, ceiling]`) | packages/daemon/src/api/types.ts:192 |
@@ -37,16 +37,13 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | lcdStore | optional | context.tree returns an empty tree (`context-handlers.ts` fail-closes `{ conversationId, nodes:[], messageCount:0 }`) when the LCD ContextStorePort is not threaded; the Context DAG browser shows no DAG until setup-memory wires it | packages/daemon/src/api/types.ts:198 |
 | contextBrowse | optional | context.conversations returns an empty page (`context-handlers.ts` fail-closes `{ conversations:[], total:0 }`) when the ContextBrowsePort is not threaded; the Context DAG browser lists no conversations until setup-memory wires it | packages/daemon/src/api/types.ts:203 |
 
-## Removed Fields
+## Removed Fields (stale-fallback — deleted)
 
-**Phase 126 Plan 03 (DAG demolition):** the context-DAG quartet — `contextStore`, `contextEngineConfig`, `store`, `config`, `resolveConversationId`, `rpcCall` (6 fields) — was removed alongside the deleted `context-handlers.ts` and the `rpc-dispatch.ts` context-handler mount. These were never a stale-fallback; they were a binary dispatcher feature-gate for the DAG `ctx_*` RPC surface, demolished in v2.12. The governed expansion surface is rebuilt fresh against the `lcd_*` store in Phase 131.
-
-Every surviving optional field still corresponds to a live feature-gate (embedding pipeline, security taint scan, observability, memory-diagnostics, dialectic) that the daemon may omit at runtime.
+**None.** Every optional field corresponds to a live feature-gate (embedding pipeline, security taint scan, observability, memory-diagnostics, dialectic) that the daemon may omit at runtime.
 
 ## Summary
 
-- **Final count:** 22 (7 required + 15 optional) — after the Phase-126 removal of the 6 context-DAG quartet fields and the addition of `lcdStore` + `contextBrowse` for the context.* operator-browse RPCs
-- **Removed (Phase 126 Plan 03):** 6 (the context-DAG quartet, deleted with `context-handlers.ts`)
+- **Final count:** 22 (7 required + 15 optional) — includes `lcdStore` + `contextBrowse` for the context.* operator-browse RPCs
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

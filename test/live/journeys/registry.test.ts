@@ -6,10 +6,9 @@
  * de-dupes by id (throws on a duplicate — the parity contract), and pushes.
  * getStories returns a COPY so callers cannot corrupt the library.
  *
- * NOTE (wave ordering): the 8 seed stories self-register at module load via
- * registry.ts's seed imports (Wave 2). This Wave-1 file uses __test__-prefixed
- * synthetic ids so it never collides with the seeds; seed-count assertions and
- * the open/closed test land in Wave 2.
+ * NOTE (id collision): the 8 seed stories self-register at module load via
+ * registry.ts's seed imports. The synthetic cases here use __test__-prefixed
+ * ids so they never collide with the seeds.
  *
  * TDD: fails until registry.ts exists.
  *
@@ -105,7 +104,7 @@ describe("seed stories US-01..08 self-register + zod-validate", () => {
       expect(s.steps.length).toBeGreaterThanOrEqual(1);
       expect(s.acceptance.outcomes).toBeDefined();
       expect(typeof s.acceptance.rubric).toBe("string");
-      // every seed composes >=3 real subsystems (the §7.7 ">=3 subsystems" rule)
+      // every seed composes >=3 real subsystems (the ">=3 subsystems" rule)
       expect(s.tags.length).toBeGreaterThanOrEqual(3);
     }
   });

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The Phase-129 synthetic-session GATE (the C1/A3 headline — Plan 05 Task 2).
+ * The LCD synthetic-session GATE.
  *
- * Composes Plans 02 (store: appendLeafSummary/getContextItems/getSummaries),
- * 03 (leaf summarizer: selectLeafChunk/summarizeLeafChunk) and 04 (pure
- * evictHistoryUnderBudget) through the Plan-05 assembler over a LONG session and
+ * Composes the store (appendLeafSummary/getContextItems/getSummaries), the
+ * leaf summarizer (selectLeafChunk/summarizeLeafChunk) and the pure
+ * evictHistoryUnderBudget through the assembler over a LONG session and
  * proves the three success criteria TOGETHER, plus the escalation invariant:
  *
  *   (1) UNDER BUDGET — the assembled history PREFIX stays ≤ the H budget computed
@@ -21,7 +21,7 @@
  *       than the chunk) drives the ladder to the deterministic Level-3 floor: the
  *       persisted summary's tokenCount < the chunk tokenCount and fallback=true.
  *
- * NO REAL LLM (Pitfall 6): the summarizer is a plain stub function; the test
+ * NO REAL LLM: the summarizer is a plain stub function; the test
  * imports no provider and makes no network call, so the gate runs under
  * `pnpm validate`. The store is the REAL `createLcdStore(new Database(":memory:"))`
  * — `@comis/memory` is an agent devDependency, allowed in `.test.ts` only (the
@@ -48,7 +48,7 @@ import {
   type LeafSummarizer,
   type LeafSummarizerDeps,
 } from "./lcd-leaf-summarizer.js";
-// Phase 130, C2: the afterTurn condense pass that folds ≥condensedMinFanout
+// The afterTurn condense pass that folds ≥condensedMinFanout
 // contiguous same-depth leaf summaries into one depth+1 condensed summary.
 import { maybeRunCondensePass } from "../executor/lcd-condense-trigger.js";
 import { CONDENSED_FALLBACK_SUMMARY_MARKER } from "./constants.js";
@@ -61,7 +61,7 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 
 // The synthesized-placeholder marker transcript repair emits for an unpaired
-// tool_use (T-128-01). Its ABSENCE in the assembled array proves no pair split.
+// tool_use. Its ABSENCE in the assembled array proves no pair split.
 const SYNTHESIZED_RESULT_MARKER = "[tool result missing — synthesized placeholder]";
 // The deterministic Level-3 leaf-fallback marker (constants.ts).
 const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
@@ -126,7 +126,7 @@ function roleOf(m: AgentMessage): string {
 }
 
 /** Append a canonical pi-ai message at the next seq, storing its REAL estimated
- *  token count (mirrors production ingest — the budget authority, Pitfall 2). */
+ *  token count (mirrors production ingest — the budget authority). */
 function append(store: ContextStorePort, msg: Message, seq: number): void {
   const input: AppendMessageInput = {
     scope: SCOPE,
@@ -197,14 +197,14 @@ function makeLeafDeps(summarize: LeafSummarizer): LeafSummarizerDeps {
 /**
  * One leaf pass over the CURRENT store state: resolve the ordered context_items
  * into `LeafChunkItem`s (message-refs only — a leaf never re-summarizes a prior
- * summary in 129; summary-refs are depth-0 terminals here), select the oldest
+ * summary; summary-refs are depth-0 terminals here), select the oldest
  * out-of-tail chunk, summarize via the stub, and persist it via
  * `appendLeafSummary` over the mapped context_items ordinal range. Returns the
  * persisted `{ summaryId, chunkTokens, summaryTokens, fallback }` or `undefined`
  * when nothing outside the fresh tail is compactable (the loop terminates).
  *
- * The driver lives in the test (the gate drives the pass directly; the afterTurn
- * threshold-sweep wiring is out of 129's scope per Open Q2 / YAGNI).
+ * The driver lives in the test (the gate drives the pass directly rather than
+ * through the afterTurn threshold-sweep wiring).
  */
 async function runOneLeafPass(
   store: ContextStorePort,
@@ -305,7 +305,7 @@ function makeDagDeps(store: ContextStorePort, contextWindow: number): ContextEng
   return {
     logger: logger as unknown as ContextEngineDeps["logger"],
     getModel: () => ({ reasoning: true, contextWindow, maxTokens: 8_192 }),
-    // Phase 165 (CWF-01) made the dag assembler fail CLOSED to the nano cap (16K)
+    // The dag assembler fails CLOSED to the nano cap (16K)
     // when modelProfile is absent. In production the profile is always threaded
     // (pi-executor → setupContextEngine), so this fixture supplies a frontier
     // profile at the intended window — otherwise the nano cap would evict the
@@ -320,7 +320,7 @@ function makeDagDeps(store: ContextStorePort, contextWindow: number): ContextEng
     contextStore: store,
     conversationId: CONVERSATION_ID,
     agentId: "agent_a",
-    tenantId: "tenant_a", // R4 (132-03): full read scope (else the assembler fails closed — WR-02)
+    tenantId: "tenant_a", // full read scope (else the assembler fails closed)
     sessionKey: "sess-a",
   };
 }
@@ -337,7 +337,7 @@ function estimateArrayTokens(msgs: AgentMessage[]): number {
 // The gate
 // ---------------------------------------------------------------------------
 
-describe("LCD synthetic-session gate (Plan 05 Task 2 — C1/A3 headline)", () => {
+describe("LCD synthetic-session gate (budget, fresh tail, tool pairs, escalation)", () => {
   let store: ContextStorePort;
 
   beforeEach(() => {
@@ -377,7 +377,7 @@ describe("LCD synthetic-session gate (Plan 05 Task 2 — C1/A3 headline)", () =>
 
     // ---- (2) FRESH TAIL INTACT: the last clamped-tail steps of the LIVE
     //         array are present verbatim (referential identity) at the END. ----
-    // EFF-02: the assembler clamps FRESH_TAIL_STEPS to what CONTEXT_WINDOW can afford.
+    // The assembler clamps FRESH_TAIL_STEPS to what CONTEXT_WINDOW can afford.
     // Use the same clamped value to compute the expected tail so the assertion tracks
     // the real assembler behavior (referential identity of the clamped tail).
     const clampedTailSteps = resolveClampedFreshTailTurns(CONTEXT_WINDOW, FRESH_TAIL_STEPS);
@@ -425,7 +425,7 @@ describe("LCD synthetic-session gate (Plan 05 Task 2 — C1/A3 headline)", () =>
     const fullHistoryTokens = estimateArrayTokens(live.slice(0, tailStart));
     expect(fullHistoryTokens).toBeGreaterThan(budget.availableHistoryTokens);
 
-    // A leaf summary actually surfaced in the assembled prefix (the C3 path ran).
+    // A leaf summary actually surfaced in the assembled prefix (the summary-resolution path ran).
     const sawSummary = prefix.some((m) =>
       roleOf(m) === "user" &&
       JSON.stringify((m as unknown as { content?: unknown }).content ?? "").includes("LEAF:"),
@@ -467,25 +467,26 @@ describe("LCD synthetic-session gate (Plan 05 Task 2 — C1/A3 headline)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// The multi-tier gate (Phase 130, C2 — Plan 02 Task 3)
+// The multi-tier gate (leaf→condense)
 // ---------------------------------------------------------------------------
 //
 // Composes the leaf pass (selectLeafChunk/summarizeLeafChunk + appendLeafSummary)
-// and the NEW condense pass (maybeRunCondensePass) over a LONG session and proves
-// the C2 success criterion end-to-end with a STUB summarizer (no network): a long
+// and the condense pass (maybeRunCondensePass) over a LONG session and proves
+// the multi-tier success criterion end-to-end with a STUB summarizer (no network): a long
 // session is summarized by repeated leaf passes until ≥condensedMinFanout depth-0
 // leaf summaries accumulate as a contiguous run, then a condense pass folds them
 // into ONE depth-1 condensed summary that surfaces in the assembled prefix with
 // accurate descendantCount + time-range + linked parents, ordering preserved.
 //
-// Boundary with Plan 03 (independently testable on the same file set): this test
+// Boundary with the summary-render layer (independently testable on the same
+// file set): this test
 // asserts the condensed summary EXISTS + has correct coverage via getSummaries()
 // (kind/depth/descendantCount/time-range) and that its recognizable Level-3
 // content (the deterministic [lcd-condensed-fallback] marker, via the oversized
-// stub) surfaces in the assembled prefix — it does NOT assert the P1 header
-// wording ("[LCD summary — depth=… trust=…]"), which Plan 03 owns.
+// stub) surfaces in the assembled prefix — it does NOT assert the rendered header
+// wording ("[LCD summary — depth=… trust=…]"), which lcd-summary-render.ts owns.
 
-describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→condense)", () => {
+describe("LCD synthetic-session gate (multi-tier leaf→condense)", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 
@@ -615,7 +616,7 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
 
     // ---- The condensed summary surfaces in the ASSEMBLED prefix (resolved through
     //      the assembler), recognizable by its deterministic Level-3 marker (NOT
-    //      the Plan-03 header wording). ----
+    //      the rendered header wording). ----
     const engine = createLcdContextEngine(dagConfig(FRESH_TAIL_STEPS), makeDagDeps(store, CONTEXT_WINDOW));
     const out = await engine.transformContext(live);
     const tailStart = freshTailBoundaryIndex(live, FRESH_TAIL_STEPS);

@@ -425,8 +425,8 @@ describe("daemon logs", () => {
     await parseDaemon(["node", "test", "daemon", "logs"]);
 
     const output = getSpyOutput(consoleSpy.log);
-    // The launcher capture is now daemon.console.log (not the bare daemon.log
-    // that collides with the structured Pino log in logs/).
+    // The launcher capture is daemon.console.log (not a bare daemon.log,
+    // which would collide with the structured Pino log in logs/).
     expect(output).toContain("daemon.console.log");
     // Operators should be pointed at the structured logs too.
     expect(output).toContain("logs/daemon.1.log");

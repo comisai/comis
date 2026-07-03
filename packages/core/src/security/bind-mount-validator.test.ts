@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// JAIL-03 (Phase 211): validateBindMount is a PURE path validator that is the
+// validateBindMount is a PURE path validator that is the
 // denylist backstop on top of the allow-list jail binds. It must reject:
 //   (1) a bind whose resolved path IS or is UNDER a denylisted dir,
 //   (2) a coarse PARENT bind that COVERS a blocked descendant,

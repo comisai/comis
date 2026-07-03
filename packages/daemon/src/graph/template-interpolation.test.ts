@@ -493,7 +493,7 @@ describe("buildContextEnvelope", () => {
     expect(result).not.toContain("Your output is captured automatically");
   });
 
-  // --- language section tests (GEN-03 graph leg) ---
+  // --- language section tests ---
 
   describe("buildContextEnvelope language section", () => {
     it("emits the verbatim-preserving Language section for a non-en conversation language", () => {
@@ -1001,17 +1001,17 @@ describe("buildContextEnvelope", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SAFE-01 — grapheme-safe graph output truncation (the two content-length cuts:
+// Grapheme-safe graph output truncation (the two content-length cuts:
 // interpolateTaskText :100 and buildContextEnvelope :229 route through
 // @comis/core adjustSliceBoundary). The regex-match-index splice (:120) is NOT a
 // content-length cut and is excluded.
 //
-// RED on pre-patch (raw output.slice(0, maxResultLength)): a boundary mid-pair /
+// Without the boundary snap (raw output.slice(0, maxResultLength)): a boundary mid-pair /
 // inside a combining run yields a lone surrogate / orphaned mark. All non-ASCII
-// fixtures are built from \u{...} escapes (the auditable-boundary convention).
+// fixtures are built from \u{...} escapes so the boundary under test is auditable.
 // ---------------------------------------------------------------------------
 
-describe("SAFE-01 grapheme-safe graph output truncation", () => {
+describe("grapheme-safe graph output truncation", () => {
   /** Detects an isolated (unpaired) UTF-16 surrogate code unit. */
   function hasLoneSurrogate(s: string): boolean {
     for (let i = 0; i < s.length; i++) {
@@ -1127,7 +1127,7 @@ describe("SAFE-01 grapheme-safe graph output truncation", () => {
       const en = buildContextEnvelope({ ...base, language: "en" });
       expect(absent.includes("## Language")).toBe(false);
       expect(en.includes("## Language")).toBe(false);
-      expect(en).toBe(absent); // no regression from the SAFE-01 edit
+      expect(en).toBe(absent); // English yields the same envelope as no language set
     });
   });
 

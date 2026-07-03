@@ -17,8 +17,8 @@ import type { MemoryApi } from "@comis/memory";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
 
 /**
- * The closed-graph REFLECTION injectables for the `__REFLECT__` sentinel (v2.31
- * Reflection, Phase 223, REFLECT-01/02 — the reflect-engine replacement for the
+ * The closed-graph REFLECTION injectables for the `__REFLECT__` sentinel (the
+ * reflect-engine replacement for the
  * deleted `SkillSynthesisCronDeps`). Assembled DAEMON-SIDE (registerCronEventListeners,
  * setup-channels-credentials.ts — the SOLE composition root that may import
  * @comis/memory + @comis/agent together) and threaded here so the handler injects
@@ -28,26 +28,26 @@ import type { ReflectionSourceTrajectory } from "@comis/agent";
  *
  * DROPPED vs the synthesis bundle: `buildValidationAdapter` (the sandbox adapter —
  * an advisory doc has no executable surface; the only validation is the JOB's
- * static `validateLearnedDocBody`, INV-3) and `approvalGate` (no mutating-admission
+ * static `validateLearnedDocBody`) and `approvalGate` (no mutating-admission
  * gate — removing it removes an attack surface). The reflect ADAPTER is built
  * per-run in the handler (it needs the resolved model/key), like the synthesis one.
  */
 export interface ReflectionCronDeps {
   /** The @comis/memory mental-model store. `get` reads the prior doc for delta-ops;
-   *  `admit` is the candidate/learned write target; `supersede` (Phase 225 FOLD-01) is
+   *  `admit` is the candidate/learned write target; `supersede` is
    *  the bi-temporal history-append a profile/topic CORRECTION routes through (the prior
    *  body is preserved in `history`, never overwritten). Built on the shared db handle. */
   learnedSkillStore: Pick<MentalModelStorePort, "get" | "admit" | "supersede">;
   /** The @comis/memory outcome-signal store (the fail-closed success gate the job selects on). */
   outcomeSignal: Pick<OutcomeSignalPort, "resolve">;
   /**
-   * Build the per-KIND source trajectories for the reflection SELECT step (Phase 225
-   * FOLD — the daemon-side `kind` seam). SKILL sources are OUTCOME trajectories (the
+   * Build the per-KIND source trajectories for the reflection SELECT step (the
+   * daemon-side `kind` seam). SKILL sources are OUTCOME trajectories (the
    * LCD-merged review source, buildReviewSessionSource — NOT sessionStore.listDetailed),
-   * each carrying a daemon-derived `trustedOrigin` (INV-5/D-04 axis 1) + `sourceTrustExternal:false`
+   * each carrying a daemon-derived `trustedOrigin` (trust axis 1) + `sourceTrustExternal:false`
    * (axis 2 is N/A for an outcome trajectory). PROFILE/TOPIC sources are built from the
    * agent's high-trust SOURCE MEMORIES (memoryApi.inspect), each carrying `sourceTrustExternal =
-   * (trustLevel === "external")` (FOLD-04 axis 2 — the old user-rep layer-1 firewall). The job
+   * (trustLevel === "external")` (the per-memory source-trust axis, axis 2). The job
    * filters on BOTH axes.
    */
   buildSourceTrajectories: (
@@ -73,7 +73,7 @@ export interface MemoryCronContext {
    * Resolve a per-agent OAuth access token for a provider (auto-refreshing),
    * threaded from the daemon's per-agent OAuthTokenManager map. Lets the
    * background jobs run on an OAuth main provider (e.g. openai-codex) instead
-   * of skipping for "no API key" (LEARN-01). Undefined ⇒ no OAuth resolution
+   * of skipping for "no API key". Undefined ⇒ no OAuth resolution
    * wired (jobs fall back to static-key/keyless resolution only).
    */
   resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
@@ -82,27 +82,27 @@ export interface MemoryCronContext {
   tenantId?: string;
   // All stores below are injected from setup-memory on the shared db; the agent
   // receives the port TYPE only (the agent↛memory cut). Each backs the named sentinel.
-  /** Orphaned in Phase 225-05 (the __MEMORY_CONSOLIDATION__ cron + its writer were deleted); retired in 226. */
+  /** Orphaned — the __MEMORY_CONSOLIDATION__ cron and its writer were removed; the store is retired. */
   consolidationStore?: MemoryConsolidationStore;
-  // (The cron-context `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
+  // (The cron-context `tripleStore` field was DELETED — its sole reader was the
   //  deleted triple-extraction dispatch branch. The graphSpread recall lane consumes tripleStore
   //  via the SEPARATE setupAgents deps chain, NOT this cron context; the port + lane survive.)
   // (The cron-context `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
-  //  upsert — was DELETED in Phase 226-04 with the rest of the social-modeling subsystem.)
-  // (The cron-context `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
-  //  the deleted usefulness-judge dispatch branch. The FORGET-02 recordUsage reward write uses
+  //  upsert — was DELETED with the rest of the social-modeling subsystem.)
+  // (The cron-context `usefulnessStore` field was DELETED — its sole reader was
+  //  the deleted usefulness-judge dispatch branch. The recordUsage reward write uses
   //  the setup-learning.ts deps, NOT this cron context; that store survives.)
   /** The DORMANT lifecycle sweep the KEYLESS __MEMORY_LIFECYCLE__
    *  sentinel drives (`runLifecycleSweep(scope)`, per (tenant, agent) + injected `now`).
    *  DORMANT — even when enabled the sweep evicts/demotes 0 rows (live policy deferred). */
   memoryLifecycleStore?: MemoryLifecyclePort;
   /** The `inspect` high-trust source read surface — the surviving __REFLECT__ sentinel scopes
-   *  its per-(tenant, agent) profile/topic source reads over it (the Phase 225 FOLD path). (The
-   *  __SOCIAL_MODELING__ reader was deleted in Phase 226-04; the __USEFULNESS_JUDGE__ +
-   *  __MEMORY_TRIPLE_EXTRACTION__ readers in Phase 226-03 — all with their subsystems.) */
+   *  its per-(tenant, agent) profile/topic source reads over it (the folded profile/topic read path). (The
+   *  __SOCIAL_MODELING__ reader was deleted; the __USEFULNESS_JUDGE__ +
+   *  __MEMORY_TRIPLE_EXTRACTION__ readers too — all with their subsystems.) */
   memoryApi?: MemoryApi;
-  /** The closed-graph reflection injectables (the `__REFLECT__` sentinel, v2.31 Reflection,
-   *  REFLECT-01/02). Assembled daemon-side; the handler injects the mental-model store + the
+  /** The closed-graph reflection injectables (the `__REFLECT__` sentinel).
+   *  Assembled daemon-side; the handler injects the mental-model store + the
    *  trusted-origin LCD source into runReflection. Absent ⇒ off-by-default (a default-config
    *  agent never reaches the sentinel). */
   reflection?: ReflectionCronDeps;

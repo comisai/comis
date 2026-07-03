@@ -7,8 +7,7 @@
  * and close. Elements are resolved by ref (e.g., "e12" from a
  * snapshot) or CSS selector.
  *
- * Ported from Comis browser/pw-tools-core.interactions.ts +
- * pw-tools-core.shared.ts, adapted for Comis's in-process pattern.
+ * Runs in-process against a shared Playwright session.
  *
  * @module
  */

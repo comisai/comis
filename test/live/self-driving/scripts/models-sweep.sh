@@ -19,8 +19,8 @@ for M in $MODELS; do
   pkill -9 -f "^node .*daemon\.js" 2>/dev/null; sleep 2
   # Truncate the SUPERVISOR log too ($HOME/comis-m1.log lives OUTSIDE $DATA/logs, so the rm above never
   # touches it) — else `grep modelId | tail` below reads modelIds accumulated across ALL prior models in
-  # the sweep and a silent substitution on model N hides behind model N-1's id (stale-log trap, codex run
-  # 2026-06-25; same class as clean-restart.sh's `: > comis-m1.log`).
+  # the sweep and a silent substitution on model N hides behind model N-1's id (stale-log trap;
+  # same class as clean-restart.sh's `: > comis-m1.log`).
   sudo -u comis bash -c "rm -rf '$DATA/workspace/sessions/default/$CHATID'; rm -f '$DATA'/memory.db '$DATA'/memory.db-wal '$DATA'/memory.db-shm; rm -f '$DATA'/logs/*.log; : > /home/comis/comis-m1.log"
   su - comis -c "bash /home/comis/restart-m1.sh" >/dev/null 2>&1
   sleep 14

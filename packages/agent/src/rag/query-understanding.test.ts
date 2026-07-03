@@ -3,14 +3,14 @@
  * Tests for query-understanding.ts — LLM-free, deterministic, never-throw query helpers
  * (intent classifier + synonym expansion + NL temporal-range parser).
  *
- * Load-bearing RED-first assertions:
+ * Load-bearing assertions:
  * - classifyIntent: a table of (query → expected Intent) covering all 4 intents + the documented
  *   multi-match precedence (temporal > enumeration > preference > factual) + plain-lookup default.
  * - intentMultiplier: 1.0 (byte-identity) for "factual" on EVERY lane + for any unmapped pair;
  *   a documented >1.0 boost on the targeted lane (temporal→temporal, preference→entity);
  *   enumeration's lane reweight is NEUTRAL (diversity is handled by MMR-λ, not a lane weight).
  *
- * (Synonym + temporal-range cases for Task 3 are added alongside in the same file.)
+ * (Synonym + temporal-range cases live alongside in this same file.)
  */
 
 import { describe, it, expect } from "vitest";

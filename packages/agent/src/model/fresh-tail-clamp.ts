@@ -6,11 +6,11 @@
  * Rules:
  * - If effectiveWindow is not finite (frontier/mid models), returns
  *   configuredTurns UNCHANGED — byte-identical guarantee.
- * - Conservative 30% budget floor (§7 open measurement question):
+ * - Conservative 30% budget floor:
  *   affordable = floor(effectiveWindow * 0.3 / avgTokPerStep)
  * - Returns min(configuredTurns, affordable), minimum 1.
- * - The 30% fraction is a placeholder until the Phase-171 harness measures
- *   actual recall impact. Do not treat it as a calibrated constant.
+ * - The 30% fraction is a conservative placeholder pending real recall-impact
+ *   measurement. Do not treat it as a calibrated constant.
  *
  * Pure function — no side effects, no async, no DI. All context passed
  * as parameters. Mirrors the effective-context-window.ts pattern.
@@ -29,12 +29,13 @@
  *   If omitted, estimated as `max(1, floor(effectiveWindow / 20))` (5% floor).
  * @returns The clamped turn count — always ≥ 1, always ≤ configuredTurns.
  *
- * NB (ISSUE #1, 2026-06-22): this turn-count clamp is the COARSE upper bound only.
+ * NB: this turn-count clamp is the COARSE upper bound only.
  * The PRECISE residual enforcement for the protected fresh tail (so it always fits a
  * small window where the system prompt dominates) lives in the lcd-assembler as a
- * post-B-8 TOTAL token bound (boundFreshTailTotalToResidual) — a turn-count clamp is
- * unreliable there because one oversized message (which B-8 bounds anyway) skews the
- * per-step estimate.
+ * TOTAL token bound applied after the per-message char cap
+ * (boundFreshTailTotalToResidual) — a turn-count clamp is unreliable there
+ * because one oversized message (which the per-message cap bounds anyway) skews
+ * the per-step estimate.
  */
 export function resolveClampedFreshTailTurns(
   effectiveWindow: number,

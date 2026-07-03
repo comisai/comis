@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LinePerEvent strategy tests (§7.3 row "LinePerEvent" + §7.1 IRC cap).
+ * LinePerEvent strategy tests (including the IRC line cap).
  *
  * Used by IRC (no edit, no delete, 512-char line cap). Emits one line per newly
  * surviving event; a line longer than 512 chars is truncated with "…". A closing

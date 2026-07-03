@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pricing-coverage query slice types (WEBUI-02, 179-04).
+ * Pricing-coverage query slice types.
  *
  * Extracted from `observability-store-types.ts` for file-size cap compliance (the
  * `cache-stats-types.ts` / `cache-break-types.ts` precedent). The
@@ -30,9 +30,9 @@ export interface PricingCoverage {
  */
 export interface PricingCoverageSlice {
   /**
-   * WEBUI-02 (179-04): the daemon-wide three-state pricing-coverage count over
-   * `obs_token_usage` (optional `sinceMs` lower bound). Reuses the E1 pricing-state
-   * CASE expressions the cost-bucket aggregate already uses. Content-free.
+   * The daemon-wide three-state pricing-coverage count over `obs_token_usage`
+   * (optional `sinceMs` lower bound). Reuses the pricing-state CASE expressions
+   * the cost-bucket aggregate already uses. Content-free.
    */
   pricingCoverage(sinceMs?: number): PricingCoverage;
 }

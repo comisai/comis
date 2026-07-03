@@ -8,7 +8,7 @@
  * @module dangerous-commands
  */
 
-/** exec ... command= (bounded .{0,50} for ReDoS safety -- was .* in original) */
+/** exec ... command= (bounded .{0,50} instead of unbounded .* for ReDoS safety) */
 export const EXEC_COMMAND = /\bexec\b.{0,50}command\s*=/gi;
 
 /** elevated=true */

@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `tg-caps` — the Telegram capability descriptor + the FOUND-03 caps↔adapter
- * reconciliation seam (the A5 decision), Phase 204.
+ * `tg-caps` — the Telegram capability descriptor + the caps↔adapter
+ * reconciliation seam.
  *
  * Two capability shapes exist in this codebase and they DIFFER:
  *
- *   - The emulator side (this file, design §3A.4) is a FLAT `ChannelCaps`:
+ *   - The emulator side (this file) is a FLAT `ChannelCaps`:
  *     `{ channel, inbound{}, outbound{}, protocol }`.
  *   - The production adapter (telegram-plugin.ts `CAPABILITIES`,
  *     core/channel-capability.ts) is NESTED `ChannelCapability`:
  *     `{ features{}, limits{}, replyToMetaKey }`.
  *
- * The A5 decision (RESOLVED here): `tg-caps.ts` carries the flat descriptor AND
- * the reconciliation map; the FOUND-03 contract test (`tg-caps.test.ts`) reads
+ * By design, `tg-caps.ts` carries the flat descriptor AND
+ * the reconciliation map; the contract test (`tg-caps.test.ts`) reads
  * the adapter's REAL declared capabilities from `@comis/channels` and asserts
  * the overlapping fields match — a drift tripwire so the emulator's caps can
- * never silently diverge from the adapter's self-declaration (threat T-204-08).
+ * never silently diverge from the adapter's self-declaration.
  *
  * The flat `ChannelCaps` shape has no slot for a message-length limit, so the
  * reconciled `maxMessageChars` is carried as the sibling const
- * {@link TG_MAX_MESSAGE_CHARS} (the FOUND-03 reconciliation seam) and the
+ * {@link TG_MAX_MESSAGE_CHARS} (the reconciliation seam) and the
  * contract test asserts it against the adapter's `limits.maxMessageChars`.
  *
- * --- FOUND-03 FIELD-BY-FIELD MAP (emulator FLAT ⇄ adapter NESTED) ---
+ * --- FIELD-BY-FIELD MAP (emulator FLAT ⇄ adapter NESTED) ---
  *   outbound.reactions    == features.reactions      (true)
  *   outbound.edits        == features.editMessages   (true)
  *   outbound.deletes      == features.deleteMessages (true)
@@ -50,7 +50,7 @@
 import type { ChannelCaps } from "../../harness/channel-emulator.js";
 
 /**
- * The reconciled Telegram message-length limit (the FOUND-03 seam).
+ * The reconciled Telegram message-length limit (the reconciliation seam).
  *
  * The flat `ChannelCaps` shape carries no `maxMessageChars` field, so the
  * reconciled value lives here as a sibling const. The contract test asserts it

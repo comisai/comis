@@ -19,7 +19,7 @@ export function setup({ seedWorld, variant }) {
   const v = (seedWorld.variants && seedWorld.variants[variant]) || seedWorld.variants.A;
   // Episode state (lab-result gate) lives PER-CASE (see open_assessment), not on the
   // process-global ctx — so it survives the --state CLI and isolates concurrent sessions
-  // sharing one MCP server process (live-run D2 fix).
+  // sharing one MCP server process.
   return {
     ...seedWorld,
     patient: v.patient,
@@ -157,7 +157,7 @@ export const handlers = {
       workups: [],
       deteriorationFlags: [],
       assessmentHistory: [], // { diagnosis, confidence, discriminatorSeenAtTime }
-      labQueryCount: 0, // per-case lab-result gate state (D2: was on global ctx)
+      labQueryCount: 0, // per-case lab-result gate state (kept per-case, not on global ctx)
       discriminatorOrdered: false,
       discriminatorSeen: false,
     });

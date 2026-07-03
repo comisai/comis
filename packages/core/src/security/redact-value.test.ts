@@ -2,14 +2,15 @@
 /**
  * Tests for redactValue() — the pure, bounded redaction primitive.
  *
- * This is the redaction keystone (AGENT-TRANSPARENCY-SPEC §10.1/§10.2):
+ * This is the redaction keystone:
  *   - No secrets ever (9 Pino keys + secret shapes → `<redacted>`).
  *   - No absolute paths ($HOME → ~, system-absolute → last 2 segments);
  *     IP / hostname / MAC masked.
  *   - PII (email / phone / CC / SSN) masked.
  *
- * The replacement token is the lowercase-angle `<redacted>` (Pitfall 5 —
- * NOT `[REDACTED]` like the log sanitizer).
+ * The replacement token is the lowercase-angle `<redacted>` — deliberately
+ * NOT `[REDACTED]` like the log sanitizer, so output always shows WHICH
+ * layer redacted a value.
  */
 
 import { describe, it, expect } from "vitest";
@@ -45,7 +46,7 @@ function reasons(result: RedactedValue): RedactionReason[] {
   return result.redactionsApplied.map((r) => r.reason);
 }
 
-describe("redactValue — token literal (Pitfall 5)", () => {
+describe("redactValue — the distinct lowercase-angle replacement token", () => {
   it("emits the lowercase-angle <redacted> token, NOT [REDACTED]", () => {
     const out = redactValue({ apiKey: "hunter2" });
     const value = out.value as Record<string, unknown>;
@@ -129,12 +130,12 @@ describe("redactValue — shape-based redaction (secret caught under a benign ke
 });
 
 // ---------------------------------------------------------------------------
-// The three secret shapes the log sanitizer covers but the activity shape pass
-// omitted — URL-embedded password, Bearer token, and aws_secret_access_key.
-// Under a BENIGN allowlisted key these survived verbatim into the user-visible
-// label (reproduced end-to-end through applyTemplate). RED on pre-patch code:
-// the password / token / 40-char secret substring is still present in
-// redactValue(...).value.
+// Three secret shapes the log sanitizer covers that the activity shape pass
+// must mirror — URL-embedded password, Bearer token, and aws_secret_access_key.
+// Without them, a credential under a BENIGN allowlisted key survives verbatim
+// into the user-visible label (asserted end-to-end through applyTemplate
+// below): the password / token / 40-char secret substring would still be
+// present in redactValue(...).value.
 // ---------------------------------------------------------------------------
 
 describe("redactValue — secret-shape gap (URL password / Bearer / AWS secret) under a benign key", () => {
@@ -284,23 +285,23 @@ describe("redactValue — absolute path COMPACTION (not stripping)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bug 1: URL host NOT stripped by absolute-path matcher.
+// URL hosts must NOT be stripped by the absolute-path matcher.
 //
-// The live IBM-info turn (instance d6d2a72b, trace 6f93aef3) rendered
-// `"fetching https:/quote/IBM/"` — `compactPaths`'s ABS_PATH_RE greedily
-// matched the `//finance.yahoo.com/quote/IBM/` span inside the URL as a
-// 4-segment absolute path and compacted to its last 2 segments, eating one
-// of the scheme's two slashes. URLs are public info per SPEC §8.4
+// Without the scheme guard, a URL like `https://finance.yahoo.com/quote/IBM/`
+// renders as `"fetching https:/quote/IBM/"` — `compactPaths`'s ABS_PATH_RE
+// greedily matches the `//finance.yahoo.com/quote/IBM/` span inside the URL as
+// a 4-segment absolute path and compacts it to its last 2 segments, eating one
+// of the scheme's two slashes. URLs are public, user-facing info
 // (tavily.com/search renders verbatim); path compaction is for
 // filesystem paths only.
 //
-// RED contract: the patch adds a `(?<!:)` negative-lookbehind on the leading
-// `/` so URL scheme separators (`://`) survive. The two assertions below
-// (scheme starts with `https://` and no `absolute_path` reason recorded) FAIL
-// pre-patch and PASS post-patch. Asserting only the scheme survival keeps the
-// test decoupled from whether HOSTNAME_RE later masks `finance.yahoo.com` —
-// that's a separate, unrelated network-identifier mask that runs AFTER
-// compactPaths; the Bug 1 signature is the lost scheme slash.
+// The `(?<!:)` negative-lookbehind on the leading `/` is what keeps URL scheme
+// separators (`://`) intact. The two assertions below (scheme starts with
+// `https://` and no `absolute_path` reason recorded) pin that contract.
+// Asserting only the scheme survival keeps the test decoupled from whether
+// HOSTNAME_RE later masks `finance.yahoo.com` — that's a separate, unrelated
+// network-identifier mask that runs AFTER compactPaths; the failure signature
+// here is the lost scheme slash.
 // ---------------------------------------------------------------------------
 
 describe("redactValue — URL host not stripped by absolute-path matcher", () => {
@@ -318,15 +319,15 @@ describe("redactValue — URL host not stripped by absolute-path matcher", () =>
   // -------------------------------------------------------------------------
   // URL host is NOT masked by HOSTNAME_RE.
   //
-  // After the compactPaths fix, the URL renders as
-  // "https://<redacted>/quote/MSFT/" because HOSTNAME_RE at redact-value.ts:211
-  // still matches finance.yahoo.com (≥3 labels ending in alpha TLD) and replaces
-  // it. URL hosts are public info per SPEC §8.4 — they should not be masked.
+  // Preserving the scheme slashes alone is not enough: without its own guard,
+  // HOSTNAME_RE (redact-value.ts) still matches finance.yahoo.com (≥3 labels
+  // ending in alpha TLD) and the URL renders as "https://<redacted>/quote/MSFT/".
+  // URL hosts are public, user-facing info — they must not be masked.
   // Standalone hostnames (e.g. internal "db-primary.internal.example.com") DO
   // stay masked (defense against infra leakage); only URL-context hosts are
   // exempt. A `(?<!\/\/)` lookbehind on HOSTNAME_RE skips hosts preceded by `//`.
   // -------------------------------------------------------------------------
-  it("preserves the URL host (does NOT mask it via HOSTNAME_RE) — SPEC §8.4", () => {
+  it("preserves the URL host (does NOT mask it via HOSTNAME_RE)", () => {
     const out = redactValue({ url: "https://finance.yahoo.com/quote/MSFT/" });
     const value = out.value as Record<string, unknown>;
     // The URL host must be intact, not "<redacted>".
@@ -346,22 +347,21 @@ describe("redactValue — URL host not stripped by absolute-path matcher", () =>
 });
 
 // ---------------------------------------------------------------------------
-// Bug 2 follow-on: URL PATHS protected from PII matchers.
+// URL PATHS are protected from the PII matchers.
 //
-// After the hotfix exempted URL HOSTS from HOSTNAME_RE via a `(?<!\/\/)`
-// lookbehind, URL PATHS still flow through every PII matcher unguarded. Live
-// evidence (daemon d103580b, trace 8830d06d): the press-release URL
-// `https://www.prnewswire.com/news-releases/...-302781634.html` is rendered
-// with the 9-digit ID falsely masked by PHONE_RE. Per SPEC §8.4, public URL
+// Exempting URL HOSTS from HOSTNAME_RE via the `(?<!\/\/)` lookbehind is not
+// enough on its own: URL PATHS would still flow through every PII matcher
+// unguarded — a press-release URL like
+// `https://www.prnewswire.com/news-releases/...-302781634.html` would render
+// with the 9-digit ID falsely masked by PHONE_RE. Public URL
 // hosts AND paths are user-facing context, not infrastructure leakage. A
 // single URL-aware extract-and-restore pre-pass wraps the network + PII
 // matcher passes so numeric IDs in URL paths are not false-positive-masked.
 //
-// RED contract: tests 1 & 2 (9-digit ID, CC-shaped path) MUST fail on
-// pre-patch code — PHONE_RE / CREDIT_CARD_RE match the URL path span and the
-// URL renders with `<redacted>` instead of verbatim. Tests 3, 4, 5 are
-// regression guards that pass pre- AND post-patch (span-precision and
-// defense-in-depth invariants).
+// The first two tests (9-digit ID, CC-shaped path) pin that pre-pass —
+// without it, PHONE_RE / CREDIT_CARD_RE match the URL path span and the
+// URL renders with `<redacted>` instead of verbatim. The remaining three are
+// regression guards for the span-precision and defense-in-depth invariants.
 // ---------------------------------------------------------------------------
 
 describe("redactValue — URL paths protected from PII matchers (PHONE/CC/SSN/EMAIL)", () => {
@@ -371,8 +371,8 @@ describe("redactValue — URL paths protected from PII matchers (PHONE/CC/SSN/EM
     const out = redactValue({ url });
     const value = out.value as Record<string, unknown>;
     // The URL must render verbatim — `302781634` is a press-release ID in the
-    // path, NOT a phone number. Pre-patch: PHONE_RE matches the digit run and
-    // replaces it with `<redacted>` → URL contains `<redacted>` → FAIL.
+    // path, NOT a phone number. Without the URL guard, PHONE_RE matches the
+    // digit run and replaces it with `<redacted>`.
     expect(value.url).toBe(url);
     expect(out.redactionsApplied.find((r) => r.reason === "pii_phone")).toBeUndefined();
   });
@@ -382,8 +382,8 @@ describe("redactValue — URL paths protected from PII matchers (PHONE/CC/SSN/EM
     const out = redactValue({ url });
     const value = out.value as Record<string, unknown>;
     // The URL must render verbatim — `4111-1111-1111-1111` is a path segment,
-    // NOT a credit card. Pre-patch: CREDIT_CARD_RE matches the 4-4-4-4 group
-    // and replaces it with `<redacted>` → URL contains `<redacted>` → FAIL.
+    // NOT a credit card. Without the URL guard, CREDIT_CARD_RE matches the
+    // 4-4-4-4 group and replaces it with `<redacted>`.
     expect(value.url).toBe(url);
     expect(out.redactionsApplied.find((r) => r.reason === "pii_credit_card")).toBeUndefined();
   });
@@ -538,7 +538,7 @@ describe("redactValue — immutability + cycle guard", () => {
 });
 
 describe("redactValue — REDACT_LIMITS bounds", () => {
-  it("exposes the §10.1 limits", () => {
+  it("exposes the documented default limits", () => {
     expect(REDACT_LIMITS.maxDepth).toBe(4);
     expect(REDACT_LIMITS.maxKeysPerLevel).toBe(16);
     expect(REDACT_LIMITS.maxArrayLength).toBe(32);

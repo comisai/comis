@@ -230,7 +230,7 @@ describe("continuous delivery-queue drainer (integration)", () => {
       // drop responses past the 10th listener, causing JSON-RPC timeouts.
       //
       // Rate limit: the gateway STRIPS a client-supplied `_agentId`
-      // (ORIGIN-02 anti-forgery — it is an internal field), so all 100 sends
+      // (anti-forgery — it is an internal field), so all 100 sends
       // resolve to the DEFAULT agent's per-agent notification limiter rather
       // than 100 distinct fresh counters. The test config raises that agent's
       // `notification.maxPerHour` to 100000 (config.test-delivery-recurring.yaml)

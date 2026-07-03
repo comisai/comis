@@ -2,7 +2,7 @@
 /**
  * `HANDLER_CAPABILITY_MAP` — the single auditable source-of-truth that
  * classifies every orchestration-core RPC method to its required
- * {@link AgentCapability} (CAP-04, v8 §3.7).
+ * {@link AgentCapability}.
  *
  * Why a registry (not a fuzzy "every handler" scan): "gated" must be a
  * machine-checkable table, not a notion. Each orchestration method is one of
@@ -12,8 +12,8 @@
  *     in-process gate, because the agent loop skips `checkScope`).
  *   - `"deny-by-origin"` — an admin/control-plane method un-grantable to an
  *     agent origin (the `rpc-dispatch.ts` chokepoint rejects an `_agentId`-bearing
- *     call for every scopes:["admin"] method). 210-GAP populates this class with
- *     the message subset §3.5 keeps admin-only (edit/delete/fetch/attach) + the
+ *     call for every scopes:["admin"] method). This class holds
+ *     the message subset kept admin-only (edit/delete/fetch/attach) + the
  *     arbitrary-session lifecycle ops carrying an in-handler `_trustLevel`-admin
  *     check (session.delete/export/reset_conversation).
  *   - `"ungated"` — a read-only / lifecycle method governed by neither a cap
@@ -29,15 +29,15 @@
  *   2. `packages/core/src/security/handler-capability-map.test.ts` pins the
  *      anchor classifications + the no-typo'd-cap invariant.
  *
- * Phase 212's `tool.invoke` cap-map will REUSE this table (the gate and the
+ * The `tool.invoke` cap-map REUSES this table (the gate and the
  * SDK draw from one source), so it lives in `security/` (importable by both
  * `@comis/daemon` handlers and `@comis/agent` tool-assembly with no package
  * cycle) and OUT of `api-contracts/` (the web-codegen surface).
  *
- * SCOPE (v8 / RESEARCH Open Q3): 210 classifies the orchestration-CORE methods
+ * SCOPE: this table classifies the orchestration-CORE methods
  * only — session.spawn plus the graph, cron, message and skills families. The
- * FULL §3.6 read/web/analyze/write/browse tool-surface map is Phase 212. Do NOT
- * enumerate the full tool surface here.
+ * FULL read/web/analyze/write/browse tool-surface map is
+ * `tool-capability-map.ts`. Do NOT enumerate the full tool surface here.
  *
  * @module
  */
@@ -60,8 +60,8 @@ export type HandlerCapabilityClassification = AgentCapability | "deny-by-origin"
  */
 export const HANDLER_CAPABILITY_MAP = {
   // ── session ── only session.spawn is an orch cap; session.send is governed by
-  // the agentToAgent policy gate. The read/lifecycle ops split two ways
-  // (210-GAP MD-01): list/compact/reset/history/run_status/search/status are
+  // the agentToAgent policy gate. The read/lifecycle ops split two
+  // ways: list/compact/reset/history/run_status/search/status are
   // "ungated" (agent-reachable self-scoped reads, rpc-scoped contracts), while
   // delete/export/reset_conversation are "deny-by-origin" — they carry an
   // in-handler `_trustLevel === "admin"` check AND target an ARBITRARY session
@@ -102,12 +102,12 @@ export const HANDLER_CAPABILITY_MAP = {
   "cron.status": "ungated",
   "cron.runs": "ungated",
 
-  // ── message ── 210-GAP / §3.5: `orch:message` exposes ONLY the
+  // ── message ── `orch:message` exposes ONLY the
   // genuinely-outward send subset (send/reply/react). edit/delete/fetch/attach
   // are admin-only and NOT part of the cap → "deny-by-origin" (they stay
   // scopes:["admin"]; an agent origin is denied at the chokepoint, NOT
-  // cap-gated). This corrects the prior over-broad gating that (a) put
-  // edit/delete/attach behind a cap no profile grants and (b) made a
+  // cap-gated). Gating the admin subset on the cap would (a) put
+  // edit/delete/attach behind a cap no profile grants and (b) make a
   // _capabilities-stripped admin gateway caller throw on the (undefined) cap.
   "message.send": "orch:message",
   "message.reply": "orch:message",
@@ -125,7 +125,7 @@ export const HANDLER_CAPABILITY_MAP = {
   "skills.upload": "orch:skill",
   "skills.list": "ungated",
 
-  // ── capabilities ── INTRO-02 (Phase 215): capabilities.introspect (the
+  // ── capabilities ── capabilities.introspect (the
   // `whoami` read) is read-only + agent-reachable with NO cap — an agent queries
   // its OWN resolved caps + remaining budget/quota. It joins the read-only
   // "ungated" class (beside session.status); the handler enforces _agentId
@@ -138,7 +138,7 @@ export type GatedMethodName = keyof typeof HANDLER_CAPABILITY_MAP;
 
 /**
  * SELF_SCOPED_AGENT_READS — the tight, named cap-socket audience exception
- * (CLI-01 / CLI-02; v8 §15 "whoami — read, no cap").
+ * ("whoami — read, no cap").
  *
  * These three methods are `"ungated"` in {@link HANDLER_CAPABILITY_MAP} (no
  * `orch:*` cap, not deny-by-origin), `scopes:["rpc"]` (not admin), and each

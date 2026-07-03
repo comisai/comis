@@ -38,9 +38,9 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
   // Emit prompt:submitted observability boundary event.
   // Fires after envelope assembly + before the retry-loop drives the
   // model call so the trajectory writer captures the exact (system,
-  // messages) pair the model is about to see. Sha256 digests over
-  // stableStringify make the digest stable across runs that produce
-  // semantically-identical prompts (the cache-trace consumer joins on
+  // messages) pair the model is about to see. Sha256 digests over the
+  // raw strings are stable across runs that produce
+  // byte-identical prompts (the cache-trace consumer joins on
   // these digests).
   emitPromptSubmitted(params, envelope.messageText);
 

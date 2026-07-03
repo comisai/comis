@@ -70,11 +70,11 @@ export async function processAudioAttachment(
 
     if (result.ok) {
       const durationMs = systemNowMs() - sttStart;
-      // OBS-01 §2.7 INFO completion: carry the voice fields THIS skills tier can
+      // INFO completion: carry the voice fields THIS skills tier can
       // see — durationMs (wall-clock) + audioBytes (inbound buffer length) —
       // alongside the existing language. provider/keyless/model are NOT visible
       // here (the handler receives a bare TranscriptionPort, not its resolved
-      // config); the daemon RPC path (Phase 196 Plan 03) owns the full field set
+      // config); the daemon RPC path owns the full field set
       // on the trajectory. Omit the unknown fields rather than log undefined.
       deps.logger.info(
         { url: att.url, language: result.value.language, durationMs, audioBytes: buffer.byteLength },
@@ -94,8 +94,8 @@ export async function processAudioAttachment(
         },
       };
     } else {
-      // OBS-01: canonical `err:` (the Pino `err` serializer key — `error:` is
-      // silently dropped). SEC-01: redact the message before it reaches any log
+      // Canonical `err:` (the Pino `err` serializer key — `error:` is
+      // silently dropped). Redact the message before it reaches any log
       // line (defense-in-depth — the adapter already sanitizes its Result.err,
       // but the handler must never re-introduce a credential/URL).
       const errMsg = redactErrorMessage(result.error.message);

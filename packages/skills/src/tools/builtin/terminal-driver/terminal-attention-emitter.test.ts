@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the transition-only in-worker attention emitter (spec §2.3, TR-11).
+ * Unit tests for the transition-only in-worker attention emitter.
  *
  * `createAttentionEmitter({ sessionId, writeFd3 })` is the no-poll mechanism's
  * WORKER half: the worker calls `observe(classification)` after each `classifyFrame`
  * on a settled frame; the emitter writes a length-prefixed {@link TerminalEventFrame}
  * to the injected `writeFd3` ONLY when the classified state TRANSITIONS (working →
  * awaiting-input, etc.) — never on an unchanged state, never on a timer. These tests
- * prove the EDGE-TRIGGERED contract (the load-bearing TR-11 invariant: the agent is
- * woken by the event, never spun) using a capturing fake fd3-writer (RESEARCH A1) — so
+ * prove the EDGE-TRIGGERED contract (the load-bearing no-poll invariant: the agent is
+ * woken by the event, never spun) using a capturing fake fd3-writer — so
  * the logic is provable on macOS regardless of the `--permission` fd3 posture.
  *
  * Pure-JS / fully-injected → runs green without forking. Decodes each captured fd3
@@ -55,7 +55,7 @@ function makeFd3Capture(): {
   };
 }
 
-describe("createAttentionEmitter — TR-11 transition-only fd3 emit (the no-poll mechanism)", () => {
+describe("createAttentionEmitter — transition-only fd3 emit (the no-poll mechanism)", () => {
   it("emits exactly ONE terminal:input_needed frame on the working -> awaiting-input transition", () => {
     const cap = makeFd3Capture();
     const emitter = createAttentionEmitter({ sessionId: "s1", writeFd3: cap.writeFd3 });
@@ -174,19 +174,17 @@ describe("createAttentionEmitter — TR-11 transition-only fd3 emit (the no-poll
 });
 
 // ---------------------------------------------------------------------------
-// CLASS-02 (163-04) Task 1 — the core↔skills MIRROR-PARITY guard.
+// The core↔skills MIRROR-PARITY guard.
 //
 // `terminal-events-attention.ts` mirrors the core `TerminalEvents` keys
 // one-for-one so the daemon's `TypedEventBus` stays structurally compatible with
-// the bus the skills layer emits on. There is NO existing parity guard for these
+// the bus the skills layer emits on. There is NO other parity guard for these
 // shapes, so a `confidence` added to the core type but MISSED on the skills mirror
-// would be a silent no-op (the project_mcp_field_plumbing bug class) — caught only
-// at build:clean, not in vitest. This source-introspection assertion makes a missed
-// mirror RED in THIS plan's vitest verify (esbuild strips type annotations, so the
-// source layer is the genuinely-RED one). RED on pre-patch: the mirror has neither
-// `confidence` (input_needed + stuck) nor `reason` (stuck) yet.
+// would be a silent no-op — caught only at build:clean, not in vitest. This
+// source-introspection assertion makes a missed mirror fail in vitest (esbuild
+// strips type annotations, so the source layer is the one that genuinely fails).
 // ---------------------------------------------------------------------------
-describe("CLASS-02 — terminal-events-attention.ts mirrors confidence (+ stuck reason) one-for-one", () => {
+describe("terminal-events-attention.ts mirrors confidence (+ stuck reason) one-for-one", () => {
   /** Slice an `export interface <Name> { ... }` block out of the mirror source. */
   function ifaceBlock(src: string, name: string): string {
     const match = src.match(new RegExp(`export interface ${name}\\s*\\{[\\s\\S]*?\\n\\}`));
@@ -194,14 +192,14 @@ describe("CLASS-02 — terminal-events-attention.ts mirrors confidence (+ stuck 
     return match![0];
   }
 
-  it("TerminalInputNeededEvent (skills mirror) declares confidence (CLASS-02 source RED on pre-patch)", () => {
+  it("TerminalInputNeededEvent (skills mirror) declares the confidence field", () => {
     const src = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
     expect(ifaceBlock(src, "TerminalInputNeededEvent"), "input_needed mirror declares confidence").toMatch(
       /confidence/,
     );
   });
 
-  it("TerminalStuckEvent (skills mirror) declares confidence AND reason (CLASS-02 source RED on pre-patch)", () => {
+  it("TerminalStuckEvent (skills mirror) declares both confidence AND reason fields", () => {
     const src = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
     const block = ifaceBlock(src, "TerminalStuckEvent");
     expect(block, "stuck mirror declares confidence").toMatch(/confidence/);
@@ -217,23 +215,21 @@ describe("CLASS-02 — terminal-events-attention.ts mirrors confidence (+ stuck 
 });
 
 // ---------------------------------------------------------------------------
-// CLASS-02 (163-04) Task 2 — frameForState threads c.confidence (+ c.reason on
-// stuck) onto the fd3 frame payload.
+// frameForState threads c.confidence (+ c.reason on stuck) onto the fd3 frame
+// payload.
 //
 // The Classification `c` already carries `.confidence` + `.reason` (it is the
-// observe() input). Today the input_needed payload drops `confidence` and the
-// stuck payload drops BOTH. These tests decode the captured fd3 frame and assert
-// the payload now carries the verdict's confidence (and stuck's reason) — while
-// staying content-free (no screen/text/cursor field). RED on pre-patch (the
-// stuck payload has no confidence/reason; input_needed has no confidence).
+// observe() input). These tests decode the captured fd3 frame and assert
+// the payload carries the verdict's confidence (and stuck's reason) — while
+// staying content-free (no screen/text/cursor field).
 // ---------------------------------------------------------------------------
-describe("CLASS-02 — frameForState carries confidence (+ stuck reason), content-free", () => {
+describe("frameForState carries confidence (+ stuck reason), content-free", () => {
   it("input_needed frame payload carries the verdict confidence (not a hardcoded default)", () => {
     const cap = makeFd3Capture();
     const emitter = createAttentionEmitter({ sessionId: "s1", writeFd3: cap.writeFd3 });
 
-    // A `medium`-confidence dialog detection (the CLASS-01 shape) — prove the ACTUAL
-    // value threads through, not a constant.
+    // A `medium`-confidence dialog detection (the full-screen-dialog shape) — prove
+    // the ACTUAL value threads through, not a constant.
     emitter.observe({ state: "awaiting-input", confidence: "medium", reason: "dialog_detected" });
 
     const frames = cap.frames();
@@ -281,8 +277,8 @@ describe("CLASS-02 — frameForState carries confidence (+ stuck reason), conten
     }
   });
 
-  it("LIVE-04 (#4): a suppressed observe (a foreground `wait` settle) writes NO fd3 frame but still advances lastState", () => {
-    // Real-VPS 2026-06-16: at launch claude's welcome screen settled DURING the agent's foreground
+  it("a suppressed observe (a foreground `wait` settle) writes NO fd3 frame but still advances lastState", () => {
+    // Observed live: at launch claude's welcome screen settled DURING the agent's foreground
     // terminal_session_wait → an awaiting-input transition → a redundant fd3 woken turn escalated
     // "waiting for input" BEFORE the agent (which the wait reply unblocks) sent the build prompt.
     const cap = makeFd3Capture();
@@ -294,7 +290,7 @@ describe("CLASS-02 — frameForState carries confidence (+ stuck reason), conten
     expect(cap.frames(), "the suppressed transition advanced lastState → it does not re-fire at the same state").toHaveLength(0);
   });
 
-  it("LIVE-04 (#4): a NON-suppressed observe still emits — the act-then-return follow-up (send/create settle) is unchanged", () => {
+  it("a NON-suppressed observe still emits — the act-then-return follow-up (send/create settle) is unchanged", () => {
     const cap = makeFd3Capture();
     const emitter = createAttentionEmitter({ sessionId: "s1", writeFd3: cap.writeFd3 });
     emitter.observe(classification("awaiting-input", "settled_cursor_parked")); // not a wait → emits

@@ -59,7 +59,7 @@ describe("stripReasoningTagsFromText", () => {
     expect(result).toBe("Before");
   });
 
-  // Issue 3 (small-model e2e 2026-06-12, UC-1 qwen27): qwen3.6 on Ollama can
+  // Small reasoning models such as qwen3.6 and qwen27 served via Ollama can
   // emit the OPENING <think> as a separate reasoning chunk while the closing
   // </think> plus the pre-close draft land in the content body. The visible
   // reply then carried a duplicated draft answer and the stray closer. An

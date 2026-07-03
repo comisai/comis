@@ -49,17 +49,17 @@ describe("ContextEngineConfigSchema", () => {
       largeFileTokenThreshold: 25_000,
       annotationKeepWindow: 15,
       annotationTriggerChars: 200_000,
-      // Post-batch continuation (replaces SEP nudge enforcement)
+      // Post-batch continuation
       postBatchContinuation: { enabled: true, maxRetries: 2 },
-      // Robustness / spend / deferred-compaction knobs (Phase 132 C4 + R1)
+      // Robustness / spend / deferred-compaction knobs
       deferCompaction: true,
       summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
       summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
-      // Phase 152 capacity + prompt-security knobs (C1/C2/C4) + Phase 166 CWF-02
+      // Capacity + prompt-security knobs
       budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 },
       compactPrompt: { enabled: true, targetTokens: 3_000 },
       compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "", summarizerFallbackProviders: [] },
-      // Phase 172 LCD→LTM distillation (default-OFF)
+      // LCD→LTM distillation (default-OFF)
       memory: { distillFromLcd: { enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 } },
     });
   });
@@ -132,15 +132,15 @@ describe("ContextEngineConfigSchema", () => {
       summaryProvider: "anthropic",
       // Post-batch continuation defaults (not overridden in this test)
       postBatchContinuation: { enabled: true, maxRetries: 2 },
-      // Phase 132 knobs (not overridden in this test — default through)
+      // Robustness / spend knobs (not overridden in this test — default through)
       deferCompaction: true,
       summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
       summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
-      // Phase 152 knobs + Phase 166 CWF-02 (not overridden in this test — default through)
+      // Capacity + prompt-security knobs (not overridden in this test — default through)
       budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 },
       compactPrompt: { enabled: true, targetTokens: 3_000 },
       compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "", summarizerFallbackProviders: [] },
-      // Phase 172 LCD→LTM distillation (not overridden in this test — default through)
+      // LCD→LTM distillation (not overridden in this test — default through)
       memory: { distillFromLcd: { enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 } },
     });
   });
@@ -211,12 +211,11 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("version", () => {
-    it("version defaults to 'dag' when unset (Phase 133 re-enables dag as the default working-context engine)", () => {
-      // Phase 133 (the v2.12 GA keystone) flips the default pipeline -> dag.
-      // The lossless LCD (dag) engine is now the live default for every agent
+    it("version defaults to 'dag' when unset (the default working-context engine)", () => {
+      // The lossless LCD (dag) engine is the default for every agent
       // that omits `version`; the simpler sequential-layer pipeline engine is
-      // the first-class opt-in. This is the durable regression gate for the
-      // keystone flip.
+      // the first-class opt-in. This is the durable regression gate for that
+      // default.
       const result = ContextEngineConfigSchema.parse({});
       expect(result.version).toBe("dag");
     });
@@ -227,12 +226,11 @@ describe("ContextEngineConfigSchema", () => {
     });
 
     it("explicit version 'dag' parses to 'dag' (the default LCD engine, explicitly pinned)", () => {
-      // "dag" (the LCD engine) is the default since Phase 133; pinning it
+      // "dag" (the LCD engine) is the default; pinning it
       // explicitly is equivalent to omitting `version`. Selecting it does not
       // throw; with a context store wired the factory builds the LCD engine,
       // and a storeless caller falls back to pipeline with a logged warning
-      // (see the c2 test in
-      // packages/agent/src/context-engine/context-engine.test.ts).
+      // (covered in packages/agent/src/context-engine/context-engine.test.ts).
       expect(() => ContextEngineConfigSchema.parse({ version: "dag" })).not.toThrow();
       const result = ContextEngineConfigSchema.parse({ version: "dag" });
       expect(result.version).toBe("dag");
@@ -284,11 +282,11 @@ describe("ContextEngineConfigSchema", () => {
 
   describe("compactionModel", () => {
     it("defaults to empty string (runtime resolution via pi-ai catalog)", () => {
-      // Schema default changed from a hardcoded Anthropic literal
-      // ("anthropic:claude-haiku-4-5-20250929") to "". Empty string triggers
+      // The schema default is "" — deliberately NOT a hardcoded Anthropic
+      // literal. Empty string triggers
       // resolveCompactionModel() at runtime to pick the fast-tier model from
-      // the agent's primary provider — closes the cross-provider routing bug
-      // where switching primary to OpenRouter still routed compaction to Claude.
+      // the agent's primary provider, so a primary of OpenRouter/Google/etc.
+      // never cross-routes compaction to Claude.
       const result = ContextEngineConfigSchema.parse({});
       expect(result.compactionModel).toBe("");
     });
@@ -309,7 +307,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("evictionMinAge", () => {
-    it("defaults to 15 (user-locked, not design's 10)", () => {
+    it("defaults evictionMinAge to 15 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.evictionMinAge).toBe(15);
     });
@@ -419,7 +417,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("observationKeepWindow", () => {
-    it("defaults to 25 (updated from 15)", () => {
+    it("defaults observationKeepWindow to 25 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.observationKeepWindow).toBe(25);
     });
@@ -453,7 +451,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("observationTriggerChars", () => {
-    it("defaults to 120000 (updated from 200000)", () => {
+    it("defaults observationTriggerChars to 120000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.observationTriggerChars).toBe(120_000);
     });
@@ -1087,7 +1085,7 @@ describe("ContextEngineConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // deferCompaction (C4) — deferred-by-default afterTurn compaction
+  // deferCompaction — deferred-by-default afterTurn compaction
   // -------------------------------------------------------------------------
 
   describe("deferCompaction", () => {
@@ -1096,7 +1094,7 @@ describe("ContextEngineConfigSchema", () => {
       expect(result.deferCompaction).toBe(true);
     });
 
-    it("accepts false (inline pre-132 behaviour for deterministic tests)", () => {
+    it("accepts false (inline compaction for deterministic tests)", () => {
       const result = ContextEngineConfigSchema.parse({ deferCompaction: false });
       expect(result.deferCompaction).toBe(false);
     });
@@ -1108,7 +1106,7 @@ describe("ContextEngineConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // summarizerSpend (R1) — per-tenant summarizer token-spend ceilings
+  // summarizerSpend — per-tenant summarizer token-spend ceilings
   // -------------------------------------------------------------------------
 
   describe("summarizerSpend", () => {
@@ -1173,13 +1171,13 @@ describe("ContextEngineConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // budget.minVisibleOutputTokens (Fix 3 / Phase 166 CWF-02)
+  // budget.minVisibleOutputTokens
   // -------------------------------------------------------------------------
 
   describe("budget.minVisibleOutputTokens", () => {
     it("defaults to 768 when budget is omitted", () => {
       const result = ContextEngineConfigSchema.parse({});
-      // CWF-02: non-reasoning floor defaults to 768 tokens.
+      // The non-reasoning visible-output floor defaults to 768 tokens.
       expect(result.budget.minVisibleOutputTokens).toBe(768);
     });
 
@@ -1211,14 +1209,14 @@ describe("ContextEngineConfigSchema", () => {
       expect(max.budget.minVisibleOutputTokens).toBe(8_192);
     });
 
-    it("rejects below minimum (255) — CWF-02 threat T-166-02-01", () => {
+    it("rejects below minimum (255) — a floor too small to be useful", () => {
       const result = ContextEngineConfigSchema.safeParse({
         budget: { minVisibleOutputTokens: 255 },
       });
       expect(result.success).toBe(false);
     });
 
-    it("rejects above maximum (8193) — CWF-02 threat T-166-02-01", () => {
+    it("rejects above maximum (8193) — a floor that would starve the input budget", () => {
       const result = ContextEngineConfigSchema.safeParse({
         budget: { minVisibleOutputTokens: 8_193 },
       });
@@ -1243,7 +1241,7 @@ describe("ContextEngineConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // summarizerBreaker (R1) — reuses CircuitBreakerConfigSchema
+  // summarizerBreaker — reuses CircuitBreakerConfigSchema
   // -------------------------------------------------------------------------
 
   describe("summarizerBreaker", () => {

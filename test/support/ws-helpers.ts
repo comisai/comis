@@ -84,7 +84,7 @@ export function sendJsonRpc(
 
   return new Promise<unknown>((resolve, reject) => {
     // Detach ALL listeners + the timeout in one place so every settle path
-    // (response / timeout / socket death) leaves no dangling handlers (WR-05).
+    // (response / timeout / socket death) leaves no dangling handlers.
     function cleanup(): void {
       clearTimeout(timeout);
       ws.removeEventListener("message", handler);
@@ -123,11 +123,11 @@ export function sendJsonRpc(
       }
     }
 
-    // WR-05: a mid-request socket death (daemon crash mid-dispatch, gateway
+    // A mid-request socket death (daemon crash mid-dispatch, gateway
     // drops the socket) must reject PROMPTLY as a transport failure — not stall
     // to the full `timeoutMs` and then mislead with a "response timed out".
-    // Phase 205 routes `rpcRequest` (and the `tg rpc` keystone) through here, so
-    // this latency/diagnosis gap is now load-bearing for the harness.
+    // `rpcRequest` (and the `tg rpc` keystone) routes through here, so this
+    // latency/diagnosis gap is load-bearing for the harness.
     function onClose(): void {
       cleanup();
       reject(

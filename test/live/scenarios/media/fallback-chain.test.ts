@@ -5,7 +5,7 @@
  * `createFallbackTranscription(providers, logger)` (from @comis/skills) is the real,
  * pure fallback-selection logic. Feeding it fake TranscriptionPort adapters — primary
  * returns err, fallback returns ok — reproduces "primary disabled ⇒ next serves" and
- * lets us assert the WARN hint/errorKind the operator relies on. This is the FND-10
+ * lets us assert the WARN hint/errorKind the operator relies on. This is the
  * log-oracle principle applied at the function boundary: a capture logger proves the
  * fallback fired with the right hint.
  *

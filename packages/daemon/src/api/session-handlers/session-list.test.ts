@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the session.list handler's agent-origin self-scoping (CR-03).
+ * Unit tests for the session.list handler's agent-origin self-scoping.
  *
  * `session.list` enumerates every session's `{ sessionKey, agentId, userId,
  * channelId, ... }`. Its only pre-existing visibility narrowing is the
@@ -8,7 +8,7 @@
  * `_agentId = lease.agentId` (setup-capability-endpoint.ts:321) but NOT the
  * `_callerMetadata`/`_callerSessionKey` the sub-agent filter needs, so for a
  * jailed orch:read caller that narrowing never fires — the script receives the
- * directory of EVERY agent's/user's sessions (the keys that turn the CR-02
+ * directory of EVERY agent's/user's sessions (the keys that turn a
  * single-session read into a turnkey cross-tenant exfiltration, plus a
  * userId/channelId enumeration leak in its own right).
  *
@@ -84,7 +84,7 @@ function makeDeps(): SessionHandlerDeps {
   return base as unknown as SessionHandlerDeps;
 }
 
-describe("session.list agent-origin self-scoping (CR-03)", () => {
+describe("session.list agent-origin self-scoping", () => {
   it("session.list does NOT return other agents' sessions to an agent-origin caller (_agentId injected)", async () => {
     // An agent-origin caller (the orchestrate rpc route injects `_agentId`)
     // must never receive the cross-tenant directory. With agent-scoping the

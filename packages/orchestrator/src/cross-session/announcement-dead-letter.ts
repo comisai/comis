@@ -70,10 +70,10 @@ export interface DeadLetterEntry {
   lastError?: string;
   /** Thread ID for threaded delivery Persisted so retried deliveries land in the correct thread. */
   threadId?: string;
-  /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Optional/forward-additive — pre-existing JSONL rows have it undefined (no migration; parseEntries tolerates the missing field). */
+  /** Idempotency key `${callerSessionKey}::${runId}`. Optional/forward-additive — pre-existing JSONL rows have it undefined (no migration; parseEntries tolerates the missing field). */
   idempotencyKey?: string;
   /**
-   * HIGH-2 (ONCE-03/04) — the announce origin's `rootRunId`, half of the durable
+   * The announce origin's `rootRunId`, half of the durable
    * `(rootRunId, stepIndex)` ONCE-ledger idempotency key. Optional/forward-additive
    * (like {@link DeadLetterEntry.idempotencyKey}): pre-ledgering JSONL rows have it
    * undefined and `parseEntries` tolerates that — no migration. When present
@@ -82,7 +82,7 @@ export interface DeadLetterEntry {
    */
   rootRunId?: string;
   /**
-   * HIGH-2 (ONCE-03/04) — the stable per-announce `stepIndex` allocated ONCE at
+   * The stable per-announce `stepIndex` allocated ONCE at
    * first announce (`allocateOutwardStep`), the other half of the idempotency key.
    * Persisted so a retry after a restart re-uses the SAME key. Optional/forward-
    * additive (no migration).
@@ -101,7 +101,7 @@ export interface AnnouncementDeadLetterQueue {
    * Retry delivery of queued entries via the provided sendToChannel callback.
    * Processes entries sequentially, drops expired entries, uses atomic write.
    *
-   * WR-01: `onDelivered` (optional) is invoked with the entry's
+   * `onDelivered` (optional) is invoked with the entry's
    * `idempotencyKey` after a SUCCESSFUL re-delivery, so the caller can record
    * the recovered key in the shared deliveredKeys set (deliveryDedup.mark /
    * batcher.markDelivered). Without it, a DLQ-recovered announcement is never
@@ -133,12 +133,12 @@ interface AnnouncementDeadLetterQueueOptions {
   /** Optional logger for diagnostics. */
   logger?: AnnouncementLogger;
   /**
-   * HIGH-2 (ONCE-03/04) — the three-state outward-send ledger. When present,
+   * The three-state outward-send ledger. When present,
    * `drain` consults it BEFORE re-delivering an entry that carries a persisted
    * `(rootRunId, stepIndex)`: a committed row → SKIP the send (the announcement
    * already landed; the in-memory deliveredKeys set could not know this across a
-   * restart, the durable ledger does). `undefined` ⇒ the legacy at-least-once
-   * behavior (unchanged). Wired by Plan 12 (the sole daemon.ts editor).
+   * restart, the durable ledger does). `undefined` ⇒ the at-least-once
+   * behavior. Wired from the daemon.
    */
   outwardLedger?: OutwardSendLedgerPort;
 }
@@ -325,14 +325,14 @@ export function createAnnouncementDeadLetterQueue(
           // Skip if not yet eligible for retry
           if (now - entry.lastAttemptAt < retryIntervalMs) continue;
 
-          // HIGH-2 (ONCE-03/04): before re-delivering, consult the durable ONCE
+          // Before re-delivering, consult the durable ONCE
           // ledger for an entry that carries its (rootRunId, stepIndex). A
           // committed row means the announcement ALREADY landed — the in-memory
           // deliveredKeys set rebuilds empty on restart and cannot know this, so
           // without this check a restart would re-deliver a sent announcement (a
           // double-notify). Skip the send, treat the entry as delivered. An
           // old-format entry (no rootRunId/stepIndex) has no key to look up and
-          // falls through to the legacy at-least-once path.
+          // falls through to the at-least-once path.
           if (outwardLedger && entry.rootRunId !== undefined && entry.stepIndex !== undefined) {
             const row = await outwardLedger.lookup(entry.rootRunId, entry.stepIndex);
             if (row.ok && row.value?.state === "committed") {
@@ -362,7 +362,7 @@ export function createAnnouncementDeadLetterQueue(
             );
             if (success) {
               delivered.add(entry.id);
-              // WR-01: record the recovered key as delivered so a later sweep
+              // Record the recovered key as delivered so a later sweep
               // (deliverFailureNotification) does not double-notify the same
               // run. Fired ONLY on success and ONLY for keyed entries.
               if (entry.idempotencyKey) onDelivered?.(entry.idempotencyKey);

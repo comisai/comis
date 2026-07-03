@@ -87,7 +87,7 @@ export interface AssemblerParams {
   extraSystemPrompt?: string;
   /** Backward-compatible additional sections (RAG memory, etc.) */
   additionalSections?: string[];
-  // REMOVED: canarySecret and sessionKey — relocated to dynamic preamble
+  // canarySecret and sessionKey intentionally live in the dynamic preamble, not here.
   /** Pre-rendered <available_skills> XML from formatAvailableSkillsXml(). */
   promptSkillsXml?: string;
   /** Pre-rendered active skill content from expandSkillForInvocation(). */
@@ -128,9 +128,9 @@ export interface AssemblerParams {
   workspaceProfile?: "full" | "specialist";
   /** Whether Silent Execution Planner (SEP) is enabled for this agent. */
   sepEnabled?: boolean;
-  /** When true (contextEngine.version === "dag"), include the P2 Compressed-context uncertainty clause. Cache-stable: gated on per-session config, not per-turn store state. */
+  /** When true (contextEngine.version === "dag"), include the Compressed-context uncertainty clause. Cache-stable: gated on per-session config, not per-turn store state. */
   dagModeEnabled?: boolean;
-  /** C2/S1: Security level for lockdown scaling in compact-secure mode.
+  /** Security level for lockdown scaling in compact-secure mode.
    *  Derived from ModelProfile.securityLevel. Defaults to "standard".
    *  Only applied when promptMode === "compact-secure". */
   securityLevel?: "standard" | "hardened" | "locked";
@@ -170,7 +170,7 @@ function buildMediaSharingSection(
 }
 
 // ---------------------------------------------------------------------------
-// C2/S1: Lockdown reinforcement builder
+// Lockdown reinforcement builder
 // ---------------------------------------------------------------------------
 
 /**
@@ -178,10 +178,10 @@ function buildMediaSharingSection(
  *
  * Called only when promptMode === "compact-secure". The securityLevel scales
  * lockdown intensity: "locked" appends the mandatory sandbox restriction line
- * that S1 tests assert by exact phrase. "hardened" appends a lighter warning.
+ * that tests assert by exact phrase. "hardened" appends a lighter warning.
  * "standard" (default) returns [].
  *
- * S1 invariant: the SPECIFIC phrase
+ * Invariant: the SPECIFIC phrase
  * "- Mandatory: all exec commands run in the sandbox. No exceptions."
  * MUST appear when securityLevel === "locked" — tests assert this exact string.
  *
@@ -251,10 +251,10 @@ export interface SectionDescriptor {
  *  NB: builders may still self-filter to `[]` when their isMinimal flag is set. */
 const MODES_ALL: ReadonlySet<PromptMode> = new Set<PromptMode>(["full", "operational", "minimal"]);
 /** Sections present in full and minimal modes (stripped in operational).
- *  Interactive-only guidance that doesn't apply to autonomous cron/heartbeat runs
- *  but that minimal sub-agent contexts historically saw before this refactor.
+ *  Interactive-only guidance that doesn't apply to autonomous cron/heartbeat runs.
  *  Minimal-mode builders typically self-filter to [] via their own isMinimal flag;
- *  membership here preserves pre-refactor behavior without changing minimal output. */
+ *  membership here leaves minimal output governed by those flags, not by mode
+ *  exclusion. */
 const MODES_FULL_MIN: ReadonlySet<PromptMode> = new Set<PromptMode>(["full", "minimal"]);
 /** Sections present in all modes including compact-secure (safety core + operational sections).
  *  compact-secure MUST include safety, language, tooling, workspace — retained from MODES_ALL. */
@@ -269,9 +269,9 @@ const MODES_COMPACT_ONLY: ReadonlySet<PromptMode> = new Set<PromptMode>(["compac
 /**
  * Canonical section list in emission order.
  *
- * Order MUST match the previous hand-written `buildAllSections` so the
- * `staticPrefix`/`attribution` index boundaries (2 + 2) continue to enclose
- * identity+persona and safety+language respectively.
+ * Order MUST keep identity+persona first and safety+language immediately
+ * after, so the `staticPrefix`/`attribution` boundaries derived by
+ * `computeBlockBoundaries` enclose exactly those sections.
  *
  * @internal exported for tests only
  */
@@ -284,11 +284,12 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   // --- Attribution block (safety self-filters in minimal) ---
   // compact-secure: safety uses MODES_ALL_PLUS_COMPACT so the builder receives mode="compact-secure".
   // Since "compact-secure" !== "minimal", buildSafetySection(false) is called — FULL 14 constitutional
-  // lines are always included. This is the S1 invariant: NEVER buildSafetySection(true) here.
+  // lines are always included. Invariant: NEVER buildSafetySection(true) here — passing true
+  // drops the entire safety core.
   { id: "safety",           includeIn: MODES_ALL_PLUS_COMPACT, build: (p, m) => buildSafetySection(m === "minimal") },
   { id: "language",         includeIn: MODES_ALL_PLUS_COMPACT, build: (p) => buildLanguageSection(p.userLanguage) },
   // --- Semi-stable body: operational-kept sections ---
-  // autonomy-doctrine: the always-on one-paragraph contract + routing rule (SKILL-02).
+  // autonomy-doctrine: the always-on one-paragraph contract + routing rule.
   // Registered AFTER `language` (the last attribution section) so computeBlockBoundaries
   // walks only the contiguous identity/persona -> safety/language run and this lands in
   // semiStableBody — it does NOT disturb the static-prefix/attribution cache boundaries.
@@ -302,7 +303,7 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   // compact-secure: self-update, privileged, compact-recover, post-compact, coding-fallback,
   //   task-delegation are all EXCLUDED (interactive-only, non-security guidance).
   { id: "self-update",      includeIn: MODES_FULL_MIN,          build: (p, m) => buildSelfUpdateGatingSection(p.toolNames ?? [], m === "minimal", true) },
-  // config-secret: MUST be in compact-secure (S1 — "## Config & Secret File Integrity" heading required).
+  // config-secret: MUST be in compact-secure ("## Config & Secret File Integrity" heading required).
   { id: "config-secret",    includeIn: MODES_FULL_MIN_COMPACT,  build: (p, m) => buildConfigSecretIntegritySection(p.toolNames ?? [], m === "minimal") },
   { id: "privileged",       includeIn: MODES_FULL_MIN,          build: (p, m) => buildPrivilegedToolsSection(p.toolNames ?? [], m === "minimal", true) },
   { id: "compact-recover",  includeIn: MODES_FULL_MIN,          build: (p, m) => buildCompactedOutputRecoverySection(m === "minimal") },
@@ -334,7 +335,7 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   { id: "reasoning",        includeIn: MODES_ALL,               build: (p, m) => buildReasoningSection(p.reasoningEnabled ?? false, m === "minimal", p.reasoningTagHint ?? false) },
   { id: "sep",              includeIn: MODES_FULL_MIN,          build: (p, m) => buildTaskPlanningSection(p.sepEnabled ?? false, m === "minimal") },
   { id: "runtime-meta",     includeIn: MODES_ALL_PLUS_COMPACT,  build: (p, m) => buildRuntimeMetadataSection(p.runtimeInfo ?? {}, m === "minimal") },
-  // sender-trust: wired into compact-secure (S1 intent — anti-injection trust display).
+  // sender-trust: wired into compact-secure (anti-injection trust display).
   // The section is ONLY populated when senderTrustDisplayConfig.enabled=true in prompt-assembly;
   // the assembler receives senderTrustEntries=[] by default (relocated to dynamic preamble
   // for cache stability). With entries=[], buildSenderTrustSection returns [] and the section
@@ -347,10 +348,10 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
                                                                    p.excludeBootstrapFromContext ? new Set(["BOOTSTRAP.md"]) : undefined,
                                                                    p.workspaceProfile,
                                                                  ) },
-  // --- C2/S1: Lockdown reinforcement (compact-secure only) ---
+  // --- Lockdown reinforcement (compact-secure only) ---
   // Appended LAST so it follows all other sections. Adds mandatory sandbox restriction line
   // when securityLevel="locked", lighter warning when "hardened", nothing when "standard".
-  // S1 invariant: securityLevel=locked MUST produce
+  // Invariant: securityLevel=locked MUST produce
   // "- Mandatory: all exec commands run in the sandbox. No exceptions."
   { id: "lockdown-reinforcement", includeIn: MODES_COMPACT_ONLY, build: (p) => buildLockdownReinforcement(p.securityLevel) },
 ];
@@ -359,8 +360,7 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
  * Build all section arrays in the canonical order.
  *
  * Filters `SECTIONS` by mode inclusion, then builds each included descriptor.
- * Subagent context is appended unconditionally as the last entry (matches the
- * previous behavior).
+ * Subagent context is appended unconditionally as the last entry.
  *
  * Shared by both `assembleRichSystemPrompt` and `assembleRichSystemPromptBlocks`
  * to guarantee identity by construction between both assembly functions.
@@ -373,7 +373,7 @@ function buildAllSections(params: AssemblerParams, mode: PromptMode): string[][]
     .map((s) => s.build(params, mode));
 
   // Subagent section: prefer structured params, fall back to raw extraSystemPrompt.
-  // Unconditional; matches the previous hand-written emission.
+  // Unconditional: it always terminates the section list, in every mode.
   const subagent = params.subagentRole
     ? buildSubagentRoleSection(params.subagentRole)
     : buildSubagentContextSection(params.extraSystemPrompt);
@@ -426,7 +426,7 @@ export function assembleRichSystemPrompt(params: AssemblerParams): string {
   // Append additional sections (backward compat for RAG memory etc.)
   const result = appendAdditionalSections(joined, params.additionalSections);
 
-  // Canary token relocated to dynamic preamble in prompt-assembly.ts.
+  // The canary token lives in the dynamic preamble (prompt-assembly.ts), not here.
   // OutputGuard scans response text against deps.canaryToken (passed separately),
   // so the canary protects against leakage regardless of prompt placement.
 

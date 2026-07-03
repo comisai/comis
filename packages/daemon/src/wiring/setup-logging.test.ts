@@ -119,7 +119,7 @@ describe("setupLogging", () => {
   //    must NOT silently drop structured logs to stdout-only (lost under
   //    systemd / `>/dev/null` / any discarded-stdout deployment). The
   //    documented "authoritative log at <dataDir>/logs/daemon.*.log" must hold
-  //    unconditionally. (package-delivery-20260628 obs-sweep finding B.)
+  //    unconditionally.
   // -------------------------------------------------------------------------
 
   it("rebases the default log path onto <dataDir>/logs/daemon.log when daemon.logging is undefined", async () => {
@@ -147,8 +147,7 @@ describe("setupLogging", () => {
   // The real production path: the root `daemon` field is ALWAYS schema-defaulted, so
   // daemon.logging carries the hardcoded `~/.comis/logs/daemon.log` default. With a custom
   // data dir that must be rebased to <dataDir>/logs — else the log lands in the SHARED
-  // ~/.comis/logs (cross-instance collision; not where the docs say). (obs-sweep finding B,
-  // corrected by the live ground-truth check.)
+  // ~/.comis/logs (cross-instance collision; not where the docs say).
   it("rebases the schema-default filePath onto <dataDir> even when daemon.logging is present", async () => {
     const container = createMinimalContainer({
       daemon: { logging: { filePath: "~/.comis/logs/daemon.log" } },

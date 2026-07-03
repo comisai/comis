@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED→GREEN coverage for {@link createLlmReflectionAdapter} (v2.31 Reflection
- * engine, Phase 223 Plan 04, INV-5).
+ * Coverage for {@link createLlmReflectionAdapter}.
  *
  * Asserts the load-bearing properties of the reflect adapter (the cheap-model
- * call seam — the deleted llm-skill-synthesis-adapter's replacement):
+ * call seam the reflection job distils docs through):
  *  1. The UNTRUSTED trajectory text is `wrapExternalContent`-wrapped (the
  *     `learned_skill_reflection` source) BEFORE it reaches the LLM — the
- *     injection-defense keystone (INV-5). The attacker text is delimited +
+ *     injection-defense keystone. The attacker text is delimited +
  *     labeled, never bare in the prompt.
  *  2. Two error branches are honest (no silent empty): a THROWN/transport fault
  *     → `err(...)` + WARN `errorKind:"network"`; a pi-ai `{stopReason:"error",
  *     content:[]}` → `err(...)` + WARN `errorKind:"dependency"` naming the model
- *     (the live-2026-06-18 judge precedent).
- *  3. `temperatureOption` omits `temperature` for a reasoning model (no HTTP-400 —
- *     the live-2026-06-22 precedent).
+ *     (the same diagnosability rule the outcome judge follows).
+ *  3. `temperatureOption` omits `temperature` for a reasoning model (reasoning
+ *     models reject the parameter with an HTTP 400).
  *
- * The model SDK (`@earendil-works/pi-ai`) is mocked exactly as the synthesis
- * adapter test mocks it.
+ * The model SDK (`@earendil-works/pi-ai`) is fully mocked.
  */
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
@@ -59,7 +57,7 @@ function makeAdapter() {
   });
 }
 
-describe("createLlmReflectionAdapter (INV-5)", () => {
+describe("createLlmReflectionAdapter (untrusted-input boundary + honest error branches)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (getModel as Mock).mockReturnValue({ id: "mock-model", reasoning: false });
@@ -93,7 +91,7 @@ describe("createLlmReflectionAdapter (INV-5)", () => {
     expect(res.value.ops?.[0]?.op).toBe("replace");
   });
 
-  it("wraps the UNTRUSTED trajectory with wrapExternalContent BEFORE the LLM (INV-5 keystone)", async () => {
+  it("wraps the UNTRUSTED trajectory with wrapExternalContent BEFORE the LLM (injection-defense keystone)", async () => {
     (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
     const adapter = makeAdapter();
 
@@ -135,7 +133,7 @@ describe("createLlmReflectionAdapter (INV-5)", () => {
     );
   });
 
-  it("DEPENDENCY branch: a non-thrown stopReason:error response → err(...) + WARN naming the model (live-2026-06-18)", async () => {
+  it("DEPENDENCY branch: a non-thrown stopReason:error response → err(...) + WARN naming the model", async () => {
     const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
     (completeSimple as Mock).mockResolvedValue({
       role: "assistant",
@@ -171,7 +169,7 @@ describe("createLlmReflectionAdapter (INV-5)", () => {
     expect(res.value).toEqual({});
   });
 
-  it("OMITS temperature for a reasoning model (no HTTP-400 — live-2026-06-22)", async () => {
+  it("OMITS temperature for a reasoning model (reasoning models reject it with HTTP 400)", async () => {
     (getModel as Mock).mockReturnValue({ id: "reasoning-model", reasoning: true });
     (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
     const adapter = makeAdapter();

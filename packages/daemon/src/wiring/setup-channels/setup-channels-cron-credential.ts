@@ -2,9 +2,9 @@
 /**
  * Shared credential resolution for the background memory/learning cron jobs.
  *
- * Live VPS incident 2026-06-19 (LEARN-01): every background job (skill
+ * Every background job (skill
  * synthesis, memory review/consolidation/reasoning, user-representation,
- * social-modeling, usefulness-judge, triple-extraction) resolved its model
+ * social-modeling, usefulness-judge, triple-extraction) resolves its model
  * credential via `secretManager.get(apiKeyName)` with a fallback ONLY for
  * `KEYLESS_PROVIDER_TYPES`. An **OAuth provider** (e.g. `openai-codex`) is
  * neither an API-key provider nor keyless, so the lookup returned "" and the
@@ -35,8 +35,8 @@ import { buildCustomJudgeModelSpec, type JudgeProviderEntry } from "../setup-lea
 /**
  * Spread-ready `{customModel?}` for a keyless/local cron/memory-ops seam — resolves the
  * provider's `/v1` baseUrl spec so a YAML provider (ollama/lm-studio/…) the pi-ai catalog
- * can't see still resolves a Model. Without it the memory-ops seams resolved "model not
- * found" and SKIPPED on every keyless run (the #223 / DIALECTIC-FIX bug class, live 2026-06-20).
+ * can't see still resolves a Model. Without it the memory-ops seams resolve "model not
+ * found" and SKIP on every keyless run.
  */
 export function cronCustomModelOpt(
   providerEntry: JudgeProviderEntry | undefined,
@@ -90,7 +90,7 @@ export async function resolveCronJobCredential(
   // Keyless-ness is a property of the provider TYPE (ollama / lm-studio), not its config NAME. A
   // user-NAMED entry (providers.entries["local-ollama"] = { type: "ollama" }) must still resolve
   // keyless — else the reflection/memory-review crons skip ("no API key") on a local keyless daemon,
-  // silently disabling the learning loop (package-delivery-20260628). Mirrors the agent completion
+  // silently disabling the learning loop. Mirrors the agent completion
   // path + setup-dialectic, which key off entry.type. Guarded by test/architecture/keyless-provider-by-type.
   if (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? provider)) {
     return { apiKey: KEYLESS_API_KEY_SENTINEL, apiKeyName, source: "keyless", hasOAuthProfile };
@@ -106,7 +106,7 @@ export async function resolveCronJobCredential(
 
 /**
  * Build the operator-actionable skip hint for an unresolvable credential,
- * branched by failure class (§16 — a hint must name the RIGHT knob): an OAuth
+ * branched by failure class (a hint must name the RIGHT knob): an OAuth
  * provider gets the re-login hint, not the misleading "set an API key".
  */
 export function cronCredentialSkipHint(

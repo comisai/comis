@@ -88,14 +88,13 @@ function makeBlockStreamCfg() {
 
 /**
  * Build a mock executor that captures the traceId AND the agentId visible inside
- * its execute() call (via tryGetContext()). The agentId capture is the REACT-04
- * (206-04) regression hook: the delivery stage (deliverToChannel) reads
+ * its execute() call (via tryGetContext()). The agentId capture is the
+ * regression hook: the delivery stage (deliverToChannel) reads
  * ctx.agentId off the SAME request ALS the executor runs under to bind the
  * outbound reply → trajectory (the reaction-attribution keystone). If the
  * executor's runWithContext does not thread agentId, ctx.agentId is undefined at
  * delivery → both the direct-ack and the drain bindings fail-closed → a reaction
- * on the reply map-misses (the 206-03 Stage-C live finding, root-caused to the
- * missing agentId on the ALS).
+ * on the reply map-misses (root-caused to the missing agentId on the ALS).
  */
 function makeCapturingExecutor(): {
   executor: AgentExecutor;
@@ -223,21 +222,18 @@ describe("executeLlm — traceId propagation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// REACT-04 (206-04): agentId on the request ALS (the reaction-attribution fix)
+// agentId on the request ALS (the reaction-attribution keystone)
 // ---------------------------------------------------------------------------
 //
-// The 206-03 Stage-C live run produced NO outcome_events source='reaction' row
-// even on the primary reply path. Ground-truth root cause (the rig memory.db's
-// delivery_queue row had optionsJson "{}" — no agentId): the executor's
-// runWithContext (execution-execute.ts) threads traceId/tenantId/userId/
-// sessionKey/trustLevel/channelType but NOT agentId, even though agentId is a
-// parameter. So deliverToChannel reads ctx.agentId === undefined → the reply's
-// agentId is never persisted into the queue optionsJson AND the direct-ack
-// REACT-04 bind fail-closes (agentId !== null is false) → a reaction map-misses.
-// The fix threads agentId onto the executor's request context so it is on the
-// SAME ALS the delivery stage reads. RED on pre-patch: ctx.agentId is undefined.
+// If the executor's runWithContext (execution-execute.ts) threads traceId/
+// tenantId/userId/sessionKey/trustLevel/channelType but NOT agentId (even
+// though agentId is a parameter), deliverToChannel reads ctx.agentId ===
+// undefined → the reply's agentId is never persisted into the queue optionsJson
+// AND the direct-ack bind fail-closes (agentId !== null is false) → a reaction
+// map-misses. Threading agentId onto the executor's request context puts it on
+// the SAME ALS the delivery stage reads. This test fails when ctx.agentId is undefined.
 
-describe("executeLlm — agentId propagation (REACT-04 reaction-attribution fix)", () => {
+describe("executeLlm — agentId propagation (reaction-attribution keystone)", () => {
   it("threads the resolved agentId onto the request ALS so the delivery stage can bind the reply → trajectory", async () => {
     const { executor, getCapturedAgentId } = makeCapturingExecutor();
     const deps = makeDeps();
@@ -271,7 +267,7 @@ describe("executeLlm — agentId propagation (REACT-04 reaction-attribution fix)
 
     // The executor (and every component nested in its context, incl. the delivery
     // stage) must see the resolved agentId on the ALS — NOT undefined. This is the
-    // load-bearing precondition for the REACT-04 outbound → trajectory binding.
+    // load-bearing precondition for the outbound → trajectory binding.
     expect(
       getCapturedAgentId(),
       "executor's request context must carry the resolved agentId (else the reply→trajectory binding fail-closes and reactions never attribute)",

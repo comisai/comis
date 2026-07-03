@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Activity-transparency emit-site tests for the PiEventBridge. Co-located
- * (NOT a __tests__/ dir — Pitfall 1).
+ * with the source (the repo's test-placement convention — no __tests__/ dirs).
  *
  * Asserts the producer-side redaction obligation at the bridge's two tool-event
- * emit sites and the failureDetector hook placement (§16.1 + §16.10):
+ * emit sites and the failureDetector hook placement:
  *
  *  - tool:started forwards REDACTED params (no raw apiKey) + an `action` field.
  *  - tool:executed forwards toolCallId (matching the paired start), traceId
@@ -187,7 +187,7 @@ describe("PiEventBridge $HOME compaction at the emit sites", () => {
   });
 });
 
-describe("PiEventBridge failureDetector hook (§16.10)", () => {
+describe("PiEventBridge failureDetector hook", () => {
   it("a failureDetector returning true marks success:false with an errorKind on an isError:false result", () => {
     registerToolMetadata("activity_flaky_70_06", { failureDetector: () => true });
     const deps = createMockDeps();
@@ -393,11 +393,11 @@ describe("end-to-end -- detector flip produces ActivityStream status:failed", ()
 // ===========================================================================
 // pi-event-bridge must honor the ALS RequestContext.traceId at
 // every emit site, falling back to deps.executionId only when ALS is absent.
-// Pre-patch the bridge stamps deps.executionId unconditionally — that ID is a
-// per-pi-mono-run UUID, NOT the channel ingress traceId the activity stream's
-// 3-way filter (agentId + sessionKey + traceId) keys on. The two ALS-positive
-// tests below FAIL on pre-patch code; the ALS-absent regression-guard PASSES
-// both pre- and post-patch (the fallback was accidentally correct).
+// The bug class guarded here: stamping deps.executionId unconditionally — that
+// ID is a per-pi-mono-run UUID, NOT the channel ingress traceId the activity
+// stream's 3-way filter (agentId + sessionKey + traceId) keys on, so every
+// turn-scoped subscriber would silently filter the bridge's events out. The
+// ALS-absent regression-guard pins the executionId fallback.
 // ===========================================================================
 
 describe("PiEventBridge traceId honors ALS RequestContext when present", () => {
@@ -448,7 +448,7 @@ describe("PiEventBridge traceId honors ALS RequestContext when present", () => {
 
   it("tool:executed falls back to deps.executionId when called OUTSIDE any runWithContext scope", () => {
     // Regression guard for the ALS-absent path (e.g. SDK async callbacks that
-    // may not propagate ALS). Pre- AND post-patch this MUST be exec-001.
+    // may not propagate ALS). This MUST stay exec-001.
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
 

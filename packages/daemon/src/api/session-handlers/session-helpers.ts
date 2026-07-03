@@ -57,7 +57,7 @@ export interface JsonlSessionInfo {
  * observability artifacts (`<file>.jsonl.trajectory.jsonl`). Both scanners
  * must share this predicate: counting trajectory EVENTS as session messages
  * re-surfaced a deleted session in session.list as
- * `default:<name>.jsonl.trajectory` (live C7 finding, 2026-06-12).
+ * `default:<name>.jsonl.trajectory` (observed live).
  */
 function isLiveTranscriptFile(file: string): boolean {
   return file.endsWith(".jsonl") && !file.endsWith(".trajectory.jsonl");
@@ -180,8 +180,8 @@ export function scanWorkspaceSessions(workspaceDir: string): JsonlSessionInfo[] 
           // file `111~peer~111.jsonl` produced the hybrid `tenant:111~peer~111:channel`
           // that parseFormattedSessionKey + `explain`/`mirror` reject — "no trajectory
           // found" on a session whose stored key is `tenant:111:channel:peer:111`
-          // (UX-1 added channelDir but missed the peer encoding; live 2026-06-21 rig
-          // Phase-0). Fall back to the legacy splice only when the path is unparseable.
+          // (an earlier fix added channelDir but missed the peer encoding).
+          // Fall back to the legacy splice only when the path is unparseable.
           const parsedKey = pathToSessionKey(filePath, sessionsRoot);
           const sessionKey = parsedKey
             ? formatSessionKey(parsedKey)
@@ -250,7 +250,7 @@ export function loadJsonlSession(
 }
 
 /**
- * COMPACT-STORE-MISS (30uc-20260624): load a session's transcript from EITHER
+ * Load a session's transcript from EITHER
  * store, keyed by the canonical formatted key. Live channel conversations are
  * persisted ONLY as file JSONL by the pi session manager
  * (`workspace/sessions/<tenant>/<channel>/<userId>~peer~<peerId>.jsonl`), never

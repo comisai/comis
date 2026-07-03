@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Signal `SignalEnvelope` builders (CHAN2-01 / invariant I4, Phase 209).
+ * Signal `SignalEnvelope` builders.
  *
- * The Signal emulator's SSE `/api/v1/events` stream (Plan 04) serves these
+ * The Signal emulator's SSE `/api/v1/events` stream serves these
  * builder-produced `SignalEnvelope` values, and the foundation-proof scenario
- * (Plan 05) round-trips them through the REAL production Signal adapter
+ * round-trips them through the REAL production Signal adapter
  * (`mapSignalToNormalized`). Because the builders import the Signal adapter's
  * OWN exported `SignalEnvelope` / `SignalAttachment` wire interface (re-exported
  * `type`-only from the `@comis/channels` barrel; defined in
@@ -12,17 +12,17 @@
  * it, every emitted envelope is *guaranteed* to be exactly the shape the adapter
  * parses — a wire-shape drift becomes a COMPILE error here, not a silent runtime
  * mismatch. That is the whole point: it forecloses the hand-rolled-struct drift
- * problem this milestone exists to avoid (design §1.3). There is no third-party
- * SDK to pin (Signal speaks signal-cli JSON-RPC, not a typed client library) —
- * the I4 contract IS the adapter's exported interface itself.
+ * problem. There is no third-party SDK to pin (Signal speaks signal-cli
+ * JSON-RPC, not a typed client library) — the type contract IS the adapter's
+ * exported interface itself.
  *
  * Analog (the untyped literal this replaces): `injectInboundMessage` in
  * `test/e2e/mocks/signal/mock-signal-server.ts:242-271` — same runtime shape,
- * which uses `Record<string, unknown>`; the I4 upgrade to a TYPED, return-
+ * which uses `Record<string, unknown>`; the upgrade to a TYPED, return-
  * annotated builder is the genuinely-new value here. The grammy-typed Telegram
  * twin is `test/live/emulators/telegram/tg-payloads.ts`.
  *
- * Scope (Phase 209, CHAN2-01): the `dataMessage.message` envelope (the DM/group
+ * Scope: the `dataMessage.message` envelope (the DM/group
  * text round-trip — what `mapSignalToNormalized` parses to `NormalizedMessage.text`)
  * and the `dataMessage.reaction` envelope (the react FLOW — `{ emoji,
  * targetSentTimestamp }` → `metadata.signalReaction=true` /
@@ -82,9 +82,9 @@ export interface MakeMessageEnvelopeOptions {
 
 /**
  * Build a well-formed signal-cli `SignalEnvelope` carrying a text
- * `dataMessage.message` (the CHAN2-01 DM/group text round-trip).
+ * `dataMessage.message` (the DM/group text round-trip).
  *
- * The return annotation IS the adapter's OWN `SignalEnvelope` (the I4 tripwire):
+ * The return annotation IS the adapter's OWN `SignalEnvelope` (the compile-time tripwire):
  * a drift in the wire interface (`signal-client.ts:31`) fails to compile here.
  * The literal is byte-for-byte the proven `mock-signal-server.ts:247-260` shape
  * — flat top-level keys (`source` / `sourceUuid` / `dataMessage`), NOT wrapped
@@ -148,10 +148,10 @@ export interface MakeReactionEnvelopeOptions {
 
 /**
  * Build a well-formed signal-cli `SignalEnvelope` carrying a
- * `dataMessage.reaction` (the CHAN2-01 react FLOW — the WS1-relevant verb Signal
- * supports, unlike Telegram's button callbacks).
+ * `dataMessage.reaction` (the react FLOW — the verb Signal supports, unlike
+ * Telegram's button callbacks).
  *
- * The return annotation IS the adapter's OWN `SignalEnvelope` (the I4 tripwire).
+ * The return annotation IS the adapter's OWN `SignalEnvelope` (the compile-time tripwire).
  * The mapper (`message-mapper.ts:47-67`) requires BOTH `reaction.emoji` and
  * `reaction.targetSentTimestamp` to classify the envelope as a reaction — so the
  * builder sets both unconditionally. `isRemove` / `targetAuthor` are spread only
@@ -203,7 +203,7 @@ export interface MakeSignalAttachmentOptions {
 }
 
 /**
- * Build a single signal-cli `SignalAttachment` (the I4 attachment tripwire).
+ * Build a single signal-cli `SignalAttachment` (the compile-time attachment tripwire).
  *
  * The return annotation IS the adapter's OWN `SignalAttachment` (`signal-client.ts:70`):
  * a drift fails to compile here. Optional fields are spread only when defined

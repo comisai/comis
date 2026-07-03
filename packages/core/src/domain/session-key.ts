@@ -80,7 +80,7 @@ export function parseFormattedSessionKey(formatted: string): SessionKey | undefi
   // any peer/guild/thread markers, so we greedily join consecutive parts into
   // channelId until we hit a known marker or run out. This makes the format
   // round-trip-safe when channelId has colons; for simple channelIds (no
-  // colons) the behaviour is identical to the old one-index-takes-all path.
+  // colons) the greedy join consumes exactly one part.
   let idx = 2;
   const channelIdParts: string[] = [];
   while (

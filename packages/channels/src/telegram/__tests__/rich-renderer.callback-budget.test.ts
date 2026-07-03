@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram callback_data budget tests (spec §6.4.3).
+ * Telegram callback_data budget tests.
  *
- * `validateCallbackDataWithinBudget` replaces the silent `truncateCallbackData`.
- * Truncating a signed `callback_data` corrupts its HMAC, so the budget check
- * MUST refuse loud (`err`) on overflow rather than cut bytes. These tests pin:
+ * Truncating a signed `callback_data` corrupts its HMAC, so
+ * `validateCallbackDataWithinBudget` MUST refuse loud (`err`) on overflow
+ * rather than silently cut bytes. These tests pin:
  *   - <=64-byte data returns `ok(data)` unchanged,
  *   - >64-byte data returns `err({kind:"callback_data_overflow", bytes, maxBytes})`,
  *   - the byte length (UTF-8), not the char length, is what is measured,

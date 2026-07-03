@@ -1,5 +1,5 @@
 {
-  "_provenance": "Derived from the HaluMem format (memory-hallucination eval at extract/update/QA stages; github.com/MemTensor/HaluMem, CC-BY-NC-ND with COI caveats — see MEMORY_BENCHMARK_CREDIBILITY.md); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see Plan 08 DATASETS.md) and never committed. The hallucination_labels ride a SEPARATE gold channel and are NEVER ingested into doc content.",
+  "_provenance": "Derived from the HaluMem format (memory-hallucination eval at extract/update/QA stages; github.com/MemTensor/HaluMem, CC-BY-NC-ND with COI caveats — see benchmarks/DATASETS.md); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see benchmarks/DATASETS.md) and never committed. The hallucination_labels ride a SEPARATE gold channel and are NEVER ingested into doc content.",
   "session_id": "halumem_user_a",
   "memory_ops": [
     { "op": "extract", "content": "Placeholder extracted memory: user_a's placeholder pet is a cat named Whiskers." },

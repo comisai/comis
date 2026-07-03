@@ -2,13 +2,13 @@
 /**
  * LCD-merged session source for the memory-review cron.
  *
- * Live finding 2026-06-11 (LIVEMEM run): `runMemoryReview` reads
+ * `runMemoryReview` reads
  * `sessionStore.listDetailed` — the daemon session store — but in DAG mode
  * (the DEFAULT context engine) the real conversations live in the pi runtime
  * JSONLs and the LCD store; the daemon store holds only a handful of
- * near-empty rows. The nightly extraction (memories, entities, causal edges)
- * was a silent no-op on a default deployment — `memory_entities` and
- * `memory_causal_edges` had ZERO rows on a live daemon with days of
+ * near-empty rows. Without this adapter the nightly extraction (memories, entities, causal edges)
+ * is a silent no-op on a default deployment — `memory_entities` and
+ * `memory_causal_edges` stay at ZERO rows on a live daemon with days of
  * conversations.
  *
  * This adapter presents the union of BOTH stores through the exact

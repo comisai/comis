@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `orchestrate-executor-cores` — the shipped daemon-side `tool.invoke` executor
- * cores (Plan 05). Asserts: the file cores run under the lease's workspaceDir
+ * cores. Asserts: the file cores run under the lease's workspaceDir
  * (a `read` returns the file content), the `jq` core confines its path under the
  * workspace + honest-degrades (missing path / traversal escape / non-zero exit)
  * to an `{ error }` shape (never a throw), and `web_search` routes to the shipped
@@ -17,7 +17,7 @@ import { join } from "node:path";
 import type { ComisLogger } from "@comis/core";
 
 // Spy on execFile so the SSRF/exfil-rejection tests can assert duckdb is NEVER
-// spawned for a malicious query (T-221-QRY-01). The default implementation
+// spawned for a malicious query. The default implementation
 // DELEGATES to the real execFile, so the jq / duckdb-absent / file-tool paths
 // keep their genuine behavior; only the call-count assertions read the spy.
 const { execFileSpy } = vi.hoisted(() => ({ execFileSpy: vi.fn() }));
@@ -185,7 +185,7 @@ describe("createOrchestrateExecutorCores", () => {
         { workspaceDir: ws },
       );
       // jq present on the host → the compact slice "1\n2"; jq absent → a
-      // content-free { error } (both are valid M1 outcomes — never a throw).
+      // content-free { error } (both are valid outcomes — never a throw).
       if (typeof result === "string") {
         expect(result.replace(/\s+/g, " ").trim()).toBe("1 2");
       } else {
@@ -197,8 +197,8 @@ describe("createOrchestrateExecutorCores", () => {
   });
 
   // -------------------------------------------------------------------------
-  // QRY-01: the `sql` (DuckDB-over-CSV/JSONL) core — Task 1 wiring skeleton.
-  // The dev host has NO duckdb (CLAUDE.md: jq is at /usr/bin/jq, duckdb is not),
+  // The `sql` (DuckDB-over-CSV/JSONL) core wiring.
+  // The dev host has NO duckdb (jq ships with the OS; duckdb does not),
   // so the spawn ENOENT-degrades to { error } errorKind:"precondition" — never a
   // throw, never a silent success. The real DuckDB round-trip is the VPS
   // orchestrate-jail.linux.test.ts.
@@ -215,7 +215,7 @@ describe("createOrchestrateExecutorCores", () => {
     }
   });
 
-  it("sql refuses a path that escapes the workspace ({ error }, no spawn) — T-221-QRY-02", async () => {
+  it("sql refuses a path that escapes the workspace ({ error }, no spawn)", async () => {
     const ws = makeWorkspace();
     try {
       const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
@@ -293,13 +293,12 @@ describe("createOrchestrateExecutorCores", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — DuckDB hardening + jsonpath-without-eval (the security core).
-// RED-first per AGENTS.md §2.10: the SSRF/exfil rejection lands before the
-// `rejectDangerousSql` guard exists, so a malicious query reaches execFile
-// (asserted absent here) on pre-patch code. T-221-QRY-01/03.
+// DuckDB hardening + jsonpath-without-eval (the security core).
+// Written RED-first per AGENTS.md §2.10: without the `rejectDangerousSql`
+// guard, a malicious query reaches execFile (asserted absent here).
 // ---------------------------------------------------------------------------
 
-describe("sql core — DuckDB hardening (T-221-QRY-01): rejects extension/file-write/network verbs before spawn", () => {
+describe("sql core — DuckDB hardening: rejects extension/file-write/network verbs before spawn", () => {
   // Each malicious query MUST be refused with errorKind:"validation" and MUST
   // NOT spawn duckdb (the SSRF/exfil floor — the un-jailed daemon-side DuckDB
   // can never be coerced into a remote fetch / file write / extension install).
@@ -364,22 +363,23 @@ describe("sql core — DuckDB hardening (T-221-QRY-01): rejects extension/file-w
 });
 
 // ---------------------------------------------------------------------------
-// CR-01 (CRITICAL): the `sql` core ran the model query VERBATIM against duckdb
-// with only a keyword denylist — DuckDB's local-file table functions
+// Local-file exfil confinement (CRITICAL): a `sql` core that ran the model
+// query VERBATIM against duckdb with only a keyword denylist would be
+// exfiltrable — DuckDB's local-file table functions
 // (read_text/read_blob/glob/getenv) read an ARBITRARY absolute host path with
 // none of the denied keywords and no url-scheme, so a model query like
 // `SELECT * FROM read_text('/home/<user>/.comis/config.yaml')` exfils daemon
-// secrets. The fix CONFINES the daemon-side duckdb to the run's workspace via
-// `SET allowed_directories=['<ws>']; SET enable_external_access=false; SET
-// lock_configuration=true;` (set BEFORE the model query so it cannot widen
-// them) AND spawns duckdb with cwd=<ws> so a workspace-relative `results/...`
-// read still resolves. Defense-in-depth: the pure-exfil readers that have NO
-// tabular-query purpose (read_text/read_blob/glob/getenv/parquet_metadata/
-// parquet_schema) are ALSO keyword-rejected before spawn. RED before the patch:
-// these readers reach (or are unconfined at) duckdb. T-221-QRY-01.
+// secrets. The core therefore CONFINES the daemon-side duckdb to the run's
+// workspace via `SET allowed_directories=['<ws>']; SET
+// enable_external_access=false; SET lock_configuration=true;` (set BEFORE the
+// model query so it cannot widen them) AND spawns duckdb with cwd=<ws> so a
+// workspace-relative `results/...` read still resolves. Defense-in-depth: the
+// pure-exfil readers that have NO tabular-query purpose
+// (read_text/read_blob/glob/getenv/parquet_metadata/parquet_schema) are ALSO
+// keyword-rejected before spawn.
 // ---------------------------------------------------------------------------
 
-describe("sql core — CR-01 local-file exfil confinement", () => {
+describe("sql core — local-file exfil confinement", () => {
   // The pure-exfil readers have no legitimate tabular-query use over a
   // results/ ResultRef (the contract only ever uses read_json_auto/read_csv/
   // read_parquet). They read raw bytes / enumerate dirs / read env from an
@@ -459,7 +459,7 @@ describe("sql core — CR-01 local-file exfil confinement", () => {
     }
   });
 
-  it("IN-04: scrubs absolute host paths out of a duckdb non-zero-exit error before it crosses the jail boundary", async () => {
+  it("scrubs absolute host paths out of a duckdb non-zero-exit error before it crosses the jail boundary", async () => {
     const ws = makeWorkspace();
     try {
       mkdirSync(join(ws, "results"), { recursive: true });
@@ -535,7 +535,7 @@ describe("rejectDangerousSql (pure guard)", () => {
     expect(rejectDangerousSql("SELECT id, price FROM read_json_auto('results/r.jsonl') WHERE price > 100")).toBeNull();
   });
 
-  it("rejects the pure-exfil local-file readers (read_text/read_blob/glob/getenv/parquet_metadata) — CR-01", () => {
+  it("rejects the pure-exfil local-file readers (read_text/read_blob/glob/getenv/parquet_metadata)", () => {
     for (const q of [
       "SELECT * FROM read_text('/etc/passwd')",
       "select content from READ_TEXT('/proc/self/environ')",
@@ -564,7 +564,7 @@ describe("rejectDangerousSql (pure guard)", () => {
   });
 });
 
-describe("jsonpath core (QRY-02): DuckDB json_extract, NO eval lib (T-221-QRY-03)", () => {
+describe("jsonpath core: DuckDB json_extract, NO eval lib", () => {
   it("compiles a $-dot/bracket expr into a json_extract query over read_json_auto", async () => {
     const ws = makeWorkspace();
     try {
@@ -626,7 +626,7 @@ describe("jsonpath core (QRY-02): DuckDB json_extract, NO eval lib (T-221-QRY-03
     }
   });
 
-  it("WR-01: escapes a single quote in the workspace path so it cannot break out of the SQL literal", async () => {
+  it("escapes a single quote in the workspace path so it cannot break out of the SQL literal", async () => {
     // The workspace dir is <dataDir>/workspace-<agentId>; agentId is only
     // z.string().min(1) (no charset limit), so a data-dir / agent-id containing a
     // single quote is reachable. safePath confines the LOCATION but does not
@@ -635,7 +635,7 @@ describe("jsonpath core (QRY-02): DuckDB json_extract, NO eval lib (T-221-QRY-03
     // break out into injectable SQL. Use a workspace dir whose name carries a
     // quote and assert the generated SQL DOUBLES it (SQL string-literal escaping),
     // never leaving a lone quote that closes the literal early.
-    const wsParent = mkdtempSync(join(tmpdir(), "orch-wr01-"));
+    const wsParent = mkdtempSync(join(tmpdir(), "orch-quote-"));
     const ws = join(wsParent, "workspace-x'or'1");
     mkdirSync(join(ws, "results"), { recursive: true });
     writeFileSync(join(ws, "results", "doc.json"), JSON.stringify({ a: 1 }), "utf8");

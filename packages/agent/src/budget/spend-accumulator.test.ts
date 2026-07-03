@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for the daemon-wide spend accumulator (Phase 177-01, WS3).
+ * RED-first contract for the daemon-wide spend accumulator.
  *
  * The load-bearing correctness piece of the spend kill-switch: a single
  * daemon-wide accumulator with a SYNCHRONOUS atomic `checkAndReserve` that closes
@@ -11,7 +11,7 @@
  *     boot cost rows; a subsequent near-ceiling reserve errs,
  *   - recordSpend() increments live (the next checkAndReserve sees it — no re-sum),
  *   - per-agent / global ceilings err at the limit,
- *   - per-tenant ISOLATION (SPEND-04 cross-tenant-DoS): A's breach leaves B ok,
+ *   - per-tenant ISOLATION (cross-tenant-DoS): A's breach leaves B ok,
  *   - warn precedes exceeded (warnAtFraction 0.8),
  *   - reconcile() settles an estimate to the actual billed amount (releases headroom),
  *   - **THE load-bearing DISCRIMINATING K-parallel test**: K synchronous reserves
@@ -102,7 +102,7 @@ describe("createSpendAccumulator", () => {
     if (!r.ok) expect(r.error.scope).toBe("global");
   });
 
-  it("isolates tenants — tenant-a breaching its perTenantUsd does not abort tenant-b (SPEND-04 cross-tenant-DoS)", () => {
+  it("isolates tenants — tenant-a breaching its perTenantUsd does not abort tenant-b (cross-tenant-DoS)", () => {
     const { acc } = makeAccumulator({ perTenantUsd: 5 });
     const scopeA: SpendScope = { tenantId: "tenant-a", agentId: "agent-x" };
     const scopeB: SpendScope = { tenantId: "tenant-b", agentId: "agent-y" };
@@ -121,7 +121,7 @@ describe("createSpendAccumulator", () => {
   it("warning precedes exceeded — at warnAtFraction (0.8) of a ceiling the reserve is ok WITH the warn DIMENSION, then errs at the cap", () => {
     const { acc } = makeAccumulator({ perAgentUsd: 10, warnAtFraction: 0.8 });
     // Reserve $8 from empty: post-reserve total 8 / cap 10 = 0.8 ≥ warnAt → ok + warn.
-    // WR-1 (177-obs-loop): warn is now the breaching DIMENSION {scope,totalUsd,capUsd},
+    // warn is the breaching DIMENSION {scope,totalUsd,capUsd},
     // not a bare boolean — so the bridge can emit spend_warning with the CORRECT scope
     // + that dimension's post-reserve total + cap (not a hard-coded session-local agent value).
     const r = acc.checkAndReserve(SCOPE, 8);
@@ -143,8 +143,8 @@ describe("createSpendAccumulator", () => {
     expect(r3.ok).toBe(false);
   });
 
-  it("WR-1: a TENANT-ceiling warn reports scope:'tenant' with the tenant total/cap, NOT session-local agent values", () => {
-    // The security-review WR-1 bug: spend_warning hard-coded scope:"agent" + a
+  it("a TENANT-ceiling warn reports scope:'tenant' with the tenant total/cap, NOT session-local agent values", () => {
+    // The bug this pins against: spend_warning hard-coded scope:"agent" + a
     // session-local spentUsd even when the TENANT (or GLOBAL) ceiling crossed
     // warnAtFraction → an internally-inconsistent event. The accumulator must
     // report WHICH dimension crossed. Here the per-agent ceiling has ample
@@ -191,19 +191,19 @@ describe("createSpendAccumulator", () => {
     acc.recordSpend(SCOPE, 1_000_000);
     const r = acc.checkAndReserve(SCOPE, 1_000_000);
     expect(r.ok).toBe(true);
-    // WR-1: warn is the breaching DIMENSION or null; all-null ceilings → null.
+    // warn is the breaching DIMENSION or null; all-null ceilings → null.
     if (r.ok) expect(r.value.warn).toBeNull();
   });
 
   // -------------------------------------------------------------------------
-  // getSnapshot() — the read accessor for the OTel gauges (178-01 Task 3,
-  // Pitfall 3). The accumulator was WRITE-ONLY (rehydrate/recordSpend/
-  // checkAndReserve/reconcile); the comis_spend_usd / _ceiling_usd /
-  // _headroom_usd gauges have no source without a pure read. These pins fail on
-  // pre-patch code: `acc.getSnapshot` is `undefined` (a runtime
-  // "is not a function" — the runtime-observable RED, not tsc-only).
+  // getSnapshot() — the read accessor for the OTel gauges.
+  // Without it the accumulator is WRITE-ONLY (rehydrate/recordSpend/
+  // checkAndReserve/reconcile) and the comis_spend_usd / _ceiling_usd /
+  // _headroom_usd gauges have no source. These pins guard the accessor at
+  // RUNTIME: a missing `acc.getSnapshot` is an "is not a function" crash in
+  // the gauge callbacks, not a tsc-only concern.
   // -------------------------------------------------------------------------
-  it("getSnapshot exists as a read accessor (RED: undefined on the write-only pre-patch accumulator)", () => {
+  it("getSnapshot exists as a runtime-callable read accessor for the spend gauges", () => {
     const { acc } = makeAccumulator();
     expect(typeof acc.getSnapshot).toBe("function");
   });
@@ -234,7 +234,7 @@ describe("createSpendAccumulator", () => {
     expect(snap.global).toBeCloseTo(3, 10);
   });
 
-  it("getSnapshot returns READ-ONLY views — a caller cannot corrupt the accumulator's enforcement state (T-178-02)", () => {
+  it("getSnapshot returns READ-ONLY views — a caller cannot corrupt the accumulator's enforcement state", () => {
     const { acc } = makeAccumulator({ perAgentUsd: 10 });
     acc.recordSpend({ tenantId: "t", agentId: "a" }, 4);
 
@@ -273,7 +273,7 @@ describe("createSpendAccumulator", () => {
   });
 
   // -------------------------------------------------------------------------
-  // THE load-bearing DISCRIMINATING K-parallel concurrency test (SPEND-02).
+  // THE load-bearing DISCRIMINATING K-parallel concurrency test.
   //
   // WHY the OLD form `NEAR_CEILING + Σreserved <= CONFIGURED + K*PER_TURN_MAX`
   // was VACUOUS: it reduces algebraically to `NEAR_CEILING <= CONFIGURED` (always
@@ -301,7 +301,8 @@ describe("createSpendAccumulator", () => {
     acc.rehydrate([{ agentId: "a", tenantId: "t", costUsd: NEAR_CEILING }]);
 
     // K SYNCHRONOUS reserves through the SAME accumulator (plain in-loop calls —
-    // NO Promise.all over real I/O; Pitfall 5). Each sees the prior reservation.
+    // NO Promise.all over real I/O, which would let the event loop interleave and
+    // stop proving synchronous atomicity). Each sees the prior reservation.
     const results = Array.from({ length: K }, () => acc.checkAndReserve(SCOPE, PER_TURN_MAX));
     const admitted = results.filter((r) => r.ok);
     const finalTotal =

@@ -182,10 +182,10 @@ describe("workspace-umbrella domain contracts", () => {
     for (const c of approvals) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
   });
 
-  it("skills.*: list + the 5 mutating handlers are all rpc-scoped (210-GAP CR-01)", () => {
-    // 210-GAP CR-01: skills.* mutating methods are the orch:skill orchestration
-    // surface the capability model owns, NOT control plane. Re-scoped admin→rpc
-    // so the deny-by-origin chokepoint no longer denies an agent its own granted
+  it("skills.*: list + the 5 mutating handlers are all rpc-scoped", () => {
+    // skills.* mutating methods are the orch:skill orchestration surface the
+    // capability model owns, NOT control plane. Scoped rpc (not admin) so the
+    // deny-by-origin chokepoint does not deny an agent its own granted
     // orch:skill before the requireCapability gate runs. The handlers still gate
     // on orch:skill; admin gateway tokens carry rpc so the web-UI manager works.
     expect(SkillsListContract.scopes).toEqual(["rpc"]);

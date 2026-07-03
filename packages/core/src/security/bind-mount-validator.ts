@@ -3,8 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 /**
- * JAIL-03 bind-mount validator — a PURE denylist backstop on top of the
- * allow-list jail binds (v8 invariant 10: the validator does NOT decide what to
+ * Bind-mount validator — a PURE denylist backstop on top of the
+ * allow-list jail binds (the validator does NOT decide what to
  * bind, it only refuses dangerous binds).
  *
  * It rejects three classic jail-escape shapes (escapes are symlink/parent-mount,

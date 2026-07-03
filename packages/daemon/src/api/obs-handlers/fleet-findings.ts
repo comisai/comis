@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Fleet findings derivation: turn the I-track diagnostic rows (`health_signal` /
+ * Fleet findings derivation: turn the ingested diagnostic rows (`health_signal` /
  * `model_health` / `config_posture`) into `{code, detail, count, hint}` findings.
  *
- * Extracted from `fleet-health.ts` to keep that module under the obs-handlers
- * per-subdirectory file-size cap (the OBS-01 Phase-180 script findings pushed it
- * over). No behavior change — `buildFindings` + the `Finding` shape + the
- * defensive details parsers relocate byte-identically; the assembler imports
- * them back.
+ * Lives separately from `fleet-health.ts` to keep that module under the
+ * obs-handlers per-subdirectory file-size cap; the assembler there imports
+ * `buildFindings`, the `Finding` shape, and the defensive details parsers
+ * from here.
  *
- * SECURITY INVARIANT (H1 + the 159 digest-only schema): findings carry counts +
+ * SECURITY INVARIANT (the digest-only report schema): findings carry counts +
  * short codes + hints ONLY — NEVER concatenate the raw `row.message`/`row.details`
  * body. Every `details` JSON field read here is parsed defensively (malformed /
  * missing folds to a safe default, never throws, never echoes a body). The
@@ -44,24 +43,22 @@ import { buildAutonomyFindings } from "./fleet-autonomy.js";
 export type { Finding };
 
 /**
- * TELEM-01 (Plan 173-03): the pipeline-authoring aggregate the Phase-174 gate
+ * The pipeline-authoring aggregate the authoring gate
  * (`pipelineAuthoringGate`) consumes — computed compute-on-read over the windowed
- * `health_signal` rows (no persisted rollup; Open Q2 / D-AGGREGATE).
+ * `health_signal` rows (no persisted rollup).
  *
- * The `PipelineAuthoringAggregate` type is now SINGLE-SOURCED in
- * `@comis/observability` (Plan 173-04, MEDIUM-4) — the provisional local
- * interface declared here at Plan 03 was deleted and this file imports the
- * canonical type (see the top-of-file `import type`). The field NAMES + ORDER
- * (`smallTierInvocations`, `smallTierValidRate`, `frontierValidRate`) are
- * unchanged — the swap is structural.
+ * The `PipelineAuthoringAggregate` type is SINGLE-SOURCED in
+ * `@comis/observability` — this file imports the
+ * canonical type (see the top-of-file `import type`) rather than declaring a
+ * local duplicate.
  *
- * The small/local tier = capabilityClass "small" OR "nano" (D-TIER); frontier =
+ * The small/local tier = capabilityClass "small" OR "nano"; frontier =
  * "frontier". "mid" and "unknown" rows are in NEITHER cohort (they are not the
  * comparison tiers). Rates are 0 (never NaN) when the cohort is empty.
  *
  * Reduce the windowed `health_signal` rows to the `PipelineAuthoringAggregate`.
  * PURE — no I/O, no globals, no Date.now(); malformed / non-pipeline rows fold out
- * (counted in neither cohort, never throws). Exported so Plan 04 / fleet-health.ts
+ * (counted in neither cohort, never throws). Exported so fleet-health.ts
  * can feed the gate.
  */
 export function pipelineAuthoringAggregateFromRows(
@@ -81,7 +78,7 @@ export function pipelineAuthoringAggregateFromRows(
       frontierTotal += 1;
       if (parsed.schemaValid) frontierValid += 1;
     }
-    // "mid" / "unknown": counted in neither cohort (D-TIER).
+    // "mid" / "unknown": counted in neither cohort (not comparison tiers).
   }
   return {
     smallTierInvocations: smallTotal,
@@ -91,14 +88,15 @@ export function pipelineAuthoringAggregateFromRows(
 }
 
 /**
- * Derive `{code, detail, count, hint}` findings from the I-track rows. Counts +
- * short codes + hints ONLY — NEVER the raw `row.message`/`row.details` body (H1 +
- * the 159 schema is digest-only). `health_signal` rows are grouped by their
+ * Derive `{code, detail, count, hint}` findings from the ingested diagnostic rows. Counts +
+ * short codes + hints ONLY — NEVER the raw `row.message`/`row.details` body (the
+ * report schema is digest-only). `health_signal` rows are grouped by their
  * closed `signal` label (so distinct signal classes are distinct findings);
- * `model_health` / `config_posture` are category-level rollups. The OBS-01
+ * `model_health` / `config_posture` are category-level rollups. The
  * script signals get DEDICATED findings (script=/lane= grouping + named knob
  * hints) and are excluded from the generic rollup so they are not double-reported
- * (mirrors how KNOB-03's dedicated finding sits beside the config_posture rollup).
+ * (mirrors how the served-below-configured dedicated finding sits beside the
+ * config_posture rollup).
  */
 /** Defensive `details` JSON parse: malformed / missing → `{}` (digest-only, never throws, never echoes a body). */
 function parseDetailsObject(details: string | undefined): Record<string, unknown> {
@@ -109,7 +107,7 @@ function parseDetailsObject(details: string | undefined): Record<string, unknown
   }
 }
 
-/** The closed reflection admission-outcome vocabulary (OBS-3b) — off-vocabulary folds to "unknown". */
+/** The closed reflection admission-outcome vocabulary — off-vocabulary folds to "unknown". */
 const REFLECT_ADMISSION_OUTCOMES: ReadonlySet<string> = new Set([
   "admitted", "uncorroborated", "rejected_validation", "rejected_name_length",
   "untrusted_origin", "empty_reflection", "no_successes",
@@ -119,17 +117,17 @@ export function buildFindings(
   healthSignals: readonly DiagnosticRow[],
   modelHealth: readonly DiagnosticRow[],
   configPosture: readonly DiagnosticRow[],
-  // OBS-3b (hindsight-reflection-20260626): the windowed `learning_health` rows (the reflection
-  // funnel). Defaulted `[]` so the pre-OBS-3b callers/tests stay byte-identical.
+  // The windowed `learning_health` rows (the reflection
+  // funnel). Defaulted `[]` so callers that do not read this category stay unchanged.
   learningHealth: readonly DiagnosticRow[] = [],
-  // OBS-2b (reflect-obs-20260627): the windowed `memory_lifecycle` rows (the forget sweep). Defaulted
-  // `[]` so the pre-OBS-2b callers/tests stay byte-identical.
+  // The windowed `memory_lifecycle` rows (the forget sweep). Defaulted
+  // `[]` so callers that do not read this category stay unchanged.
   memoryLifecycle: readonly DiagnosticRow[] = [],
 ): Finding[] {
   const findings: Finding[] = [];
 
   // health_signal — one finding per closed `signal` label (counts only). The
-  // OBS-01 script labels are EXCLUDED here (they get dedicated findings below).
+  // dedicated-signal labels are EXCLUDED here (they get dedicated findings below).
   const bySignal = new Map<string, number>();
   for (const row of healthSignals) {
     const label = healthSignalLabel(row);
@@ -145,7 +143,7 @@ export function buildFindings(
     });
   }
 
-  // OBS-01 (Phase 180): dedicated script_zero_hit finding — one per
+  // Dedicated script_zero_hit finding — one per
   // (scriptClass, lane) group, reading "N non-Latin zero-hit searches
   // (script=X, lane=Y)". Counts + closed enums only; the hint names the repair
   // that backfills the normalized trigram twins (history backfill).
@@ -166,7 +164,7 @@ export function buildFindings(
     });
   }
 
-  // OBS-01 (Phase 180): dedicated summary_language_mismatch finding — a single
+  // Dedicated summary_language_mismatch finding — a single
   // rollup count whose hint names the exact knob (a non-Latin chunk summarized in
   // Latin; visibility only, never gated). Counts only, no source/summary body.
   const mismatchCount = healthSignals.filter(
@@ -181,9 +179,9 @@ export function buildFindings(
     });
   }
 
-  // GENQ-01: dedicated generation_quality finding — the memory-generation analog of
+  // Dedicated generation_quality finding — the memory-generation analog of
   // summary_language_mismatch over the consolidation/reasoning/user-representation
-  // passes (the F-ML1 regression class made a fleet count instead of an offline
+  // passes (a regression class surfaced as a fleet count instead of an offline
   // probe). Counts only, no source/generated body; visibility only, never gated.
   const genQualityCount = healthSignals.filter(
     (row) => healthSignalLabel(row) === "generation_quality",
@@ -197,17 +195,17 @@ export function buildFindings(
     });
   }
 
-  // TELEM-01 (Plan 173-03): dedicated pipeline_authoring finding — the HEADLINE
+  // Dedicated pipeline_authoring finding — the HEADLINE
   // metric is the small-model pipeline-authoring failure rate = (small-tier rows
-  // where schemaValid===false) / (small-tier rows total) over the window (D-TIER:
-  // small|nano = the small tier). Counts + a static hint ONLY (no source/generated
+  // where schemaValid===false) / (small-tier rows total) over the window
+  // (small|nano = the small tier). Counts + a static hint ONLY (no source/generated
   // graph body — the pipelineAuthoringFromRow parser reads only the closed tier +
   // the schemaValid boolean). Fires only when smallTotal > 0 (no finding on zero
-  // small-tier traffic — mirrors the GENQ-01/voice if-guards). The reducer above is
-  // the same compute-on-read fold; here we re-walk for the invalid COUNT the finding
-  // names.
+  // small-tier traffic — mirrors the generation-quality/voice if-guards). The reducer
+  // above is the same compute-on-read fold; here we re-walk for the invalid COUNT the
+  // finding names.
   //
-  // METRIC BOUNDARY (Phase 173 review WR-02): the denominator counts every
+  // METRIC BOUNDARY: the denominator counts every
   // CONTRACT-PARSE-REACHABLE authoring invocation. graph.define emits
   // schemaValid:false on BOTH a strict-contract (GraphDefineContract) parse
   // rejection AND a buildGraphInput parse/validate throw; graph.execute (a loose
@@ -233,11 +231,11 @@ export function buildFindings(
       code: "pipeline_authoring",
       detail: `${smallInvalid}/${smallTotal} small-tier pipeline authorings invalid (rate ${pct}%)`,
       count: smallInvalid,
-      hint: "small/local models are failing to author valid pipeline DAGs; this is the Phase-174 (small-model-authorable DAGs) gate metric — review before enabling orchestration.authoring.*",
+      hint: "small/local models are failing to author valid pipeline DAGs; this is the small-model-authorable-DAGs gate metric — review before enabling orchestration.authoring.*",
     });
   }
 
-  // ORCH-OBS (orchestration-observability): dedicated sandbox_downgrade_refused
+  // Dedicated sandbox_downgrade_refused
   // finding — the count of fail-closed sub-agent spawn refusals + the violated
   // sandbox dimensions (closed enum labels). A spawn refusal is fail-closed working,
   // but it means an agent was configured to spawn a LESS-confined child (a
@@ -269,7 +267,7 @@ export function buildFindings(
     });
   }
 
-  // ORCH-OBS: dedicated delivery_deadlettered finding — the count of sub-agent
+  // Dedicated delivery_deadlettered finding — the count of sub-agent
   // completions PERMANENTLY DROPPED (self-healing delivery exhausted retries, or an
   // immediate permanent failure). This is a SILENT degradation today (the graph
   // reports completed while a node's result never reached the parent). Counts + the
@@ -293,7 +291,7 @@ export function buildFindings(
     });
   }
 
-  // ORCH-OBS: dedicated node_budget_exceeded finding — the count of per-node token
+  // Dedicated node_budget_exceeded finding — the count of per-node token
   // budget breaches + the DOMINANT cap source (which knob bound the node). Counts +
   // the closed capSource label + a hint NAMING all three knobs ONLY (the per-node
   // token numbers are per-incident — on the node error string + the WARN + `comis
@@ -321,18 +319,18 @@ export function buildFindings(
     });
   }
 
-  // FLEET-01 (Phase 220-03): the three dedicated autonomy findings (durable_orphaned
+  // The three dedicated autonomy findings (durable_orphaned
   // / autonomy_revoked / autonomy_killed; kill separable from revoke) — extracted to
   // the `fleet-autonomy.ts` sibling (the obs-handlers 500-line subdir cap). Each has
   // its own zero-traffic guard inside the helper; the returned findings inherit the
   // FLEET_FINDINGS_CAP bound + the highest-count-first sort below.
   findings.push(...buildAutonomyFindings(healthSignals));
 
-  // OBS-04 (Phase 196): dedicated voice_health finding — the degraded STT/TTS
+  // Dedicated voice_health finding — the degraded STT/TTS
   // turn count + the DOMINANT voice errorKind (the closed domain SttErrorKind),
   // rolled up from the `voice_degraded` health_signal rows the daemon voice obs
   // emits on a transcription/synthesis failure. Counts + a closed errorKind label
-  // + a STATIC hint ONLY — NEVER a raw provider message body or a secret (the H1
+  // + a STATIC hint ONLY — NEVER a raw provider message body or a secret (the
   // no-body rule; safe to paste). Mirrors the `model_health` if-guard + the
   // script-signal dedicated-grouping pattern. Beside model_health/config_posture.
   let voiceDegradedCount = 0;
@@ -381,11 +379,12 @@ export function buildFindings(
   }
 
   if (modelHealth.length > 0) {
-    // EMB-01: multilingual advisory read from the LATEST model_health row
-    // (STANDING STATE, not a reboot count — mirror the KNOB-03 latest-row pattern
-    // below, NOT the generic count above; Pitfall 4). Counts/codes/hints only; the
-    // hint names the DOC-01 recommendation + the I4 FTS floor. Advisory ONLY — no
-    // recall/search behavior gates on these flags anywhere (I4).
+    // Multilingual advisory read from the LATEST model_health row
+    // (STANDING STATE, not a reboot count — mirror the served-below latest-row
+    // pattern below, NOT the generic count above). Counts/codes/hints only; the
+    // hint names the recommended multilingual models + the FTS trigram floor that
+    // still carries recall. Advisory ONLY — no recall/search behavior gates on
+    // these flags anywhere.
     let latestModelHealth = modelHealth[0]!;
     for (const row of modelHealth) {
       if (row.timestamp > latestModelHealth.timestamp) latestModelHealth = row;
@@ -417,7 +416,7 @@ export function buildFindings(
     for (const row of configPosture) {
       if (row.timestamp > latest.timestamp) latest = row;
     }
-    // T1.3 (F6): name the SPECIFIC flagged keys (closed labels only) so an operator does
+    // Name the SPECIFIC flagged keys (closed labels only) so an operator does
     // not have to grep daemon.log to learn WHICH knob is off (gateway.tls, CANARY_SECRET…).
     const flaggedKeys = flaggedPostureKeys(latest);
     findings.push({
@@ -429,7 +428,7 @@ export function buildFindings(
       count: configPosture.length,
       hint: "reconcile the named flagged keys against the secure baseline (served-below + chimeric model have their own findings)",
     });
-    // KNOB-03: dedicated served-below-configured finding from the latest posture row.
+    // Dedicated served-below-configured finding from the latest posture row.
     const latestCount = servedBelowConfiguredFromRow(latest);
     if (latestCount > 0) {
       findings.push({
@@ -439,9 +438,9 @@ export function buildFindings(
         hint: "set OLLAMA_CONTEXT_LENGTH / Modelfile 'PARAMETER num_ctx' to the configured window (config-yaml served-window section); run `comis explain` on a served-bound session for the numbers",
       });
     }
-    // RESOLVE-01: dedicated chimeric-provider/model finding from the SAME latest
+    // Dedicated chimeric-provider/model finding from the SAME latest
     // posture row. A NATIVE provider (anthropic/openai/google) paired with a foreign
-    // model family resolves a phantom ModelProfile (incident ffe11736) — name it.
+    // model family resolves a phantom ModelProfile (observed live) — name it.
     const chimeraCount = chimericModelFromRow(latest);
     if (chimeraCount > 0) {
       findings.push({
@@ -451,9 +450,9 @@ export function buildFindings(
         hint: "align agents.<id>.provider with the model family (e.g. provider:anthropic ⇒ a claude model; for a qwen/llama model use an ollama/openrouter provider), or set the model id explicitly under the right provider",
       });
     }
-    // SPEND-05: dedicated pricing-gap finding from the SAME latest posture row.
+    // Dedicated pricing-gap finding from the SAME latest posture row.
     // Configured agents burning tokens on remote-unknown-priced models (a NATIVE
-    // provider with no catalog rate — the ffe11736 fail-open where spend is silently
+    // provider with no catalog rate — the fail-open where spend is silently
     // under-counted as $0). Surfaces the kill-switch's pricing coverage so an operator
     // sees how much spend the ceiling cannot account for. Counts + remediation only.
     const pricingGapCount = pricingGapFromRow(latest);
@@ -466,7 +465,7 @@ export function buildFindings(
       });
     }
   }
-  // OBS-3b (hindsight-reflection-20260626): dedicated learning_health finding — the reflection funnel
+  // Dedicated learning_health finding — the reflection funnel
   // rolled up over the window. The daemon-wide "is reflection learning / why-0-admitted" posture, beside
   // model_health / config_posture. Counts + the LATEST closed admissionOutcome verdict (standing state,
   // max-timestamp scan — never assume query order) + summed admitted/untrustedDrops ONLY (the
@@ -497,7 +496,7 @@ export function buildFindings(
     });
   }
 
-  // OBS-2b (reflect-obs-20260627): the dedicated memory_lifecycle finding — the forget sweep rolled up
+  // The dedicated memory_lifecycle finding — the forget sweep rolled up
   // over the window (the parity of learning_health for the forget half). Counts ONLY (summed evicted/
   // demoted across the window's sweeps; every details field parsed defensively). A sweep that evicted
   // nothing (no eviction-candidates) is NOT a fault — healthy maintenance — so the hint says so.
@@ -513,7 +512,7 @@ export function buildFindings(
       code: "memory_lifecycle",
       detail: `${memoryLifecycle.length} forget sweep(s) in the window; evicted=${evictedSum}, demoted=${demotedSum}`,
       count: memoryLifecycle.length,
-      hint: 'run `cron.runs jobName "Memory lifecycle"` for the per-sweep counts; evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the INV-4 exemptions (pinned/high-proof/system survive).',
+      hint: 'run `cron.runs jobName "Memory lifecycle"` for the per-sweep counts; evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the anti-induced-eviction exemptions (pinned/high-proof/system survive).',
     });
   }
 

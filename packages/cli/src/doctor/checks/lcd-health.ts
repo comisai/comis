@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD store health check for comis doctor — DOC-01.
+ * LCD store health check for comis doctor.
  *
  * Six read-only SQL scan classes against memory.db that give operators
- * store-integrity visibility without raw SQL access. Designed per
- * design/lcd-v3-unified-substrate.md §6.11 corruption classification.
+ * store-integrity visibility without raw SQL access. Each scan class
+ * targets one known corruption shape (see the enumeration on the check
+ * export below).
  *
  * Privacy: all finding `message` fields carry ONLY counts, UUIDs, and
  * errorKind strings — never `content` column values, message text, or
- * summary plaintext (threat T-170-02-01).
+ * summary plaintext.
  *
- * Safety: opens memory.db with `readonly: true` (threat T-170-02-02)
- * and sets `busy_timeout = 100` (threat T-170-02-03).
+ * Safety: opens memory.db with `readonly: true` so a scan can never mutate
+ * the store, and sets `busy_timeout = 100` so a locked store degrades the
+ * scan instead of hanging the CLI.
  *
  * @module
  */
@@ -147,8 +149,8 @@ function scanFtsDrift(db: Database.Database): DoctorFinding[] {
     `)
     .get() as { msg_drift: number; sum_drift: number } | undefined;
 
-  // WR-03: negative drift = orphaned contentless FTS shadow rows, which are
-  // EXPECTED after a Phase-164 deleteConversationLcd / `sessions reset` (the
+  // Negative drift = orphaned contentless FTS shadow rows, which are
+  // EXPECTED after a deleteConversationLcd / `sessions reset` (the
   // contentless FTS5 table has no FK and is not pruned on message delete). Only
   // POSITIVE drift — messages/summaries present but not yet indexed — is the real
   // corruption signal. Floor at 0 so a healthy post-reset store stays clean.
@@ -174,9 +176,9 @@ function scanFtsDrift(db: Database.Database): DoctorFinding[] {
 /**
  * Detect lcd_messages or lcd_summaries rows with NULL tenant_id or agent_id.
  *
- * These violate the R4 isolation scope invariant (Phase 132-03) — affected
- * rows will be invisible to scope-filtered queries and may leak across
- * agent boundaries.
+ * These violate the R4 isolation scope invariant (every row must carry its
+ * tenant/agent scope) — affected rows will be invisible to scope-filtered
+ * queries and may leak across agent boundaries.
  */
 function scanR4Anomalies(db: Database.Database): DoctorFinding[] {
   const row = db
@@ -216,9 +218,10 @@ function scanR4Anomalies(db: Database.Database): DoctorFinding[] {
  * its scope — equal in single-epoch steady state, strictly less once a prior
  * epoch has accumulated. `ingested_live_len` GREATER than the persisted count is
  * therefore impossible in normal operation and signals a corrupt / hand-edited
- * cursor. Phase-164 note: a cursor with `ingested_live_len = 0` (or small) while
- * many durable messages exist is a NORMAL fresh epoch / continue-append state and
- * is correctly NOT flagged (0 <= msg_count). Content-free: counts only.
+ * cursor. Note: under the epoch model a cursor with `ingested_live_len = 0` (or
+ * small) while many durable messages exist is a NORMAL fresh epoch /
+ * continue-append state and is correctly NOT flagged (0 <= msg_count).
+ * Content-free: counts only.
  */
 function scanCursorInconsistencies(db: Database.Database): DoctorFinding[] {
   const rows = db
@@ -279,7 +282,7 @@ export const lcdHealthCheck: DoctorCheck = {
     try {
       db = new Database(dbPath, { readonly: true });
       // Short timeout — treat BUSY as a "scan could not acquire read lock"
-      // degradation rather than hanging the CLI (threat T-170-02-03).
+      // degradation rather than hanging the CLI.
       db.pragma("busy_timeout = 100");
 
       findings.push(...scanOrphanedSummaries(db));

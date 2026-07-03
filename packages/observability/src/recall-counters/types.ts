@@ -2,7 +2,7 @@
 /**
  * In-process recall counter registry types.
  *
- * The counter registry is a process-lifetime GAUGE (Assumption A2): it
+ * The counter registry is a process-lifetime GAUGE: it
  * accumulates lane usage, rerank runs/fallbacks, consolidation throughput,
  * and recall hit-rate inputs in plain numeric accumulators that RESET ON
  * RESTART. It is deliberately NOT a durable SQLite table (unlike the

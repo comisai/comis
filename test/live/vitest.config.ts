@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Dedicated live-tier Vitest config — Phase 148 (the
- * `260606-live-tier-daemon-concurrency-flake.md` fix-forward, PROVE-04 gate
- * reliability).
+ * Dedicated live-tier Vitest config — the fix for the live-tier
+ * daemon-concurrency flake, for gate reliability.
  *
  * Mirrors `test/vitest.config.ts` (the integration project) for the `@comis/*`
  * dist-alias map, `globalSetup`, the `forks` pool, timeouts, and the
@@ -12,8 +11,8 @@
  *
  * Without it, ~6+ daemon-booting `test/live/**` scenario files run in parallel
  * vitest forks → 6+ daemons boot simultaneously → intermittent boot/port-free
- * timeout flakes on a single host (the symptom Phase 138 surfaced; it worsens
- * as later phases add more daemon-booting scenarios). `fileParallelism: false`
+ * timeout flakes on a single host (the symptom this config addresses; it worsens
+ * as more daemon-booting scenarios are added). `fileParallelism: false`
  * runs the live files SEQUENTIALLY so daemons don't oversubscribe the host —
  * reliable, slightly slower — making `pnpm test:live` repeatable WITHOUT the
  * manual `--no-file-parallelism` flag the gate previously required. `retry: 1`
@@ -73,7 +72,7 @@ export default defineConfig({
     pool: "forks",
     maxConcurrency: 1,
     // THE flake fix: run live files sequentially so daemon-booting scenarios
-    // do not oversubscribe the host (the 260606-live-tier-daemon-concurrency
+    // do not oversubscribe the host (the live-tier daemon-concurrency
     // flake). This replaces the manual `--no-file-parallelism` flag.
     fileParallelism: false,
     retry: 1,

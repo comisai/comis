@@ -70,8 +70,8 @@ export function estimateMessageChars(
     chars = msg.content.length;
   } else if (Array.isArray(msg.content)) {
     for (const block of msg.content) {
-      // Defensive (LCD/codex turn-abort regression 2026-06-14): a malformed or
-      // undefined content block must NEVER throw out of estimation. The LCD
+      // Defensive: a malformed or undefined content block must NEVER throw
+      // out of estimation. The LCD
       // context-engine assembler runs this inside transformContext BEFORE the
       // LLM call, so a throw aborts the whole turn and surfaces to the user as a
       // silent "AI didn't produce a response". Flat-penalty anything that isn't
@@ -153,8 +153,8 @@ export function estimateContextChars(
  * weighted 2x to reflect their higher token density. Used ONLY by the
  * observation masker threshold check.
  *
- * Deliberately factor-free: a RELATIVE char-pressure heuristic — a script
- * factor would cancel (TOK-01, design §4).
+ * Deliberately factor-free: a RELATIVE char-pressure heuristic — applying
+ * the script token factor to both sides of the ratio would cancel out.
  */
 export function estimateContextCharsWithDualRatio(
   messages: Message[],
@@ -180,14 +180,14 @@ export function estimateContextCharsWithDualRatio(
 const CHARS_PER_TOKEN_STRUCTURED = 3;
 
 /**
- * Memo for the factored per-message estimate (TOK-01), keyed on CONTENT
- * IDENTITY, not object identity alone (review WR-01). Several pipeline
- * layers reassign `msg.content` in place on live Message objects
- * (observation-masker placeholder swap, microcompaction-guard
- * empty-toolResult normalization, schema-stripping, tool-result-clearing
- * TTL clears) — an object-keyed memo returns stale counts after those
- * swaps, and a stale-LOW count after a content-GROWING reassignment is
- * exactly the anti-conservative under-count class TOK-01 closes. Each
+ * Memo for the factored per-message estimate, keyed on CONTENT IDENTITY,
+ * not object identity alone. Several pipeline layers reassign
+ * `msg.content` in place on live Message objects (observation-masker
+ * placeholder swap, microcompaction-guard empty-toolResult normalization,
+ * schema-stripping, tool-result-clearing TTL clears) — an object-keyed
+ * memo returns stale counts after those swaps, and a stale-LOW count
+ * after a content-GROWING reassignment is exactly the anti-conservative
+ * under-count class the script-aware factors close. Each
  * entry therefore records the content value/reference it was computed from
  * and is recomputed whenever `msg.content` no longer matches (one compare
  * on the hit path; every in-repo mutation site reassigns a fresh array or
@@ -217,11 +217,11 @@ const factoredTokensMemo = new WeakMap<Message, FactoredTokensMemoEntry>();
  * - Images: fixed estimate (IMAGE_TOKEN_ESTIMATE)
  *
  * Each ratio is additionally multiplied by `scriptTokenFactor(text)` over
- * the EXACT string whose `.length` is divided (TOK-01, one rule every
- * site): dense non-Latin scripts (Hebrew/Arabic/CJK/...) tokenize at far
- * fewer chars/token than the flat ratios assume, so the divisor shrinks and
- * the estimate grows. Pure-ASCII text has factor 1.0 — byte-identical to
- * the unfactored math (I1).
+ * the EXACT string whose `.length` is divided (one rule, applied
+ * identically at every site): dense non-Latin scripts (Hebrew/Arabic/CJK/...)
+ * tokenize at far fewer chars/token than the flat ratios assume, so the
+ * divisor shrinks and the estimate grows. Pure-ASCII text has factor 1.0 —
+ * byte-identical to the unfactored math.
  */
 export function estimateMessageTokens(msg: Message): number {
   const cached = factoredTokensMemo.get(msg);
@@ -243,14 +243,14 @@ function computeMessageTokens(msg: Message): number {
   const isStructured = msg.role === "toolResult";
 
   for (const block of msg.content) {
-    // Defensive (LCD/codex turn-abort regression 2026-06-14): a malformed or
-    // undefined content block must NEVER throw out of estimation. The LCD
+    // Defensive: a malformed or undefined content block must NEVER throw
+    // out of estimation. The LCD
     // context-engine assembler runs this inside transformContext BEFORE the LLM
     // call, so a throw aborts the whole turn and surfaces to the user as a
     // silent "AI didn't produce a response". Flat-penalty anything that isn't an
     // object with a string `type`.
     if (block == null || typeof block !== "object" || typeof (block as { type?: unknown }).type !== "string") {
-      // flat-by-design: a malformed/undefined block carries no source text to language-factor — UNKNOWN_BLOCK_CHARS is a fixed structural penalty, not derived from any string (TOK-01).
+      // flat-by-design: a malformed/undefined block carries no source text to language-factor — UNKNOWN_BLOCK_CHARS is a fixed structural penalty, not derived from any string.
       tokens += Math.ceil(UNKNOWN_BLOCK_CHARS / CHARS_PER_TOKEN);
       continue;
     }
@@ -280,14 +280,14 @@ function computeMessageTokens(msg: Message): number {
           const json = JSON.stringify(args);
           tokens += Math.ceil(json.length / (CHARS_PER_TOKEN_STRUCTURED * scriptTokenFactor(json)));
         } catch {
-          // flat-by-design: constant penalty, no source text in scope (TOK-01)
+          // flat-by-design: constant penalty, no source text in scope
           tokens += Math.ceil(TOOL_STRINGIFY_FALLBACK / CHARS_PER_TOKEN_STRUCTURED);
         }
         break;
       }
 
       default:
-        // flat-by-design: constant penalty, no source text in scope (TOK-01)
+        // flat-by-design: constant penalty, no source text in scope
         tokens += Math.ceil(UNKNOWN_BLOCK_CHARS / CHARS_PER_TOKEN);
         break;
     }

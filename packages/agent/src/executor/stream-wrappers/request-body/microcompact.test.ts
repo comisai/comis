@@ -2,7 +2,7 @@
 /**
  * Unit tests for the microcompact orchestration triggers.
  *
- * Focus: `runEveryTurnMicrocompact` (EFF-01/EFF-03) — the unconditional every-turn
+ * Focus: `runEveryTurnMicrocompact` — the unconditional every-turn
  * Tier-0 microcompact pass that clears stale compactable tool results regardless of
  * the TTL-expiry / token-ceiling gates, fence-protected and cache-stable.
  *
@@ -44,7 +44,7 @@ function makeConfig(overrides: Partial<RequestBodyInjectorConfig> = {}): Request
   } as unknown as RequestBodyInjectorConfig;
 }
 
-describe("runEveryTurnMicrocompact — EFF-01 (unconditional every-turn pass)", () => {
+describe("runEveryTurnMicrocompact — unconditional every-turn pass", () => {
   it("clears stale compactable results with NO TTL/ceiling condition met", () => {
     // No getElapsedSinceLastResponse, no microcompactTokenCeiling — neither TTL nor
     // ceiling trigger would fire. The every-turn pass clears anyway.
@@ -93,7 +93,7 @@ describe("runEveryTurnMicrocompact — EFF-01 (unconditional every-turn pass)", 
   });
 });
 
-describe("runEveryTurnMicrocompact — EFF-03 (cache-stability)", () => {
+describe("runEveryTurnMicrocompact — cache-stability", () => {
   it("never clears a stale result at or below the cache fence", () => {
     // 3 stale reads at tool indices 2, 5, 8. Fence at 3 protects idx <= 3.
     const result: Record<string, unknown> = { messages: messagesWithStaleReads(3) };

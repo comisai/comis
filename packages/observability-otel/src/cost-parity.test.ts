@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-02 / PROM-01 — corrected-cost parity.
+ * Corrected-cost parity.
  *
  * `comis.cost.usd` (the OTLP counter, and the rendered `comis_cost_usd_total`)
  * MUST equal `SELECT SUM(cost_total) FROM obs_token_usage`. This seeds an
@@ -28,7 +28,7 @@ interface CostRow {
   costTotal: number;
 }
 
-describe("cost parity — comis.cost.usd == SUM(cost_total) (OTEL-02)", () => {
+describe("cost parity — comis.cost.usd == SUM(cost_total)", () => {
   let db: Database.Database;
   let fx: MetricFixture;
 

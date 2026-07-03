@@ -4,7 +4,7 @@
  * is permitted to use.
  *
  * When the allowlist is empty (no entries), all models are allowed
- * (backward-compatible default). When populated, only models matching
+ * (the permissive default). When populated, only models matching
  * an entry are permitted.
  *
  * Supports two matching formats:
@@ -56,7 +56,7 @@ export interface ModelAllowlist {
  * - "provider/modelId" for exact provider+model matching
  * - "modelId" for provider-agnostic matching
  *
- * An empty array means "allow all models" (backward compatible).
+ * An empty array means "allow all models" (the permissive default).
  *
  * @param allowedModels - List of permitted model strings
  */

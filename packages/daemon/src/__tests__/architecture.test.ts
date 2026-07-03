@@ -188,9 +188,9 @@ describe("@comis/daemon -- architecture invariants", () => {
 
   // 90s timeout (default 5s) — under v8 coverage instrumentation the
   // 27-handler AST walk slows enough to exceed the default budget, and on a
-  // loaded CI runner (full-workspace coverage, 2026-06-12 run 27408093972)
-  // it blew through the earlier 30s bump too. Without coverage the test
-  // runs in ~1.5s; the generous ceiling only delays a REAL hang's report.
+  // loaded CI runner under full-workspace coverage it can exceed even a 30s
+  // ceiling. Without coverage the test runs in ~1.5s; the generous ceiling
+  // only delays a REAL hang's report.
   it(
     "api/*-handlers.ts never imports another api/*-handlers.ts file",
     () => {

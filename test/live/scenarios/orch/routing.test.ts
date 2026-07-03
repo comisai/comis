@@ -117,20 +117,20 @@ describe("ORCH-03 Stage-B — daemon routing via ConversationDriver (no LLM)", (
       if (!m.includes("Daemon exit")) throw err;
     }
     // Clean up the temp config file written by buildOrchConfig (consistent with
-    // isolation.test.ts and background-reentry.test.ts — IN-01 fix).
+    // isolation.test.ts and background-reentry.test.ts).
     const { rmSync } = await import("node:fs");
     rmSync(orchConfigPath, { force: true });
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // sendTurn may be called in this block — "JSON-RPC method error" is expected
     // with dummy keys (rpc-dispatch.ts emits this ERROR on LLM provider failure).
     await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
 
-    // FND-11 persistence oracle — only run if memory.db was created.
+    // Persistence oracle — only run if memory.db was created.
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});

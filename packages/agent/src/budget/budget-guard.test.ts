@@ -308,10 +308,10 @@ describe("BudgetGuard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // BUDGET-01: resetExecution(cap?) sets an OPTIONAL per-execution effective
+  // resetExecution(cap?) sets an OPTIONAL per-execution effective
   // cap for THIS run, scoped to one execution (cleared/replaced on the next
   // resetExecution). The shared per-agent guard must never leak one spawn's
-  // tight cap into the agent's other runs (Pitfall 1), and a child can only
+  // tight cap into the agent's other runs, and a child can only
   // TIGHTEN — never RAISE — its budget above config.perExecution (min()).
   // -------------------------------------------------------------------------
   describe("resetExecution per-execution cap override", () => {
@@ -340,7 +340,7 @@ describe("BudgetGuard", () => {
       expect(result.ok).toBe(true);
     });
 
-    it("behaves exactly as today when resetExecution is called with no arg (config.perExecution bounds it)", () => {
+    it("behaves identically when resetExecution is called with no arg (config.perExecution bounds it)", () => {
       const guard = createBudgetGuard(defaultConfig); // config.perExecution = 10_000
       guard.resetExecution();
       guard.recordUsage(9_000);
@@ -368,7 +368,7 @@ describe("BudgetGuard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CR-01 (170-REVIEW): the per-execution dimension MUST be execution-local.
+  // The per-execution dimension MUST be execution-local.
   // The BudgetGuard is created ONCE per agentId and shared across all of that
   // agent's executions. When a parallel graph runs two nodes resolving to the
   // SAME agentId concurrently, each calls resetExecution(cap) on the SAME
@@ -381,7 +381,7 @@ describe("BudgetGuard", () => {
   // checkBudget/recordUsage are scoped to ONE run; the per-hour/per-day rolling
   // windows stay shared per-agent (they are correctly per-agent).
   // -------------------------------------------------------------------------
-  describe("CR-01: concurrent same-agent executions are budget-isolated", () => {
+  describe("concurrent same-agent executions are budget-isolated", () => {
     it("each concurrent execution is bounded by ITS OWN cap and accrued spend on the shared guard", () => {
       // ONE shared per-agent guard, exactly as setup-agents-runtime creates it.
       const guard = createBudgetGuard(defaultConfig); // config.perExecution = 10_000
@@ -430,8 +430,8 @@ describe("BudgetGuard", () => {
       sibling.recordUsage(100);
 
       // The child's tight cap MUST still fire: 1_900 + 200 = 2_100 > 2_000.
-      // On the old shared-state code the sibling's resetExecution zeroed
-      // executionTotal, so the child's spend was wiped and this check passed.
+      // With guard-level shared state, the sibling's resetExecution would zero
+      // executionTotal, wiping the child's spend and letting this check pass.
       const childOver = child.checkBudget(200);
       expect(childOver.ok).toBe(false);
       if (!childOver.ok) {
@@ -479,8 +479,8 @@ describe("BudgetGuard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// checkSpendCeiling — the 3-state pricing gate + atomic accumulator read
-// (Phase 177-03 Task 1). The enforcement READ lives in the enforcer module
+// checkSpendCeiling — the 3-state pricing gate + atomic accumulator read.
+// The enforcement READ lives in the enforcer module
 // (budget-guard.ts), NOT the pure recorder (cost-tracker.ts).
 //
 // Four branches:
@@ -569,7 +569,7 @@ describe("checkSpendCeiling", () => {
       expect(res.value.kind).toBe("ok");
       if (res.value.kind === "ok") {
         expect(res.value.reservation.reservedUsd).toBe(0.5);
-        // WR-1: warn is the breaching DIMENSION or null; below the warn line → null.
+        // warn is the breaching DIMENSION or null; below the warn line → null.
         expect(res.value.warn).toBeNull();
       }
     }
@@ -604,7 +604,7 @@ describe("checkSpendCeiling", () => {
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.value.kind).toBe("ok");
-      // WR-1: warn carries the breaching DIMENSION (agent scope here, post-reserve
+      // warn carries the breaching DIMENSION (agent scope here, post-reserve
       // total 8.1, cap 10) — not a bare boolean.
       if (res.value.kind === "ok") {
         expect(res.value.warn).not.toBeNull();

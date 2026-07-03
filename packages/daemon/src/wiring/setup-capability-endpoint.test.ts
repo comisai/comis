@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `createCapabilityEndpoint` — the loopback capability endpoint deny-matrix
- * (ENDPOINT-01 / ENDPOINT-02; Phase 211 Plan 06).
+ * `createCapabilityEndpoint` — the loopback capability endpoint deny-matrix.
  *
  * The endpoint is a NEAR-CLONE of the shipped `createAgentRpcCall`: validate the
  * bearer against the LeaseManager (timing-safe, not-expired, not-revoked,
  * audience-bound) → inject `_capabilities` (= lease.caps) AND `_agentId`
  * (= lease.agentId) → dispatch through the SAME `createRpcDispatch` sink. So
- * ENDPOINT-02's deny matrix is MOSTLY the automatic consequence of the two
+ * the deny matrix is MOSTLY the automatic consequence of the two
  * injections + a denylist pre-check + the validate function — not new gate code:
  *   - bad/expired/revoked lease → `validate` returns null → deny, no dispatch.
  *   - cap-not-held → the lease caps are injected verbatim → the handler's
@@ -18,9 +17,9 @@
  *   - unknown method → the dispatch sink's own `if (!handler) throw` fires when
  *     the method is absent from `handlers[]` (a valid lease is NOT sufficient —
  *     this is distinct from the denylist pre-check; proven through the REAL
- *     sink logic + real `assertNotAgentOrigin`, FIX-1 in the plan revision).
+ *     sink logic + real `assertNotAgentOrigin`).
  *   - admin method → because the endpoint injects `_agentId`, the real
- *     `assertNotAgentOrigin` chokepoint denies-by-origin (RESEARCH Pitfall 2).
+ *     `assertNotAgentOrigin` chokepoint denies-by-origin.
  *
  * This suite uses the REAL `createLeaseManager` (@comis/infra — shipped,
  * unit-proven) for the lease lifecycle, and a faithful minimal dispatch sink
@@ -118,7 +117,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
   // orch:skill→skills.*, orch:spawn→session.spawn. So in-audience test methods
   // MUST come from that set; `cron.add` (orch:cron) is the canonical valid call.
 
-  // ENDPOINT-01: a valid lease over an in-audience method dispatches with the
+  // A valid lease over an in-audience method dispatches with the
   // injected _agentId + _capabilities (mirroring createAgentRpcCall).
   it("dispatches a valid lease call injecting _agentId and _capabilities from the lease", async () => {
     const clock = createTestClock();
@@ -143,7 +142,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(result).toEqual({ ok: true });
   });
 
-  // CR-01 (ORIGIN-02 at the socket boundary): the wire `params` are
+  // At the socket boundary the wire `params` are
   // FULLY attacker-controlled (the jailed script the lease authenticates). A
   // forged `_X` control field MUST NOT reach the dispatch sink — only the
   // lease-derived `_agentId`/`_capabilities` are trusted. Without the
@@ -189,7 +188,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect("_tenantId" in calledParams).toBe(false);
   });
 
-  // ENDPOINT-02: a bad/garbage bearer is denied (validate returns null), and the
+  // A bad/garbage bearer is denied (validate returns null), and the
   // dispatch sink is NOT called.
   it("denies a bad bearer (validate null) and never dispatches", async () => {
     const clock = createTestClock();
@@ -201,7 +200,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // ENDPOINT-02: an expired (soft-expired) lease is denied.
+  // An expired (soft-expired) lease is denied.
   it("denies an expired lease and never dispatches", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
@@ -218,7 +217,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // ENDPOINT-02: a revoked lease is denied.
+  // A revoked lease is denied.
   it("denies a revoked lease and never dispatches", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
@@ -237,7 +236,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // ENDPOINT-02 (audience): a valid lease replayed at a method OUTSIDE its caps'
+  // Audience: a valid lease replayed at a method OUTSIDE its caps'
   // audience is denied by validate (the requested method is threaded into
   // validate, so a captured lease cannot be replayed elsewhere).
   it("denies a valid lease replayed at a method outside its capability audience", async () => {
@@ -252,7 +251,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // ENDPOINT-02 (denylist): a denylisted tool is denied by the pre-check BEFORE
+  // Denylist: a denylisted tool is denied by the pre-check BEFORE
   // dispatch (the rpcCall is never reached) — even with a lease minted for it.
   // skills.create is the LOAD-BEARING case: it is orch:skill (so a lease holding
   // orch:skill PASSES audience) AND non-admin (so deny-by-origin does NOT fire) —
@@ -270,7 +269,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // ENDPOINT-02 (denylist, admin family): a denylisted admin tool (agents.create)
+  // Denylist (admin family): a denylisted admin tool (agents.create)
   // is also denied by the pre-check before dispatch (defense-in-depth on top of
   // the audience + deny-by-origin boundaries).
   it("denies a denylisted agents.create via the pre-check before dispatch", async () => {
@@ -284,7 +283,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // ENDPOINT-02 (cap-not-held): the endpoint injects the lease caps VERBATIM and
+  // Cap-not-held: the endpoint injects the lease caps VERBATIM and
   // adds NO second gate, so the shipped per-handler requireCapability fires for a
   // cap the lease lacks. Proven by dispatching through a sink whose handler runs
   // the REAL requireCapability against the injected _capabilities. The lease
@@ -312,10 +311,10 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     );
   });
 
-  // ENDPOINT-02 (unknown method): a valid bearer over an IN-AUDIENCE method that
+  // Unknown method: a valid bearer over an IN-AUDIENCE method that
   // is nonetheless ABSENT from the handler map is denied by the REAL dispatch
   // sink's `if (!handler) throw` — distinct from the denylist pre-check and NOT
-  // satisfied by a valid lease alone (FIX-1 in the plan revision).
+  // satisfied by a valid lease alone.
   it("denies an unknown method through the real dispatch sink's !handler throw", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
@@ -333,7 +332,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     );
   });
 
-  // ENDPOINT-02 (admin → denied): an admin method is DENIED through the endpoint.
+  // Admin → denied: an admin method is DENIED through the endpoint.
   // By design NO admin method maps to an orch:* cap (the capability model grants
   // only non-admin orchestration), so the lease audience denies every admin
   // method at `validate` (the first gate) — the handler is never reached, with
@@ -373,7 +372,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // ENDPOINT-02 (Pitfall 2 — the deny-by-origin chokepoint is load-bearing):
+  // The deny-by-origin chokepoint is load-bearing:
   // the endpoint injects _agentId, so IF an _agentId-bearing call reached an
   // admin method at the dispatch sink, the REAL assertNotAgentOrigin would deny
   // it by origin. This proves the second gate fires on exactly the shape the
@@ -400,13 +399,13 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// tool.invoke — the one-route dispatch (DISPATCH-01/02; Phase 212 Plan 02)
+// tool.invoke — the one-route dispatch
 // ---------------------------------------------------------------------------
 
 describe("createCapabilityEndpoint tool.invoke dispatch", () => {
-  // DISPATCH-01 (rpc route): tool.invoke({tool:"memory_search"}) for an orch:read
+  // Rpc route: tool.invoke({tool:"memory_search"}) for an orch:read
   // lease routes to the registered RPC method with strip-then-inject (the lease's
-  // _agentId is the only one the sink sees — self-scoping CR-01).
+  // _agentId is the only one the sink sees — self-scoping).
   it("routes an rpc-kind tool to its registered method with strip-then-inject", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
@@ -431,7 +430,7 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect(result).toEqual({ hits: [] });
   });
 
-  // DISPATCH-01 (executor route): tool.invoke({tool:"web_fetch"}) for an orch:web
+  // Executor route: tool.invoke({tool:"web_fetch"}) for an orch:web
   // lease routes to the INJECTED toolInvokeExecutor (NOT rpcCall).
   it("routes an executor-kind tool to the injected toolInvokeExecutor (not rpcCall)", async () => {
     const clock = createTestClock();
@@ -456,7 +455,7 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect(result).toEqual({ url: "https://x", text: "body" });
   });
 
-  // DISPATCH-02 (default-deny): an unmapped tool → CapabilityDeniedError.
+  // Default-deny: an unmapped tool → CapabilityDeniedError.
   it("denies an unmapped tool with CapabilityDeniedError (default-deny by absence)", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
@@ -473,7 +472,7 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect(toolInvokeExecutor).not.toHaveBeenCalled();
   });
 
-  // DISPATCH (denylist, defense-in-depth): an unmapped AND denylisted tool is
+  // Denylist (defense-in-depth): an unmapped AND denylisted tool is
   // denied. `gateway` is not on the cap-map (unmapped → CapabilityDeniedError);
   // the deny fires either way. (The cap-map absence is the first gate.)
   it("denies an unmapped+denylisted tool (gateway) — never dispatched", async () => {
@@ -492,9 +491,9 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect(toolInvokeExecutor).not.toHaveBeenCalled();
   });
 
-  // DISPATCH (requireCapability): tool.invoke({tool:"web_fetch"}) with a lease
+  // requireCapability: tool.invoke({tool:"web_fetch"}) with a lease
   // holding ONLY orch:read is denied at requireCapability — orch:web is the cap
-  // for web_fetch. NOTE: the lease audience (Task 1) ALSO denies this at validate
+  // for web_fetch. NOTE: the lease audience ALSO denies this at validate
   // (the inner tool's cap is out of audience), so the deny may surface there; the
   // point is web_fetch is unreachable with an orch:read-only lease.
   it("denies web_fetch for an orch:read-only lease (cap not held)", async () => {
@@ -512,7 +511,7 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect(toolInvokeExecutor).not.toHaveBeenCalled();
   });
 
-  // IN-02 (loose args contract): an ARRAY passed as `args` must NOT slip through
+  // Loose args contract: an ARRAY passed as `args` must NOT slip through
   // the `typeof === "object"` branch as an index-keyed object (`{0:…,1:…}`) — it
   // is not a valid named-args object. Tighten the guard so an array degrades to
   // empty named args (like any other non-object), never index-keyed fields the
@@ -539,9 +538,9 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect(params._agentId).toBe("agent-arr");
   });
 
-  // DISPATCH (strip-then-inject / S2): forged _agentId/_trustLevel in the inner
+  // Strip-then-inject: forged _agentId/_trustLevel in the inner
   // args are stripped; the rpc route receives the lease's _agentId (NOT the forged
-  // "victim") — the self-scoping integrity prerequisite (CR-01 / T-212-06).
+  // "victim") — the self-scoping integrity prerequisite.
   it("strips forged _X fields from the inner args on the rpc route", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
@@ -562,7 +561,7 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect("_trustLevel" in params).toBe(false); // forged escalation stripped
   });
 
-  // DISPATCH (admin unreachable): no admin tool is cap-mapped, so tool.invoke
+  // Admin unreachable: no admin tool is cap-mapped, so tool.invoke
   // cannot reach an admin handler — an admin-ish tool name is unmapped → denied.
   it("cannot reach an admin tool via tool.invoke (agents_create unmapped → denied)", async () => {
     const clock = createTestClock();
@@ -626,7 +625,7 @@ describe("createCapabilityEndpoint socket server", () => {
     expect(existsSync(socketPath)).toBe(false);
   });
 
-  // WR-01: a client that connects and pushes > MAX_LINE_BYTES without ever
+  // A client that connects and pushes > MAX_LINE_BYTES without ever
   // sending a newline must have its connection destroyed (bounded receive
   // buffer) — otherwise `buf` grows without bound (OOM vector from a jailed
   // client). Assert the socket is closed by the server after oversize input.
@@ -664,7 +663,7 @@ describe("createCapabilityEndpoint socket server", () => {
     await endpoint.stopSocket();
   });
 
-  // WR-01: stopSocket() must not hang on a non-terminating client. A bare
+  // stopSocket() must not hang on a non-terminating client. A bare
   // net.Server.close() waits for live connections to drain, so a connection
   // that never sends a newline (and never closes) would wedge shutdown forever.
   // The endpoint destroys tracked sockets before close — assert stop resolves.
@@ -701,7 +700,7 @@ describe("createCapabilityEndpoint socket server", () => {
     client.destroy();
   });
 
-  // WR-02 (§2.7): the socket boundary is observable through the injected logger
+  // The socket boundary is observable through the injected logger
   // — the bind emits an INFO and a receive-buffer overflow emits a WARN carrying
   // the canonical errorKind/hint (not an empty catch). This proves the logger is
   // threaded and that a boundary event is reconstructable from logs.
@@ -750,11 +749,10 @@ describe("createCapabilityEndpoint socket server", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 213 RATE-01 (per-root + per-socket rate limit) + RATE-02 (cron
-// self-ownership) at the cap ENDPOINT. The lease's agentId is authoritative ONLY
-// here (NOT in the shared cron-handlers.ts — Pitfall 3); the cap socket is the
-// agent's only orchestrate egress, so the rate limit + cron self-ownership belong
-// at handleCapCall.
+// Per-root + per-socket rate limit + cron self-ownership at the cap ENDPOINT.
+// The lease's agentId is authoritative ONLY here (NOT in the shared
+// cron-handlers.ts); the cap socket is the agent's only orchestrate egress, so
+// the rate limit + cron self-ownership belong at handleCapCall.
 // ---------------------------------------------------------------------------
 
 /** A configurable BoundedAutonomy stub for the endpoint's rate-limit + cron-cap
@@ -779,10 +777,10 @@ function makeBoundedAutonomyStub(over: {
   };
 }
 
-describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)", () => {
-  // RATE-01: when the bounded-autonomy rate limiter denies (per-root or per-socket
+describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
+  // When the bounded-autonomy rate limiter denies (per-root or per-socket
   // over cap), handleCapCall is DENIED before the dispatch sink is reached.
-  it("denies a cap call when the rate limiter trips, before dispatch (RATE-01)", async () => {
+  it("denies a cap call when the rate limiter trips, before dispatch", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-rl");
@@ -799,7 +797,7 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  it("dispatches normally when under the rate cap (RATE-01)", async () => {
+  it("dispatches normally when under the rate cap", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-ok");
@@ -813,10 +811,10 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     expect(rpcCall).toHaveBeenCalledTimes(1);
   });
 
-  // RATE-02: a cron mutation forwards with agentId FORCED to the lease's agentId
+  // A cron mutation forwards with agentId FORCED to the lease's agentId
   // (the forged "OTHER-AGENT" is overwritten) — on BOTH agentId AND _agentId
   // (cron-handlers reads both).
-  it("forces agentId := lease.agentId on a cron mutation, overwriting a forged agentId (RATE-02)", async () => {
+  it("forces agentId := lease.agentId on a cron mutation, overwriting a forged agentId", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "self-agent");
@@ -837,8 +835,8 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     expect(params._agentId).toBe("self-agent");
   });
 
-  // RATE-02: a system_event cron is REJECTED (only agent_turn is self-ownable).
-  it("rejects a cron mutation with payload_kind:system_event (RATE-02)", async () => {
+  // A system_event cron is REJECTED (only agent_turn is self-ownable).
+  it("rejects a cron mutation with payload_kind:system_event", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "self-agent");
@@ -854,11 +852,11 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // RATE-02: agentId:"*" is neutralized to the lease's single agentId (the "*"
+  // agentId:"*" is neutralized to the lease's single agentId (the "*"
   // never reaches the handler from the endpoint path). Uses cron.run (a mutation
   // in the orch:cron audience) — cron.list is `ungated`/out-of-audience, so a
   // cap-lease cannot reach it at all (validate denies it).
-  it("neutralizes agentId:'*' to the lease's single agentId on a cron mutation (RATE-02)", async () => {
+  it("neutralizes agentId:'*' to the lease's single agentId on a cron mutation", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "self-agent");
@@ -875,10 +873,10 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     expect(params._agentId).toBe("self-agent");
   });
 
-  // RATE-02: cronSelfMax is enforced via the NAMED boundedAutonomy.cronCount(agentId)
+  // cronSelfMax is enforced via the NAMED boundedAutonomy.cronCount(agentId)
   // accessor (provider-backed) — NOT a handleCapCall-local counter. A wrong/missing
   // production accessor would FAIL this test.
-  it("caps cron mutations at cronSelfMax via boundedAutonomy.cronCount(lease.agentId) (RATE-02)", async () => {
+  it("caps cron mutations at cronSelfMax via boundedAutonomy.cronCount(lease.agentId)", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "busy-agent");
@@ -899,7 +897,7 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     expect(cronCount).toHaveBeenCalledWith("busy-agent");
   });
 
-  it("dispatches a cron mutation when under cronSelfMax (cronCount < cap) (RATE-02)", async () => {
+  it("dispatches a cron mutation when under cronSelfMax (cronCount < cap)", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "calm-agent");
@@ -915,7 +913,7 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
   });
 
   // -------------------------------------------------------------------------
-  // Phase 216 (HIGH-1 / NEW-3): the jail leg allocates a monotonic
+  // The jail leg allocates a monotonic
   // _outwardStepIndex for an OUTWARD message method (orch:message) and strips a
   // forged inbound value before re-injecting the trusted allocated one.
   // -------------------------------------------------------------------------
@@ -932,7 +930,7 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     } as never;
   }
 
-  it("HIGH-1: two outward message.send calls in one run get _outwardStepIndex 0 then 1 and BOTH dispatch", async () => {
+  it("two outward message.send calls in one run get _outwardStepIndex 0 then 1 and BOTH dispatch", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     // orch:message is the audience for message.send/reply/react.
@@ -949,7 +947,7 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(1);
   });
 
-  it("NEW-3: a forged inbound _outwardStepIndex is stripped, then the trusted allocated index is injected", async () => {
+  it("a forged inbound _outwardStepIndex is stripped, then the trusted allocated index is injected", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-out");

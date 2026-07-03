@@ -1,7 +1,7 @@
 # Comis Test Configuration — Gateway Concurrent Tests
 #
 # Uses port 8460 to avoid conflicts when running in parallel via vitest pool: "forks".
-# High maxRequests (10000) to avoid rate limiting in concurrency tests (per Research pitfall 2).
+# High maxRequests (10000) to avoid rate limiting in concurrency tests.
 
 tenantId: "test"
 logLevel: "debug"

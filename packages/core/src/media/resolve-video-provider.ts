@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * resolveVideoProvider — the pure, I/O-free priority resolver for
- * video-generation provider selection (RES-02/03/04, CAP-01, SEC-04).
+ * video-generation provider selection.
  *
  * A 1:1 mirror of `resolveImageProvider` (resolve-image-provider.ts) with the
- * video vocabulary, PLUS the SEC-04 prototype-pollution guard the image resolver
- * lacks (DIVERGENCE 4): `isBlockedObjectKey` rejects `__proto__` / `constructor`
+ * video vocabulary, PLUS a prototype-pollution guard the image resolver
+ * lacks: `isBlockedObjectKey` rejects `__proto__` / `constructor`
  * / `prototype` BEFORE every `VIDEO_CAPABILITY[...]` index (three sites — the
  * explicit branch, the follow-main branch, and the fallback-chain loop).
  *
@@ -15,7 +15,7 @@
  * environment, and never imports a secret store — so it is trivially
  * unit-testable with no daemon and no network.
  *
- * Honest-capability invariant (I3 / T-188-03): a video-incapable main provider
+ * Honest-capability invariant: a video-incapable main provider
  * or absent credentials yields `{ ok: false, errorKind, hint }` — NEVER a silent
  * fall-through to a different paid provider. The `fallbackChain` is consulted
  * ONLY after the follow-main path fails, and each skip is reported.
@@ -31,9 +31,9 @@ import type { VideoErrorKind } from "./video-error.js";
  * map, read or pollute the prototype chain instead of an own property
  * (`__proto__` → the prototype; `constructor` / `prototype` → built-in members).
  * Apply this BEFORE every `VIDEO_CAPABILITY` / `VIDEO_PRICING` index on a
- * config-/resolution-supplied provider id (SEC-04 / DIVERGENCE 4).
+ * config-/resolution-supplied provider id.
  *
- * Exported because Task 2's pricing estimate and Plan 04's selector reuse the
+ * Exported because the pricing estimate and the daemon's selector reuse the
  * exact same guard (single source of truth — no scattered inline checks).
  */
 export function isBlockedObjectKey(k: string): boolean {
@@ -43,15 +43,15 @@ export function isBlockedObjectKey(k: string): boolean {
 /**
  * The structural subset of the video-generation selection config this resolver
  * reads. Declared LOCALLY (not imported from the runtime `VideoGenerationConfig`
- * in schema-integrations.ts) so this Wave-1 plan stays decoupled from Plan 02,
- * which adds that schema in the same wave. The resolver only needs these fields.
+ * in schema-integrations.ts) to keep this pure resolver decoupled from the
+ * runtime config schema. The resolver only needs these fields.
  */
 export type VideoGenSelectionConfig = {
   /** "auto" | "fal" | "google" | "xai" */
   provider: string;
   /** Tool/config-supplied model that overrides the per-backend default. */
   model?: string;
-  /** Plan 02 lands the real field; this resolver reads it defensively. */
+  /** Defined by the runtime schema; this resolver reads it defensively. */
   fallbackChain?: string[];
 };
 
@@ -69,7 +69,7 @@ export type VideoProviderSelection =
     }
   | { ok: false; errorKind: VideoErrorKind; hint: string };
 
-/** The exact config knob a RES-03 hint must name (success-criterion). */
+/** The exact config knob every honest-unavailable hint must name. */
 const PROVIDER_KNOB = "integrations.media.videoGeneration.provider";
 
 function unavailableHint(mainProviderId: string): string {
@@ -88,14 +88,14 @@ export function resolveVideoProvider(
 ): VideoProviderSelection {
   // 1. Explicit non-"auto" provider takes priority over follow-main.
   if (cfg.provider !== "auto") {
-    // SEC-04: reject a poisoned provider id BEFORE indexing VIDEO_CAPABILITY.
+    // Reject a poisoned (prototype-polluting) provider id BEFORE indexing VIDEO_CAPABILITY.
     if (isBlockedObjectKey(cfg.provider)) {
       return { ok: false, errorKind: "unsupported_provider", hint: unavailableHint(cfg.provider) };
     }
     const cap = VIDEO_CAPABILITY[cfg.provider];
     // `fal` (and any explicit provider with no VIDEO_CAPABILITY entry) is an
     // explicit-only backend with no follow-main capability — its concrete
-    // adapter path is wired separately in Plan 04. Here it resolves to
+    // adapter path is wired separately in the daemon. Here it resolves to
     // honest-unavailable; do NOT special-case `fal` into the capability map.
     if (cap && credsAvailable(cap.videoApi)) {
       return { ok: true, ...cap, model: cfg.model, source: "explicit" };
@@ -112,7 +112,7 @@ export function resolveVideoProvider(
   }
 
   // 2. provider === "auto": follow the agent's main provider.
-  // SEC-04: reject a poisoned resolved main-provider id BEFORE indexing.
+  // Reject a poisoned resolved main-provider id BEFORE indexing.
   if (isBlockedObjectKey(mainProviderId)) {
     return { ok: false, errorKind: "unsupported_provider", hint: unavailableHint(mainProviderId) };
   }
@@ -146,7 +146,7 @@ export function resolveVideoProvider(
 }
 
 /**
- * 3. Fallback chain (RES-04) — consulted ONLY after follow-main fails. Each
+ * 3. Fallback chain — consulted ONLY after follow-main fails. Each
  * entry that cannot serve (blocked key, incapable, or no creds) is reported via
  * `onSkip` with a reason naming it; the first usable entry wins. Returns
  * undefined if the chain is empty or exhausted (the caller emits the
@@ -159,7 +159,7 @@ function tryFallbackChain(
   followMainSkipReason: string,
 ): VideoProviderSelection | undefined {
   const chain = cfg.fallbackChain ?? [];
-  // WR-04: when there is no fallback to try (the schema-default empty chain),
+  // When there is no fallback to try (the schema-default empty chain),
   // the follow-main-skip line is pure log noise — there was no fallback
   // consultation to narrate, and the caller emits its own honest-unavailable
   // hint. Only report the skip when a chain actually exists (then it IS the
@@ -168,7 +168,7 @@ function tryFallbackChain(
   // Report that follow-main was tried first (it is the reason we are here).
   onSkip?.(`follow-main skipped: ${followMainSkipReason}`);
   for (const p of chain) {
-    // SEC-04: reject a poisoned fallback entry BEFORE indexing VIDEO_CAPABILITY.
+    // Reject a poisoned fallback entry BEFORE indexing VIDEO_CAPABILITY.
     if (isBlockedObjectKey(p)) {
       onSkip?.(`fallback "${p}" skipped: blocked object key`);
       continue;

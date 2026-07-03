@@ -203,16 +203,16 @@ function foldMarkerText(input: string): string {
 
 function replaceMarkers(content: string): string {
   const folded = foldMarkerText(content);
-  // Check for both legacy static markers and new dynamic markers
+  // Check for both the fixed literal markers and the dynamic hex-delimiter markers
   if (!/external_untrusted_content/i.test(folded) && !/untrusted_[a-f0-9]/i.test(folded)) {
     return content;
   }
   const replacements: Array<{ start: number; end: number; value: string }> = [];
   const patterns: Array<{ regex: RegExp; value: string }> = [
-    // Legacy static markers
+    // Fixed literal markers (a known string an attacker can embed to fake a boundary)
     { regex: /<<<EXTERNAL_UNTRUSTED_CONTENT>>>/gi, value: "[[MARKER_SANITIZED]]" },
     { regex: /<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>/gi, value: "[[END_MARKER_SANITIZED]]" },
-    // New dynamic markers (hex delimiter pattern)
+    // Dynamic markers (hex delimiter pattern)
     { regex: /<<<UNTRUSTED_[a-f0-9]+>>>/gi, value: "[[MARKER_SANITIZED]]" },
     { regex: /<<<END_UNTRUSTED_[a-f0-9]+>>>/gi, value: "[[END_MARKER_SANITIZED]]" },
   ];

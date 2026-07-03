@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture guard for the sandbox no-downgrade invariant (SANDBOX-02, design
- * §12, Phase 172 Plan 02).
+ * Architecture guard for the sandbox no-downgrade invariant.
  *
  * The invariant: a spawned child may never be LESS confined than its spawner.
  * It is enforced fail-closed at the SINGLE spawn chokepoint

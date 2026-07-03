@@ -353,22 +353,23 @@ describe("buildGraphAnnouncement", () => {
 });
 
 // ---------------------------------------------------------------------------
-// graph-completion honors §1.4 mode invariants on substrate-routed writes
+// graph-completion honors the owner-only 0o600 file-mode invariant on
+// substrate-routed writes
 //
-// The graph-completion writer's _run-metadata.json write is now routed
+// The graph-completion writer's _run-metadata.json write is routed
 // through `writeRegularFile`. The substrate uses `fs.openSync` +
 // `fs.fchmodSync(fd, 0o600)` internally — distinct from the `writeFileSync`
 // path mocked above — so real fs writes succeed even with the workspace-
 // level `vi.mock("node:fs", ...)`. The substrate's chmod-by-fd is the
-// load-bearing primitive the §1.4 invariant relies on.
+// load-bearing primitive the file-mode invariant relies on.
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// IN-01: nodeTokenSpend must have a production READER. It is surfaced as a
+// nodeTokenSpend must have a production READER. It is surfaced as a
 // per-node spend breakdown on the graph:completed event (mirroring the sibling
 // nodeEffectiveness cache breakdown), so the per-node spend recorded by
-// applyNodeBudgetBreach is no longer a dead write.
+// applyNodeBudgetBreach is not a dead write.
 // ---------------------------------------------------------------------------
-describe("IN-01: graph:completed surfaces the per-node token-spend breakdown", () => {
+describe("graph:completed surfaces the per-node token-spend breakdown", () => {
   function runCompletion(spend: Record<string, number>) {
     const gs = createMinimalGraphRunState([
       { nodeId: "n1", status: "completed" },
@@ -393,14 +394,14 @@ describe("IN-01: graph:completed surfaces the per-node token-spend breakdown", (
     expect(payload!.nodeTokenSpend).toEqual({ n1: 1_200, n2: 3_400 });
   });
 
-  it("omits nodeTokenSpend when no per-node spend was recorded (byte-identical to today)", () => {
+  it("omits nodeTokenSpend when no per-node spend was recorded (payload shape unchanged)", () => {
     const payload = runCompletion({});
     expect(payload).toBeDefined();
     expect(payload!.nodeTokenSpend).toBeUndefined();
   });
 });
 
-describe("graph-completion honors §1.4 file mode invariant", () => {
+describe("graph-completion honors the owner-only 0o600 file-mode invariant", () => {
   it("write_regular_file_substrate_produces_run_metadata_at_mode_0o600", async () => {
     // Direct substrate-level test: write to a tmp file using the same
     // primitive the migrated graph-completion code uses; assert the
@@ -431,20 +432,20 @@ describe("graph-completion honors §1.4 file mode invariant", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEND-04 (Phase 177) — graph maxCost ↔ spend-ceiling interop.
+// Graph maxCost ↔ spend-ceiling interop.
 //
-// handleBudgetExceeded already takes an OPEN `reason: string` and is the SINGLE
-// seam the graph cumulative-budget path (graph-driver-handler.ts:110 →
+// handleBudgetExceeded takes an OPEN `reason: string` and is the SINGLE
+// seam the graph cumulative-budget path (graph-driver-handler.ts →
 // handleBudgetExceeded(gs, tokenExceeded ? "tokens" : "cost")) routes through. A
 // spend-ceiling breach in a graph context interoperates by routing through the
 // SAME seam with "spend_exceeded" — NO parallel graph kill-path, NO signature
 // change. These tests pin that contract: the spend reason is honored (running
 // nodes marked `Budget exceeded (spend_exceeded)`, graph cancelled/completed, WARN
-// fired) AND the existing "cost"/"tokens" reasons still work (coexistence). The
+// fired) AND the "cost"/"tokens" reasons still work (coexistence). The
 // WARN stays content-free (no `$` body — counts + hint + errorKind only).
 // ---------------------------------------------------------------------------
 
-describe("SPEND-04: handleBudgetExceeded interoperates with graph maxCost via an open reason", () => {
+describe("handleBudgetExceeded interoperates with graph maxCost via an open reason", () => {
   /** A GraphRunState with ONE running node (in runIdToNode, marked running on the
    *  state machine, NOT yet terminal, completedAt undefined) — the shape
    *  handleBudgetExceeded acts on. */
@@ -515,9 +516,8 @@ describe("SPEND-04: handleBudgetExceeded interoperates with graph maxCost via an
     expect(warn).toHaveBeenCalled();
     const warnArg = warn.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(warnArg["errorKind"]).toBe("resource");
-    // SPEND-04: a spend-ceiling breach names the spend kill-switch knob, NOT the
-    // graph's own maxTokens/maxCost (those are a different ceiling). RED: the hint
-    // is currently the generic graph.budget.maxTokens/maxCost text for every reason.
+    // A spend-ceiling breach names the spend kill-switch knob, NOT the
+    // graph's own maxTokens/maxCost (those are a different ceiling).
     expect(warnArg["hint"]).toMatch(/observability\.spend|spend ceiling/i);
     expect(warnArg["hint"]).not.toMatch(/graph\.budget\.maxTokens\/maxCost/);
     // Content-free: no `$` amount echoed as a body.
@@ -567,20 +567,19 @@ describe("SPEND-04: handleBudgetExceeded interoperates with graph maxCost via an
 });
 
 // ---------------------------------------------------------------------------
-// COST-02 (Task 2): subtree rollup over corrected $ + per-node surfacing.
+// Subtree rollup over corrected $ + per-node surfacing.
 //
-// HEAD has NO subtree rollup — only the graph-WIDE gs.cumulativeCost. The
-// rollup sums a node + every DESCENDANT (a child rolls into its parent's
+// The rollup sums a node + every DESCENDANT (a child rolls into its parent's
 // subtree total) over the per-node corrected-$ ledger gs.nodeCost, walking the
 // existing node→children edges (the reverse of dependsOn). It is PURE +
-// deterministic (no IO) so it is unit-testable and reusable by the COST-02 read
-// RPC. The rollup uses ONLY the per-graph gs (which IS the (tenant,agent)
+// deterministic (no IO) so it is unit-testable and reusable by read-side cost
+// reporting. The rollup uses ONLY the per-graph gs (which IS the (tenant,agent)
 // scope), so two graphs in different scopes never cross-contaminate. The
 // per-node cumulative cost is also surfaced on graph:completed (the
 // nodeTokenSpend precedent): present only when gs.nodeCost is non-empty.
 // ---------------------------------------------------------------------------
 
-describe("COST-02: subtree rollup over corrected $ (computeSubtreeCost)", () => {
+describe("subtree rollup over corrected $ (computeSubtreeCost)", () => {
   /** A GraphRunState carrying a parent + 2 children + 1 grandchild graph and a
    *  per-node corrected-$ ledger, for rollup assertions (no completion drive). */
   function rollupGs(nodeCost: Record<string, number>): GraphRunState {
@@ -600,7 +599,6 @@ describe("COST-02: subtree rollup over corrected $ (computeSubtreeCost)", () => 
     // parent $0.02, childA $0.10, childB $0.05, grandchild $0.01.
     const gs = rollupGs({ parent: 0.02, childA: 0.10, childB: 0.05, grandchild: 0.01 });
 
-    // RED on pre-patch: computeSubtreeCost does not exist (only a graph-wide sum).
     // parent's subtree = parent + childA + childB + grandchild = 0.18.
     expect(computeSubtreeCost(gs, "parent")).toBeCloseTo(0.18, 10);
     // childA's subtree = childA + grandchild = 0.11 (childB is NOT under childA).
@@ -639,7 +637,7 @@ describe("COST-02: subtree rollup over corrected $ (computeSubtreeCost)", () => 
   });
 });
 
-describe("COST-02: graph:completed surfaces the per-node cost ledger", () => {
+describe("graph:completed surfaces the per-node cost ledger", () => {
   function runCompletion(nodeCost: Record<string, number>) {
     const gs = createMinimalGraphRunState([
       { nodeId: "parent", status: "completed" },
@@ -669,7 +667,7 @@ describe("COST-02: graph:completed surfaces the per-node cost ledger", () => {
     expect(payload!.nodeCost).toEqual({ parent: 0.02, childA: 0.10 });
   });
 
-  it("omits nodeCost when no per-node cost was recorded (byte-identical to today)", () => {
+  it("omits nodeCost when no per-node cost was recorded (payload shape unchanged)", () => {
     const payload = runCompletion({});
     expect(payload).toBeDefined();
     expect(payload!.nodeCost).toBeUndefined();

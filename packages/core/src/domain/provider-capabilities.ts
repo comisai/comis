@@ -6,8 +6,7 @@
  * These describe provider-level quirks that apply to ALL models served by
  * a provider (as opposed to ModelCompatConfig which is per-model).
  *
- * NOTE: Comis starts with 4 fields that address known provider-specific
- * issues. Additional fields (e.g., payloadNormalization, thinkingSignature)
+ * NOTE: Additional fields (e.g., payloadNormalization, thinkingSignature)
  * can be added as needed without breaking existing configs because Zod
  * defaults handle missing fields.
  *

@@ -158,7 +158,7 @@ export function attributeReason(
   if (changes.toolsChanged) return "tools_changed";
   if (changes.retentionChanged) return "retention_changed";
   if (changes.metadataChanged) return "cache_metadata_changed";
-  // New reasons after metadata, before TTL
+  // Header / extra-body reasons after metadata, before TTL
   if (changes.headersChanged) return "headers_changed";
   if (changes.extraBodyChanged) return "extra_body_changed";
   // Effort and cache_control reasons after extra_body, before TTL

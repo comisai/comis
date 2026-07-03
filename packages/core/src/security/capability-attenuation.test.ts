@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LEASE-04 — mint attenuation is the SINGLE trust boundary against capability
- * broadening down a delegation tree (v8 §4.2). `attenuateCaps(parent, requested)`
+ * Mint attenuation is the SINGLE trust boundary against capability
+ * broadening down a delegation tree. `attenuateCaps(parent, requested)`
  * must return exactly `parent ∩ requested`: a child lease can NEVER hold a cap
  * the parent does not, and never a cap that was not requested.
  *
@@ -9,12 +9,9 @@
  * test is insufficient — the load-bearing assertion is a SEEDED, deterministic
  * fuzz of >=1000 iterations over random (parent, requested) subsets of the closed
  * `AGENT_CAPABILITIES` universe, holding the subset-of-parent invariant on EVERY
- * iteration. No property-testing library (it is not a dependency — RESEARCH
- * Pitfall 5); the PRNG is a tiny inline mulberry32 with a FIXED seed so any
+ * iteration. No property-testing library (it is not a dependency);
+ * the PRNG is a tiny inline mulberry32 with a FIXED seed so any
  * failure reproduces exactly (matching the codebase's existing loop-fuzz convention).
- *
- * These cases fail on the pre-patch tree: `attenuateCaps` is not yet exported
- * (TS2305 on the import) — RED proof.
  *
  * @module
  */
@@ -44,22 +41,22 @@ function randomSubset(rng: () => number, universe: readonly AgentCapability[]): 
 const FUZZ_ITERATIONS = 1000;
 const FUZZ_SEED = 0x9e3779b9; // golden-ratio constant — a fixed, reproducible seed
 
-describe("attenuateCaps (LEASE-04 — mint attenuation = pure parent ∩ requested)", () => {
-  it("LEASE-04-S1: attenuateCaps([], requested) is empty — an empty parent grants nothing", () => {
+describe("attenuateCaps (mint attenuation = pure parent ∩ requested)", () => {
+  it("attenuateCaps([], requested) is empty — an empty parent grants nothing", () => {
     expect(attenuateCaps([], [...AGENT_CAPABILITIES])).toEqual([]);
   });
 
-  it("LEASE-04-S2: attenuateCaps(parent, []) is empty — an empty request takes nothing", () => {
+  it("attenuateCaps(parent, []) is empty — an empty request takes nothing", () => {
     expect(attenuateCaps([...AGENT_CAPABILITIES], [])).toEqual([]);
   });
 
-  it("LEASE-04-S3: drops a requested cap the parent does not hold (orch:spawn outside parent)", () => {
+  it("drops a requested cap the parent does not hold (orch:spawn outside parent)", () => {
     // parent lacks orch:spawn; requesting it must NOT broaden the child lease.
     const result = attenuateCaps(["orch:read", "orch:web"], ["orch:web", "orch:spawn"]);
     expect(result).toEqual(["orch:web"]);
   });
 
-  it("LEASE-04-S4: preserves the REQUESTED order on the intersection", () => {
+  it("preserves the REQUESTED order on the intersection", () => {
     // requested order is orch:web then orch:read; both in parent → that order out.
     const result = attenuateCaps(
       ["orch:read", "orch:web", "orch:analyze"],
@@ -68,14 +65,14 @@ describe("attenuateCaps (LEASE-04 — mint attenuation = pure parent ∩ request
     expect(result).toEqual(["orch:web", "orch:read"]);
   });
 
-  it("LEASE-04-S5: identity on full ∩ full — all 10 caps survive", () => {
+  it("is the identity on full ∩ full — all 10 caps survive", () => {
     const result = attenuateCaps([...AGENT_CAPABILITIES], [...AGENT_CAPABILITIES]);
     expect([...result].sort()).toEqual([...AGENT_CAPABILITIES].sort());
     expect(result.length).toBe(10);
   });
 
   // ── The load-bearing property: >=1000 seeded iterations, subset-of-parent ──
-  it(`LEASE-04-S6: over ${FUZZ_ITERATIONS} seeded iterations, the result NEVER broadens beyond parent`, () => {
+  it(`over ${FUZZ_ITERATIONS} seeded iterations, the result NEVER broadens beyond parent`, () => {
     const rng = mulberry32(FUZZ_SEED);
     const universe = AGENT_CAPABILITIES;
     const capSet = new Set<string>(universe);
@@ -89,7 +86,7 @@ describe("attenuateCaps (LEASE-04 — mint attenuation = pure parent ∩ request
       const requestedSet = new Set<string>(requested);
 
       for (const cap of result) {
-        // (a) subset-of-parent — the broadening-prevention invariant (LEASE-04).
+        // (a) subset-of-parent — the broadening-prevention invariant.
         expect(
           parentSet.has(cap),
           `iteration ${i} (seed ${FUZZ_SEED}): result cap "${cap}" is NOT in parent — BROADENING`,
@@ -115,7 +112,7 @@ describe("attenuateCaps (LEASE-04 — mint attenuation = pure parent ∩ request
     }
   });
 
-  it("LEASE-04-S7: is pure — the same (parent, requested) yields a deeply-equal result", () => {
+  it("is pure — the same (parent, requested) yields a deeply-equal result", () => {
     const parent: AgentCapability[] = ["orch:read", "orch:web", "orch:spawn"];
     const requested: AgentCapability[] = ["orch:web", "orch:graph", "orch:read"];
     expect(attenuateCaps(parent, requested)).toEqual(attenuateCaps(parent, requested));

@@ -13,7 +13,7 @@
  *   5. !verifyCallbackData(...)                     → invalid_signature (constant-time, no throw)
  *   6. details → details_requested (no resolve); approve/deny → resolveApproval + resolved
  *
- * Plain-text branch (§6.4.6): pendingForSession + case-insensitive verb (+ optional shortId
+ * Plain-text branch: pendingForSession + case-insensitive verb (+ optional shortId
  * suffix); exactly-one → resolve; multiple-no-suffix → ambiguous; none → unknown. HMAC skipped
  * for this branch only; replay protection still from pending-table removal.
  */
@@ -218,7 +218,7 @@ describe("InteractiveCallbackRouter — signed branch", () => {
 
   it("invalid_signature: verifyCallbackData does NOT throw on an unequal-length tag (length-guard-first contract)", () => {
     // parseCallbackData enforces a 16-char hmac, so the unequal-length path is asserted
-    // directly against the primitive the router calls (the 'no throw' line, Pitfall 3).
+    // directly against the primitive the router calls (the 'no throw' contract).
     const shortTag = "short";
     const longTag = "waytoolongtagvaluethatexceeds16chars";
     expect(() => signCallbackData(SECRET, "approve", SHORT_ID)).not.toThrow();
@@ -288,7 +288,7 @@ describe("InteractiveCallbackRouter — signed branch", () => {
   });
 });
 
-describe("InteractiveCallbackRouter — plain-text branch (§6.4.6)", () => {
+describe("InteractiveCallbackRouter — plain-text branch", () => {
   it("exactly-one pending in session + 'approve' → resolved (HMAC skipped)", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
     const res = await router.route(inbound("approve"));

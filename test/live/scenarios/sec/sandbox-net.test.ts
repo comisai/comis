@@ -90,7 +90,7 @@ describe("SEC-06 — bwrap + net{open,broker-only} (Linux-only)", () => {
       "is absent on macOS; runs on a Linux+bwrap host where detectSandboxProvider() returns a BwrapProvider. " +
       "sandbox-exec ignores the network mode (covered above is exec-confinement only).",
     () => {
-      // On Linux+bwrap (operator / Phase 146):
+      // On Linux+bwrap (operator):
       //   const provider = detectSandboxProvider(); // → BwrapProvider
       //   const open = provider.buildArgs({ ..., network: { mode: "open" } });
       //   expect(open).toContain("--share-net");

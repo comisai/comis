@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the complete-conversation-reset factory (live finding
- * 2026-06-11, LIVEMEM run): a DAG conversation survived every existing
- * "forget" surface because `session.reset_conversation` skipped the runtime
- * layer (resurrection via lcd-ingest epoch rebase) while `/new`//`/reset`
- * skipped the LCD layer (old context items re-presented).
+ * Unit tests for the complete-conversation-reset factory: a DAG conversation
+ * survived every existing "forget" surface because `session.reset_conversation`
+ * skipped the runtime layer (resurrection via lcd-ingest epoch rebase) while
+ * `/new`//`/reset` skipped the LCD layer (old context items re-presented).
  *
  * Pins:
- *   R1: destroyConversationCompletely clears ALL THREE layers and reports
- *       per-layer counts (lcd rows, session messages, runtime destroyed)
- *   R2: LCD delete runs INSIDE runOnConversation (serialized vs live ingest)
- *   R3: sessionStore cleared with [] + original metadata preserved
- *   R4: absent layers degrade to honest zeros/false with WARN — never throw
- *   R5: a failing layer never undoes the others (best-effort isolation)
- *   R6: destroyRuntimeSession parses the formatted key and destroys via the
- *       agent's adapter; unparseable key → false + WARN, no throw
- *   R7: missing adapter for the agent → false + WARN naming the resurrection
- *       consequence
+ *   - destroyConversationCompletely clears ALL THREE layers and reports
+ *     per-layer counts (lcd rows, session messages, runtime destroyed)
+ *   - LCD delete runs INSIDE runOnConversation (serialized vs live ingest)
+ *   - sessionStore cleared with [] + original metadata preserved
+ *   - absent layers degrade to honest zeros/false with WARN — never throw
+ *   - a failing layer never undoes the others (best-effort isolation)
+ *   - destroyRuntimeSession parses the formatted key and destroys via the
+ *     agent's adapter; unparseable key → false + WARN, no throw
+ *   - missing adapter for the agent → false + WARN naming the resurrection
+ *     consequence
  *
  * Use-case shape: operator or user asks the platform to forget a
  * conversation; the system either fully severs it or says honestly which
@@ -116,11 +115,10 @@ describe("user asks the platform to completely forget a conversation", () => {
     );
   });
 
-  // OBS-2: a reset that clears 0 across all three layers is almost always a
+  // A reset that clears 0 across all three layers is almost always a
   // session_key-format mismatch (the LCD is keyed by the formatted key, not the
   // trajectory-filename "<chat>~peer~<chat>" form). Surface it as a WARN naming
-  // the formatted key instead of a silent 0-count info line (openclaw-usecases
-  // 2026-06-25 — a near-miss invalid cross-session test).
+  // the formatted key instead of a silent 0-count info line.
   it("WARNs with the formatted-key hint when the reset clears NOTHING across all layers", async () => {
     const deps = makeDeps({ lcdStore: makeLcdStore(0), sessionStore: makeSessionStore([]) });
 

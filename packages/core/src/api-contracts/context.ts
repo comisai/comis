@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Context (LCD lossless-store) operator-browse RPC contracts. Back the web
- * Context DAG browser (`packages/web/src/views/context-dag-browser.ts`), which
- * previously called these methods via untyped `.call()` against UNREGISTERED
- * handlers (every call returned JSON-RPC -32601 — the view was 100% dead).
+ * Context DAG browser (`packages/web/src/views/context-dag-browser.ts`).
  *
  * Handler path: `packages/daemon/src/api/context-handlers.ts`.
  *
- * **Scope (R4).** Both methods are `rpc`-scoped and AGENT+TENANT scoped exactly
+ * **Scope.** Both methods are `rpc`-scoped and AGENT+TENANT scoped exactly
  * like `memory.search_files`: the handler reads `_agentId` from the dispatcher-
  * injected internals and `tenantId` from `deps.tenantId`, NEVER widening past
  * one agent within one tenant. The caller cannot pass agentId/tenantId — they
- * ride the request context (WR-02).
+ * ride the request context.
  *
  * **Content posture.** `context.conversations` is pure metadata (ids / counts /
  * time-bounds). `context.tree` is the structural DAG (summary nodes + raw-
@@ -19,8 +17,8 @@
  * mirrors `ctx_inspect`'s deliberate "metadata-first" stance and surfaces the
  * per-node `taint` flag so the UI can mark untrusted nodes. Full per-node
  * content recovery (the taint-sensitive `context.inspect` / FTS
- * `context.searchByConversation` paths) is intentionally NOT in this pass —
- * those two methods remain unregistered and are tracked as deferred.
+ * `context.searchByConversation` paths) is intentionally not exposed —
+ * those two methods are unregistered (see the aggregator note below).
  *
  * **Allowlist compliance.** All schemas use only the 12-shape allowlist:
  * z.object, z.string, z.number, z.boolean, z.array, z.nullable, z.optional.
@@ -83,7 +81,7 @@ export const ContextConversationsContract = defineContract({
  * `contentPreview` (bounded, untrusted-origin — shown to a human, never re-fed
  * to a model), `childIds`, `parentIds`, `taint`, `createdAt` ISO string).
  * `messageCount` is the number of `message`-ref context_items (raw turns not yet
- * collapsed into a summary). R4 agent+tenant scoped — a wrong/foreign
+ * collapsed into a summary). Agent+tenant scoped — a wrong/foreign
  * conversation resolves to an empty tree, never another agent's data.
  */
 export const ContextTreeContract = defineContract({
@@ -117,15 +115,15 @@ export const ContextTreeContract = defineContract({
  * Tuple of every context.* operator-browse contract. The bidirectional 1:1
  * architecture test treats this as an unordered set.
  *
- * NOTE: `context.inspect` + `context.searchByConversation` are deliberately
- * absent — they are the deferred content-recovery / FTS methods and remain
- * unregistered until implemented (the view degrades to load + render the DAG
- * structure without per-node deep-inspect / in-conversation search).
+ * NOTE: `context.inspect` + `context.searchByConversation` (per-node
+ * content recovery / in-conversation FTS) are deliberately absent — they are
+ * unregistered, and the view degrades to load + render the DAG structure
+ * without per-node deep-inspect / in-conversation search.
  *
- * Phase 164-06: `context.reset_lcd` (LCD-only forget) has been superseded by
- * `session.reset_conversation` (complete cross-mode forget: LCD + sessionStore).
- * The new contract lives in `sessions.ts` under `SESSIONS_CONTRACTS`; the
- * handler is in `session-archive.ts`.
+ * Conversation reset is NOT a context.* method: `session.reset_conversation`
+ * (complete cross-mode forget: LCD + sessionStore) covers it. That contract
+ * lives in `sessions.ts` under `SESSIONS_CONTRACTS`; the handler is in
+ * `session-archive.ts`.
  */
 export const CONTEXT_CONTRACTS = [
   ContextConversationsContract,

@@ -4,19 +4,19 @@ import { resolveVisionPath } from "./resolve-vision-path.js";
 
 /**
  * resolveVisionPath is a PURE ladder-decision resolver (no I/O) for the
- * provider-following vision path (VIS-02/03). Purity is preserved by injection:
+ * provider-following vision path. Purity is preserved by injection:
  * the daemon precomputes `visionCapable` (via `isVisionCapable(getModel(...))`),
  * `mainCredsAvailable` (a SecretManager/OAuth lookup), and `registryAvailable`
  * (whether `selectVisionProvider` would return a provider). The resolver never
  * touches the catalog, a secret store, process.env, or the network — it only
  * labels WHICH path the handler must execute.
  *
- * The locked ladder ORDER (CONTEXT/RESEARCH): main-vision FIRST (image only,
+ * The locked ladder ORDER: main-vision FIRST (image only,
  * when the main model sees images AND its creds resolve) → registry SECOND →
  * gemini-video THIRD (raw video only) → honest-unavailable LAST. An explicit
- * vision `defaultProvider` overrides main-first (A3 — I2 parity: explicit wins).
+ * vision `defaultProvider` overrides main-first (explicit wins).
  * `mediaKind:"video"` NEVER returns main-vision (pi-ai has no video content
- * type — Pitfall 3).
+ * type).
  */
 describe("resolveVisionPath", () => {
   const baseImage = {
@@ -27,12 +27,12 @@ describe("resolveVisionPath", () => {
     registryAvailable: true,
   };
 
-  it("picks main-vision FIRST when image + vision-capable + main creds + no explicit override (VIS-01)", () => {
+  it("picks main-vision FIRST when image + vision-capable + main creds + no explicit override", () => {
     const sel = resolveVisionPath({ ...baseImage });
     expect(sel).toEqual({ ok: true, path: "main-vision", provider: "anthropic" });
   });
 
-  it("falls to the registry when the main provider is not vision-capable (VIS-02 no-regression)", () => {
+  it("falls to the registry when the main provider is not vision-capable", () => {
     const onSkip = vi.fn();
     const sel = resolveVisionPath({ ...baseImage, visionCapable: false }, onSkip);
     expect(sel).toEqual({ ok: true, path: "registry" });
@@ -41,7 +41,7 @@ describe("resolveVisionPath", () => {
     );
   });
 
-  it("falls to the registry (NOT unavailable) when main is vision-capable but has no creds (VIS-02)", () => {
+  it("falls to the registry (NOT unavailable) when main is vision-capable but has no creds", () => {
     const onSkip = vi.fn();
     const sel = resolveVisionPath({ ...baseImage, mainCredsAvailable: false }, onSkip);
     // The registry has its OWN keys → registry, never unavailable.
@@ -51,7 +51,7 @@ describe("resolveVisionPath", () => {
     );
   });
 
-  it("honors an explicit defaultProvider over main-first (A3 — explicit wins, I2 parity)", () => {
+  it("honors an explicit defaultProvider over main-first (explicit operator config wins)", () => {
     const onSkip = vi.fn();
     const sel = resolveVisionPath(
       { ...baseImage, explicitDefaultProvider: "openai" },
@@ -68,7 +68,7 @@ describe("resolveVisionPath", () => {
     expect(sel).toEqual({ ok: true, path: "main-vision", provider: "anthropic" });
   });
 
-  it("NEVER returns main-vision for mediaKind:video even when vision-capable (Pitfall 3)", () => {
+  it("NEVER returns main-vision for mediaKind:video even when vision-capable", () => {
     const sel = resolveVisionPath({
       mediaKind: "video",
       mainProviderId: "anthropic",
@@ -121,7 +121,7 @@ describe("resolveVisionPath", () => {
     expect(sel.hint).toContain("anthropic");
   });
 
-  it("reports each non-chosen tier via onSkip in ladder order (VIS-03 path-logging)", () => {
+  it("reports each non-chosen tier via onSkip in ladder order (path-logging)", () => {
     const order: string[] = [];
     const onSkip = (reason: string): void => {
       order.push(reason);

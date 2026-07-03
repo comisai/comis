@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `comis-agent-cli` — the in-jail `comis-agent` CLI body (Surface 3, v8 §7).
+ * `comis-agent-cli` — the in-jail `comis-agent` CLI body (Surface 3).
  * {@link runComisAgent} parses an attacker-controlled argv (the agent's own
  * script) into EXACTLY ONE cap-socket call and dispatches it via the injected
- * {@link callCapSocket} (CLI-04 — the lease cap socket, never a WebSocket /
+ * {@link callCapSocket} (the lease cap socket, never a WebSocket /
  * gateway client). A `{kind:"tool"}` subcommand rides `tool.invoke`
  * (`callCapSocket("tool.invoke", { tool, args })`); a `{kind:"method"}`
  * subcommand sends the DIRECT method (`callCapSocket(method, params)`).
@@ -14,9 +14,9 @@
  * `requireCapability` decide (a denial surfaces as the endpoint's content-free
  * message, never re-implemented here). An unknown subcommand — including the
  * deliberately-absent `skill` (denylisted orch:skill closed door) and the admin
- * verbs `secrets`/`config`/`tokens` (CLI-03) — exits non-zero WITHOUT touching
+ * verbs `secrets`/`config`/`tokens` — exits non-zero WITHOUT touching
  * the socket. A missing lease loud-fails (the {@link callCapSocket} reject
- * surfaces as a non-zero exit + a loud stderr naming the env + "jail", CLI-06).
+ * surfaces as a non-zero exit + a loud stderr naming the env + "jail").
  *
  * Containment (AGENTS.md §2.3): this runs INSIDE the orchestrate jail, so the
  * parser is deliberately DEPENDENCY-FREE — a tiny hand-rolled flag/positional

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Generic per-tier benchmark suite report builder -- the single manifest shape
- * every Tier-3 + external + BEAM harness writes to disk via `writeRegularFile`,
+ * every Comis-unique, external-benchmark, and BEAM harness writes to disk via `writeRegularFile`,
  * so a Comis suite number is reproducible across changes and comparable
  * per-ability.
  *

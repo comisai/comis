@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IRC LinePerEvent renderer tests (§18.3 IRC column).
+ * IRC LinePerEvent renderer tests.
  *
- * IRC is text-only: no in-place edit, no delete, a hard 512-char per-line cap
- * (§7.1). The renderer wires the `createLinePerEventRenderer` — that
+ * IRC is text-only: no in-place edit, no delete, a hard 512-char per-line
+ * cap. The renderer wires the `createLinePerEventRenderer` — that
  * strategy OWNS the 512-cap/`…` truncation and the closing summary line; this
  * file proves the wiring (one send per `changeSet.added` event, `✓ done · N steps`
  * on success, `[ERR] {errorKind}` on failure) and the thin classifier.
@@ -12,7 +12,7 @@
  * failures in `new Error("Failed to send IRC message: …")` with NO structured
  * numeric code, so the classifier defaults to `internal` and reads the error for
  * NOTHING user-facing (it selects the variant only and is NEVER rendered as
- * activity text — §19.3). `makeIrcRenderActions` maps `send` through it and
+ * activity text). `makeIrcRenderActions` maps `send` through it and
  * answers `edit`/`delete` with `not_supported` (IRC has neither);
  * `createIrcActivityRenderer` wires the strategy (no duplicated state machine).
  *
@@ -20,7 +20,7 @@
  * wall-time call (globals.test.ts fails the build otherwise). IRC needs only a
  * clock (the elapsed-time suffix on the success closing line); LinePerEvent takes
  * NO timer. Golden fixtures assert via readFixture + toEqual (NEVER an
- * auto-writing inline/file snapshot, which self-heals a wrong fixture — Pitfall 3).
+ * auto-writing inline/file snapshot, which self-heals a wrong fixture).
  */
 import { describe, it, expect } from "vitest";
 import type {
@@ -58,7 +58,7 @@ function makeEvent(overrides: Partial<ActivityEvent> = {}): ActivityEvent {
   } as ActivityEvent;
 }
 
-// --- Task 1: classifyIrcError + makeIrcRenderActions -----------------------
+// --- classifyIrcError + makeIrcRenderActions --------------------------------
 
 describe("classifyIrcError (structural only, never the wrapped message string)", () => {
   it("maps an unknown bare Error to internal carrying the cause (IRC has no numeric code)", () => {
@@ -150,14 +150,14 @@ describe("createIrcActivityRenderer (LinePerEvent wiring, clock-only deps)", () 
       changeSet: { added: ["a-1"], edited: [], removed: [] },
     });
 
-    // [Rule 1 — bug fix, quick-260528-nsv] Tool-event line carries the running
-    // 🔧 marker (per-step glyph re-derived by eventLabel post-patch); the
-    // one-send-per-added-event invariant is unchanged.
+    // The tool-event line carries the running 🔧 marker (per-step glyph
+    // derived by eventLabel); the one-send-per-added-event invariant is the
+    // load-bearing assertion.
     expect(fake.recorded.calls).toEqual([{ op: "send", id: "irc-msg-0", text: "🔧 step one" }]);
   });
 });
 
-// --- Task 2: 11 golden fixtures (S1-S7, S9-S12; no S8) ---------------------
+// --- 11 golden fixtures (S1-S7, S9-S12; no S8) ------------------------------
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeIrcAdapter>): unknown {
@@ -215,7 +215,7 @@ async function runScenario(
 /** Fixed elapsed delta → the success closing line reads `· 2.0s`. */
 const ELAPSED_MS = 2000;
 
-describe("IRC golden fixtures (§18.3 LinePerEvent rows — readFixture + toEqual)", () => {
+describe("IRC golden fixtures (LinePerEvent rows — readFixture + toEqual)", () => {
   it("S1 trivial chat — zero lines (success trivial, no added events)", async () => {
     const log = await runScenario([], { kind: "success", trivial: true, delivery: receipt(0) });
     expect(log).toEqual(readFixture("irc", "S1"));

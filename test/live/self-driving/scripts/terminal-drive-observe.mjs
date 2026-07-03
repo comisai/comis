@@ -4,7 +4,7 @@
 // terminal-drive-observe.mjs — the GROUND-TRUTH oracle for a webhook/cron→claude TERMINAL DRIVE.
 //
 // Runs ON THE VPS (needs the tmux socket + /proc + the daemon log). It bundles the four hand-rolled
-// probes the webhook-claude-gsd-snake-20260702 run had to reinvent every few minutes:
+// probes a webhook→claude terminal-drive run otherwise reinvents every few minutes:
 //
 //   screen     — the LIVE claude tmux pane(s) (capture-pane), so you SEE what the drive is doing
 //                (planning / executing / Noodling / a dialog) without guessing from the log.
@@ -14,22 +14,22 @@
 //   lifecycle  — the drive lifecycle from the daemon log: create / promote / awaiting-input /
 //                drive_continue / evicted(reason) / reaped / webhook_delivered(success). This is the
 //                honest-fail + idle-reap read (the run had to `cat daemon.log daemon.1.log | grep` by hand).
-//   progress   — a GSD/coding drive's real progress: the project's git log + ROADMAP `[x]` phases +
+//   progress   — a coding drive's real progress: the project's git log + ROADMAP `[x]` phases +
 //                code-file count (the "did it actually build anything" read, not the chat reply).
 //
-// WHY: the run diagnosed the TERMINAL-IDLE-REAP finding by hand-correlating `terminal session evicted`
+// WHY: the idle-reap behavior was first diagnosed by hand-correlating `terminal session evicted`
 // timestamps vs the last activity, hand-scanning /proc for the leak oracle, and hand-grepping git for
-// GSD progress — all reusable for ANY webhook→claude test. This is that kit, once.
+// build progress — all reusable for ANY webhook→claude test. This is that kit, once.
 //
 // Usage (on the VPS):
 //   node terminal-drive-observe.mjs [screen|secrets|lifecycle|progress|all] [projectName] [--session <substr>] [--watch <sec>]
-//   node terminal-drive-observe.mjs all snake-gsd2
-//   node terminal-drive-observe.mjs lifecycle --session snakegsd     # filter the log to one drive
-//   node terminal-drive-observe.mjs all snake-gsd2 --watch 20        # re-run every 20s (the drive-poll loop)
+//   node terminal-drive-observe.mjs all snake-app
+//   node terminal-drive-observe.mjs lifecycle --session snake        # filter the log to one drive
+//   node terminal-drive-observe.mjs all snake-app --watch 20         # re-run every 20s (the drive-poll loop)
 //
 // --watch <sec> is the DRIVE-POLL loop: it re-runs the selected mode(s) every <sec> seconds so you can
 // watch an unattended drive PROGRESS (screen advancing, commits landing, lifecycle transitions) without
-// hand-re-running — exactly the poll the webhook-claude-gsd-snake run kept doing by hand via a remote
+// hand-re-running — exactly the poll such a run otherwise does by hand via a remote
 // /tmp/*-poll.sh. Ctrl-C to stop; each pass is timestamp-headed.
 //
 // Env: DATA (default /home/comis/.comis), COMIS_USER (default comis). ROOT-HOME-guarded like db.mjs.

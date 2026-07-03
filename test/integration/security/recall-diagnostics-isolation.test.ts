@@ -192,7 +192,7 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
   }
 
   /** Mint an observation (proof_count IS NOT NULL) under a scope via the REAL
-   *  store write path so `listObservations` surfaces it. (Phase 226 trimmed the
+   *  store write path so `listObservations` surfaces it. (There is no
    *  consolidation-cron `applyConsolidation` writer; an observation is identified
    *  by `proof_count IS NOT NULL`, so a direct `store(...)` of an observation row
    *  + a scoped source-mark is the equivalent seed.) */

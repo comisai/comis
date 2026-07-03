@@ -42,7 +42,7 @@ describe("workspace-manager", () => {
     });
 
     it("does not overwrite user-owned files", async () => {
-      // Renamed 2026-05-20: SOUL.md is now platform-owned and gets refreshed by
+      // SOUL.md is platform-owned and gets refreshed by
       // ensureWorkspace; user-owned IDENTITY.md is the correct surface for the
       // "preserve existing content" assertion.
       const dir = await makeTempDir();
@@ -249,10 +249,9 @@ describe("workspace-manager", () => {
       });
 
       it("skips tracker registration for pre-existing user-owned files (writeIfMissing returned false)", async () => {
-        // Renamed/retargeted 2026-05-20: this test originally pre-created SOUL.md
-        // (now platform-owned) and asserted ensureWorkspace did not touch it.
-        // SOUL.md is now refreshed-when-stale, so we use IDENTITY.md (user-owned)
-        // to exercise the same "pre-existing file is not re-registered" path.
+        // SOUL.md is platform-owned and refreshed-when-stale, so it cannot serve
+        // as the pre-existing file here; we use IDENTITY.md (user-owned)
+        // to exercise the "pre-existing file is not re-registered" path.
         const dir = await makeTempDir();
         await fs.mkdir(dir, { recursive: true });
         // Pre-create IDENTITY.md with custom content; ensureWorkspace must NOT
@@ -296,9 +295,9 @@ describe("workspace-manager", () => {
   });
 
   describe("refreshPlatformFiles (content-hash refresh)", () => {
-    // 2026-05-20 lineage: the prior `wx`-only seed flow let stale pre-fix
-    // templates persist forever, so an installed agent's inherited workspace
-    // kept promising a pre-warmed venv that no code provisioned. These tests
+    // A `wx`-only seed flow would let stale templates persist forever — an
+    // installed agent's inherited workspace could keep promising behavior no
+    // code provisions. These tests
     // lock the architectural contract — platform-owned files heal on the next
     // ensureWorkspace call; user-owned files and cleared BOOTSTRAP.md are
     // preserved.
@@ -342,7 +341,7 @@ describe("workspace-manager", () => {
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(
         path.join(dir, "BOOTSTRAP.md"),
-        "# Stale seed content from v1.0.37\n",
+        "# Stale seed content from an older install\n",
         "utf-8",
       );
 

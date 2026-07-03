@@ -1,33 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Durable resume engine (Phase 216 — the brain of the phase). On boot (and on
+ * Durable resume engine. On boot (and on
  * each watchdog tick) it turns persisted state back into live runs:
  *
- *   1. RECONCILE crashed-mid-send rows (ONCE-03/ONCE-04). An `unknown_after_send`
+ *   1. RECONCILE crashed-mid-send rows. An `unknown_after_send`
  *      ledger row is NEVER blind-replayed — the owning channel's `reconcileSend?`
  *      resolves it three ways: `sent` → ack once (commit, no replay), `not_sent`
  *      → replay exactly once, `unresolved` (or a channel that cannot reconcile)
  *      → park + escalate. A channel with no `reconcileSend` is treated as
- *      `unresolved` (Pitfall 2 — never a double-send dressed as a reconcile).
- *   2. RESUME-OR-ORPHAN (DUR-02/DUR-03). For each resumable run the engine
+ *      `unresolved` (never a double-send dressed as a reconcile).
+ *   2. RESUME-OR-ORPHAN. For each resumable run the engine
  *      re-mints a lease from the PERSISTED attenuated caps VERBATIM (never
  *      re-attenuating from a live parent — the persisted caps ARE the attenuated
  *      result). A `revoked` re-read, a caps-parse failure (a tampered superset),
  *      or an un-resumable run is ORPHANED + the operator is notified — never
  *      silently re-minted and never silently dropped. A legitimate never-sent run
- *      (stepIndex = -1, the NEW-5 sentinel) PASSES the guard and is resumed.
- *   3. BOUNDED RECOVERY (HB-02). The whole pass is bounded by a wall-clock
+ *      (stepIndex = -1, the never-sent sentinel) PASSES the guard and is resumed.
+ *   3. BOUNDED RECOVERY. The whole pass is bounded by a wall-clock
  *      `recoveryBudgetMs`; a backlog larger than the budget is partially
  *      recovered and the remainder DEFERRED (status stays `running`, so the
  *      watchdog / next boot picks them up) — no thundering herd.
- *   4. ORPHAN NOTIFICATION (HB-03). Every orphan fires the injected NotifyFn + an
+ *   4. ORPHAN NOTIFICATION. Every orphan fires the injected NotifyFn + an
  *      eventBus `durable:orphaned` + an INFO line — an un-resumed run is never
- *      silently vanished (DUR-02).
+ *      silently vanished.
  *
  * The engine is deliberately PURE / I/O-free: every dependency (the stores, the
  * LeaseManager re-mint, the channel lookup, the replay closure, the operator
  * notify, the clock, the event bus) is INJECTED so it is exhaustively
- * unit-testable with a fake clock + stub stores + a stub channel. Plan 07's
+ * unit-testable with a fake clock + stub stores + a stub channel. The
  * wiring binds it to the real stores / LeaseManager / channel adapters and calls
  * `resumeAll()` on boot. No callable-global time/timer reads here (the
  * globals.test.ts arch-gate forbids the wall-clock and interval-scheduler
@@ -37,7 +37,7 @@
  * line (with durationMs) + an eventBus event; every failure branch carries
  * `hint` + `errorKind` (the closed precondition|dependency|platform|internal
  * union). Content-free: rootRunId/stepIndex/state/reconcileOutcome/counts ONLY —
- * never the message body (the reconcile query keys on a contentDigest, T-216-17).
+ * never the message body (the reconcile query keys on a contentDigest).
  *
  * @module
  */
@@ -61,12 +61,12 @@ import {
 // trust boundary at SPAWN time (capability.ts:92). On RESUME the engine does NOT
 // call it: `record.caps` is already the persisted attenuated result, and
 // re-attenuating from a (possibly stale or broadened) live parent would be the
-// DUR-03 elevation-of-privilege hole. The `void` keeps the import live without
+// elevation-of-privilege hole. The `void` keeps the import live without
 // invoking it.
 void attenuateCaps;
 
 /**
- * The content-free operator notification (HB-03). Reuses the background-task
+ * The content-free operator notification. Reuses the background-task
  * NotifyFn shape: ids + a reason + a hint, NEVER a message body. Fired
  * out-of-band for every orphan / unresolved reconcile.
  */
@@ -97,7 +97,7 @@ export interface IssuedLease {
 
 /**
  * The narrow content-free event emitter the engine calls on each transition.
- * Plan 07's wiring binds a real TypedEventBus adapter; the engine stays I/O-free
+ * The wiring binds a real TypedEventBus adapter; the engine stays I/O-free
  * and the closed EventMap (owned at the wiring layer) is not coupled here.
  */
 export interface DurableEventEmitter {
@@ -105,15 +105,14 @@ export interface DurableEventEmitter {
 }
 
 /**
- * FLEET-03 (Phase 220-01): map the engine's free-text orphan reason to the
- * CLOSED enum the `durable:orphaned` EVENT carries (events-orchestration.ts).
- * TOTAL over `string` — the `default` arm guarantees every input (including a
- * brand-new unmapped reason) returns a union member and the function NEVER
- * echoes its `freeText` argument. This is the T-220-01 content-free invariant AT
- * THE SOURCE: the free string stays ONLY on the WARN log / notify (the operator's
- * debugging surface); the closed enum is the only thing that crosses onto the
- * event/obs-row. Mirrors the closed-union discriminator pattern of
- * `execution:aborted.reason`.
+ * Map the engine's free-text orphan reason to the CLOSED enum the
+ * `durable:orphaned` EVENT carries (events-orchestration.ts). TOTAL over
+ * `string` — the `default` arm guarantees every input (including a brand-new
+ * unmapped reason) returns a union member and the function NEVER echoes its
+ * `freeText` argument. This is the content-free invariant AT THE SOURCE: the
+ * free string stays ONLY on the WARN log / notify (the operator's debugging
+ * surface); the closed enum is the only thing that crosses onto the event/obs-row.
+ * Mirrors the closed-union discriminator pattern of `execution:aborted.reason`.
  */
 export function orphanReasonToEnum(
   freeText: string,
@@ -150,16 +149,16 @@ export interface ReconcileLedgerDeps {
 const RECONCILE_WINDOW_MS = 600_000; // 10 min
 
 /**
- * Reconcile ONE crashed-mid-send ledger row (ONCE-03/ONCE-04). The exactly-once
+ * Reconcile ONE crashed-mid-send ledger row. The exactly-once
  * core: it asks the channel "was this sent?" and resolves the row accordingly —
  * it NEVER blind-replays.
  *
- *   - `committed` row → no-op (ONCE-02; already terminal-success).
+ *   - `committed` row → no-op (already terminal-success).
  *   - channel has no `reconcileSend` → treated as `unresolved` → park + escalate,
- *     NO replay (Pitfall 2 — an un-queryable channel must never double-send).
+ *     NO replay (an un-queryable channel must never double-send).
  *   - `sent`       → resolveReconcile("sent") + commit(platformMessageId); NO replay.
  *   - `not_sent`   → resolveReconcile("not_sent") + replay ONCE; on ok → commit;
- *                    on a PERMANENT error → markFailed("permanent") (ONCE-04, retry
+ *                    on a PERMANENT error → markFailed("permanent") (retry
  *                    budget skipped); on a TRANSIENT error → leave for the next tick.
  *   - `unresolved` → resolveReconcile("unresolved") + notify escalation; NO replay,
  *                    NO commit.
@@ -175,14 +174,14 @@ export async function reconcileLedgerRow(
   const { ledger, channel, replaySend, notify, nowMs, logger } = deps;
   const { rootRunId, stepIndex } = row;
 
-  // ONCE-02 — an already-committed row is a pure no-op (a re-scan must not
+  // An already-committed row is a pure no-op (a re-scan must not
   // re-query or re-send a confirmed send).
   if (row.state === "committed") {
     return ok(undefined);
   }
 
   // Build the content-free reconcile query — a contentDigest + a time window
-  // bracketed around the recovery time (never the body, T-216-17).
+  // bracketed around the recovery time (never the body).
   const now = nowMs();
   const query = {
     channelId: row.channelId,
@@ -191,7 +190,7 @@ export async function reconcileLedgerRow(
     sentBeforeMs: now + RECONCILE_WINDOW_MS,
   };
 
-  // ABSENCE of reconcileSend = unresolved (Pitfall 2). A channel that cannot tell
+  // ABSENCE of reconcileSend = unresolved. A channel that cannot tell
   // is parked + escalated, NEVER replayed.
   // prettier-ignore
   const outcomeResult: Result<ReconcileSendOutcome, Error> = channel?.reconcileSend ? await channel.reconcileSend(query) : ok({ kind: "unresolved" } as ReconcileSendOutcome);
@@ -237,7 +236,7 @@ export async function reconcileLedgerRow(
         logger.info({ rootRunId, stepIndex, reconcileOutcome: "not_sent" }, "Durable reconcile: not_sent → replayed once");
         return ok(undefined);
       }
-      // ONCE-04: a permanent error is terminal — markFailed, skip the retry budget.
+      // A permanent error is terminal — markFailed, skip the retry budget.
       if (isPermanentError(replayed.error.message)) {
         const failed = await ledger.markFailed(rootRunId, stepIndex, "permanent");
         if (!failed.ok) return failLedger(logger, failed.error, "markFailed", rootRunId, stepIndex);
@@ -309,7 +308,7 @@ export interface DurableResumeEngineDeps {
   readonly replaySend: (row: OutwardSendRecord) => Promise<Result<{ platformMessageId: string }, Error>>;
   readonly notify: NotifyFn;
   readonly nowMs: () => number;
-  /** The wall-clock recovery budget (ms) — the whole pass is bounded by it (HB-02). */
+  /** The wall-clock recovery budget (ms) — the whole pass is bounded by it. */
   readonly recoveryBudgetMs: number;
   readonly logger: ComisLogger;
   readonly eventBus: DurableEventEmitter;
@@ -348,7 +347,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
     eventBus,
   } = deps;
 
-  /** Orphan a run: markOrphaned + NotifyFn + eventBus + INFO (never silent — DUR-02/HB-03). */
+  /** Orphan a run: markOrphaned + NotifyFn + eventBus + INFO (never silent). */
   async function orphan(rootRunId: string, reason: string, hint: string): Promise<void> {
     const marked = await durableRuns.markOrphaned(rootRunId, reason);
     if (!marked.ok) {
@@ -358,8 +357,8 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
       );
     }
     notify({ kind: "run_orphaned", rootRunId, reason, hint });
-    // FLEET-03: the EVENT carries the CLOSED enum (T-220-01) — the free-text
-    // `reason` stays on the notify + logger.info below (the operator surface).
+    // The EVENT carries the CLOSED enum — the free-text `reason` stays on the
+    // notify + logger.info below (the operator surface).
     eventBus.emit("durable:orphaned", {
       rootRunId,
       reason: orphanReasonToEnum(reason),
@@ -388,7 +387,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
       let attempted = 0;
 
       for (const candidate of backlog) {
-        // HB-02 — bounded recovery: stop when the wall-clock budget is spent; the
+        // Bounded recovery: stop when the wall-clock budget is spent; the
         // remainder stays `running` so the watchdog / next boot picks them up. No
         // thundering herd.
         if (nowMs() > deadline) {
@@ -404,7 +403,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         const rootRunId = candidate.rootRunId;
 
         // Belt: re-read the record — a concurrent revoke may have flipped it to
-        // 'revoked' since listResumable (DUR-03). A non-running re-read is orphaned.
+        // 'revoked' since listResumable. A non-running re-read is orphaned.
         const reread = await durableRuns.getByRootRun(rootRunId);
         if (!reread.ok) {
           await orphan(rootRunId, "re-read failed", "the checkpoint could not be re-read; verify the store");
@@ -422,9 +421,9 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
           continue;
         }
 
-        // DUR-03 cap-tamper guard: parse the re-read record (the closed
+        // Cap-tamper guard: parse the re-read record (the closed
         // AgentCapability union + strictObject). A tampered superset / malformed
-        // record orphans — never re-minted. NEW-5: parseDurableRunRecord PERMITS
+        // record orphans — never re-minted. parseDurableRunRecord PERMITS
         // stepIndex = -1, so a legitimate never-sent run PASSES and is resumed (the
         // guard rejects only genuinely-malformed caps/records, never a legitimate
         // never-sent run). The parsed result is THE authoritative `record` we
@@ -464,7 +463,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         }
 
         // Re-mint from the PERSISTED attenuated caps VERBATIM.
-        // DUR-03: rehydrate the persisted attenuated caps — do NOT re-attenuate
+        // Rehydrate the persisted attenuated caps — do NOT re-attenuate
         // from a live parent (the persisted set IS the attenuated result; a
         // re-attenuation against a stale/broadened parent would resurrect or
         // broaden authority).
@@ -481,7 +480,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         const resumeResult = await resumeRun(record, lease.leaseId);
         if (resumeResult.ok) {
           resumed++;
-          // FLEET-03: numeric stepIndex + timestamp (content-free, §2.7).
+          // Numeric stepIndex + timestamp (content-free per the §2.7 logging matrix).
           eventBus.emit("durable:resumed", {
             rootRunId,
             stepIndex: record.stepIndex,
@@ -515,9 +514,9 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
 }
 
 /**
- * Derive the agentId for the re-mint. The DurableRunRecord (Plan 01) does not
+ * Derive the agentId for the re-mint. The DurableRunRecord does not
  * carry a dedicated agentId field; the run's authority is keyed by rootRunId +
- * caps + leases, and the wiring's remintLease closure (Plan 07) resolves the
+ * caps + leases, and the wiring's remintLease closure resolves the
  * concrete agent from the lease/session context. We pass the rootRunId as a
  * stable correlation id so the mint is attributable; the closure may override.
  */

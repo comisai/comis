@@ -25,7 +25,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 // runMemoryConsolidation returns counts-only stats (generalized/clustersConsidered/durationMs).
-// (The learning:memory_generalized telemetry event was deleted in Phase 226 SIMPLIFY-04; the
+// (The learning:memory_generalized telemetry event was removed; the
 // consolidation cron no longer emits a learning event — the stats stay for the INFO completion line.)
 const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } })));
 const mockRunMemoryReview = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
@@ -43,7 +43,7 @@ const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   source: "default",
 })));
 
-// Faithful capability-axis stub for resolveModelProfile (CR-01): explicit
+// Faithful capability-axis stub for resolveModelProfile: explicit
 // override wins; else anthropic/openai → frontier, google → mid, else → small.
 const mockResolveModelProfile = vi.hoisted(() => vi.fn((model: { provider: string }, override?: string) => {
   let capabilityClass = override;
@@ -97,8 +97,8 @@ function makeEventBus() {
   };
 }
 
-/** A stub consolidation store — the trimmed live surface (Phase 226 cut the
- *  dead consolidation-cron writer methods). Its methods are not reached on the
+/** A stub consolidation store — the trimmed live surface (the dead
+ *  consolidation-cron writer methods were cut). Its methods are not reached on the
  *  short-circuit path. */
 function makeConsolidationStore() {
   return {
@@ -222,16 +222,16 @@ describe("setup-channels-credentials", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 225 FOLD §3.2: the __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
+  // The __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
   // __USER_REPRESENTATION__ sentinel intercepts were REMOVED end-to-end — their work
-  // folds into the ONE __REFLECT__ cron (Plan 04). Fired through registerCronEventListeners
+  // folds into the ONE __REFLECT__ cron. Fired through registerCronEventListeners
   // (with the per-agent features ENABLED), the consolidation/reasoning jobs are NEVER
   // invoked — the sentinel is no longer routed (the registrations are gone too, so it can
   // no longer fire in production; this proves a stray one is inert).
   // -------------------------------------------------------------------------
 
   it.each(["__MEMORY_CONSOLIDATION__", "__MEMORY_REASONING__", "__USER_REPRESENTATION__"])(
-    "FOLD: the removed %s sentinel runs no job end-to-end (folded into __REFLECT__)",
+    "the removed %s sentinel runs no job end-to-end (folded into __REFLECT__)",
     async (sentinel) => {
       const deps = makeDeps({
         agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true }, memoryReasoning: { enabled: true }, memoryUserRepresentation: { enabled: true } } },
@@ -249,13 +249,13 @@ describe("setup-channels-credentials", () => {
   );
 
   // -------------------------------------------------------------------------
-  // CR-01: the __MEMORY_REVIEW__ branch threads R6 capabilityClass +
+  // The __MEMORY_REVIEW__ branch threads capabilityClass +
   // hasCapableModelOverride into runMemoryReview's deps so the abstain path is
-  // reachable in production for a small/nano cron model. Before the fix neither
-  // field was passed → default "frontier" → "capable", so a weak model still ran
-  // the extraction LLM call (the R6-dead bug).
+  // reachable in production for a small/nano cron model. Without these fields the
+  // deps default to "frontier" → "capable", so a weak model would still run
+  // the extraction LLM call.
   // -------------------------------------------------------------------------
-  it("CR-01: __MEMORY_REVIEW__ threads capabilityClass='small' + no override for a small cron model (abstain reachable)", async () => {
+  it("__MEMORY_REVIEW__ threads capabilityClass='small' + no override for a small cron model (abstain reachable)", async () => {
     mockResolveOperationModel.mockReturnValue({
       provider: "ollama", modelId: "ollama:qwen3.6:35b", model: "ollama:qwen3.6:35b",
       timeoutMs: 60_000, source: "default",
@@ -279,7 +279,7 @@ describe("setup-channels-credentials", () => {
     expect(arg.hasCapableModelOverride).toBe(false);
   });
 
-  it("CR-01: __MEMORY_REVIEW__ threads hasCapableModelOverride=true when the cron provider pins a capable class", async () => {
+  it("__MEMORY_REVIEW__ threads hasCapableModelOverride=true when the cron provider pins a capable class", async () => {
     mockResolveOperationModel.mockReturnValue({
       provider: "ollama", modelId: "ollama:qwen3.6:35b", model: "ollama:qwen3.6:35b",
       timeoutMs: 60_000, source: "default",
@@ -304,13 +304,13 @@ describe("setup-channels-credentials", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LAT-01-14: the cron agent_turn producer THREADS the resolver's
-  // timeoutSource into cronOverrides.promptTimeout.source. Pre-fix the
-  // producer passed `promptTimeout: { promptTimeoutMs }` UNCONDITIONALLY —
-  // collapsing "the 150s cron default applied" into what decode treats as an
-  // explicit operator override (177-RESEARCH Critical Finding 1 / Pitfall 4).
+  // The cron agent_turn producer THREADS the resolver's
+  // timeoutSource into cronOverrides.promptTimeout.source. A producer that
+  // passed `promptTimeout: { promptTimeoutMs }` UNCONDITIONALLY would
+  // collapse "the 150s cron default applied" into what decode treats as an
+  // explicit operator override.
   // -------------------------------------------------------------------------
-  it("LAT-01-14: cron agent_turn threads resolution.timeoutSource into cronOverrides.promptTimeout.source (provenance not collapsed)", async () => {
+  it("cron agent_turn threads resolution.timeoutSource into cronOverrides.promptTimeout.source (provenance not collapsed)", async () => {
     // The resolver labeled this timeout "operation_default" (the 150s cron
     // default applied — the operator set NO operationModels.cron.timeout).
     mockResolveOperationModel.mockReturnValue({

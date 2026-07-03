@@ -5,15 +5,15 @@ import type { ActionClassification } from "./action-classifier.js";
 import { systemNowDate } from "../runtime/system-time.js";
 
 /**
- * Audit event KIND — the closed event-family discriminator (AUDIT-03 / E4).
+ * Audit event KIND — the closed event-family discriminator.
  *
- * The original schema conflated two concepts into one required
- * `classification` enum (`read|mutate|destructive`). Live emit sites were
- * passing values OUTSIDE that enum (`"security"`/`"write"`/`"neutral"`),
- * silently violating it because the event-bus payload types
- * `classification` as a loose `string`. E4 splits the event FAMILY (`kind`,
- * required, closed) from the access-class (`classification`, optional,
- * present only when meaningful — chiefly the generic `audit` kind).
+ * The event FAMILY (`kind`, required, closed) is deliberately split from the
+ * access-class (`classification`, optional, present only when meaningful —
+ * chiefly the generic `audit` kind). Conflating the two into one required
+ * `classification` enum (`read|mutate|destructive`) forces emit sites to pass
+ * values OUTSIDE that enum (`"security"`/`"write"`/`"neutral"`) — a silent
+ * violation, because the event-bus payload types `classification` as a loose
+ * `string`.
  *
  * Closed string-literal union (AGENTS §2.8) — NEVER `kind: string`. Adding a
  * member here without handling it in {@link kindIsSecuritySignal} fails the
@@ -45,10 +45,10 @@ export const AUDIT_KINDS = [
   /** A sandbox downgrade was refused (fail-closed) — sandbox governance. */
   "sandbox_downgrade_refused",
   /** A capability or deny-by-origin gate rejected a call — capability.ts /
-   *  assert-not-agent-origin (Phase 210). */
+   *  assert-not-agent-origin. */
   "capability_denied",
   /** An outbound URL was blocked by the SSRF guard (validateUrl) — metadata IP /
-   *  RFC1918 / loopback / non-http target. hermes-usecases obs-loop 2026-06-25. */
+   *  RFC1918 / loopback / non-http target. */
   "ssrf_blocked",
 ] as const;
 
@@ -111,7 +111,7 @@ export const AuditEventSchema = z.strictObject({
     /** Event family (closed union — the single source is AUDIT_KINDS). */
     kind: z.enum(AUDIT_KINDS),
     /**
-     * Risk classification of the action — OPTIONAL (E4). Present only when
+     * Risk classification of the action — OPTIONAL. Present only when
      * meaningful (chiefly the generic `audit` kind); security-signal kinds
      * leave it unset.
      */
@@ -133,8 +133,8 @@ export type AuditEvent = z.infer<typeof AuditEventSchema>;
  * Parameters for creating an audit event.
  * The id and timestamp are auto-generated; everything else must be provided.
  *
- * `kind` (the event family) is required; `classification` is optional (E4 —
- * present only when the access-class is meaningful).
+ * `kind` (the event family) is required; `classification` is optional
+ * (present only when the access-class is meaningful).
  */
 export interface CreateAuditEventParams {
   tenantId: string;
@@ -154,8 +154,8 @@ export interface CreateAuditEventParams {
  *
  * This is the SOLE constructor for an {@link AuditEvent} — every emit site
  * routes through it so every event is schema-valid before it can be
- * persisted (Plan 03's sink). `classification` is only included when
- * provided (E4 — the schema makes it optional).
+ * persisted by the audit sink. `classification` is only included when
+ * provided (the schema makes it optional).
  *
  * @param params - Event parameters (id and timestamp are auto-generated)
  * @returns A validated AuditEvent
@@ -169,7 +169,7 @@ export function createAuditEvent(params: CreateAuditEventParams): AuditEvent {
     userId: params.userId,
     actionType: params.actionType,
     kind: params.kind,
-    // Only carry classification when meaningful (E4 — present chiefly for
+    // Only carry classification when meaningful (present chiefly for
     // the generic `audit` kind; security-signal kinds leave it unset).
     ...(params.classification !== undefined ? { classification: params.classification } : {}),
     outcome: params.outcome,

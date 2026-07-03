@@ -2,13 +2,13 @@
 /**
  * Store-aware config resolution shared by every doctor check.
  *
- * `comis doctor` used to load the config twice: config-health resolved
- * `${VAR}` references from env before validating, while buildDoctorContext
- * validated the RAW file. On an encrypted-store deployment the raw
- * `${COMIS_GATEWAY_TOKEN}` placeholder fails the >=32-char token gate, the
- * context silently dropped the config, and the gateway/channel checks
- * reported "No gateway URL configured" / "No channels configured" against a
- * live, fully configured daemon (2026-06-12 C1 live finding).
+ * Without a shared resolution path, `comis doctor` would load the config
+ * twice: config-health resolving `${VAR}` references from env before
+ * validating, while buildDoctorContext validates the RAW file. On an
+ * encrypted-store deployment the raw `${COMIS_GATEWAY_TOKEN}` placeholder
+ * then fails the >=32-char token gate, the context silently drops the
+ * config, and the gateway/channel checks report "No gateway URL configured"
+ * / "No channels configured" against a live, fully configured daemon.
  *
  * This module is the single resolution path. `${VAR}` references resolve
  * the way daemon boot does: process env first, then `~/.comis/.env`, then

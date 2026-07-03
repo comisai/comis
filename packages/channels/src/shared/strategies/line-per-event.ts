@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LinePerEvent — one short line per event + a closing summary line (§7.2 / §7.3
- * row "LinePerEvent"). Used by IRC (no edit, no delete, 512-char line cap, §7.1).
+ * LinePerEvent — one short line per event + a closing summary line.
+ * Used by IRC (no edit, no delete, 512-char line cap).
  *
  * State machine:
  *   - `apply(frame)`: for each event newly visible in this frame
@@ -16,7 +16,8 @@
  *       • trivial / silent / aborted: no closing line.
  *
  * Implements the core `ChannelActivityRenderer` port. The clock (optional) only
- * feeds the elapsed-time suffix — never raw `Date.now()` (Pitfall 7).
+ * feeds the elapsed-time suffix — never raw `Date.now()` (injected time keeps
+ * tests deterministic).
  */
 import { ok, type Result } from "@comis/shared";
 import type {
@@ -38,13 +39,13 @@ import { eventLabel } from "./render.js";
  * helpers: IRC's defaults differ from the windowed-edit channels — the success
  * line is the composed `"✓ done · N steps · Xs"` (not `"✓ done"`) and the failure
  * line is `"[ERR] {errorKind}"` (a bracketed ASCII tag, NOT the `❌` the shared
- * `DEFAULT_MARKERS` use). These two literals are the historical IRC defaults; a
+ * `DEFAULT_MARKERS` use). These two literals are the established IRC defaults; a
  * marker-less call MUST stay byte-identical to them (golden-fixture parity).
  */
 const DEFAULT_SUCCESS_MARKER = "✓";
 const DEFAULT_FAILURE_MARKER = "[ERR]";
 
-/** IRC's hard per-line cap (§7.1). Overlong lines truncate with the ellipsis. */
+/** IRC's hard per-line cap. Overlong lines truncate with the ellipsis. */
 const MAX_LINE_CHARS = 512;
 const ELLIPSIS = "…";
 
@@ -53,7 +54,7 @@ export interface LinePerEventDeps {
   /** Optional — supplies the elapsed-time suffix on the success closing line. */
   clock?: ClockPort;
   /**
-   * Per-event line builder (§6.4.6 / §18.3). Default: `eventLabel`
+   * Per-event line builder. Default: `eventLabel`
    * (the redacted `defaultLabel`). A depth-aware plain-text channel (IRC) overrides
    * it to render a `kind:"approval"` event as the plain-text prompt
    * ("Reply approve or deny …", with shortIds when more than one is pending) and a
@@ -66,7 +67,7 @@ export interface LinePerEventDeps {
    * Resolved theme status markers. The success/failure glyphs on the
    * closing summary line follow these. Omitted → the IRC defaults
    * (`✓` success, `[ERR]` failure), keeping a marker-less call byte-identical to
-   * the historical output. Only `success`/`failure` are read (the closing line
+   * the fixture-pinned output. Only `success`/`failure` are read (the closing line
    * paints neither `subagent` nor `running`).
    */
   markers?: ActivityStatusMarkers;

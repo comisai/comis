@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the §4.4 woken-turn driver (`buildWokenTurnDriver`,
+ * Unit tests for the woken-turn driver (`buildWokenTurnDriver`,
  * terminal-wake-turn.ts) — the function the wake-FSM calls as
  * `wakeOneTurn(sessionId, owner)`.
  *
- * WR-05 (the audit-accuracy contract): the keystroke audit MUST reflect whether
- * the send was actually DELIVERED. A registry send that returns the degraded
- * not-delivered result (a wedged worker, a dropped tmux send-keys child — spec
- * §4.6) must be audited `outcome:"rejected"`, NEVER `outcome:"attempted"`, so a
- * keystroke that hit nothing is distinguishable from one that reached the pane in
- * the §2.7 logs+events trail.
+ * The audit-accuracy contract: the keystroke audit MUST reflect whether the send
+ * was actually DELIVERED. A registry send that returns the degraded not-delivered
+ * result (a wedged worker, a dropped tmux send-keys child) must be audited
+ * `outcome:"rejected"`, NEVER `outcome:"attempted"`, so a keystroke that hit nothing
+ * is distinguishable from one that reached the pane in the §2.7 logs+events trail.
  *
- * RED on pre-patch: `auditAnswer` hard-codes `outcome:"attempted"`, so a failed
- * send is audited as a successful attempt (both the `terminal:keystroke` event and
- * the keystroke_audit DEBUG log claim `attempted`).
+ * The defect this guards against: if `auditAnswer` hard-coded `outcome:"attempted"`,
+ * a failed send would be audited as a successful attempt (both the
+ * `terminal:keystroke` event and the keystroke_audit DEBUG log claiming `attempted`).
  *
  * In-process fakes + an injected clock; deterministic.
  *
@@ -28,7 +27,7 @@ import { DRIVE_SCOPE_PREFIX } from "./terminal-drive-scope.js";
 import type { DriveJournal } from "@comis/skills/tools";
 
 const OWNER: PersistedWakeOwner = { agentId: "a", sessionKey: "" };
-/** A PROMOTED wake owner — the FSM carries drive:<id> for a backgrounded drive (DRIVE-01). */
+/** A PROMOTED wake owner — the FSM carries drive:<id> for a backgrounded drive. */
 const DRIVE_OWNER: PersistedWakeOwner = { agentId: "a", sessionKey: `${DRIVE_SCOPE_PREFIX}s-1` };
 const SAFE_SCREEN = "Press enter to continue";
 const CFG: TerminalAttentionConfig = {
@@ -54,10 +53,10 @@ function makeLogger() {
  * A fake owner-scoped registry whose `sendText` returns a controllable result, so a
  * test can simulate a DELIVERED send vs the degraded not-delivered shape.
  *
- * 164-06: the registry is OWNER-GATED exactly like production (`sameOwner` /
- * `ownedHandle`): `status`/`read` resolve the LIVE view ONLY under the session's STAMPED
- * owner (`sessionKey:""`); a call carrying a drive-scoped (or any non-"") owner gets the
- * not-found minimal view (`alive:false`, empty screen). This is how the I5 read-parity test
+ * The registry is OWNER-GATED exactly like production (`sameOwner` / `ownedHandle`):
+ * `status`/`read` resolve the LIVE view ONLY under the session's STAMPED owner
+ * (`sessionKey:""`); a call carrying a drive-scoped (or any non-"") owner gets the
+ * not-found minimal view (`alive:false`, empty screen). This is how the read-parity test
  * proves the woken-turn driver strips the drive: scope (registryOwnerFor) — without the
  * strip, a promoted turn (wake owner drive:<id>) reads the empty not-found view.
  */
@@ -75,8 +74,8 @@ function makeRegistry(opts: { screen: string; sendResult: { screen: string; curs
         : { state: "exited" as const, lastActivity: 0, interactions: 0, cursorParked: false, screenDiffEmpty: true },
     ),
     read: vi.fn(async (_id: string, owner: { sessionKey?: string }) => (stamped(owner) ? liveView : notFoundView)),
-    // HI-01 (165-REVIEW): the stop path the spend breach drives (the reaper-backed evict that
-    // emits terminal:session_evicted → the holder de-promotes + removes the journal/descriptor).
+    // The stop path the spend breach drives (the reaper-backed evict that emits
+    // terminal:session_evicted → the holder de-promotes + removes the journal/descriptor).
     evict: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
   };
@@ -87,7 +86,7 @@ interface Emitted {
   payload: Record<string, unknown>;
 }
 
-/** An in-memory DriveJournalStore fake mirroring the daemon's closure-local Map (164-06). */
+/** An in-memory DriveJournalStore fake mirroring the daemon's closure-local Map. */
 function makeJournalStore(seed?: Map<string, DriveJournal>) {
   const map = seed ?? new Map<string, DriveJournal>();
   const setCalls: Array<{ sessionId: string; journal: DriveJournal }> = [];
@@ -108,13 +107,13 @@ function build(opts: {
   loopRepeat?: boolean;
   autoAnswer?: "none" | "safe-only" | "all";
   hintPatterns?: string[];
-  /** v2.26 DIALOG-01: the session's operator-declared allowId (selects the platform profile). */
+  /** The session's operator-declared allowId (selects the platform profile). */
   allowId?: string;
-  /** A controllable clock — MR-01 elapsedMs-advances pins drive it forward across wakes. */
+  /** A controllable clock — elapsedMs-advance pins drive it forward across wakes. */
   nowMs?: () => number;
-  /** The drive's start ms (MR-01) — `elapsedMs = nowMs() - driveStartMs`. */
+  /** The drive's start ms — `elapsedMs = nowMs() - driveStartMs`. */
   driveStartMs?: (sessionId: string) => number;
-  /** ENDURE-01 (165-07): the per-drive spend ceiling (USD), or null/undefined for uncapped. */
+  /** The per-drive spend ceiling (USD), or null/undefined for uncapped. */
   maxCostUsd?: number | null;
 }) {
   const registry = makeRegistry(opts);
@@ -148,7 +147,7 @@ function build(opts: {
   return { wakeOneTurn, registry, emitted, logger };
 }
 
-describe("terminal-wake-turn — woken-turn driver auto-answer audit (WR-05)", () => {
+describe("terminal-wake-turn — woken-turn driver auto-answer audit", () => {
   it("audits outcome:attempted when the registry send is DELIVERED (a real send reached the pane)", async () => {
     const { wakeOneTurn, registry, emitted } = build({
       screen: SAFE_SCREEN,
@@ -164,9 +163,9 @@ describe("terminal-wake-turn — woken-turn driver auto-answer audit (WR-05)", (
     expect(emitted.find((e) => e.event === "terminal:auto_answered")).toBeDefined();
   });
 
-  it("audits outcome:rejected — NOT attempted — when the registry send returns the degraded not-delivered result (WR-05)", async () => {
+  it("audits outcome:rejected — NOT attempted — when the registry send returns the degraded not-delivered result", async () => {
     // The degraded send shape the registry returns for a wedged worker / dropped
-    // tmux send-keys (spec §4.6): empty screen, origin cursor, delivered falsy.
+    // tmux send-keys: empty screen, origin cursor, delivered falsy.
     const { wakeOneTurn, registry, emitted, logger } = build({
       screen: SAFE_SCREEN,
       sendResult: { screen: "", cursor: { x: 0, y: 0 } },
@@ -197,12 +196,12 @@ describe("terminal-wake-turn — woken-turn driver auto-answer audit (WR-05)", (
 });
 
 // ===========================================================================
-// 164-06 Task 2: the registry-owner strip (I5) + the bounded content-free
-// journal as the promoted drive's cross-wake memory (DRIVE-01).
+// The registry-owner strip + the bounded content-free journal as the promoted
+// drive's cross-wake memory.
 // ===========================================================================
 
-describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cross-wake journal", () => {
-  it("DRIVE-01/I5: a promoted woken turn (wake owner sessionKey=drive:<id>) resolves registry.read via registryOwnerFor → the LIVE non-empty view (alive:true), NOT the not-found view", async () => {
+describe("terminal-wake-turn — registry-owner strip + the cross-wake journal", () => {
+  it("a promoted woken turn (wake owner sessionKey=drive:<id>) resolves registry.read via registryOwnerFor → the LIVE non-empty view (alive:true), NOT the not-found view", async () => {
     // The owner-gated registry returns the LIVE view ONLY under the stamped owner
     // (sessionKey:""). The wake owner here is drive:s-1 (a promoted drive). The driver MUST
     // strip it (registryOwnerFor) so registry.read resolves the live session. A regression to
@@ -216,7 +215,7 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     // read was called with the STAMPED owner (the drive: scope stripped), so it resolved alive.
     expect(registry.read).toHaveBeenCalledTimes(1);
     const readOwner = registry.read.mock.calls[0]![1] as { sessionKey: string };
-    expect(readOwner.sessionKey, "the driver must strip drive:<id> → '' for the registry call (I5)").toBe("");
+    expect(readOwner.sessionKey, "the driver must strip drive:<id> → '' for the registry call").toBe("");
     // status likewise resolved the live session under the stamped owner.
     const statusOwner = registry.status.mock.calls[0]![1] as { sessionKey: string };
     expect(statusOwner.sessionKey).toBe("");
@@ -235,7 +234,7 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     expect(src, "the raw `sessionKey: owner.sessionKey` ownerObj must be gone").not.toMatch(/sessionKey:\s*owner\.sessionKey/);
   });
 
-  it("DRIVE-01: a promoted woken turn reads+updates the per-session journal (step appended, lastClassification + redacted lastScreenDigest set)", async () => {
+  it("a promoted woken turn reads+updates the per-session journal (step appended, lastClassification + redacted lastScreenDigest set)", async () => {
     const { store, map, setCalls } = makeJournalStore();
     const { wakeOneTurn } = build({
       screen: SAFE_SCREEN,
@@ -260,7 +259,7 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     expect(j.interactions).toBeGreaterThanOrEqual(1);
   });
 
-  it("I3: a secret-shaped screen → the journal lastScreenDigest contains no raw secret", async () => {
+  it("a secret-shaped screen → the journal lastScreenDigest contains no raw secret", async () => {
     const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
     const { store, map } = makeJournalStore();
     const { wakeOneTurn } = build({
@@ -274,7 +273,7 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     await wakeOneTurn("s-1", DRIVE_OWNER);
 
     const j = map.get("s-1")!;
-    expect(j.lastScreenDigest, "the redacted digest must NOT carry the raw secret (I3)").not.toContain(secret);
+    expect(j.lastScreenDigest, "the redacted digest must NOT carry the raw secret").not.toContain(secret);
     expect(j.lastScreenDigest, "the secret must be redacted in the journal digest").toContain("[REDACTED]");
   });
 
@@ -293,11 +292,11 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     const j = map.get("s-1")!;
     // CAP_STEPS is 64 (terminal-drive-journal.ts) — the array is bounded regardless of N.
     expect(j.stepsTried.length, "stepsTried must stay within its cap across N wakes").toBeLessThanOrEqual(64);
-    // The drop count is recorded (the I7 breadcrumb), never a silent unbounded append.
+    // The drop count is recorded (the truncations breadcrumb), never a silent unbounded append.
     expect(j.truncations, "over-cap appends must record the truncations breadcrumb").toBeGreaterThan(0);
   });
 
-  it("I1: an unpromoted woken turn creates NO journal entry (byte-identical to today)", async () => {
+  it("an unpromoted woken turn creates NO journal entry (the unpromoted path is unchanged)", async () => {
     const { store, map, setCalls } = makeJournalStore();
     const { wakeOneTurn, registry } = build({
       screen: SAFE_SCREEN,
@@ -310,7 +309,7 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     // The turn still ran (the unpromoted path is unchanged) …
     expect(registry.status).toHaveBeenCalledTimes(1);
     expect(registry.sendText).toHaveBeenCalledTimes(1);
-    // … but the journal was NOT touched (no entry, no set) — I1.
+    // … but the journal was NOT touched (no entry, no set).
     expect(store.set, "an unpromoted turn must not write a journal").not.toHaveBeenCalled();
     expect(setCalls).toHaveLength(0);
     expect(map.size).toBe(0);
@@ -340,12 +339,12 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     expect((warn![0] as { errorKind?: string }).errorKind).toBeDefined();
   });
 
-  it("IN-03: a degenerate owner (non-string sessionKey) does NOT throw the turn — promoted resolves defensively like registryOwnerFor", async () => {
+  it("a degenerate owner (non-string sessionKey) does NOT throw the turn — promoted resolves defensively like registryOwnerFor", async () => {
     // registryOwnerFor narrows a non-string sessionKey to "" (the woken-turn driver + the
     // active-check call it on EVERY wake, so a throw would strand the turn). The `promoted`
     // gate must use the SAME total accessor — a raw `owner.sessionKey.startsWith(...)` throws
-    // on a degenerate owner (TypeError: startsWith of undefined). RED on pre-patch: the raw
-    // `.startsWith` rejects the promise.
+    // on a degenerate owner (TypeError: startsWith of undefined). Without the total accessor the
+    // raw `.startsWith` rejects the promise.
     const { store, map } = makeJournalStore();
     const { wakeOneTurn, registry } = build({
       screen: SAFE_SCREEN,
@@ -357,12 +356,12 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
     await expect(wakeOneTurn("s-1", degenerate)).resolves.toBeUndefined();
     // The turn still ran its real work (the registry resolved via the stamped owner).
     expect(registry.status).toHaveBeenCalledTimes(1);
-    // A degenerate (non-drive) owner is treated as unpromoted → no journal write (I1).
+    // A degenerate (non-drive) owner is treated as unpromoted → no journal write.
     expect(store.set).not.toHaveBeenCalled();
     expect(map.size).toBe(0);
   });
 
-  it("IN-03: the promoted gate uses the same total accessor as the registry owner (source guard)", async () => {
+  it("the promoted gate uses the same total accessor as the registry owner (source guard)", async () => {
     const { readFileSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const src = readFileSync(fileURLToPath(new URL("./terminal-wake-turn.ts", import.meta.url)), "utf8");
@@ -379,16 +378,16 @@ describe("terminal-wake-turn — registry-owner strip (DRIVE-01 / I5) + the cros
 });
 
 // ===========================================================================
-// MR-01: the journal writer populates the LOCKED §7.1.6 fields the resume
-// substrate needs — answeredPrompts[] (the DRIVE-01 "resume without re-answering"
-// dedup substrate, content-free pattern ids), elapsedMs (drive start → now),
-// and costUsd (0 + a documented note — no spend signal at the canned-keystroke
-// auto-answer seam). RED on pre-patch: recordJournal only wrote stepsTried +
-// lastClassification + lastScreenDigest + interactions, so answeredPrompts stayed
-// [] and elapsedMs stayed 0 forever (the exported appendAnswered had no caller).
+// The journal writer populates the fields the resume substrate needs —
+// answeredPrompts[] (the "resume without re-answering" dedup substrate,
+// content-free pattern ids), elapsedMs (drive start → now), and costUsd (0 + a
+// documented note — no spend signal at the canned-keystroke auto-answer seam).
+// Without this, recordJournal would only write stepsTried + lastClassification +
+// lastScreenDigest + interactions, so answeredPrompts stays [] and elapsedMs stays
+// 0 forever (the exported appendAnswered would have no caller).
 // ===========================================================================
 
-describe("terminal-wake-turn — MR-01: the journal populates answeredPrompts / elapsedMs (DRIVE-01 resume substrate)", () => {
+describe("terminal-wake-turn — the journal populates answeredPrompts / elapsedMs (resume substrate)", () => {
   it("a promoted drive that auto-answers a safe prompt records a content-free answeredPrompts entry (pattern id, not raw text)", async () => {
     const { store, map } = makeJournalStore();
     const { wakeOneTurn } = build({
@@ -401,7 +400,7 @@ describe("terminal-wake-turn — MR-01: the journal populates answeredPrompts / 
     const j = map.get("s-1")!;
     // answeredPrompts is no longer always-empty: a delivered safe answer appends a tag.
     expect(j.answeredPrompts.length, "a delivered safe answer must append an answeredPrompts tag").toBe(1);
-    // The tag is the content-free matched-pattern identity (an id), never the prompt text (I3).
+    // The tag is the content-free matched-pattern identity (an id), never the prompt text.
     expect(j.answeredPrompts[0]).toBe("pattern:0");
     expect(j.answeredPrompts[0]).not.toContain("Press enter"); // never the raw prompt
   });
@@ -440,7 +439,7 @@ describe("terminal-wake-turn — MR-01: the journal populates answeredPrompts / 
     expect(j.stepsTried.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("a NOT-delivered safe answer does NOT append to answeredPrompts (nothing was actually answered, WR-05 parity)", async () => {
+  it("a NOT-delivered safe answer does NOT append to answeredPrompts (nothing was actually answered)", async () => {
     const { store, map } = makeJournalStore();
     const { wakeOneTurn } = build({
       screen: SAFE_SCREEN,
@@ -510,15 +509,16 @@ describe("terminal-wake-turn — MR-01: the journal populates answeredPrompts / 
 });
 
 // ===========================================================================
-// 165-07 Task 3 (ENDURE-01): the spend-ceiling escalate path. On each PROMOTED turn the
-// driver reads the journal's honest run-total costUsd (I6 — NEVER fabricated) and runs the
-// pure checkSpendCeiling over deps.maxCostUsd; a breach escalates with the figure + a §2.7
-// WARN and STOPS the turn (no answer) — never a silent overspend. A null/absent ceiling is
-// a no-op (I1, byte-identical to today). RED on pre-patch: the driver never consults
-// checkSpendCeiling, so a journal whose costUsd exceeds the ceiling still auto-answers.
+// The spend-ceiling escalate path. On each PROMOTED turn the driver reads the
+// journal's honest run-total costUsd (NEVER fabricated) and runs the pure
+// checkSpendCeiling over deps.maxCostUsd; a breach escalates with the figure + a
+// §2.7 WARN and STOPS the turn (no answer) — never a silent overspend. A
+// null/absent ceiling is a no-op. Without this the driver would never consult
+// checkSpendCeiling, so a journal whose costUsd exceeds the ceiling would still
+// auto-answer.
 // ===========================================================================
 
-describe("terminal-wake-turn — ENDURE-01: the spend-ceiling escalate path", () => {
+describe("terminal-wake-turn — the spend-ceiling escalate path", () => {
   it("a journal costUsd OVER drive.maxCostUsd escalates (terminal:escalated) + STOPS the turn (no answer)", async () => {
     // Seed a resumed/accumulated journal whose run-total already exceeds the ceiling.
     const seed = new Map<string, DriveJournal>([
@@ -563,7 +563,7 @@ describe("terminal-wake-turn — ENDURE-01: the spend-ceiling escalate path", ()
     expect(emitted.find((e) => e.event === "terminal:escalated"), "no escalate at the exact cap").toBeUndefined();
   });
 
-  it("I1: a null maxCostUsd is a no-op — the turn behaves byte-identically to today (answers)", async () => {
+  it("a null maxCostUsd is a no-op — the turn answers normally (uncapped)", async () => {
     const seed = new Map<string, DriveJournal>([
       ["s-1", { objective: "build", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 0, interactions: 1, costUsd: 9_999, truncations: 0 }],
     ]);
@@ -572,14 +572,14 @@ describe("terminal-wake-turn — ENDURE-01: the spend-ceiling escalate path", ()
       screen: SAFE_SCREEN,
       sendResult: { screen: "ok", cursor: { x: 1, y: 1 }, delivered: true },
       journal: store,
-      maxCostUsd: null, // uncapped — even a huge costUsd never breaches (I1)
+      maxCostUsd: null, // uncapped — even a huge costUsd never breaches
     });
     await wakeOneTurn("s-1", DRIVE_OWNER);
-    expect(registry.sendText, "a null ceiling never breaches (I1)").toHaveBeenCalledTimes(1);
+    expect(registry.sendText, "a null ceiling never breaches").toHaveBeenCalledTimes(1);
     expect(emitted.find((e) => e.event === "terminal:escalated")).toBeUndefined();
   });
 
-  it("I1: an UNPROMOTED turn never consults the spend ceiling (the spend check is drive-only)", async () => {
+  it("an UNPROMOTED turn never consults the spend ceiling (the spend check is drive-only)", async () => {
     // No journal store engaged for an unpromoted owner; even a configured ceiling is inert.
     const { wakeOneTurn, registry, emitted } = build({
       screen: SAFE_SCREEN,
@@ -587,11 +587,11 @@ describe("terminal-wake-turn — ENDURE-01: the spend-ceiling escalate path", ()
       maxCostUsd: 0.0001, // a tiny ceiling — but an unpromoted turn has no drive journal to check
     });
     await wakeOneTurn("s-1", OWNER);
-    expect(registry.sendText, "an unpromoted turn ignores the spend ceiling (I1)").toHaveBeenCalledTimes(1);
+    expect(registry.sendText, "an unpromoted turn ignores the spend ceiling").toHaveBeenCalledTimes(1);
     expect(emitted.find((e) => e.event === "terminal:escalated")).toBeUndefined();
   });
 
-  it("I6: the spend check reads the journal's honest costUsd and does NOT fabricate a cost (the canned-keystroke seam stays 0)", async () => {
+  it("the spend check reads the journal's honest costUsd and does NOT fabricate a cost (the canned-keystroke seam stays 0)", async () => {
     const { store, map } = makeJournalStore();
     const { wakeOneTurn } = build({
       screen: SAFE_SCREEN,
@@ -600,16 +600,16 @@ describe("terminal-wake-turn — ENDURE-01: the spend-ceiling escalate path", ()
       maxCostUsd: 5,
     });
     await wakeOneTurn("s-1", DRIVE_OWNER);
-    // The canned-keystroke auto-answer has no LLM spend → costUsd stays the honest 0 (I6).
-    expect(map.get("s-1")!.costUsd, "the woken-turn seam must not fabricate a cost (I6)").toBe(0);
+    // The canned-keystroke auto-answer has no LLM spend → costUsd stays the honest 0.
+    expect(map.get("s-1")!.costUsd, "the woken-turn seam must not fabricate a cost").toBe(0);
   });
 
-  // HI-01 (165-REVIEW): a spend breach must STOP the drive, not just the turn. Pre-patch the
-  // turn escalated + returned but left the session alive + promoted, so the NEXT wake re-checked
-  // the ceiling, re-breached, re-escalated — indefinitely (a re-escalation storm). The fix:
-  // dedupe with a breachedSessions Set (one escalate) + actually stop the drive via the
-  // registry evict path (descriptor+journal lifecycle + de-promote run) so it is not re-woken.
-  it("HI-01: a spend breach STOPS the drive (registry.evict) — two wakes yield EXACTLY ONE escalate + ONE stop (no re-escalation storm)", async () => {
+  // A spend breach must STOP the drive, not just the turn. Otherwise the turn would escalate +
+  // return but leave the session alive + promoted, so the NEXT wake re-checks the ceiling,
+  // re-breaches, re-escalates — indefinitely (a re-escalation storm). The guard: dedupe with a
+  // breachedSessions Set (one escalate) + actually stop the drive via the registry evict path
+  // (descriptor+journal lifecycle + de-promote run) so it is not re-woken.
+  it("a spend breach STOPS the drive (registry.evict) — two wakes yield EXACTLY ONE escalate + ONE stop (no re-escalation storm)", async () => {
     const seed = new Map<string, DriveJournal>([
       ["s-1", { objective: "build", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 0, interactions: 3, costUsd: 7.5, truncations: 0 }],
     ]);
@@ -636,16 +636,16 @@ describe("terminal-wake-turn — ENDURE-01: the spend-ceiling escalate path", ()
 });
 
 // ===========================================================================
-// 165-07 Task 3 (DUR-02 / I10): the resume-no-re-answer guard. On the FIRST turn of a
-// RESUMED drive this daemon life (its journal came back from disk with prior answeredPrompts
-// — the in-memory loop-guard ring is cold post-restart), a matched pattern already in
-// answeredPrompts is SKIPPED (the send is NOT re-issued) + a content-free waited step is
-// recorded. A LIVE drive (journal accumulated this life) is governed by the loop-guard, NOT
-// this guard, so it still answers (no behavior change for the live path). RED on pre-patch:
-// the driver re-sends a matched pattern even when the resumed journal already answered it.
+// The resume-no-re-answer guard. On the FIRST turn of a RESUMED drive this daemon life
+// (its journal came back from disk with prior answeredPrompts — the in-memory loop-guard
+// ring is cold post-restart), a matched pattern already in answeredPrompts is SKIPPED (the
+// send is NOT re-issued) + a content-free waited step is recorded. A LIVE drive (journal
+// accumulated this life) is governed by the loop-guard, NOT this guard, so it still answers
+// (no behavior change for the live path). Without this guard the driver would re-send a
+// matched pattern even when the resumed journal already answered it.
 // ===========================================================================
 
-describe("terminal-wake-turn — DUR-02/I10: the resume-no-re-answer guard", () => {
+describe("terminal-wake-turn — the resume-no-re-answer guard", () => {
   it("a RESUMED drive whose journal already answered pattern 0 SKIPS the re-send on its first turn this life (sendText: 0 calls)", async () => {
     // The seeded journal is the RESUMED one (prior life answered pattern:0); the loop-guard
     // ring is empty (post-restart), so without the resume guard the driver would re-answer.
@@ -660,7 +660,7 @@ describe("terminal-wake-turn — DUR-02/I10: the resume-no-re-answer guard", () 
     });
     await wakeOneTurn("s-1", DRIVE_OWNER);
 
-    // The already-answered pattern is NOT re-sent (I10 — resume, don't re-answer).
+    // The already-answered pattern is NOT re-sent (resume, don't re-answer).
     expect(registry.sendText, "a resumed drive must NOT re-answer an already-answered prompt").not.toHaveBeenCalled();
     // A content-free waited step is recorded (the turn did something — it waited, didn't answer).
     const j = map.get("s-1")!;
@@ -669,7 +669,7 @@ describe("terminal-wake-turn — DUR-02/I10: the resume-no-re-answer guard", () 
     expect(j.answeredPrompts.filter((t) => t === "pattern:0").length, "the skip must not double-append the pattern").toBe(1);
   });
 
-  it("a LIVE drive (journal accumulated THIS life, not resumed) still answers a repeated pattern — the loop-guard governs repeats, not this guard (the MR-01 accumulation is unchanged)", async () => {
+  it("a LIVE drive (journal accumulated THIS life, not resumed) still answers a repeated pattern — the loop-guard governs repeats, not this guard (the live accumulation is unchanged)", async () => {
     const { store, map } = makeJournalStore();
     const { wakeOneTurn, registry } = build({
       screen: SAFE_SCREEN,
@@ -682,7 +682,7 @@ describe("terminal-wake-turn — DUR-02/I10: the resume-no-re-answer guard", () 
     // live path answers again (the loop-guard, faked off here, is the live-repeat handler).
     await wakeOneTurn("s-1", DRIVE_OWNER);
     expect(registry.sendText, "a live drive answers each turn (the resume guard only skips a RESUMED first turn)").toHaveBeenCalledTimes(2);
-    expect(map.get("s-1")!.answeredPrompts.length, "the live MR-01 accumulation is unchanged").toBe(2);
+    expect(map.get("s-1")!.answeredPrompts.length, "the live accumulation is unchanged").toBe(2);
   });
 
   it("a RESUMED drive whose journal answered a DIFFERENT pattern still answers the current one (the skip is pattern-specific)", async () => {
@@ -710,16 +710,16 @@ describe("terminal-wake-turn — DUR-02/I10: the resume-no-re-answer guard", () 
 });
 
 // ===========================================================================
-// ISSUE-3 (live VPS 2026-06-16): a DETACHED drive whose session was created in a
-// request context (chat-API / Telegram) is STAMPED under owner (userId, nonEmptyKey)
-// — terminal-tools.ts resolveOwner. The worker→daemon re-publish drops that identity
-// (setup-terminal-tools.ts emits agentId only), so the daemon wake path builds
-// (realAgentId, ""), and registryOwnerFor cannot recover the userId/sessionKey. The
-// woken-turn driver must recover the STAMPED owner the registry holds (registry.getOwner)
-// and thread IT into status/read/sendText — else every detached channel/API drive strands.
+// A DETACHED drive whose session was created in a request context (chat-API / Telegram)
+// is STAMPED under owner (userId, nonEmptyKey) — terminal-tools.ts resolveOwner. The
+// worker→daemon re-publish drops that identity (setup-terminal-tools.ts emits agentId
+// only), so the daemon wake path builds (realAgentId, ""), and registryOwnerFor cannot
+// recover the userId/sessionKey. The woken-turn driver must recover the STAMPED owner the
+// registry holds (registry.getOwner) and thread IT into status/read/sendText — else every
+// detached channel/API drive strands.
 // ===========================================================================
-describe("terminal-wake-turn — ISSUE-3: a channel/API-stamped session drives via the recovered STAMPED owner (getOwner)", () => {
-  it("drives the LIVE session stamped under (userId, nonEmptyKey) — RED pre-fix (registryOwnerFor → not-found view → no drive)", async () => {
+describe("terminal-wake-turn — a channel/API-stamped session drives via the recovered STAMPED owner (getOwner)", () => {
+  it("drives the LIVE session stamped under (userId, nonEmptyKey) — without the recovery registryOwnerFor yields the not-found view and no drive", async () => {
     const STAMPED = { agentId: "openai-api", sessionKey: "default:openai-api:openai" };
     const liveView = { screen: SAFE_SCREEN, cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true };
     const notFoundView = { screen: "", cursor: { x: 0, y: 0 }, cols: 0, rows: 0, alt: false, alive: false };
@@ -763,11 +763,11 @@ describe("terminal-wake-turn — ISSUE-3: a channel/API-stamped session drives v
   });
 });
 
-describe("buildEscalationMessage — actionable, redaction-safe escalation text (real-VPS 2026-06-16)", () => {
-  // Live Telegram drive: the escalation delivered the BARE "Terminal session X needs a human:
-  // <reason>." — the user could not tell what was wanted or how to unblock the drive. The message
-  // must be reason-aware + tell the user HOW to respond (reply to drive it, or stop), while
-  // staying redaction-safe (the structural reason ONLY, never the attacker-influenceable screen).
+describe("buildEscalationMessage — actionable, redaction-safe escalation text", () => {
+  // A bare "Terminal session X needs a human: <reason>." leaves the user unable to tell what was
+  // wanted or how to unblock the drive. The message must be reason-aware + tell the user HOW to
+  // respond (reply to drive it, or stop), while staying redaction-safe (the structural reason
+  // ONLY, never the attacker-influenceable screen).
   it("is reason-aware + tells the user how to respond (not the bare 'needs a human: <reason>')", () => {
     const m = buildEscalationMessage("sess-1", "no_safe_match");
     expect(m).toContain("sess-1");
@@ -789,7 +789,7 @@ describe("buildEscalationMessage — actionable, redaction-safe escalation text 
   });
 });
 
-describe("terminal-wake-turn — profile dialogs feed the safe-only policy (v2.26 DIALOG-01)", () => {
+describe("terminal-wake-turn — profile dialogs feed the safe-only policy", () => {
   it("ESCALATES a codex approval-overlay (a destructive profile dialog) instead of auto-answering", async () => {
     // The session's allowId resolves the codex profile; its approval-overlay dialog is destructive,
     // so decideAutoAnswer escalates (command execution is never auto-approved) — proves the wake-turn
@@ -806,7 +806,7 @@ describe("terminal-wake-turn — profile dialogs feed the safe-only policy (v2.2
     expect(esc?.payload.reason).toBe("destructive");
   });
 
-  it("answers a claude trust-gate (a non-destructive profile dialog) and records the audit source as 'dialog' (L1 provenance)", async () => {
+  it("answers a claude trust-gate (a non-destructive profile dialog) and records the audit source as 'dialog'", async () => {
     const { wakeOneTurn, registry, emitted } = build({
       screen: "Do you trust the files in this folder?",
       allowId: "claude",
@@ -820,7 +820,7 @@ describe("terminal-wake-turn — profile dialogs feed the safe-only policy (v2.2
     expect(aa?.payload.source).toBe("dialog"); // provenance: a profile dialog, not an operator hintPattern
   });
 
-  it("no allowId ⇒ no profile ⇒ today's hintPattern-only behavior (INV-1)", async () => {
+  it("no allowId ⇒ no profile ⇒ plain hintPattern-only behavior", async () => {
     // Without an allowId the wake-turn passes no dialogs; the same screen falls through to the
     // operator hintPattern path. With no hint match it escalates `no_safe_match` (the escalate-always
     // veto is gated on an actual safe match — the narration-false-positive fix — so it does NOT fire

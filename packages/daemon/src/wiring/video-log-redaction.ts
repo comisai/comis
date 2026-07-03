@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SEC-03 (Phase 192): redaction-safe shaping of a RAW provider/channel Error
- * before it rides a log line.
+ * Redaction-safe shaping of a RAW provider/channel Error before it rides a log line.
  *
  * The off-turn video poller logs failure causes — a FAL/Veo/Grok SDK error, a
  * channel-adapter send error, a SQLite store error — whose free-text `message`
@@ -11,10 +10,10 @@
  * `err.message` or `err.cause`. So a raw cause logged as `err: cause` leaks any
  * secret in its (possibly nested) message.
  *
- * `redactErr` (CR-01) walks a BOUNDED `err.cause` chain, folds every level's
+ * `redactErr` walks a BOUNDED `err.cause` chain, folds every level's
  * message into one carrier, runs it through `sanitizeLogString` (the SECOND line
  * of defense — Bearer/sk-/AIza/the FAL uuid:hex shape/etc. → `[REDACTED]`), and
- * exact-match-scrubs any BOUND resolved video secret (the v2.20 OutputGuard
+ * exact-match-scrubs any BOUND resolved video secret (the OutputGuard
  * `knownSecrets` precedent — catches ANY shape, incl. future ones, with zero
  * false-positive risk). It returns a spreadable `{ errName, errMessage }`
  * (bounded) for the log payload. The cause chain is preserved so the failure
@@ -87,15 +86,15 @@ export function redactErr(cause: Error): RedactedErr {
  * @param knownSecrets - Resolved secret VALUES (the agent's GOOGLE_API_KEY /
  *   XAI_API_KEY / FAL_KEY / the Grok bearer) — never the env-ref names.
  */
-/** The names of the video creds resolved for the SEC-03 exact-match log scrub —
- *  the SAME creds the adapters use (CRED-01, no video-specific secret). */
+/** The names of the video creds resolved for the exact-match log scrub —
+ *  the SAME creds the adapters use (no video-specific secret). */
 const VIDEO_SECRET_NAMES = ["GOOGLE_API_KEY", "XAI_API_KEY", "FAL_KEY"] as const;
 
 /**
  * Resolve the video creds (their VALUES, never the env-ref names) from the secret
  * manager for the poller's exact-match log scrub. Absent keys drop out → the
- * poller falls back to the pattern scrub only (no crash). Lives here (the SEC-03
- * module) so the wiring site stays small (file-size discipline).
+ * poller falls back to the pattern scrub only (no crash). Lives here (this
+ * redaction module) so the wiring site stays small (file-size discipline).
  *
  * @param secretManager - any object exposing `get(name): string | undefined`
  *   (the daemon `SecretManager`; typed structurally to avoid a core type dep here).

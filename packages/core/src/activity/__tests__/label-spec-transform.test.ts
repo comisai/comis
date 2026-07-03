@@ -5,7 +5,7 @@
  * pipeline and BEFORE the length
  * cap — its non-empty return wins, an empty return falls through to the
  * substituted label. The transform is also defended in depth by a post-hoc
- * redactValue call (see the Pitfall 4 regression-lock test in
+ * redactValue call (see the defense-in-depth regression-lock test in
  * template-engine.test.ts).
  *
  * This file covers the REGISTRY + RESOLVER concerns:

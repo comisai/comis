@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Zod row schema for the `video_jobs` table — the durable async VideoJobStore
- * (Phase 189, JOB-01). SSOT for the file-internal `VideoJobDbRow` interface in
+ * Zod row schema for the `video_jobs` table — the durable async VideoJobStore.
+ * SSOT for the file-internal `VideoJobDbRow` interface in
  * `video-job-store.ts`.
  *
  * Lives in its OWN module (NOT `row-schemas.ts`) because that file is at the
@@ -13,7 +13,7 @@
  *     store's `rowToRecord` maps `?? undefined` at the domain boundary.
  *   - INTEGER timestamps → `z.number()`; REAL cost/progress → `z.number().nullable()`.
  *
- * SECURITY (T-189-02): the column set is the opaque provider jobId + routing +
+ * SECURITY: the column set is the opaque provider jobId + routing +
  * state + cost + path ONLY — NO key/token/secret/bearer column. The provider
  * credential is held by the boot-bound adapter and is NEVER persisted here.
  *
@@ -35,8 +35,8 @@ export const VideoJobDbRowSchema = z.strictObject({
   channel_type: z.string().nullable(),
   channel_id: z.string().nullable(),
   trace_id: z.string().nullable(),
-  // OBS-04 (Phase 192): the off-turn recorder fold key. Nullable — old rows
-  // (pre-192, or in-flight at upgrade time) are NULL → offline-only
+  // The off-turn recorder fold key. Nullable — old rows
+  // (in-flight at upgrade time) are NULL → offline-only
   // reconstruction. The strictObject above REJECTS a column the DDL adds without
   // this line, so the schema + the ensureVideoJobTable DDL move in lockstep.
   session_key: z.string().nullable(),
@@ -47,9 +47,9 @@ export const VideoJobDbRowSchema = z.strictObject({
   actual_cost_usd: z.number().nullable(),
   media_path: z.string().nullable(),
   progress: z.number().nullable(),
-  // The markFailed errorKind; the Plan-03 status handler surfaces it as `error`.
+  // The markFailed errorKind; the status handler surfaces it as `error`.
   last_error: z.string().nullable(),
-  // CR-01: persisted redelivery counter. NOT NULL DEFAULT 0 in the DDL, so it is
+  // Persisted redelivery counter. NOT NULL DEFAULT 0 in the DDL, so it is
   // always a number (never null) — the poller bounds the redelivery loop against
   // it and dead-letters the row to `failed` once it exceeds maxDeliveryAttempts.
   deliver_attempts: z.number(),
@@ -60,7 +60,7 @@ export const VideoJobDbRowSchema = z.strictObject({
 export type VideoJobDbRow = z.infer<typeof VideoJobDbRowSchema>;
 
 /**
- * Single-column projection for the CR-01 `incrementDeliveryAttempt` read-back —
+ * Single-column projection for the `incrementDeliveryAttempt` read-back —
  * the bumped `deliver_attempts` value re-read in the same synchronous turn as the
  * atomic UPDATE. A dedicated schema (vs. the full-row `VideoJobDbRowSchema`) so
  * the SELECT can project ONE column and still go through `createRowMapper`

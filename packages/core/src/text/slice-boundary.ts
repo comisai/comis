@@ -1,31 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure O(1) slice-boundary backoff (SAFE-01 / I9): no I/O/clock/env. Adjust a
+ * Pure O(1) slice-boundary backoff: no I/O/clock/env. Adjust a
  * raw UTF-16 cut index so a truncation never splits a surrogate pair or orphans
  * a base char's trailing combining/joiner/variation-selector sequence — the
- * result is mojibake-free for the scripts this milestone serves (Hebrew niqqud,
+ * result is mojibake-free for the served scripts (Hebrew niqqud,
  * emoji-ZWJ families, astral CJK).
  *
- * Single source of truth (I7): the content-length truncation cut sites in
+ * Single source of truth: the content-length truncation cut sites in
  * @comis/agent (tool-result-size-guard.ts) and @comis/daemon
  * (template-interpolation.ts) ALL import THIS symbol — never a copy. The helper
  * only MOVES an index backward; it injects nothing (so the truncation marker,
  * which stays plain English + newline-isolated, gains no bidi-control codepoint
- * at its boundary — I2).
+ * at its boundary).
  *
  * Detection uses Node's native ECMAScript Unicode property escapes under the `u`
  * flag (probed live on Node v22.21.1: `\p{M}`/`\p{Join_Control}`/
- * `\p{Variation_Selector}` all supported) — NOT `Intl.Segmenter` (REJECTED, I6:
+ * `\p{Variation_Selector}` all supported) — NOT `Intl.Segmenter` (REJECTED:
  * full grapheme segmentation of a 50K string to move two indices is O(n)
  * over-engineering for an O(1) need, and would add no dependency-free guarantee)
- * and NOT a reuse of the SCRIPT_CLASSES combining ranges (those are scoped to the
- * milestone's served scripts, not all Unicode marks). NO imports from any @comis
+ * and NOT a reuse of the SCRIPT_CLASSES combining ranges (those are scoped to
+ * the served-script set, not all Unicode marks). NO imports from any @comis
  * package — pure data + a pure function.
  * @module
  */
 
 /** Bounded backoff: a pathological combining-mark/joiner run cuts anyway after
- *  this many code units, so the helper stays O(1) on a 50K string (T-182-02). */
+ *  this many code units, so the helper stays O(1) on a 50K string. */
 const MAX_BACKOFF = 16;
 
 /** Trailing combiner/joiner/variation-selector test. `\p{M}` = Mn/Me combining
@@ -43,7 +43,7 @@ const TRAILING_COMBINER = /\p{M}|\p{Join_Control}|\p{Variation_Selector}/u;
  *   truncation target).
  * @returns the adjusted index: never inside a surrogate pair, never immediately
  *   after a base char's trailing combining/joiner/VS run; bounded backoff, then
- *   cuts anyway. An ASCII boundary is a no-op (returns the index unchanged — I1).
+ *   cuts anyway. An ASCII boundary is a no-op (returns the index unchanged).
  */
 export function adjustSliceBoundary(text: string, index: number): number {
   if (index <= 0) return 0; // clamp low (also covers an empty string)

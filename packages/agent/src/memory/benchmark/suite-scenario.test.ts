@@ -2,7 +2,7 @@
 /**
  * RED->GREEN unit suite for the deterministic constructed-scenario builders
  * -- the adversarial / contradiction / redaction /
- * learning fixtures the 4 Comis-unique Tier-3 harnesses consume
+ * learning fixtures the 4 Comis-unique harnesses consume
  * WITHOUT any external corpus.
  *
  * UNGATED, default-CI: pure deterministic literal construction (no clock, no

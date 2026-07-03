@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: the orchestrate runner honest-degrades on an unavailable jail
-// (S4) and on a failed jailed child via throwToolError / Error — both are caught
+// and on a failed jailed child via throwToolError / Error — both are caught
 // by the AgentTool execution boundary (agent-loop) and surfaced as a tool error.
 /**
- * `orchestrate-tool` — the Surface-2 `orchestrate` runner (ORCH-01/02). The
+ * `orchestrate-tool` — the `orchestrate` runner. The
  * headline autonomy primitive: the model writes ONE script that chains
  * capability-scoped typed tools (the committed `comis_tools` SDK) in a jailed
  * child, and only size-bounded stdout re-enters context — a search→fetch→
@@ -11,25 +11,25 @@
  * ResultRefs (queried in-jail) rather than the transcript.
  *
  * It composes the SHIPPED substrate, adding NO new sandbox primitive:
- *   - the Phase-211 bwrap cap-socket jail (`BwrapProvider.buildArgs` with
+ *   - the bwrap cap-socket jail (`BwrapProvider.buildArgs` with
  *     `network:{mode:"cap-socket"}` → `--unshare-net` + the cap socket `--bind`;
  *     `~/.comis` is masked by construction — the jail binds only the workspace +
  *     `SYSTEM_RO_PATHS`, never the data dir).
- *   - `resolveJailNode` (JAIL-04) for the honest-degrade: no `node`/`bwrap`
+ *   - `resolveJailNode` for the honest-degrade: no `node`/`bwrap`
  *     inside the jail → a loud precondition error, NEVER a quiet host-side run
  *     outside the jail.
- *   - the committed `comis_tools.{d.ts,js}` SDK (Plan 03) + the
- *     `orchestrate-sdk-runtime.js` shim (Task 1), copied into the workspace so
+ *   - the committed `comis_tools.{d.ts,js}` SDK + the
+ *     `orchestrate-sdk-runtime.js` shim, copied into the workspace so
  *     the script can `import "./comis_tools.js"`.
- *   - the `result-ref-store` run lifecycle (Plan 03) — the runner owns
- *     `cleanupRun` (REF-03) in a `finally`.
+ *   - the `result-ref-store` run lifecycle — the runner owns
+ *     `cleanupRun` in a `finally`.
  *   - `createToolResultSizeGuard` (@comis/agent) for the stdout size-bounce.
  *
- * ORCH-02 (env-scrub): the inherited/base env is filtered through
+ * Env-scrub: the inherited/base env is filtered through
  * {@link scrubSecretEnv} (drop any `*KEY* / *TOKEN* / *SECRET*` key) BEFORE the
  * daemon-injected lease vars (`COMIS_CAP_LEASE`/`COMIS_ORCH_SOCKET`) are merged —
  * the lease vars ride `brokerSpawnEnv.placeholders`, merged LAST, so they survive
- * the scrub by construction (Pitfall 4). A host secret can never leak into the
+ * the scrub by construction. A host secret can never leak into the
  * jailed (attacker-controlled) child; the lease the SDK authenticates with always
  * does.
  *
@@ -78,7 +78,7 @@ registerActivityLabelSpec("orchestrate", {
 });
 
 // ---------------------------------------------------------------------------
-// Parameter schema (ORCH-01).
+// Parameter schema.
 // ---------------------------------------------------------------------------
 
 const OrchestrateParams = Type.Object({
@@ -124,7 +124,7 @@ export type OrchestrateSpawnFn = (
   opts: { env: Record<string, string | undefined>; cwd?: string },
 ) => OrchestrateSpawnedChild;
 
-/** Minimal store surface the runner needs (the run-lifecycle owner — REF-03). */
+/** Minimal store surface the runner needs (the runner owns the run lifecycle). */
 export interface OrchestrateResultStore {
   materialize(
     payload: string | Buffer,
@@ -144,19 +144,19 @@ export interface OrchestrateToolDeps {
   /**
    * The cap socket bound into the jail (`network:{mode:"cap-socket", capSocketPath}`).
    * Daemon-minted per-run path (conventionally `/run/comis` or the data dir) —
-   * Plan 05 threads it from the kept endpoint handle.
+   * the daemon wiring threads it from the kept endpoint handle.
    */
   readonly capSocketPath: string;
   /** The platform sandbox provider (BwrapProvider on Linux) — the arg generator. */
   readonly sandbox: SandboxProvider;
   /**
    * The daemon-injected lease-env carrier. `placeholders` (COMIS_CAP_LEASE /
-   * COMIS_ORCH_SOCKET) are merged AFTER the secret-scrub so they survive it
-   * (Pitfall 4). Optional: when absent the child gets no lease (the SDK calls
+   * COMIS_ORCH_SOCKET) are merged AFTER the secret-scrub so they survive it.
+   * Optional: when absent the child gets no lease (the SDK calls
    * would then fail their precondition — never a silent unauthenticated run).
    */
   readonly brokerSpawnEnv?: { readonly placeholders: Record<string, string> };
-  /** The ResultRef store — the runner owns `cleanupRun` on run end (REF-03). */
+  /** The ResultRef store — the runner owns `cleanupRun` on run end. */
   readonly store: OrchestrateResultStore;
   /** The directory holding the committed SDK assets to copy into the jail. */
   readonly sdkAssetsDir?: string;
@@ -167,7 +167,7 @@ export interface OrchestrateToolDeps {
   /**
    * The comis-agent CLI-binary resolver (default `defaultResolveJailAgentCli`,
    * which resolves the dist entry + reads the committed manifest sha via
-   * `import.meta.url` and calls `resolveJailAgentCli`). CLI-05/06: a missing or
+   * `import.meta.url` and calls `resolveJailAgentCli`). A missing or
    * tampered binary makes ONLY the CLI surface unavailable (a loud WARN, no bind,
    * no COMIS_AGENT_BIN) — the orchestrate SCRIPT surface still runs.
    */
@@ -177,8 +177,8 @@ export interface OrchestrateToolDeps {
   /** Injected wall clock (default `systemNowMs`). */
   readonly now?: () => number;
   /**
-   * The base/inherited env to scrub (ORCH-02). REQUIRED — the daemon wiring
-   * (Plan 05) supplies the inherited env explicitly, so the runner never reads
+   * The base/inherited env to scrub. REQUIRED — the daemon wiring
+   * supplies the inherited env explicitly, so the runner never reads
    * an ambient global (AGENTS.md §2.2). The lease vars are added separately via
    * {@link brokerSpawnEnv}, merged AFTER the scrub.
    */
@@ -189,10 +189,10 @@ export interface OrchestrateToolDeps {
 // Constants.
 // ---------------------------------------------------------------------------
 
-/** The SDK asset filenames copied into the jail workspace (Plan 03 + Task 1). */
+/** The SDK asset filenames copied into the jail workspace. */
 const SDK_ASSETS = ["comis_tools.d.ts", "comis_tools.js", "orchestrate-sdk-runtime.js"] as const;
 
-/** The comis-built comis-agent entry that is sha256-pinned + RO-bound (CLI-05). */
+/** The comis-built comis-agent entry that is sha256-pinned + RO-bound. */
 const COMIS_AGENT_ENTRY_FILENAME = "comis-agent-entry.js";
 
 /** The committed manifest (rides into dist via the asset-copy) holding the pin. */
@@ -202,7 +202,7 @@ const COMIS_AGENT_MANIFEST_FILENAME = "comis-agent-manifest.json";
 const STDOUT_MAX_CHARS = 30_000;
 
 /**
- * The hard in-stream ceiling on the daemon-side stdout collector (WR-01). The
+ * The hard in-stream ceiling on the daemon-side stdout collector. The
  * `STDOUT_MAX_CHARS` bounce only runs AFTER the child exits, so without this an
  * unbounded jailed `console.log` flood grows the daemon heap for the whole run.
  * A few × `STDOUT_MAX_CHARS` (4 MiB) leaves ample headroom for a legitimate
@@ -216,8 +216,8 @@ export const STDOUT_HARD_CAP_BYTES = 4 * 1024 * 1024;
  * success path stderr is dropped (stdout-only — diagnostic noise stays out of
  * context); on a NON-ZERO exit this bounded tail is the only signal of WHY the
  * child died (a thrown `TypeError`, a bad import, a comis_tools misuse) and is
- * surfaced in the rejection so the failure is diagnosable without a re-run
- * (hermes-usecases live-test 2026-06-25). Bounded so a stderr flood can neither
+ * surfaced in the rejection so the failure is diagnosable without a re-run.
+ * Bounded so a stderr flood can neither
  * grow the daemon heap nor swamp the error/context. The surfaced tail still
  * passes the daemon OutputGuard on egress, and the jail env is secret-scrubbed.
  */
@@ -227,7 +227,7 @@ const STDERR_TAIL_MAX_CHARS = 2_000;
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
 /**
- * The hard ceiling on a model-supplied `timeoutMs` (WR-02). The schema accepts
+ * The hard ceiling on a model-supplied `timeoutMs`. The schema accepts
  * any positive integer, so without this a jailed (attacker-controlled) script
  * could request `timeoutMs: 999_999_999` (~11.5 days) and pin a child for an
  * arbitrarily long window. 10 minutes is far longer than any legitimate
@@ -239,11 +239,11 @@ export const MAX_TIMEOUT_MS = 10 * 60_000;
 const PER_RUN_AGGREGATE_CAP_BYTES = 64 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
-// Pure exported helper — the ORCH-02 env-scrub (macOS-unit-testable).
+// Pure exported helper — the env-scrub (macOS-unit-testable).
 // ---------------------------------------------------------------------------
 
 /**
- * Matches any env key that could carry a credential (ORCH-02 + IN-01). Covers
+ * Matches any env key that could carry a credential. Covers
  * the obvious `KEY/TOKEN/SECRET` names PLUS common credential names that contain
  * none of those substrings (`PASSWORD`, `PASSPHRASE`, `CREDENTIAL(S)`,
  * `PRIVATE`, `BEARER`, `AUTH`, a `_PAT` suffix, `DSN`). `_PAT\b` is anchored so
@@ -255,13 +255,13 @@ const PER_RUN_AGGREGATE_CAP_BYTES = 64 * 1024 * 1024;
 const SECRET_KEY_PATTERN = /KEY|TOKEN|SECRET|PASSWORD|PASSPHRASE|CREDENTIAL|PRIVATE|BEARER|AUTH|_PAT\b|DSN/i;
 
 /**
- * Filter a base/inherited env map for the jailed child (ORCH-02): drop every key
+ * Filter a base/inherited env map for the jailed child: drop every key
  * matching `*KEY* / *TOKEN* / *SECRET*` (case-insensitive) and every undefined
  * value, returning a clean `Record<string,string>`.
  *
  * This runs over the BASE env ONLY — the daemon-injected lease vars
  * (`COMIS_CAP_LEASE`/`COMIS_ORCH_SOCKET`) are merged AFTER this scrub (they ride
- * `brokerSpawnEnv.placeholders`), so they survive by construction (Pitfall 4).
+ * `brokerSpawnEnv.placeholders`), so they survive by construction.
  * Keeping the scrub a pure function over the base map makes the survival property
  * unit-testable on macOS with no real spawn.
  *
@@ -282,7 +282,7 @@ export function scrubSecretEnv(
 
 /**
  * Resolve the effective jailed-run wall-clock timeout from a model-supplied
- * value (WR-02): a non-positive / non-numeric request falls back to
+ * value: a non-positive / non-numeric request falls back to
  * {@link DEFAULT_TIMEOUT_MS}; any larger request is clamped down to
  * {@link MAX_TIMEOUT_MS}. Pure so the bound is unit-testable with no spawn.
  *
@@ -300,7 +300,7 @@ export function clampTimeoutMs(requested: number | undefined): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Create the `orchestrate` AgentTool (ORCH-01/02). See the module doc for the
+ * Create the `orchestrate` AgentTool. See the module doc for the
  * composition + the containment guarantees.
  *
  * @param deps - The injected collaborators (workspace, cap socket, sandbox,
@@ -331,14 +331,14 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       const startedMs = now();
       const runId = `orch-${startedMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const workspacePath = deps.workspaceResolver();
-      // WR-02: bound the model-supplied timeout (fallback default, clamp ceiling)
+      // Bound the model-supplied timeout (fallback default, clamp ceiling)
       // so a jailed script cannot pin a child for an arbitrarily long window.
       const timeoutMs = clampTimeoutMs(params.timeoutMs);
 
       log.debug({ runId, step: "start", language: params.language }, "orchestrate run starting");
 
-      // Resolve the seccomp fd ONCE, BEFORE the try (CR-01 + seccomp-profile.ts
-      // §21-43). The fd is opened WITHOUT O_CLOEXEC so the bwrap child inherits
+      // Resolve the seccomp fd ONCE, BEFORE the try (see the fd-lifecycle
+      // contract in seccomp-profile.ts). The fd is opened WITHOUT O_CLOEXEC so the bwrap child inherits
       // it — the parent (daemon) keeps its OWN copy after fork and MUST close it
       // in the finally below, or every jailed run leaks one descriptor and a
       // long-running daemon exhausts its fd table. Opening it here (not inside
@@ -361,8 +361,8 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         }
         log.debug({ runId, step: "sdk-written" }, "script + SDK written to workspace");
 
-        // 3. Honest-degrade (S4): resolve the jail node; refuse on unavailable —
-        //    NEVER a quiet host-side run outside the jail (T-212-18).
+        // 3. Honest-degrade: resolve the jail node; refuse on unavailable —
+        //    NEVER a quiet host-side run outside the jail.
         const jailNode = resolveNode();
         if (jailNode.mode === "unavailable") {
           log.warn(
@@ -376,13 +376,13 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           );
         }
 
-        // 3b. CLI-05/06 honest-degrade: resolve the sha256-pinned comis-agent
-        //     binary. UNLIKE the node resolve, an unavailable (missing/tampered)
-        //     binary does NOT refuse the whole jail — it degrades ONLY the
-        //     comis-agent CLI surface (the orchestrate SCRIPT surface is
-        //     independent and still runs). A LOUD content-free WARN names the
-        //     cause; we then omit the bind + COMIS_AGENT_BIN (never a silent bind
-        //     of a missing/tampered binary — T-219-22 / T-219-24).
+        // 3b. Honest-degrade for the CLI surface: resolve the sha256-pinned
+        //     comis-agent binary. UNLIKE the node resolve, an unavailable
+        //     (missing/tampered) binary does NOT refuse the whole jail — it
+        //     degrades ONLY the comis-agent CLI surface (the orchestrate SCRIPT
+        //     surface is independent and still runs). A LOUD content-free WARN
+        //     names the cause; we then omit the bind + COMIS_AGENT_BIN (never a
+        //     silent bind of a missing/tampered binary).
         const jailAgentCli = resolveAgentCli();
         if (jailAgentCli.mode === "unavailable") {
           log.warn(
@@ -396,15 +396,15 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         //    The provider binds the curated SYSTEM_RO_PATHS itself (so jq + node
         //    resolve); we pass NO extra readOnlyPaths (mirrors the cap-socket
         //    .linux.test) — re-listing them here would route the curated
-        //    allow-list through the JAIL-03 discovery screen (a false-positive on
-        //    /etc/* paths that resolve into a blocked dir on some hosts).
-        //    `jailAgentCli` is passed verbatim — buildArgs RO-binds the binary
-        //    ONLY on mode "bind", omits it otherwise (CLI-05).
+        //    allow-list through the provider's read-only-path discovery screen
+        //    (a false-positive on /etc/* paths that resolve into a blocked dir
+        //    on some hosts). `jailAgentCli` is passed verbatim — buildArgs
+        //    RO-binds the binary ONLY on mode "bind", omits it otherwise.
         // The jail `--bind`s `<workspace>/.tmp` as its writable temp; bwrap requires
         // the bind SOURCE to exist, so create it BEFORE building the args. A missing
         // `.tmp` makes bwrap fail at construction with "Can't find source path
-        // …/.tmp" → exit 1 on EVERY real jailed run (live VPS finding 2026-06-23;
-        // invisible to the macOS unit suite, which injects a fake spawn). Guarded by
+        // …/.tmp" → exit 1 on EVERY real jailed run (invisible to the macOS unit
+        // suite, which injects a fake spawn). Guarded by
         // orchestrate-tool.test.ts.
         const tempDir = safePath(workspacePath, ".tmp");
         mkdirSync(tempDir, { recursive: true });
@@ -431,17 +431,17 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         const bin = args[0]!;
         const spawnArgs = [...args.slice(1), "/bin/bash", "-c", command];
 
-        // 5. Env: the ORCH-02 scrub over the BASE env, THEN the lease placeholders
-        //    merged LAST (Pitfall 4 — they survive the scrub by construction).
+        // 5. Env: the secret scrub over the BASE env, THEN the lease placeholders
+        //    merged LAST (so they survive the scrub by construction).
         const childEnv: Record<string, string | undefined> = scrubSecretEnv(deps.baseEnv);
         if (deps.brokerSpawnEnv) {
           Object.assign(childEnv, deps.brokerSpawnEnv.placeholders);
         }
-        // 5b. CLI-05: expose COMIS_AGENT_BIN (the in-jail comis-agent path) ONLY
+        // 5b. Expose COMIS_AGENT_BIN (the in-jail comis-agent path) ONLY
         //     when the binary is bound. It is NOT a secret, so it is set AFTER the
         //     scrub (like the lease vars). On "unavailable" it is intentionally
         //     unset — the in-jail `comis-agent` then has no binary to resolve, the
-        //     loud WARN above already announced the scoped degrade (CLI-06).
+        //     loud WARN above already announced the scoped degrade.
         if (jailAgentCli.mode === "bind") {
           childEnv.COMIS_AGENT_BIN = jailAgentCli.binPath;
         }
@@ -464,14 +464,14 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         );
         return { content: bounced, details: { runId, stdoutBytes: stdout.length } };
       } finally {
-        // 7. CR-01: close the PARENT's copy of the seccomp fd. By the time the
+        // 7. Close the PARENT's copy of the seccomp fd. By the time the
         //    finally runs the child has already inherited it (spawn returned, or
         //    threw — either way the parent's copy is open and must be released).
         //    null-safe + double-close-safe, so this is unconditional. Closing
         //    BEFORE gcRun/cleanupRun guarantees a throwing GC cannot skip it.
         closeSeccompProfileFd(seccompFd);
 
-        // 8. REF-03: the runner owns the run lifecycle — GC then drop the run's
+        // 8. The runner owns the run lifecycle — GC then drop the run's
         //    results/ entries, on success AND on failure.
         try {
           await deps.store.gcRun({
@@ -536,7 +536,7 @@ function runJailedChild(
 
     child.stdout?.on("data", (chunk: Buffer) => {
       if (settled) return;
-      // WR-01: bound the in-stream accumulation. The post-exit STDOUT_MAX_CHARS
+      // Bound the in-stream accumulation. The post-exit STDOUT_MAX_CHARS
       // bounce does not protect the daemon heap DURING the run, so a jailed
       // `while(true) console.log(...)` flood must be stopped here — fail closed:
       // stop appending, SIGKILL the runaway child, and reject.
@@ -606,7 +606,7 @@ interface TextBlock {
   text: string;
 }
 
-/** Size-bounce the raw stdout into bounded text content (ORCH-01 / T-212-21). */
+/** Size-bounce the raw stdout into bounded text content. */
 function sizeBounceStdout(stdout: string): TextBlock[] {
   const guard = createToolResultSizeGuard();
   const result = guard.truncateIfNeeded(
@@ -637,7 +637,7 @@ function readExecPath(): string {
 }
 
 /**
- * The default comis-agent CLI resolver (CLI-05/06). Resolve the built entry +
+ * The default comis-agent CLI resolver. Resolve the built entry +
  * the committed manifest from `assetDir` (the built module dir, which carries
  * both via the copy-sandbox-assets step), read the pinned sha, and delegate to
  * `resolveJailAgentCli` (which hash-verifies the bound bytes). When the manifest

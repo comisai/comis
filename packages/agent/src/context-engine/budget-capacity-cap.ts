@@ -2,14 +2,14 @@
 /**
  * computeTokenBudgetForProfile — ModelProfile-aware token budget wrapper.
  *
- * C1: handles both:
+ * Handles both:
  *   1. 8K-starvation (effectiveO = min(OUTPUT_RESERVE_TOKENS, profile.maxOutputTokens))
  *   2. 256K-overfill (effectiveWindow = min(contextWindow, EFFECTIVE_CAP_BY_CLASS[class]))
  *
  * Frontier/mid: byte-identical to computeTokenBudget (behavior-neutral guarantee).
  * Small/nano: effective window capped by capability class to prevent 256K-overfill degradation.
  *
- * IMPORTANT: the B-1 3.5-ratio over-reservation (the ÷CHARS_PER_TOKEN_RATIO
+ * IMPORTANT: the 3.5-ratio over-reservation (the ÷CHARS_PER_TOKEN_RATIO
  * estimates in assembleTools step 5, "System token estimate", in
  * executor-tool-assembly.ts) is PRESERVED — it is applied at the call site
  * before passing systemTokensEstimate and freshTailPreambleTokensEstimate to
@@ -33,13 +33,13 @@ import type { ModelProfile } from "../executor/model-profile.js";
  * The `?? 32_000` final fallback in resolveEffectiveCap handles unknown classes.
  *
  * frontier/mid: Infinity (use raw contextWindow — behavior-neutral).
- * small: 32K (matches Zod schema default; validated against Phase 149 comprehension data).
- * nano: 16K (matches Zod schema default; validated against Phase 149 comprehension data).
+ * small: 32K (matches Zod schema default; validated against small-model comprehension data).
+ * nano: 16K (matches Zod schema default; validated against small-model comprehension data).
  * Operators can tune small/nano via contextEngine.budget.effectiveContextCapSmall/Nano.
  */
 export const DEFAULT_EFFECTIVE_CAP_BY_CLASS: Readonly<Record<string, number>> = {
   frontier: Infinity,
-  mid: Infinity, // mid (Google Gemini) genuinely uses long context; no cap in Phase 152
+  mid: Infinity, // mid (Google Gemini) genuinely uses long context; deliberately uncapped
   small: 32_000,
   nano: 16_000,
 } as const;
@@ -48,17 +48,17 @@ export const DEFAULT_EFFECTIVE_CAP_BY_CLASS: Readonly<Record<string, number>> = 
  * Compute a ModelProfile-aware token budget.
  *
  * @param profile       - The resolved ModelProfile (from resolveModelProfile()).
- * @param systemTokensEstimate - S: system tokens (÷3.5 of system prompt chars — B-1 applied by caller).
- * @param freshTailPreambleTokensEstimate - P: preamble tokens (÷3.5 of preamble chars — B-1 applied by caller).
+ * @param systemTokensEstimate - S: system tokens (÷3.5 of system prompt chars — over-reservation applied by caller).
+ * @param freshTailPreambleTokensEstimate - P: preamble tokens (÷3.5 of preamble chars — over-reservation applied by caller).
  * @param cacheFenceIndex - Optional; passed through to computeTokenBudget. Default: -1.
  * @param effectiveContextCapSmall - Optional override for the small class cap (from contextEngine.budget.effectiveContextCapSmall).
  * @param effectiveContextCapNano  - Optional override for the nano class cap (from contextEngine.budget.effectiveContextCapNano).
- * @param windowProvenance - Optional KNOB-02 provenance from the executor's
+ * @param windowProvenance - Optional provenance from the executor's
  *   resolveEffectiveContextWindow reconcile. When present, rawContextWindowTokens
  *   reports the TRUE configuredWindow (profile.contextWindow arrives ALREADY
  *   overwritten with the reconciled value) and windowCapSource gains "served" /
- *   the class knob for upstream binds. Absent ⇒ byte-identical pre-provenance
- *   behavior (I3 frontier/mid pin).
+ *   the class knob for upstream binds. Absent ⇒ the profile's contextWindow is
+ *   reported as the raw window and no upstream cap source is attributed.
  */
 export function computeTokenBudgetForProfile(
   profile: ModelProfile,
@@ -77,16 +77,16 @@ export function computeTokenBudgetForProfile(
     effectiveContextCapNano,
   );
   const effectiveWindow = Math.min(profile.contextWindow, classCap);
-  // W1 cap provenance: when this function's OWN class cap bit, it is the
+  // Cap provenance: when this function's OWN class cap bit, it is the
   // binding (tightest) constraint — name the budget knob (raising it genuinely
-  // works on this branch). Otherwise (KNOB-02) consult the executor-side
+  // works on this branch). Otherwise consult the executor-side
   // reconcile provenance: "served" when the Ollama-served window bound
   // upstream; "capabilityClass" when the executor's DEFAULT_EFFECTIVE_CAP_BY_CLASS
-  // cap bound upstream (WR-01: that cap comes from the operator's
+  // cap bound upstream (that cap comes from the operator's
   // providers.entries.<id>.capabilities.capabilityClass pin — it never reads
   // the contextEngine.budget.* knobs, so naming the budget knob here would send
   // operators to a dead lever); "none" when nothing clamped or no provenance
-  // was threaded (pre-KNOB-02 byte-identical behavior).
+  // was threaded.
   const capBit = effectiveWindow < profile.contextWindow;
   const windowCapSource: WindowCapSource = capBit
     ? capKnob
@@ -117,9 +117,9 @@ export function computeTokenBudgetForProfile(
     return {
       ...rawBudget,
       windowTokens: effectiveWindow,
-      // KNOB-02: profile.contextWindow arrives executor-OVERWRITTEN with the
+      // profile.contextWindow arrives executor-OVERWRITTEN with the
       // reconciled (possibly served) value — the TRUE configured window lives
-      // on the provenance. Absent provenance ⇒ pre-KNOB-02 behavior.
+      // on the provenance. Absent provenance ⇒ report the profile value directly.
       rawContextWindowTokens: windowProvenance?.configuredWindow ?? profile.contextWindow,
       windowCapSource,
       ...(windowProvenance?.served !== undefined && { servedWindowTokens: windowProvenance.served }),
@@ -132,7 +132,7 @@ export function computeTokenBudgetForProfile(
   // For frontier: effectiveWindow == contextWindow (Infinity cap) → byte-identical.
   return {
     ...computeTokenBudget(effectiveWindow, systemTokensEstimate, cacheFenceIndex, freshTailPreambleTokensEstimate),
-    // KNOB-02: see the starvation-path comment above — raw = the TRUE configured window.
+    // See the starvation-path comment above — raw = the TRUE configured window.
     rawContextWindowTokens: windowProvenance?.configuredWindow ?? profile.contextWindow,
     windowCapSource,
     ...(windowProvenance?.served !== undefined && { servedWindowTokens: windowProvenance.served }),
@@ -142,7 +142,7 @@ export function computeTokenBudgetForProfile(
 /**
  * Resolve the class cap AND the knob it came from. `source` names the
  * `contextEngine.budget.*` knob that produced the cap so the budget can report
- * WHICH setting to raise (W1 cap provenance). The unknown-class `?? 32_000`
+ * WHICH setting to raise. The unknown-class `?? 32_000`
  * safety net is attributed to the small knob — it mirrors that knob's default
  * and only non-schema callers can reach it.
  */

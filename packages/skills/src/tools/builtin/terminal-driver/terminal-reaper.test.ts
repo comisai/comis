@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the terminal-driver reaper (spec §4.6).
+ * Unit tests for the terminal-driver reaper.
  *
  * Fully-injected → runs green on macOS without real time. `createTerminalReaper`
  * is a FACTORY closing over a single timer handle (no module-global state); the
@@ -219,20 +219,20 @@ describe("createTerminalReaper — no module-global / injected clock", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ENDURE-01 (I9): the idle sweep EXCLUDES an alive-and-busy session — a
+// The idle sweep EXCLUDES an alive-and-busy session — a
 // quiet-but-busy multi-hour compile is NEVER idle-evicted. The exclusion
 // consumes the injected `isBusy` predicate (the daemon binds it to
-// `busyOrHung(...) === "busy"`, 165-02). A genuinely-idle (not busy) session
+// `busyOrHung(...) === "busy"`). A genuinely-idle (not busy) session
 // is STILL reaped; the deliberate wall_clock/max_interactions caps STILL fire
-// and NAME the cap on the reason; the no-isBusy path is byte-identical (I1).
+// and NAME the cap on the reason; the no-isBusy path is byte-identical.
 // ---------------------------------------------------------------------------
-describe("createTerminalReaper — ENDURE-01 alive-busy idle exclusion (I9)", () => {
-  it("does NOT idle-evict a session quiet past idleTtlMs but alive+busy (seeds the BUSY signal, not just lastActivity — Pitfall 2)", () => {
+describe("createTerminalReaper — alive-busy idle exclusion", () => {
+  it("does NOT idle-evict a session quiet past idleTtlMs but alive+busy (seeds the BUSY signal, not just lastActivity)", () => {
     const now0 = 1_000_000;
-    // The CRITICAL row (Pitfall 2): lastActivity is STALE (10min ago, well past
+    // The CRITICAL row: lastActivity is STALE (10min ago, well past
     // idleTtlMs) because a backgrounded compile makes no tool round-trip — yet
     // the WORKER is making progress, so `isBusy` returns true. A naive idle sweep
-    // (lastActivity-only) would evict it; the I9 exclusion must NOT.
+    // (lastActivity-only) would evict it; the busy exclusion must NOT.
     const rows: Row[] = [
       { sessionId: "busy-compile", lastActivity: now0 - 600_000, startedAtMs: now0 - 600_000 },
     ];
@@ -251,7 +251,7 @@ describe("createTerminalReaper — ENDURE-01 alive-busy idle exclusion (I9)", ()
 
     timers.advance(1000); // one sweep — the clock stays at now0
 
-    // The I9 exclusion: the busy compile is NOT idle-evicted despite a stale lastActivity.
+    // The busy exclusion: the busy compile is NOT idle-evicted despite a stale lastActivity.
     expect(onEvict).not.toHaveBeenCalledWith("busy-compile", "idle");
     expect(onEvict).not.toHaveBeenCalled();
     // And the predicate was actually consulted on the idle row (not a lastActivity-only impl).
@@ -310,7 +310,7 @@ describe("createTerminalReaper — ENDURE-01 alive-busy idle exclusion (I9)", ()
     reaper.stop();
   });
 
-  it("I1: with isBusy ABSENT the idle sweep is byte-identical to today (eviction on quietness alone)", () => {
+  it("with isBusy ABSENT the idle sweep is unchanged (eviction on quietness alone)", () => {
     const now0 = 1_000_000;
     const rows: Row[] = [
       { sessionId: "stale", lastActivity: now0 - 6000, startedAtMs: now0 - 6000 },
@@ -339,10 +339,10 @@ describe("createTerminalReaper — ENDURE-01 alive-busy idle exclusion (I9)", ()
 });
 
 // ---------------------------------------------------------------------------
-// ENDURE-01: a max_interactions cap-eviction NAMES its cap verbatim on the
+// A max_interactions cap-eviction NAMES its cap verbatim on the
 // SINGLE audited eviction site (`wireRegistryReaper.evict`) — the same path the
 // daemon's max-interactions check calls. The reason rides onto onEvict + the
-// WARN, so the NOTIFY-01 failed outcome (Phase 166) reads a deliberate bound,
+// WARN, so the user-facing failed outcome reads a deliberate bound,
 // not a mystery.
 // ---------------------------------------------------------------------------
 describe("wireRegistryReaper — cap-eviction names the cap (max_interactions)", () => {

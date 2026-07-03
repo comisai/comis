@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cost aggregation with pricing coverage (COST-03, Phase 179 WS6).
+ * Cost aggregation with pricing coverage.
  *
  * Two bucket widths over the SAME columns:
  *   - `aggregateQuarterHourly` — a 900000-ms (15-min) bucket. The four quarter-hour
  *     buckets inside an hour SUM (cost / tokens / calls / cacheSaved) to that hour's
- *     single hourly bucket (the conservation invariant the WS6 test pins).
+ *     single hourly bucket (the conservation invariant the test pins).
  *   - `aggregateHourlyCost` — a 3600000-ms (60-min) bucket; the `comis cost export`
  *     default granularity. Identical columns + coverage so the export's CSV header is
  *     stable across granularities.
  *
  * Both build their SELECT from one parameterized statement (the only difference is the
- * integer-division divisor), so they cannot drift. Each bucket carries the E1
+ * integer-division divisor), so they cannot drift. Each bucket carries the
  * pricing-coverage pair so a `comis cost export` consumer (a finance review) sees how
  * trustworthy the dollars are: the SUM(cost_correction), the per-bucket count of
  * `unknown`/NULL `pricing_state` rows (`missingPricingCount` — dollars NOT
@@ -46,7 +46,7 @@ export type ObservabilityAggregates = Pick<
   "aggregateQuarterHourly" | "aggregateHourlyCost" | "aggregateToolCostByAgent" | "pricingCoverage"
 >;
 
-/** The pricing-coverage row schema (WEBUI-02) — the three E1 pricing-state tallies. */
+/** The pricing-coverage row schema — the three pricing-state tallies. */
 const pricingCoverageMapper = createRowMapper(
   z.strictObject({
     priced: z.number(),
@@ -56,7 +56,7 @@ const pricingCoverageMapper = createRowMapper(
 );
 
 /**
- * HG-01 per-tool even-split row schema — the three attributable columns + the
+ * Per-tool even-split row schema — the three attributable columns + the
  * raw `tool_tag` JSON blob (parsed + validated in JS by {@link parseDistinctTools}
  * rather than in SQL: better-sqlite3 has no JSON-array iteration, and the
  * distinct-set is already content-free names). `tool_tag` is `nullable` so the
@@ -92,7 +92,7 @@ function parseDistinctTools(raw: string | null): string[] {
 }
 
 /**
- * The bucket row schema (COST-03) — the `HourlyBucketDbRow` columns PLUS the E1
+ * The bucket row schema — the `HourlyBucketDbRow` columns PLUS the
  * pricing-coverage tallies (`missing_pricing_count`; `priced_count`/`free_count`
  * from which the bound method derives the dominant `pricingState`). Defined HERE
  * (its ONLY consumer) rather than row-schemas.ts so it is not a dead public export,
@@ -110,7 +110,7 @@ const QuarterHourBucketDbRowSchema = z.strictObject({
   free_count: z.number(),
   missing_pricing_count: z.number(),
 });
-/** The bucket mapper (COST-03, the 900000-/3600000-ms aggregates). */
+/** The bucket mapper (the 900000-/3600000-ms aggregates). */
 const quarterHourBucketMapper = createRowMapper(QuarterHourBucketDbRowSchema);
 
 /**
@@ -198,12 +198,12 @@ export function bindAggregates(db: Database.Database): ObservabilityAggregates {
     }));
   }
 
-  // HG-01: the per-tool even-split for ONE agent. Pull the agent's rows that
+  // The per-tool even-split for ONE agent. Pull the agent's rows that
   // carry a non-null tool_tag (a NULL-tag turn has no tool to attribute to), then
   // even-split each row's cost/tokens/calls across its DISTINCT tools in JS (the
   // JSON-array split has no clean SQL form in better-sqlite3). The split conserves:
-  // Σ per-tool cost === Σ attributable-row cost_total (the COST-01 comment's promise,
-  // now a real contract — pinned by the conservation test). Content-free (tool names
+  // Σ per-tool cost === Σ attributable-row cost_total (a real contract, pinned by
+  // the conservation test). Content-free (tool names
   // + numbers only). The WHERE is parameterized (agent_id + the optional sinceMs) —
   // never interpolated (the untyped-sqlite + SQL-injection gate).
   const toolCostByAgentAllStmt = db.prepare(`
@@ -247,8 +247,8 @@ export function bindAggregates(db: Database.Database): ObservabilityAggregates {
     return [...byTool.values()].sort((a, b) => b.cost - a.cost);
   }
 
-  // WEBUI-02 (179-04): the daemon-wide three-state pricing-coverage count. Reuses
-  // the SAME E1 CASE expressions as the cost buckets above (priced / free / the
+  // The daemon-wide three-state pricing-coverage count. Reuses
+  // the SAME CASE expressions as the cost buckets above (priced / free / the
   // unknown-or-NULL fall-through) so the snapshot's coverage and the export's
   // per-bucket coverage cannot drift. Content-free (three integer counts).
   function pricingCoverage(sinceMs?: number): { priced: number; free: number; unknown: number } {

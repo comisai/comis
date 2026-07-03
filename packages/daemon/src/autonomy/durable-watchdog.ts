@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Durable watchdog (Phase 216, HB-01 / DUR-04): the PURE lapsed-heartbeat
+ * Durable watchdog: the PURE lapsed-heartbeat
  * detector. A long-running durable run stamps `lastHeartbeatAt` on a keep-alive
  * (DurableRunPort.touchHeartbeat); a process that crashed stops stamping, so a
  * run whose heartbeat is older than `staleHeartbeatMs` is a crash candidate the
@@ -9,11 +9,11 @@
  * This module is JUST the detector — `detectStaleRuns` is a pure filter with no
  * I/O and no callable-global time/timer reads (the globals.test.ts arch-gate
  * forbids the wall-clock global and the interval-scheduler global here). The
- * ACTUAL interval that calls it on a tick is wired in Plan 07 via the injected
- * TimerPort; `nowMs` is passed in by that caller so the detector stays
- * exhaustively unit-testable with a fake clock.
+ * ACTUAL interval that calls it on a tick is wired at the daemon boot layer via
+ * the injected TimerPort; `nowMs` is passed in by that caller so the detector
+ * stays exhaustively unit-testable with a fake clock.
  *
- * Pitfall 4 (the conservative-threshold rule): the threshold must be GENEROUSLY
+ * The conservative-threshold rule: the threshold must be GENEROUSLY
  * larger than the keep-alive interval, or a slow-but-alive run is falsely failed
  * and its work duplicated. This is the same lesson `ANNOUNCE_PARENT_TIMEOUT_MS`
  * encodes — "30s caused premature fallback + duplicate delivery"
@@ -27,7 +27,7 @@ import type { DurableRunRecord } from "@comis/core";
 
 /**
  * The default keep-alive write cadence (ms) — how often a live durable run
- * stamps `lastHeartbeatAt`. Plan 07 schedules the touch at this interval.
+ * stamps `lastHeartbeatAt`. The daemon boot layer schedules the touch at this interval.
  */
 export const DEFAULT_KEEPALIVE_MS = 30_000;
 
@@ -36,12 +36,12 @@ export const DEFAULT_KEEPALIVE_MS = 30_000;
  * older than `nowMs - this` is treated as crashed. Deliberately 4x
  * {@link DEFAULT_KEEPALIVE_MS} (comfortably above the >=3x conservative-ratio
  * floor) so a transiently-slow run that misses a keep-alive or two is NOT failed
- * — the Pitfall-4 / `ANNOUNCE_PARENT_TIMEOUT_MS` "30s was too tight" lesson.
+ * — the conservative-ratio / `ANNOUNCE_PARENT_TIMEOUT_MS` "30s was too tight" lesson.
  */
 export const DEFAULT_STALE_HEARTBEAT_MS = 120_000;
 
 /**
- * Detect the runs whose heartbeat has lapsed (HB-01).
+ * Detect the runs whose heartbeat has lapsed.
  *
  * A run is stale iff it is still `running` AND its last heartbeat is STRICTLY
  * older than the threshold (`lastHeartbeatAt < nowMs - staleHeartbeatMs`). The

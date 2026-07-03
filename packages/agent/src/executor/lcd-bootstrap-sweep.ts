@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DEPTH-03 bootstrap crash-recovery sweep (Plan 174-03).
+ * Bootstrap crash-recovery sweep.
  *
  * Closes the mid-turn crash gap: when the daemon is killed AFTER the JSONL
  * trajectory write but BEFORE the `afterTurn` ingest, those messages never reach
@@ -13,18 +13,18 @@
  * NOT reimplemented here:
  *   - EXACTLY-ONCE is the cursor: the sweep bumps `ingestedLiveLen` to
  *     `live.length`; the subsequent first-turn afterTurn then sees the cursor
- *     already there and appends only genuinely-new messages (Pitfall 6 — no
+ *     already there and appends only genuinely-new messages (no
  *     double-append, no seq collision).
  *   - FAIL-CLOSED on ambiguous transcript identity is the existing
  *     `isScopeSafeForIngest` guard inside `ingestTurnGuarded` (an empty security
  *     column OR conversationId≠sessionKey → refuse + onFailClosed), extending the
  *     `live_store_divergence` family — a mis-derived session key can never
- *     silently reattach this transcript to a prior conversation (T-132-04-02).
- *   - LCD-IS-TRUTH: this is a one-way catch-up SWEEP. The design (§11.3)
+ *     silently reattach this transcript to a prior conversation.
+ *   - LCD-IS-TRUTH: this is a one-way catch-up SWEEP. The design
  *     explicitly REJECTS reconciling the JSONL and the store as co-equal
  *     authorities (no comparison of the JSONL's byte position / modification time
  *     / content hash); the durable LCD store is the single source of truth and is
- *     only appended to, never rewritten or deleted (F1 losslessness).
+ *     only appended to, never rewritten or deleted (losslessness).
  *
  * The new code vs the afterTurn site is only: (1) this distinct trigger that runs
  * ONCE at session start before the first turn, and (2) a distinct content-free
@@ -125,7 +125,7 @@ export async function bootstrapLcdSweep(args: BootstrapLcdSweepArgs): Promise<vo
           timestamp: clock.now(),
         });
       },
-      // onDivergence: the WR-01 genuine in-session shrink skip (live shorter than
+      // onDivergence: the genuine in-session shrink skip (live shorter than
       // the cursor within the same epoch) — surfaced as a content-free
       // live_store_divergence health signal, same as the afterTurn site.
       () => {
@@ -139,8 +139,8 @@ export async function bootstrapLcdSweep(args: BootstrapLcdSweepArgs): Promise<vo
         });
       },
       // onRebase: a detected epoch re-base that continued appending at the store's
-      // max seq (the v2.17 RR6 path, now also reachable at bootstrap) — a correct
-      // continuation, not degradation. Content-free session_rebase.
+      // max seq (the same rebase path the afterTurn ingest takes, also reachable
+      // at bootstrap) — a correct continuation, not degradation. Content-free session_rebase.
       () => {
         eventBus.emit("context:dag_degraded", {
           conversationId: scope.conversationId,

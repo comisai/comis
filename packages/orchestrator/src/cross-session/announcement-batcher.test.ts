@@ -230,13 +230,13 @@ describe("AnnouncementBatcher", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Idempotent success-path delivery (DELIVERY-01).
+// Idempotent success-path delivery.
 // A delivered-key Set makes a second delivery of the same idempotencyKey a
-// no-op. Mark ONLY on success (Pitfall 3): a both-paths-failed item stays
-// un-marked so Plan 02's retry is preserved. undefined keys are never deduped.
+// no-op. Mark ONLY on success: a both-paths-failed item stays
+// un-marked so a later retry is preserved. undefined keys are never deduped.
 // ---------------------------------------------------------------------------
 
-describe("AnnouncementBatcher idempotent delivery (DELIVERY-01)", () => {
+describe("AnnouncementBatcher idempotent delivery", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -304,7 +304,7 @@ describe("AnnouncementBatcher idempotent delivery (DELIVERY-01)", () => {
     expect(batcher.hasDelivered("K")).toBe(true); // marked after success
   });
 
-  it("does NOT mark delivered when BOTH announceToParent and the fallback sendToChannel fail (retry preserved for Plan 02)", async () => {
+  it("does NOT mark delivered when BOTH announceToParent and the fallback sendToChannel fail (retry preserved for a later attempt)", async () => {
     const deps = makeDeps({
       announceToParent: vi.fn().mockReturnValue(new Promise(() => {})), // hangs → fallback
       sendToChannel: vi.fn().mockRejectedValue(new Error("send failed")),
@@ -317,8 +317,8 @@ describe("AnnouncementBatcher idempotent delivery (DELIVERY-01)", () => {
     await vi.advanceTimersByTimeAsync(301_000); // 300s timeout → fallback sendToChannel (rejects)
 
     expect(deps.sendToChannel).toHaveBeenCalledOnce();
-    // Pitfall 3: a fully-failed delivery must NOT be marked — the key stays open
-    // so a later retry (Plan 02) can re-attempt it.
+    // A fully-failed delivery must NOT be marked — the key stays open
+    // so a later retry can re-attempt it.
     expect(batcher.hasDelivered("K")).toBe(false);
   });
 
@@ -338,15 +338,15 @@ describe("AnnouncementBatcher idempotent delivery (DELIVERY-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-03: the delivered-key set must be BOUNDED. Every successful keyed delivery
+// The delivered-key set must be BOUNDED. Every successful keyed delivery
 // adds a `${callerSessionKey}::${runId}` string and nothing evicted it for the
 // daemon lifetime — a leak over a 40-hour autonomous run spawning thousands of
 // sub-agents. The set must be capped like its siblings (runs MAX_RUNS, the DLQ
 // maxEntries). Also: the batcher must accept an INJECTED shared DeliveryDedup so
-// the no-batcher success branches + DLQ recovery can mark the SAME set (WR-01/02).
+// the no-batcher success branches + DLQ recovery can mark the SAME set.
 // ---------------------------------------------------------------------------
 
-describe("AnnouncementBatcher deliveredKeys bounding (WR-03)", () => {
+describe("AnnouncementBatcher deliveredKeys bounding", () => {
   it("does not grow the delivered-key set without bound when an injected dedup is capped", () => {
     const cap = 16;
     const dedup = createDeliveryDedup(cap);
@@ -385,7 +385,7 @@ describe("AnnouncementBatcher deliveredKeys bounding (WR-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Transient/permanent retry classification in the fallback path (DELIVERY-02).
+// Transient/permanent retry classification in the fallback path.
 // On a sendToChannel fallback failure the batcher classifies via the injected
 // classifyErrorContext: transient → retry-with-backoff (computeRetryBackoff)
 // before dead-lettering; permanent → dead-letter immediately with zero retries.
@@ -393,7 +393,7 @@ describe("AnnouncementBatcher deliveredKeys bounding (WR-03)", () => {
 // wiring) — applied in BOTH the single-item and the multi-item-batch branch.
 // ---------------------------------------------------------------------------
 
-describe("AnnouncementBatcher transient/permanent retry (DELIVERY-02)", () => {
+describe("AnnouncementBatcher transient/permanent retry", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -561,8 +561,8 @@ describe("AnnouncementBatcher transient/permanent retry (DELIVERY-02)", () => {
     expect(bDl![1]).toMatchObject({ runId: "run-B", transient: false, attempt: 0 });
   });
 
-  it("NO-DEPS back-compat: without classifyErrorContext/computeRetryBackoff the fallback is single-attempt then DLQ (single-item)", async () => {
-    // No retry deps injected → behaves exactly as pre-DELIVERY-02: one
+  it("without classifyErrorContext/computeRetryBackoff injected the fallback is single-attempt then DLQ (single-item)", async () => {
+    // No retry deps injected → single-attempt fallback: one
     // sendToChannel attempt, then DLQ on failure, no retry, no crash.
     const sendToChannel = vi.fn().mockRejectedValue(new Error("ETIMEDOUT"));
     const enqueue = vi.fn();
@@ -583,7 +583,7 @@ describe("AnnouncementBatcher transient/permanent retry (DELIVERY-02)", () => {
     expect(batcher.hasDelivered("K")).toBe(false);
   });
 
-  it("NO-DEPS back-compat: multi-item batch fallback is single-attempt-per-item then DLQ", async () => {
+  it("without retry deps injected the multi-item batch fallback is single-attempt-per-item then DLQ", async () => {
     const sendToChannel = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
     const enqueue = vi.fn();
     const deps = makeDeps({

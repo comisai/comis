@@ -2,7 +2,7 @@
 /**
  * E2E-01 / E2E-04 Stage-A — zod UserStory schema validation.
  *
- * The schema IS the executable acceptance spec (§7.7): a malformed story REJECTS
+ * The schema IS the executable acceptance spec: a malformed story REJECTS
  * at parse; a well-formed story parses. These are pure-function zod assertions —
  * no daemon, no provider, zero cost. TDD: fails until types.ts exists.
  *

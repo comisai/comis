@@ -58,7 +58,7 @@ describe("stripInternalFields()", () => {
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
 
-  it("includes `_capabilities` and projects it away from external callers (T-210-02)", () => {
+  it("includes `_capabilities` and projects it away from external callers", () => {
     // An external WS/REST caller must NOT be able to forge orchestration caps:
     // `_capabilities` is dispatcher-injected, so the strip drops it.
     expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_capabilities");
@@ -67,9 +67,10 @@ describe("stripInternalFields()", () => {
     expect(result._capabilities).toBeUndefined();
   });
 
-  it("includes `_outwardStepIndex` and strips a forged inbound value (Phase 216 NEW-3/HIGH-1)", () => {
+  it("includes `_outwardStepIndex` and strips a forged inbound value", () => {
     // A jailed script must NOT be able to forge the outward-send index to
-    // self-collide its own send (inverting ONCE-02) or perturb ordering. The
+    // self-collide its own send (defeating the outward-send ledger's
+    // idempotency-key dedup) or perturb ordering. The
     // strip drops any inbound `_outwardStepIndex` BEFORE the trusted cap
     // chokepoint re-injects the allocated one (strip-then-inject, like _agentId).
     expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_outwardStepIndex");
@@ -78,7 +79,7 @@ describe("stripInternalFields()", () => {
     expect(result._outwardStepIndex).toBeUndefined();
   });
 
-  it("includes `_autonomyMode` and strips a forged inbound value (Phase 217 UNATT-01/EVICT-02)", () => {
+  it("includes `_autonomyMode` and strips a forged inbound value", () => {
     // A jailed/external caller must NOT be able to forge `_autonomyMode: "max"`
     // to perturb the chokepoint's deny-vs-escalate decision. The strip drops any
     // inbound `_autonomyMode` BEFORE the chokepoint reads it; the trusted in-process

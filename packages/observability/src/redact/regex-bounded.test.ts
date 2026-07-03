@@ -2,15 +2,15 @@
 /**
  * `replacePatternBounded` — chunked bounded-replace ReDoS guard tests.
  *
- * Design §2.4 + §5.5 behavior:
+ * Behavior:
  *   - Input length ≤ 32 768 → single `replace` call on the full input.
  *   - Input length > 32 768 → sliced into 16 384-char chunks; each chunk
  *     `replace`-d independently. This caps backtracking work per chunk
  *     and keeps a ReDoS-prone pattern from catastrophic blow-up on the
  *     whole input.
  *   - Performance assertion: a malicious ReDoS pattern `/(a+)+b/` against
- *     a 64 KB input completes in < 200 ms. (Plan budgets 50 ms; we leave
- *     headroom because shared CI runners and macOS hosts vary by 3×.)
+ *     a 64 KB input completes in < 200 ms. (The target budget is 50 ms; we
+ *     leave headroom because shared CI runners and macOS hosts vary by 3×.)
  *
  * @module
  */
@@ -74,12 +74,11 @@ describe("replacePatternBounded — chunked replace above threshold", () => {
 describe("replacePatternBounded — performance smoke test", () => {
   it("processes 64 KB input through a non-pathological pattern within 200 ms", () => {
     // Performance smoke test using a benign pattern (no nested
-    // quantifiers, no catastrophic backtracking). The plan's design
-    // §5 ReDoS chunking guards POLYNOMIAL worst-cases by capping each
-    // chunk's regex work — it does not (and cannot) tame exponential
-    // nested-quantifier patterns like `(a+)+b`. The plan documents
-    // this trade-off explicitly; testing against an exponential pattern
-    // would assert the impossible.
+    // quantifiers, no catastrophic backtracking). The ReDoS chunking
+    // guard bounds POLYNOMIAL worst-cases by capping each chunk's regex
+    // work — it does not (and cannot) tame exponential nested-quantifier
+    // patterns like `(a+)+b`. That trade-off is intentional; testing
+    // against an exponential pattern would assert the impossible.
     //
     // This test instead verifies the chunked path itself executes
     // efficiently on a realistic input size: a 64 KB string is sliced

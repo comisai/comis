@@ -1,34 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * INTEGRATION — Phase 227 / D-01: the CONSOLIDATED build-side acceptance of the
- * five "Hindsight" learning capabilities (LIVE-01..05), driven from a CLEAN temp
- * `memory.db` (mkdtempSync, NOT `~/.comis`) through the PUBLIC `@comis/memory` +
- * `@comis/agent` + `@comis/daemon` + `@comis/core` dist barrels. This is the
- * Darwin-buildable analog of the operator's real-provider VPS drive; the
- * real-provider VPS drive is operator-deferred (D-05, the rewritten
- * EXAMPLE-verified-learning.md runbook).
+ * INTEGRATION: the CONSOLIDATED build-side acceptance of the five "Hindsight"
+ * learning capabilities, driven from a CLEAN temp `memory.db` (mkdtempSync, NOT
+ * `~/.comis`) through the PUBLIC `@comis/memory` + `@comis/agent` +
+ * `@comis/daemon` + `@comis/core` dist barrels. This is the Darwin-buildable
+ * analog of the operator's real-provider VPS drive; the real-provider VPS drive
+ * is operator-deferred (see the EXAMPLE-verified-learning.md runbook).
  *
- * Per D-01: the consolidated build-side acceptance of LIVE-01..05 driven from a
- * clean memory.db; the real-provider VPS drive is operator-deferred (D-05, the
- * rewritten EXAMPLE-verified-learning.md runbook).
- *
- * It ties together the per-phase proofs 222-226 already shipped (MODEL-04,
- * reflection-a-to-b, FORGET-02 reachability, FORGET-04 supersede, profile/topic
- * equivalence) into ONE clean-slate acceptance manifest — NOT new engine code.
+ * It ties together the already-shipped per-capability proofs (the source-agnostic
+ * model surface, the reflection A→B loop, eviction reachability, non-destructive
+ * supersede, profile/topic equivalence) into ONE clean-slate acceptance manifest
+ * — NOT new engine code.
  *
  * ## The five capabilities (one describe block each)
- *   (a) LIVE-01 ACCUMULATION — a fact `memories` row + a resolved `outcome_events` row.
- *   (b) LIVE-02 CROSS-SESSION RECALL — a fact written under session A recalls from
+ *   (a) ACCUMULATION — a fact `memories` row + a resolved `outcome_events` row.
+ *   (b) CROSS-SESSION RECALL — a fact written under session A recalls from
  *       the durable LTM table under a DIFFERENT session id (no LCD in the loop).
- *   (c) LIVE-03 REFLECT A→B + REUSE-PROMOTE — 2 corroborating successes → a candidate
+ *   (c) REFLECT A→B + REUSE-PROMOTE — 2 corroborating successes → a candidate
  *       skill doc → a fresh-session reuse promotes it candidate→active (proof_count↑).
- *   (d) LIVE-04 PROFILE/TOPIC DOCS — kind:'profile' + kind:'topic' docs admitted +
+ *   (d) PROFILE/TOPIC DOCS — kind:'profile' + kind:'topic' docs admitted +
  *       surface-eligible via the kind-filtered list.
- *   (e) LIVE-05 SUPERSESSION + ANTI-POISON EVICTION — a corrected fact supersedes
+ *   (e) SUPERSESSION + ANTI-POISON EVICTION — a corrected fact supersedes
  *       (history kept, no delete); a corroborated low-proof memory soft-evicts under
  *       the LIVE policy; pinned/system/high-proof survive identical failures.
  *
- * ## WHAT IS REAL vs MOCKED (the 0-false-success discipline, I8)
+ * ## WHAT IS REAL vs MOCKED (the 0-false-success discipline)
  *  - REAL: the SQLite `memories` / `memory_usefulness` / `mental_models` /
  *    `outcome_events` stores (ONE db handle); the `SqliteMemoryAdapter`
  *    store/search/supersede; the `runReflection` SELECT→GROUP→GATE→REFLECT→GUARD→ADMIT
@@ -41,7 +37,7 @@
  *
  * Every assertion reads GROUND TRUTH — store `.get`/`.list`/`.search`, the resolved
  * `outcome_events` ledger, a raw `SELECT`, the emitted counts-only event payloads —
- * NEVER a chat reply (I8).
+ * NEVER a chat reply.
  *
  * ## FALSE-GREEN DEFENSE (how each block FAILS on a real break)
  *  - (a) fails if the `memories` row is absent OR `resolve()` does not fuse to
@@ -59,7 +55,8 @@
  *        content was not appended to history. EVICTION fails if the sweep did NOT
  *        soft-evict the corroborated low-proof row, OR — the inverse, the
  *        anti-induced-eviction guard — if the pinned/high-proof row WAS evicted under
- *        the SAME failures (INV-4 / FORGET-03). The eviction is driven under the LIVE
+ *        the SAME failures (the anti-poison exemption: pinned/high-proof/system
+ *        survive). The eviction is driven under the LIVE
  *        policy (`evictionEnabled:true`), NOT the dormant default sweep (which evicts
  *        nothing by design — a dormant-default assertion would be a false green).
  *
@@ -151,10 +148,10 @@ function makeEntry(over: Partial<MemoryEntry> & { content: string; id: string })
 }
 
 // ===========================================================================
-// (a) LIVE-01 — ACCUMULATION: a `memories` row + a resolved `outcome_events` row.
+// (a) ACCUMULATION: a `memories` row + a resolved `outcome_events` row.
 // ===========================================================================
 
-describe("LIVE-01 ACCUMULATION (the memories + resolved outcome_events floor, from a clean memory.db)", () => {
+describe("ACCUMULATION (the memories + resolved outcome_events floor, from a clean memory.db)", () => {
   let tmpDir: string;
   let adapter: SqliteMemoryAdapter;
   let outcomeStore: ReturnType<typeof createSqliteOutcomeStore>;
@@ -214,11 +211,11 @@ describe("LIVE-01 ACCUMULATION (the memories + resolved outcome_events floor, fr
 });
 
 // ===========================================================================
-// (b) LIVE-02 — CROSS-SESSION RECALL: a fact written under session A recalls from
+// (b) CROSS-SESSION RECALL: a fact written under session A recalls from
 //     the durable LTM table under a DIFFERENT session id (no LCD in the loop).
 // ===========================================================================
 
-describe("LIVE-02 CROSS-SESSION RECALL (sever the LCD → a fresh session recalls the fact from LTM)", () => {
+describe("CROSS-SESSION RECALL (sever the LCD → a fresh session recalls the fact from LTM)", () => {
   let tmpDir: string;
   let adapter: SqliteMemoryAdapter;
 
@@ -252,7 +249,7 @@ describe("LIVE-02 CROSS-SESSION RECALL (sever the LCD → a fresh session recall
     // Recall from a DIFFERENT session — a fresh SessionKey (a different channelId =
     // a different conversation = no shared LCD). The REAL adapter FTS/vec recall path.
     // NOTE: the real-provider vec+FTS hybrid recall against a running daemon is the
-    // operator drive (D-05); here we assert the durable-row recall through the
+    // operator drive; here we assert the durable-row recall through the
     // adapter's content search — ground truth, not a chat reply.
     const sessionB: SessionKey = { tenantId: TENANT, userId: "user-2", channelId: "a-different-channel" };
     const found = await adapter.search(sessionB, "who is the on-call engineer Mallory", { limit: 10 });
@@ -264,7 +261,7 @@ describe("LIVE-02 CROSS-SESSION RECALL (sever the LCD → a fresh session recall
 });
 
 // ===========================================================================
-// (c) LIVE-03 — REFLECT A→B + REUSE-PROMOTE. Reuses the reflection-a-to-b loop.
+// (c) REFLECT A→B + REUSE-PROMOTE. Reuses the reflection A→B loop.
 // ===========================================================================
 
 /** The exact STOPWORDS the topicKey normalizer strips (kept in sync with topic-key.ts). */
@@ -278,7 +275,7 @@ const STOPWORDS = new Set([
 /** The deterministic doc NAME the reflection job admits a topic under: `skill-<full-topicKey>`. */
 function docNameFor(signature: string): string {
   // Mirror reflection-job.ts `docNameForTopic("skill", normalizeOpeningRequest(signature))`:
-  // tokenize → drop stopwords + len<=1 → STEM each survivor (REFLECT-02b) → de-dupe + sort → sha256.
+  // tokenize → drop stopwords + len<=1 → STEM each survivor → de-dupe + sort → sha256.
   // Kept in sync with topic-key.ts (`openingRequestTokens` + `stemToken`).
   const tokens = signature
     .toLowerCase()
@@ -291,7 +288,7 @@ function docNameFor(signature: string): string {
   return `skill-${topicKey}`;
 }
 
-/** MIRROR of topic-key.ts `stemToken` (REFLECT-02b) — keep in sync. A conservative
+/** MIRROR of topic-key.ts `stemToken` — keep in sync. A conservative
  *  inflectional stemmer collapsing regular -ing/-ed/-ies/-(s|x|z|ch|sh)es/-s inflections
  *  (5+-char tokens only; never -ss/-us/-is) so morphological variants share one topicKey token. */
 function stemToken(token: string): string {
@@ -343,7 +340,7 @@ function successObservation(over: { sessionId: string; trajectoryId: string }): 
   };
 }
 
-describe("LIVE-03 REFLECT A→B + REUSE-PROMOTE (the full Hindsight loop, GROUND TRUTH)", () => {
+describe("REFLECT A→B + REUSE-PROMOTE (the full Hindsight loop, GROUND TRUTH)", () => {
   let tmpDir: string;
   let adapter: SqliteMemoryAdapter;
   let skillStore: ReturnType<typeof createSqliteMentalModelStore>;
@@ -415,7 +412,7 @@ describe("LIVE-03 REFLECT A→B + REUSE-PROMOTE (the full Hindsight loop, GROUND
     const candidate = afterAdmit.ok ? afterAdmit.value : undefined;
     expect(candidate, "the reflected doc must exist in the REAL store").toBeDefined();
     expect(candidate!.state).toBe("candidate");
-    expect(candidate!.trustLevel).toBe("learned"); // SEC-01 ceiling: never `system`
+    expect(candidate!.trustLevel).toBe("learned"); // the trust ceiling: never `system`
     expect(candidate!.kind).toBe("skill");
     const admittedProof = candidate!.proofCount;
 
@@ -494,13 +491,14 @@ describe("LIVE-03 REFLECT A→B + REUSE-PROMOTE (the full Hindsight loop, GROUND
 });
 
 // ===========================================================================
-// (d) LIVE-04 — PROFILE/TOPIC DOCS maintained + surface-eligible (the kind filter).
+// (d) PROFILE/TOPIC DOCS maintained + surface-eligible (the kind filter).
 //
-// The real-LLM profile/topic CONTENT equivalence is proven by the Phase-225 FOLD-03
-// tests; here we assert the store/kind SURFACE (MODEL-04 source-agnostic downstream).
+// The real-LLM profile/topic CONTENT equivalence is proven by the dedicated
+// profile/topic equivalence tests; here we assert the store/kind SURFACE (the
+// downstream is source-agnostic — recall does not depend on how a doc was authored).
 // ===========================================================================
 
-describe("LIVE-04 PROFILE/TOPIC DOCS (kind:'profile' + kind:'topic' admitted + surface-eligible)", () => {
+describe("PROFILE/TOPIC DOCS (kind:'profile' + kind:'topic' admitted + surface-eligible)", () => {
   let tmpDir: string;
   let adapter: SqliteMemoryAdapter;
   let store: ReturnType<typeof createSqliteMentalModelStore>;
@@ -561,7 +559,7 @@ describe("LIVE-04 PROFILE/TOPIC DOCS (kind:'profile' + kind:'topic' admitted + s
     );
     expect(topicAdmit.ok && topicAdmit.value.admitted).toBe(true);
 
-    // GROUND TRUTH: both docs admitted at trust='learned' (the SEC-01 ceiling holds
+    // GROUND TRUTH: both docs admitted at trust='learned' (the trust ceiling holds
     // for every kind — a profile/topic doc cannot escalate trust).
     const profileGet = await store.get("user-prefers-signal", SCOPE);
     expect(profileGet.ok && profileGet.value?.kind).toBe("profile");
@@ -592,19 +590,19 @@ describe("LIVE-04 PROFILE/TOPIC DOCS (kind:'profile' + kind:'topic' admitted + s
 });
 
 // ===========================================================================
-// (e) LIVE-05 — SUPERSESSION + ANTI-POISON EVICTION.
+// (e) SUPERSESSION + ANTI-POISON EVICTION.
 //
 // THE EVICTION CAVEAT: the lifecycle SWEEP is scaffold-dormant by default (it evicts
 // NOTHING unless `evictionEnabled:true`). This block drives the sweep under the LIVE
 // policy (`evictionEnabled:true`, an explicit `failureEvictionFloor`/`highProofFloor`)
-// — the FORGET-02 corroborated-failure eviction the design intends — NOT the dormant
+// — the corroborated-failure eviction the design intends — NOT the dormant
 // default (which would make the assertion a false green).
 // ===========================================================================
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const T0 = 100 * DAY_MS;
 
-/** Seed `memory_usefulness.failure_count` (the FORGET-02 wrongness signal the sweep reads). */
+/** Seed `memory_usefulness.failure_count` (the wrongness signal the sweep reads). */
 function seedFailureCount(db: ReturnType<SqliteMemoryAdapter["getDb"]>, memoryId: string, failureCount: number): void {
   db.prepare(
     `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, failure_count)
@@ -648,7 +646,7 @@ function evictedAtOf(db: ReturnType<SqliteMemoryAdapter["getDb"]>, id: string): 
   return (db.prepare("SELECT evicted_at FROM memories WHERE id = ?").get(id) as { evicted_at: number | null }).evicted_at;
 }
 
-describe("LIVE-05 SUPERSESSION + ANTI-POISON EVICTION (supersede keeps history; the LIVE-policy sweep evicts poison, exempts pinned/high-proof)", () => {
+describe("SUPERSESSION + ANTI-POISON EVICTION (supersede keeps history; the LIVE-policy sweep evicts poison, exempts pinned/high-proof)", () => {
   let tmpDir: string;
   let adapter: SqliteMemoryAdapter;
 
@@ -695,7 +693,7 @@ describe("LIVE-05 SUPERSESSION + ANTI-POISON EVICTION (supersede keeps history; 
     expect(countAfter).toBe(countBefore);
   });
 
-  it("EVICTION (LIVE policy): a corroborated low-proof memory soft-evicts; pinned + high-proof survive IDENTICAL failures (INV-4 / FORGET-03, RED both directions)", async () => {
+  it("EVICTION (LIVE policy): a corroborated low-proof memory soft-evicts; pinned + high-proof survive IDENTICAL failures (RED both directions)", async () => {
     const db = adapter.getDb();
 
     // The LIVE eviction policy — the design intent (NOT the dormant default sweep).
@@ -729,7 +727,7 @@ describe("LIVE-05 SUPERSESSION + ANTI-POISON EVICTION (supersede keeps history; 
 
     // GROUND TRUTH — RED direction 2 (the anti-induced-eviction guard): pinned +
     // high-proof memories under the SAME failures are NOT evicted. A poisoner inducing
-    // failures cannot evict a pinned/well-corroborated memory (INV-4 / FORGET-03).
+    // failures cannot evict a pinned/well-corroborated memory.
     expect(evictedAtOf(db, "exempt-pinned"), "a pinned memory must survive identical failures").toBeNull();
     expect(evictedAtOf(db, "exempt-highproof"), "a high-proof memory must survive identical failures").toBeNull();
 

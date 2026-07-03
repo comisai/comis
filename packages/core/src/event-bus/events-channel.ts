@@ -26,15 +26,15 @@ export interface ChannelEvents {
   };
 
   /**
-   * REACT-01 (Verified Learning WS1): an inbound reaction-add captured on a
+   * An inbound reaction-add captured on a
    * Discord/Slack/Telegram message. Emitted by the orchestrator channel-manager
-   * via the optional adapter.onReaction fanout; the daemon (Plan 04, setup-
+   * via the optional adapter.onReaction fanout; the daemon (setup-
    * learning) subscribes and observes a `reaction`-source outcome IFF the
-   * messageId maps to an agent-authored outbound trajectory (REACT-02 fail-
+   * messageId maps to an agent-authored outbound trajectory (fail-
    * closed). The reactorId/emoji are UNTRUSTED inbound — no trust is asserted
    * here. Counts/ids/emoji ONLY — never message bodies or sender display names
-   * (SEC-01 §7); the emoji is matched against a CLOSED reactionMap downstream
-   * (Plan 04) and never flows into a prompt.
+   * (§2.7); the emoji is matched against a CLOSED reactionMap downstream
+   * and never flows into a prompt.
    */
   "channel:reaction_received": {
     messageId: string;
@@ -378,7 +378,7 @@ export interface ChannelEvents {
   };
 
   /**
-   * REACT-04 / WR-01 (Verified Learning, Phase 206-05): a minted agent-reply
+   * A minted agent-reply
    * messageId was bound to its trajectory scope on the PRIMARY inbound-reply
    * (direct-ack) path — the positive proof that the reaction->trajectory
    * binding fired. Emitted right after `recordOutboundMessage` in the
@@ -388,7 +388,7 @@ export interface ChannelEvents {
    * not a never-bound), and its absence means the bind never fired. Shares the
    * `messageId` with the `delivery:acked` event emitted on the same chunk, so
    * the attribution is reconstructable from the event trail. COUNTS/IDS/closed-
-   * scalars ONLY — never a message body or a secret (§2.7 / SEC-01); the
+   * scalars ONLY — never a message body or a secret (§2.7); the
    * `agentId` is the REAL agent partition (never the tenantId).
    */
   "delivery:reply_bound": {

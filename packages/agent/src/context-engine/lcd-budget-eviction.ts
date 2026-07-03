@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD budget-eviction unit (Phase 129, A3) — the PURE step-atomic newest-kept fill.
+ * LCD budget-eviction unit — the PURE step-atomic newest-kept fill.
  *
  * {@link evictHistoryUnderBudget} shrinks ONLY the evictable history prefix at the
- * documented `lcd-assembler.ts:110-119` seam: the assembler splits `history`
- * (evictable) from `freshTail` (protected, A1), and this function trims `history`
+ * documented `lcd-assembler.ts` seam: the assembler splits `history`
+ * (evictable) from `freshTail` (protected), and this function trims `history`
  * to fit the available token budget while the assembler concatenates the fresh tail
- * unconditionally — so the live tool exchange always ships even when over budget
- * (A3 "always included even when over budget"). The A3 seam shape the assembler
- * (Plan 05) uses:
+ * unconditionally — so the live tool exchange always ships even when over budget.
+ * The seam shape the assembler uses:
  *
  *   const evictable = historyPrefixForTail(history, liveMessages, tailStart);
  *   const budgeted  = evictHistoryUnderBudget(evictableWithTokens, availableHistoryTokens);
@@ -24,12 +23,12 @@
  * exceed; the kept steps (in original order) are the result. If even the single
  * newest step cannot fit, the WHOLE evictable prefix is dropped (`[]`) — never a
  * half step. This guarantees the kept array never starts with an orphan
- * `toolResult` (T-129-12): the assembler's `sanitizeToolUseResultPairing` (step 6)
- * is the backstop, but A3's contract is to AVOID the split, which this does.
+ * `toolResult`: the assembler's `sanitizeToolUseResultPairing` (step 6)
+ * is the backstop, but this unit's contract is to AVOID the split, which this does.
  *
- * Token authority (Pitfall 2 / T-129-13): tokens are SUPPLIED per message — the
- * caller (Plan 05) sources `tokens` from the stored `LcdMessage.tokenCount` for
- * store-sourced history (counts F3 thinking) and from `estimateMessageTokens` for
+ * Token authority: tokens are SUPPLIED per message — the assembler
+ * sources `tokens` from the stored `LcdMessage.tokenCount` for
+ * store-sourced history (which includes thinking tokens) and from `estimateMessageTokens` for
  * live/fresh-tail messages. This function does NOT re-estimate (which would
  * under-count by excluding thinking), keeping it both pure and budget-correct.
  *
@@ -49,13 +48,13 @@ export interface BudgetItem {
   /** Pre-computed token count for this message (the budget authority). */
   tokens: number;
   /**
-   * WR-01 (Phase 174-04): the durable `lcd_messages.id` of a store-resolved message-ref,
-   * carried from `resolveContextItem` so the DEPTH-01 relevance pass can match a `searchLcd`
+   * The durable `lcd_messages.id` of a store-resolved message-ref,
+   * carried from `resolveContextItem` so the relevance pass can match a `searchLcd`
    * hit to this band item by the hit's STABLE `refId` (= `lcd_messages.id`) instead of a
    * fragile snippet-substring. Absent for live/synthetic items (the fresh tail, a coalesced
    * summary message, a unit fixture) — those simply never id-match and fall to recency, which
    * is the correct floor. The recency fill (`evictHistoryUnderBudget`) NEVER reads this, so
-   * the frontier/mid recency path stays byte-identical (LOCKED #2).
+   * the frontier/mid recency path stays byte-identical.
    */
   lcdId?: string;
 }
@@ -69,7 +68,7 @@ export interface BudgetItem {
  * - Under-budget input is returned unchanged (every message kept).
  * - Over budget, the oldest whole steps are dropped until the kept suffix fits.
  * - If even the single newest step exceeds the budget, the entire prefix is
- *   dropped (`[]`) — the fresh tail still ships via the assembler (A3).
+ *   dropped (`[]`) — the fresh tail still ships via the assembler.
  * - `budgetTokens <= 0` returns `[]`.
  *
  * Pure: the input array is not mutated; the return is a new array; no I/O, no

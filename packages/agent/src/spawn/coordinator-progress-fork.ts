@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * COORD-03 — the ~30s read-only progress fork.
+ * The ~30s read-only progress fork.
  *
  * A multi-day coordinator spawns children that may run for minutes. Without a
  * progress signal a long child advances invisibly until it returns. This helper
@@ -8,7 +8,7 @@
  * `session:sub_agent_progress` event — a 3-5 word status line + elapsed +
  * steps — WITHOUT the child completing.
  *
- * It is deliberately NOT a re-execution (RESEARCH Pitfall 6 / T-218-13). "Fork"
+ * It is deliberately NOT a re-execution. "Fork"
  * here means a cheap read-only *summary* of the in-flight child's current step
  * state, NOT a second run. The helper has NO reference to `executeAgent`, a
  * spawner, a tool dispatcher, or a model — its ONLY input is a pure
@@ -17,7 +17,7 @@
  * spawn (fork-bomb); this one cannot, by construction.
  *
  * Discipline:
- *   - §2.7 CONTENT-FREE (T-218-14): the event carries identifiers + a short
+ *   - CONTENT-FREE (AGENTS.md §2.7): the event carries identifiers + a short
  *     status `progressLine` + counts + a timestamp ONLY — never the child's
  *     output, message body, or any tool result.
  *   - No-globals (AGENTS §2.5; globals.test.ts): time is read from the injected
@@ -25,7 +25,7 @@
  *     {@link TimerPort} — never `setInterval`/`Date.now`. The handle is
  *     `.unref()`'d so it never blocks event-loop exit, and `stop()` cancels it
  *     via `handle.cancel()` (never raw `clearInterval`), so the fork never
- *     outlives the child (T-218-15: no leaked timer).
+ *     outlives the child (no leaked timer).
  *   - No model call: the `progressLine` is built deterministically from the step
  *     count — it is a state summary, not an LLM summarization (cheap +
  *     deterministic).
@@ -37,7 +37,7 @@
  */
 import type { ClockPort, TimerPort, TimerHandle, EventMap } from "@comis/core";
 
-/** Default progress cadence — the v8 §23.10 ~30s fork. */
+/** Default progress cadence (~30s). */
 export const COORDINATOR_PROGRESS_INTERVAL_MS = 30_000;
 
 /**
@@ -73,8 +73,8 @@ export interface CoordinatorProgressForkDeps {
    * Pure read of the in-flight child's current step state. The fork's ONLY
    * input besides the clock/timers — there is no re-execution channel. When the
    * runner cannot cheaply read a live step count it returns `{ stepsExecuted: 0 }`
-   * and the elapsed wall-clock is the advance signal (RESEARCH: a count-only
-   * advance is still NOT a re-execution).
+   * and the elapsed wall-clock is the advance signal (a count-only advance is
+   * still NOT a re-execution).
    */
   getStepState: () => { stepsExecuted: number };
   /** Override the ~30s cadence (default {@link COORDINATOR_PROGRESS_INTERVAL_MS}). */
@@ -94,7 +94,7 @@ export interface CoordinatorProgressForkHandle {
 
 /**
  * Build a short, content-free progress status line from the step count. ≤ ~6
- * words by construction (T-218-14, §2.7) — a status descriptor, NOT child
+ * words by construction (AGENTS.md §2.7) — a status descriptor, NOT child
  * content. NEVER incorporate the child's output here.
  */
 function buildProgressLine(stepsExecuted: number): string {
@@ -102,7 +102,7 @@ function buildProgressLine(stepsExecuted: number): string {
 }
 
 /**
- * Create the COORD-03 read-only progress fork. See the module doc for the full
+ * Create the read-only progress fork. See the module doc for the full
  * read-only / content-free / no-globals / no-leak contract.
  */
 export function createCoordinatorProgressFork(
@@ -133,7 +133,8 @@ export function createCoordinatorProgressFork(
       if (handle) return; // idempotent — never schedule two intervals
       startMs = clock.now();
       handle = timers.setInterval(tick, intervalMs);
-      // Never block event-loop exit (mirrors the HB-01 keep-alive in the runner).
+      // Never block event-loop exit (the runner's keep-alive interval is
+      // unref()'d for the same reason).
       handle.unref();
     },
     stop(): void {

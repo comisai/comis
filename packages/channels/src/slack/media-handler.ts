@@ -8,8 +8,6 @@
  * - isSlackHostname(): Verify a hostname belongs to Slack
  * - fetchWithSlackAuth(): Download Slack files with cross-origin redirect handling
  *
- * Ported from legacy src/slack/monitor/media.ts with simplified interface.
- *
  * @module
  */
 

@@ -3,15 +3,15 @@
 // a malformed request) are caught and converted to JSON-RPC error responses by
 // rpc-dispatch.ts.
 /**
- * Video status RPC handler module (Phase 189 Plan 03 — JOB-04).
+ * Video status RPC handler module.
  *
  * Provides the `video.status` handler that reads the durable `VideoJobStore` and
  * reports `{state, progress?, mediaPath?, costUsd?, error?}` for a job. This
- * closes the JOB-04 loop: `video.generate` returns a handle (Plan 02), the
- * background poller drives the render off-turn (Plan 02), and `video.status`
+ * closes the async-job loop: `video.generate` returns a handle, the
+ * background poller drives the render off-turn, and `video.status`
  * reports the durable terminal state the poller wrote.
  *
- * AGENT-SCOPED (JOB-04 / TARGET-01 / Pitfall 6 / threat T-189-10): the handler
+ * AGENT-SCOPED (cross-agent read is a data leak): the handler
  * resolves the calling agent EXPLICITLY (`?? "default"`, never silent) and reads
  * the agent-scoped `videoJobStore.get(job_id, agentId)` — which filters by BOTH
  * the jobId AND the agentId. A job belonging to ANOTHER agent matches no row and
@@ -20,18 +20,18 @@
  * is `ok(undefined)` (distinct from a real lookup error), so this handler answers
  * "no such job for this agent" rather than throwing.
  *
- * RES-01 / single-source: this handler is a PURE consumer of the boot-selected
+ * Single-source: this handler is a PURE consumer of the boot-selected
  * store (the SAME `videoJobStore` the poller writes — `buildVideoGenBundle`
- * constructs one instance). It re-derives nothing (the v2.20 keyless-summarizer
- * two-source firewall).
+ * constructs one instance). It re-derives nothing (a second source of truth
+ * can silently diverge from what the poller wrote).
  *
  * The handler key is the computed-property name `[VideoStatusContract.method]`
  * so the bidirectional 1:1 contract↔handler parity gate resolves it through
  * `defineContract({ method, ... })` in `packages/core/src/api-contracts/media.ts`.
  *
  * OBSERVABILITY SCOPE (logger-only): a content-free DEBUG on the not-found branch
- * naming the resolved agentId (TARGET-01) — never the other agent's data. No
- * `video.*` trajectory events (that bridge is OBS-04 / Phase 192).
+ * naming the resolved agentId — never the other agent's data. No
+ * `video.*` trajectory events (the generate handler + poller own that bridge).
  *
  * @module
  */
@@ -58,21 +58,21 @@ export function createVideoStatusHandlers(
 ): Record<string, RpcHandler> {
   return {
     [VideoStatusContract.method]: async (rawParams) => {
-      // Resolve the agent EXPLICITLY (never a silent default — TARGET-01).
+      // Resolve the agent EXPLICITLY (never a silent default).
       const agentId = (rawParams._agentId as string) ?? "default";
       // Validate the request (a malformed request — missing job_id — throws here
-      // and is converted to a JSON-RPC error by rpc-dispatch; T-189-12).
+      // and is converted to a JSON-RPC error by rpc-dispatch).
       const { job_id } = VideoStatusContract.request.parse(stripInternalFields(rawParams));
 
-      // Agent-scoped read — filters by BOTH job_id AND agentId (Pitfall 6 /
-      // T-189-10). A cross-agent jobId matches no row → ok(undefined) → not-found.
+      // Agent-scoped read — filters by BOTH job_id AND agentId.
+      // A cross-agent jobId matches no row → ok(undefined) → not-found.
       const result = await deps.videoJobStore.get(job_id, agentId);
       const job = result.ok ? result.value : undefined;
 
       if (!job) {
-        // Content-free not-found (TARGET-01: state the resolved agentId; the
+        // Content-free not-found (state the resolved agentId; the
         // job_id is the opaque, secret-free provider id — echoing it leaks
-        // nothing, T-189-12). A real lookup error also lands here as not-found —
+        // nothing). A real lookup error also lands here as not-found —
         // honest "no such job for this agent" rather than a thrown 500.
         deps.logger.debug(
           { agentId, step: "video_status_not_found", ...(result.ok ? {} : { errorKind: "internal" as const }) },

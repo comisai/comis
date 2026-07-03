@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LCD leaf summarization unit (Plan 129-03, C1).
+ * Tests for the LCD leaf summarization unit.
  *
- * RED-first. Drives the two C1 obligations:
+ * Drives the two obligations:
  *  1. `selectLeafChunk` picks the OLDEST contiguous chunk OUTSIDE the fresh tail,
  *     capped at `leafChunkTokens`, extended forward to a STEP boundary (never
  *     ending on an assistant `tool_use` without its trailing `toolResult`s).
  *  2. `summarizeLeafChunk` runs the mandatory 3-level escalation
  *     (normal → aggressive → deterministic truncation) that ALWAYS reduces
- *     tokens or falls back deterministically — the binding C1 invariant.
+ *     tokens or falls back deterministically — the binding strict-shrink invariant.
  *
- * The summarizer is INJECTED as ONE function (no network, no real LLM — Pitfall 6;
- * Phase 132 swaps it for the spend-governed `generateSummary` wrapper). Three
+ * The summarizer is INJECTED as ONE function (no network, no real LLM;
+ * production swaps it for the spend-governed `generateSummary` wrapper). Three
  * stubs exercise the ladder deterministically:
  *  - a SHORT-returning stub (Level-1 success),
  *  - an OVERSIZED-returning stub (output ≥ chunk → forces escalation → Level 3),
@@ -26,7 +26,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, it, expect, vi } from "vitest";
 
-// B-5 (260605-m82): mock the SDK generateSummary so the test can read the
+// Mock the SDK generateSummary so the test can read the
 // `model` argument buildLeafSummarizeFn passes it. Hoisted above the SUT import.
 // The existing summarizeLeafChunk tests inject a stub `summarize` and never
 // reach buildLeafSummarizeFn → generateSummary, so this mock does not affect them.
@@ -112,7 +112,7 @@ function item(id: string, msg: Message, tokens: number, createdAt: number): Leaf
  * A simple synthetic history of N user/assistant text turns (each ~`tokensEach`
  * stored tokens). The content is padded to ≈ `tokensEach * CHARS_PER_TOKEN` chars
  * so the RENDERED 4:1 measure is consistent with the claimed stored token count
- * (B-4 260605-ney: the shrink-CHECK now compares the candidate against the
+ * (the shrink-CHECK compares the candidate against the
  * rendered ceiling, so a fixture's content length must match its token claim —
  * a 2-char "u0" body claiming 200 tokens is dishonest and would falsely floor).
  */
@@ -147,16 +147,16 @@ function throwingSummarizer(): LeafSummarizer {
 }
 
 /**
- * B-4 (260605-ney): a SPY-with-PROPORTIONAL-OUTPUT summarizer — models a real
+ * A SPY-with-PROPORTIONAL-OUTPUT summarizer — models a real
  * model writing TO its token target. It records every `reserveTokens` it is
  * handed (`seenReserveTokens`) and returns a string of `reserveTokens * k *
  * CHARS_PER_TOKEN` chars, so its measured summary tokens ≈ `reserveTokens * k`
  * (estimateMessageTokens of a user string is `ceil(len / 4)`). With the chunk
  * sized so the rendered-4:1 shrink ceiling sits BELOW the full configured target
  * (1200/2000) but ABOVE the bounded effective target (≈ floor(ceiling * 0.5)),
- * the SAME stub FLOORS pre-patch (it sees the full target → its output exceeds
- * the chunk → escalate → Level-3) and REDUCES post-patch (it sees the bounded
- * target → its output is below the ceiling → accepted at Level 1). `k = 1`.
+ * the SAME stub FLOORS under an unbounded target (it sees the full target → its
+ * output exceeds the chunk → escalate → Level-3) and REDUCES under the bounded
+ * target (its output is below the ceiling → accepted at Level 1). `k = 1`.
  */
 function proportionalSpySummarizer(k = 1): {
   fn: LeafSummarizer;
@@ -324,10 +324,10 @@ describe("summarizeLeafChunk always reduces tokens or falls back deterministical
     expect(summaryTokens(result.content)).toBeLessThan(totalChunkTokens);
   });
 
-  it("R1: an OVER-CAP per-tenant gate degrades the leaf pass to the deterministic floor (truncation-only, no throw to the turn)", async () => {
-    // Build the REAL 132-02 gate with a 1-token hourly cap → ANY real chunk is
+  it("an OVER-CAP per-tenant gate degrades the leaf pass to the deterministic floor (truncation-only, no throw to the turn)", async () => {
+    // Build the REAL spend-breaker gate with a 1-token hourly cap → ANY real chunk is
     // over-cap → the gate throws "degraded" WITHOUT calling inner. The ladder
-    // catches that throw and floors to Level-3 (fallback:true) — exactly the R1
+    // catches that throw and floors to Level-3 (fallback:true) — exactly the
     // degrade-to-truncation-only path, with NO error propagating to the turn.
     const inner = shortSummarizer(); // would succeed at Level 1 if ever called
     const spendBreaker = createSummarizerSpendBreaker({
@@ -348,11 +348,11 @@ describe("summarizeLeafChunk always reduces tokens or falls back deterministical
     expect(result.content.startsWith(LEAF_FALLBACK_SUMMARY_MARKER)).toBe(true);
     // The inner summarizer was BYPASSED (the gate refused before calling it).
     expect(inner).not.toHaveBeenCalled();
-    // Strictly smaller than the chunk (the C1 invariant still holds under degrade).
+    // Strictly smaller than the chunk (the strict-shrink invariant still holds under degrade).
     expect(summaryTokens(result.content)).toBeLessThan(totalChunkTokens);
   });
 
-  it("R1: an OPEN-breaker per-tenant gate degrades the leaf pass to the floor after repeated summarizer failures", async () => {
+  it("an OPEN-breaker per-tenant gate degrades the leaf pass to the floor after repeated summarizer failures", async () => {
     // failureThreshold:1 → the FIRST inner throw opens the breaker; the SECOND
     // call is bypassed (breaker open) and floors. Proves the breaker (not just the
     // spend cap) drives the degrade. Generous spend caps so only the breaker fires.
@@ -388,7 +388,7 @@ describe("summarizeLeafChunk always reduces tokens or falls back deterministical
     }
   });
 
-  it("forwards previousSummary to the injected summarizer for continuity (Pattern 2)", async () => {
+  it("forwards previousSummary to the injected summarizer for continuity", async () => {
     const summarize = shortSummarizer();
     const { deps } = makeDeps(summarize);
     await summarizeLeafChunk(chunkItems, deps, {
@@ -452,20 +452,20 @@ describe("summarizeLeafChunk always reduces tokens or falls back deterministical
 });
 
 // ===========================================================================
-// WR-01 — the deterministic Level-3 floor must shrink even a TINY chunk
+// The deterministic Level-3 floor must shrink even a TINY chunk
 // ===========================================================================
 //
-// The C1 "always strictly smaller" invariant must hold for the smallest
+// The "always strictly smaller" invariant must hold for the smallest
 // reachable chunk too: `selectLeafChunk` always includes at least one message,
 // so a single tiny out-of-tail message on a small-window model can be a
-// sub-5-token chunk. The pre-fix `Math.max(MARKER.length, …)` floor pins the
+// sub-5-token chunk. A `Math.max(MARKER.length, …)` floor would pin the
 // Level-3 output at the 19-char marker (≈5 tokens at the estimator's 4:1),
 // LARGER than a 2–3-token chunk — the opposite of compaction. The bound must be
 // the estimator itself (truncate until estimateMessageTokens < chunkTokens),
-// not a hand-derived 3.5-chars-per-token ceiling (which also drops IN-03's
-// 3.5-vs-4 mismatch).
+// not a hand-derived 3.5-chars-per-token ceiling (which would reintroduce a
+// 3.5-vs-4 estimator mismatch).
 
-describe("summarizeLeafChunk Level-3 floor shrinks even a tiny chunk (WR-01)", () => {
+describe("summarizeLeafChunk Level-3 floor shrinks even a tiny chunk", () => {
   for (const chunkTok of [3, 2]) {
     it(`a ${chunkTok}-token chunk + oversized stub yields a Level-3 summary strictly smaller than the chunk`, async () => {
       // One tiny message carrying exactly `chunkTok` stored tokens.
@@ -505,18 +505,18 @@ describe("summarizeLeafChunk Level-3 floor shrinks even a tiny chunk (WR-01)", (
 });
 
 // ===========================================================================
-// WR-03 — an all-oversized chunk must still attempt Level 2 (aggressive)
+// An all-oversized chunk must still attempt Level 2 (aggressive)
 // ===========================================================================
 //
 // `previousSummary` continuity is documented as threaded at Levels 1 and 2. The
-// pre-fix Level-2 path filters out every message above
+// Level-2 filter drops every message above
 // OVERSIZED_MESSAGE_CHARS_THRESHOLD; when EVERY message is oversized the filtered
-// set is empty and Level 2 is skipped entirely — the ladder jumps straight to the
+// set is empty — skipping Level 2 there would jump straight to the
 // count-only floor, dropping the chance an aggressive LLM summary of the full set
 // would have reduced. When the filter empties the set, one aggressive attempt on
 // the FULL (unfiltered) set must be made before the deterministic floor.
 
-describe("summarizeLeafChunk attempts aggressive Level 2 on an all-oversized chunk (WR-03)", () => {
+describe("summarizeLeafChunk attempts aggressive Level 2 on an all-oversized chunk", () => {
   function allOversized(): LeafChunkItem[] {
     // Three messages, each well above OVERSIZED_MESSAGE_CHARS_THRESHOLD (50_000).
     return [
@@ -579,13 +579,13 @@ describe("summarizeLeafChunk attempts aggressive Level 2 on an all-oversized chu
 });
 
 // ===========================================================================
-// B-5 (260605-m82): buildLeafSummarizeFn must pass a REAL pi-ai Model<any> to
+// buildLeafSummarizeFn must pass a REAL pi-ai Model<any> to
 // generateSummary on the PRIMARY path — NOT the 4-field CompactionModelSnapshot.
 // The snapshot lacks the provider-client runtime the SDK invokes, so handing it
 // to generateSummary throws every compaction LLM call (always floors → breaker
 // opens). The real Model is the executor-resolved model threaded via deps.
 // ===========================================================================
-describe("buildLeafSummarizeFn passes a REAL Model to generateSummary (B-5)", () => {
+describe("buildLeafSummarizeFn passes a REAL Model to generateSummary", () => {
   // A sentinel "real Model" — has a method/marker the 4-field snapshot lacks, so
   // the test can prove the snapshot is NOT what generateSummary received.
   const realModel = { id: "claude", provider: "anthropic", generate: () => {}, __realModel: true };
@@ -638,7 +638,7 @@ describe("buildLeafSummarizeFn passes a REAL Model to generateSummary (B-5)", ()
 });
 
 // ===========================================================================
-// B-4 (260605-ney): the spurious deterministic floor on a SMALL chunk.
+// The spurious deterministic floor on a SMALL chunk.
 //
 // Live real-LLM testing showed one leaf falling to `escalationLevel:3
 // fallback:true` (the deterministic count-only floor) on a 3-message chunk while
@@ -653,10 +653,10 @@ describe("buildLeafSummarizeFn passes a REAL Model to generateSummary (B-5)", ()
 // tokenCount stays the budget/floor authority (the Level-3 floor still beats it).
 //
 // The SPY+proportional stub (`proportionalSpySummarizer`) is the key to a clean
-// RED: it writes TO its target, so the SAME stub floors at the full 1200 target
-// (pre-patch) and reduces at the bounded target (post-patch).
+// regression signal: it writes TO its target, so the SAME stub floors at the full
+// 1200 target (unbounded) and reduces at the bounded target.
 // ===========================================================================
-describe("summarizeLeafChunk does not spuriously floor a small chunk — bounds the target + self-consistent ceiling (B-4)", () => {
+describe("summarizeLeafChunk does not spuriously floor a small chunk — bounds the target + self-consistent ceiling", () => {
   const SHRINK_TARGET_FRACTION = 0.5; // mirrors the production constant.
 
   /** The rendered-4:1 shrink ceiling over a chunk's messages (what the fix uses). */
@@ -692,19 +692,20 @@ describe("summarizeLeafChunk does not spuriously floor a small chunk — bounds 
     const { deps } = makeDeps(spy.fn);
     const result = await summarizeLeafChunk(chunk, deps, { reserveTokens: 1_200 });
 
-    // Post-fix: accepted at level 1 (the bounded target produces a reducing summary).
-    // Pre-patch the spy sees 1200 → its proportional summary (~1200 tok) exceeds the
-    // chunk → escalates to the Level-3 deterministic floor (level 3, fallback true).
+    // Accepted at level 1 (the bounded target produces a reducing summary).
+    // With an unbounded target the spy sees 1200 → its proportional summary
+    // (~1200 tok) exceeds the chunk → escalates to the Level-3 deterministic
+    // floor (level 3, fallback true).
     expect(result.level).toBe(1);
     expect(result.fallback).toBe(false);
     // The summarizer was handed a target BOUNDED below the chunk's rendered-4:1
-    // ceiling (≤ floor(ceiling * 0.5)) — pre-patch it would be the full 1200.
+    // ceiling (≤ floor(ceiling * 0.5)) — unbounded it would be the full 1200.
     const cap = boundedTarget(chunk);
     expect(cap).toBeLessThan(1_200);
     for (const seen of spy.seenReserveTokens()) {
       expect(seen).toBeLessThanOrEqual(cap);
     }
-    // The accepted summary is strictly smaller than the chunk (the C1 invariant).
+    // The accepted summary is strictly smaller than the chunk (the strict-shrink invariant).
     expect(summaryTokens(result.content)).toBeLessThan(before);
   });
 
@@ -758,10 +759,10 @@ describe("summarizeLeafChunk does not spuriously floor a small chunk — bounds 
 });
 
 // ---------------------------------------------------------------------------
-// SUM-03: wrapSummarizerWithFailover — provider failover (Phase 171-03)
+// wrapSummarizerWithFailover — provider failover
 // ---------------------------------------------------------------------------
 
-describe("wrapSummarizerWithFailover — SUM-03", () => {
+describe("wrapSummarizerWithFailover — ordered provider failover", () => {
   // Minimal message fixtures for failover tests
   const msgs: AgentMessage[] = [userMsg("hello") as unknown as AgentMessage];
   const opts = { reserveTokens: 200 };
@@ -879,6 +880,6 @@ describe("wrapSummarizerWithFailover — SUM-03", () => {
   });
 });
 
-// resolveSummarizerWindowTokens (SUMW-01) tests moved to
+// resolveSummarizerWindowTokens tests live in
 // summarizer-window.test.ts alongside the production extraction (this file's
 // production sibling sat at the 800-line file-size cap).

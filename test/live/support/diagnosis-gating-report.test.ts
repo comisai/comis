@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the per-failure-class gating-report builder
- * (Phase 149 — PROVE: LLM-diagnosis baseline, success criterion #3).
+ * RED-first unit tests for the per-failure-class gating-report builder.
  *
- * This is the metric-bearing analysis that GATES phases 150-155 (the reorder/trim
- * signal), so it is RED→GREEN unit-tested BEFORE the Stage-C run consumes it —
- * the `--selftest` discipline (scripts/bench-small-model/run.mjs:120-182).
+ * This is the metric-bearing analysis that GATES the downstream obs-surface
+ * build-out (the reorder/trim signal), so it is RED→GREEN unit-tested BEFORE the
+ * Stage-C run consumes it — the `--selftest` discipline.
  *
  * Stage-A (always-on, keyless): runs in `pnpm validate`. NO COMIS_LIVE gate.
  *
@@ -13,7 +12,7 @@
  * vitest workspace (`projects: ["packages/*", …]`), so a bare `pnpm vitest run`
  * resolves the root config and runs NOTHING (a false-RED). Verify under the LIVE
  * config: `pnpm vitest run --config test/live/vitest.config.ts <file>` (the same
- * path test/live/support tests actually run under — 149-01-SUMMARY decision #5).
+ * path test/live/support tests actually run under).
  *
  * @module
  */
@@ -78,7 +77,7 @@ describe("buildGatingTable — per-failure-class trim/build recommendation", () 
     expect(table[0]!.recommendation).toMatch(/INCONCLUSIVE/);
   });
 
-  it("buildGatingTable distinguishes a budget-skipped (never-measured) class from a judge-skip (WR-04)", () => {
+  it("buildGatingTable distinguishes a budget-skipped (never-measured) class from a judge-skip", () => {
     // A class the budget cut off before it ran is NOT measured-but-inconclusive —
     // the reader must be able to tell "never measured" from "measured, no key".
     // The scenario records the budget-skip via a `budget-skipped` surfacesUsed marker.
@@ -143,7 +142,7 @@ describe("buildGatingTable — per-failure-class trim/build recommendation", () 
     expect(md).toContain("| Failure class |");
   });
 
-  it("renderGatingMarkdown flags the budget-skipped count so a partial corpus is not read as complete (WR-04)", () => {
+  it("renderGatingMarkdown flags the budget-skipped count so a partial corpus is not read as complete", () => {
     // 1 measured class + 2 budget-skipped: the table must not present this as a
     // clean 3-class gate. The summary must surface that 2 classes were not measured.
     const table = buildGatingTable([

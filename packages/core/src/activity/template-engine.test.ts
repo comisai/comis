@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for applyTemplate — the pure allowlist + redaction + substitution
- * chokepoint (spec §10.1). This is the projection-time enforcement of the
+ * chokepoint. This is the projection-time enforcement of the
  * redaction rules: it allowlist-filters params (killing message-body reflection),
  * runs redactValue on every surviving value, substitutes statically (no eval),
  * caps length, and surfaces redactionsApplied for the WARN.
@@ -70,7 +70,7 @@ describe("applyTemplate", () => {
     expect(result.value.redactionsApplied.some((r) => r.reason === "secret_key")).toBe(true);
   });
 
-  it("treats a literal ${process.exit(1)} param as inert text — no code execution (purity, §19.4)", () => {
+  it("treats a literal ${process.exit(1)} param as inert text — no code execution (purity)", () => {
     // If applyTemplate eval'd the template/params, this would terminate the
     // worker. Surviving the call (and rendering it as literal text) proves the
     // substitution is static — no eval / Function / template-literal-eval.
@@ -221,15 +221,15 @@ describe("applyTemplate — transform hook", () => {
     expect(result.value.defaultLabel).toBe("subst VALUE");
   });
 
-  it("redacts a malicious transform output via redactValue defense-in-depth (PITFALL 4 REGRESSION LOCK)", () => {
+  it("redacts a malicious transform output via redactValue defense-in-depth (regression lock)", () => {
     // A transform that returns a raw secret string MUST be caught by the
-    // post-hoc redactValue pipe inside applyTemplate. This is the Pitfall 4
+    // post-hoc redactValue pipe inside applyTemplate. This is the
     // regression lock — even if a transform claims to self-redact (like
     // parseShellCommand at shell-label-parser.ts:53), applyTemplate runs the
     // output through redactValue again as belt-and-braces. The Anthropic
     // sk- shape is one of the canonical secret patterns in
-    // injection-patterns.ts (SK_API_KEY); pre-patch the transform output flows
-    // verbatim into defaultLabel and this test fails.
+    // injection-patterns.ts (SK_API_KEY); without the post-hoc pipe the
+    // transform output flows verbatim into defaultLabel and this test fails.
     const spec: LabelSpec = {
       semanticPhase: "tool",
       label: "x",

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-break query slice types (WEBUI-02, 179-04).
+ * Cache-break query slice types.
  *
  * Extracted from `observability-store-types.ts` for file-size cap compliance
  * (per-subdirectory cap = 500 lines) — the `cache-stats-types.ts` precedent. The
@@ -17,7 +17,7 @@
  * $-lost (`estCostUsd`) is the summed directly-lost cache-read saving for the reason
  * (0 for an unknown-priced model — honest, never NaN/null). Content-free: a closed
  * reason label + two numbers ONLY. Matches the IncidentReport `cacheBreaks?` type
- * (incident-report.ts:379) which already declared estCostUsd — closes that gap.
+ * (incident-report.ts), which also declares estCostUsd.
  */
 export interface CacheBreakReasonRate {
   reason: string;
@@ -33,7 +33,7 @@ export interface CacheBreakReasonRate {
  */
 export interface CacheBreakQueriesSlice {
   /**
-   * WEBUI-02 (179-04): cache-break rate by reason + the $-lost SUM over the existing
+   * Cache-break rate by reason + the $-lost SUM over the existing
    * `category:'cache_break'` diagnostics index. The store-method wrapper around the
    * standalone `queryCacheBreakRateByReason` (kept standalone for the fleet/explain
    * surfaces; exposed here as the `obs.cacheBreaks.byReason` RPC's deps-reachable

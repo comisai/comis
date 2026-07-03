@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { ModelCompatConfigSchema, ToolSchemaProfileSchema } from "./model-compat.js";
 
-describe('ToolSchemaProfileSchema — "gbnf" enum acceptance (GBNF-01)', () => {
+describe('ToolSchemaProfileSchema — "gbnf" enum acceptance', () => {
   it('parses "gbnf" as a valid tool schema profile', () => {
     expect(ToolSchemaProfileSchema.parse("gbnf")).toBe("gbnf");
   });
@@ -18,7 +18,7 @@ describe("ToolSchemaProfileSchema — regression pins (enum closed, zero new con
     expect(ToolSchemaProfileSchema.safeParse("gbnf2").success).toBe(false);
   });
 
-  it("rejects unknown keys alongside a valid profile (strictObject — zero NEW config keys, GBNF-01)", () => {
+  it("rejects unknown keys alongside a valid profile (strictObject — zero NEW config keys)", () => {
     expect(
       ModelCompatConfigSchema.safeParse({ toolSchemaProfile: "gbnf", bogusKey: true }).success,
     ).toBe(false);

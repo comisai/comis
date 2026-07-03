@@ -31,7 +31,7 @@ const THINKING_TAG_RE =
  * - "strict": drops content after unclosed opening tag
  * - "preserve": keeps trailing content even with unclosed tags
  *
- * Unbalanced-tag robustness (Issue 3, small-model e2e 2026-06-12): an ORPHAN
+ * Unbalanced-tag robustness: an ORPHAN
  * closing tag — a `</think>` with no matching opener in the visible text,
  * outside code regions — strips everything up to and including itself. On the
  * Ollama reasoning path the opener can be consumed as a separate reasoning
@@ -88,7 +88,7 @@ export function stripReasoningTagsFromText(
         // separate reasoning chunk while the closing tag plus the pre-close
         // draft land in the content body — everything before the orphan
         // closer is, by construction, trailing reasoning. Drop it along
-        // with the tag (small-model e2e 2026-06-12, Issue 3).
+        // with the tag.
         result = "";
       } else {
         result += cleaned.slice(lastIndex, idx);

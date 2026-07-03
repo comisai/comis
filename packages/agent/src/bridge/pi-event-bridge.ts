@@ -203,12 +203,12 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
 }
 
 /**
- * F-OBS-2 (30uc-20260624): a CONTENT-FREE grounding summary of a web_search /
- * web_fetch result for the trajectory `tool.result` — result count + source
- * HOSTS only. NEVER titles, snippets, full URLs (path/query), or bodies. Lets a
- * "grounded in fetched results" predicate be verified from `comis explain` /
- * trajectory without a DEBUG daemon-log grep (the load-bearing-evidence-was-
- * DEBUG-only obs-loop trigger). Returns `undefined` for any other tool or an
+ * A CONTENT-FREE grounding summary of a web_search / web_fetch result for the
+ * trajectory `tool.result` — result count + source HOSTS only. NEVER titles,
+ * snippets, full URLs (path/query), or bodies. Lets a "grounded in fetched
+ * results" predicate be verified from `comis explain` / trajectory without a
+ * DEBUG daemon-log grep (load-bearing evidence must not be visible only at
+ * DEBUG level). Returns `undefined` for any other tool or an
  * unparseable result, so the `tool:executed` emit is unchanged for everything else.
  *
  * The tool return is an `AgentToolResult`; the structured payload rides `.details`
@@ -258,12 +258,12 @@ export interface TtlSplitEstimate {
 }
 
 /**
- * The NARROW per-root budget surface the bridge consults (Phase 213-08,
- * BUDGET-01/02) — the subset of the daemon-wide `BoundedAutonomy` the bridge
- * needs to reserve a self-spawning loop's LIVE LLM spend per tree-root. Defined
- * here (the consumer) so `@comis/agent` carries no `@comis/daemon` edge; the
- * daemon's composite is structurally assignable. `reserveBudget`'s
- * {@link SpendGateOutcome} return is the SAME the Phase-177 spend gate produces.
+ * The NARROW per-root budget surface the bridge consults — the subset of the
+ * daemon-wide `BoundedAutonomy` the bridge needs to reserve a self-spawning
+ * loop's LIVE LLM spend per tree-root. Defined here (the consumer) so
+ * `@comis/agent` carries no `@comis/daemon` edge; the daemon's composite is
+ * structurally assignable. `reserveBudget`'s {@link SpendGateOutcome} return is
+ * the SAME shape the daemon-wide spend-ceiling gate produces.
  */
 export interface BoundedAutonomyBudgetPort {
   /** Reserve one LLM call's spend against the tree root: wall-clock + token limbs
@@ -278,7 +278,7 @@ export interface BoundedAutonomyBudgetPort {
   ): SpendGateOutcome;
   /** Anchor a tree root's wall-clock deadline + the rootRunId↔leaseId correlation. */
   registerRoot(rootRunId: string, leaseId: string, parentLeaseId?: string): void;
-  /** KEYING-01: re-anchor an IDLE root's wall-clock + token limbs at a turn
+  /** Re-anchor an IDLE root's wall-clock + token limbs at a turn
    *  boundary — the bridge calls this once per turn so an interactive
    *  `root-session-*` root (which acquires no spawn slot, so `releaseSpawn` never
    *  evicts it) does NOT accumulate its wall-clock across the whole conversation
@@ -304,7 +304,7 @@ export interface BoundedAutonomyBudgetHolder {
 /** Dependencies required by the PiEventBridge. */
 export interface PiEventBridgeDeps {
   eventBus: TypedEventBus;
-  // CR-01: the per-execution budget window for THIS run (the shared per-agent
+  // The per-execution budget window for THIS run (the shared per-agent
   // BudgetGuard is structurally assignable for the legacy single-execution path).
   // recordUsage accrues into this window; checkBudgetLimit reads it.
   budgetGuard: ExecutionBudgetWindow;
@@ -312,7 +312,7 @@ export interface PiEventBridgeDeps {
   stepCounter: StepCounter;
   circuitBreaker: CircuitBreaker;
   /**
-   * Per-execution loop detector (FIX #2). When present, the bridge breaks the
+   * Per-execution loop detector. When present, the bridge breaks the
    * turn early with finishReason "loop_detected" once it reports a no-progress
    * / empty-turn loop — well before the step limit. Satisfied by the executor's
    * TurnLoopDetector.
@@ -355,23 +355,24 @@ export interface PiEventBridgeDeps {
   /** Returns current model ID for per-turn pricing resolution. Updated on manual /model switch. */
   getCurrentModel?: () => string;
   /**
-   * Phase 177 — the daemon-wide spend accumulator (the dollars kill-switch
-   * enforcement state). The per-agent bridge holds a REFERENCE to the single
-   * daemon-wide instance (Pitfall 4). When ABSENT (flags off / not wired) the
+   * The daemon-wide spend accumulator (the dollars kill-switch enforcement
+   * state). The per-agent bridge holds a REFERENCE to the single daemon-wide
+   * instance — never a per-bridge copy, or ceilings would be enforced per
+   * session instead of daemon-wide. When ABSENT (flags off / not wired) the
    * entire spend path is a no-op — the healthy path is byte-identical.
    */
   spendAccumulator?: SpendAccumulator;
   /**
    * The resolved `(tenant, agent)` this bridge reserves spend against — derived
-   * at the daemon composition root via `parseFormattedSessionKey` (L1). Required
+   * at the daemon composition root via `parseFormattedSessionKey`. Required
    * whenever `spendAccumulator` is present.
    */
   spendScope?: SpendScope;
   /** `observability.spend.*` — drives the perTurnMax reservation, the action gate, and the pricing gate. */
   spendConfig?: SpendConfig;
   /**
-   * Phase 213-08 (BUDGET-01/02) — the LATE-BOUND per-root budget holder. A
-   * SIBLING to `spendAccumulator`: where the Phase-177 ceiling is per-`(tenant,
+   * The LATE-BOUND per-root budget holder. A SIBLING to `spendAccumulator`:
+   * where the spend-ceiling gate is per-`(tenant,
    * agent)`, this reserves a self-spawning loop's LIVE LLM token/$ spend per
    * tree-ROOT (keyed on the run's rootRunId), so the token + wall-clock limbs fire
    * on a reasoning loop — INCLUDING a zero-price native-provider model where the
@@ -384,7 +385,7 @@ export interface PiEventBridgeDeps {
    */
   boundedAutonomyBudget?: BoundedAutonomyBudgetHolder;
   /**
-   * Resolve THIS run's tree-stable rootRunId from its session key (Phase 213-08).
+   * Resolve THIS run's tree-stable rootRunId from its session key.
    * Returns a registered root for the session, or a SYNTHETIC per-session root the
    * resolver registers on first use (so a top-level, non-spawned loop is bounded
    * too). Required whenever {@link boundedAutonomyBudget} is present.
@@ -546,7 +547,7 @@ export interface PiEventBridgeResult {
    */
   getDrainState: () => DrainInflightState;
   /**
-   * ATTR-01: a ReadonlySet view of the per-turn skill ids attributed this run
+   * A ReadonlySet view of the per-turn skill ids attributed this run
    * (skillNames whose `<location>` a `read` matched). The executor reads this
    * back at the postExecution call site and threads it onto the counts/ids-only
    * `memory:skill_used` write-back event. Read-only view — encapsulation
@@ -574,7 +575,7 @@ export interface PiEventBridgeResult {
  * - error (from turn_end with stopReason) -> circuit breaker failure
  */
 /**
- * Tool self-grade convention (PD-OUTCOME-1, codex package-delivery live-test).
+ * Tool self-grade convention.
  *
  * A tool may report its own SEMANTIC outcome via an explicit
  * `{ graded: true, outcome: "success" | "failure" }` envelope, so an action that
@@ -589,7 +590,7 @@ export interface PiEventBridgeResult {
  *     JSON-stringified result sits inside `content[].text` (see the :79 note above).
  *
  * OPT-IN by design: only an explicit `graded:true` result is honored, so an arbitrary
- * result is NEVER false-flagged (the c53ab0f no-false-flag invariant). Total + bounded:
+ * result is NEVER false-flagged (the no-false-flag invariant). Total + bounded:
  * only text blocks are parsed, length-capped, with a cheap `"graded"` pre-filter before
  * `JSON.parse`, and a non-JSON / non-object / unknown-`outcome` input returns `undefined`.
  */
@@ -604,7 +605,7 @@ export function extractSelfGradedOutcome(result: unknown): "success" | "failure"
   //    MCP content (wrapExternalContent: a "SECURITY NOTICE…" preamble + <<<UNTRUSTED_…>>>
   //    markers around the payload), so a whole-text JSON.parse FAILS — the envelope is
   //    EMBEDDED after the preamble. parseEmbeddedJsonObject handles both the wrapped and
-  //    the bare case (verified live, PD-OUTCOME-1: the preamble/markers carry no braces, so
+  //    the bare case (verified against the live wire shape: the preamble/markers carry no braces, so
   //    the first-'{'…last-'}' slice is the JSON payload).
   const content = (result as { content?: unknown }).content;
   if (!Array.isArray(content)) return undefined;
@@ -681,7 +682,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
             if (deps.onDelta && typeof ame.delta === "string") {
               try {
-                // SA1: forward the SDK's typed delta kind so the consumer can gate
+                // Forward the SDK's typed delta kind so the consumer can gate
                 // accumulation to kind==='text' only. thinking_delta is forwarded
                 // with kind='thinking' so the consumer can still refresh the typing
                 // TTL (proves the agent is alive during extended reasoning phases)
@@ -752,7 +753,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               channelId: deps.channelId ?? "",
               agentId: deps.agentId,
               traceIds: [deps.executionId],
-              source: "runtime" as const, // D9 provenance stamp (production rows)
+              source: "runtime" as const, // provenance stamp (production rows)
             },
           );
           // Emit the trace.metadata lifecycle envelope directly via the
@@ -874,7 +875,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // The SDK only sets isError on thrown exceptions, so we also inspect the result.
           let toolSuccess = !endEvent.isError;
           let toolErrorKind: ErrorKind | undefined;
-          // D1 failure-classification provenance (P1): assigned AT each
+          // Failure-classification provenance: assigned AT each
           // mutation point (never a post-hoc switch — by the WARN site
           // toolSuccess is just `false` and the source is lost). transportOk
           // is derived from classifiedFailureBy at the sinks (sdk_iserror ⇒
@@ -894,9 +895,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // content was a failure → transportOk stays true. This is the
           // self-evident-misclassification tell: a transportOk:true failure
           // with classifiedFailureBy:'failure_detector' means "we matched a
-          // structured field, the transport was fine". (OQ A3 — derived from
+          // structured field, the transport was fine". (Derived from
           // the flip source, NOT the refined classifiedFailureBy label, so the
-          // A1 MCP-refinement of an SDK-isError failure stays transportOk:false.)
+          // MCP-refinement of an SDK-isError failure stays transportOk:false.)
           const transportOk = !endEvent.isError;
           // :591 — SDK isError flip (the transport/call itself errored).
           if (!toolSuccess) classifiedFailureBy = "sdk_iserror";
@@ -907,7 +908,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // driver's perception tools (status/read/wait) surface the DRIVEN SESSION's exit code
           // as an informational datum (`exitCodeIsDrivenSession`); a driven program exiting
           // non-zero there does NOT mean the tool failed — the tool SUCCEEDED in reporting it.
-          // Skip flagged tools (real-VPS 2026-06-16: a bash `exit 1` misclassified a perfectly
+          // Skip flagged tools (observed live: a bash `exit 1` misclassified a perfectly
           // successful terminal_session_status as success:false / classifiedFailureBy:exit_code).
           if (toolSuccess && endEvent.result != null && toolMeta?.exitCodeIsDrivenSession !== true) {
             const details = (endEvent.result as Record<string, unknown>)?.details;
@@ -922,7 +923,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
 
-          // §16.10: run the tool's failureDetector hook BEFORE the
+          // Run the tool's failureDetector hook BEFORE the
           // tool:executed emit, so observability never sees the raw result.
           // The detector is pure + synchronous; it lets a tool flag a
           // logically-failed result the SDK reported as success. A THROWING
@@ -936,8 +937,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               try {
                 const detected = detector(endEvent.result, endEvent.isError);
                 if (detected !== false && detected !== undefined) {
-                  // D2 single-chokepoint no-false-flag guard (P2): the codified
-                  // c53ab0f invariant, generalized to ALL detectors here at the
+                  // Single-chokepoint no-false-flag guard: the no-false-flag
+                  // invariant, generalized to ALL detectors here at the
                   // ONE consumption site (not per-detector, so it also covers
                   // future detectors). A status:200 + no-string-error result is
                   // a structural success and must NEVER be flagged a failure.
@@ -970,7 +971,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                         : undefined) ?? toolErrorKind ?? "internal";
                     classifiedFailureBy = "failure_detector";
                     if (typeof detected === "object" && detected !== null) {
-                      // matchedRule/matchedToken are verdict provenance (P2).
+                      // matchedRule/matchedToken are verdict provenance.
                       // matchedToken is free-text untrusted tool output — it is
                       // sanitized+bounded at BOTH sinks (WARN + emit), never here.
                       matchedRule = detected.matchedRule;
@@ -997,12 +998,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
 
-          // PD-OUTCOME-1: honor an explicit tool self-grade. A tool that reports
+          // Honor an explicit tool self-grade. A tool that reports
           // { graded:true, outcome:"failure" } while returning cleanly (no SDK isError)
           // is a LOGICAL failure — flip the transport-success so the learning loop credits
           // the real task outcome (not "the tool returned"). transportOk stays true (the
           // call returned; the CONTENT failed — the failure_detector semantics). Opt-in
-          // marker ⇒ never a false-flag (mirrors the c53ab0f invariant). Runs only while
+          // marker ⇒ never a false-flag. Runs only while
           // still success, so an SDK/exit-code/detector failure already classified wins.
           if (toolSuccess && extractSelfGradedOutcome(endEvent.result) === "failure") {
             toolSuccess = false;
@@ -1022,7 +1023,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           let errorText: string | undefined;
           // resultBytes/resultDigest replace the raw body with a count + a
-          // non-reversible 12-hex digest on the failure path (D1+D4) — the
+          // non-reversible 12-hex digest on the failure path — the
           // body itself never crosses into the event/log.
           let resultBytes: number | undefined;
           let resultDigest: string | undefined;
@@ -1058,7 +1059,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   : (mcpKind === "connection" || mcpKind === "transport")
                     ? "dependency"
                     : classifyToolError(endEvent.toolName, errorText);
-                // A1 precedence: the MCP classifier refines the sdk_iserror
+                // Classifier precedence: the MCP classifier refines the sdk_iserror
                 // flip when this is an MCP-namespaced tool. The flip source
                 // is primary; the classifier that produced the errorKind wins
                 // the label here.
@@ -1090,7 +1091,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   errorText = classifyUnreachableTool(missingTool, deps.activeToolGroups);
                   toolErrorKind = "validation";
                 }
-                // F-13: "did you mean <closest>?" for a hallucinated tool name. Fires
+                // "Did you mean <closest>?" for a hallucinated tool name. Fires
                 // for top-level AND sub-agents whenever a confident match exists — this is
                 // exactly the path a small model needs when it guessed e.g.
                 // `mcp__memory_manage--delete` for the builtin `memory_manage`.
@@ -1122,20 +1123,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 errorKind: toolErrorKind ?? ("dependency" as const),
                 // Name the bracketed `[error_code]` the errorText carries
                 // (permission_denied / invalid_value / …) instead of a generic
-                // "check errorText" — §2.7 name-which-knob (UC-C2, 2026-06-20).
+                // "check errorText" — the hint must name the exact knob (AGENTS.md §2.7).
                 hint: toolFailureHint(errorText),
-                // D1 provenance — assigned at the mutation points above.
+                // Failure-classification provenance — assigned at the mutation points above.
                 // matchedToken is untrusted tool output → sanitize+bound it
                 // exactly like errorText; the rest are enum-like/digest/number.
                 // transportOk = !endEvent.isError — it reflects whether the
                 // transport DELIVERED a response, not which classifier labeled
                 // the failure. It is false ONLY when the SDK reported a
                 // transport/spawn failure (endEvent.isError), and STAYS false
-                // even when the A1 MCP classifier later refines that isError
+                // even when the MCP classifier later refines that isError
                 // failure (relabeling classifiedFailureBy → "mcp_classifier").
                 // Do NOT rewrite as (classifiedFailureBy !== "sdk_iserror") —
-                // that flips the A1 case to transportOk:true and reopens the
-                // c53ab0f MCP-transport-failure misclassification (see the
+                // that flips the MCP-refined case to transportOk:true and reopens
+                // the MCP-transport-failure misclassification (see the
                 // const above).
                 ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
                 transportOk,
@@ -1151,12 +1152,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // Record tool result in retry breaker for consecutive failure
           // tracking. recordResult returns a transition verdict at the
-          // tool-wide counter-crossing edges (the breaker stays emitter-free,
-          // D3) — capture it and emit the breaker event here, the bridge being
-          // the sole holder of the event bus. Emit the two events as SEPARATE
-          // string-literal calls in an if/else (NOT a ternary) so the
-          // trajectory-event-types-known arch gate's EMIT_REGEX sees both names
-          // and verifies their mappings (Pitfall 7).
+          // tool-wide counter-crossing edges (the breaker itself stays
+          // emitter-free) — capture it and emit the breaker event here, the
+          // bridge being the sole holder of the event bus. Emit the two events
+          // as SEPARATE string-literal calls in an if/else (NOT a ternary) so
+          // the trajectory-event-types-known arch gate's EMIT_REGEX sees both
+          // names and verifies their mappings.
           if (deps.toolRetryBreaker) {
             const transition = deps.toolRetryBreaker.recordResult(
               endEvent.toolName,
@@ -1166,7 +1167,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             );
             if (transition) {
               // Count of tools executed so far this execution — the monotonic
-              // per-execution seq Phase 153 orders the breakerTimeline on (A3).
+              // per-execution seq the breakerTimeline is ordered on.
               // Pushed at the m.toolExecResults.push below, so this is the
               // pre-push count (0 for the first tool).
               const seq = m.toolExecResults.length;
@@ -1179,7 +1180,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   seq,
                   timestamp: systemNowMs(),
                 });
-                // Count the trip for the session-health rollup (D5/F1). Only the
+                // Count the trip for the session-health rollup. Only the
                 // opened transition increments — a reset must not (the rollup
                 // wants total trips this execution, not net breaker state).
                 m.breakerTripCount++;
@@ -1200,8 +1201,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             success: toolSuccess,
             durationMs,
             ...(errorText && { errorText }),
-            // Carry the closed-union errorKind (Phase 150 classification, set on
-            // the failure path only) for the rollup's bounded topErrorKinds.
+            // Carry the closed-union errorKind (set on the failure path only)
+            // for the rollup's bounded topErrorKinds.
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
           });
 
@@ -1278,7 +1279,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             | Record<string, unknown>
             | undefined;
 
-          // F-OBS-2: content-free web_search/web_fetch grounding summary (count +
+          // Content-free web_search/web_fetch grounding summary (count +
           // source hosts only) — computed on the SUCCESS path so the trajectory
           // tool.result reconstructs grounding without a DEBUG daemon-log grep.
           const webResultMeta = toolSuccess
@@ -1299,9 +1300,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
             ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
             ...(truncMeta && { truncated: truncMeta.truncated, fullChars: truncMeta.fullChars, returnedChars: truncMeta.returnedChars }),
-            // D1 provenance (P1) — assigned at the mutation points above.
+            // Failure-classification provenance — assigned at the mutation points above.
             // matchedToken is untrusted tool output and the payload feeds the
-            // trajectory + cache-trace translators (Plan 06), so it MUST be
+            // trajectory + cache-trace translators, so it MUST be
             // sanitized+bounded HERE TOO (identical to the WARN) — a raw token
             // would leak into the event stream. resultDigest/resultBytes/
             // httpStatus/classifiedFailureBy/matchedRule are digest/number/
@@ -1317,7 +1318,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(webResultMeta?.domains !== undefined && { domains: webResultMeta.domains }),
           });
 
-          // ATTR-01: skill-use attribution. A `read` whose path equals a frozen
+          // Skill-use attribution. A `read` whose path equals a frozen
           // learned-skill `<location>` means the model invoked that skill. Map
           // the read path → skillName via the per-session location index
           // (parsed once at prompt-assembly freeze time), emit the EXISTING
@@ -1374,10 +1375,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
 
-          // Safety: break a runaway repeating-tool loop early (FIX #2) — fires
+          // Safety: break a runaway repeating-tool loop early — fires
           // at the detector's no-progress threshold, well before the step limit.
           // finishReason "loop_detected" flows to the orchestrator's
-          // mapAbortToTurnOutcome (FIX #3) for a truthful status.
+          // mapAbortToTurnOutcome for a truthful status.
           if (deps.turnLoopDetector) {
             const loopCheck = checkLoopLimit(deps.turnLoopDetector, m.aborted);
             if (loopCheck.shouldAbort) {
@@ -1929,11 +1930,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     },
                   }
                 : {};
-            // COST-01: tag this turn with the DISTINCT tools that fired (from the
-            // already-tracked m.toolCallHistory at :557 — NOT a new accumulator).
+            // Tag this turn with the DISTINCT tools that fired (from the
+            // already-tracked m.toolCallHistory — NOT a new accumulator).
             // Content-free: tool NAMES/ids only, never args/output. The per-tool $
-            // split a consumer renders is best-effort/labeled (N3) — an even split
-            // across these distinct tools that conserves cost.total (locked A5);
+            // split a consumer renders is best-effort/labeled — an even split
+            // across these distinct tools that conserves cost.total;
             // exact per-tool accounting is out of scope. undefined ⇒ the spread
             // vanishes and the emit is byte-for-byte unchanged on a no-tool turn.
             const toolTag =
@@ -1972,23 +1973,23 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               warmupTurn,
               pendingCacheInvestmentUsd,
               ...costCorrectionField,
-              // COST-01: the distinct tool tag (best-effort, labeled). Spread so
+              // The distinct tool tag (best-effort, labeled). Spread so
               // a no-tool turn keeps the payload byte-for-byte unchanged (no shim).
               ...(toolTag && { toolTag }),
-              // B3 (D8): SDK per-turn stop signal. RELIABLE — m.lastStopReason is
-              // captured at :1231 in this same turn_end case, BEFORE this emit.
+              // SDK per-turn stop signal. RELIABLE — m.lastStopReason is
+              // captured earlier in this same turn_end case, BEFORE this emit.
               ...(m.lastStopReason !== undefined && { stopReason: m.lastStopReason }),
-              // B3 (D8): execution-level finish disposition. m.finishReason settles
-              // LATER than turn_end (the safety guards set it at
-              // :1005/:1018/:1625/:1672/:2113), so on a normal turn it is still the
+              // Execution-level finish disposition. m.finishReason settles
+              // LATER than turn_end (the safety guards set it),
+              // so on a normal turn it is still the
               // init default "stop". Forward it ONLY once it has diverged from that
               // default, so model.completed does not carry a stale, authoritative-
-              // looking "stop" on every normal turn (WR-151-01) — the translator's
+              // looking "stop" on every normal turn — the translator's
               // presence-conditional guard then correctly omits it. A genuinely
               // settled value (a guard-set "max_steps"/"loop_detected"/etc. from this
               // or a prior turn) IS forwarded. The authoritative settled finishReason
-              // is Phase 152's flight-recorder (effectiveFinishReason); the reliable
-              // D8 field at this per-turn emit is stopReason above.
+              // is the flight-recorder rollup (effectiveFinishReason); the reliable
+              // per-turn field at this emit is stopReason above.
               ...(m.finishReason !== "stop" && { finishReason: m.finishReason }),
             });
 
@@ -2008,16 +2009,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 durationMs: llmLatencyMs ?? 0,
                 inputTokens: usage.input,
                 outputTokens: usage.output,
-                // W7 (obs-llm-troubleshooting): make degraded turns greppable from
+                // Make degraded turns greppable from
                 // the index alone. stopReason is the RELIABLE per-turn signal
-                // (captured at :1231 in this same turn_end); finishReason mirrors
-                // the model.completed WR-151-01 guard — forwarded only once it has
-                // settled away from the init default "stop" (the HR-01 mapping for
-                // THIS turn runs after this append, so it lands on later rows).
+                // (captured in this same turn_end); finishReason mirrors
+                // the model.completed guard — forwarded only once it has
+                // settled away from the init default "stop" (the context-exhaustion
+                // mapping for THIS turn runs after this append, so it lands on later rows).
                 ...(m.lastStopReason !== undefined && { stopReason: m.lastStopReason }),
                 ...(m.finishReason !== "stop" && { finishReason: m.finishReason }),
-                lastError: null, // populated by error paths in a follow-up plan; null here
-                source: "runtime" as const, // D9 provenance stamp (production rows)
+                lastError: null, // error paths do not write this append site; always null here
+                source: "runtime" as const, // provenance stamp (production rows)
               },
             );
 
@@ -2032,7 +2033,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               }
             }
 
-            // Safety: the dollars kill-switch (Phase 177). ADMISSION-BOUNDED +
+            // Safety: the dollars kill-switch. ADMISSION-BOUNDED +
             // COOPERATIVE-ABORT. The bridge has NO pre-flight cost estimate at this
             // post-record point, so it reserves a conservative perTurnMax through
             // the SYNCHRONOUS atomic accumulator (which serializes concurrent
@@ -2060,12 +2061,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               let spendBreachCurrentUsd = 0;
               let spendBreachCapUsd = 0;
               const spendEmit: SpendEmitHooks = {
-                // WR-1 (177-obs-loop): emit the breaching warn DIMENSION the
+                // Emit the breaching warn DIMENSION the
                 // accumulator reported (the crossed scope + THAT dimension's
                 // post-reserve total + cap) — NOT a hard-coded scope:"agent" + the
                 // session-local cumulative cost + a first-non-null cap (an
                 // internally-inconsistent event when the tenant/global ceiling is
-                // the one that crossed — the security-review WR-1 finding).
+                // the one that crossed).
                 spendWarning: (warn) =>
                   deps.eventBus.emit("observability:spend_warning", {
                     timestamp: systemNowMs(),
@@ -2141,12 +2142,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               }
             }
 
-            // Phase 213-08 (BUDGET-01/02): the PER-ROOT budget reserve — a SIBLING
-            // to the Phase-177 checkSpendCeiling above. Where that ceiling is
+            // The PER-ROOT budget reserve — a SIBLING
+            // to the checkSpendCeiling above. Where that ceiling is
             // per-(tenant,agent), this reserves a self-spawning loop's LIVE LLM
             // spend per tree-ROOT (keyed on the run's rootRunId), so the token +
             // wall-clock limbs fire on a reasoning loop — INCLUDING a zero-price
-            // native-provider model where the $-cap can never bite (criterion #2).
+            // native-provider model where the $-cap can never bite.
             //
             // ADDITIVE + gated on the holder ALONE (NOT spendAccumulator): a
             // zero-price loop runs with the $-ceiling off yet must still trip the
@@ -2158,16 +2159,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const perRoot = deps.boundedAutonomyBudget?.current;
             if (perRoot && deps.resolveRootRunId && !m.aborted) {
               const rootRunId = deps.resolveRootRunId(deps.sessionKey);
-              // KEYING-01: re-anchor the per-root wall-clock + token limbs ONCE per
+              // Re-anchor the per-root wall-clock + token limbs ONCE per
               // turn (this metrics state is per-turn, so the flag fires on the turn's
               // FIRST per-root reserve). An interactive session root (`root-session-*`)
               // acquires no spawn slot, so `releaseSpawn` never evicts it and its
               // anchor would accumulate across the WHOLE conversation — falsely
-              // aborting a turn after wallClockMs of wall-clock AGE (live finding
-              // 2026-06-24). evictRootIfIdle is a NO-OP when a live spawn shares the
+              // aborting a turn after wallClockMs of wall-clock AGE (observed
+              // live). evictRootIfIdle is a NO-OP when a live spawn shares the
               // root (the runaway-tree backstop holds) and preserves the $ aggregate;
               // the reserveBudget below then re-anchors THIS turn from its own start
-              // (the IN-02 first-reserve write in per-root-budget.ts).
+              // (the first-reserve write in per-root-budget.ts).
               if (!m.perRootReanchored) {
                 perRoot.evictRootIfIdle?.(rootRunId);
                 m.perRootReanchored = true;
@@ -2189,12 +2190,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 m.finishReason = "spend_exceeded"; // reuse the single spend finishReason
                 m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
-                // SPEND-ABORT-OBS: this is the per-ROOT autonomy.budget meter, NOT the
+                // This is the per-ROOT autonomy.budget meter, NOT the
                 // observability.spend ceiling — steer the operator hint at the right knob.
-                // OBS-3: carry the tripped limb + its numbers (token/wall-clock/$ in
+                // Carry the tripped limb + its numbers (token/wall-clock/$ in
                 // their own unit) onto the abort event so `explain` names the exact
                 // knob instead of the operator grepping the "Per-root … budget
-                // exceeded" log line. The WARN stays content-free (§2.7).
+                // exceeded" log line. The WARN stays content-free.
                 emitSpendAbort(
                   deps,
                   "per_root",
@@ -2540,7 +2541,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         const turnMsg = (event as { message: unknown }).message as AssistantMessage | undefined;
         if (turnMsg && "stopReason" in turnMsg && turnMsg.stopReason === "error") {
           m.lastLlmErrorMessage = turnMsg.errorMessage ?? "Unknown LLM error";
-          // HR-01 (v2.19): a ContextExhaustionError thrown by the context-engine
+          // A ContextExhaustionError thrown by the context-engine
           // pre-flight during a MID-TURN continuation surfaces here as a turn_end
           // error with its message preserved (the SDK strips the `instanceof`, so
           // the top-level handleEnvelopeException mapping never runs). Recover the
@@ -2767,10 +2768,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     drainInflightByKey: m.drainInflightByKey,
   });
 
-  // ATTR-01: ReadonlySet view of the per-turn attributed skill ids. The
+  // ReadonlySet view of the per-turn attributed skill ids. The
   // executor reads this back at the postExecution call site (carrier → the
   // memory:skill_used write-back). Read-only — `m` is never exported.
-  // Reuse-attribution UNION: the explicit-`read` attributions (ATTR-01, m.turnUsedSkillIds)
+  // Reuse-attribution UNION: the explicit-`read` attributions (m.turnUsedSkillIds)
   // with the per-turn TOPIC-MATCHED surfaced skills (prompt-assembly computed which surfaced
   // skills THIS turn's request instantiates) — so a skill applied without opening its SKILL.md
   // still promotes. Empty/no-match ⇒ byte-identical to before.

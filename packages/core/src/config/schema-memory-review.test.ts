@@ -12,7 +12,7 @@ describe("MemoryReviewConfigSchema", () => {
       enabled: true,
       schedule: "0 2 * * *",
       minMessages: 5,
-      // best-out-of-box (reflect-obs-20260627): broader + richer consolidation per run (cost ignored).
+      // best-out-of-box: broader + richer consolidation per run (cost ignored).
       maxSessionsPerRun: 50,
       maxReviewTokens: 16384,
       dedupThreshold: 0.85,
@@ -66,7 +66,7 @@ describe("PerAgentConfigSchema memoryReview field", () => {
   });
 
   it("defaults memoryReview ON for a bare config (opt-out posture; kill-switch-gated)", () => {
-    // The subtree is no longer `.optional()`; a bare config gets it populated
+    // The subtree is not `.optional()`; a bare config gets it populated
     // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
     expect(result.memoryReview).toBeDefined();

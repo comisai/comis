@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AppendOnly strategy tests (§7.3 row "AppendOnly").
+ * AppendOnly strategy tests.
  *
  * Used by iMessage / LINE (no edit, no delete). Posts one opening status. On
  * success NO closing is posted (the windowed-edit "✓ done" branch is not
@@ -69,7 +69,7 @@ const RECEIPT: FinalDeliveryReceipt = {
   ok: true, deliveredChunks: 1, lastChunkMessageId: "final", deliveredAtMs: 0,
 };
 
-/** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
+/** The ascii theme's markers: bracketed pure-ASCII tags, zero emoji. */
 const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
 
 describe("createAppendOnlyRenderer", () => {
@@ -164,7 +164,7 @@ describe("createAppendOnlyRenderer", () => {
     expect(calls).toHaveLength(0);
   });
 
-  // --- §8.5 production wiring (elapsedMs threading) ---
+  // --- elapsed-time fallback wiring (elapsedMs threading) ---
   //
   // AppendOnly accepts an optional `clock?: ClockPort` and
   // captures `startedAtMs` on first apply(). Because AppendOnly posts
@@ -172,7 +172,7 @@ describe("createAppendOnlyRenderer", () => {
   // fires on the FIRST visible frame. That is acceptable because the first
   // frame is exactly the moment when no plan has yet arrived from SEP (the
   // plan stream lands after the first model tick). The (running 0 s) on the
-  // first send is the visible §8.5 fallback for iMessage AND LINE.
+  // first send is the visible elapsed-time fallback for iMessage AND LINE.
 
   it("AppendOnly accepts a clock dep and threads elapsedMs into renderFrameText — opening send carries (running 0 s)", async () => {
     const clock = createFakeClock(1000);

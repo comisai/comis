@@ -10,8 +10,8 @@
  * flow through `renderer.apply`).
  *
  * Observable: the `renderer.apply` spy is NOT called when the switch is off,
- * and IS called when it is on. RED on the un-gated coordinator (apply always
- * fires regardless of the kill switch).
+ * and IS called when it is on. Without the gate, apply always
+ * fires regardless of the kill switch.
  */
 import type {
   ActivityEvent,

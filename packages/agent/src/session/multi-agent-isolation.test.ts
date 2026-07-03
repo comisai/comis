@@ -183,7 +183,7 @@ function delay(ms: number): Promise<void> {
 // the array via the per-agent MemoryPort.search() upstream) and splits them
 // between inline + system-prompt placement.
 //
-// Per-agent isolation now holds by construction: the injector has no shared
+// Per-agent isolation holds by construction: the injector has no shared
 // state across calls and no MemoryPort dependency; passing distinct result
 // arrays guarantees distinct formatted output. The isolation tests below
 // pass the per-agent MemorySearchResult[] directly to .split() — equivalent

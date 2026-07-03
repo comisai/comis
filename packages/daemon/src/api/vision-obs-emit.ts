@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * VIS-04 (Phase 187): the vision-turn trajectory direct-emit + §2.7 log-line
- * helper.
+ * The vision-turn trajectory direct-emit + §2.7 log-line helper.
  *
  * The daemon vision RPC handlers (`image.analyze` / `media.describe_video` in
  * `media-handlers.ts`) record a vision turn's lifecycle onto the per-session
  * trajectory so `comis explain <sessionKey>` reconstructs it (provider /
  * mainProvider / model / path / costUsd / outcome), AND emit the §2.7 INFO
  * completion line / WARN failure line — the SAME observability image generation
- * got in Phase 186 (`image-handlers.ts:210` / `:604` are the templates).
+ * has (`image-handlers.ts:210` / `:604` are the templates).
  *
  * Extracted to a sibling (NOT inlined into `media-handlers.ts`) because that
  * file is at its 800-line cap — routing the emits + the §2.7 lines through this
@@ -21,12 +20,12 @@
  * without one, env-disabled session, or no session key) makes the trajectory
  * emits NO-OPs (never a crash). The §2.7 log lines ALWAYS fire (recorder or not).
  *
- * CONTENT-FREE (T-187-12): every recorded payload + log field carries ids /
+ * CONTENT-FREE: every recorded payload + log field carries ids /
  * labels / the `path` / `costUsd` / `outcome` / `errorKind` / `durationMs` ONLY
  * — NEVER the image bytes, the analysis prompt, the model's answer, or a
  * credential. `costUsd` rides `media.vision.completed` + the INFO line
  * (= `AssistantMessage.usage.cost.total`, OPTIONAL — absent on the
- * registry/gemini-video tiers; Pitfall 4). The domain `ImageErrorKind` maps onto
+ * registry/gemini-video tiers). The domain `ImageErrorKind` maps onto
  * the CLOSED log `ErrorKind` via `IMAGE_ERR_TO_LOG` on every failure line (the
  * closed-errorKind architecture invariant; `imageErrorKind` carries the domain).
  *
@@ -37,7 +36,7 @@ import type { SessionTrajectoryHandleRegistry, TrajectoryEventType } from "@comi
 import { IMAGE_ERR_TO_LOG } from "@comis/core";
 import type { ComisLogger, ImageErrorKind } from "@comis/core";
 
-/** The ladder tier a vision turn took — VIS-03's "which path" signal. Mirrors
+/** The ladder tier a vision turn took — the "which path" signal. Mirrors
  *  the `path` literals `resolveVisionPath` returns (+ the `MediaVisionEvents`
  *  EventMap `VisionPath`); kept local so the daemon helper takes no extra
  *  `@comis/core` barrel surface. `unavailable` is failure-only. */
@@ -49,14 +48,14 @@ type VisionSelection =
   | { ok: false; errorKind: ImageErrorKind; hint: string };
 
 /**
- * WR-03: resolve the honest-unavailable terminal's `{ errorKind, hint }`. A
+ * Resolve the honest-unavailable terminal's `{ errorKind, hint }`. A
  * resolver refusal (`sel.ok === false`) is authoritative and wins. Otherwise
  * (a chosen path that then could not serve — e.g. main-vision ran and failed,
  * or a registry/video provider was absent) the caller-supplied `fallbackKind`/
  * `fallbackHint` are used: the image handler passes the LAST bridge failure
  * kind/hint so the terminal keeps the specific reason (auth_required/timeout)
  * instead of the generic `unsupported_provider`; the video handler passes its
- * own generic kind/message (no bridge runs for video — Pitfall 3).
+ * own generic kind/message (no bridge runs for video).
  */
 export function resolveTerminalUnavailable(
   sel: VisionSelection,
@@ -78,7 +77,7 @@ export interface VisionObsEmitter {
   readonly active: boolean;
   /**
    * A tier SUCCEEDED: emit media.vision.completed (content-free; costUsd
-   * OPTIONAL — Pitfall 4) AND the §2.7 INFO completion line carrying
+   * OPTIONAL) AND the §2.7 INFO completion line carrying
    * { agentId, visionProvider, mainProvider, model, path, costUsd, durationMs,
    * step:"vision_complete" }. ONE call per success site.
    */
@@ -99,7 +98,7 @@ export interface VisionObsEmitter {
     message: string;
   }): void;
   /**
-   * WR-01 convenience: read the domain `errorKind` off a Result error (a
+   * Convenience: read the domain `errorKind` off a Result error (a
    * `VisionUnavailable` or any Error) — `?? "dependency"` when absent — then
    * delegate to {@link failed}. Lets each tier-failure branch instrument in ONE
    * line (the registry / gemini-video throw sites) without re-deriving the cast.

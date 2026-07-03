@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Provider-boundary fake-provider harness — the PERMANENT regression gate
- * for the assembled provider array (O2).
+ * for the assembled provider array.
  *
  * This harness drives a tool turn through the REAL pipeline context engine
  * (`createContextEngine({ ...config, version: "pipeline" }).transformContext`)
@@ -17,14 +17,12 @@
  *   - the tool turn's assembled array GROWS vs the prior short turn
  *     (totalCount strictly increases).
  *
- * The growth + pairing assertions ride the `assembledShape` field added in
- * Plan 126-05 Task 2 — so on pre-patch code (before the field + emit exist)
- * `assembledShape` is `undefined` and these assertions FAIL (RED). They flip
- * GREEN once the schema field + wrapper emit land.
+ * The growth + pairing assertions ride the `assembledShape` field the
+ * cache-trace wrapper records — if the schema field or the wrapper emit is
+ * ever removed, `assembledShape` is `undefined` and these assertions fail.
  *
- * Phases 127-133 assert against this gate. Keep ALL harness logic in this
- * `.test.ts` (Pitfall 4: a never-imported `.ts` source counts 0% in the full
- * coverage run and trips the agent per-package floor).
+ * Keep ALL harness logic in this `.test.ts` (a never-imported `.ts` source
+ * counts 0% in the full coverage run and trips the agent per-package floor).
  *
  * Precedents copied verbatim:
  *   - makeTrace / readLines / fake `next: StreamFn`:
@@ -237,12 +235,12 @@ async function recordTurnWith(
 // --- dag-mode (LCD) fixtures + store helpers ───────────────────────────────
 //
 // The dag engine reads HISTORY from an injected ContextStorePort + the FRESH
-// TAIL from the live `transformContext` arg (Plan 128-02). To exercise it we
+// TAIL from the live `transformContext` arg. To exercise it we
 // build canonical pi-ai messages (`toolCall` blocks + top-level `toolResult`
 // messages — the shapes the core `messageToParts`/`partsToMessage` codec
 // round-trips faithfully, matching the real SDK loop) and persist them to a
 // real `createLcdStore(:memory:)` via the codec, exactly as the afterTurn
-// ingest path (Plan 128-03) would. The harness's pipeline fixtures above use
+// ingest path would. The harness's pipeline fixtures above use
 // the `tool_use`/top-level-toolResult AgentMessage casts — DISTINCT shapes for
 // the DISTINCT path; we keep the codec-faithful canonical builders here.
 
@@ -323,8 +321,8 @@ function appendTurnToStore(store: ContextStorePort, messages: AgentMessage[]): v
 function makeDagEngine(store: ContextStorePort, freshTailTurns: number): ContextEngine {
   return createContextEngine(
     { ...pipelineConfig, version: "dag", freshTailTurns } as unknown as ContextEngineConfig,
-    // R4 (132-03): thread agentId + tenantId so the dag assembler builds the full
-    // read scope (matching dagScope's appends) — else it fails closed (WR-02).
+    // Thread agentId + tenantId so the dag assembler builds the full
+    // read scope (matching dagScope's appends) — else it fails closed.
     {
       ...makeDeps(),
       contextStore: store,
@@ -336,7 +334,7 @@ function makeDagEngine(store: ContextStorePort, freshTailTurns: number): Context
   );
 }
 
-describe("provider-boundary harness — assembled array invariants (O2)", () => {
+describe("provider-boundary harness — assembled array invariants", () => {
   it("tool turn records a toolResult, pairs tool_use<->tool_result, and the array grows", async () => {
     // Turn 1: a short user + assistant exchange.
     const turn1 = await recordTurn(
@@ -376,22 +374,20 @@ describe("provider-boundary harness — assembled array invariants (O2)", () => 
     );
   });
 
-  // ── Gate 1 (always-on, no env, no provider): the SAME A4/A2 invariants on the
-  //    LIVE dag-mode LCD assembly (Plan 128-02), fed by REAL ingested store rows
-  //    (Plan 128-03), driven through the cache-trace wrapper. ──────────────────
+  // ── Always-on gate (no env, no provider): the SAME presence/pairing/growth
+  //    invariants on the LIVE dag-mode LCD assembly, fed by REAL ingested store
+  //    rows, driven through the cache-trace wrapper. ──────────────────────────
   //
-  // This is the permanent deterministic regression for the loop bug-class: the
-  // DELETED dag-assembler flattened every tool_use / tool_result to
-  // `content:[{type:"text"}]`, so the model never saw a provider-valid pairing
-  // for its own prior action and re-issued the same call dozens of times. On
-  // pre-Plan-02 code the `dag` branch fell through to the pipeline with NO
-  // faithful toolResult reconstructed from the store, so `hasToolResult` was
-  // false / the array did not grow → this case FAILS. It GREENs once the LCD
-  // assembler emits the paired, growing array. Verified RED by temporarily
-  // forcing the dag-branch fall-through (commit body).
+  // This is the permanent deterministic regression for the loop bug-class: an
+  // earlier (since deleted) dag-assembler flattened every tool_use / tool_result
+  // to `content:[{type:"text"}]`, so the model never saw a provider-valid
+  // pairing for its own prior action and re-issued the same call dozens of
+  // times. If the `dag` branch ever falls through to the pipeline with NO
+  // faithful toolResult reconstructed from the store, `hasToolResult` is
+  // false / the array does not grow → this case fails.
   //
-  // It asserts via the SAME O2 `assembledShape` fields as the pipeline case
-  // above (Pitfall 6: the contract is intact — no new block convention), and
+  // It asserts via the SAME `assembledShape` fields as the pipeline case
+  // above (one contract — no new block convention), and
   // additionally pins `pairedToolResultCount === toolResultCount` (the
   // orphan-free count signal that survives the 64-item id cap).
   it("dag-mode LCD assembly records a toolResult, pairs tool_use<->tool_result, and the array grows", async () => {
@@ -435,7 +431,7 @@ describe("provider-boundary harness — assembled array invariants (O2)", () => 
     expect(turn2.assembledShape).toBeDefined();
     expect(turn2.assembledShape!.hasToolResult).toBe(true);
 
-    // (pairing — A2) every toolResultId has a matching toolUseId (no orphan) AND
+    // (pairing) every toolResultId has a matching toolUseId (no orphan) AND
     // the orphan-free count signal holds (survives the 64-item id cap).
     expect(turn2.assembledShape!.toolResultIds.length).toBeGreaterThan(0);
     for (const rid of turn2.assembledShape!.toolResultIds) {
@@ -445,7 +441,7 @@ describe("provider-boundary harness — assembled array invariants (O2)", () => 
       turn2.assembledShape!.toolResultCount,
     );
 
-    // (growth — A4) the tool turn's assembled array GREW vs the short text turn.
+    // (growth) the tool turn's assembled array GREW vs the short text turn.
     expect(turn1.assembledShape).toBeDefined();
     expect(turn2.assembledShape!.totalCount).toBeGreaterThan(
       turn1.assembledShape!.totalCount,
@@ -456,7 +452,7 @@ describe("provider-boundary harness — assembled array invariants (O2)", () => 
     //    + its toolResult fall in the history prefix [0,tailStart), which the
     //    assembler reconstructs from the STORE rows (the codec round-trip), NOT
     //    from the live array's tail. The live array is the FULL conversation
-    //    (the SDK passes `state.messages`, never a tail-only slice — CR-01); with
+    //    (the SDK passes `state.messages`, never a tail-only slice); with
     //    freshTailTurns=1 the boundary lands at the trailing assistant so the
     //    earlier tu_1 step is store-sourced. The pairing + presence invariants
     //    must STILL hold — this is the round-trip the flatten-to-text loop bug
@@ -486,24 +482,25 @@ describe("provider-boundary harness — assembled array invariants (O2)", () => 
     );
   });
 
-  // ── WR-01: high-tool-count turn — the pairing/orphan signal must SURVIVE the
+  // ── High-tool-count turn — the pairing/orphan signal must SURVIVE the
   //    64-item sanitizeForPersistence array cap. ──────────────────────────────
   //
   // `assembledShape.toolUseIds` / `toolResultIds` are NOT in the cache-trace
-  // exempt set (correct — they must stay bounded). On pre-patch code those are
-  // plain unbounded arrays, so a turn assembling >64 tool_use / tool_result
-  // blocks serializes them as a `{ __bounded__: "bounded-payload-array-length-
-  // limit", originalLength: N }` SENTINEL in the JSONL — and every downstream
-  // pairing/orphan check that iterates `toolResultIds` / indexes `toolUseIds`
-  // becomes a silent no-op exactly on the largest, highest-risk turns. The fix
+  // exempt set (correct — they must stay bounded). Were those
+  // plain unbounded arrays, a turn assembling >64 tool_use / tool_result
+  // blocks would serialize them as a `{ __bounded__: "bounded-payload-array-
+  // length-limit", originalLength: N }` SENTINEL in the JSONL — and every
+  // downstream pairing/orphan check that iterates `toolResultIds` / indexes
+  // `toolUseIds` would become a silent no-op exactly on the largest,
+  // highest-risk turns. The descriptor therefore
   // self-bounds the id arrays at the source AND carries count fields
   // (`toolUseCount` / `toolResultCount` / `pairedToolResultCount`) that never
   // vanish under the bound, so the gate asserts on counts instead of reading
   // through a sentinel.
   //
-  // Reads the raw JSONL as an untyped record so the test compiles against BOTH
-  // pre- and post-patch schemas; it FAILS on pre-patch behavior (sentinel +
-  // missing count fields), GREEN once the descriptor self-bounds.
+  // Reads the raw JSONL as an untyped record (post-sanitization, exactly what
+  // landed on disk); it fails if the id arrays arrive as a sentinel or the
+  // count fields are missing.
   it("high-tool-count turn keeps the pairing signal under the 64-item array cap", async () => {
     const PAIRS = 80; // > PAYLOAD_BOUNDS.maxArrayLength (64)
     const messages: AgentMessage[] = [userMsg("kick off a big fan-out")];

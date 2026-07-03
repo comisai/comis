@@ -50,7 +50,7 @@ export interface PromptRunnerBridge {
     tokensUsed?: { output?: number };
     stepsExecuted?: number;
     toolCallHistory?: string[];
-    /** R2: Abort redirect message set at bridge abort sites; undefined for normal completions. */
+    /** Abort redirect message set at bridge abort sites; undefined for normal completions. */
     abortResponse?: string;
   };
 }
@@ -88,15 +88,16 @@ export interface RunPromptParams {
   _directives: CommandDirectives | undefined;
   _prevTimestamp: number | undefined;
   resolvedModel: { id: string; provider: string; input?: string[] } | undefined;
-  /** ModelProfile resolved once per execution; drives scaffoldLevel-gated features (R1 GoalAnchor). */
+  /** ModelProfile resolved once per execution; drives scaffoldLevel-gated features (e.g. GoalAnchor). */
   modelProfile?: ModelProfile;
   // Deps
   deps: {
     eventBus: TypedEventBus;
     logger: ComisLogger;
-    // CR-01: per-execution budget window for THIS run (precheck estimateCost/
+    // The per-execution budget window for THIS run (precheck estimateCost/
     // checkBudget + the envelope snapshot read it). The shared per-agent guard
-    // is structurally assignable for the legacy path.
+    // is structurally assignable, so call sites that pass it instead still
+    // typecheck.
     budgetGuard: ExecutionBudgetWindow;
     costTracker: CostTracker;
     authRotation?: AuthRotationAdapter;
@@ -112,12 +113,12 @@ export interface RunPromptParams {
     /** Timer scheduling. */
     timers: TimerPort;
     /**
-     * ISSUE #2: the canonical system-tokens (system prompt + tools) estimate the
+     * The canonical system-tokens (system prompt + tools) estimate the
      * pre-flight throws on (cachedSystemTokensEstimate). Lets wrapEnvelope size the
      * tight-window residual (window − S − floorHeadroom) and drop the heavy
      * tool-discovery preamble before it overflows — using the SAME S so the decision
-     * cannot drift from the assembler. Absent ⇒ the drop is skipped (no S → can't size
-     * the residual → never drop, byte-identical to pre-ISSUE#2).
+     * cannot drift from the assembler. Absent ⇒ the drop is skipped (no S → can't
+     * size the residual → never drop, byte-identical envelope output).
      */
     getSystemTokensEstimate?: () => number;
   };

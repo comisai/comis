@@ -83,7 +83,7 @@ describe("CLI entry point", () => {
       // IncidentReport post-mortem surface (obs.explain).
       "explain",
       // Live resolved-caps + remaining-budget read (capabilities.introspect) —
-      // the `comis whoami` surface (215, INTRO-01/02; live-only, no --offline).
+      // the `comis whoami` surface (live-only, no --offline).
       "whoami",
       // Cross-session FleetHealthReport triage (obs.fleet.health) — the
       // remote-admin sibling of `explain`, DISTINCT from the local `health` doctor.
@@ -94,7 +94,7 @@ describe("CLI entry point", () => {
       "cache",
       // MCP server management surface.
       "mcp",
-      // Cost-attribution exports/reports (179-03 `comis cost export`).
+      // Cost-attribution exports/reports (`comis cost export`).
       "cost",
     ] as const;
 

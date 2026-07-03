@@ -3,10 +3,10 @@
  * Core-owned delivery types.
  *
  * These types live in core/src/delivery/ so createDeliveryService can be
- * defined in core without a core → channels back-edge. The actual
- * `deliverToChannel` function and value-level helpers
+ * defined in core without a core → channels back-edge. The delivery
+ * pipeline itself lives in delivery-service.ts; the value-level helpers
  * (QUEUE_BACKOFF_SCHEDULE_MS, computeQueueBackoff, resolveChunkLimit)
- * live in channels/src/shared/deliver-to-channel.ts.
+ * live in queue-backoff.ts.
  */
 
 import type { SendMessageOptions } from "../ports/channel.js";

@@ -2,14 +2,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { createVideoObsEmitter } from "./video-obs-emit.js";
 
-// OBS-04 (Phase 192): createVideoObsEmitter — the null-safe, off-turn-safe video
+// createVideoObsEmitter — the null-safe, off-turn-safe video
 // trajectory direct-emit helper. It is the createVisionObsEmitter twin, but
-// trajectory-RECORD-focused: the video handler (188) + poller (189/190) already
+// trajectory-RECORD-focused: the video handler + poller already
 // carry the complete §2.7 logger floor (an INFO completion line + an ERROR/WARN
 // with errorKind+hint on EVERY branch), so this emitter adds ONLY the per-session
 // trajectory records — it does NOT re-log (which would double-emit the §2.7 line
-// the SEC-02 / poller-step tests pin). Its value is the recorder resolution by
-// sessionKey + the no-op-when-gone primitive OBS-04 needs off-turn.
+// the handler / poller-step tests pin). Its value is the recorder resolution by
+// sessionKey + the no-op-when-gone primitive off-turn emits need.
 
 /** A capture recorder mirroring the SessionTrajectoryHandleRegistry recorder. */
 function captureRecorder() {
@@ -115,7 +115,7 @@ describe("createVideoObsEmitter", () => {
   it("off-turn safety: no sessionKey / no registry → active=false, every method no-ops (no throw, no record)", () => {
     // The common off-turn case: the recorder is gone (session closed / daemon
     // restarted) or there is no session key. The emitter must NOT throw and must
-    // emit NO trajectory record — the offline assembler (Plan 02) is the binding
+    // emit NO trajectory record — the offline assembler is the binding
     // oracle; the live emit is best-effort.
     const obs1 = createVideoObsEmitter({
       sessionKey: undefined,

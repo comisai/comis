@@ -16,8 +16,8 @@
  * - T3 free-form-object properties injection — template-rendering / Go-side
  *   robustness for `{"type":"object"}` nodes with no shape at all.
  *
- * I6 invariant (security posture untouched) — the real guarantee
- * (175-REVIEW WR-04): no transform ever WIDENS the set of values the schema
+ * Security invariant (posture untouched) — the real guarantee:
+ * no transform ever WIDENS the set of values the schema
  * admits. Transformed schemas accept a SUBSET of the original's values
  * (T1/T2 drop the null branch; T4 injects an inferred `type` that narrows a
  * previously-unconstrained node) or the IDENTICAL set (T3 —
@@ -37,16 +37,16 @@
  * twice produces byte-identical output to running it once.
  *
  * `pattern` and `format` are deliberately NOT stripped here: llama.cpp largely
- * supports them, and stripping them is GBNF-02's REACTIVE remedy (classify a
+ * supports them, and stripping them is the REACTIVE remedy (classify a
  * grammar-400, strip, retry once) — never part of this proactive profile.
  *
- * DoS posture (T-175-01): the walk recurses only into schema-bearing keys
+ * DoS posture: the walk recurses only into schema-bearing keys
  * (`properties`/`items`/`prefixItems`/`allOf`/`anyOf`/`oneOf`/
- * `additionalProperties`/`$defs`/`definitions`/`patternProperties` — WR-06);
+ * `additionalProperties`/`$defs`/`definitions`/`patternProperties`);
  * no `$ref` resolution or expansion (refs pass through untouched; their
  * TARGET definitions are walked once where they live under `$defs`), so a
  * maliciously deep third-party MCP schema costs O(nodes), never exponential.
- * STACK DEPTH is bounded too (175-REVIEW WR-03): recursion stops at
+ * STACK DEPTH is bounded too: recursion stops at
  * {@link MAX_GBNF_WALK_DEPTH} — subtrees beyond the cap pass through
  * un-walked (every transform is skip-tolerant, so pass-through is always
  * safe) and `depthLimited` reports the cut so the caller can WARN. Without
@@ -75,7 +75,7 @@ const KEYWORD_ORDER: readonly GbnfTransformKeyword[] = [
 const NULLABLE_HINT = " (nullable)";
 
 /**
- * Stack-depth cap for the recursive walk (175-REVIEW WR-03). Third-party MCP
+ * Stack-depth cap for the recursive walk. Third-party MCP
  * schemas are attacker-controlled: a chain deep enough to overflow the
  * un-capped walk still parses cleanly through JSON.parse at the transport
  * boundary. Nodes deeper than the cap pass through UN-WALKED — fail-safe by
@@ -187,7 +187,7 @@ function collapseTypeArray(
   return out;
 }
 
-/** WR-04: typeless nodes carrying any of these keys infer `type: "number"`. */
+/** Typeless nodes carrying any of these keys infer `type: "number"`. */
 const NUMERIC_CONSTRAINT_KEYS = [
   "minimum",
   "maximum",
@@ -196,7 +196,7 @@ const NUMERIC_CONSTRAINT_KEYS = [
   "multipleOf",
 ] as const;
 
-/** WR-04: typeless nodes carrying any of these keys infer `type: "array"`. */
+/** Typeless nodes carrying any of these keys infer `type: "array"`. */
 const ARRAY_CONSTRAINT_KEYS = ["minItems", "maxItems", "uniqueItems", "contains"] as const;
 
 /** Typeless nodes carrying any of these keys infer `type: "string"` honestly. */
@@ -227,7 +227,7 @@ function hasAnyKey(node: Record<string, unknown>, keys: readonly string[]): bool
 /**
  * T4: inject an inferred `type` on a node carrying NONE of the type-bearing
  * keys (the llama.cpp "Unrecognized schema" class). Inference reads the
- * constraint family (175-REVIEW WR-04 — a constraint-only `{minimum: 0}`
+ * constraint family (a constraint-only `{minimum: 0}`
  * must become "number", not the string default that would force the model
  * to emit a string where the tool expects a number):
  * properties/required/additionalProperties → "object";
@@ -242,9 +242,9 @@ function hasAnyKey(node: Record<string, unknown>, keys: readonly string[]): bool
  * "patternProperties":{"^.*$":{}}}`) got `type:"string"` stamped on its
  * value schema, so the wire schema contradicted the daemon driver
  * (`agents: array`, `rounds: number`) and the model oscillated between the
- * two validators' errors forever (small-model e2e 2026-06-12, UC-1/UC-6).
+ * two validators' errors forever (observed live in a small-model e2e run).
  * The union keeps the node grammar-valid (llama.cpp still rejects truly
- * typeless nodes) while admitting the identical value set — an I6
+ * typeless nodes) while admitting the identical value set — an
  * identical-set transform like T3, not a narrowing.
  */
 function injectMissingType(
@@ -271,8 +271,8 @@ function injectMissingType(
 
 /**
  * T3: give a free-form object (`type: "object"`, no `properties`, no
- * `additionalProperties`) an explicit empty `properties: {}`. Non-tightening
- * (I6): without `additionalProperties: false` the node still admits anything.
+ * `additionalProperties`) an explicit empty `properties: {}`. Non-tightening:
+ * without `additionalProperties: false` the node still admits anything.
  */
 function injectEmptyProperties(
   node: Record<string, unknown>,
@@ -292,7 +292,7 @@ function injectEmptyProperties(
  * single pass — keeping twice-equals-once true by construction. Each collapse
  * strictly shrinks the subtree, so the loop terminates in O(nodes).
  *
- * Depth-capped (WR-03): an object node at `depth >= MAX_GBNF_WALK_DEPTH` is
+ * Depth-capped: an object node at `depth >= MAX_GBNF_WALK_DEPTH` is
  * returned UN-WALKED and `limited.hit` is set — pass-through, never a throw.
  *
  * Always builds NEW objects; never mutates the input.
@@ -307,7 +307,7 @@ function walk(
   if (schema === null || schema === undefined) return schema;
   if (typeof schema !== "object" || Array.isArray(schema)) return schema;
 
-  // WR-03: cap BEFORE any per-node transform so the entire subtree passes
+  // Cap BEFORE any per-node transform so the entire subtree passes
   // through byte-identical (a half-transformed cut node would be confusing).
   if (depth >= MAX_GBNF_WALK_DEPTH) {
     limited.hit = true;
@@ -329,7 +329,7 @@ function walk(
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(node)) {
     // Recurse into schema MAPS: properties / $defs / definitions /
-    // patternProperties (WR-06). Map KEYS are names (property names,
+    // patternProperties. Map KEYS are names (property names,
     // definition names, key regexes) — never treated as schema nodes; each
     // VALUE is a schema. $defs/definitions matter because llama.cpp RESOLVES
     // $ref at grammar-compile — hostility inside a definition 400s exactly
@@ -359,7 +359,7 @@ function walk(
     }
 
     // Recurse into items (single schema or array of schemas) and prefixItems
-    // (the draft-2020 tuple form — an array of schemas, WR-06).
+    // (the draft-2020 tuple form — an array of schemas).
     if (key === "items" || key === "prefixItems") {
       out[key] = Array.isArray(value)
         ? value.map((item) => walk(item, applied, depth + 1, limited))
@@ -374,8 +374,8 @@ function walk(
     }
 
     // Recurse into additionalProperties when it is an object schema — the
-    // free-form transform needs this branch (deviation from the sibling
-    // cleaners' walk, documented in the phase pattern map). Open-record
+    // free-form transform needs this branch (a deliberate deviation from the
+    // sibling cleaners' walk, which does not descend here). Open-record
     // VALUE position, like patternProperties values above.
     if (
       key === "additionalProperties" &&
@@ -403,10 +403,10 @@ function walk(
  *
  * `transformedKeywords` is the content-free report of which transform classes
  * fired anywhere in the tree (deduplicated, stable order) — safe for logging
- * under I7 (keyword names only, never schema bodies).
+ * (keyword names only, never schema bodies).
  *
  * `depthLimited` is true when any subtree exceeded {@link MAX_GBNF_WALK_DEPTH}
- * and passed through un-walked (WR-03 fail-safe) — callers WARN on it.
+ * and passed through un-walked (the depth-cap fail-safe) — callers WARN on it.
  */
 export function cleanSchemaForGbnf(schema: unknown): {
   schema: unknown;

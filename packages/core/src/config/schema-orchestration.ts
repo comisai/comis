@@ -2,13 +2,13 @@
 import { z } from "zod";
 
 /**
- * Orchestration authoring gates (Phase 174 / v2.27 P2 — small-model-authorable DAGs).
+ * Orchestration authoring gates — small-model-authorable DAGs.
  *
- * SHIPPED GATED-OFF (every flag .default(false)). The capability lands inert;
- * the operator flips a flag only on real telemetry (the 173 pipeline-authoring
- * gate — see 173-GATE-DECISION.md). With all flags false the producer/synthesizer/
- * GBNF paths are unreachable and behavior is byte-identical to today (the
- * load-bearing invariant).
+ * SHIPPED GATED-OFF (every flag .default(false)). The capability is inert by
+ * default; the operator flips a flag only on real telemetry. With all flags
+ * false the producer/synthesizer/
+ * GBNF paths are unreachable and behavior is byte-identical to a build without
+ * them (the load-bearing invariant).
  *
  * @module
  */
@@ -20,11 +20,11 @@ import { z } from "zod";
  * schema.ts / AppConfigSchema).
  */
 export const OrchestrationAuthoringConfigSchema = z.strictObject({
-  /** AUTHOR-02: enable the `from_intent` action + deterministic synthesizer (default: false). */
+  /** Enable the `from_intent` action + deterministic synthesizer (default: false). */
   intentAction: z.boolean().default(false),
-  /** AUTHOR-01: enable the weak-model graph repair producer (server-side tier feed + repair) (default: false). */
+  /** Enable the weak-model graph repair producer (server-side tier feed + repair) (default: false). */
   repairProducer: z.boolean().default(false),
-  /** AUTHOR-03 (best-effort): grammar-constrain the raw pipeline schema for GBNF providers (default: false). */
+  /** Best-effort: grammar-constrain the raw pipeline schema for GBNF providers (default: false). */
   gbnfConstrain: z.boolean().default(false),
 });
 

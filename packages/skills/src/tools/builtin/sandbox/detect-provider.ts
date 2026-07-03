@@ -56,7 +56,7 @@ function isContainer(): boolean {
  * the given isolation flags + `extraArgs`, returning whether the namespace
  * construction succeeded plus the raw bwrap stderr/signal. The single, DRY probe
  * body shared by {@link bwrapSmokeTest} (the boot-time provider detection) and
- * {@link namespacePreflight} (the JAIL-03 autonomy preflight) — they differ only
+ * {@link namespacePreflight} (the autonomy preflight) — they differ only
  * in the isolation flags passed, so the bind list + spawn options never drift.
  *
  * The base flags `--unshare-user --unshare-pid --proc /proc` are the kernel-
@@ -96,9 +96,9 @@ function bwrapSmokeTest(): { ok: boolean; stderr: string; signal: NodeJS.Signals
 }
 
 /**
- * Result of the JAIL-03 namespace preflight. The `namespacePreflightOk` field is
+ * Result of the namespace preflight. The `namespacePreflightOk` field is
  * structurally assignable to `@comis/core`'s `AutonomyPreflightResult` — feed
- * this straight into the SHIPPED `degradeAutonomy` (PROFILE-03, Phase 210) with
+ * this straight into `degradeAutonomy` with
  * no adapter. The extra `stderr`/`signal` carry the bwrap error onto the boot
  * signal so an operator sees WHY the jail could not be built without enabling
  * DEBUG (matching the {@link detectSandboxProvider} warn-with-stderr pattern).
@@ -113,8 +113,8 @@ export interface NamespacePreflightResult {
 }
 
 /**
- * JAIL-03 namespace preflight — PRODUCE the `namespacePreflightOk` boolean the
- * SHIPPED `degradeAutonomy` (PROFILE-03) consumes. Extends the boot smoke test
+ * Namespace preflight — PRODUCE the `namespacePreflightOk` boolean that
+ * `degradeAutonomy` consumes. Extends the boot smoke test
  * with `--unshare-net` (the net-new isolation the `orchestrate` jail requires)
  * + the unprivileged-user-namespace availability check.
  *
@@ -124,10 +124,10 @@ export interface NamespacePreflightResult {
  * downshifts any autonomy-bearing posture to `assistant` and SURFACES a WARN +
  * `doctor` finding — never a silent unjailed fallback.
  *
- * 211 ONLY PRODUCES the boolean — it NEVER re-implements the downshift (that is
- * PROFILE-03 in `@comis/core`). The daemon-side wiring that calls this at boot
- * then feeds `degradeAutonomy` per agent (the `emit-autonomy-boot-log` hook
- * already accepts a `namespacePreflightOk` input) lands in 211-06.
+ * This preflight ONLY PRODUCES the boolean — it NEVER re-implements the
+ * downshift (that is `degradeAutonomy` in `@comis/core`). The daemon-side
+ * wiring calls this at boot and feeds `degradeAutonomy` per agent (the
+ * `emit-autonomy-boot-log` hook accepts a `namespacePreflightOk` input).
  *
  * @returns the preflight result (`namespacePreflightOk` + the bwrap stderr/signal).
  */

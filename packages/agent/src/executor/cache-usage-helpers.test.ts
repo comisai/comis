@@ -54,15 +54,15 @@ describe("getCacheProviderInfo", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Backward compatibility: previously-whitelisted providers remain eligible
+  // Catalog-backed providers with cacheRead pricing are cache-eligible
   // -------------------------------------------------------------------------
 
-  describe("backward compatibility with previously-whitelisted providers", () => {
+  describe("catalog-backed providers with cacheRead pricing", () => {
     // Providers whose catalog entries include cacheRead pricing
     const catalogCacheProviders = ["anthropic", "openai", "google", "openrouter"];
 
     for (const provider of catalogCacheProviders) {
-      it(`${provider} remains cache-eligible`, () => {
+      it(`${provider} is cache-eligible via catalog pricing`, () => {
         const info = getCacheProviderInfo(provider);
         expect(info.cacheEligible).toBe(true);
       });

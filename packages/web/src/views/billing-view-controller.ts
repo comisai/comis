@@ -39,20 +39,21 @@ export interface TotalLevelData {
   providers: BillingByProvider[];
 }
 
-/** Per-agent load result carrying the optional COST-01/02 granularity rows. */
+/** Per-agent load result carrying the optional per-tool/per-subagent granularity rows. */
 export interface AgentLevelData {
   agents: BillingByAgent[];
-  /** Per-tool cost (COST-01 tool_tag, best-effort, even-split). */
+  /** Per-tool cost (tool_tag, best-effort, even-split). */
   toolCosts: ToolCostBreakdown[];
-  /** Per-subagent cost (COST-02 corrected-$ subtree rollup). */
+  /** Per-subagent cost (corrected-$ subtree rollup). */
   subagentCosts: SubagentCostBreakdown[];
 }
 
 /**
- * The EXPLICIT, content-free CSV/JSON export column allowlist (matches 179-03's
- * `COST_EXPORT_COLUMNS`). Each entry maps a stable header to a row accessor —
- * the export is built by projecting ONLY these, never `Object.keys(row)`, so a
- * body/secret field cannot leak (T-179-14).
+ * The EXPLICIT, content-free CSV/JSON export column allowlist (the same
+ * content-free approach as the CLI cost-export `COST_EXPORT_COLUMNS`). Each
+ * entry maps a stable header to a row accessor — the export is built by
+ * projecting ONLY these, never `Object.keys(row)`, so a body/secret field
+ * cannot leak.
  */
 export interface BillingExportRow {
   agentId: string;
@@ -117,8 +118,8 @@ export interface BillingViewController {
   ): Promise<BillingTotalData>;
   loadProviderLevel(sinceMs: number): Promise<BillingByProvider[]>;
   /**
-   * Load the agent level + the optional COST-01/02 granularity rows (per-tool
-   * tool_tag costs + per-subagent corrected-$ rollup) carried on the per-agent
+   * Load the agent level + the optional granularity rows (per-tool tool_tag
+   * costs + per-subagent corrected-$ rollup) carried on the per-agent
    * responses. Granularity is empty when the daemon does not surface it.
    */
   loadAgentLevel(sinceMs: number): Promise<AgentLevelData>;
@@ -152,7 +153,7 @@ function narrowSessions(raw: unknown): BillingBySession[] {
 }
 
 /**
- * Narrow an optional per-tool cost breakdown (COST-01 `tool_tag`, best-effort)
+ * Narrow an optional per-tool cost breakdown (`tool_tag`, best-effort)
  * off a billing response. Content-free: tool ids/numbers only, never bodies.
  */
 export function narrowToolCosts(raw: unknown): ToolCostBreakdown[] {
@@ -195,17 +196,17 @@ function mergeToolCosts(rows: ToolCostBreakdown[]): ToolCostBreakdown[] {
 }
 
 /**
- * Narrow an optional per-subagent cost rollup (COST-02 corrected-$ `nodeCost`
- * subtree rollup) off a billing response. Content-free: node ids + corrected
- * dollars only.
+ * Narrow an optional per-subagent cost rollup (corrected-$ `nodeCost` subtree
+ * rollup) off a billing response. Content-free: node ids + corrected dollars
+ * only.
  *
- * 179-wiring CR-01 (path b): `obs.billing.byAgent` does NOT currently carry
- * `subagents[]` — COST-02's `gs.nodeCost` is per-graph-run (surfaced on
- * `graph:completed` / the Incident view), NOT persisted to `obs_token_usage`, so the
- * per-agent billing aggregate has no honest per-subagent source. This narrower
- * therefore returns `[]` today (driving the view's honest "see the Incident view"
- * degradation, never a fabricated row); it stays wired to defend a future per-agent
- * persisted-linkage source (path a) without a wire-shape change.
+ * `obs.billing.byAgent` does NOT currently carry `subagents[]` — the per-graph
+ * `gs.nodeCost` is per-graph-run (surfaced on `graph:completed` / the Incident
+ * view), NOT persisted to `obs_token_usage`, so the per-agent billing aggregate
+ * has no honest per-subagent source. This narrower therefore returns `[]` today
+ * (driving the view's honest "see the Incident view" degradation, never a
+ * fabricated row); it stays wired to defend a future per-agent persisted-linkage
+ * source without a wire-shape change.
  */
 export function narrowSubagentCosts(raw: unknown): SubagentCostBreakdown[] {
   const wrapped = raw as Record<string, unknown> | undefined;
@@ -306,9 +307,9 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
         .filter((a): a is BillingByAgent => a !== null)
         .sort((a, b) => b.cost - a.cost);
 
-      // COST-01/02 granularity: aggregate the per-tool + per-subagent rows
-      // carried on the per-agent responses (content-free; empty when the
-      // daemon does not surface them — honest degradation).
+      // Granularity: aggregate the per-tool + per-subagent rows carried on the
+      // per-agent responses (content-free; empty when the daemon does not
+      // surface them — honest degradation).
       const toolCosts = mergeToolCosts(
         results.flatMap((r) => (r.status === "fulfilled" ? narrowToolCosts(r.value) : [])),
       );

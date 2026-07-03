@@ -139,7 +139,7 @@ function buildCacheConfig(opts: {
 
   // Patch geminiCache.enabled — replace the targeted `enabled:` line in an existing
   // geminiCache block, or append the block under agents.default (NOT at file root).
-  // CR-01: geminiCache is defined in AgentConfigSchema (PerAgentConfigSchema), which
+  // geminiCache is defined in AgentConfigSchema (PerAgentConfigSchema), which
   // maps to the `agents.default` block in YAML. AppConfigSchema is z.strictObject, so
   // an unknown top-level key causes a ZodError and daemon boot fails.
   if (opts.geminiCacheEnabled !== undefined) {
@@ -220,7 +220,7 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
   const canRun = registry.getSkipVerdict("LLM(anthropic)") === null;
 
   // Retention × adaptive combos — each spawns its own driver.
-  // WR-01: use it.skipIf(!canRun) so combos show as SKIPPED (not phantom-passed)
+  // Use it.skipIf(!canRun) so combos show as SKIPPED (not phantom-passed)
   // when Anthropic credentials are unavailable.
   it.skipIf(!canRun).each(RETENTION_MATRIX)(
     "retention=$label",
@@ -242,7 +242,7 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
         await flushDaemonLogs(driver);
         const lines = readFileSync(cacheTracePath, "utf-8");
 
-        // CR-02: cacheRetention="none" activates the kill-switch (kill-switch.ts strips
+        // cacheRetention="none" activates the kill-switch (kill-switch.ts strips
         // all cache_control markers), so the provider returns cacheCreationInputTokens=0.
         // Assert the ABSENCE of a cache write for this path, not its presence.
         if (cacheRetention === "none") {
@@ -258,7 +258,7 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
         await driver.close().catch(() => {
           // swallow shutdown noise
         });
-        // IN-01: clean up the per-combo temp config file so it does not accumulate
+        // Clean up the per-combo temp config file so it does not accumulate
         // in tmpdir across repeated live runs.
         try { rmSync(configPath); } catch { /* ignore if already gone */ }
       }
@@ -267,7 +267,7 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
   );
 
   // Breakpoint strategy × geminiCache combos — each spawns its own driver.
-  // WR-01: use it.skipIf(!canRun) so combos show as SKIPPED (not phantom-passed).
+  // Use it.skipIf(!canRun) so combos show as SKIPPED (not phantom-passed).
   it.skipIf(!canRun).each(STRATEGY_MATRIX)(
     "strategy=$label",
     async ({ cacheBreakpointStrategy, geminiCache, label }) => {
@@ -297,7 +297,7 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
         await driver.close().catch(() => {
           // swallow shutdown noise
         });
-        // IN-01: clean up the per-combo temp config file.
+        // Clean up the per-combo temp config file.
         try { rmSync(configPath); } catch { /* ignore if already gone */ }
       }
     },

@@ -1,31 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Script-routed FTS5 trigram query construction (FTS-01).
+ * Script-routed FTS5 trigram query construction.
  *
  * Routes a query to one of three lanes and, for the trigram lane, builds the
  * FTS5 MATCH string from untrusted user/model query text:
  *   - "word": NO non-Latin token → the caller uses the ORIGINAL string against
- *     the existing porter word lane (I1: byte-identical SQL for all-Latin).
+ *     the existing porter word lane (byte-identical SQL for all-Latin queries).
  *   - "tri":  at least one non-Latin token → a quoted, normalized, bounded
  *     MATCH expression over the trigram twins.
  *   - "scan": every non-operator token folds below the 3-codepoint trigram
  *     floor → the caller runs its bounded normalized scan floor over `scanTokens`.
  *
- * DECISION RECORD — Open Question 1 resolved as **Option B**: OR-of-trigram
- * decomposition ONLY for suffixing-morphology scripts (cyrillic + greek);
- * whole-quoted tokens for hebrew/arabic/cjk/everything else. A quoted whole
- * token is FTS5 substring semantics, which fails the pinned Russian criterion
- * (`книга` is not a substring of stored `книги`); an OR-of-trigrams group
- * matches it (RESEARCH probe 2, 2026-06-13). he/ar/CJK are prefix/substring
- * cases the whole-token shape already satisfies (the Hermes production
- * precedent). Adding a suffixing script later is a data edit to SUFFIXING_SCRIPTS.
+ * DECISION RECORD: OR-of-trigram decomposition ONLY for suffixing-morphology
+ * scripts (cyrillic + greek); whole-quoted tokens for hebrew/arabic/cjk/
+ * everything else. A quoted whole token is FTS5 substring semantics, which
+ * fails inflected-suffix recall (`книга` is not a substring of stored
+ * `книги`); an OR-of-trigrams group matches it. he/ar/CJK are prefix/substring
+ * cases the whole-token shape already satisfies. Adding a suffixing script
+ * later is a data edit to SUFFIXING_SCRIPTS.
  *
- * SECURITY (T-180-01-01 / T-180-01-02): every non-operator term is double-quoted
+ * SECURITY: every non-operator term is double-quoted
  * AFTER normalization, operators come only from the exact-uppercase allowlist,
  * any residual ASCII `"` is stripped from a term before quoting, and the only
  * parens are builder-emitted (never sourced from user text). MAX_QUERY_TOKENS +
  * MAX_TRIGRAMS_PER_TOKEN bound the MATCH size; the dangling-operator sweep
- * eliminates the probe-pinned FTS5 syntax-error shapes. Pure (I9): no I/O.
+ * eliminates the known FTS5 syntax-error shapes (a stranded leading/trailing
+ * or doubled operator is a hard FTS5 parse error). Pure: no I/O.
  * @module
  */
 
@@ -46,8 +46,9 @@ export interface TrigramRoute {
 
 /**
  * DoS bound on the token count fed into the MATCH builder. The upstream FTS5
- * sanitizer does NOT cap token count, so the builder must (RESEARCH Security
- * Domain — "DoS via pathological queries"). 16 is generous for real queries.
+ * sanitizer does NOT cap token count, so the builder must — a pathological
+ * query could otherwise inflate the MATCH string without limit. 16 is
+ * generous for real queries.
  */
 const MAX_QUERY_TOKENS = 16;
 
@@ -61,7 +62,7 @@ const MAX_TRIGRAMS_PER_TOKEN = 12;
 /**
  * Scripts whose morphology is SUFFIXING — a stem keeps its prefix but changes
  * its tail across inflections, so substring (quoted whole-token) matching fails
- * (`книга`/`книги`). These get OR-of-trigram decomposition (OQ-1 Option B).
+ * (`книга`/`книги`). These get OR-of-trigram decomposition.
  * Everything else (hebrew/arabic/cjk/...) is prefix/substring morphology and
  * stays whole-quoted. Adding a script here is a one-line data edit.
  */
@@ -113,7 +114,7 @@ function orOfTrigrams(normalized: string): string {
 }
 
 /** Double-quote a term for FTS5. The caller has already stripped any interior
- *  ASCII `"` (so the quotes can never be unbalanced — T-180-01-01). */
+ *  ASCII `"` (so the quotes can never be unbalanced). */
 function quote(term: string): string {
   return DQUOTE + term + DQUOTE;
 }
@@ -136,7 +137,7 @@ function stripQuotes(s: string): string {
  * cross-package import between core and skills is forbidden in both directions,
  * so the source is duplicated with this citation rather than imported. These are
  * fixed alternations over a 3-word operator set: no nested quantifiers, no
- * backtracking surface (T-180-01-02).
+ * backtracking surface (ReDoS-safe).
  */
 function sweepDanglingOperators(match: string): string {
   let working = match;
@@ -208,7 +209,8 @@ export function routeSearchQuery(query: string, opts: { join: "and" | "or" }): T
   const tokens = tokenize(raw).slice(0, MAX_QUERY_TOKENS);
   if (tokens.length === 0) return { lane: "word" };
 
-  // Step 3: all-Latin → word lane (caller uses the ORIGINAL string — I1).
+  // Step 3: all-Latin → word lane (caller uses the ORIGINAL string, so the
+  // existing porter word lane emits byte-identical SQL).
   const anyNonLatin = tokens.some((t) => hasNonLatin(t.text));
   if (!anyNonLatin) return { lane: "word" };
 
@@ -247,10 +249,11 @@ export function routeSearchQuery(query: string, opts: { join: "and" | "or" }): T
     scanTokens.push(normalized);
 
     // Drop tokens below the 3-codepoint trigram floor — correctness-critical:
-    // a <3-cp token in an AND context returns ZERO ROWS (RESEARCH probe 3).
+    // a <3-cp token can never match a trigram index, so in an AND context it
+    // returns ZERO ROWS for the whole query.
     if (codepointLength(normalized) < 3) continue;
 
-    // OQ-1 Option B: suffixing-script token (≥4 cp) NOT directly governed by a
+    // Suffixing-script token (≥4 cp) NOT directly governed by a
     // preceding NOT → OR-of-trigrams group; else whole-quoted.
     if (hasSuffixingScript(normalized) && codepointLength(normalized) >= 4 && !governedByNot) {
       terms.push(orOfTrigrams(normalized));

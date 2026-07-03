@@ -66,13 +66,13 @@ export interface ModelRetryParams {
     promptTimeoutMs: number;
     retryPromptTimeoutMs: number;
     /**
-     * LAT-02 (177-03): makespan = promptTimeoutMs × stallCeilingMultiplier
-     * threaded into the primary race (R-1 — non-optional wherever stall
+     * Makespan ceiling = promptTimeoutMs × stallCeilingMultiplier,
+     * threaded into the primary race (non-optional wherever stall
      * semantics apply; production callers always pass it). Optional on the
-     * carrier so legacy direct constructions keep compiling.
+     * carrier so hand-built carriers keep compiling.
      */
     stallCeilingMultiplier?: number;
-    /** LAT-01 binding provenance — feeds bindingKnob on timeout emits. */
+    /** Timeout binding provenance — feeds bindingKnob on timeout emits. */
     source?: TimeoutSource;
     operationType?: string;
   };
@@ -214,7 +214,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   const { eventBus, logger, authRotation, modelRegistry, clock, timers } = deps;
   const fallbackModels = deps.fallbackModels ?? [];
 
-  // §16.9: turn-scoping ids stamped onto every model:* emit so
+  // Turn-scoping ids are stamped onto every model:* emit so
   // kind:"model" activity groups to the right turn. agentId/sessionKey come
   // from deps; traceId rides on the RequestContext (AsyncLocalStorage) — the
   // same source tool:* uses. Omit a field when absent so the optional schema
@@ -235,8 +235,8 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   let effectiveModel: { provider: string; model: string } | undefined;
 
   try {
-    // Primary prompt uses resettable timeout so tool completions (and, since
-    // LAT-02, stream deltas) can reset the deadline. Retry/fallback paths use
+    // Primary prompt uses resettable timeout so tool completions and stream
+    // deltas can reset the deadline. Retry/fallback paths use
     // the original withPromptTimeout (fresh whole-turn timeout).
     const resettable = withResettablePromptTimeout(
       session.prompt(messageText, {
@@ -247,18 +247,18 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
       () => session.abort(),
       timers,
       {
-        // LAT-02 (177-01 DECISION): the makespan ceiling is non-optional
-        // wherever stall semantics apply — DERIVED here from the multiplier,
-        // never a standalone ms knob. A delta-resetting runaway generation is
-        // bounded at promptTimeoutMs × stallCeilingMultiplier (T-177-08).
-        // initialBudgetMs deliberately NOT wired (first_activity_scaling:
-        // none — wiring it would re-open the LAT-02-5 hang-detection cost
-        // without a decision record).
-        // Clamped at Node's 32-bit timer cap (177-REVIEW WR-02,
-        // defense-in-depth against hand-built configs that bypass the zod
-        // 1..100 bound): a product > 2^31-1 makes setTimeout clamp the delay
-        // to 1ms — the ceiling would fire INSTANTLY, every prompt killed at
-        // once, classified makespan, and suppressed from providerHealth.
+        // The makespan ceiling is non-optional wherever stall semantics
+        // apply — DERIVED here from the multiplier, never a standalone ms
+        // knob. A delta-resetting runaway generation is bounded at
+        // promptTimeoutMs × stallCeilingMultiplier.
+        // initialBudgetMs deliberately NOT wired: scaling the first-activity
+        // budget would stretch hang-detection latency from minutes to tens
+        // of minutes, a cost accepted nowhere.
+        // Clamped at Node's 32-bit timer cap (defense-in-depth against
+        // hand-built configs that bypass the zod 1..100 bound): a product
+        // > 2^31-1 makes setTimeout clamp the delay to 1ms — the ceiling
+        // would fire INSTANTLY, every prompt killed at once, classified
+        // makespan, and suppressed from providerHealth.
         ...(timeoutConfig.stallCeilingMultiplier !== undefined && {
           makespanMs: Math.min(
             timeoutConfig.promptTimeoutMs * timeoutConfig.stallCeilingMultiplier,
@@ -287,14 +287,14 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         maxRetries,
         totalElapsedMs: clock.now() - retryStartMs,
         hint: "Primary model failed, attempting fallback",
-        // LAT-04: timeouts are their own failure class — booking them as
+        // Timeouts are their own failure class — booking them as
         // "dependency" misclassified every prompt timeout in fleet rollups.
         errorKind: (primaryError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
       },
       "Primary model prompt error",
     );
 
-    // GBNF-02: a grammar-compile/schema 400 is deterministic — rotating auth or
+    // A grammar-compile/schema 400 is deterministic — rotating auth or
     // burning fallback models cannot fix a schema the provider can't compile.
     // Short-circuit the ladder; the executor's withSession-scoped strip-retry
     // (silent-failure-handlers.ts) owns the single repair attempt. The raw body
@@ -312,9 +312,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
       return { succeeded: false, error: primaryError };
     }
 
-    // Emit prompt timeout event for observability (LAT-04: full attribution —
+    // Emit prompt timeout event for observability (full attribution —
     // numbers + enum + the pre-rendered config-KEY string only, never delta
-    // content or env values; T-177-11).
+    // content or env values).
     if (primaryError instanceof PromptTimeoutError) {
       eventBus.emit("execution:prompt_timeout", {
         agentId: deps.agentId ?? "unknown",
@@ -332,10 +332,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
     }
 
     // Feed failure into provider health monitor — EXCEPT makespan-kills.
-    // LAT-04: a makespan-kill is the model streaming forever (runaway), not
+    // A makespan-kill is the model streaming forever (runaway), not
     // the provider failing; booking it would let slow-prefill turns trip the
     // safety gate into provider_degraded skips. Stall-kills (indistinguishable
-    // from a hung provider) still record (Pitfall 6 both-directions).
+    // from a hung provider) still record.
     const isPrimaryMakespanKill =
       primaryError instanceof PromptTimeoutError && primaryError.limit === "makespan";
     if (isPrimaryMakespanKill) {
@@ -366,9 +366,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           );
           await new Promise<void>(r => { const h = timers.setTimeout(() => r(), retryAfterMs); void h; });
           try {
-            // LAT-02 scope decision (177 Open Q2): retry/fallback prompts KEEP
-            // whole-turn retryPromptTimeoutMs semantics (non-resettable) — pinned
-            // by LAT-02-W-6; extend only if local retries die spuriously in
+            // Scope decision: retry/fallback prompts KEEP whole-turn
+            // retryPromptTimeoutMs semantics (non-resettable) — pinned
+            // by test; extend only if local retries die spuriously in
             // practice. Applies to ALL withPromptTimeout sites in this function.
             await withPromptTimeout(
               session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
@@ -432,17 +432,17 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               maxRetries,
               totalElapsedMs: clock.now() - retryStartMs,
               hint: "Rotated key also failed, proceeding to model fallback",
-              // LAT-04: a timeout on the rotated-key retry is a timeout, not
+              // A timeout on the rotated-key retry is a timeout, not
               // an auth failure — keep "auth" only for non-timeout errors.
               errorKind: (rotatedKeyError instanceof PromptTimeoutError ? "timeout" : "auth") as ErrorKind,
             },
             "Rotated key retry failed",
           );
-          // Emit prompt timeout event on rotation retry timeout (LAT-04
+          // Emit prompt timeout event on rotation retry timeout (full
           // attribution; `limit` absent ⇒ whole-turn retry semantics — the
           // kill that fired is the retryPromptTimeoutMs race, so the knob is
           // the RETRY key, never the promptTimeoutMs binding that
-          // timeoutConfig.source describes (177-REVIEW WR-01).
+          // timeoutConfig.source describes).
           if (rotatedKeyError instanceof PromptTimeoutError) {
             eventBus.emit("execution:prompt_timeout", {
               agentId: deps.agentId ?? "unknown",
@@ -461,7 +461,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             });
           }
           // Feed rotation failure into provider health monitor — makespan-kill
-          // suppression mirrors the primary site (LAT-04; structurally dead on
+          // suppression mirrors the primary site (structurally dead on
           // this whole-turn path today, but the gate keeps the split uniform).
           const isRotatedMakespanKill =
             rotatedKeyError instanceof PromptTimeoutError && rotatedKeyError.limit === "makespan";
@@ -548,14 +548,14 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             maxRetries,
             totalElapsedMs: clock.now() - retryStartMs,
             hint: "Fallback model also failed",
-            // LAT-04: timeout class for PromptTimeoutError (fleet rollups).
+            // Timeout class for PromptTimeoutError (fleet rollups).
             errorKind: (fallbackError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
           },
           "Fallback model prompt error",
         );
-        // Emit prompt timeout event on fallback timeout (LAT-04 attribution;
+        // Emit prompt timeout event on fallback timeout (full attribution;
         // `limit` absent ⇒ whole-turn retry semantics — the knob is the RETRY
-        // key, never the promptTimeoutMs binding; 177-REVIEW WR-01).
+        // key, never the promptTimeoutMs binding).
         if (fallbackError instanceof PromptTimeoutError) {
           eventBus.emit("execution:prompt_timeout", {
             agentId: deps.agentId ?? "unknown",
@@ -574,8 +574,8 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           });
         }
         // Feed fallback failure into provider health monitor — makespan-kill
-        // suppression mirrors the primary site (LAT-04; structurally dead on
-        // this whole-turn path today, but the gate keeps the split uniform).
+        // suppression mirrors the primary site (structurally dead on this
+        // whole-turn path today, but the gate keeps the split uniform).
         const isFallbackMakespanKill =
           fallbackError instanceof PromptTimeoutError && fallbackError.limit === "makespan";
         if (isFallbackMakespanKill) {
@@ -660,12 +660,12 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               lkwProvider: lkw.provider,
               lkwModel: lkw.model,
               hint: "Last-known-working model also failed",
-              // LAT-04: timeout class for PromptTimeoutError (fleet rollups).
+              // Timeout class for PromptTimeoutError (fleet rollups).
               errorKind: (lkwError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
             },
             "Last-known-working model fallback failed",
           );
-          // Emit prompt timeout event on LKW timeout (177-REVIEW IN-03):
+          // Emit prompt timeout event on LKW timeout:
           // the explain verdict consumes the LAST execution.prompt_timeout
           // record — without this emit, a terminal LKW timeout left the
           // prior rotation/fallback kill as the "terminal" record and its
@@ -688,8 +688,8 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               ...(lkwError.makespanMs !== undefined && { makespanMs: lkwError.makespanMs }),
             });
           }
-          // providerHealth deliberately NOT recorded here (177-REVIEW IN-03
-          // disposition): the LKW attempt runs against a DIFFERENT provider
+          // providerHealth deliberately NOT recorded here:
+          // the LKW attempt runs against a DIFFERENT provider
           // chosen as a desperation fallback after an auth failure on the
           // configured ladder — booking its failure would extend the safety
           // gate's input surface beyond the 3 configured-path recordFailure

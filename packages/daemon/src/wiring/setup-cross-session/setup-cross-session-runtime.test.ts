@@ -49,7 +49,7 @@ const mockStepCounterInstance = vi.hoisted(() => ({
 }));
 const mockCreateStepCounter = vi.hoisted(() => vi.fn(() => ({ ...mockStepCounterInstance })));
 
-// Phase 218 (SUMREF-02): the ResultRef store (from @comis/skills/tools). The
+// The ResultRef store (from @comis/skills/tools). The
 // wiring constructs it and injects a materializeFullOutput callback into the
 // runner; the spy lets the test invoke that callback and assert it targets the
 // CHILD's resolved jailed workspace (T-218-08) and returns the union unchanged.
@@ -155,7 +155,7 @@ const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
 const mockResolveProviderFamily = vi.hoisted(() => vi.fn(() => "anthropic"));
 
 // SpawnPacket builder mock — faithfully reproduces the real factory's
-// conditional-language spread so the GEN-03 round-trip test can assert that
+// conditional-language spread so the round-trip test can assert that
 // the daemon reads `meta.language` and threads it into build() (the builder
 // itself is unit-tested in spawn-packet-builder.test.ts). Other tests never
 // set `taskDescription`, so they never reach this builder.
@@ -175,7 +175,7 @@ const mockCreateSpawnPacketBuilder = vi.hoisted(() => vi.fn((deps: any) => ({
 })));
 
 vi.mock("@comis/agent", async (importOriginal) => {
-  // SANDBOX-02 / WR-02: the wiring injects a `resolvePosture` closure built over
+  // The wiring injects a `resolvePosture` closure built over
   // the REAL `resolvePostureFromSkills` (it folds an agent's per-agent skills
   // config into a SandboxPosture). Pull the genuine implementation through so the
   // wiring test can invoke the injected closure end-to-end and prove the gate is
@@ -195,7 +195,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
     createSpawnPacketBuilder: mockCreateSpawnPacketBuilder,
     // Real pure primitive — the injected posture resolver depends on it.
     resolvePostureFromSkills: actual.resolvePostureFromSkills,
-    // WR-02: shared bounded delivered-key store, constructed eagerly in the
+    // Shared bounded delivered-key store, constructed eagerly in the
     // wiring and handed to both the batcher and the runner. A minimal real-shaped
     // stub (has/mark/size) so the wiring can pass it through opaquely.
     classifyErrorContext: vi.fn(() => ({ errorType: "Unknown", retryable: false })),
@@ -219,7 +219,7 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
-// createResultRefStore lives in @comis/skills/tools (SUMREF-02). Spread the real
+// createResultRefStore lives in @comis/skills/tools. Spread the real
 // module so any other re-exports keep working; override only the store factory so
 // the wiring's injected materializeFullOutput routes to the spy.
 vi.mock("@comis/skills/tools", async (importOriginal) => {
@@ -274,7 +274,7 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
             subAgentMaxSteps: 50,
             subAgentToolGroups: ["coding"],
             subAgentMcpTools: "inherit",
-            // DELIVERY-02: the batcher reads delivery.maxRetries for the
+            // The batcher reads delivery.maxRetries for the
             // transient-retry cap (schema-defaulted in real config).
             delivery: { maxRetries: 3 },
           },
@@ -494,7 +494,7 @@ describe("setupCrossSession", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-02: the SAME bounded DeliveryDedup instance must reach both the batcher
+  // The SAME bounded DeliveryDedup instance must reach both the batcher
   // and the sub-agent runner. A wiring that constructed two separate dedups
   // would silently break cross-path dedup (success via deliverAnnouncement vs
   // failure via deliverFailureNotification would not collide).
@@ -1146,7 +1146,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 15,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1344,7 +1344,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "none",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1426,7 +1426,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1489,7 +1489,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1545,7 +1545,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1608,7 +1608,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1665,7 +1665,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1716,7 +1716,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1766,7 +1766,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1823,7 +1823,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1865,7 +1865,7 @@ describe("setupCrossSession", () => {
                   subAgentMaxSteps: 50,
                   subAgentToolGroups: ["coding"],
                   subAgentMcpTools: "inherit",
-                  delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                  delivery: { maxRetries: 3 }, // batcher retry cap
                 },
               },
               tenantId: "test-tenant",
@@ -2256,7 +2256,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: false,
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2305,7 +2305,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: true,
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2368,7 +2368,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: true,
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2394,11 +2394,11 @@ describe("setupCrossSession", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Sub-agent reply-language round-trip (GEN-03): session metadata.language ->
+  // Sub-agent reply-language round-trip: session metadata.language ->
   // builder.build -> SpawnPacket.language at child boot. Proves the parent's
   // resolved tag survives the persistence boundary.
   // -------------------------------------------------------------------------
-  describe("sub-agent reply-language round-trip (GEN-03)", () => {
+  describe("sub-agent reply-language round-trip", () => {
     it("carries metadata.language into the child SpawnPacket at boot", async () => {
       const setupCrossSession = await getSetupCrossSession();
       const mockExecutor = {
@@ -2430,7 +2430,7 @@ describe("setupCrossSession", () => {
       );
     });
 
-    it("produces a SpawnPacket without a language field when metadata omits language (byte-identical, I1)", async () => {
+    it("produces a SpawnPacket without a language field when metadata omits language (byte-identical)", async () => {
       const setupCrossSession = await getSetupCrossSession();
       const mockExecutor = {
         execute: vi.fn(async () => ({
@@ -2696,7 +2696,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2834,7 +2834,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subagentContext: {},
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2879,7 +2879,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // DELIVERY-02 batcher retry cap
+                delivery: { maxRetries: 3 }, // batcher retry cap
               },
             },
             tenantId: "test-tenant",
@@ -3031,7 +3031,7 @@ describe("setupCrossSession", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SANDBOX-02 / WR-02: the production wiring path ARMS the no-downgrade gate.
+  // The production wiring path ARMS the no-downgrade gate.
   //
   // The fail-closed gate is inert when `resolvePosture` is absent (deps.* check
   // in sub-agent-runner.ts). A source-grep architecture test pins the injection
@@ -3042,7 +3042,7 @@ describe("setupCrossSession", () => {
   // than silently shipping an inert P0 control ("built but not wired").
   // -------------------------------------------------------------------------
 
-  describe("sandbox no-downgrade gate wiring (WR-02)", () => {
+  describe("sandbox no-downgrade gate wiring", () => {
     function depsWithSkills() {
       return createMinimalDeps({
         container: {
@@ -3112,12 +3112,12 @@ describe("setupCrossSession", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SUMREF-02: the materializeFullOutput callback is injected and targets the
-  // CHILD's OWN jailed workspace (T-218-08), returning the store's 3-way union
+  // The materializeFullOutput callback is injected and targets the
+  // CHILD's OWN jailed workspace, returning the store's 3-way union
   // unchanged. These fail on the pre-patch wiring (no dep injected) — RED proof.
   // -------------------------------------------------------------------------
 
-  describe("full-output ResultRef materialize wiring (SUMREF-02)", () => {
+  describe("full-output ResultRef materialize wiring", () => {
     it("injects a defined materializeFullOutput callback into createSubAgentRunner", async () => {
       const setupCrossSession = await getSetupCrossSession();
       setupCrossSession(createMinimalDeps());
@@ -3186,17 +3186,17 @@ describe("setupCrossSession", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 216 Plan 12 (HIGH-2): the durable-store deps are INJECTED into the
+// The durable-store deps are INJECTED into the
 // cross-session/announcement path — NOT dead code. setupCrossSession must
 // thread the SAME `outwardLedger` / `durableRuns` / `resolveRootRunId` it
-// receives into BOTH createCrossSessionSender (Plan 10 Task 1) AND the
-// announcement dead-letter queue (Plan 10 Task 2). Without this wiring the
+// receives into BOTH createCrossSessionSender AND the
+// announcement dead-letter queue. Without this wiring the
 // announce ledgering is a runtime pass-through (the deps are undefined), so
-// HIGH-2 is closed only in isolated unit tests, never at runtime. These cases
+// the ledgering is closed only in isolated unit tests, never at runtime. These cases
 // fail on the pre-patch wiring (the deps are dropped on the floor) — RED proof.
 // ---------------------------------------------------------------------------
 
-describe("setupCrossSession durable-store injection (Phase 216 Plan 12, HIGH-2)", () => {
+describe("setupCrossSession durable-store injection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -3228,7 +3228,7 @@ describe("setupCrossSession durable-store injection (Phase 216 Plan 12, HIGH-2)"
     expect(senderArgs.resolveRootRunId).toBe(resolveRootRunId);
   });
 
-  it("the injected ledger reaches the dead-letter queue: a committed row makes drain SKIP the re-send (HIGH-2, ONCE-03)", async () => {
+  it("the injected ledger reaches the dead-letter queue: a committed row makes drain SKIP the re-send", async () => {
     const setupCrossSession = await getSetupCrossSession();
     // A ledger whose lookup reports the announce already committed (delivered) —
     // the DLQ must consult it BEFORE re-delivering and skip the send. If the DLQ

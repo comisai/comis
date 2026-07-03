@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The expr↔metric DRIFT GUARD — the centerpiece of PROM-04 (design §6 WS7).
+ * The expr↔metric DRIFT GUARD.
  *
  * The honesty ledger binding the SHIPPED dashboards-as-code + Prometheus rules to
  * the metrics the exporter can actually emit. It is BIDIRECTIONAL:
@@ -10,27 +10,26 @@
  *       and assert each is in the exporter's PRODUCED-metric set (the catalog
  *       entries that actually have a runtime producer, histograms expanded to
  *       `_bucket`/`_sum`/`_count`). A panel referencing a renamed/removed/
- *       catalogued-but-UNPRODUCED metric fails CI instead of silently blanking
- *       (T-178-10).
+ *       catalogued-but-UNPRODUCED metric fails CI instead of silently blanking.
  *
  *   (b) **Rules** — parse every `prometheus/rules/*.yml`, extract every
  *       recording/alert `expr`'s `comis_*` metric names, and assert each is
- *       PRODUCED too (catches PROM-02 rule drift). Recorded-series names
+ *       PRODUCED too (catches rule drift). Recorded-series names
  *       (`comis:...` with a colon) are the rules' OWN outputs, not exporter
  *       metrics, and are excluded from the produced-set check.
  *
- * **HG-01 (the corrected invariant).** This guard formerly checked expr metrics
+ * **The corrected invariant.** This guard formerly checked expr metrics
  * against `EMITTED_METRIC_NAMES` — the ENTIRE catalog. That certified a panel/
  * rule on a catalogued-but-unproduced metric GREEN while it rendered "No data"
- * in production (the CR-01 blind spot: 16 of 30 catalog metrics had no producer,
+ * in production (the blind spot: 16 of 30 catalog metrics had no producer,
  * yet `ComisAuditSinkFailure` and friends "passed"). It now checks against the
  * PRODUCED set (catalog ∩ producers, via `buildProducedPromNames`), so a panel/
  * rule on an unproduced metric FAILS — the property the docstring promises.
  *
- * **E7 data-link presence** — every dashboard panel that has targets MUST carry a
+ * **Data-link presence** — every dashboard panel that has targets MUST carry a
  * data link (`links[]`) whose URL templates a `comis explain` reference (the
- * chart→incident drill-down). Realized per Plan 01's `PROMETHEUS_EXEMPLARS_SUPPORTED
- * === false` finding: the `/metrics`-pull surface renders NO OpenMetrics exemplars,
+ * chart→incident drill-down). Because `PROMETHEUS_EXEMPLARS_SUPPORTED
+ * === false`, the `/metrics`-pull surface renders NO OpenMetrics exemplars,
  * so the link keys on the `comis.trace_id` span attribute (a template variable),
  * documented honestly in the doc + the dashboard description.
  *
@@ -73,7 +72,7 @@ const CATALOG_DIST_URL = pathToFileURL(
 ).href;
 
 let EMITTED: ReadonlySet<string>;
-// PRODUCED = catalog ∩ producers (histograms expanded) — the HG-01 truth set the
+// PRODUCED = catalog ∩ producers (histograms expanded) — the truth set the
 // expr checks consult (NOT the full EMITTED set). A panel/rule on a catalogued-
 // but-unproduced metric is in EMITTED but NOT in PRODUCED → it fails.
 let PRODUCED: ReadonlySet<string>;
@@ -172,19 +171,19 @@ function repoRel(abs: string): string {
   return abs.startsWith(REPO_ROOT) ? abs.slice(REPO_ROOT.length + 1) : abs;
 }
 
-describe("grafana-dashboard-metrics — PROM-04 expr↔metric drift guard (bidirectional)", () => {
+describe("grafana-dashboard-metrics — expr↔metric drift guard (bidirectional)", () => {
   // ── Sanity floors (fail loud on a glob/path miss) ──────────────────────────
 
   it("sanity: the emitted + PRODUCED metric sets loaded from the compiled catalog and are non-trivial", () => {
     expect(EMITTED, "EMITTED_METRIC_NAMES not loaded from the extension dist — was the extension built?").toBeTypeOf("object");
-    // 29 catalog entries (cache.break.cost.usd removed in CR-01); 2 histograms
+    // 29 catalog entries (cache.break.cost.usd is not catalogued); 2 histograms
     // each add 3 child series → 35 names.
     expect(EMITTED.size, `expected the catalog-derived set to be substantial, got ${EMITTED.size}`).toBeGreaterThanOrEqual(29);
     // Spot-check a histogram family expanded (the _bucket child the p95 panel uses).
     expect(EMITTED.has("comis_run_duration_seconds_bucket")).toBe(true);
     expect(EMITTED.has("comis_cost_usd_total")).toBe(true);
-    // HG-01: the PRODUCED set (catalog ∩ producers) loaded and is non-trivial —
-    // after CR-01 every catalog metric is produced, so PRODUCED == EMITTED in
+    // The PRODUCED set (catalog ∩ producers) loaded and is non-trivial —
+    // every catalog metric is produced, so PRODUCED == EMITTED in
     // size (the floor guards against a producer-grep/path miss vacuously
     // shrinking it, which would make the drift checks pass over an empty set).
     expect(PRODUCED, "PRODUCED set not built — producer grep / catalog dist miss?").toBeTypeOf("object");
@@ -238,14 +237,14 @@ describe("grafana-dashboard-metrics — PROM-04 expr↔metric drift guard (bidir
           snippet: `references "${v.metric}" — NOT in the PRODUCED-metric set\n    ${v.context}`,
         })),
         suggestedFix: `Correct the panel expr to reference a PRODUCED metric, OR wire a producer for it in metric-mapping.ts (subscribe its bus event + increment). Do NOT just widen the catalog — a catalogued-but-unproduced metric is the CR-01 bug. Produced names: ${PRODUCED_SORTED.join(", ")}`,
-        designRef: "observability-excellence-implementation.md §6 WS7 (PROM-04 — the expr↔metric drift guard, HG-01 producer-set); metric-catalog.ts + metric-mapping.ts",
+        designRef: "every dashboard panel expr references a metric with a runtime producer; see metric-catalog.ts + metric-mapping.ts",
       }),
     ).toEqual([]);
   });
 
   // ── (b) Rule half: every record/alert expr → an emitted metric ─────────────
 
-  it("every prometheus rule expr references a metric the exporter emits (PROM-02 rule drift)", () => {
+  it("every prometheus rule expr references a metric the exporter emits (rule drift)", () => {
     const refs: MetricRef[] = [];
     for (const file of listRuleFiles()) {
       const parsed = parseYaml(readFileSync(file, "utf-8")) as {
@@ -274,12 +273,12 @@ describe("grafana-dashboard-metrics — PROM-04 expr↔metric drift guard (bidir
           snippet: `references "${v.metric}" — NOT in the PRODUCED-metric set\n    ${v.context}`,
         })),
         suggestedFix: `Correct the rule expr to reference a PRODUCED metric, OR wire a producer for it in metric-mapping.ts. Produced names: ${PRODUCED_SORTED.join(", ")}`,
-        designRef: "observability-excellence-implementation.md §6 WS7 (PROM-02 recording/alert rules, HG-01 producer-set)",
+        designRef: "every recording/alert rule expr references a produced metric",
       }),
     ).toEqual([]);
   });
 
-  // ── Dashboard structure + E7 data link ─────────────────────────────────────
+  // ── Dashboard structure + data link ────────────────────────────────────────
 
   it("each dashboard is valid JSON with uid, title, and the required template vars", () => {
     const REQUIRED_VARS = ["datasource", "tenant", "agent", "provider", "model"];
@@ -294,8 +293,8 @@ describe("grafana-dashboard-metrics — PROM-04 expr↔metric drift guard (bidir
     }
   });
 
-  it("every panel with targets carries an E7 data link to comis explain (trace_id-keyed)", () => {
-    // Per PROMETHEUS_EXEMPLARS_SUPPORTED===false (Plan 01): the /metrics pull
+  it("every panel with targets carries a data link to comis explain (trace_id-keyed)", () => {
+    // Per PROMETHEUS_EXEMPLARS_SUPPORTED===false: the /metrics pull
     // surface has no OpenMetrics exemplars, so the drill-down link keys on the
     // comis.trace_id span attribute (a template variable) → a `comis explain`
     // reference. We assert the link's PRESENCE + shape (it mentions "explain"); the
@@ -324,7 +323,7 @@ describe("grafana-dashboard-metrics — PROM-04 expr↔metric drift guard (bidir
           "E7 drill-down: every dashboard panel with targets must carry a data link (panel links[] or fieldConfig.defaults.links[]) whose url references `comis explain` — the chart→incident pivot, keyed on the comis.trace_id span attribute (PROMETHEUS_EXEMPLARS_SUPPORTED===false → no /metrics exemplars; the link uses a template variable).",
         violations: offenders.map((v) => ({ file: v.file, line: 0, snippet: `panel "${v.metric}": ${v.context}` })),
         suggestedFix: "Add a links[] entry to the panel (or fieldConfig.defaults.links) with a url like \"/observe/explain?ref=${__data.fields.comis_trace_id}\" or a comis explain CLI reference.",
-        designRef: "observability-excellence-implementation.md §6 E7 (chart→explain drill-down); 178-01-SUMMARY PROMETHEUS_EXEMPLARS_SUPPORTED",
+        designRef: "every panel with targets carries a chart→explain drill-down link",
       }),
     ).toEqual([]);
   });

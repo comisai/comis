@@ -12,7 +12,7 @@
  * context so the MODEL sees a well-formed error and self-corrects by re-emitting
  * valid JSON on its next turn.
  *
- * WR-03: this synthetic toolResult does NOT interact with ToolRetryBreaker.
+ * This synthetic toolResult does NOT interact with ToolRetryBreaker.
  * The breaker's counters are driven exclusively by real tool-execution events
  * in pi-event-bridge.ts (ToolRetryBreaker.recordResult), not by messages a
  * StreamFn wrapper injects into context.messages. Moreover, unparseable args
@@ -22,7 +22,7 @@
  * is not a PARAMETER_VALIDATION_TAGS breaker carve-out (there is nothing to
  * carve out, because the breaker never sees this turn).
  *
- * S3 INVARIANT: repair is shape-only. Repaired args flow through the EXISTING
+ * INVARIANT: repair is shape-only. Repaired args flow through the EXISTING
  * downstream exec-security gates (validateExecCommand for exec tools) — those
  * gates are the final authority on scope for ALL tool types.
  *
@@ -46,12 +46,12 @@ import type { ModelProfile } from "../model-profile.js";
  *
  * When a ToolCall's arguments field arrives as a raw JSON string (runtime value
  * is a string despite being typed as Record<string, any>), this wrapper:
- * - Attempts structural repair via the SDK's parseStreamingJson (SA9: strict
- *   superset of the old trailing-comma-only repair; also handles truncated JSON
+ * - Attempts structural repair via the SDK's parseStreamingJson (a strict
+ *   superset of trailing-comma-only repair; also handles truncated JSON
  *   and control characters; same function the provider layer uses)
  * - On success: replaces the string with the parsed object (value-preserving)
  * - On failure: injects a synthetic ToolResultMessage error with a "Validation
- *   failed" prefix so the model self-corrects on its next turn. (WR-03: this
+ *   failed" prefix so the model self-corrects on its next turn. (This
  *   does NOT touch ToolRetryBreaker — the breaker is driven by real
  *   tool-execution events in pi-event-bridge.ts, and unparseable args never
  *   reach tool execution, so the breaker is uninvolved on this path.)
@@ -70,7 +70,7 @@ export function createToolCallRepairWrapper(
     return (model, context, options) => {
       const repairedMessages: Message[] = [];
 
-      // WR-04 (idempotency): the wrapper runs on the OUTGOING context on every
+      // Idempotency: the wrapper runs on the OUTGOING context on every
       // stream call. Collect the toolCallIds that already have a toolResult so a
       // second pass over the same history does NOT inject a duplicate synthetic
       // validation-failed result for a tool call that was already answered.
@@ -107,8 +107,8 @@ export function createToolCallRepairWrapper(
           if (typeof rawArgs !== "string") return block;
 
           // Arguments arrived as a raw JSON string — attempt shape-only repair via the SDK's
-          // parseStreamingJson (SA9: same fn the provider layer uses; strict superset of the
-          // old trailing-comma-only repair: handles trailing commas + truncated + control chars).
+          // parseStreamingJson (same fn the provider layer uses; a strict superset of
+          // trailing-comma-only repair: handles trailing commas + truncated + control chars).
           // parseStreamingJson NEVER throws — returns {} or partial object for garbage input.
           // Cast: rawArgs is narrowed to never by TS (ToolCall.arguments: Record<string,any>)
           // but we confirmed it is a string above; the cast is safe and intentional.
@@ -151,7 +151,7 @@ export function createToolCallRepairWrapper(
 
           // Irreparable — inject a synthetic ToolResultMessage error so the model
           // sees a well-formed validation error and self-corrects on its next
-          // turn. WR-03: this message is context for the MODEL only; it does not
+          // turn. This message is context for the MODEL only; it does not
           // reach ToolRetryBreaker (counters come from real tool-execution events
           // in pi-event-bridge.ts), and unparseable args never trigger a tool
           // execution, so the breaker is not involved on this path.
@@ -167,7 +167,7 @@ export function createToolCallRepairWrapper(
 
           modified = true;
 
-          // WR-04 (well-formed assistant block): replace the raw string args with
+          // Well-formed assistant block: replace the raw string args with
           // a safe empty object so the outgoing assistant message carries
           // arguments as the object the SDK/provider serializer expects (a string
           // may be rejected or silently mishandled). Replacing it also means a
@@ -175,7 +175,7 @@ export function createToolCallRepairWrapper(
           // will not re-detect / re-fail this same tool call.
           const sanitizedBlock: ToolCall = { ...toolCall, arguments: {} };
 
-          // WR-04 (de-dup): only inject a synthetic toolResult if this tool call
+          // De-dup: only inject a synthetic toolResult if this tool call
           // does not already have one in the history. Prevents duplicating the
           // validation-failed message (and growing context) on every turn.
           if (!existingToolResultIds.has(toolCall.id)) {

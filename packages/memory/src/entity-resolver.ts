@@ -10,10 +10,10 @@
  * SQLite's built-in `lower()` is ASCII-only: it folds only A–Z, leaving
  * `lower('İSTANBUL')` → `'İstanbul'`, `lower('CAFÉ')` → `'cafÉ'`, and
  * `lower('ПРИВЕТ')` → `'ПРИВЕТ'` UNCHANGED. A `UNIQUE INDEX ON
- * (tenant_id, agent_id, lower(canonical_name))` (the original §4.2 spec) would
- * therefore treat `"İSTANBUL"`, `"İstanbul"`, `"istanbul"`, `"CAFÉ"`/`"café"`,
- * and `"ПРИВЕТ"`/`"привет"` as DISTINCT keys → duplicate entities → dedup
- * fails for exactly the Turkish/CJK/Cyrillic cases the criterion calls out.
+ * (tenant_id, agent_id, lower(canonical_name))` would therefore treat
+ * `"İSTANBUL"`, `"İstanbul"`, `"istanbul"`, `"CAFÉ"`/`"café"`, and
+ * `"ПРИВЕТ"`/`"привет"` as DISTINCT keys → duplicate entities → dedup fails for
+ * exactly the Turkish/CJK/Cyrillic cases this normalizer must collapse.
  *
  * The fix is to compute a normalized `canonical_key` HERE, in locale-independent
  * TypeScript, and UNIQUE-index that stored column instead. The transform is

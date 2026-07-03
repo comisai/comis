@@ -3,8 +3,8 @@
  * RED->GREEN unit suite for {@link wilsonInterval} + {@link twoProportionTest}
  * -- the N + statistical-significance layer every published number must carry.
  *
- * WHY THIS MODULE EXISTS: the believability protocol
- * (.planning/MEMORY_BENCHMARK_CREDIBILITY.md) requires every headline number to
+ * WHY THIS MODULE EXISTS: the believability requirement
+ * that every headline number
  * report N + a significance flag. No prior statistical test exists in the repo
  * (only `accuracyOf`, a plain fold). This is the only genuinely net-new
  * algorithm here: a Wilson 95% confidence interval for a single accuracy

@@ -21,13 +21,12 @@
  *
  * Both shapes match the record schemas verbatim:
  *
- *   - `event` is the discriminant ("config.write" | "config.observe"),
- *     NOT `phase` (renamed).
+ *   - `event` is the discriminant ("config.write" | "config.observe").
  *   - `source` is the fixed literal `"config-io"`.
- *     The prior four-value enum (last-known-good-save / restore /
- *     config-patch-rpc / cli-sync-tooling) is preserved verbatim in
- *     the new `callerSource: string` field so consumers (CLI audit
- *     show, downstream forensics) keep the call-site provenance.
+ *     The call-site provenance (last-known-good-save / restore /
+ *     config-patch-rpc / cli-sync-tooling) lives in the
+ *     `callerSource: string` field so consumers (CLI audit
+ *     show, downstream forensics) can read it.
  *   - Stat fields are FLAT (previousDev / previousIno / previousMode /
  *     previousNlink / previousUid / previousGid plus next* mirrors).
  *     `dev` and `ino` are `string | null` — POSIX

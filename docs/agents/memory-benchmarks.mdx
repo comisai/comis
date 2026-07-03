@@ -324,13 +324,13 @@ numbers.
 ## What the shipped capabilities provably do (keyless, at $0)
 
 Like the structural-tracks section above, this is deliberately **separate from the accuracy
-table**. This set originally shipped six capabilities -- a per-user profile, a
+table**. This set covers six capabilities -- a per-user profile, a
 per-channel relationship model, an ask-your-memory tool, a query-conditional
 usefulness reorder, a recall loop that learns which memories prove useful, and
-principled ranking decay of stale memories -- each TDD-green. (Two were **removed in v2.31**:
+principled ranking decay of stale memories. (Two were **dropped before release**:
 the per-channel relationship model and the bandit recall-tuning loop — see the table rows
-below; the per-user profile is now maintained by the [one reflection
-engine](/agents/memory-config#the-one-learning-reflection-engine-v2-31).) Every number below
+below; the per-user profile is maintained by the [one reflection
+engine](/agents/memory-config#the-one-learning-reflection-engine).) Every number below
 is a **structural** invariant of the code as measured, **keyless, with no answer model, no
 judge, no key, no cost.**
 
@@ -347,11 +347,11 @@ judge, no key, no cost.**
 | Capability (shipped) | Measured delta (mechanical, keyless, $0) | Manifest |
 |----------------------|------------------------------------------|----------|
 | **Per-user profile** | typed per-user records round-trip **4/4**; an external-trust upsert is **rejected** (0 rows); (tenant, agent, user) isolation; recall stays LLM-free | [`claim1-prefix-typing-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase107-user/claim1-prefix-typing-report.json) |
-| **Per-channel relationship model** (~~directional social model~~ — **removed in v2.31**) | The double-gated directional relationship model (A→B and B→A as two distinct edges, gated on a privacy-review sign-off) once measured `4/4` here. The whole social-modeling subsystem was **removed in v2.31** (its config key no longer parses). The historical measurement is preserved in [`claim4-signoff-gate-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase108-social/claim4-signoff-gate-report.json) |
+| **Per-channel relationship model** (~~directional social model~~ — **removed**) | The double-gated directional relationship model (A→B and B→A as two distinct edges, gated on a privacy-review sign-off) once measured `4/4` here. The whole social-modeling subsystem was **dropped before release** (its config key does not parse). The historical measurement is preserved in [`claim4-signoff-gate-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase108-social/claim4-signoff-gate-report.json) |
 | **Ask-your-memory tool** (opt-in / default-off) | recall stays **LLM-free** (0 model calls on read); citations are a **subset** of the recalled ids; **mandatory abstention** on empty recall | [consolidated re-prove `GATE-REPORT.md`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase113-reprove/GATE-REPORT.md) |
 | **Query-conditional usefulness reorder** | a memory used for intent X ranks **1 vs 2** for an X- vs Y-query (`perIntentRankLift` 1); citation→usefulness accrual; default-off byte-identical | [`claim1-per-intent-bucket-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase110-learn-iq/claim1-per-intent-bucket-report.json) |
-| **Learning-to-rank** (~~bandit recall tuning~~ — **removed in v2.31**) | An opt-in UCB loop once bounded-tuned recall ranking from the outcome-reward signal (trust stayed frozen). The bandit was **removed in v2.31** — it never validated a recall lift (see the flat `rankLift 0` below). Recall ranking is now the fixed `rag.scoring` fusion; the outcome-reward write survives as the `memory_usefulness.failure_count` source. The historical measurement is preserved in [`claim1-bandit-rank-lift-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase111-learn-rank/claim1-bandit-rank-lift-report.json) |
-| **The one measured learning signal** (~~bandit~~ — **historical**) | The bandit's recall-**score** lift was **+0.1** over 5 episodes (`goldScoreLift` 0.1) but the gold's **rank position was flat** (`rankLift` 0) — the null result that justified **removing** the bandit in v2.31. Preserved for the record in [`claim1-bandit-rank-lift-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase111-learn-rank/claim1-bandit-rank-lift-report.json) |
+| **Learning-to-rank** (~~bandit recall tuning~~ — **removed**) | An opt-in UCB loop once bounded-tuned recall ranking from the outcome-reward signal (trust stayed frozen). The bandit was **dropped before release** — it never validated a recall lift (see the flat `rankLift 0` below). Recall ranking is the fixed `rag.scoring` fusion; the outcome-reward write survives as the `memory_usefulness.failure_count` source. The historical measurement is preserved in [`claim1-bandit-rank-lift-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase111-learn-rank/claim1-bandit-rank-lift-report.json) |
+| **The one measured learning signal** (~~bandit~~ — **historical**) | The bandit's recall-**score** lift was **+0.1** over 5 episodes (`goldScoreLift` 0.1) but the gold's **rank position was flat** (`rankLift` 0) — the null result that justified **removing** the bandit. Preserved for the record in [`claim1-bandit-rank-lift-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase111-learn-rank/claim1-bandit-rank-lift-report.json) |
 | **Principled ranking decay** (eviction dormant / default-off) | old + unused rank lower (old/unused factor **0.553** \< fresh **0.995**; gap 0.441); decay **ranks, never gates**; byte-identical at neutral; dormant footprint 5→5 | [`claim2-deterministic-decay-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase112-forget/claim2-deterministic-decay-report.json) |
 
 **Default-OFF byte-identity.** As with the structural tracks, every capability factor is **default-off**

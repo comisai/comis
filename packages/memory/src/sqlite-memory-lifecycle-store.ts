@@ -21,12 +21,11 @@
  *                                     (liveEviction && failureCount >= failureEvictionFloor))
  *
  * where `exempt` = pinned ∨ `trust_level === 'system'` ∨ `proof_count >=
- * highProofFloor` — the FORGET-03 anti-induced-eviction floors. (The FadeMem
- * strength-decay disjunct was DELETED in Phase 224: its strength formula floored at
- * `0.5·exp(…) ≥ ~0.25`, ABOVE the 0.2 strength floor, so the strength term could
- * never fire for a failure-implicated row — the EVI-STRENGTH-FLOOR dead branch. The
- * corroborated-`failure_count` floor is the reachable wrongness-eviction path that
- * replaces it.) A soft-evicted row has
+ * highProofFloor` — the anti-induced-eviction floors. (There is no strength-decay
+ * disjunct: a strength formula that floors at `0.5·exp(…) ≥ ~0.25`, ABOVE the 0.2
+ * strength floor, could never fire for a failure-implicated row, so the
+ * corroborated-`failure_count` floor is the reachable wrongness-eviction path.) A
+ * soft-evicted row has
  * `evicted_at` set NON-DESTRUCTIVELY (a marker, never a hard DELETE — the
  * `consolidated_at` precedent), preserving the raw row + provenance for audit/`asOf`.
  * The eviction is REVERSIBLE via {@link MemoryLifecyclePort.unevict} (clear
@@ -35,12 +34,12 @@
  * `evicted`/`demoted` = 0, no UPDATE, no DELETE) — the byte-identity guarantee. Tier
  * demote/promote moves remain a deferred step (`promoted`/`demoted` are still 0 in
  * this build). The recall-side exclusion of evicted rows is enforced on EVERY live
- * recall path (CR-01), not here: `hybrid-search.ts` (the post-fusion `evicted_at IS
+ * recall path, not here: `hybrid-search.ts` (the post-fusion `evicted_at IS
  * NULL`) AND `sqlite-memory-adapter.ts` (`hydrateLane`/`searchLanes` + the
  * vector-only `search()` per-id reads). The inspect/asOf raw reads stay UNFILTERED so
  * an evicted row is still audit/asOf-resolvable.
  *
- * ## Isolation is the load-bearing security boundary (the §5.2 invariant)
+ * ## Isolation is the load-bearing security boundary
  *
  * Comis runs many agents and many tenants in ONE DB. The candidate SELECT filters
  * `WHERE tenant_id = ? AND agent_id = ?` (bound params), so a sweep run under one
@@ -83,21 +82,21 @@ interface MemoryLogger {
 
 /**
  * The lifecycle policy: the dormancy window PLUS the optional LIVE soft-eviction
- * behavior gate + the two FORGET-03/02 floors. The daemon passes the
+ * behavior gate + the two anti-induced-eviction floors. The daemon passes the
  * operator-configured `learningForgetting` values via `deps`/`scope.policy` when it
  * wires the cron; until then the unit adapter uses {@link DEFAULT_POLICY}.
  */
 export interface MemoryLifecyclePolicy {
   /**
    * Dormancy window (T_max, days): a memory UNUSED (not recalled-useful) for longer
-   * than T_max is an eviction candidate. WR-02: "dormant" is measured from
+   * than T_max is an eviction candidate. "dormant" is measured from
    * `last_useful_at` (last recall), NOT `occurred_at` (event time) — a recently-
-   * recalled memory about an OLD event is NOT dormant (FORGET-04). A never-recalled
+   * recalled memory about an OLD event is NOT dormant. A never-recalled
    * memory falls back to event age, so genuinely-stale rows still reap.
    */
   maxDormantDays: number;
 
-  // ── LIVE soft-eviction behavior (FORGET-01..04) ──
+  // ── LIVE soft-eviction behavior ──
   // ALL optional + default-OFF: with `evictionEnabled` unset the sweep stays
   // DORMANT (evicts/demotes nothing — the byte-identity guarantee). The daemon
   // passes the operator-configured `learningForgetting` values (a later plan); the
@@ -111,19 +110,19 @@ export interface MemoryLifecyclePolicy {
    */
   evictionEnabled?: boolean;
   /**
-   * The high-`proof_count` eviction-exemption floor (FORGET-03 anti-induced-
+   * The high-`proof_count` eviction-exemption floor (anti-induced-
    * eviction): a memory with `proof_count >= highProofFloor` is NEVER soft-evicted,
    * no matter how many failures — a poisoner inducing failures cannot evict a
    * well-corroborated memory. Defaults to {@link DEFAULT_HIGH_PROOF_FLOOR}.
    */
   highProofFloor?: number;
   /**
-   * The corroborated-`failure_count` eviction floor (FORGET-02, the EVI-STRENGTH-FLOOR
-   * fix): the at/above-which a NON-EXEMPT memory is soft-evicted. This is the reachable
-   * wrongness-eviction path (the deleted strength disjunct floored above its threshold
-   * and never fired). Each `failure_count` increment is itself corroboration-gated (≥2
-   * independent sessions OR a deterministic source, setup-learning-corroboration.ts).
-   * SECURITY: gated by the SAME FORGET-03 exemptions (pinned / system / `proof_count >=
+   * The corroborated-`failure_count` eviction floor: the at/above-which a NON-EXEMPT
+   * memory is soft-evicted. This is the reachable wrongness-eviction path (a
+   * strength-decay disjunct would floor above its threshold and never fire). Each
+   * `failure_count` increment is itself corroboration-gated (≥2 independent sessions
+   * OR a deterministic source, setup-learning-corroboration.ts).
+   * SECURITY: gated by the SAME anti-induced-eviction exemptions (pinned / system / `proof_count >=
    * highProofFloor`), so an induced-failure attacker still cannot evict a
    * well-corroborated/pinned/system memory — the floor only reaches LOW-proof,
    * non-pinned, non-system rows. Default {@link DEFAULT_FAILURE_EVICTION_FLOOR}; a
@@ -138,7 +137,7 @@ const DEFAULT_POLICY: MemoryLifecyclePolicy = {
 };
 
 /**
- * The default high-`proof_count` eviction-exemption floor (FORGET-03). A memory
+ * The default high-`proof_count` eviction-exemption floor. A memory
  * corroborated by >= 5 independent observations is treated as durably-trusted and
  * is never soft-evicted — the anti-cache-poisoning guarantee at the store. Mirrors
  * the design's high-proof exemption; the daemon can override via the policy.
@@ -146,11 +145,11 @@ const DEFAULT_POLICY: MemoryLifecyclePolicy = {
 const DEFAULT_HIGH_PROOF_FLOOR = 5;
 
 /**
- * RC-3: the default corroborated-`failure_count` eviction floor. Each `failure_count`
+ * The default corroborated-`failure_count` eviction floor. Each `failure_count`
  * increment is corroboration-gated (≥2 independent sessions OR a deterministic source),
  * so 3 means a memory implicated in failures across multiple independent corroborated
  * events — sustained wrongness, not a stray transient. Deliberately conservative; only
- * reaches LOW-proof, non-pinned, non-system rows (the FORGET-03 exemptions still hold).
+ * reaches LOW-proof, non-pinned, non-system rows (the exemptions still hold).
  */
 const DEFAULT_FAILURE_EVICTION_FLOOR = 3;
 
@@ -201,16 +200,16 @@ export function createSqliteMemoryLifecycleStore(
   // scope can NEVER read another tenant/agent's rows. The LIMIT (a bound `?`)
   // bounds the per-sweep working set. Bound params only — never concatenated.
   //
-  // The LEFT JOIN folds in the FORGET-02 wrongness signal: the per-(tenant, agent,
+  // The LEFT JOIN folds in the failure-count wrongness signal: the per-(tenant, agent,
   // memory) `failure_count` SUMmed across intents (a memory may accrue failures in
-  // several intent buckets). WR-02: it ALSO folds in the last-recall recency
+  // several intent buckets). It ALSO folds in the last-recall recency
   // `MAX(last_useful_at)` across intents — the DISUSE signal the dormant-age branch
   // keys off (NOT occurred_at, the event time), so a recently-recalled old-event
   // memory is not "dormant". The subquery is scoped to the SAME (tenant, agent) as
   // the outer scan (it cannot leak another scope's failures/recency), and the LEFT
   // JOIN keeps memories with no usefulness row (NULL → coalesced below; an absent
   // last_useful_at falls back to event age so a never-recalled old memory still
-  // reaps). `pinned` and `trust_level` feed the FORGET-03 exemptions.
+  // reaps). `pinned` and `trust_level` feed the anti-induced-eviction exemptions.
   const scanCandidates = db.prepare(
     "SELECT m.id, m.memory_type, m.occurred_at, m.created_at, m.proof_count, " +
       "m.lifecycle_demoted_at, m.evicted_at, m.strength, m.pinned, m.trust_level, " +
@@ -226,7 +225,7 @@ export function createSqliteMemoryLifecycleStore(
       "LIMIT ?",
   );
 
-  // The NON-DESTRUCTIVE soft-eviction UPDATE (FORGET-01): set the `evicted_at`
+  // The NON-DESTRUCTIVE soft-eviction UPDATE: set the `evicted_at`
   // marker, NEVER DELETE. Scoped to (tenant, agent) so a sweep can only mark its
   // own rows. The `evicted_at IS NULL` guard makes a re-eviction a no-op (idempotent;
   // never re-stamps an already-evicted row's timestamp).
@@ -235,7 +234,7 @@ export function createSqliteMemoryLifecycleStore(
       "WHERE id = ? AND tenant_id = ? AND agent_id = ? AND evicted_at IS NULL",
   );
 
-  // The REVERSAL (FORGET-04): clear the marker on renewed usefulness. Scoped to
+  // The REVERSAL: clear the marker on renewed usefulness. Scoped to
   // (tenant, agent) — the isolation boundary holds on the un-evict too.
   const clearEvict = db.prepare(
     "UPDATE memories SET evicted_at = NULL WHERE id = ? AND tenant_id = ? AND agent_id = ?",
@@ -256,7 +255,7 @@ export function createSqliteMemoryLifecycleStore(
         const rows = parsed.value;
 
         // The EFFECTIVE policy = the per-call `scope.policy` override (the daemon's per-agent
-        // `learningForgetting`, FORGET-06) layered over the constructor policy. The store is
+        // `learningForgetting`) layered over the constructor policy. The store is
         // shared across agents but the eviction behavior is PER-AGENT, so the gate rides the
         // call: an absent override → the constructor policy (DORMANT by default — byte-identity).
         const ov = scope.policy;
@@ -268,11 +267,11 @@ export function createSqliteMemoryLifecycleStore(
         const liveEviction = effEvictionEnabled === true;
         const highProofFloor = policy.highProofFloor ?? DEFAULT_HIGH_PROOF_FLOOR;
         // The corroborated-failure eviction floor (the reachable wrongness path). Only
-        // consulted under the LIVE policy; the FORGET-03 exemptions still gate it.
+        // consulted under the LIVE policy; the exemptions still gate it.
         const failureEvictionFloor = ov?.failureEvictionFloor ?? policy.failureEvictionFloor ?? DEFAULT_FAILURE_EVICTION_FLOOR;
 
         // Per-row eviction candidacy: the two reachable disjuncts (dormancy OR
-        // corroborated-failure), minus the FORGET-03 exemptions. Under the LIVE policy
+        // corroborated-failure), minus the exemptions. Under the LIVE policy
         // the eligible candidates are collected for the soft UPDATE below; under DORMANT
         // nothing is applied (the byte-identity guarantee).
         let evictionCandidates = 0;
@@ -281,11 +280,11 @@ export function createSqliteMemoryLifecycleStore(
           // Event-time in epoch ms (occurred_at ?? created_at) — the fallback for a
           // never-recalled row's disuse age below. Uses the INJECTED scope.now, never Date.now.
           const eventMs = row.occurred_at ?? row.created_at;
-          // WR-02: the DISUSE age — days since the memory was last RECALLED-useful
+          // The DISUSE age — days since the memory was last RECALLED-useful
           // (last_useful_at), falling back to the event age when it was never recalled
           // (NULL). This — NOT the event age — gates the dormant-age candidacy disjunct,
-          // so a recently-recalled memory about an OLD event is NOT "dormant" (FORGET-04:
-          // wrong fades faster than merely old; a still-useful old fact is not reaped on
+          // so a recently-recalled memory about an OLD event is NOT "dormant" (wrong
+          // fades faster than merely old; a still-useful old fact is not reaped on
           // event-age alone). A never-recalled old memory falls back to event age, so the
           // age reaper still prunes genuinely dormant rows.
           const lastUsefulMs = row.last_useful_at ?? eventMs;
@@ -293,7 +292,7 @@ export function createSqliteMemoryLifecycleStore(
           const proof = row.proof_count ?? 0;
           const failureCount = row.failure_count ?? 0;
 
-          // FORGET-03 anti-induced-eviction EXEMPTIONS (the store-side half of the
+          // Anti-induced-eviction EXEMPTIONS (the store-side half of the
           // corroboration control): pinned / system-trust / high-proof memories are
           // NEVER evicted, no matter how many failures. A poisoner inducing failures
           // cannot evict a well-corroborated, pinned, or system memory.
@@ -303,14 +302,14 @@ export function createSqliteMemoryLifecycleStore(
             proof >= highProofFloor;
 
           // The eviction candidacy: DORMANT (UNUSED) beyond T_max OR corroborated-wrong
-          // (`failure_count >= failureEvictionFloor`) — minus the exemptions. WR-02: the
+          // (`failure_count >= failureEvictionFloor`) — minus the exemptions. The
           // age disjunct uses `disuseDays` (days since last recall), so a recently-recalled
-          // old-event memory survives the age branch (FORGET-04); a never-recalled old
+          // old-event memory survives the age branch; a never-recalled old
           // memory still trips it (disuseDays falls back to event age). The failure disjunct
-          // is the reachable wrongness path — the deleted FadeMem strength disjunct floored
-          // above its threshold and never fired (EVI-STRENGTH-FLOOR). The failure disjunct
+          // is the reachable wrongness path — a strength-decay disjunct would floor
+          // above its threshold and never fire. The failure disjunct
           // is gated on `liveEviction` so the DORMANT-mode candidacy count stays
-          // byte-identical; `!exempt` keeps the FORGET-03 guarantee (high-proof / pinned /
+          // byte-identical; `!exempt` keeps the anti-induced-eviction guarantee (high-proof / pinned /
           // system are never reached, no matter how many failures).
           const isEvictionCandidate =
             !exempt &&

@@ -14,6 +14,20 @@ pi-mono (pi-agent-core, pi-ai, pi-coding-agent)
   Licensed under MIT
   https://github.com/badlogic/pi-mono
 
+OpenClaw - Open-source personal AI agent
+  Copyright OpenClaw contributors
+  Licensed under MIT
+  https://github.com/openclaw/openclaw
+  Portions of Comis's OpenAI Codex OAuth support are derived from
+  OpenClaw source code: the TLS preflight classifier in
+  packages/core/src/oauth/oauth-tls-preflight.ts, the OAuth error
+  classifier and identity resolution in
+  packages/core/src/security/oauth-helpers.ts, the login flow's
+  VPS-aware handlers and manual-paste fallback in
+  packages/core/src/oauth/oauth-login-runner.ts, and the remote/headless
+  environment detection heuristic in
+  packages/core/src/runtime/is-remote-env.ts.
+
 Hono - Ultrafast web framework
   Copyright Yusuke Wada and Hono contributors
   Licensed under MIT

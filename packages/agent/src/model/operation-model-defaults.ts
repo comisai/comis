@@ -2,15 +2,15 @@
 /**
  * Operation model defaults: catalog-derived per-provider model tiering.
  *
- * Replaces the previous hardcoded `OPERATION_MODEL_DEFAULTS` table (which
- * pinned `mid`/`fast` model IDs per provider family) with a pure function
- * that reads the live pi-ai catalog at call time. Two design properties:
+ * A pure function reads the live pi-ai catalog at call time rather than
+ * consulting a hardcoded table of `mid`/`fast` model IDs per provider
+ * family. Two design properties:
  *
  * 1. Pi-ai SDK upgrades automatically light up new providers/models — no
- *    per-release source edits to bump `OPERATION_MODEL_DEFAULTS` literals.
- * 2. Closes the latent bug where switching primary to a non-Anthropic
- *    provider left cron/heartbeat/compaction routed to Claude Sonnet
- *    (because the old map was Anthropic/OpenAI/Google only).
+ *    per-release source edits to bump literal model IDs.
+ * 2. Every provider is covered uniformly: a hardcoded family map covering
+ *    only a few providers would leave cron/heartbeat/compaction routed to
+ *    Claude Sonnet when the primary provider is anything else.
  *
  * Tier picking: filter to text-capable models with non-zero cost, sort
  * ascending by total cost (input + output), pick top-of-cohort (lex-greatest
@@ -46,10 +46,10 @@ function totalCost(m: { cost?: { input?: number; output?: number } }): number {
  * claude-sonnet-4-5) the lex order matches recency.
  *
  * Why not just take `sortedAsc[idx]`? JavaScript's stable sort preserves
- * original-array order within a cost-tied block, so the previous algorithm
- * picked whatever the catalog happened to enumerate first. With 9 priced
- * Anthropic Sonnets all at $18/MTok, that was `claude-sonnet-4-5` — picked
- * by accident, not by quality signal.
+ * original-array order within a cost-tied block, so a bare index pick
+ * returns whatever the catalog happened to enumerate first. With 9 priced
+ * Anthropic Sonnets all at $18/MTok, that would be an arbitrary Sonnet —
+ * picked by accident, not by quality signal.
  *
  * Module-internal — not exported.
  */
@@ -147,10 +147,10 @@ export const OPERATION_TIER_MAP: Record<ModelOperationType, "primary" | "mid" | 
   compaction: "fast",
   taskExtraction: "fast",
   condensation: "fast",
-  verification: "primary",  // R4: local-only self-check; configured: cheap model via Level 2
-  planning: "primary",       // R5: same resolution path; deferrable on M2
-  outcomeJudge: "fast",      // OUTCOME-04: optional cost-gated outcome judge — a fast classification op
-  skillSynthesis: "mid",     // SKILL-09: offline procedural synthesis — a mid-tier synthesis op (NOT a fast classify)
+  verification: "primary",  // local-only self-check; configured: cheap model via Level 2
+  planning: "primary",       // same resolution path as verification
+  outcomeJudge: "fast",      // optional cost-gated outcome judge — a fast classification op
+  skillSynthesis: "mid",     // offline procedural synthesis — a mid-tier synthesis op (NOT a fast classify)
 };
 
 /**
@@ -167,9 +167,9 @@ export const OPERATION_TIMEOUT_DEFAULTS: Partial<Record<ModelOperationType, numb
   compaction: 60_000,
   taskExtraction: 30_000,
   condensation: 30_000,
-  verification: 120_000,  // R4: same ceiling as the critic LLM_TIMEOUT_MS (Phase 154)
-  outcomeJudge: 30_000,   // OUTCOME-04: mirrors condensation — a fast classification op
-  skillSynthesis: 150_000, // SKILL-09: mirrors cron — an offline batch op (Phase 201)
+  verification: 120_000,  // same ceiling as the critic LLM_TIMEOUT_MS
+  outcomeJudge: 30_000,   // mirrors condensation — a fast classification op
+  skillSynthesis: 150_000, // mirrors cron — an offline batch op
 };
 
 /**
@@ -184,8 +184,8 @@ export const OPERATION_CACHE_DEFAULTS: Partial<Record<ModelOperationType, "none"
   taskExtraction: "none",
   condensation: "short",
   cron: "short", // 5m TTL: covers within-execution multi-step reuse, avoids 1h write premium across hourly runs.
-  verification: "none",  // R4: critic responses consume the reviewed response and must not be cached (Phase 154)
-  planning: "none",       // R5: planner responses are request-specific; caching wastes storage (Phase 154)
-  outcomeJudge: "none",   // OUTCOME-04: judge responses are request-specific (like verification)
-  skillSynthesis: "short", // SKILL-09: offline reuse within a run, like cron (Phase 201)
+  verification: "none",  // critic responses consume the reviewed response and must not be cached
+  planning: "none",       // planner responses are request-specific; caching wastes storage
+  outcomeJudge: "none",   // judge responses are request-specific (like verification)
+  skillSynthesis: "short", // offline reuse within a run, like cron
 };

@@ -4,8 +4,7 @@
  *
  * Tests config-health check for missing, corrupt, schema-invalid,
  * unresolved-secret-reference, and valid config scenarios — driven through
- * the shared store-aware resolution on the context (the check's contract
- * since the 2026-06-12 doctor split-brain fix).
+ * the shared store-aware resolution on the context (the check's contract).
  *
  * @module
  */

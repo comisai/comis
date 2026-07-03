@@ -8,8 +8,8 @@
  *
  * Sectional layout: (1) memory-package-local public rows paired 1:1 with the
  * `./types.js` interfaces (each pair gets an `expectTypeOf` drift guard in
- * `row-schemas.test.ts`); (2) removed in v2.12 — the DAG context-store row
- * schemas were deleted with the ctx_* schema (Phase 126); (3) session-store
+ * `row-schemas.test.ts`); (2) removed — the DAG context-store row
+ * schemas were deleted with the ctx_* schema; (3) session-store
  * DTOs; (4) file-internal snake_case row shapes (the SSOT consumers retarget to
  * via `z.infer<typeof XxxRowSchema>`).
  *
@@ -120,7 +120,7 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
   ignored_count: z.number(),
   /** Epoch ms of the last "used" attribution; NULL until first use. */
   last_useful_at: z.number().nullable(),
-  /** Outcome-attributed task-failure count (NOT NULL DEFAULT 0; FORGET-02) — DISTINCT from ignored_count. WR-03: the readUsefulness projection NOW selects it (the bandit feed's negative-reward signal, surfaced onto the signal only when >0); `.optional()` keeps the schema tolerant of the legacy/lifecycle reads that omit it. */
+  /** Outcome-attributed task-failure count (NOT NULL DEFAULT 0) — DISTINCT from ignored_count. The readUsefulness projection selects it (the bandit feed's negative-reward signal, surfaced onto the signal only when >0); `.optional()` keeps the schema tolerant of the legacy/lifecycle reads that omit it. */
   failure_count: z.number().optional(),
 });
 
@@ -131,7 +131,7 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
  * the sweep uses to compute each candidate's decayed strength (failure_count-coupled) +
  * tier + eviction candidacy (tenant_id/agent_id NOT projected — the WHERE pins them).
  * Markers + occurred_at + proof_count + failure_count + last_useful_at are `.nullable()`;
- * `memory_type` NOT NULL drives β; `pinned`/`trust_level` feed the FORGET-03 exemptions. Via `createRowMapper`.
+ * `memory_type` NOT NULL drives β; `pinned`/`trust_level` feed the eviction exemptions. Via `createRowMapper`.
  */
 export const MemoryLifecycleRowSchema = z.strictObject({
   id: z.string(),
@@ -149,13 +149,13 @@ export const MemoryLifecycleRowSchema = z.strictObject({
   evicted_at: z.number().nullable(),
   /** Computed strength side-column (REAL 0..1); NULL = not yet computed. */
   strength: z.number().nullable(),
-  /** Pinned flag (NOT NULL DEFAULT 0); pinned=1 is a hard eviction exemption (FORGET-03). */
+  /** Pinned flag (NOT NULL DEFAULT 0); pinned=1 is a hard eviction exemption. */
   pinned: z.number(),
-  /** Trust tier ('system'|'learned'|'external'); 'system' is exempt (FORGET-03). */
+  /** Trust tier ('system'|'learned'|'external'); 'system' is exempt from eviction. */
   trust_level: z.string(),
-  /** SUM(failure_count) across intents (LEFT JOIN; NULL→0) — the failurePenalty coupling (FORGET-02). */
+  /** SUM(failure_count) across intents (LEFT JOIN; NULL→0) — the failurePenalty coupling. */
   failure_count: z.number().nullable(),
-  /** MAX(last_useful_at) across intents (LEFT JOIN; NULL = never recalled) — the DISUSE signal the dormant-age branch keys off (WR-02), NOT occurred_at. */
+  /** MAX(last_useful_at) across intents (LEFT JOIN; NULL = never recalled) — the DISUSE signal the dormant-age branch keys off, NOT occurred_at. */
   last_useful_at: z.number().nullable(),
 });
 
@@ -213,8 +213,8 @@ export const MemoryTripleRowSchema = z.strictObject({
 
 
 // (RelationshipRowSchema — the `relationship` row projection for the directional
-//  social-modeling adapter — was DELETED in Phase 226 SIMPLIFY-03 with the rest of that
-//  subsystem (the table, the adapter, the port). No alias, I1.)
+//  social-modeling adapter — was DELETED with the rest of that subsystem (the
+//  table, the adapter, the port). No alias.)
 
 /**
  * Schema for the graph-spread recursive-CTE node projection. The
@@ -260,10 +260,10 @@ export const SessionRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `lcd_messages` table (LCD lossless store, Phase 127, F1).
- * Paired with `LcdMessageRow` exported from `./types.js`. The R4 isolation
- * columns are strict-required so a SELECT that drops one fails loudly (threat
- * T-127-06 — a silent scoping gap would be a cross-tenant hole).
+ * Schema for the `lcd_messages` table (LCD lossless store).
+ * Paired with `LcdMessageRow` exported from `./types.js`. The tenant/agent
+ * isolation columns are strict-required so a SELECT that drops one fails loudly
+ * (a silent scoping gap would be a cross-tenant hole).
  */
 export const LcdMessageRowSchema = z.strictObject({
   id: z.string(),
@@ -278,7 +278,7 @@ export const LcdMessageRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `lcd_message_parts` table (LCD lossless store, Phase 127, F1).
+ * Schema for the `lcd_message_parts` table (LCD lossless store).
  * Paired with `LcdMessagePartRow` exported from `./types.js`. Tool columns are
  * nullable (SQLite NULL ≠ undefined — absent for non-tool blocks); `is_error`
  * is the SQLite bool 0/1 integer; `tool_input`/`tool_output`/`metadata` are
@@ -298,10 +298,10 @@ export const LcdMessagePartRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `lcd_summaries` table (LCD compaction store, Phase 129, C3).
- * Paired with `LcdSummaryRow` exported from `./types.js`. The R4 isolation
- * columns are strict-required so a SELECT that drops one fails loudly (threat
- * T-129-04). `kind` is the closed-union TEXT (`leaf` for 129); `taint`/
+ * Schema for the `lcd_summaries` table (LCD compaction store).
+ * Paired with `LcdSummaryRow` exported from `./types.js`. The tenant/agent
+ * isolation columns are strict-required so a SELECT that drops one fails loudly.
+ * `kind` is the closed-union TEXT (`leaf` for the leaf tier); `taint`/
  * `fallback` are the SQLite bool 0/1 integers; `file_ids` is JSON-encoded TEXT.
  */
 export const LcdSummaryRowSchema = z.strictObject({
@@ -310,7 +310,7 @@ export const LcdSummaryRowSchema = z.strictObject({
   tenant_id: z.string(),
   agent_id: z.string(),
   session_key: z.string(),
-  kind: z.string(), // leaf (closed union; condensed kinds = Phase 130)
+  kind: z.string(), // leaf (closed union; condensed kinds are the condensed tier)
   depth: z.number(),
   earliest_at: z.number(),
   latest_at: z.number(),
@@ -324,8 +324,8 @@ export const LcdSummaryRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `lcd_summary_messages` table (LCD compaction store, Phase 129,
- * C3). Paired with `LcdSummaryMessageRow` exported from `./types.js`. The
+ * Schema for the `lcd_summary_messages` table (LCD compaction store).
+ * Paired with `LcdSummaryMessageRow` exported from `./types.js`. The
  * leaf→message link; strict (no extra column) keeps the projection minimal.
  */
 export const LcdSummaryMessageRowSchema = z.strictObject({
@@ -334,8 +334,8 @@ export const LcdSummaryMessageRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `lcd_summary_parents` table (LCD condensed tier, Phase 130,
- * C2). Paired with `LcdSummaryParentRow` exported from `./types.js`. The
+ * Schema for the `lcd_summary_parents` table (LCD condensed tier).
+ * Paired with `LcdSummaryParentRow` exported from `./types.js`. The
  * condensed→child summary edge; strict (no extra column) keeps the edge minimal.
  */
 export const LcdSummaryParentRowSchema = z.strictObject({
@@ -344,9 +344,9 @@ export const LcdSummaryParentRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `lcd_context_items` table (LCD compaction store, Phase 129,
- * C3). Paired with `LcdContextItemRow` exported from `./types.js`. The R4
- * isolation columns are strict-required (threat T-129-04); `ref_kind` is the
+ * Schema for the `lcd_context_items` table (LCD compaction store).
+ * Paired with `LcdContextItemRow` exported from `./types.js`. The tenant/agent
+ * isolation columns are strict-required; `ref_kind` is the
  * closed `message`|`summary` discriminator TEXT.
  */
 export const LcdContextItemRowSchema = z.strictObject({
@@ -374,7 +374,7 @@ export const FtsSearchRowSchema = z.strictObject({
 });
 
 /**
- * Schema for an LCD FTS5 MATCH hit row (E1 ctx_search). The SELECT aliases the
+ * Schema for an LCD FTS5 MATCH hit row (ctx_search). The SELECT aliases the
  * per-table columns to a uniform shape (`message_id`/`summary_id AS ref_id`,
  * `content AS snippet`, `rank`). Mirrors `FtsSearchRowSchema`; consumed by
  * `searchLcdImpl` (lcd-fts.ts), which maps it to the core `LcdSearchHit` DTO.
@@ -386,11 +386,11 @@ export const LcdSearchHitRowSchema = z.strictObject({
 });
 
 /**
- * Schema for an LCD LIKE-fallback hit row (E1 ctx_search, FTS5 uncompiled). Same
+ * Schema for an LCD LIKE-fallback hit row (ctx_search, FTS5 uncompiled). Same
  * `ref_id`/`snippet` shape as the MATCH path but WITHOUT `rank` — the LIKE scan
  * has no ranking, so the projection selects no `rank` column and the hit's `rank`
  * is set to `undefined` by the contract. Routes through the SAME per-row
- * `parseOptionalRow`+skip the MATCH path uses (WR-02) so both search paths degrade
+ * `parseOptionalRow`+skip the MATCH path uses so both search paths degrade
  * identically — a drifted/corrupt row is skipped, never surfaced with an
  * `undefined` `snippet`/`refId` into `wrapExternalContent` at the tool boundary.
  */
@@ -418,9 +418,8 @@ export const NamedGraphRowSchema = z.strictObject({
 
 // ─── 2. (removed) Context-store rows ───
 // The DAG context-store row schemas (paired with the @comis/core
-// context-store-types DTOs) were removed in v2.12 (Phase 126, LCD
-// reimplementation) together with the ctx_* schema/store. The LCD store DTOs
-// are reintroduced fresh in a later phase.
+// context-store-types DTOs) were removed together with the ctx_* schema/store
+// when the LCD store replaced them; the LCD store DTOs are defined separately.
 
 // ─── 3. Session-store DTOs (paired with @comis/core/ports/session-store-types) ───
 
@@ -492,13 +491,13 @@ export const TokenUsageDbRowSchema = z.strictObject({
   cost_cache_write: z.number(),
   cache_saved: z.number(),
   latency_ms: z.number(),
-  // PERSIST-02 cost-correctness columns (nullable; cache_retention DROPPED).
+  // Cost-correctness columns (nullable; cache_retention DROPPED).
   warmup_turn: z.number().nullable(),
   cache_eligible: z.number().nullable(),
   cost_correction: z.number().nullable(),
   pending_cache_investment_usd: z.number().nullable(),
   pricing_state: z.string().nullable(),
-  tool_tag: z.string().nullable(), // COST-01: JSON-stringified distinct-tool array (content-free; nullable)
+  tool_tag: z.string().nullable(), // JSON-stringified distinct-tool array (content-free; nullable)
 });
 
 /**

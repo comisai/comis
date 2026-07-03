@@ -49,7 +49,7 @@ export interface BrokerContextDeps {
 export type { IssuedSession };
 
 /**
- * Capability-lease mint deps (ENDPOINT-03; Phase 211 Plan 06). Threaded from
+ * Capability-lease mint deps. Threaded from
  * daemon.ts for an AUTONOMY-BEARING agent so {@link buildBrokerSpawnEnv} mints
  * an attenuated lease, registers the bearer in OutputGuard, and injects
  * `COMIS_CAP_LEASE` + `COMIS_ORCH_SOCKET`. Absent for a non-autonomy agent (no
@@ -58,7 +58,7 @@ export type { IssuedSession };
  * agent gets the lease vars EVEN WHEN no broker is configured.
  */
 export interface CapabilityMintDeps {
-  /** The daemon-wide LeaseManager (211-01) — mints the per-spawn lease. */
+  /** The daemon-wide LeaseManager — mints the per-spawn lease. */
   leaseManager: LeaseManager;
   /** The OutputGuard the bearer is registered in at mint (Pitfall 1 — never logged). */
   outputGuard: OutputGuardPort;
@@ -66,7 +66,7 @@ export interface CapabilityMintDeps {
   capSocketPath: string;
   /** The agent's resolved autonomy caps (resolveAutonomy(...).capabilities). */
   resolvedCaps: readonly AgentCapability[];
-  /** Budget ref recorded on the lease (Phase 213 budget enforcement reads it). */
+  /** Budget ref recorded on the lease (budget enforcement reads it). */
   budgetRef: string;
   /** The session key the lease is minted for. */
   sessionKey: string;
@@ -75,16 +75,16 @@ export interface CapabilityMintDeps {
   /**
    * The PARENT lease's caps, for a child spawn. When supplied (with
    * {@link requestedCaps}), the minted caps are `attenuateCaps(parentCaps,
-   * requestedCaps)` — the child can never broaden beyond the parent (LEASE-04).
+   * requestedCaps)` — the child can never broaden beyond the parent.
    * Absent for a root spawn (the caps are then `resolvedCaps`).
    */
   parentCaps?: readonly AgentCapability[];
   /** The caps the child requested — intersected with {@link parentCaps} at mint. */
   requestedCaps?: readonly AgentCapability[];
-  /** The parent lease id, recorded for the Phase 213 revoke cascade. */
+  /** The parent lease id, recorded for the revoke cascade. */
   parentLeaseId?: string;
   /**
-   * Phase 213: anchor the tree root in the bounded-autonomy service right after
+   * Anchor the tree root in the bounded-autonomy service right after
    * the mint. Called with the SAME tree-stable `rootRunId` the lease is minted
    * with + the freshly-minted `leaseId` (+ parentLeaseId) so the per-root budget
    * wall-clock deadline anchors and the rootRunId↔leaseId correlation builds (the
@@ -106,7 +106,7 @@ export interface BrokerSpawnEnv {
 /**
  * Build the spawn-env for an agent's exec tool. Two independent concerns merge
  * into the `placeholders` slot (which `buildExecEnv` merges LAST, so these
- * daemon-injected vars survive the existing exec/terminal scrub — Open Q3):
+ * daemon-injected vars survive the existing exec/terminal scrub):
  *
  *   1. BROKER (when `brokerContext` present): issues a single-use proxy token
  *      and adds HTTPS_PROXY + CA + `COMIS_BROKER_TOKEN` (placeholder values only;
@@ -120,8 +120,8 @@ export interface BrokerSpawnEnv {
  * Returns `undefined` only when NEITHER concern applies (the default
  * open-network, non-autonomy path; no regression).
  *
- * Open Q3 (subtle correctness): the JAIL-04 workspace-`.env` `COMIS_` block
- * (211-04) applies ONLY to the untrusted workspace-loaded source — never to
+ * Subtle correctness: the workspace-`.env` `COMIS_` block
+ * applies ONLY to the untrusted workspace-loaded source — never to
  * these daemon-injected `COMIS_CAP_LEASE`/`COMIS_ORCH_SOCKET` placeholders.
  *
  * FIXME: the broker token is issued once per assembleToolsForAgent call
@@ -152,7 +152,7 @@ export function buildBrokerSpawnEnv(
 
   if (capMint) {
     // Child caps = parent ∩ requested when a child spawn supplies both; else the
-    // agent's resolved caps (root spawn). attenuateCaps NEVER broadens (LEASE-04).
+    // agent's resolved caps (root spawn). attenuateCaps NEVER broadens.
     const caps =
       capMint.parentCaps !== undefined && capMint.requestedCaps !== undefined
         ? attenuateCaps(capMint.parentCaps, capMint.requestedCaps)
@@ -170,7 +170,7 @@ export function buildBrokerSpawnEnv(
     // Register the bearer BEFORE it leaves this function so any later log/model
     // output that echoes it is redacted (Pitfall 1 — never logged).
     capMint.outputGuard.registerSecret(bearer);
-    // Phase 213: anchor the tree root in the bounded-autonomy service with the
+    // Anchor the tree root in the bounded-autonomy service with the
     // SAME rootRunId the lease was minted with + the freshly-minted leaseId (so
     // the per-root budget wall-clock anchors and the rootRunId↔leaseId index is
     // built for the audit/kill fan-out).

@@ -288,9 +288,8 @@ export async function sendAttachment(
     // A successful Telegram send ALWAYS returns a numeric message_id. A missing id
     // means the platform did not accept the media — returning ok(String(undefined))
     // === "undefined" is a false success that hides a real delivery failure
-    // (openclaw-usecases 2026-06-25: image-gen/TTS produced real artifacts but were
-    // never delivered; the adapter logged "attachment sent" with
-    // messageId:"undefined" and the channel oracle showed 0 media sends). Fail
+    // (generated media can produce real artifacts that are never delivered while
+    // the adapter logs "attachment sent" with messageId:"undefined"). Fail
     // honestly + name the knob instead of a silent false-success.
     const sentMessageId = (sent as { message_id?: number } | undefined)?.message_id;
     if (sentMessageId == null) {

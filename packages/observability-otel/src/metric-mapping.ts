@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-02 / PROM-01 — the bus-event → OTel-instrument subscriber.
+ * The bus-event → OTel-instrument subscriber.
  *
  * `wireMetricMapping(deps)` is the extension's whole metric INPUT surface. It
  * follows the `obs-audit-sink.ts` `wireAuditSink` shape (one `eventBus.on` per
  * source event), but maps each typed payload to a CONTENT-FREE OTel instrument
- * increment off the single {@link METRIC_CATALOG} (Plan 01 — one definition, two
+ * increment off the single {@link METRIC_CATALOG} (one definition, two
  * readers, so the OTLP push and Prometheus pull surfaces can never drift).
  *
  * Two invariants are upheld HERE:
  *   1. **Content-free / low-cardinality labels.** Every label is a catalog
  *      {@link MetricLabel} (ids/enums/counts only). The AsyncLocalStorage
  *      `traceId` is a UUID and rides as a span ATTRIBUTE / exemplar value
- *      (Pitfall 4) — NEVER a metric label. Every attribute bag is additionally
- *      routed through {@link redactAttributes} (E3 defense-in-depth) before it
+ *      — NEVER a metric label. Every attribute bag is additionally
+ *      routed through {@link redactAttributes} (defense-in-depth) before it
  *      reaches an instrument. Label VALUES are bounded too, not just KEYS: an
- *      open-ended `reason` is mapped to the closed cache-break set (else `"other"`,
- *      MD-02), and `provider`/`model` are the CONFIG-RESOLVED provider/model ids
+ *      open-ended `reason` is mapped to the closed cache-break set (else `"other"`),
+ *      and `provider`/`model` are the CONFIG-RESOLVED provider/model ids
  *      (the value the resolver settled on for the turn — a closed-ish set of
  *      configured aliases, NOT a raw request string), so a fat-fingered or
- *      injected model ref cannot fan the series out per the chimera incident.
- *   2. **No new emit (N1).** The extension only SUBSCRIBES the existing
- *      `observability:*` / `security:*` signals 176/177 already emit.
+ *      injected model ref cannot fan the series out.
+ *   2. **No new emit.** The extension only SUBSCRIBES the existing
+ *      `observability:*` / `security:*` signals that other layers already emit.
  *
  * The spend `observableGauge`s (`comis.spend.{usd,ceiling.usd,headroom.usd}`)
- * read `spendAccumulator.getSnapshot()` (Pitfall 3) through `addCallback` —
+ * read `spendAccumulator.getSnapshot()` through `addCallback` —
  * headroom = ceiling − current spend per scope (ceiling from the injected
  * config). They register ONLY when an accumulator is provided.
  *
@@ -41,7 +41,7 @@ import type { SpendSnapshotReader } from "./spend-snapshot.js";
 type SpendScopeName = "agent" | "tenant" | "global";
 
 /**
- * The closed set of cache-break reasons (MD-02). A RUNTIME mirror of the
+ * The closed set of cache-break reasons. A RUNTIME mirror of the
  * `CacheBreakReason` union in `@comis/agent`
  * (executor/cache-detection/cache-state-types.ts) — declared LOCALLY (not
  * imported) so the extension keeps its narrow dependency surface
@@ -50,7 +50,7 @@ type SpendScopeName = "agent" | "tenant" | "global";
  * The `observability:cache_break` bus payload types `reason` as a bare `string`
  * (wider than the union — the closed label union guarantees the KEY `reason`,
  * NOT its VALUE). An unknown reason reaching the `reason` LABEL verbatim is an
- * unbounded-cardinality series (T-178-07). {@link boundedReason} maps any value
+ * unbounded-cardinality series. {@link boundedReason} maps any value
  * outside this set to `"other"` before it becomes a label.
  *
  * MUST stay in lockstep with the union; if a new reason is added there, add it
@@ -76,7 +76,7 @@ const KNOWN_CACHE_BREAK_REASONS: ReadonlySet<string> = new Set<string>([
 
 /**
  * Bound a cache-break `reason` to the closed set before it becomes a metric
- * label (MD-02). A known reason passes through verbatim; ANY other value (a new
+ * label. A known reason passes through verbatim; ANY other value (a new
  * emit, a bug, a hostile high-cardinality string) is bucketed to `"other"`, so a
  * single unexpected reason can never explode the `comis_cache_break_total`
  * series count.
@@ -98,7 +98,7 @@ export interface WireMetricMappingDeps {
   readonly meter: Meter;
   /** The typed event bus — the extension's only input (subscribe, never emit). */
   readonly eventBus: TypedEventBus;
-  /** The 177 spend accumulator's read accessor — the `comis_spend_*` gauge source. */
+  /** The spend accumulator's read accessor — the `comis_spend_*` gauge source. */
   readonly spendAccumulator?: SpendSnapshotReader;
   /** The per-scope spend ceilings (config) the headroom gauge subtracts from. */
   readonly ceilings?: SpendCeilingsView;
@@ -160,7 +160,7 @@ function recordHistogram(
 }
 
 /**
- * Register the spend `observableGauge`s reading `getSnapshot()` (Pitfall 3). The
+ * Register the spend `observableGauge`s reading `getSnapshot()`. The
  * snapshot's `perAgent`/`perTenant`/`global` totals feed `comis.spend.usd`; the
  * config ceilings feed `comis.spend.ceiling.usd`; headroom = ceiling − spend per
  * scope feeds `comis.spend.headroom.usd`. Content-free: a closed `scope` label +
@@ -230,8 +230,8 @@ function wireSpendGauges(deps: WireMetricMappingDeps): void {
 /**
  * Register the meta gauges `comis_up` (exporter-liveness; constant 1 while the
  * MeterProvider runs) and `comis_build_info{version}` (constant 1 carrying the
- * daemon version label — version ONLY, NO commit; Pitfall 7 / decision #5: no
- * git rev-parse at runtime). Both are pull-based `observableGauge`s — the only
+ * daemon version label — version ONLY, NO commit; no git rev-parse runs at
+ * daemon boot). Both are pull-based `observableGauge`s — the only
  * way to expose a constant series — observed on every scrape. `comis_up` going
  * absent (no scrape) IS the liveness signal the fleet dashboard alerts on.
  */
@@ -322,7 +322,7 @@ export function wireMetricMapping(deps: WireMetricMappingDeps): void {
       agent: payload.agentId,
       outcome: turnOutcome(payload.finishReason, payload.stopReason),
     });
-    // Pricing coverage (E1): a turn that billed > $0 is `priced`, a $0 turn is
+    // Pricing coverage: a turn that billed > $0 is `priced`, a $0 turn is
     // `free` (local-first). The `unknown` state rides spend_unpriceable below.
     addCounter(instruments, "comis.pricing.turns", 1, {
       state: payload.cost.total > 0 ? "priced" : "free",
@@ -332,7 +332,7 @@ export function wireMetricMapping(deps: WireMetricMappingDeps): void {
   // ── observability:cache_break → cache-break by reason + scope ──
   eventBus.on("observability:cache_break", (payload) => {
     addCounter(instruments, "comis.cache.break", 1, {
-      // MD-02: the payload types `reason` as a bare string (wider than the closed
+      // The payload types `reason` as a bare string (wider than the closed
       // CacheBreakReason union). Bound it to the known set — an unknown/new reason
       // is bucketed to "other" so it cannot explode the series cardinality.
       reason: boundedReason(payload.reason),
@@ -353,7 +353,7 @@ export function wireMetricMapping(deps: WireMetricMappingDeps): void {
     // the spend.unpriceable label set — the catalog's spend.unpriceable carries
     // `scope` only; an unpriceable turn is not scoped by a ceiling, bare count).
     addCounter(instruments, "comis.spend.unpriceable", 1, {});
-    // E1 pricing-coverage: an unpriceable turn is the `unknown` pricing state +
+    // Pricing-coverage: an unpriceable turn is the `unknown` pricing state +
     // the per-(provider,model) pricing-gap counter (provider/model are config
     // ids — a model id is a config value, NOT user content; §2.7).
     addCounter(instruments, "comis.pricing.turns", 1, { state: "unknown" });

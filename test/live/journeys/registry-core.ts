@@ -59,11 +59,11 @@ export function getStory(id: string): UserStory | undefined {
  * The story-coverage VIEW (E2E-03): one entry per registered story exposing its
  * tags (Cat A–V subsystems composed) + dimensions (config mode-values exercised).
  *
- * Satisfies "each story's tags + dimensions contribute to the §7.2 coverage
+ * Satisfies "each story's tags + dimensions contribute to the coverage
  * matrix" — auto-wired (walks STORY_LIBRARY, grows the instant a story
  * registers, zero downstream change). It deliberately does NOT add rows to
- * `COVERAGE_DIMENSIONS`: the §7.2 matrix enumerates CONFIG mode-values (owned +
- * settled by phases 136–146); journeys are a HORIZONTAL composition layer
+ * `COVERAGE_DIMENSIONS`: the coverage matrix enumerates CONFIG mode-values (owned +
+ * settled by the depth suites); journeys are a HORIZONTAL composition layer
  * settled by their test files existing (scenario-cert style). coverage-matrix.ts
  * re-exports this so the runner / architecture gate / soak read it from one place.
  */

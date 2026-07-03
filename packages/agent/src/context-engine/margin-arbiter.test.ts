@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RETR-02 — the pure tiered margin arbiter.
- *
- * RED-first (CLAUDE.md Tests-First): margin-arbiter.ts does not exist yet — every
- * test fails with "Cannot find module './margin-arbiter.js'" until the GREEN patch
- * creates it. This failing state is committed intentionally.
+ * Tests for the pure tiered margin arbiter.
  *
  * The arbiter is the relevance-first sibling of evictHistoryUnderBudget: it consumes
- * the discretionary pool the Fix-3 pre-flight already validated
+ * the discretionary pool the pre-flight already validated
  * (budget.availableHistoryTokens) and allocates it across the history tiers (T0/T1/T2)
  * AND the cross-session LTM/KG candidate tiers (T3/T4) by FUSED RANK (RRF via the
- * Plan-02 scorer / fuse), with the T0 fresh-tail + S4-pinned floors UNCONDITIONAL.
+ * shared scorer / fuse), with the T0 fresh-tail + security-pinned floors UNCONDITIONAL.
  *
- * Invariants pinned here (the success criterion #3 contract):
+ * Invariants pinned here:
  *  - Test 1: no over-allocate — sum(kept tokens) ≤ poolTokens (never reclaim).
  *  - Test 2: T0 fresh-tail floor is unconditional (kept regardless of fused rank).
- *  - Test 3: S4-pinned floor is unconditional (kept, never a relevance candidate).
+ *  - Test 3: security-pinned floor is unconditional (kept, never a relevance candidate).
  *  - Test 4: per-tier minimum slots are represented (LTM + recent-history).
  *  - Test 5: allocation is by FUSED RANK, never raw score.
  *  - Test 6: purity — the input arrays are not mutated.
@@ -81,7 +77,7 @@ const NO_FLOORS: ArbiterFloors = { freshTailItems: [], pinnedItems: [] };
 // A non-degraded relevance query so scoreRelevance runs the RRF path (≥2 terms).
 const HEALTHY_QUERY = buildRelevanceQuery(["deploy the trading bot config"]);
 
-describe("marginArbitrate — RETR-02 pure tiered allocator", () => {
+describe("marginArbitrate — pure tiered allocator", () => {
   it("Test 1: never over-allocates — the kept token sum is ≤ the discretionary pool", () => {
     // Pool is 100 tokens; candidates total 250. The arbiter must allocate ≤ 100.
     const history: BudgetItem[] = [
@@ -132,7 +128,7 @@ describe("marginArbitrate — RETR-02 pure tiered allocator", () => {
     expect(keptTexts).not.toContain("m1");
   });
 
-  it("Test 3: the S4-pinned floor is unconditional — kept regardless of fused rank, never a relevance candidate", () => {
+  it("Test 3: the security-pinned floor is unconditional — kept regardless of fused rank, never a relevance candidate", () => {
     // A security-pinned history item with NO relevance signal whatsoever; pool is tiny.
     const pinned = item("CANARY-pinned", 80);
     const ordinary = item("ordinary", 20);
@@ -245,8 +241,8 @@ describe("marginArbitrate — RETR-02 pure tiered allocator", () => {
     expect(out.perTierKept.ltm).toBe(0); // no LTM allocated with a 0 pool
   });
 
-  it("WR-04: a pinned tool_use mid-step keeps its trailing toolResult whole AND bills poolTokensUsed exactly", () => {
-    // The accounting/atomicity gap: S4 pins were filtered at MESSAGE granularity. A
+  it("a pinned tool_use mid-step keeps its trailing toolResult whole AND bills poolTokensUsed exactly", () => {
+    // The accounting/atomicity gap: with security pins filtered at MESSAGE granularity, a
     // pinned assistant `tool_use` whose `toolResult` is NOT itself pinned orphans a
     // half-step — the toolResult is left in the relevance-evictable middle band, where
     // the step grouper mis-binds it to the OLDER message and either drops it (splitting a
@@ -263,10 +259,10 @@ describe("marginArbitrate — RETR-02 pure tiered allocator", () => {
     // middle band is just [h_old]; the 50-token pool keeps it. So poolTokensUsed = 50
     // (h_old only — floors ride on top) and tr1 SURVIVES with its pinned tool_use.
     //
-    // RED on pre-patch code (message-granularity): pinnedItems=[tool_use] only;
+    // Under message-granularity pinning: pinnedItems=[tool_use] only;
     // middleBand=[h_old, tr1]; groupIntoSteps mis-binds tr1 to h_old → one 100-token step
     // that does NOT fit the 50 pool → keptMiddle=[] → poolTokensUsed=0 and tr1 is DROPPED
-    // (the pinned tool_use's result orphaned). Both assertions below fail.
+    // (the pinned tool_use's result orphaned). Both assertions below would fail.
     const hOld = item("h_old", 50);
     const pinnedToolUse = item("PINNED-tool-use", 10, "assistant");
     const tr1 = toolResultItem("tr1-result", 50);
@@ -294,9 +290,9 @@ describe("marginArbitrate — RETR-02 pure tiered allocator", () => {
     expect(out.poolTokensUsed).toBe(expectedUsed);
   });
 
-  it("WR-04: poolTokensUsed never exceeds the pool even with a mid-step pin (no over-billing)", () => {
+  it("poolTokensUsed never exceeds the pool even with a mid-step pin (no over-billing)", () => {
     // A complementary invariant: whatever the step boundaries, the discretionary
-    // accounting stays bounded by the pool (RETR-02 budget non-regression).
+    // accounting stays bounded by the pool (the arbiter's budget bound).
     const pinnedToolUse = item("PIN-tu", 10, "assistant");
     const tr = toolResultItem("tr", 30);
     const h1 = item("h1", 40);

@@ -105,9 +105,9 @@ function makeParams(overrides?: Partial<ContextEngineSetupParams>): ContextEngin
     deps,
     formattedKey: "tenant-a:user_a:chan-a",
     sessionKey: "tenant-a:user_a:chan-a",
-    // DAG-CRIT-1: the turn agentId param defaults to undefined so the existing
-    // deps.agentId-fallback tests still resolve through deps; the CRIT-1 tests
-    // override it explicitly.
+    // The turn agentId param defaults to undefined so the existing
+    // deps.agentId-fallback tests still resolve through deps; the turn-agentId
+    // tests override it explicitly.
     agentId: undefined,
     msg: { channelType: "test", channelId: "chan-a" },
     sm: { fileEntries: [] },
@@ -163,12 +163,12 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(captured.calls[0].deps.agentId).toBe("agent-xyz");
   });
 
-  // ── DAG-CRIT-1 (260605-m82): on the executeAgent path the turn's agentId
+  // ── On the executeAgent path the turn's agentId
   //    arrives as the positional execute() arg (the ALS RequestContext) and is
   //    NEVER set onto frozenDeps, so `deps.agentId` is undefined → the assembler
-  //    built no read scope and failed closed (recalled 0 history). setupContextEngine
+  //    would build no read scope and fail closed (recall 0 history). setupContextEngine
   //    must accept the turn agentId as an explicit param and prefer it.
-  it("DAG-CRIT-1: createContextEngine receives the turn agentId from params.agentId even when deps.agentId is undefined (the executeAgent positional path)", () => {
+  it("createContextEngine receives the turn agentId from params.agentId even when deps.agentId is undefined (the executeAgent positional path)", () => {
     setupContextEngine(
       makeParams({ deps: makeDeps({ agentId: undefined }), agentId: "agent-positional" }),
     );
@@ -176,7 +176,7 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(captured.calls[0].deps.agentId).toBe("agent-positional");
   });
 
-  it("DAG-CRIT-1: params.agentId ?? deps.agentId — the deps.agentId fallback is preserved for non-executeAgent callers", () => {
+  it("params.agentId ?? deps.agentId — the deps.agentId fallback is preserved for non-executeAgent callers", () => {
     setupContextEngine(makeParams({ deps: makeDeps({ agentId: "agent-from-deps" }) }));
     // No explicit params.agentId → fall back to deps.agentId (unchanged behavior).
     expect(captured.calls[0].deps.agentId).toBe("agent-from-deps");
@@ -194,7 +194,7 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(ref.current).toBe(captured.calls[0].engineHandle);
   });
 
-  it("threads getCachedFreshTailPreambleTokens into the engine deps as getFreshTailPreambleTokensEstimate (I1 / WR-01 — separate from getSystemTokensEstimate)", () => {
+  it("threads getCachedFreshTailPreambleTokens into the engine deps as getFreshTailPreambleTokensEstimate (separate from getSystemTokensEstimate)", () => {
     setupContextEngine(makeParams({ getCachedFreshTailPreambleTokens: () => 321 }));
     const deps = captured.calls[0].deps;
     // The fresh-tail preamble estimate is wired as its OWN lazy getter (the budget
@@ -203,20 +203,19 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(deps.getFreshTailPreambleTokensEstimate!()).toBe(321);
   });
 
-  // KNOB-02 (Phase 176): the second computeTokenBudgetForProfile call site lives
-  // in lcd-assembler, which reads ContextEngineDeps.windowProvenance (the 176-01
-  // seam). Without this params→deps hop the seam stays permanently undefined —
-  // "built-but-not-wired" (Pitfall 4).
-  it("KNOB-02-21: threads params.windowProvenance verbatim onto the createContextEngine deps (the lcd-assembler budget seam)", () => {
+  // The second computeTokenBudgetForProfile call site lives
+  // in lcd-assembler, which reads ContextEngineDeps.windowProvenance. Without
+  // this params→deps hop the seam stays permanently undefined —
+  // "built-but-not-wired".
+  it("threads params.windowProvenance verbatim onto the createContextEngine deps (the lcd-assembler budget seam)", () => {
     const windowProvenance = {
       configuredWindow: 131_072,
       served: 8_192,
       reconcileSource: "served" as const,
     };
     setupContextEngine(makeParams({ windowProvenance }));
-    // RED pre-patch: ContextEngineSetupParams has no windowProvenance field, so
-    // the constructed deps carry undefined and the assembler's budget stays
-    // provenance-blind.
+    // Without the params→deps hop, the constructed deps would carry undefined
+    // and the assembler's budget stays provenance-blind.
     expect(captured.calls[0].deps.windowProvenance).toEqual(windowProvenance);
   });
 });
@@ -436,11 +435,11 @@ describe("setupContextEngine — observation-masker -> cacheBreakDetector wiring
 });
 
 // ---------------------------------------------------------------------------
-// R1 (132-05): getSummarizerDeps wraps the leaf summarizer with the injected
+// getSummarizerDeps wraps the leaf summarizer with the injected
 // per-tenant spend+breaker gate keyed on the live tenantId.
 // ---------------------------------------------------------------------------
 
-describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiring (R1)", () => {
+describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiring", () => {
   /** A stub gate that records the tenantId it was keyed on and returns a sentinel. */
   function makeRecordingBreaker(): {
     breaker: SummarizerSpendBreaker;

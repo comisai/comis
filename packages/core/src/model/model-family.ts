@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RESOLVE-01 (observability-excellence) — the provider↔model chimera detector.
+ * The provider↔model chimera detector.
  *
- * Pure: no I/O, no clock, no env (hexagonal I9). Classifies a model id into a
+ * Pure: no I/O, no clock, no env. Classifies a model id into a
  * coarse provider FAMILY and flags a "chimera" — a NATIVE single-family provider
  * (anthropic/openai/google/…) paired with a model id from a DIFFERENT family.
  *
- * The incident this exists for (`ffe11736`): an agent configured `provider:
- * anthropic` with a qwen model ref resolved a phantom nano/8192 ModelProfile that
- * blocked Opus fallback — and nothing in `obs.explain`/`obs.fleet.health` named the
+ * The failure mode this exists for: an agent configured `provider:
+ * anthropic` with a qwen model ref resolves a phantom nano/8192 ModelProfile that
+ * blocks Opus fallback — and nothing in `obs.explain`/`obs.fleet.health` names the
  * mismatch. The detector lets `config_posture` surface "N agent(s) with a chimeric
  * provider/model" in one `comis fleet` look.
  *
@@ -16,8 +16,8 @@
  *   - Only NATIVE single-family providers (where the provider IS one model family)
  *     can flag a chimera. GATEWAY/aggregator providers (ollama, openrouter,
  *     amazon-bedrock, google-vertex, groq, together, …) legitimately serve models
- *     from MANY families, so they NEVER flag (the ffe11736 case is a native
- *     `anthropic` provider, not a gateway).
+ *     from MANY families, so they NEVER flag (the motivating misconfiguration
+ *     was a native `anthropic` provider, not a gateway).
  *   - An unrecognized model family (`"unknown"`) NEVER flags (we only flag a
  *     KNOWN, mismatched family).
  *
@@ -40,7 +40,7 @@ export type ModelFamily =
 /**
  * Ordered family patterns. Order matters only where ids could overlap; these are
  * disjoint in practice. Matched with `.test()` against a lowercased id — never
- * executed/interpolated (T-182-05 string-safety precedent).
+ * executed or interpolated, so an attacker-controlled model id cannot inject a pattern.
  */
 const FAMILY_PATTERNS: ReadonlyArray<readonly [ModelFamily, RegExp]> = [
   ["anthropic", /claude/i],
@@ -100,7 +100,8 @@ export function resolveModelFamily(modelRef: string): ModelFamily {
 
 /**
  * True when `providerFamily` is a NATIVE single-family provider AND `modelRef`
- * resolves to a KNOWN, DIFFERENT family — the `ffe11736` shape (anthropic+qwen).
+ * resolves to a KNOWN, DIFFERENT family (e.g. provider `anthropic` paired with
+ * a qwen model id).
  *
  * @param providerFamily - the normalized provider id (`resolveProviderFamily`).
  * @param modelRef       - the configured model id string.

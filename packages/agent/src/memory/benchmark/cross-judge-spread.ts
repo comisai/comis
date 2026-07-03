@@ -6,15 +6,13 @@
  *
  * THE MOAT: credibility = cross-judge
  * >=2 + a published spread. A result is trusted ONLY if it survives -- i.e. the
- * two judges agree within tolerance on that category. This module replaces the
- * hand-authored arithmetic in
- * `benchmarks/results/2026-05-31-j1-baseline/cross-judge-spread.md` with a
+ * two judges agree within tolerance on that category. This module is a
  * tested, reproducible fold over >=2 committed judge manifests.
  *
- * THE SURVIVAL TOLERANCE (from the j1-baseline reference math): a category
+ * THE SURVIVAL TOLERANCE: a category
  * SURVIVES if |A-B| <= 5.0 points. Per-category n=20 gives a binomial SE of
- * ~10-11pt, so a >5pt inter-judge gap is judge-noise, not signal -- e.g.
- * single-session-preference did NOT survive in the j1 baseline (30 vs 45 = 15pt)
+ * ~10-11pt, so a >5pt inter-judge gap is judge-noise, not signal -- e.g. a
+ * single-session-preference reading of 30 vs 45 (= 15pt) does NOT survive
  * and must NOT headline.
  *
  * PURE (no Result, no throws, no I/O, no clock, no env -- AGENTS.md 2.1 pure-fn
@@ -63,7 +61,7 @@ import type { AccuracyResult } from "./qa-accuracy.js";
  * The survival tolerance in accuracy points: a category SURVIVES (is stable
  * across the two judges) when its inter-judge spread |A-B| <= this value.
  *
- * 5.0pt is the j1-baseline protocol value. Rationale: per-category n=20 yields a
+ * 5.0pt is the protocol value. Rationale: per-category n=20 yields a
  * binomial standard error of ~10-11pt, so a <=5pt inter-judge gap is well within
  * noise (the judges agree), whereas a larger gap signals the number is too
  * judge-dependent to headline.

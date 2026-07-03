@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TurnOutcome + delivery receipts (spec §4.3).
+ * TurnOutcome + delivery receipts.
  *
  * Pure TS interfaces and a discriminated union — no Zod runtime. The delivery
  * stage captures `deliveredAtMs` itself (the chunk schema carries no per-chunk
@@ -15,7 +15,7 @@ import type { ActivityEvent } from "./activity-event.js";
  * Aggregated telemetry returned by the delivery stage when every chunk
  * was delivered successfully. `deliveredAtMs` is captured by
  * `deliverExecutionResponse` at the moment the last chunk's send-promise
- * resolves (§16.6). The chunk schema does NOT carry a per-chunk timestamp;
+ * resolves. The chunk schema does NOT carry a per-chunk timestamp;
  * the delivery stage takes one once at end.
  */
 export interface FinalDeliveryReceipt {
@@ -44,8 +44,9 @@ export interface DeliveryFailureReceipt {
 }
 
 /**
- * The orchestrator's delivery stage now returns this Result. Previously
- * returned Promise<void>; §16.6 specifies the bridge change.
+ * The Result returned by the orchestrator's delivery stage: success carries
+ * the aggregated receipt; failure carries enough state for the coordinator
+ * to classify and render the turn.
  */
 export type DeliveryStageResult = Result<FinalDeliveryReceipt, DeliveryFailureReceipt>;
 

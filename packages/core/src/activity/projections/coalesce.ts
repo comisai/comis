@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Coalescing rules engine for the chat projection (spec §9).
+ * Coalescing rules engine for the chat projection.
  *
  * Coalescing belongs to the **chat** projection, not to `ActivityStream`. ACP
  * and Web projections deliberately do not coalesce (IDEs want every step), so
@@ -23,7 +23,7 @@ const FAST_SUCCESS_MS = 1500;
 const GROUP_WINDOW_MS = 800;
 
 /**
- * Static coalescing parameters (spec §9). `maxLines` caps the visible set per
+ * Static coalescing parameters. `maxLines` caps the visible set per
  * verbosity; preserved events (failures/approvals/subagents) are kept even when
  * the cap would otherwise truncate them.
  */
@@ -45,7 +45,7 @@ export interface CoalesceResult {
 
 /**
  * An event is always preserved (never dropped, never silently truncated away)
- * when it is a failure, an approval prompt, or a sub-agent boundary (§9).
+ * when it is a failure, an approval prompt, or a sub-agent boundary.
  */
 function isPreserved(e: ActivityEvent): boolean {
   return e.status === "failed" || e.kind === "approval" || e.kind === "subagent";
@@ -96,7 +96,7 @@ export function coalesce(
   // 1.5) Phase-pair dedup — for each activityId, keep ONE event. Prefer the
   //      `phase === "end"` event (terminal state, carries the final status +
   //      durationMs) so coalesced lines render with the call's terminal
-  //      classification. This removes the live-evidence Bug A: a slow-success
+  //      classification. Without this dedup, a slow-success
   //      start+end pair produced "🔧 doing thing\ndoing thing" — the marked
   //      start AND the bare end both survived Step 1 (start has no
   //      durationMs; end has durationMs ≥ 1500ms). Replacing the start at the
@@ -140,7 +140,7 @@ export function coalesce(
     if (runLength > 1) {
       const constituents = dedupedByActivityId.slice(i, j);
       const surrogateId = surrogateIdFor(head);
-      // Bug B defense-in-depth: count DISTINCT activityIds, not raw
+      // Defense-in-depth: count DISTINCT activityIds, not raw
       // constituent length. Step 1.5 above already collapses same-id pairs,
       // so the production-path constituents array carries distinct ids; the
       // `new Set(...)` dedup here protects against a future regression that

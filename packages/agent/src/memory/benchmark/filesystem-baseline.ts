@@ -10,8 +10,7 @@
  * by the SAME judge. It is a deliberately-trivial no-memory reference: if a
  * full-dump baseline ties/beats Comis's ranked recall on a benchmark, the
  * *benchmark* is weak, not Comis (exactly how Letta showed a filesystem agent
- * scored 74.0% on LoCoMo, above Mem0's self-reported 68.5%;
- * .planning/MEMORY_BENCHMARK_CREDIBILITY.md TL;DR). It is recorded ONLY under an
+ * scored 74.0% on LoCoMo, above Mem0's self-reported 68.5%). It is recorded ONLY under an
  * explicit control label — NEVER as Comis's own score.
  *
  * COMPARABLE SHAPE: each doc is rendered as the SAME numbered + dated block that

@@ -44,7 +44,7 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: true,
     fetchHistory: false,
     attachments: true,
-    // §17.2: Telegram EditPlace — typing indicator + inline keyboard buttons.
+    // Telegram EditPlace — typing indicator + inline keyboard buttons.
     typing: true,
     threads: false,
     buttons: "inline",

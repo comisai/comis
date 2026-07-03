@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Reaction + correction outcome wiring (Verified Learning WS1, Phase 199 P0.5).
+ * Reaction + correction outcome wiring (Verified Learning).
  *
  * Co-located beside {@link wireLearningOutcome} (setup-learning.ts) — the daemon
  * composition root holds BOTH the bus AND the `OutcomeSignalPort` adapter (the
  * agent↛memory cut). This module adds the TWO corroborating outcome sources that
- * the deterministic tool/pipeline signal (Phase 198) already outranks at fusion:
+ * the deterministic tool/pipeline signal already outranks at fusion:
  *
  *  - REACTION (`channel:reaction_received`): a chat reaction on an agent-authored
  *    OUTBOUND message. The `messageId → trajectory scope` map (captured ONLY at the
  *    outbound delivery ack — {@link ReactionTrajectoryMap}) resolves the trajectory;
  *    a reaction on a USER message / unknown id has NO entry → fail-closed SKIP
- *    (REACT-02 keystone). The emoji is matched against a CLOSED reactionMap
+ *    (keystone). The emoji is matched against a CLOSED reactionMap
  *    (unmapped → skip); confidence is SCALED by the channel-sender trust
- *    (`external` → near-zero, REACT-03/04); a per-sender rate limit caps a flood.
+ *    (`external` → near-zero); a per-sender rate limit caps a flood.
  *    Then `observe({ source: "reaction" })`.
  *
  *  - CORRECTION (`message:received`): a follow-up user turn classified by the
- *    cost-gated detector seam (Plan 03). The prior completed trajectory for the
+ *    cost-gated detector seam. The prior completed trajectory for the
  *    session is recorded from `diagnostic:message_processed` — the per-turn
  *    completion event that fires for single-agent turns too and carries
- *    agentId/sessionKey/traceId on its PAYLOAD (CR-02; the prior `graph:completed`
+ *    agentId/sessionKey/traceId on its PAYLOAD (the prior `graph:completed`
  *    + ALS wiring never fired for a single-agent turn and had no ALS at the emit).
  *    The recorded sessionKey is the SAME `formatSessionKey(...)` string the reader
  *    formats off the `message:received` payload (`formatSessionKey(p.sessionKey)`).
@@ -28,7 +28,7 @@
  *    that prior trajectory; the deterministic sources always outrank it.
  *
  * Counts/ids/closed-enums ONLY ever cross the bus or reach the store (AGENTS.md
- * §2.7 / SEC-01) — the emoji is matched against the closed map and never flows
+ * §2.7) — the emoji is matched against the closed map and never flows
  * into a prompt; no sender display names, no message bodies. Every observe is
  * fire-and-forget / non-fatal (WARN+errorKind+hint, never throws — the turn
  * already completed). `senderTrust` is provenance, NEVER raises authority.
@@ -68,7 +68,7 @@ import { buildCustomJudgeModelSpec } from "./setup-learning-judge.js";
 // 1. messageId → trajectory-scope map (bounded, in-memory daemon-lifetime)
 // ===========================================================================
 
-/** The trajectory scope an agent-authored outbound message maps to (REACT-02). */
+/** The trajectory scope an agent-authored outbound message maps to. */
 export interface OutboundTrajectoryEntry {
   /** The trajectory identity (=== traceId; the trajectory + `comis explain` key). */
   traceId: string;
@@ -79,7 +79,7 @@ export interface OutboundTrajectoryEntry {
   /** Conversation/session identity (falls back to the trajectory id at capture). */
   sessionId: string;
   /**
-   * FLAG-2 (group reaction-spoof): the conversation PARTICIPANT — the inbound
+   * Group-reaction-spoof guard: the conversation PARTICIPANT — the inbound
    * sender whose message triggered this agent reply, captured from
    * `RequestContext.userId` at the delivery binding (the inbound pipeline sets
    * `ctx.userId = sessionKey.userId = msg.senderId`). It is the ONE reactor who
@@ -118,7 +118,7 @@ interface MapBucket {
 }
 
 /**
- * Evict the oldest-by-recency entry (bounded growth). WR-05: O(1) — `record()`
+ * Evict the oldest-by-recency entry (bounded growth). O(1) — `record()`
  * deletes-then-re-sets an updated key so the Map's insertion order IS the recency
  * order (most-recently-recorded last), making the FIRST key the genuine oldest.
  * `Map.keys().next().value` is O(1), replacing the prior O(n) min-`insertedAt`
@@ -139,7 +139,7 @@ export function createReactionTrajectoryMap(
   config?: { entryTtlMs?: number; maxEntries?: number },
 ): ReactionTrajectoryMap {
   // A reaction usually arrives soon after the message; a day is generous. The map
-  // is in-memory daemon-lifetime (resolved decision A1) — a post-restart reaction
+  // is in-memory daemon-lifetime — a post-restart reaction
   // simply has no entry → fail-closed skip.
   const entryTtlMs = config?.entryTtlMs ?? 86_400_000; // 24h
   const maxEntries = config?.maxEntries ?? 50_000;
@@ -158,7 +158,7 @@ export function createReactionTrajectoryMap(
       const existing = buckets.get(messageId);
       if (existing) {
         existing.timer.cancel();
-        // WR-05: delete BEFORE re-setting so the refreshed key moves to the Map's
+        // Delete BEFORE re-setting so the refreshed key moves to the Map's
         // tail — keeps insertion order == recency order, which the O(1)
         // `evictOldestMapEntry` (first key = oldest) depends on.
         buckets.delete(messageId);
@@ -181,17 +181,17 @@ export function createReactionTrajectoryMap(
 // 2. Reaction + correction wiring deps + the trust/emoji tables
 // ===========================================================================
 
-/** The closed emoji → outcome map (Unicode defaults; REACT-03). */
+/** The closed emoji → outcome map (Unicode defaults). */
 export interface ReactionEmojiMap {
   success: string[];
   failure: string[];
 }
 
-/** Base confidence for a clean reaction before trust scaling (REACT-03). */
+/** Base confidence for a clean reaction before trust scaling. */
 const REACTION_BASE_CONFIDENCE = 0.6;
 
 /**
- * WR-03: the minimum trust-scaled confidence a reaction must clear to be written
+ * The minimum trust-scaled confidence a reaction must clear to be written
  * to the append-only ledger. An `external`/unknown reactor yields
  * `REACTION_BASE_CONFIDENCE (0.6) * trustWeight("external") (0.05) = 0.03` — inert
  * (the deterministic tool/pipeline signal always outranks it at fusion), so rather
@@ -202,9 +202,9 @@ const REACTION_BASE_CONFIDENCE = 0.6;
 const REACTION_MIN_CONFIDENCE_TO_WRITE = 0.05;
 
 /**
- * Channel-sender trust → confidence weight (REACT-03/04). The vocabulary is the
+ * Channel-sender trust → confidence weight. The vocabulary is the
  * channel-sender ladder (owner/admin/trusted/known/external) — NOT the tool-gate
- * guest/user/admin narrowing (Pitfall 4). An `external`/unknown reactor is
+ * guest/user/admin narrowing. An `external`/unknown reactor is
  * near-zero (a spoofed 👍 can never mint a strong reward; deterministic outranks
  * it regardless).
  */
@@ -255,11 +255,11 @@ export interface LearningReactionsWiringDeps {
   outcomeStore: OutcomeSignalPort;
   /** Injected clock for `observedAt`. */
   clock: ClockPort;
-  /** Structured logger (OBS-01 INFO/durationMs + the non-fatal failure WARN). */
+  /** Structured logger (INFO/durationMs + the non-fatal failure WARN). */
   logger: ComisLogger;
   /** Per-agent effective learning-outcome enable (the byte-identity gate). */
   learningOutcomeEnabled: (agentId: string) => boolean;
-  /** The bounded outbound-trajectory map (REACT-02 fail-closed resolution). */
+  /** The bounded outbound-trajectory map (fail-closed resolution). */
   reactionTrajectoryMap: ReactionTrajectoryMap;
   /** Dedicated per-sender rate limiter for reactions (separate counters from injection detection). */
   reactionRateLimiter: InjectionRateLimiter;
@@ -268,7 +268,7 @@ export interface LearningReactionsWiringDeps {
   /**
    * Resolve the RAW channel-sender trust string for a reactor. Explicitly-mapped
    * reactors keep `senderTrustMap[reactorId]`. For an UNMAPPED reactor the result
-   * is participant-aware (FLAG-2): `defaultTrustLevel` applies ONLY when the
+   * is participant-aware: `defaultTrustLevel` applies ONLY when the
    * reactor IS the conversation `participantId` (the inbound sender); any other
    * unmapped reactor — a group bystander — resolves to `"external"` (inert). When
    * `participantId` is `undefined` (a legacy/unthreaded capture) it FAILS SAFE to
@@ -282,7 +282,7 @@ export interface LearningReactionsWiringDeps {
   /**
    * Record the most-recent completed trajectory + its scope for a session, keyed
    * on the `formatSessionKey(...)` string carried by the per-turn completion event
-   * (CR-02). The full scope is stored so the reader attributes the correction to
+   * The full scope is stored so the reader attributes the correction to
    * the trajectory's OWN (tenant, agent) — not the follow-up turn's ALS (which may
    * differ / be absent at the bus boundary).
    */
@@ -331,7 +331,7 @@ function observeReactionNonFatal(
         );
         return;
       }
-      // OBS-01: one INFO line per recorded reaction — counts/ids/closed-enums only
+      // One INFO line per recorded reaction — counts/ids/closed-enums only
       // (the observe latency as durationMs, the resolved senderTrust). Never the
       // emoji-as-content beyond the closed map, never a sender display name.
       deps.logger.info(
@@ -419,10 +419,10 @@ function observeCorrectionNonFatal(
 /**
  * Stand up the `channel:reaction_received` → observe(source:"reaction") subscriber.
  *
- * Order (REACT-02/03/04):
+ * Order:
  *  1. Resolve the trajectory FIRST via the map — a miss (user message / unresolvable
  *     id) is a fail-closed SKIP (the keystone). The reaction NEVER calls resolve();
- *     the existing graph:completed resolve (198) fuses the reaction row with the
+ *     the existing graph:completed resolve fuses the reaction row with the
  *     deterministic rows, and a reaction NEVER outranks tool/pipeline.
  *  2. Byte-identity gate (now agentId is known from the entry).
  *  3. emoji → outcome via the closed reactionMap (unmapped → skip).
@@ -432,7 +432,7 @@ function observeCorrectionNonFatal(
  */
 export function wireLearningReactions(deps: LearningReactionsWiringDeps): void {
   deps.eventBus.on("channel:reaction_received", (p) => {
-    // 1. Fail-closed trajectory resolution (REACT-02 keystone).
+    // 1. Fail-closed trajectory resolution (keystone).
     const entry = deps.reactionTrajectoryMap.lookup(p.messageId);
     if (entry === undefined) return; // user message / unresolvable / evicted → SKIP
 
@@ -444,7 +444,7 @@ export function wireLearningReactions(deps: LearningReactionsWiringDeps): void {
     if (outcome === undefined) return;
 
     // 4. RAW channel-sender trust → a confidence weight (external → near-zero).
-    //    FLAG-2: pass the bound conversation participant so an unmapped reactor
+    //    Pass the bound conversation participant so an unmapped reactor
     //    inherits defaultTrustLevel ONLY when it IS the participant (the inbound
     //    sender); an unmapped group bystander resolves to "external" (inert) and
     //    cannot spoof the reaction-learning signal. `entry.participantId` is
@@ -452,7 +452,7 @@ export function wireLearningReactions(deps: LearningReactionsWiringDeps): void {
     const trust = deps.resolveSenderTrust(entry.agentId, p.reactorId, entry.participantId);
     const confidence = REACTION_BASE_CONFIDENCE * trustWeight(trust);
 
-    // 4b. WR-03: a near-zero (external/unknown) reaction is below the write floor →
+    // 4b. A near-zero (external/unknown) reaction is below the write floor →
     // skip entirely (no observe, no ledger row). The deterministic signal outranks
     // it regardless, so writing it only amplifies the append-only ledger.
     if (confidence < REACTION_MIN_CONFIDENCE_TO_WRITE) return;
@@ -479,13 +479,13 @@ export function wireLearningReactions(deps: LearningReactionsWiringDeps): void {
 
 /**
  * Stand up the correction path: record the prior completed trajectory per session
- * (`diagnostic:message_processed` — the per-turn completion event — CR-02) and
+ * (`diagnostic:message_processed` — the per-turn completion event) and
  * observe a `corrected` outcome on a classified follow-up turn (`message:received`).
  */
 export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void {
   // WRITER — record the most-recent completed trajectory for the session.
   //
-  // CR-02: keys off the `diagnostic:message_processed` PAYLOAD, NOT the ALS. The
+  // Keys off the `diagnostic:message_processed` PAYLOAD, NOT the ALS. The
   // prior writer hooked `graph:completed`, which (a) is emitted from the graph
   // coordinator's async tick loop OUTSIDE any `runWithContext` (so `tryGetContext()`
   // was always undefined → the writer always early-returned) and (b) only fires for
@@ -496,7 +496,7 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
   // string the reader formats the `message:received` payload into. An absent
   // sessionKey OR traceId records NOTHING (a later correction then fails-closed —
   // never mis-joined). The tenant is derived from the sessionKey's first segment
-  // (mirrors the 198 `deriveTenantFromSessionKey`).
+  // (mirrors `deriveTenantFromSessionKey`).
   deps.eventBus.on("diagnostic:message_processed", (p) => {
     if (deps.recordSessionTrajectory === undefined) return;
     if (!deps.correctionEnabled(p.agentId)) return;
@@ -557,8 +557,8 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
 export interface ReactionWiringContainer {
   config: {
     agents?: Record<string, AgentReactionConfig | undefined>;
-    // H-1 (Phase 226): the REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
-    // so tsc ENFORCES the `costFeatures.enabled`→`enabled` master-gate rename — a missed rename is a
+    // The REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
+    // so tsc ENFORCES that the master gate reads `memory.enabled` — a missed field is a
     // compile error, never a silent `undefined !== false === true` force-ENABLE (the inverted kill-switch).
     memory?: Pick<MemoryConfig, "enabled">;
     providers?: { entries?: Record<string, { apiKeyName?: string; type?: string } | undefined> };
@@ -601,7 +601,7 @@ export interface BuildReactionWiringResult {
   /** The bounded session→trajectory map (returned so the daemon can destroy it on shutdown). */
   sessionTrajectoryMap: ReactionTrajectoryMap;
   /**
-   * WR-01: tear down EVERY bounded-with-timers resource this wiring owns — the
+   * Tear down EVERY bounded-with-timers resource this wiring owns — the
    * reaction trajectory map, the session trajectory map, AND the dedicated
    * reaction rate limiter — cancelling each entry's `unref()`'d TTL timer. Threaded
    * into the daemon shutdown path beside the existing `injectionRateLimiter.destroy()`
@@ -616,7 +616,7 @@ const DEFAULT_REACTION_MAP: ReactionEmojiMap = { success: ["👍", "✅"], failu
 /** Per-call output bound for the cheap correction classification (a tiny JSON verdict). */
 const CORRECTION_MAX_OUTPUT_TOKENS = 1024;
 /**
- * Reaction-tuned rate-limit thresholds. WR-04: a TIGHT per-sender cap — the
+ * Reaction-tuned rate-limit thresholds. A TIGHT per-sender cap — the
  * handler skips at `audit` (count >= auditThreshold), so the effective per-sender
  * allowance is `auditThreshold - 1 = 3` reactions per 5-minute window. The prior
  * `auditThreshold: 10` let 9 reactions through per sender before skipping, which
@@ -628,10 +628,10 @@ const REACTION_RATE_LIMIT = { windowMs: 300_000, warnThreshold: 2, auditThreshol
 
 /**
  * Resolve + construct the cheap `fast`-tier correction detector for one agent
- * (the `outcomeJudge` operation tier — research A2, no new ModelOperationType).
+ * (the `outcomeJudge` operation tier — no new ModelOperationType).
  * Resolves the provider/modelId by NAME and the API key from the secret manager
  * (KEYLESS sentinel for keyless providers); returns `undefined` on a missing key
- * (a no-op branch — `Defer != Retry`). The seam itself is the Plan-03 clone.
+ * (a no-op branch — `Defer != Retry`). The seam itself reuses createCorrectionDetectorSeam.
  */
 function resolveCorrectionDetector(
   agent: AgentReactionConfig,
@@ -653,8 +653,8 @@ function resolveCorrectionDetector(
   const apiKey =
     container.secretManager.get(apiKeyName) ??
     // Keyless by TYPE, not config NAME — a user-named ollama entry must resolve keyless, else the
-    // correction detector (DRIFT/supersede) is a silent no-op on a local keyless daemon
-    // (package-delivery-20260628). Guarded by test/architecture/keyless-provider-by-type.
+    // correction detector (DRIFT/supersede) is a silent no-op on a local keyless daemon.
+    // Guarded by test/architecture/keyless-provider-by-type.
     (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
   if (!apiKey) return undefined; // no key → no-op detector (Defer != Retry)
   // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog → the
@@ -677,8 +677,8 @@ function resolveCorrectionDetector(
  * byte-identity gate. Keeps the bulk OUT of setup-memory.ts (the 800-cap file) —
  * called in ONE line from the `setupLearningOutcomeWiring` site.
  *
- * Gates (mirror the 198 byte-identity computation):
- *  - `costFeaturesEnabled = memory.enabled !== false` (master switch, renamed from costFeatures.enabled in Phase 226).
+ * Gates (mirror the byte-identity computation):
+ *  - `costFeaturesEnabled = memory.enabled !== false` (master switch).
  *  - `learningOutcomeEnabled(id) = costFeaturesEnabled && agent.learningOutcome.enabled`.
  *  - `correctionEnabled(id) = learningOutcomeEnabled(id) && agent.learningOutcome.correction.enabled`.
  *  - `recordOutboundMessage` is built ONLY when SOME agent has learning-outcome on
@@ -713,7 +713,7 @@ export function buildReactionWiringDeps(
   // Resolve the RAW channel-sender trust string — the channel-sender vocabulary,
   // NOT the tool-gate narrowing.
   //
-  // FLAG-2 (group reaction-spoof): `defaultTrustLevel` is the privilege of the ONE
+  // Group reaction-spoof guard: `defaultTrustLevel` is the privilege of the ONE
   // conversation PARTICIPANT (the inbound sender whose message triggered the reply),
   // NOT a blanket grant to every unmapped group member. Resolution order:
   //   1. an EXPLICITLY-mapped reactor keeps `senderTrustMap[reactorId]` (an
@@ -789,7 +789,7 @@ export function buildReactionWiringDeps(
     ? (messageId: string, scope: OutboundTrajectoryEntry): void => reactionTrajectoryMap.record(messageId, scope)
     : undefined;
 
-  // WR-01: one closure that cancels the timers of ALL THREE bounded resources.
+  // One closure that cancels the timers of ALL THREE bounded resources.
   // The daemon shutdown path invokes it beside injectionRateLimiter.destroy().
   const destroyReactionWiring = (): void => {
     reactionTrajectoryMap.destroy();

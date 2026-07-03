@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Co-located unit coverage for the surviving learning-verdict predicates in
+ * Co-located unit coverage for the learning-verdict predicates in
  * `obs-explain-learning-verdicts.ts` (`learnedSkillFailingVerdict` +
  * `synthesisAbstainedVerdict`). Both are BENIGN, rank below every acute cause, and
  * return `null` on an absent learning block so the frozen obs-explain fixtures
  * cannot regress.
- *
- * Phase 226 SIMPLIFY-04: the `userModelRevisedVerdict` (Phase 203) was DELETED — the
- * `userModelRevised` signal it keyed on was removed with its 0-emit event (the user-rep
- * revision path folded into the reflection engine in Phase 225). The reflection-abstain
- * verdict's detail was reworded from "skill-synthesis cron" to "reflection".
  *
  * @module
  */
@@ -21,7 +16,7 @@ import {
   synthesisAbstainedVerdict,
 } from "./obs-explain-learning-verdicts.js";
 
-/** A minimal learning signal with the P2 fields zeroed unless overridden. */
+/** A minimal learning signal with the skill fields zeroed unless overridden. */
 function learning(overrides: Partial<NonNullable<IncidentSignals["learning"]>> = {}): IncidentSignals {
   return {
     learning: {
@@ -35,7 +30,7 @@ function learning(overrides: Partial<NonNullable<IncidentSignals["learning"]>> =
   } as IncidentSignals;
 }
 
-describe("synthesisAbstainedVerdict (BENIGN — reworded to 'reflection' in Phase 226)", () => {
+describe("synthesisAbstainedVerdict (BENIGN reflection-abstain verdict)", () => {
   it("returns null when the learning block is absent / not abstained (no fixture regression)", () => {
     expect(synthesisAbstainedVerdict({} as IncidentSignals)).toBeNull();
     expect(synthesisAbstainedVerdict(learning())).toBeNull();
@@ -45,7 +40,7 @@ describe("synthesisAbstainedVerdict (BENIGN — reworded to 'reflection' in Phas
     const v = synthesisAbstainedVerdict(learning({ synthesisAbstained: true }));
     expect(v).not.toBeNull();
     expect(v!.code).toBe("synthesis_abstained_low_capability");
-    expect(v!.detail).toMatch(/reflection abstained/i); // reworded from "synthesis abstained"
+    expect(v!.detail).toMatch(/reflection abstained/i); // the detail names the reflection engine
     expect(v!.suggestedNextSteps.length).toBeGreaterThan(0);
   });
 

@@ -21,7 +21,7 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: false,
     fetchHistory: false,
     attachments: false,
-    // §17.2: Echo is the TestSink — no typing, no threads, no buttons.
+    // Echo is the TestSink — no typing, no threads, no buttons.
     typing: false,
     threads: false,
     buttons: "none",
@@ -29,10 +29,9 @@ const CAPABILITIES: ChannelCapability = {
   limits: {
     maxMessageChars: 10000,
   },
-  // Defensive declaration so the lifecycle reactor + replyToMetaKey
-  // single-source path (post-REPLY_TO_META_KEY Record deletion) does
-  // not silently disable echo replies in integration tests. Echo's
-  // adapter stores message IDs under this key.
+  // Defensive declaration so the lifecycle reactor's replyToMetaKey
+  // single-source path does not silently disable echo replies in
+  // integration tests. Echo's adapter stores message IDs under this key.
   replyToMetaKey: "echoMessageId",
 };
 

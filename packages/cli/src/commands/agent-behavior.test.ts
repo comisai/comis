@@ -283,7 +283,7 @@ describe("agent create initializes workspace", () => {
       config: { name: "basic-agent" },
     });
 
-    // 260611: third arg is the resolved data dir (COMIS_DATA_DIR) so the CLI's
+    // The third arg is the resolved data dir (COMIS_DATA_DIR) so the CLI's
     // workspace resolution matches the daemon's — undefined here (no env set).
     expect(vi.mocked(resolveWorkspaceDir)).toHaveBeenCalledWith(
       expect.objectContaining({ workspacePath: undefined }),

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the shared `fingerprint(s)` digest util (D4).
+ * Unit tests for the shared `fingerprint(s)` digest util.
  *
- * Pins the contract Plan 04's bounded `extractErrorText` suffix +
- * `resultDigest`, the `setup-gateway-admin` messageHash, and Phase 155's
- * `withDedup`/H2 all converge on:
+ * Pins the contract the bounded `extractErrorText` suffix + `resultDigest`,
+ * the `setup-gateway-admin` messageHash, and `withDedup` all converge on:
  *   - deterministic (same input → same output)
  *   - exactly 12 lowercase-hex chars (a sha256 prefix)
  *   - 1-byte input difference changes the output

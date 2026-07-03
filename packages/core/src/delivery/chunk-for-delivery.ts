@@ -51,8 +51,9 @@ const PLATFORMS_NEEDING_TABLE_CONVERSION = new Set(["telegram", "signal", "whats
 /**
  * Chunk text for delivery to a specific platform.
  *
- * Pure function -- no side effects, no adapter calls. Matches the chunking
- * logic previously inline in execution-pipeline.ts lines 661-686.
+ * Pure function -- no side effects, no adapter calls. Shared by the
+ * DeliveryService simple path and the execution pipeline so both produce
+ * identical chunk boundaries for the same input.
  *
  * @param text - The text to chunk (markdown or pre-formatted)
  * @param channelType - Target platform identifier
@@ -99,7 +100,7 @@ export function chunkForDelivery(
     });
   }
 
-  // Safety: never return empty array (design section 11.2)
+  // Safety: never return an empty array — delivery expects at least one chunk
   if (blocks.length === 0) {
     return [text];
   }

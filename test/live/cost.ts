@@ -2,13 +2,13 @@
 /**
  * Cost Governor — budget ceiling enforcement and secret-sweep utilities.
  *
- * Reused by cassette.ts, report.ts, and log-oracle.ts in later plans.
+ * Reused by cassette.ts, report.ts, and log-oracle.ts.
  *
  * Cost tiers (declared per-scenario):
  *   "$0"    — keyless: local embeddings, DuckDuckGo, structural checks, cassette replay
  *   "cent"  — 1–2 cheapest-model calls (e.g., Haiku/gpt-4o-mini/gemini-flash)
  *   "dollar" — judged multi-turn / modality round-trip
- *   "double" — matrix sweep / soak (Phase 148 territory)
+ *   "double" — matrix sweep / soak
  *
  * The governor checks budget BEFORE spawning each scenario and aborts with
  * SKIPPED(budget-exceeded) on breach. Default budget: $2.00, overridable via
@@ -42,7 +42,7 @@ const TIER_USD: Record<CostTier, number> = {
  * bare field names in serialized JSON like `"apiKey":null` or `"apiKey":"<param-name>"`.
  * A minimum value length of 4 chars avoids matching parameter-name placeholders.
  *
- * CR-01 fix: added `i` flag so `SK-CANARY-9F3X-DO-NOT-REVEAL` (uppercase) is matched
+ * The `i` flag is set so `SK-CANARY-9F3X-DO-NOT-REVEAL` (uppercase) is matched
  * in addition to the lowercase `sk-` prefix. Canary token format is SK-XXXXXXXX.
  */
 const SECRET_PATTERN =
@@ -60,7 +60,7 @@ export function scanForSecrets(content: string): string[] {
  * Assert no secrets are present in content, throwing on detection.
  * Matched values are REDACTED in the thrown error to prevent secondary leakage.
  *
- * T-134-02 (Information Disclosure): matched strings are never echoed.
+ * Information Disclosure guard: matched strings are never echoed.
  */
 export function assertNoSecrets(content: string, context = "content"): void {
   const found = scanForSecrets(content);
@@ -75,7 +75,7 @@ export function assertNoSecrets(content: string, context = "content"): void {
  * Cost Governor — accumulates declared scenario cost tiers and enforces the
  * COMIS_LIVE_BUDGET_USD ceiling before any scenario spawns.
  *
- * T-134-03 (Elevation of Privilege): parseFloat + isFinite guard; non-finite or
+ * Elevation of Privilege guard: parseFloat + isFinite guard; non-finite or
  * negative budget falls back to $2.00 — no negative budget bypass.
  */
 export class CostGovernor {

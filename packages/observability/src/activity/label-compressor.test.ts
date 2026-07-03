@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * label-compressor unit tests (spec §8.4). Proves the pure, one-pass,
+ * label-compressor unit tests. Proves the pure, one-pass,
  * idempotent display-shortener for URLs / ISO timestamps / long mcp_ tool
- * names, and — critically (Pitfall 2) — that it treats an already-redacted,
+ * names, and — critically — that it treats an already-redacted,
  * already-path-compacted string as a fixed point: it does NOT re-compact paths
  * (redactValue's job) and does NOT re-redact tokens (also redactValue's job).
  *
@@ -42,7 +42,7 @@ const CATEGORIES: ReadonlyArray<readonly [string, string, string]> = [
   ["plain word", "done", "done"],
 ];
 
-describe("compressLabel — per-category one-pass display shortening (§8.4)", () => {
+describe("compressLabel — per-category one-pass display shortening", () => {
   it.each(CATEGORIES)("compresses category: %s", (_name, input, expected) => {
     expect(compressLabel(input)).toBe(expected);
   });
@@ -73,7 +73,7 @@ describe("compressLabel — per-category one-pass display shortening (§8.4)", (
   });
 });
 
-describe("compressLabel — path fixed point (Pitfall 2: never re-compact redactValue output)", () => {
+describe("compressLabel — path fixed point (never re-compact redactValue output)", () => {
   it("treats a tilde-rooted path as a fixed point and does not trim it", () => {
     // redactValue already produced this `~`-rooted form. The compressor MUST
     // NOT shrink it to `foo/bar.ts` — that second-pass shrink breaks idempotency.
@@ -127,7 +127,7 @@ describe("compressLabel — output never grows relative to the input", () => {
   });
 });
 
-describe("compressLabel — hard-clamps to the 120-char schema cap (FIX 3)", () => {
+describe("compressLabel — hard-clamps to the 120-char schema cap", () => {
   it("clamps a label longer than 120 chars to at most 120, truncating the tail with an ellipsis", () => {
     // A label with no compressible shape (plain prose) that is far over the cap.
     // The ActivityEvent schema enforces defaultLabel.max(120); a longer label is

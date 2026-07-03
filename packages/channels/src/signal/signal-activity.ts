@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Signal DeleteAndRepost activity renderer (§7.2 / §18.3 row
- * "DeleteAndRepost"). Signal is the ONLY one of the 5 non-EditPlace channels
+ * Signal DeleteAndRepost activity renderer.
+ * Signal is the ONLY one of the 5 non-EditPlace channels
  * with a real `deleteMessage`, so this is the canonical DeleteAndRepost wiring
  * the strategy was designed for. Three parts, copying the established
  * `make<Ch>RenderActions` / `classify<Ch>Error` / `create<Ch>ActivityRenderer`
@@ -13,8 +13,8 @@
  *      live adapter returns `err(result.error)`, a raw signal-cli JSON-RPC
  *      `Error`. There is no reliable structural signal to disambiguate a
  *      retryable/permission case, so the classifier DEFAULTS to
- *      `{kind:"internal", cause:e}` (KISS — Pitfall 4; no invented rich
- *      classifier). Per §19.3: the raw RPC error `.message` is read for NOTHING
+ *      `{kind:"internal", cause:e}` (KISS — no invented rich
+ *      classifier). The raw RPC error `.message` is read for NOTHING
  *      user-facing — it selects the variant only and is NEVER rendered or logged
  *      as activity text. The S4 fixture proves the failure text is
  *      `❌ {errorKind}` (from `failureLabel`), not the RPC body.
@@ -59,8 +59,7 @@ import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
  * union. Signal's send/delete failures arrive as a raw signal-cli JSON-RPC
  * `Error` with no structured numeric code to read, so this DEFAULTS to `internal`
  * carrying the cause. The error is consulted for NOTHING that reaches the user —
- * it selects the variant only and is never rendered or logged as activity text
- * (§19.3).
+ * it selects the variant only and is never rendered or logged as activity text.
  */
 export function classifySignalError(e: unknown): ActivityRenderError {
   // signal-cli offers no structured code for these ops; there is no reliable
@@ -122,7 +121,7 @@ export function createSignalActivityRenderer(
     markers: deps.markers,
     // Signal has no button surface, so an approval frame appends the plain-text
     // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
-    // reposted message (§6.4.6). A non-approval frame yields "" (no append).
+    // reposted message. A non-approval frame yields "" (no append).
     buildPrompt: buildApprovalPrompt,
   });
 }

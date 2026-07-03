@@ -119,7 +119,7 @@ A full `docker-compose.yml` (with the optional `comis-web` dashboard and `comis-
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `DISCORD_BOT_TOKEN` | Discord bot token |
 | `SLACK_BOT_TOKEN` | Slack bot token |
-| `COMIS_GATEWAY_HOST` | Bind address **inside the container** (separate from the host-side `-p` mapping). Defaults to `0.0.0.0` since 1.0.25. On older images, set this explicitly so Docker port-forwarding can reach the daemon. |
+| `COMIS_GATEWAY_HOST` | Bind address **inside the container** (separate from the host-side `-p` mapping). Defaults to `0.0.0.0` in the image so Docker port-forwarding can reach the daemon. |
 | `COMIS_GATEWAY_PORT` | Gateway port (default `4766`) |
 | `COMIS_GATEWAY_TOKEN` | Optional bearer token for gateway auth |
 | `SECRETS_MASTER_KEY` | Auto-generated on first boot and written to `~/.comis/.env` (mode 0600). Back up this file — losing the key makes `secrets.db` permanently unreadable. Providing this variable explicitly overrides the auto-generated value. See [Secrets management](https://docs.comis.ai/operations/docker#secrets-management). |

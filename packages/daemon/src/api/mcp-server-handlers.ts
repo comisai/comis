@@ -183,7 +183,7 @@ export interface BuildMcpServerForClientDeps {
    *  root with MCP_RESOURCE_READ_LIMIT. */
   readonly resourceReadLimit: number;
   /**
-   * SECURITY (154-03) — the trust-flag-FREE direct invocation of the
+   * SECURITY — the trust-flag-FREE direct invocation of the
    * `obs.explain` ASSEMBLER (`assembleIncidentReportFromSources`), built at the
    * composition root over the obsStore + dataDir. The `obs_explain` MCP tool's
    * dispatch branch calls THIS (not {@link daemonRpcForMcpClient}) so it runs
@@ -204,7 +204,7 @@ export interface BuildMcpServerForClientDeps {
     params: Record<string, unknown>,
   ) => Promise<unknown>;
   /**
-   * SECURITY (161-02) — the trust-flag-FREE direct invocation of the
+   * SECURITY — the trust-flag-FREE direct invocation of the
    * `obs.fleet.health` ASSEMBLER (`assembleFleetHealthReport`), the cross-session
    * fleet sibling of {@link obsExplainForMcpClient}. Built at the composition
    * root over the obsStore + dataDir + boot.clock. The `obs_fleet_health` MCP
@@ -492,8 +492,8 @@ function buildDispatchCallback(args: {
     // including obs_explain below.)
     const safeParams: Record<string, unknown> = stripTrustLevel(argsRecord);
 
-    // ----- Step 4 (obs_explain, 154-03) -- direct-assembler dispatch ---------
-    // SECURITY: obs_explain reaches the Phase-153 IncidentReport with NO new
+    // ----- Step 4 (obs_explain) -- direct-assembler dispatch -----------------
+    // SECURITY: obs_explain reaches the IncidentReport assembler with NO new
     // privilege. It does NOT route through daemonRpcForMcpClient -> the
     // admin-gated obs.explain RPC; instead it invokes the trust-flag-FREE
     // assembler closure DIRECTLY under daemon authority. Its boundary is the
@@ -567,7 +567,7 @@ function buildDispatchCallback(args: {
       return { content: [{ type: "text", text: wrapped }] };
     }
 
-    // ----- Step 4 (obs_fleet_health, 161-02) -- direct-assembler dispatch -----
+    // ----- Step 4 (obs_fleet_health) -- direct-assembler dispatch -------------
     // SECURITY: the cross-session fleet sibling of obs_explain. It reaches the
     // FleetHealthReport with NO new privilege — it does NOT route through
     // daemonRpcForMcpClient -> the admin-gated obs.fleet.health RPC; instead it

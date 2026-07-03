@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 219 Plan 08 (WT-01): the executeSubAgent worktree create/run/clean seam.
+ * The executeSubAgent worktree create/run/clean seam.
  *
- * These cases fail on the pre-patch tree (`./worktree-spawn-run.js` does not
- * exist) — RED proof. They assert the END-TO-END wiring executeSubAgent uses when
+ * These cases assert the END-TO-END wiring executeSubAgent uses when
  * `meta.worktree === true`:
  *   (a) resolveWorktreeDir confines the worktree UNDER the child's jailed
- *       workspace (T-219-11 — never an escape);
+ *       workspace (never an escape);
  *   (b) prepareWorktree ACTUALLY calls the lifecycle's createWorktree (honest
  *       wiring, not dead code) and registers the entry, returning the worktree dir
  *       the child must run IN;
@@ -60,7 +59,7 @@ function makeGit(opts: {
 }
 
 describe("resolveWorktreeDir", () => {
-  it("confines the worktree dir UNDER the child's jailed workspace (T-219-11)", () => {
+  it("confines the worktree dir UNDER the child's jailed workspace", () => {
     const dir = resolveWorktreeDir("/data/workspace-researcher", "run-abc");
     expect(dir.startsWith("/data/workspace-researcher/")).toBe(true);
     expect(dir).toContain("run-abc");
@@ -71,7 +70,7 @@ describe("resolveWorktreeDir", () => {
   });
 });
 
-describe("prepareWorktree (WT-01)", () => {
+describe("prepareWorktree", () => {
   it("ACTUALLY creates the worktree and registers it, returning the dir the child runs IN (honest wiring)", async () => {
     const reg = createWorktreeRegistry();
     const { git, calls } = makeGit({});

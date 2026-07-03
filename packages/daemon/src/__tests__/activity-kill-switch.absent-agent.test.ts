@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 acceptance — fail-CLOSED guard for the kill-switch slice
+ * Acceptance — fail-CLOSED guard for the kill-switch slice
  * resolver (injection regression guard).
  *
  * The sibling `default-off` test seeds `agents.default.activity = {channels:{}}`
@@ -11,8 +11,8 @@
  * default-fallback id mismatch — cf. the `createExecutor` defaultAgentId
  * fallback). A getter returning `undefined` there is read by the coordinator as
  * "no suppression" (`activity-turn-coordinator.ts`: `if (!ks) return false`) →
- * activity renders UNCONDITIONALLY: fail-OPEN, the opposite of the §22.2 Day-0
- * mandate.
+ * activity renders UNCONDITIONALLY: fail-OPEN, the opposite of the kill-switch's
+ * fail-closed contract.
  *
  * `resolveActivityKillSwitchSlice` is the production resolver the daemon getter
  * now delegates to. A security kill-switch must fail CLOSED by construction:
@@ -48,7 +48,7 @@ const silentLogger = {
   },
 } as never;
 
-describe("§22.2 resolveActivityKillSwitchSlice fails closed", () => {
+describe("resolveActivityKillSwitchSlice fails closed", () => {
   it("returns a suppressing slice (never undefined) for an agentId absent from the map", () => {
     const agents: AgentActivityConfigMap = {
       default: { activity: { emergencyDisabled: false, channels: {} } },

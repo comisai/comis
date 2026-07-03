@@ -20,7 +20,7 @@ import { readConfigFileObservation, type ConfigFileObservation } from "./read-co
 
 // ---------------------------------------------------------------------------
 // Emit config.observe records at daemon bootstrap config-read path. Each
-// record carries the full design-§9.2 forensics shape (file-stat + LKG +
+// record carries the full forensics shape (file-stat + LKG +
 // backup + recovery). Dispatch model: `Promise.allSettled` so a single
 // append failure cannot abort daemon boot.
 // ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ import { readConfigFileObservation, type ConfigFileObservation } from "./read-co
 /** Parameters for `emitBootstrapConfigObserveRecords`. */
 export interface EmitBootstrapConfigObserveRecordsParams {
   /**
-   * §9.2 file-state observations, one per *requested* config path
+   * File-state observations, one per *requested* config path
    * (NOT one per existing path — missing paths produce `exists:false`
    * records). Built by the daemon's `readConfigFileObservation`
    * aggregator BEFORE the `existsSync` filter at the call site.
@@ -60,7 +60,7 @@ export interface EmitBootstrapConfigObserveRecordsParams {
 }
 
 /**
- * Aggregate the bootstrap config-read step: build §9.2 observations
+ * Aggregate the bootstrap config-read step: build observations
  * for every requested path (BEFORE the existsSync filter), filter
  * existing paths for the actual bootstrap call, run `_bootstrap`,
  * build the coarse per-path validity map, and emit the
@@ -101,7 +101,7 @@ export async function runConfigBootstrapAndEmitObserve<TBoot>(params: {
 /**
  * Emit one `event: "config.observe"` audit-log record per observation
  * (one per *requested* config path, including missing ones). Each
- * record carries the design-§9.2 forensics shape projected from the
+ * record carries the forensics shape projected from the
  * observation cluster (file-stat block + LKG triple + backup triple)
  * plus the per-path validity bit.
  *

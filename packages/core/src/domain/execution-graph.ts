@@ -59,17 +59,16 @@ export const NodeTypeIdSchema = z.enum([
 export type NodeTypeId = z.infer<typeof NodeTypeIdSchema>;
 
 /**
- * Required-config shape hint per built-in node type (OR-01, v2.19).
+ * Required-config shape hint per built-in node type.
  *
  * Surfaced in the both-or-neither validation error so a weak model that
  * declares a typed driver (e.g. `typeId:"debate"`) but forgets its
- * `typeConfig` is told EXACTLY what config to add — instead of the old
+ * `typeConfig` is told EXACTLY what config to add — instead of a
  * generic "omit both for a regular single-agent node" steer, which silently
- * demoted the user's debate/vote/etc. to a plain agent and destroyed intent
- * (the live bull_bear_debate attempt-1 failure). These are descriptive hints,
+ * demotes the user's debate/vote/etc. to a plain agent and destroys intent
+ * (an observed live failure). These are descriptive hints,
  * not the authoritative driver schemas (those live in the orchestrator and are
  * validated at the RPC layer); `?` marks an optional field.
- * See design/small-model-orchestration-fidelity.md §4.
  */
 const TYPE_CONFIG_HINTS: Record<NodeTypeId, string> = {
   agent: `{ "agent": "agent-id" }`,
@@ -113,7 +112,7 @@ export const GraphNodeSchema = z.strictObject({
   timeoutMs: z.number().int().positive().optional(),
   /** Maximum agentic steps for the sub-agent */
   maxSteps: z.number().int().positive().optional(),
-  /** Per-spawn token budget for this node's sub-agent. Becomes the child's BudgetGuard per-execution cap; a breach fails THIS node honoring on_failure (BUDGET-01/02). */
+  /** Per-spawn token budget for this node's sub-agent. Becomes the child's BudgetGuard per-execution cap; a breach fails THIS node honoring on_failure. */
   tokenBudget: z.number().int().positive().optional(),
   /** Barrier mode for fan-in nodes: all (default), majority (>50%), best-effort (any completed) */
   barrierMode: z.enum(["all", "majority", "best-effort"]).default("all"),
@@ -128,7 +127,7 @@ export const GraphNodeSchema = z.strictObject({
   /** Type-specific configuration -- validated against the driver's configSchema at the RPC layer */
   typeConfig: z.record(z.string(), z.unknown()).optional(),
 }).superRefine((n, ctx) => {
-  // both-or-neither (OR-01). When violated, emit a TYPE-AWARE message that steers
+  // typeId/typeConfig are both-or-neither. When violated, emit a TYPE-AWARE message that steers
   // the model toward the correct self-correction instead of a generic both-or-neither
   // string that mis-advises demotion (see TYPE_CONFIG_HINTS above).
   const hasTypeId = n.typeId !== undefined;

@@ -5,17 +5,17 @@
  * `SingleAgentDeps` is actually forwarded into the `createPiExecutor(...)` deps
  * object literal.
  *
- * The DIST-03 read-side carry-in (Phase 173, C1→C2) activates the dormant
+ * The provenance read-side wiring activates the
  * provenance down-weighting pass (memory-recall.ts Step 5c). That pass is gated
  * `if (deps.provenanceStore != null)` — so if the daemon composition omits the
  * forward, the pass stays DORMANT in production even though the adapter compiles
- * and the types thread (the milestone's #1 recurring failure class:
- * "built-but-not-wired", hit 3× before). This is the runtime proof that the
+ * and the types thread (the recurring failure class:
+ * "built-but-not-wired"). This is the runtime proof that the
  * threaded value ARRIVES, not merely that it type-checks.
  *
- * Mirrors setup-agents-pinned-wiring.test.ts 1:1. RED on pre-fix code (the
- * createPiExecutor deps literal omits provenanceStore), GREEN once the forward is
- * added on the sibling-stores line in setup-agents-runtime.ts.
+ * Mirrors setup-agents-pinned-wiring.test.ts 1:1. Regression guard: without the
+ * forward the createPiExecutor deps literal omits provenanceStore; the forward
+ * rides the sibling-stores line in setup-agents-runtime.ts.
  *
  * @module
  */
@@ -43,7 +43,7 @@ vi.mock("@comis/agent", () => ({
   createAuthRotationAdapter: vi.fn(() => ({})),
   resolveCompactionModel: vi.fn(() => ""),
   resolveOperationDefaults: vi.fn(() => ({ mid: "concrete-model" })),
-  // KNOB-01 + FLOOR-01 (176-05): the boot-honesty block runs unconditionally in
+  // The boot-honesty block runs unconditionally in
   // setupSingleAgent — stubbed inert here (this suite pins a different wire).
   compareServedWindowForProvider: vi.fn(() => undefined),
   collectAgentBootWindowInfo: vi.fn(() => ({})),
@@ -157,16 +157,16 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
 
 // --- Test ------------------------------------------------------------------
 
-describe("setupSingleAgent forwards provenanceStore into createPiExecutor (DIST-03 built-but-not-wired guard)", () => {
+describe("setupSingleAgent forwards provenanceStore into createPiExecutor (built-but-not-wired guard)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("passes the SingleAgentDeps.provenanceStore through to the executor deps so the DIST-03 provenance pass fires at runtime", async () => {
-    // RED on pre-fix code: the createPiExecutor object literal omits provenanceStore,
+  it("passes the SingleAgentDeps.provenanceStore through to the executor deps so the provenance down-weighting pass fires at runtime", async () => {
+    // Without the forward the createPiExecutor object literal omits provenanceStore,
     // so memory-recall's Step 5c gate (deps.provenanceStore != null) is ALWAYS false in
-    // the live daemon — the down-weighting is BUILT but DORMANT. GREEN once the forward
-    // is added on the sibling-stores line in setup-agents-runtime.ts.
+    // the live daemon — the down-weighting is BUILT but DORMANT. The forward rides
+    // the sibling-stores line in setup-agents-runtime.ts.
     const agentId = "default";
     const container = makeContainer(agentId);
     const deps = makeDeps(container);

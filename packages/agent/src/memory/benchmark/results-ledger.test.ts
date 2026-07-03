@@ -3,15 +3,14 @@
  * RED-first co-located unit tests for the append-only results ledger -- the
  * dated, append-only, NEVER-OVERWRITTEN results history.
  *
- * THE LOAD-BEARING TEST (Test 3): the never-overwrite invariant. The corrected
- * finding (fs-safe.ts:436-452) is that
+ * THE LOAD-BEARING TEST (Test 3): the never-overwrite invariant. The key fact
+ * (fs-safe.ts:436-452) is that
  * `writeRegularFile`'s default `unlinkExisting:true` SILENTLY OVERWRITES a
  * pre-existing dated file -- the O_EXCL there is anti-TOCTOU-symlink, NOT
  * anti-clobber. So the never-overwrite invariant is enforced by an explicit
  * `existsSync` guard in `appendLedgerRow`, and this test proves the REAL
  * semantics: a 2nd write for an already-written dated path is REFUSED (ok:false)
- * AND the 1st file's bytes are byte-identical to the first read. Authored to
- * FAIL on pre-patch code (no module exists), per CLAUDE.md Tests-First.
+ * AND the 1st file's bytes are byte-identical to the first read.
  *
  * @module
  */
@@ -61,8 +60,8 @@ function makeRowInput(overrides: Partial<Omit<LedgerRow, "timestamp">> = {}): Om
   return {
     date: "2026-06-02",
     commit: "abc1234",
-    branch: "v2.8-prove-climb",
-    systemVersions: { comis: "2.8.0", pi: "0.78.0" },
+    branch: "bench/prove-climb",
+    systemVersions: { comis: "1.0.0", pi: "0.78.0" },
     tier: "head-to-head",
     judgeSpread: makeSpread(),
     n: 120,
@@ -83,11 +82,11 @@ describe("results-ledger -- buildLedgerRow (pure dated-row builder)", () => {
     // Every contract field carried through, field-by-field.
     expect(row.date).toBe("2026-06-02");
     expect(row.commit).toBe("abc1234");
-    expect(row.branch).toBe("v2.8-prove-climb");
+    expect(row.branch).toBe("bench/prove-climb");
     expect(row.tier).toBe("head-to-head");
     expect(row.n).toBe(120);
     expect(row.significance).toEqual({ n: 120, pValue: 0.012, significant: true });
-    expect(row.systemVersions).toEqual({ comis: "2.8.0", pi: "0.78.0" });
+    expect(row.systemVersions).toEqual({ comis: "1.0.0", pi: "0.78.0" });
     expect(row.judgeSpread).toHaveLength(2);
     expect(row.judgeSpread[0]).toEqual({
       category: "single-hop",
@@ -127,7 +126,7 @@ describe("results-ledger -- buildLedgerRow (pure dated-row builder)", () => {
     input.cost.totalTokensPerQuery = -1;
 
     expect(row.judgeSpread[0].judgeA).toBe(71.1);
-    expect(row.systemVersions.comis).toBe("2.8.0");
+    expect(row.systemVersions.comis).toBe("1.0.0");
     expect(row.cost.totalTokensPerQuery).toBe(500);
   });
 
@@ -140,7 +139,7 @@ describe("results-ledger -- buildLedgerRow (pure dated-row builder)", () => {
     // Hang an off-contract secret on the input + a userinfo-bearing model URI in systemVersions.
     const polluted = makeRowInput({
       systemVersions: {
-        comis: "2.8.0",
+        comis: "1.0.0",
         // A free-form model URI carrying embedded credentials -- must be sanitized.
         embedding: "https://user:secret@host.example/v1/models/text-embedding",
       },
@@ -159,11 +158,11 @@ describe("results-ledger -- buildLedgerRow (pure dated-row builder)", () => {
     // The sanitized URI keeps scheme+host+path but drops the userinfo.
     expect(row.systemVersions.embedding).toBe("https://host.example/v1/models/text-embedding");
     // The legitimate version survives.
-    expect(row.systemVersions.comis).toBe("2.8.0");
+    expect(row.systemVersions.comis).toBe("1.0.0");
   });
 });
 
-describe("results-ledger -- appendLedgerRow (the corrected never-overwrite ledger)", () => {
+describe("results-ledger -- appendLedgerRow (the never-overwrite ledger)", () => {
   it("Test 3 (LOAD-BEARING never-overwrite): a 2nd write for the SAME dated path is REFUSED and the 1st file's bytes are UNCHANGED", () => {
     const dir = mkdtempSync(join(tmpdir(), "comis-ledger-overwrite-"));
     try {
@@ -179,7 +178,7 @@ describe("results-ledger -- appendLedgerRow (the corrected never-overwrite ledge
       const row1Different = buildLedgerRow(makeRowInput({ n: 999 }), NOW_MS + 5_000);
       const second = appendLedgerRow({ historyDir: dir, row: row1Different });
 
-      // The corrected explicit existsSync guard refuses the clobber.
+      // The explicit existsSync guard refuses the clobber.
       expect(second.ok, "a 2nd write for an existing dated path is REFUSED").toBe(false);
 
       // The on-disk file's bytes are byte-identical to the first read (no silent overwrite).

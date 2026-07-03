@@ -10,11 +10,11 @@
  * every recall (lanes fired, fused order, rerank pre/post scores, the final
  * ranked set with per-memory score breakdowns + include/exclude reasons), but
  * the CLI table view reads only `traceId/sessionKey/finalCount/ts`
- * (memory.ts:276-285) — everything else is "captured-but-unread"
- * (HINDSIGHT_VS_COMIS.md N4). This analyzer is the missing reducer: it folds the
+ * (memory.ts:276-285) — everything else is "captured-but-unread".
+ * This analyzer is the missing reducer: it folds the
  * discarded `ranked[].breakdown`, `rerank.pre/postScores`, `ranked[].reason`,
  * `lanes`, and `degradations` into a `TraceQualityView` — the diagnostic
- * dashboard a recall@k regression in a later phase is read against.
+ * dashboard a future recall@k regression is read against.
  *
  * ARCHITECTURAL CUT (architecture-graph.test.ts:133 — agent depends on
  * {shared,core,observability,scheduler}, NO memory edge): this file imports ONLY

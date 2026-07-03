@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DEL-03 (Phase 192 / Plan 03) — the per-channelType video-size limit table +
- * resolver + link-support map.
+ * The per-channelType video-size limit table + resolver + link-support map.
  *
- * RED-first (AGENTS.md §2.10): these assertions describe the behavior the new
- * `video-delivery-limits.ts` must provide. They FAIL to even import before the
- * module exists.
- *
- * The contract under test (DEL-03 must_haves):
+ * The contract under test:
  *   - the limit is PER-channelType (each platform's documented bot/upload limit),
  *     NOT one hardcoded global, NOT an invented byte table scattered across
  *     adapters;
@@ -27,7 +22,7 @@ import {
 
 const MB = 1024 * 1024;
 
-describe("video-delivery-limits — per-channelType limit table + resolver (DEL-03)", () => {
+describe("video-delivery-limits — per-channelType limit table + resolver", () => {
   // ─── Test 1: per-channelType documented limits; unknown → default; never throws ───
   it("resolves each channel's documented limit and falls back to the 25MB default for an unknown channelType", () => {
     // Telegram's bot-upload limit (~50MB) is well above Discord's free cap (~25MB):
@@ -45,7 +40,7 @@ describe("video-delivery-limits — per-channelType limit table + resolver (DEL-
   });
 
   // ─── Test 2: an explicit config override wins over the per-channel constant ───
-  it("an explicit maxVideoBytes override wins over the per-channel constant (DEL-03 'overridable via maxVideoBytes')", () => {
+  it("an explicit maxVideoBytes override wins over the per-channel constant (overridable via maxVideoBytes)", () => {
     const override = 8 * MB;
     // Telegram's constant is ~50MB, but the operator-supplied override clamps it to 8MB.
     expect(resolveVideoSizeLimit("telegram", override)).toBe(override);
@@ -53,12 +48,12 @@ describe("video-delivery-limits — per-channelType limit table + resolver (DEL-
     expect(resolveVideoSizeLimit("totally-unknown-channel", override)).toBe(override);
   });
 
-  // ─── Test 2b: proto-pollution-safe (SEC-04 defense-in-depth) ───
+  // ─── Test 2b: proto-pollution-safe ───
   it("guards the table lookup against prototype-pollution keys (never reads the prototype chain)", () => {
     // A `__proto__` / `constructor` / `prototype` channelType must NOT read a
     // prototype-chain member — it falls back to the default, exactly like any
     // other unknown key. (channelType is platform-internal, but the guard is
-    // cheap defense-in-depth — reuse the shipped isBlockedObjectKey / SEC-04 guard.)
+    // cheap defense-in-depth — reuse the shipped isBlockedObjectKey guard.)
     expect(resolveVideoSizeLimit("__proto__", undefined)).toBe(25 * MB);
     expect(resolveVideoSizeLimit("constructor", undefined)).toBe(25 * MB);
     expect(resolveVideoSizeLimit("prototype", undefined)).toBe(25 * MB);
@@ -104,7 +99,7 @@ describe("video-delivery-limits — per-channelType limit table + resolver (DEL-
       expect(msg.policy).toBe("link");
       expect(msg.text).toContain("https://provider.example/video/xyz?token=abc");
       expect(msg.text).toContain(FILE_PATH); // saved path always present (recoverable)
-      expect(msg.text).not.toContain("[Attachment too large"); // never the v2.23 marker
+      expect(msg.text).not.toContain("[Attachment too large"); // never the silent-drop marker
     });
 
     it("notice policy: a notice-only channel (or no sourceUrl) carries the saved workspace path, never a link", () => {
@@ -133,8 +128,8 @@ describe("video-delivery-limits — per-channelType limit table + resolver (DEL-
       expect(noUrl.text).not.toContain("[Attachment too large");
     });
 
-    // ─── WR-03 (Phase 192): a keyed/private provider URL is NOT a shareable link ───
-    it("WR-03: a Veo keyed-download host degrades to notice+path, NEVER a (dead/key-needing) link", () => {
+    // ─── a keyed/private provider URL is NOT a shareable link ───
+    it("a Veo keyed-download host degrades to notice+path, NEVER a (dead/key-needing) link", () => {
       // Veo's out.sourceUrl is the UN-keyed video.uri on the Google
       // generativelanguage download host: it 403s without the &key= the adapter
       // withholds. Sharing it as a `link` hands the user a DEAD url (and a keyed
@@ -151,7 +146,7 @@ describe("video-delivery-limits — per-channelType limit table + resolver (DEL-
       expect(veo.text).not.toContain("generativelanguage.googleapis.com");
     });
 
-    it("WR-03: the xAI/Grok private download host also degrades to notice+path, not a link", () => {
+    it("the xAI/Grok private download host also degrades to notice+path, not a link", () => {
       const grok = buildOversizedDegradeMessage({
         channelType: "discord",
         sizeBytes: 60 * MB,
@@ -164,7 +159,7 @@ describe("video-delivery-limits — per-channelType limit table + resolver (DEL-
       expect(grok.text).not.toContain("api.x.ai");
     });
 
-    it("WR-03: a publicly-fetchable FAL CDN URL is STILL shared as a link (regression guard)", () => {
+    it("a publicly-fetchable FAL CDN URL is STILL shared as a link (regression guard)", () => {
       // FAL renders to a public CDN (fal.media / v3.fal.media) needing no secret —
       // that link IS shareable and must remain the `link` policy (don't over-degrade).
       const fal = buildOversizedDegradeMessage({

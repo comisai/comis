@@ -279,10 +279,10 @@ describe("secrets-domain contracts", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 03-02 — restart-truth contract fields
+// Restart-truth contract fields
 // ---------------------------------------------------------------------------
 
-describe("03-02 — restart-truth contract fields", () => {
+describe("restart-truth contract fields", () => {
   // --- SecretsSetContract restarting field ----------------------------------
 
   it("SecretsSetContract response parses an object with name, stored, and restarting fields", () => {

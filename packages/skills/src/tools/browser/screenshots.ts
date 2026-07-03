@@ -7,9 +7,7 @@
  * images exceeding screenshotMaxSide), supports element-scoped capture,
  * and generates PDFs.
  *
- * Ported from Comis browser/screenshot.ts +
- * pw-tools-core.interactions.ts (takeScreenshotViaPlaywright, pdfViaPlaywright),
- * simplified without sharp-based resize (uses Playwright's built-in capture).
+ * Resize uses Playwright's built-in capture rather than a sharp-based resize.
  *
  * @module
  */

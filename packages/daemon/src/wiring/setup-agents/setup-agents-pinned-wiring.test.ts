@@ -4,18 +4,17 @@
  * boot path and asserts that `pinnedStore` from `SingleAgentDeps` is actually
  * forwarded into the `createPiExecutor(...)` deps object literal.
  *
- * Pins the same field-plumbing failure mode caught by the earlier wiring tests
- * (tuned-alpha / relationship / userrep): a store can be threaded through the
- * TYPES and POPULATED in setup-agents-registry.ts, yet the `createPiExecutor`
+ * Pins the same field-plumbing failure mode caught by the sibling wiring tests:
+ * a store can be threaded through the TYPES and POPULATED in
+ * setup-agents-registry.ts, yet the `createPiExecutor`
  * construction site in setup-agents-runtime.ts can still OMIT it — so in the live
  * daemon `deps.pinnedStore` is always `undefined`, the pinned-first recall lane
  * (memory-recall.ts Step 0) is gated `if (cfg_pinned?.enabled === true &&
  * deps.pinnedStore !== undefined)` and NEVER fires, and pinned memories are
- * silently absent from every agent response (R6 BLOCKER).
+ * silently absent from every agent response (a blocking defect).
  *
- * Mirrors setup-agents-tuned-alpha-wiring.test.ts 1:1. RED on pre-fix code
- * (the createPiExecutor deps literal omits pinnedStore), GREEN once the forward
- * is added.
+ * Regression guard: without the forward the createPiExecutor deps literal omits
+ * pinnedStore.
  *
  * @module
  */
@@ -43,7 +42,7 @@ vi.mock("@comis/agent", () => ({
   createAuthRotationAdapter: vi.fn(() => ({})),
   resolveCompactionModel: vi.fn(() => ""),
   resolveOperationDefaults: vi.fn(() => ({ mid: "concrete-model" })),
-  // KNOB-01 + FLOOR-01 (176-05): the boot-honesty block runs unconditionally in
+  // The boot-honesty block runs unconditionally in
   // setupSingleAgent — stubbed inert here (this suite pins a different wire).
   compareServedWindowForProvider: vi.fn(() => undefined),
   collectAgentBootWindowInfo: vi.fn(() => ({})),
@@ -159,16 +158,16 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
 
 // --- Test ------------------------------------------------------------------
 
-describe("setupSingleAgent forwards pinnedStore into createPiExecutor (R6 blocker closure)", () => {
+describe("setupSingleAgent forwards pinnedStore into createPiExecutor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("passes the SingleAgentDeps.pinnedStore through to the executor deps so the pinned-first recall lane fires at runtime", async () => {
-    // RED on pre-fix code: the createPiExecutor object literal omits pinnedStore,
+    // Without the forward the createPiExecutor object literal omits pinnedStore,
     // so memory-recall's Step 0 gate (cfg_pinned?.enabled && deps.pinnedStore !== undefined)
     // is ALWAYS false in the live daemon — pinned memories are silently absent from every
-    // agent response. GREEN once the forward is added on the sibling-stores line.
+    // agent response. The forward rides the sibling-stores line.
     const agentId = "default";
     const container = makeContainer(agentId);
     const deps = makeDeps(container);

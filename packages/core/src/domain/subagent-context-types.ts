@@ -100,7 +100,7 @@ export interface SpawnPacket {
    *  Child agents restore these into their DiscoveryTracker so previously-discovered
    *  tools are immediately available without re-discovery. */
   discoveredDeferredTools?: string[];
-  /** Inherited conversation language (DET-02 tag); auto-populated from parent. */
+  /** Inherited conversation language tag; auto-populated from parent. */
   language?: string;
   /** Cached prompt state from parent for prefix sharing.
    *  When present and model/provider match, sub-agent reuses parent's frozen
@@ -113,7 +113,7 @@ export interface SpawnPacket {
     model: string;
     provider: string;
     cacheRetention: string | undefined;
-    /** 2.1: Timestamp (ms since epoch) when the parent last confirmed a cache write.
+    /** Timestamp (ms since epoch) when the parent last confirmed a cache write.
      *  Used by the TTL expiry guard in sub-agents to disable skipCacheWrite when
      *  the shared prefix cache has likely expired. */
     cacheWriteTimestamp?: number;
@@ -167,8 +167,8 @@ export interface SubAgentSpawnPreparedEvent {
 
 /**
  * Emitted when a spawn request is denied. The per-caller gates emit
- * `depth_exceeded`/`children_exceeded`/`queue_full`/`queue_timeout`; the Phase-213
- * tree-wide spawn ceiling (CEIL-01, `boundedAutonomy.tryAcquireSpawn`) emits the
+ * `depth_exceeded`/`children_exceeded`/`queue_full`/`queue_timeout`; the
+ * tree-wide spawn ceiling (`boundedAutonomy.tryAcquireSpawn`) emits the
  * `ceiling_*` reasons so an observer can distinguish a tree-wide bound (the whole
  * spawn tree, keyed on `rootRunId`) from a single caller's depth/fan-out gate.
  */
@@ -181,7 +181,7 @@ export interface SubAgentSpawnRejectedEvent {
     | "children_exceeded"
     | "queue_full"
     | "queue_timeout"
-    // Tree-wide ceiling (CEIL-01) — concurrency/depth/fanout across the whole tree.
+    // Tree-wide ceiling — concurrency/depth/fanout across the whole tree.
     | "ceiling_concurrency"
     | "ceiling_depth"
     | "ceiling_fanout";

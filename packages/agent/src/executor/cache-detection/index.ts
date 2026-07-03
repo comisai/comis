@@ -2,9 +2,8 @@
 /**
  * Cache-break detection module.
  *
- * Barrel re-export of the canonical public API of the former
- * cache-break-detection.ts monolith. No aliases — every export keeps
- * its canonical name.
+ * Barrel re-export of the cache-break detection public API.
+ * No aliases — every export keeps its canonical name.
  *
  * @module
  */

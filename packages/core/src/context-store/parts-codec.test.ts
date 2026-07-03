@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Golden per-provider round-trip + pairing + F3 tests for the LCD parts codec
- * (Phase 127 Plan 02 — the F2/F3 heart).
+ * Golden per-provider round-trip + pairing + reasoning-exclusion tests for the
+ * LCD parts codec.
  *
- * RED-first: these fixtures pin the lossless `partsToMessage(messageToParts(msg))`
- * round-trip contract BEFORE the codec body exists, so a regression cannot be
- * absorbed silently (RESEARCH Open Question 3: inline hand-written fixtures, NOT
+ * These fixtures pin the lossless `partsToMessage(messageToParts(msg))`
+ * round-trip contract, so a regression cannot be
+ * absorbed silently (inline hand-written fixtures, NOT
  * auto-snapshots that `-u` would rubber-stamp).
  *
  * The fixtures build the CANONICAL pi-ai `Message` shape (role `"assistant"`
@@ -17,11 +17,11 @@
  * the SAME canonical shape and differ only in the `api`/`provider`/`model`/
  * signature fields (that divergence is pi-ai's concern, not the codec's).
  *
- * The O2 pairing invariant (a reconstructed assistant `ToolCall.id` ===
+ * The pairing invariant (a reconstructed assistant `ToolCall.id` ===
  * the paired `ToolResultMessage.toolCallId`) is asserted INLINE here: the
  * assembled-shape pairing helper is module-internal to
- * `observability/src/cache-trace/stream-fn-wrapper.ts` and must NOT be imported
- * (RESEARCH Pitfall 4) — the tiny pairing check is replicated below.
+ * `observability/src/cache-trace/stream-fn-wrapper.ts` and must NOT be
+ * imported — the tiny pairing check is replicated below.
  *
  * @module
  */
@@ -78,7 +78,7 @@ function roundTrip(msg: Message): Message {
 }
 
 /**
- * Inline replica of the O2 tool_use<->tool_result pairing gate (the
+ * Inline replica of the tool_use<->tool_result pairing gate (the
  * assembled-shape pairing helper, stream-fn-wrapper.ts:146-206) — NOT imported
  * (module-internal). Collect every assistant `toolCall` id, collect every
  * top-level `toolResult` `toolCallId`, and assert every tool-result id has a
@@ -110,7 +110,7 @@ function assertPaired(messages: Message[]): void {
 // model + the signature fields each family carries. Each covers: a user text
 // message, an assistant message with a stable-id toolCall, the paired top-level
 // ToolResultMessage (isError:false), an assistant ThinkingContent reasoning
-// block (F3), and an ImageContent (F1 file fidelity).
+// block, and an ImageContent (verbatim file fidelity).
 
 const ANTHROPIC_MESSAGES: Message[] = [
   {
@@ -225,11 +225,11 @@ const PROVIDER_FIXTURES: Array<{ name: string; messages: Message[] }> = [
 
 // --- Tests -----------------------------------------------------------------
 
-describe("parts-codec — golden per-provider round-trip (F2)", () => {
+describe("parts-codec — golden per-provider lossless round-trip", () => {
   for (const { name, messages } of PROVIDER_FIXTURES) {
     it(`reconstructs every ${name} canonical message losslessly with stable ids`, () => {
       for (const msg of messages) {
-        // F3: the reconstructed visible content of an assistant message must
+        // The reconstructed visible content of an assistant message must
         // not re-emit the thinking block, so compare the EXPECTED reconstruction
         // (source minus any thinking block) rather than the raw source.
         const expected = stripVisibleReasoning(msg);
@@ -248,7 +248,7 @@ describe("parts-codec — golden per-provider round-trip (F2)", () => {
   });
 });
 
-describe("parts-codec — F3 reasoning exclusion", () => {
+describe("parts-codec — reasoning exclusion from visible content", () => {
   it("emits a reasoning part marked topLevelReasoningOnly for an assistant thinking block", () => {
     const assistant = ANTHROPIC_MESSAGES[1] as AssistantMessage;
     const parts = messageToParts(assistant);
@@ -265,7 +265,7 @@ describe("parts-codec — F3 reasoning exclusion", () => {
   });
 });
 
-describe("parts-codec — F1 verbatim raw-block capture", () => {
+describe("parts-codec — verbatim raw-block capture", () => {
   it("captures a non-undefined metadata.raw deep-equal to the source block for every part", () => {
     const assistant = ANTHROPIC_MESSAGES[1] as AssistantMessage;
     const parts = messageToParts(assistant);
@@ -285,15 +285,14 @@ describe("parts-codec — F1 verbatim raw-block capture", () => {
   });
 });
 
-describe("parts-codec — blockFromPart never yields a sparse block (LCD-codec turn-abort regression 2026-06-14)", () => {
+describe("parts-codec — blockFromPart never yields a sparse block (a sparse block aborts the whole turn)", () => {
   // A stored part whose `metadata.raw` is absent/null (and whose kind has no
   // typed-column reconstruction) MUST NOT decode to an `undefined`/`null`
   // content block. A sparse block crashes every downstream `.type` consumer
   // (token estimator, transcript-repair) inside the LCD assembler's
   // transformContext — BEFORE the LLM call — aborting the whole turn and
-  // surfacing to the user as a silent "AI didn't produce a response" (the
-  // openai-codex failure on a fresh VPS install). Reconstruct from typed
-  // columns, or emit a valid empty block.
+  // surfacing to the user as a silent "AI didn't produce a response".
+  // Reconstruct from typed columns, or emit a valid empty block.
   it("decodes a raw-ABSENT text part to a valid block (not undefined)", () => {
     const part = { kind: "text", metadata: {} } as unknown as LcdMessagePart;
     const msg = partsToMessage(rowFromParts("assistant", [part]));
@@ -330,10 +329,11 @@ describe("parts-codec — blockFromPart never yields a sparse block (LCD-codec t
   });
 });
 
-describe("parts-codec — O2 stable-id pairing (inline invariant)", () => {
+describe("parts-codec — stable-id tool-call pairing (inline invariant)", () => {
   it("keeps reconstructed toolCall.id === paired ToolResultMessage.toolCallId (no orphan, no drift)", () => {
     // Reconstruct the full anthropic multi-step turn and assert pairing inline
-    // (NOT via the module-internal assembled-shape pairing helper — Pitfall 4).
+    // (NOT via the module-internal assembled-shape pairing helper, which must
+    // stay unimported).
     const reconstructed = ANTHROPIC_MESSAGES.map((m) =>
       partsToMessage(rowFromParts(m.role, messageToParts(m))),
     );
@@ -348,13 +348,13 @@ describe("parts-codec — O2 stable-id pairing (inline invariant)", () => {
   });
 });
 
-describe("parts-codec — empty-content envelope fidelity (WR-01)", () => {
+describe("parts-codec — empty-content envelope fidelity", () => {
   // An aborted/errored assistant turn is a realistic shape: stopReason
   // "aborted"/"error" with errorMessage and ZERO content blocks
   // (AssistantMessage.content is (Text|Thinking|ToolCall)[], which admits []).
   // The message-level envelope (api/provider/model/usage/stopReason/
   // errorMessage/timestamp) must survive the round-trip even with no blocks —
-  // F2 says the round-trip drops no field.
+  // the round-trip contract drops no field.
 
   it("preserves the full envelope of an empty-content assistant message (content: [])", () => {
     const empty: AssistantMessage = {
@@ -461,7 +461,7 @@ describe("parts-codec — isError + tool input fidelity", () => {
 /**
  * Build the EXPECTED reconstruction of a canonical message: identical to the
  * source EXCEPT an assistant message's visible content drops any `thinking`
- * block (F3 — reasoning rides as a marked part / metadata, never re-emitted as
+ * block (reasoning rides as a marked part / metadata, never re-emitted as
  * a visible content block). User + toolResult messages are returned unchanged.
  */
 function stripVisibleReasoning(msg: Message): Message {

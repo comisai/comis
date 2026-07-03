@@ -9,8 +9,8 @@
  * `dataDir` string in, a `PermissionCorrection[]` out, only `node:fs` sync I/O.
  *
  * It was moved out of `main-helpers.ts` (a behavior-neutral function extraction,
- * no logic change) to keep that file under the 800-line architecture cap that
- * the v2.24 squash pushed it over — a shrink-only split, NOT an allowlist add
+ * no logic change) to keep that file under the 800-line architecture cap it
+ * would otherwise exceed — a shrink-only split, NOT an allowlist add
  * (allowlists are shrink-only per AGENTS.md §2.8). The single caller (daemon.ts,
  * which invokes `hardenDataDirPermissions(dataDir)` at startup) imports it from
  * this path.

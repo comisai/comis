@@ -7,9 +7,8 @@
  * readiness, and runs subsystem health checks with per-failure fix
  * guidance.
  *
- * This is the biggest UX win of the redesign: users get immediate
- * feedback on whether their setup works, plus actionable guidance
- * when it does not.
+ * Users get immediate feedback on whether their setup works, plus
+ * actionable guidance when it does not.
  *
  * @module
  */
@@ -55,9 +54,9 @@ export const DAEMON_START_PROMPT = "Start the Comis daemon now?";
  *
  * Same contract as {@link DAEMON_START_PROMPT}: the NonInteractivePrompter
  * keys off this literal so `comis init --non-interactive` WITHOUT
- * `--start-daemon` answers "no" (leave running) instead of "restart" — the
- * generic fallback used to pick the first option ("restart") and silently
- * bounce an unrelated running daemon.
+ * `--start-daemon` answers "no" (leave running) instead of "restart" —
+ * without this keying, the generic first-option fallback would pick
+ * "restart" and silently bounce an unrelated running daemon.
  */
 export const DAEMON_RESTART_PROMPT =
   "Daemon is already running. What would you like to do?";

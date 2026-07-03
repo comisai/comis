@@ -3,7 +3,7 @@
  * Credential Registry — maps present API keys to unlockable test categories
  * and produces typed SKIPPED(reason) verdicts without ever failing for absence.
  *
- * T-134-01 (Information Disclosure): env var values never leave this module;
+ * Information Disclosure guard: env var values never leave this module;
  * CredentialRegistry.hasKey() returns boolean only — the key value itself is
  * never exported, serialized, or included in error messages.
  *
@@ -32,12 +32,12 @@ export type SkipVerdict =
 export type Category = string;
 
 /**
- * Capability enum — per-model capabilities for FND-08 skip-not-fail.
+ * Capability enum — per-model capabilities for the skip-not-fail gate.
  */
 export type Capability = "vision" | "tools" | "structured-output" | "thinking";
 
 /**
- * Env-var → category mapping table (from design §4.3).
+ * Env-var → category mapping table.
  * All 13 documented API keys listed here.
  */
 const KEY_TO_CATEGORIES: Record<string, Category[]> = {
@@ -59,7 +59,7 @@ const KEY_TO_CATEGORIES: Record<string, Category[]> = {
 /**
  * Categories that do not require any API key — these are keyless probes
  * that must always be runnable regardless of what credentials are present.
- * T-135-CR01: getSkipVerdict returns null for these before the no-creds fallthrough.
+ * getSkipVerdict returns null for these before the no-creds fallthrough.
  */
 const KEYLESS_CATEGORIES = new Set<string>([
   "TTS(edge)",
@@ -71,7 +71,7 @@ const KEYLESS_CATEGORIES = new Set<string>([
 
 /**
  * Per-model capability registry — pinned model snapshot IDs mapped to
- * supported capabilities. For FND-08 skip-not-fail gate.
+ * supported capabilities. For the skip-not-fail gate.
  */
 export const CAPABILITY_REGISTRY: Record<string, Capability[]> = {
   "claude-3-5-haiku-20241022": ["tools", "structured-output"],
@@ -103,7 +103,7 @@ export interface CredentialRegistry {
 
   /**
    * Returns true if the given env var name was present and non-empty at build time.
-   * Value is never returned — boolean only (T-134-01 mitigation).
+   * Value is never returned — boolean only.
    */
   hasKey(envVar: string): boolean;
 }
@@ -129,7 +129,7 @@ function isBwrapAvailable(): boolean {
  */
 export function buildCredentialRegistry(): CredentialRegistry {
   // Capture presence (boolean only) for all known keys at call time.
-  // T-134-01: values are never stored or returned.
+  // Values are never stored or returned.
   const presentKeys = new Set<string>(
     Object.keys(KEY_TO_CATEGORIES).filter(
       (k) => {

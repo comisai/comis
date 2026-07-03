@@ -54,9 +54,9 @@ export interface MarkdownIR {
  *    consumed by the italic `_text_` alternative. Without this branch,
  *    a URL like `code_challenge_method=…` matches `_(.+?)_` and renders
  *    as `<i>challenge</i>method=…`, dropping every paired `_` from the
- *    surface form. Higgsfield-class providers receive params with
- *    truncated names (`responsetype`, `redirecturi`, …) and return 400
- *    `redirect_uri must be a valid absolute URL` (observed 2026-05-28).
+ *    surface form. OAuth providers then receive params with truncated
+ *    names (`responsetype`, `redirecturi`, …) and return 400
+ *    `redirect_uri must be a valid absolute URL`.
  *    Excludes `)` so URLs in parens (`(See https://x.com/)`) don't grab
  *    the trailing close-paren; we accept that legitimate URLs with `)`
  *    in their path (rare; Wikipedia is the canonical example) will be
@@ -112,7 +112,7 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
     } else if (match[2] !== undefined) {
       // Bare URL: pass through as a self-pointing link so the URL bytes
       // (including every `_`) reach the renderer unmodified. See INLINE_RE
-      // docblock for the Higgsfield-OAuth bug this closes.
+      // docblock for the OAuth-URL corruption this closes.
       const url = match[2];
       spans.push({
         type: "link",
@@ -361,7 +361,8 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
         i++;
       }
 
-      // If not closed, rawLines extends to end of input (per spec)
+      // If not closed, rawLines extends to end of input (CommonMark treats an
+      // unclosed fence as running to the end of the document)
       blocks.push({
         type: "code_block",
         spans: [],

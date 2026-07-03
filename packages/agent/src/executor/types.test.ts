@@ -86,14 +86,13 @@ describe("ExecutionOverrides type extensions", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEND-02 (Phase 177-01): ExecutionResult.finishReason gains "spend_exceeded".
+// ExecutionResult.finishReason includes "spend_exceeded".
 //
 // A dedicated member (NOT a reuse of "budget_exceeded") keeps the dollars-vs-
 // tokens terminal cause distinct. SafetyCheckResult.finishReason is typed off
-// ExecutionResult["finishReason"] (bridge-safety-controls.ts), so Plan 03's
-// checkSpendLimit depends on this member existing. RED on pre-patch: the closed
-// union lacks "spend_exceeded", so the assignment below fails to COMPILE (per
-// AGENTS §2.10 a compile-RED is the failing state for a closed-type widen).
+// ExecutionResult["finishReason"] (bridge-safety-controls.ts), so
+// checkSpendLimit depends on this member existing. If the closed union ever
+// loses "spend_exceeded", the assignment below fails to COMPILE.
 // ---------------------------------------------------------------------------
 describe("ExecutionResult.finishReason spend_exceeded member", () => {
   it("accepts spend_exceeded as a finishReason literal", () => {
@@ -120,7 +119,7 @@ describe("ExecutionResult.finishReason spend_exceeded member", () => {
 
   it("rejects a non-member finishReason literal (closed union)", () => {
     // @ts-expect-error - "spend_unpriceable" is not a finishReason member; the
-    // distinct observability:spend_unpriceable event carries that nuance (A3).
+    // distinct observability:spend_unpriceable event carries that nuance.
     const bad: ExecutionResult["finishReason"] = "spend_unpriceable";
     void bad;
   });

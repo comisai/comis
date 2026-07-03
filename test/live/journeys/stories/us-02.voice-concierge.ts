@@ -2,11 +2,11 @@
 /**
  * US-02 / J2 — Voice concierge (STT → tool/MCP action → TTS voice reply).
  *
- * §7.7 flow: WhatsApp voice note → STT → tool/MCP action → TTS voice reply.
+ * Flow: WhatsApp voice note → STT → tool/MCP action → TTS voice reply.
  * Subsystems composed: A core-loop, B LLM, L voice (STT+TTS), F tools, G MCP,
  * S delivery.
  *
- * Gated behind MEDIA Stage-C cert (142). In sandbox: shape validated + requires-skip
+ * Gated behind MEDIA Stage-C cert. In sandbox: shape validated + requires-skip
  * (no STT/TTS keys); the real voice round-trip runs at Stage-D. Runs on echo (no
  * WhatsApp account) or a real channel when credentialed — authored once.
  *

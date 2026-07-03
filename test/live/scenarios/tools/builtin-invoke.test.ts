@@ -20,10 +20,10 @@
  *   a tool errors.
  *
  * Security notes:
- *   T-136-02-02: tool:executed listener is unregistered in a finally block
- *   — no handler persists after the test.
- *   T-140-04-02: toolName is structural metadata, not PII; FND-10 log-oracle
- *   post-condition checks no secret leaks in daemon log.
+ *   - tool:executed listener is unregistered in a finally block
+ *     — no handler persists after the test.
+ *   - toolName is structural metadata, not PII; the log-oracle
+ *     post-condition checks no secret leaks in daemon log.
  *
  * costTier: "¢" — cheapest model per provider (Haiku / gpt-4o-mini).
  *
@@ -99,7 +99,7 @@ describe("TOOL-01 Stage-A — event-bus wiring (no COMIS_LIVE)", () => {
     // Keep expectedErrors: [] (no "JSON-RPC method error" will appear here).
     await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
 
-    // FND-11 persistence oracle — only run if memory.db was created.
+    // Persistence oracle — only run if memory.db was created.
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -242,7 +242,7 @@ describe.skipIf(!isLive)("Live — TOOL-01 built-in tool invocation (Stage-C, re
           );
         }
       } finally {
-        // T-136-02-02: always unregister to prevent listener leak across tests.
+        // Always unregister to prevent listener leak across tests.
         container.eventBus.off("tool:executed", toolListener);
       }
     },
@@ -254,7 +254,7 @@ describe.skipIf(!isLive)("Live — TOOL-01 built-in tool invocation (Stage-C, re
     async () => {
       // Send a prompt that may invoke a command that doesn't exist.
       // The agent loop must not throw — it should surface the error gracefully
-      // and return a reply string. This certifies T-140-04-04 resilience.
+      // and return a reply string. This certifies tool-error resilience.
       container.eventBus.on("tool:executed", toolListener);
       try {
         const reply = await driver.sendTurn(

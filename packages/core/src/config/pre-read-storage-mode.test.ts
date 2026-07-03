@@ -8,10 +8,6 @@
  * a lightweight YAML scan that honors the layered-config precedence rule
  * "later files win" and defaults to "encrypted" (schema default) when no
  * file explicitly sets the field.
- *
- * RED+GREEN committed together per AGENTS.md §2.10:
- * The test file imports `preReadStorageMode` from `pre-read-storage-mode.ts`,
- * which did not exist before this commit. A RED-only commit cannot compile.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";

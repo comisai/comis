@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the durable resume engine (Phase 216). RED-first — neither
- * `reconcileLedgerRow` nor `createDurableResumeEngine` exists yet, so this file
- * fails to import before the patch.
- *
- * This file covers BOTH plan tasks:
- *   - Task 2: `reconcileLedgerRow` — the exactly-once recovery resolution
- *     (ONCE-03/ONCE-04). Tests named "reconcile: ..." so `vitest -t reconcile`
- *     selects them.
- *   - Task 3: `createDurableResumeEngine` — resume-or-orphan + cap rehydrate +
- *     bounded recovery (DUR-02/03/04, HB-02/03).
+ * Tests for the durable resume engine, covering both units:
+ *   - `reconcileLedgerRow` — the exactly-once recovery resolution. Tests named
+ *     "reconcile: ..." so `vitest -t reconcile` selects them.
+ *   - `createDurableResumeEngine` — resume-or-orphan + cap rehydrate + bounded
+ *     recovery.
  *
  * The stubs (a recording ledger, a configurable channel, spy replaySend/notify,
  * a fake clock) keep the engine exhaustively unit-testable with no real I/O — it
- * is bound to the real stores / LeaseManager / channel adapters in Plan 07.
+ * is bound to the real stores / LeaseManager / channel adapters by the wiring.
  */
 import { describe, it, expect, vi } from "vitest";
 import { ok, err, type Result } from "@comis/shared";
@@ -156,7 +151,7 @@ function makeReconcileDeps(
   };
 }
 
-describe("reconcileLedgerRow (ONCE-03/ONCE-04)", () => {
+describe("reconcileLedgerRow exactly-once recovery resolution", () => {
   it("reconcile: sent → resolveReconcile('sent') + commit(platformMessageId), NO replay (exactly once)", async () => {
     const ledger = makeLedger();
     const replaySend = vi.fn(async () => ok({ platformMessageId: "should-not-happen" }));
@@ -240,7 +235,7 @@ describe("reconcileLedgerRow (ONCE-03/ONCE-04)", () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it("reconcile: not_sent + replay fails with a PERMANENT error → markFailed('permanent'), retry budget skipped (ONCE-04)", async () => {
+  it("reconcile: not_sent + replay fails with a PERMANENT error → markFailed('permanent'), retry budget skipped", async () => {
     const ledger = makeLedger();
     // 'chat not found' matches isPermanentError
     const replaySend = vi.fn(async () => err(new Error("Bad Request: chat not found")));
@@ -273,7 +268,7 @@ describe("reconcileLedgerRow (ONCE-03/ONCE-04)", () => {
     expect(ledger.calls.find((c) => c.method === "commit")).toBeUndefined();
   });
 
-  it("reconcile: an already-committed row is a no-op — no reconcileSend, no replaySend (ONCE-02)", async () => {
+  it("reconcile: an already-committed row is a no-op — no reconcileSend, no replaySend", async () => {
     const ledger = makeLedger();
     const replaySend = vi.fn(async () => ok({ platformMessageId: "nope" }));
     const reconcileSpy = vi.fn(async () => ok({ kind: "not_sent" } as ReconcileSendOutcome));
@@ -378,7 +373,7 @@ function makeEngineDeps(overrides: Partial<DurableResumeEngineDeps>): DurableRes
   };
 }
 
-describe("createDurableResumeEngine (DUR-02/03/04, HB-02/03)", () => {
+describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () => {
   it("resume happy path: re-mints a lease passing record.caps VERBATIM, then resumes from stepIndex (verbatim-caps-passed-to-mint)", async () => {
     const record = durableRecord({ caps: VALID_CAPS });
     const remintLease = vi.fn((input) => ({ leaseId: "lease-x", bearer: "b" }));
@@ -403,7 +398,7 @@ describe("createDurableResumeEngine (DUR-02/03/04, HB-02/03)", () => {
     expect(resumeRun.mock.calls[0][1]).toBe("lease-x");
   });
 
-  it("DUR-03 revoked-record-not-reminted: a status='revoked' re-read → markOrphaned + notify, remintLease NEVER called", async () => {
+  it("revoked-record-not-reminted: a status='revoked' re-read → markOrphaned + notify, remintLease NEVER called", async () => {
     // listResumable returns a running record, but the belt re-read shows revoked
     const running = durableRecord({ rootRunId: "root-rev", status: "running" });
     const revoked = durableRecord({ rootRunId: "root-rev", status: "revoked" });
@@ -428,7 +423,7 @@ describe("createDurableResumeEngine (DUR-02/03/04, HB-02/03)", () => {
     if (r.ok) expect(r.value.orphaned).toBe(1);
   });
 
-  it("DUR-03 cap-tamper-orphan: a record whose caps fail parseDurableRunRecord (a tampered superset) → orphaned, NOT re-minted", async () => {
+  it("cap-tamper-orphan: a record whose caps fail parseDurableRunRecord (a tampered superset) → orphaned, NOT re-minted", async () => {
     // a foreign cap that is not in AGENT_CAPABILITIES — parseDurableRunRecord rejects it
     const tampered = {
       ...durableRecord({ rootRunId: "root-tamper" }),
@@ -456,7 +451,7 @@ describe("createDurableResumeEngine (DUR-02/03/04, HB-02/03)", () => {
     expect(notify).toHaveBeenCalled();
   });
 
-  it("NEW-5 never-sent-run-resumes-not-orphaned: a status='running' record with stepIndex=-1 RESUMES (remintLease + resumeRun), NOT orphaned", async () => {
+  it("never-sent-run-resumes-not-orphaned: a status='running' record with stepIndex=-1 RESUMES (remintLease + resumeRun), NOT orphaned", async () => {
     const neverSent = durableRecord({ rootRunId: "root-neversent", stepIndex: -1 });
     const remintLease = vi.fn(() => ({ leaseId: "lease-ns", bearer: "b" }));
     const resumeRun = vi.fn(async () => ok(undefined));
@@ -483,7 +478,7 @@ describe("createDurableResumeEngine (DUR-02/03/04, HB-02/03)", () => {
     if (r.ok) expect(r.value.resumed).toBe(1);
   });
 
-  it("HB-02 budget-deferred-backlog: a backlog of N with a fake clock past budget after K → exactly K processed, N-K deferred (no thundering herd)", async () => {
+  it("budget-deferred-backlog: a backlog of N with a fake clock past budget after K → exactly K processed, N-K deferred (no thundering herd)", async () => {
     const N = 5;
     const backlog = Array.from({ length: N }, (_, i) =>
       durableRecord({ rootRunId: `root-${i}` }),
@@ -529,7 +524,7 @@ describe("createDurableResumeEngine (DUR-02/03/04, HB-02/03)", () => {
     expect(budgetLine?.obj.remaining).toBe(2);
   });
 
-  it("DUR-02 orphan path: resumeRun returns err → markOrphaned(reason) + notify (HB-03), never silently dropped", async () => {
+  it("orphan path: resumeRun returns err → markOrphaned(reason) + notify, never silently dropped", async () => {
     const record = durableRecord({ rootRunId: "root-fail" });
     const resumeRun = vi.fn(async () => err(new Error("no live channel for pending sends")));
     const notify = vi.fn();
@@ -599,15 +594,15 @@ describe("createDurableResumeEngine (DUR-02/03/04, HB-02/03)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FLEET-03 (Phase 220-01): the durable:* events carry a CLOSED-enum reason + a
-// numeric timestamp — never the engine's free text (T-220-01 content-free
-// observability). The free string stays on the WARN log / notify only.
+// The durable:* events carry a CLOSED-enum reason + a numeric timestamp — never
+// the engine's free text (content-free observability). The free string stays on
+// the WARN log / notify only.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The closed reason union the durable:orphaned EVENT may carry (events-orchestration.ts). */
 const ORPHAN_ENUM = ["not_resumable", "reread_failed", "invalid_caps", "resume_failed"] as const;
 
-describe("orphanReasonToEnum (FLEET-03 content-free reason map, TOTAL over string)", () => {
+describe("orphanReasonToEnum content-free reason map, TOTAL over string", () => {
   it("maps each known engine free-text reason to its closed enum member (never echoes the input)", () => {
     // The four free-text reasons the engine passes to orphan() today.
     expect(orphanReasonToEnum("re-read failed")).toBe("reread_failed");
@@ -640,7 +635,7 @@ describe("orphanReasonToEnum (FLEET-03 content-free reason map, TOTAL over strin
   });
 });
 
-describe("durable:orphaned / durable:resumed event payloads (FLEET-03 typed, content-free)", () => {
+describe("durable:orphaned / durable:resumed event payloads typed, content-free", () => {
   it("durable:orphaned carries a CLOSED-enum reason (∈ the 4-member union, ≠ the free string) + a numeric timestamp", async () => {
     // A status='revoked' re-read drives the orphan path with the free-text reason
     // `not resumable: status=revoked` — the EVENT must carry the enum, not that string.

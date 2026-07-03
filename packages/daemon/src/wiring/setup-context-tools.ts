@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon-side wiring for the in-session expansion-loop `ctx_*` tools
- * (v2.12 Phase 131, E1/E2): `ctx_search` / `ctx_inspect` / `ctx_expand`.
+ * Daemon-side wiring for the in-session expansion-loop `ctx_*` tools:
+ * `ctx_search` / `ctx_inspect` / `ctx_expand`.
  *
  * The daemon is the composition root — it constructs the concrete LCD store
  * (`createLcdStore`, in `setup-memory`) and injects it here AS the core
  * `ContextStorePort` TYPE, then pushes the three tools onto the agent tool array
- * sharing ONE `ContextToolDeps`. This mirrors the v2.11 terminal-driver wiring
+ * sharing ONE `ContextToolDeps`. This mirrors the terminal-driver wiring
  * (`wireTerminalTools`) exactly: a direct-injection, never-export, owner-scoped
  * tool set wired OUTSIDE the platform-tool parity registry — it is structurally
  * DISTINCT from the cross-session recall layer (no in-process RPC dispatch, no
@@ -29,7 +29,7 @@ import type { ContextStorePort } from "@comis/core";
 // same way setup-tools.ts and setup-terminal-tools.ts type their tool arrays.
 import type { PlatformToolProvider } from "@comis/skills";
 // Direct-injection ctx_* factories + the shared deps contract. These live on the
-// `./tools` subpath (NOT the `.` barrel) — the terminal-driver precedent (Plan 03).
+// `./tools` subpath (NOT the `.` barrel) — the terminal-driver precedent.
 import {
   createCtxSearchTool,
   createCtxInspectTool,
@@ -37,9 +37,9 @@ import {
   depthForTier,
   type ContextToolDeps,
 } from "@comis/skills/tools";
-// DEPTH-02: the capability-axis resolver (frontier/mid/small/nano) — the same
+// The capability-axis resolver (frontier/mid/small/nano) — the same
 // minimal {id, provider} the memory-ops capability resolver uses. The capability
-// axis ignores contextWindow (K2 invariant), so a bare model object is correct.
+// axis ignores contextWindow, so a bare model object is correct.
 import { resolveModelProfile } from "@comis/agent";
 import type { CapabilityClass } from "@comis/agent";
 
@@ -61,16 +61,16 @@ export interface ContextWiringDeps {
   /** Inline-output cap before `ctx_expand` spills to a file (from `ContextEngineConfig`, default 4000). */
   readonly maxExpandTokens: number;
   /**
-   * DEPTH-02: tier-gated max BFS hop depth for the `ctx_expand` multi-hop walk
+   * Tier-gated max BFS hop depth for the `ctx_expand` multi-hop walk
    * (nano1/small2/mid3/frontier4). The daemon resolves it from the agent's
    * `ModelProfile` at `setup-tools.ts` (a capacity knob — wiring-time is correct;
-   * R4 scope stays per-call). Absent ⇒ a conservative single-hop depth of 1.
+   * the read scope stays per-call). Absent ⇒ a conservative single-hop depth of 1.
    */
   readonly maxExpandDepth?: number;
   /** Per-call session tool-results dir resolver (the hoisted exec-tool precedent). */
   readonly getToolResultsDir: () => string | undefined;
   /**
-   * Optional structural event bus (O1) — the daemon's real `TypedEventBus`,
+   * Optional structural event bus — the daemon's real `TypedEventBus`,
    * passed structurally so the skills layer never value-imports it. Threaded
    * onto the shared `ContextToolDeps` so each ctx_* hit emits a content-free
    * `context:dag_expanded`. Absent ⇒ a silent no-op.
@@ -79,7 +79,7 @@ export interface ContextWiringDeps {
 }
 
 /**
- * Wire the three never-export, dag-mode in-session expansion tools (E1/E2).
+ * Wire the three never-export, dag-mode in-session expansion tools.
  * Mirrors `wireTerminalTools`: build one shared `ContextToolDeps` from the
  * injected store + the daemon deps, then push the three factories onto the
  * agent tool array. The `store` is the concrete `createLcdStore` adapter the
@@ -93,22 +93,22 @@ export function wireContextTools(
   _agentId: string,
   deps: ContextWiringDeps,
 ): void {
-  // R4 (132-03): `_agentId` stays UNUSED. The ctx_* tools read the live agentId
+  // `_agentId` stays UNUSED. The ctx_* tools read the live agentId
   // (+ tenantId) from the per-call RequestContext (`tryGetContext()`), NOT from
-  // this wiring-time closure — multi-agent-safe (Pitfall 4). One wiring can serve
+  // this wiring-time closure — multi-agent-safe. One wiring can serve
   // multiple agents per channel, so a closure-captured agentId would scope every
-  // agent's reads to whichever agent wired the tools (the exact WR-02 cross-agent
+  // agent's reads to whichever agent wired the tools (the exact cross-agent
   // threat). The store read scope therefore comes from the live turn, never here.
   const shared: ContextToolDeps = {
     store,
     logger: deps.skillsLogger,
     nowMs: deps.nowMs,
     maxExpandTokens: deps.maxExpandTokens,
-    // DEPTH-02: the tier-gated multi-hop depth cap (resolved wiring-time from the
-    // agent's ModelProfile). A capacity knob — R4 scope is still per-call.
+    // The tier-gated multi-hop depth cap (resolved wiring-time from the
+    // agent's ModelProfile). A capacity knob — the read scope is still per-call.
     maxExpandDepth: deps.maxExpandDepth,
     getToolResultsDir: deps.getToolResultsDir,
-    // O1: the daemon's real bus (structurally assignable) so each ctx_* hit
+    // The daemon's real bus (structurally assignable) so each ctx_* hit
     // emits a content-free context:dag_expanded. `undefined` ⇒ silent no-op.
     eventBus: deps.eventBus,
   };
@@ -128,13 +128,13 @@ export interface CtxToolAgentConfig {
 
 /**
  * Gate + wire the dag-mode `ctx_*` tools (extracted from `setup-tools.ts` to keep that file
- * under the 800-line cap — Phase 174-04). Wires the tools when the agent's
+ * under the 800-line cap). Wires the tools when the agent's
  * `contextEngine.version` resolves to `"dag"` AND a store is present.
  *
- * WR-05 (Phase 174-04): the missing-version default is `"dag"` — ALIGNED with
- * `shouldRunLcdStorePasses` (which gates the LCD store WRITES + the DEPTH-03 sweep), so a bare
+ * The missing-version default is `"dag"` — ALIGNED with
+ * `shouldRunLcdStorePasses` (which gates the LCD store WRITES + its sweep), so a bare
  * agent config that writes durable history also wires the `ctx_*` tools that read it back (was
- * `?? "pipeline"` — a pre-existing skew). WR-04: the operator `capabilityClassOverride` (the
+ * `?? "pipeline"` — a pre-existing skew). The operator `capabilityClassOverride` (the
  * same `providers.entries.<id>.capabilities.capabilityClass` source pi-executor uses, supplied
  * by the caller) governs the tier-gated `ctx_expand` walk depth; absent ⇒ provider-family
  * heuristic. No-op (nothing pushed) when not dag mode or no store.
@@ -150,7 +150,7 @@ export function maybeWireContextTools(
 ): void {
   if ((agentConfig?.contextEngine?.version ?? "dag") !== "dag" || !store) return;
   const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
-  // DEPTH-02 / WR-04: tier-gated multi-hop depth (capacity knob → wiring-time; R4 per-call).
+  // Tier-gated multi-hop depth (capacity knob → wiring-time; read scope per-call).
   const maxExpandDepth = resolveCtxExpandDepth(
     agentConfig?.model,
     agentConfig?.provider,
@@ -162,18 +162,18 @@ export function maybeWireContextTools(
     maxExpandTokens,
     maxExpandDepth,
     getToolResultsDir: deps.getToolResultsDir,
-    eventBus: deps.eventBus, // O1: ctx_* context:dag_expanded
+    eventBus: deps.eventBus, // ctx_* context:dag_expanded
   });
 }
 
 /**
- * DEPTH-02: resolve the tier-gated `ctx_expand` multi-hop walk depth
+ * Resolve the tier-gated `ctx_expand` multi-hop walk depth
  * (nano1/small2/mid3/frontier4) from an agent's `model`/`provider`.
  *
- * `RequestContext` carries NO `capabilityClass` (Pitfall 3), so the cap is
+ * `RequestContext` carries NO `capabilityClass`, so the cap is
  * resolved HERE at wiring time from the agent's `ModelProfile`. The DEPTH cap is
  * a CAPACITY knob, NOT a scope — wiring-time resolution is correct even when one
- * `wireContextTools` call serves multiple agents per channel (A3); the R4 read
+ * `wireContextTools` call serves multiple agents per channel; the read
  * scope still comes per-call from `requireCtxScope()` inside each tool. The
  * capability axis ignores `contextWindow`, so the minimal `{ id, provider }` the
  * memory-ops resolver uses is correct here too (resolve-memory-ops-capability.ts).
@@ -181,7 +181,7 @@ export function maybeWireContextTools(
  * `model`/`provider` default to "default" on a parsed agent config; an undefined
  * or unknown model fails closed to the most-locked profile (nano → depth 1).
  *
- * WR-04 (Phase 174-04): `capabilityClassOverride` is the operator's per-provider
+ * `capabilityClassOverride` is the operator's per-provider
  * `providers.entries.<id>.capabilities.capabilityClass` pin (the same source pi-executor
  * threads into the live ModelProfile). When supplied it wins over the provider-family
  * heuristic, so an operator who pins a large quantized ollama model "mid" gets the mid
@@ -192,7 +192,7 @@ export function resolveCtxExpandDepth(
   provider: string | undefined,
   capabilityClassOverride?: CapabilityClass,
 ): number {
-  // WR-04 (Phase 174-04): thread the operator capabilityClass override (the same
+  // Thread the operator capabilityClass override (the same
   // providers.entries.<id>.capabilities.capabilityClass pin pi-executor.ts:359-364 honors)
   // into resolveModelProfile so a pinned tier governs the ctx_expand walk depth consistently
   // with the rest of the platform — not the provider-family heuristic alone. Absent ⇒ the

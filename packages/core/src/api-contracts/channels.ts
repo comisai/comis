@@ -27,13 +27,14 @@
  *   - `delivery.queue.status`    (rpc — registered intrinsically via
  *                                 channel-handlers; read-only observability)
  *
- *   message-handlers.ts (all admin per setup-gateway-api.ts:265-270):
- *   - `message.send`             (admin)
- *   - `message.reply`            (admin)
+ *   message-handlers.ts:
+ *   - `message.send`             (rpc — outward-send subset; see the scope
+ *                                 rationale on the contract)
+ *   - `message.reply`            (rpc — outward-send subset)
  *   - `message.edit`             (admin)
  *   - `message.delete`           (admin)
  *   - `message.fetch`            (admin)
- *   - `message.react`            (admin)
+ *   - `message.react`            (rpc — outward-send subset)
  *   - `message.attach`           (admin)
  *   - `telegram.action`          (admin)
  *   - `discord.action`           (admin)
@@ -344,8 +345,8 @@ export const ChannelsRestartContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `message.send` — Send a text message via a channel adapter. Admin-scoped
- * per setup-gateway-api.ts:265-270. Handler path: message-handlers.ts:104-123.
+ * `message.send` — Send a text message via a channel adapter. Rpc-scoped
+ * (see the scope rationale on the contract). Handler path: message-handlers.ts:104-123.
  *
  * Authorizes channel access via `authorizeChannelAccess`. Resolves adapter
  * via `resolveAdapter`. Optional rich content (`buttons`, `cards`, `effects`)
@@ -373,9 +374,9 @@ export const MessageSendContract = defineContract({
     messageId: z.string(),
     channelId: z.string(),
   }),
-  // 210-GAP CR-01: orchestration surface (the genuinely-outward send subset,
-  // §3.5), NOT control plane. Re-scoped admin→rpc so the deny-by-origin
-  // chokepoint (keyed on scopes.includes("admin")) no longer denies an agent its
+  // Orchestration surface (the genuinely-outward send subset),
+  // NOT control plane. Scoped rpc rather than admin so the deny-by-origin
+  // chokepoint (keyed on scopes.includes("admin")) does not deny an agent its
   // own granted orch:message before the requireCapability gate runs. The handler
   // still gates on orch:message; admin gateway tokens carry rpc so are unaffected.
   scopes: ["rpc"] as const,
@@ -387,7 +388,7 @@ export const MessageSendContract = defineContract({
 
 /**
  * `message.reply` — Reply to an existing message via a channel adapter.
- * Admin-only. Handler path: message-handlers.ts:125-146.
+ * Rpc-scoped. Handler path: message-handlers.ts:125-146.
  *
  * Resolves inbound UUID `message_id` to platform-native id via
  * `inboundMessageIdResolver` before adapter call. Same rich content options
@@ -412,7 +413,7 @@ export const MessageReplyContract = defineContract({
     messageId: z.string(),
     channelId: z.string(),
   }),
-  // 210-GAP CR-01: outward send subset (§3.5) → orchestration surface, rpc-scoped
+  // Outward send subset → orchestration surface, rpc-scoped
   // (governed by orch:message), not control plane. See message.send rationale.
   scopes: ["rpc"] as const,
 });
@@ -422,7 +423,7 @@ export const MessageReplyContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `message.react` — React to a message with an emoji. Admin-only. Handler
+ * `message.react` — React to a message with an emoji. Rpc-scoped. Handler
  * path: message-handlers.ts:148-159.
  *
  * Capability-gated (`reactions` feature). Resolves inbound UUID via
@@ -445,7 +446,7 @@ export const MessageReactContract = defineContract({
     messageId: z.string(),
     emoji: z.string(),
   }),
-  // 210-GAP CR-01: outward send subset (§3.5) → orchestration surface, rpc-scoped
+  // Outward send subset → orchestration surface, rpc-scoped
   // (governed by orch:message), not control plane. See message.send rationale.
   scopes: ["rpc"] as const,
 });
@@ -458,7 +459,7 @@ export const MessageReactContract = defineContract({
  * `message.edit` — Edit an existing message. Admin-only. Handler path:
  * message-handlers.ts:163-175.
  *
- * 210-GAP / §3.5: edit/delete/fetch/attach STAY admin-only (deny-by-origin) and
+ * edit/delete/fetch/attach STAY admin-only (deny-by-origin) and
  * are NOT part of `orch:message` — the cap exposes only the genuinely-outward
  * send subset (send/reply/react). An agent origin is denied at the chokepoint.
  *

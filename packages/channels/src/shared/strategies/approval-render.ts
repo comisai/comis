@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Shared approval-render helpers (render side, §6.4 / §7.7).
+ * Shared approval-render helpers (render side of the approval flow).
  *
  * The render path is text-only by default; these helpers are the foundation
  * every per-channel approval UI (buttons, Block-Kit / Quick-Reply,
@@ -8,17 +8,17 @@
  * carried on a `kind:"approval"` ActivityEvent into:
  *
  *   - `buildApprovalButtons(event, sign)` → signed `RichButton[][]`. Each
- *     button's `callback_data` is the §6.4.2 wire string
+ *     button's `callback_data` is the wire string
  *     `v1.<choice>.<shortId>.<hmac>`. The `<hmac>` is produced by the INJECTED,
  *     secret-bound signer (`SignCallbackData`) — the renderer never sees the
- *     secret and never reaches across into the orchestrator package (Pitfall
- *     5). The visible text and style come from the choice's own redacted
- *     hints; no raw tool params are ever read (§19.1).
+ *     secret and never reaches across into the orchestrator package. The
+ *     visible text and style come from the choice's own redacted
+ *     hints; no raw tool params are ever read.
  *   - `buildApprovalText(event, opts?)` → the plain-text fallback for surfaces
  *     with no button affordance (IRC / WhatsApp / Signal / iMessage). Single
  *     pending → "Reply approve or deny …"; `includeShortId` →
  *     "Reply approve <S> or deny <S>" so a renderer that knows there is more
- *     than one pending approval can disambiguate (§6.4.6).
+ *     than one pending approval can disambiguate.
  *
  * The signer is wired at the daemon composition root: a function that
  * closes over `activity.interactiveCallbackSigningSecret` and delegates to the
@@ -34,7 +34,7 @@ import type { ActivityEvent, ApprovalChoice, RichButton } from "@comis/core";
 /**
  * The secret-bound signer injected into a renderer's deps at the composition
  * root. Returns the 16-char base64url HMAC tag for `(choice, shortId)`
- * — the `<hmac>` segment of the §6.4.2 wire string. Delegates to the core
+ * — the `<hmac>` segment of the callback wire string. Delegates to the core
  * primitive `signCallbackData(secret, choice, shortId)`; the secret is captured
  * by the closure and never crosses into the channels package.
  */
@@ -44,7 +44,7 @@ export type SignCallbackData = (
 ) => string;
 
 /**
- * Assemble the §6.4.2 callback wire string for one choice.
+ * Assemble the callback wire string for one choice.
  *
  * Byte-identical to `renderCallbackData` from `@comis/core` so the orchestrator's
  * router verifies what the renderer signs. Format: `v1.<choice>.<shortId>.<hmac>`.
@@ -58,7 +58,7 @@ function callbackData(choice: ApprovalChoice["id"], shortId: string, sign: SignC
  *
  * Returns one row carrying every choice in render order. A non-approval event
  * (no `approval` block) yields `[]` — callers can unconditionally spread the
- * result. Each button's `callback_data` is the signed §6.4.2 string; the text
+ * result. Each button's `callback_data` is the signed wire string; the text
  * and style come from the choice's redacted hints (never from raw params).
  */
 export function buildApprovalButtons(
@@ -81,7 +81,7 @@ export function buildApprovalButtons(
 export interface ApprovalTextOptions {
   /**
    * Include the `shortId` after each verb so a user can disambiguate when more
-   * than one approval is pending in the same channel (§6.4.6). The renderer
+   * than one approval is pending in the same channel. The renderer
    * (which knows the pending count) decides whether to set this.
    */
   includeShortId?: boolean;
@@ -115,8 +115,8 @@ export function countPendingApprovals(events: readonly ActivityEvent[]): number 
 
 /**
  * Build the plain-text approval prompt(s) for a whole frame — the single helper
- * the four button-less channels (WhatsApp / Signal / iMessage / IRC) consume
- * (§6.4.6). For each `kind:"approval"` event it emits `buildApprovalText`, joined
+ * the four button-less channels (WhatsApp / Signal / iMessage / IRC) consume.
+ * For each `kind:"approval"` event it emits `buildApprovalText`, joined
  * by newlines. `includeShortId` is derived HERE from the pending count: a shortId
  * is surfaced ONLY when MORE THAN ONE approval is pending in this same frame, so a
  * single-pending prompt stays terse and cross-session shortIds never appear.

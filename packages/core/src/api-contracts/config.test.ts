@@ -198,10 +198,10 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("config.patch: request strips the legacy { path, value } shape (path is no longer in the schema)", () => {
-    // The legacy `path: "a.b.c"` shape was removed from both the contract
-    // schema and the daemon-side parser. Zod default "strip unknown keys"
-    // mode means the parse does NOT throw on a legacy `{ path, value }`
+  it("config.patch: request strips an unrecognized { path, value } shape (path is not in the schema)", () => {
+    // `path` is not a contract field — the canonical shape is
+    // `{ section, key, value }`. Zod default "strip unknown keys"
+    // mode means the parse does NOT throw on a `{ path, value }`
     // payload — it succeeds with `path` stripped. The daemon's bespoke
     // pre-Zod section-required check (config-write.ts:96) then rejects
     // the call with `Missing required parameter "section"`.
@@ -551,9 +551,8 @@ describe("config + env + gateway-infrastructure contracts", () => {
   });
 
   it("env.set: response accepts the encrypted storage variant", () => {
-    // Storage is narrowed from z.enum(["encrypted", "envfile"]) to
-    // z.literal("encrypted") — the .env-file fallback is gone (see
-    // env-handlers.ts).
+    // "encrypted" is the SecretStorePort-backed member of the closed
+    // storage enum (["encrypted", "file"] — see EnvSetContract).
     expect(() =>
       EnvSetContract.response.parse({
         set: true,
@@ -587,12 +586,11 @@ describe("config + env + gateway-infrastructure contracts", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // EnvSetContract widening.
-  // RED: these tests fail until storage is z.enum(["encrypted","file"]) and
-  // restarting is z.boolean().
+  // EnvSetContract storage/restarting variants — storage is
+  // z.enum(["encrypted","file"]) and restarting is z.boolean().
   // ---------------------------------------------------------------------------
 
-  it("env.set: response accepts file storage variant (widening)", () => {
+  it("env.set: response accepts the file storage variant", () => {
     expect(() =>
       EnvSetContract.response.parse({
         set: true,
@@ -603,7 +601,7 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("env.set: response accepts file storage + restarting:false (widening)", () => {
+  it("env.set: response accepts file storage with restarting:false", () => {
     expect(() =>
       EnvSetContract.response.parse({
         set: true,
@@ -614,7 +612,7 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("env.set: response accepts encrypted storage + restarting:false (widening)", () => {
+  it("env.set: response accepts encrypted storage with restarting:false", () => {
     expect(() =>
       EnvSetContract.response.parse({
         set: true,

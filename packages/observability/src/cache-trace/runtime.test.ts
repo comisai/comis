@@ -291,17 +291,16 @@ describe("createCacheTrace -- terminal session:after on flushAndClose", () => {
     expect(sessionAfter).toHaveLength(1);
   });
 
-  it("explicit_recordStage_session_after_PLUS_terminal_emit_yields_two_records_legacy_compat", async () => {
-    // The new contract removes the explicit recordStage("session:after",
-    // {}) call from callers. But existing test fixtures and legacy
-    // callers may still emit one; verify the terminal emit still fires
-    // (yielding TWO session:after records — one explicit, one terminal).
-    // This documents the migration semantic: callers should drop the
-    // explicit emit, but the recorder doesn't second-guess them.
+  it("explicit_recordStage_session_after_PLUS_terminal_emit_yields_two_records", async () => {
+    // Callers normally rely on the terminal session:after emit and do NOT
+    // call recordStage("session:after", {}) explicitly. A caller that emits
+    // one anyway is tolerated: the terminal emit still fires, yielding TWO
+    // session:after records (one explicit, one terminal). The recorder does
+    // not second-guess callers.
     const trace = makeTrace({});
     expect(trace).not.toBeNull();
     trace!.setLatestTokenUsage({ cacheReadTokens: 7, cacheWriteTokens: 3 });
-    trace!.recordStage("session:after", {}); // explicit (legacy) — consumes the stash
+    trace!.recordStage("session:after", {}); // explicit emit — consumes the stash
     await trace!.flushAndClose();
 
     const lines = readLines(trace!.filePath);
@@ -316,7 +315,7 @@ describe("createCacheTrace -- terminal session:after on flushAndClose", () => {
   });
 });
 
-describe("createCacheTrace -- §7.2 envelope: traceId + contextual fields", () => {
+describe("createCacheTrace -- envelope: traceId + contextual fields", () => {
   it("traceId_falls_back_to_sessionId_when_no_AsyncLocalStorage_context", async () => {
     const trace = makeTrace({});
     expect(trace).not.toBeNull();
@@ -594,8 +593,7 @@ describe("cache_trace.write_failures sentinel", () => {
   it("summary_sentinel_carries_session_lifetime_ms", async () => {
     // Summary sentinel at flushAndClose carries
     // sessionLifetimeMs (= systemNowMs() - state.sessionStartedAt),
-    // droppedEvents (renamed from `count`), and totalDroppedBytes
-    // (renamed from `rejectedBytes`).
+    // droppedEvents, and totalDroppedBytes.
     //
     // Cap calibration: 8 KB cap + 4 KB payload mirrors the other
     // sentinel tests so the summary sentinel has room to land after

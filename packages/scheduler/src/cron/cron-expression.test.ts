@@ -96,7 +96,7 @@ describe("computeNextRunAtMs", () => {
       expect(next).toBeUndefined();
     });
 
-    // Live VPS incident 2026-06-19 (UC-A3): a Pacific user's "remind me at 9am"
+    // A Pacific user's "remind me at 9am"
     // was stored as a NAIVE "2026-06-20T09:00:00" and fired at 09:00 UTC
     // (= 02:00 Pacific), the wrong wall-clock time. The "at" schedule now
     // carries an optional tz; a naive `at` is interpreted in that zone.
@@ -130,7 +130,7 @@ describe("computeNextRunAtMs", () => {
     });
   });
 
-  // CRON-IN-01 (live 2026-06-20): "remind me in 2 minutes" on a keyless small
+  // "remind me in 2 minutes" on a keyless small
   // model was scheduled ~7h off — it picked kind "at" and paired the injected
   // UTC hour with the user's display timezone. The relative "in" kind resolves
   // deterministically as now + N seconds, with NO timezone parse, so the error

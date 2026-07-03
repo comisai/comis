@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-03 / E3 — the content-free re-redaction boundary at the exporter.
+ * The content-free re-redaction boundary at the exporter.
  *
  * `redactAttributes` enforces a CLOSED ALLOWLIST of known attribute keys (the
  * `MetricLabel` union + the known span/log attribute keys + the structural
@@ -10,7 +10,7 @@
  * allowlist is the load-bearing guarantee: an allowed-key secret-value scan
  * (credential-keyed or prefix-patterned) is NOT enough on its own, because a
  * BENIGN-keyed, no-prefix, high-entropy value survives value-scanning verbatim
- * (CR-02 — empirically demonstrated). The allowlist is the only posture that
+ * (empirically demonstrated). The allowlist is the only posture that
  * survives a secret VALUE you cannot reliably detect.
  *
  * This unit test pins all three halves: (1) a planted secret at ≥2 nesting
@@ -19,8 +19,8 @@
  * benign-keyed / no-prefix / high-entropy value DOES NOT survive the boundary
  * (it is dropped by the allowlist — value-scanning alone would leak it).
  *
- * LOAD-BEARING: removing the `sanitizeForPersistence` call breaks Test 1;
- * removing the allowlist DROP breaks the CR-02 hostile-value tests (the planted
+ * LOAD-BEARING: removing the `sanitizeForPersistence` call breaks the planted-secret
+ * test; removing the allowlist DROP breaks the hostile-value tests (the planted
  * benign-keyed secret survives) — neither assertion is a tautology.
  *
  * @module
@@ -28,8 +28,8 @@
 import { describe, it, expect } from "vitest";
 import { redactAttributes } from "./redact-attributes.js";
 
-describe("redactAttributes (OTEL-03 / E3 — the exporter re-redaction boundary)", () => {
-  it("Test 1: a planted secret at >=2 nesting levels never survives the boundary", () => {
+describe("redactAttributes (the exporter re-redaction boundary)", () => {
+  it("a planted secret at >=2 nesting levels never survives the boundary", () => {
     const planted = {
       password: "PLANTED",
       token: "sk-PLANTED",
@@ -42,7 +42,7 @@ describe("redactAttributes (OTEL-03 / E3 — the exporter re-redaction boundary)
     }
   });
 
-  it("Test 2: the scrubbed object is still USEFUL — the real allowed content-free labels survive", () => {
+  it("the scrubbed object is still USEFUL — the real allowed content-free labels survive", () => {
     const out = redactAttributes({
       password: "PLANTED",
       provider: "anthropic",
@@ -60,14 +60,13 @@ describe("redactAttributes (OTEL-03 / E3 — the exporter re-redaction boundary)
     expect(Object.keys(out).length).toBeGreaterThanOrEqual(3);
   });
 
-  // ── CR-02: the allowlist is the robust posture — value-scanning is NOT enough ──
+  // ── The allowlist is the robust posture — value-scanning is NOT enough ──
 
-  it("CR-02: a benign-keyed, no-prefix, high-entropy value does NOT survive the boundary", () => {
+  it("a benign-keyed, no-prefix, high-entropy value does NOT survive the boundary", () => {
     // These are EXACTLY the values upstream credential-key/prefix scanning lets
     // through: the keys are benign (not in CREDENTIAL_KEYS) and the values have
     // NO credential prefix (no `sk-`/`ghp_`/`Bearer …`), so `sanitizeForPersistence`
-    // alone passes them VERBATIM. Only a closed allowlist drops them. This FAILS
-    // on the pre-allowlist boundary (the secret survives) and is GREEN after.
+    // alone passes them VERBATIM. Only a closed allowlist drops them.
     const hostile = {
       // A benign key carrying 32 random chars (a real secret could look exactly
       // like this — an opaque token with no recognisable prefix).
@@ -86,12 +85,12 @@ describe("redactAttributes (OTEL-03 / E3 — the exporter re-redaction boundary)
     ]) {
       expect(
         json,
-        `benign-keyed, no-prefix value '${leak}' must NOT survive the allowlist boundary (CR-02)`,
+        `benign-keyed, no-prefix value '${leak}' must NOT survive the allowlist boundary`,
       ).not.toContain(leak);
     }
     // The benign KEYS themselves are dropped (not in the allowlist). NOTE: the
     // `reason` key IS an allowed MetricLabel — its VALUE is bounded to the known
-    // cache-break-reason set at the metric-mapping emit site (MD-02), NOT here;
+    // cache-break-reason set at the metric-mapping emit site, NOT here;
     // these keys (note/detail/freeText) are not labels at all, so they are
     // dropped outright by the closed allowlist.
     expect(out["note"]).toBeUndefined();
@@ -99,7 +98,7 @@ describe("redactAttributes (OTEL-03 / E3 — the exporter re-redaction boundary)
     expect(out["freeText"]).toBeUndefined();
   });
 
-  it("CR-02: an unknown attribute key with an innocuous value is still dropped (closed allowlist, not blocklist)", () => {
+  it("an unknown attribute key with an innocuous value is still dropped (closed allowlist, not blocklist)", () => {
     const out = redactAttributes({
       // Not a metric label, not a known span/log attr — dropped even though the
       // value is harmless. A future careless attribute addition cannot leak.
@@ -111,7 +110,7 @@ describe("redactAttributes (OTEL-03 / E3 — the exporter re-redaction boundary)
     expect(out["outcome"]).toBe("success");
   });
 
-  it("CR-02: the known span attribute keys (comis.trace_id / gen_ai.* / structural summaries) survive the allowlist", () => {
+  it("the known span attribute keys (comis.trace_id / gen_ai.* / structural summaries) survive the allowlist", () => {
     // These are the keys the span path (traces.ts) legitimately emits through
     // the boundary; the allowlist MUST NOT drop them.
     const out = redactAttributes({

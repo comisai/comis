@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * terminal-tmux-backend -- the THIRD worker backend (node-pty | pipe | tmux),
- * required for milestone-length runs (OPS-05, spec §4.6 "Recovery").
+ * required for milestone-length runs (recovery across a worker/daemon restart).
  *
  * A worker crash loses an in-process (node-pty / pipe) PTY. The tmux backend owns the
  * driven child inside a DETERMINISTICALLY-named tmux session (`comis-<sessionId>`) so the
  * tmux SERVER outlives the worker/daemon: a restart RE-ATTACHES (`tmux has-session` →
  * `tmux attach`) rather than re-creating, and a human can `tmux attach -t comis-<id>` to
  * take over. The deterministic name + has-session-then-attach is the load-bearing survival
- * mechanism (RESEARCH Pitfall 6 — a random/UUID name is un-recoverable and leaks an
- * un-reapable session; T-124-23).
+ * mechanism (a random/UUID name is un-recoverable and leaks an un-reapable session).
  *
  * DRIVABILITY (the read/drive model — corrected 2026-06-16). The backend drives the
  * session by ATTACHING a real **node-pty** running `tmux attach -t comis-<id>`. That pty IS
@@ -24,7 +23,7 @@
  * path. The session is configured `status off` (no chrome in reads) + `prefix None` (no
  * Ctrl-b interception of driven keystrokes) so the attach behaves as a transparent pipe.
  *
- * JAIL NESTING (T-124-24 — no unjailed path). The driven child STILL runs inside the bwrap
+ * JAIL NESTING (no unjailed path). The driven child STILL runs inside the bwrap
  * jail: `attachBackend` hands this backend the already-composed plan command (`{bin,argv}` =
  * `bwrap [scope] -- <child> …`), and the backend runs `tmux new-session -d -s comis-<id> --
  * bwrap [scope] -- <child>`. tmux is the OUTERMOST process by DESIGN (not bwrap): the
@@ -32,7 +31,7 @@
  * wrapper. The attach pty is just a viewing/driving client — the driven child stays jailed
  * inside the tmux session.
  *
- * Architecture invariants (binding — AGENTS.md / 124 house style):
+ * Architecture invariants (binding — AGENTS.md):
  *   - NO module-global mutable state: the per-session attach pty + closure state live inside
  *     the factory — two `createTmuxBackend` instances never share state.
  *   - PURE command builders: `tmuxSessionName` + the `buildTmux*Argv` set are free functions
@@ -41,7 +40,7 @@
  *   - Infra-free + DEPENDENCY-free: value-imports NOTHING (only types). The one-shot tmux
  *     runner AND the attach-pty spawner are INJECTED ({@link TmuxBackendDeps}) so the logic
  *     is provable on macOS without a live tmux server — never `@comis/infra` /
- *     `@comis/observability` (SEC-07; the infra-runtime-scope architecture gate NAMES this file).
+ *     `@comis/observability` (the infra-runtime-scope architecture gate NAMES this file).
  *
  * @module
  */
@@ -52,7 +51,7 @@ import type { FakePtyLike } from "./terminal-worker-types.js";
  * Derive the DETERMINISTIC tmux session name from a worker sessionId. Stable +
  * recoverable: the same sessionId always maps to `comis-<sessionId>`, so a
  * worker/daemon restart re-attaches by name rather than re-creating under a fresh
- * (un-recoverable) name. This is the OPS-05 survival key (RESEARCH Pitfall 6).
+ * (un-recoverable) name. This is the survival key.
  */
 export function tmuxSessionName(sessionId: string): string {
   return `comis-${sessionId}`;
@@ -63,7 +62,7 @@ export function tmuxSessionName(sessionId: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * The `tmux -S <socket> …` prefix shared by EVERY command builder. DUR-01 survival: the
+ * The `tmux -S <socket> …` prefix shared by EVERY command builder. Survival: the
  * socket MUST be an explicit, STABLE path under the data dir — NOT tmux's default
  * `$TMUX_TMPDIR|/tmp/tmux-<uid>/default`. systemd `PrivateTmp=yes` gives each daemon START
  * a FRESH private /tmp, so a /tmp socket is UNREACHABLE from the restarted daemon and
@@ -168,7 +167,7 @@ export interface TmuxBackendDeps {
   tmuxPath: string;
   /**
    * The explicit `-S` socket path — a STABLE file under the data dir (e.g.
-   * `<dataDir>/terminal-worker/tmux.sock`), NOT tmux's default /tmp socket. DUR-01 survival
+   * `<dataDir>/terminal-worker/tmux.sock`), NOT tmux's default /tmp socket. Survival
    * key: systemd `PrivateTmp=yes` privatizes /tmp per daemon start, so the default socket is
    * unreachable after a restart; the data-dir socket is reachable by both daemon generations
    * so the restarted daemon re-attaches. See {@link tmuxSocketHead}.
@@ -194,17 +193,17 @@ export interface TmuxBackendDeps {
    */
   spawnAttachPty: (name: string) => FakePtyLike;
   /**
-   * BL-01 (165-REVIEW): re-attach ONLY — NEVER create. When `true` and `hasSession` is
+   * Re-attach ONLY — NEVER create. When `true` and `hasSession` is
    * false, {@link createTmuxBackend} returns `undefined` (the session is genuinely gone; the
    * worker's `reattach` handler replies `ok:false` → the registry flips `lost`). This is the
    * recover-on-boot path: a fresh `new-session` would spawn a SECOND CLI against a session
-   * whose liveness we could not confirm — a double-drive (I10). Absent/false ⇒ create-or-attach.
+   * whose liveness we could not confirm — a double-drive. Absent/false ⇒ create-or-attach.
    */
   forceAttachOnly?: boolean;
 }
 
 /**
- * Create a tmux backend handle for a session. On construction it makes the OPS-05 survival
+ * Create a tmux backend handle for a session. On construction it makes the survival
  * decision ONCE: `hasSession(comis-<id>)` ? ATTACH (the session survived a restart) : CREATE
  * (`new-session -d`) then ATTACH. It configures the session for transparent driving
  * (`status off` + `prefix None`), then spawns the node-pty `tmux attach` that IS the
@@ -214,7 +213,7 @@ export interface TmuxBackendDeps {
  * NEVER an unconditional `new-session`: re-creating an existing session would discard the
  * surviving session's state (the whole point of tmux survival).
  *
- * BL-01 (165-REVIEW): with `forceAttachOnly:true` (the recover-on-boot re-attach path) a
+ * With `forceAttachOnly:true` (the recover-on-boot re-attach path) a
  * GONE session (`hasSession` false) returns `undefined` instead of creating — the caller
  * (the worker's `reattach` handler) then replies `ok:false`, NEVER a fresh CLI.
  */
@@ -223,12 +222,12 @@ export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefine
     deps;
   const name = tmuxSessionName(sessionId);
 
-  // The OPS-05 decision (RESEARCH Pitfall 6), made ONCE at construction.
+  // The survival decision, made ONCE at construction.
   const exists = hasSession(name);
   if (!exists) {
-    // BL-01: attach-only (recover-on-boot) + the session is gone → re-attach is impossible.
+    // Attach-only (recover-on-boot) + the session is gone → re-attach is impossible.
     // Return undefined so the worker replies ok:false (the registry flips lost) — NEVER a
-    // fresh new-session (a double-drive, I10).
+    // fresh new-session (a double-drive).
     if (forceAttachOnly === true) return undefined;
     // Fresh session: create it DETACHED (the tmux server owns the PTY so it outlives this worker).
     runOneShot(buildTmuxSpawnArgv({ tmuxPath, socketPath, name, bin, binArgv: argv, cols, rows }));

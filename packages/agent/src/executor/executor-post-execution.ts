@@ -52,7 +52,7 @@ import {
   deleteBreakpointIndex,
   getBreakpointIndexMapSize,
 } from "./executor-session-state.js";
-// Finding A: the surfaced-skill census is STORED during assembly and emitted HERE (post-execution,
+// The surfaced-skill census is STORED during assembly and emitted HERE (post-execution,
 // after the trajectory bridge subscribes) — see the prompt-assembly note on SkillSurfacedCensus.
 import {
   getSessionPromptSkillSurfacedCensus,
@@ -68,19 +68,19 @@ import {
 import { mergeSessionStats } from "./pi-executor/session-stats.js";
 import { recordLastResponseTs } from "./ttl-guard.js";
 import { stripDiscoverySchemas } from "./schema-stripping.js";
-// LCD afterTurn ingest write-path (Phase 128, A1). Body lives in lcd-ingest.ts
+// LCD afterTurn ingest write-path. Body lives in lcd-ingest.ts
 // (this file is already over the 800L cap); the call below is a thin gated
 // invocation. The agent↛memory cut: lcd-ingest imports only the core port type
 // + the core codec — never @comis/memory.
 import { ingestTurnGuarded } from "./lcd-ingest.js";
-// LCD afterTurn leaf-pass trigger (Phase 129, C1/C3). Activates the inert
+// LCD afterTurn leaf-pass trigger. Activates the inert
 // contextThreshold: a thin gated call right after the ingest fires one leaf pass
 // when utilization is over threshold. The body (gating + opts + summarize +
 // range-replace + emit) lives in lcd-compaction-trigger.ts (this file is over
 // the 800L cap); the call here is a single non-fatal invocation. The
 // agent↛memory cut: the trigger imports only the core port type + the core codec.
 import { runLeafPassAfterTurn } from "./lcd-compaction-trigger.js";
-// LCD afterTurn CONDENSE pass (Phase 130, C2). A second thin gated call right
+// LCD afterTurn CONDENSE pass. A second thin gated call right
 // after the leaf pass: when ≥condensedMinFanout contiguous same-depth summaries
 // have accumulated, fold the shallowest run into one depth+1 condensed summary.
 // Runs AFTER the leaf pass so a turn that just created the Nth leaf can fold it.
@@ -88,9 +88,9 @@ import { runLeafPassAfterTurn } from "./lcd-compaction-trigger.js";
 // call here is a single non-fatal invocation. The agent↛memory cut: the condense
 // trigger imports only core types + the agent-side condense summarizer.
 import { runCondensePassAfterTurn } from "./lcd-condense-trigger.js";
-// LCD→LTM distillation runner (Phase 172-02, DIST-01..04). Fires via the
+// LCD→LTM distillation runner. Fires via the
 // onCondensed callback on runCondensePassAfterTurn — non-fatal, fire-and-forget
-// (mirrors the condense pass's own T-130-07 wrapping). The agent↛memory cut:
+// (mirrors the condense pass's own non-fatal wrapping). The agent↛memory cut:
 // the runner imports only core TYPE-only ports — no @comis/memory import.
 import { runDistillationPassAfterTurn } from "./lcd-distillation-runner.js";
 import type { LeafSummarizerDeps, CompactionModelSnapshot } from "../context-engine/lcd-leaf-summarizer.js";
@@ -98,7 +98,8 @@ import type { LeafSummarizerDeps, CompactionModelSnapshot } from "../context-eng
 // only; the write-back is the daemon's job, off the recall-used bus event).
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Write side: the DETERMINISTIC, LLM-free intent classifier (same package, NOT
-// publicly exported — Pitfall 2). The turn-end memory:recall_used emit threads
+// publicly exported — so no daemon caller can drag an LLM in via the barrel).
+// The turn-end memory:recall_used emit threads
 // classifyIntent(msg.text) so the daemon write-back records the per-intent usefulness bucket.
 import { classifyIntent } from "../rag/query-understanding.js";
 import { getWorkspaceStatus } from "../workspace/index.js";
@@ -106,15 +107,15 @@ import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
-// WR-02: import the precise type so PostExecutionParams.capabilityClass
+// Import the precise type so PostExecutionParams.capabilityClass
 // is CapabilityClass | undefined, not string | undefined.
 import type { CapabilityClass } from "./model-profile.js";
 import { createHash, randomUUID } from "node:crypto";
-// R4: critic hook (no inline logic — all logic in verification-gate.ts)
+// Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
-// CWF-05: deterministic user-facing reply for named degraded terminal causes.
+// Deterministic user-facing replies for named degraded terminal causes.
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply } from "./degraded-reply.js";
-// GEN-02 (DET-02): resolve the degraded reply's language once at the chokepoint.
+// Resolve the degraded reply's language once at the chokepoint.
 import { resolveReplyLanguage } from "./resolve-reply-language.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
@@ -134,8 +135,9 @@ export interface PostExecutionBridgeResult {
   toolCallHistory?: string[];
   finishReason?: ExecutionResult["finishReason"];
   lastActiveToolName?: string;
-  /** The last LLM error message the bridge captured (HR-01 mid-turn path) —
-   *  Issue-6 reads the `[cause: …]` tag from it when errorContext is absent. */
+  /** The last LLM error message the bridge captured on the mid-turn path —
+   *  the context-exhausted reply reads the `[cause: …]` tag from it when
+   *  errorContext is absent. */
   lastLlmErrorMessage?: string;
   failedToolCalls?: number;
   failedTools?: string[];
@@ -150,15 +152,15 @@ export interface PostExecutionBridgeResult {
   cacheWrite1hTokens?: number;
   /** Session-cumulative total cost across all turns (USD). */
   sessionCostUsd?: number;
-  /** Per-tool execution results carrying the classified errorKind (Plan 01) —
-   *  the rollup's failure source for toolStats + topErrorKinds (D5/F1). */
+  /** Per-tool execution results carrying the classified errorKind —
+   *  the rollup's failure source for toolStats + topErrorKinds. */
   toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
-  /** How many times a tool circuit breaker opened this session (Plan 01). */
+  /** How many times a tool circuit breaker opened this session. */
   breakerTripCount?: number;
-  /** Turn count for the session:summary event (Plan 02/F2). */
+  /** Turn count for the session:summary event. */
   turnCount?: number;
   /**
-   * The SDK-normalized stop reason of the session's FINAL turn (QT3). The bridge
+   * The SDK-normalized stop reason of the session's FINAL turn. The bridge
    * captures `AssistantMessage.stopReason` at EVERY `turn_end`
    * (pi-event-bridge.ts), so the value carried here is the TERMINAL one. Its
    * union is `"stop" | "length" | "toolUse" | "error" | "aborted"` (pi-ai) — a
@@ -192,7 +194,7 @@ export interface PostExecutionBridgeResult {
    *  Conditionally emitted on the Execution-complete log when > 0 — mirrors
    *  the per-event `costCorrection` breadcrumb gate in pi-event-bridge.ts. */
   totalCostCorrectionDeltaUsd?: number;
-  /** R2 (Phase 153): abort-redirect message set at bridge abort sites
+  /** Abort-redirect message set at bridge abort sites
    *  (max_steps, budget_exceeded, loop_detected, …). When present and the
    *  turn did not finish with "stop", post-execution replaces the response
    *  so a weak executive never free-associates after an abort. Mirrors
@@ -225,8 +227,8 @@ export interface PostExecutionParams {
   sm: { buildSessionContext(): unknown };
   config: PerAgentConfig;
   msg: NormalizedMessage;
-  /** USER.md preferred language (DET-02 tier-2), threaded from prompt assembly.
-   *  Consumed by the degraded-reply resolver (GEN-02, wired in 181-03). */
+  /** USER.md preferred language, threaded from prompt assembly. Consumed by
+   *  the degraded-reply resolver (priority: config > USER.md > inbound script). */
   userMdLanguage?: string;
   sessionKey: SessionKey;
   formattedKey: string;
@@ -241,11 +243,11 @@ export interface PostExecutionParams {
    *  IN-PROCESS by the overlap heuristic here; content NEVER logged/emitted (only
    *  ids/counts cross the bus). Absent ⇒ no attribution (default-off / no recall). */
   recalledMemories?: ReadonlyArray<{ id: string; content: string }>;
-  /** ATTR-02: the per-turn skill ids attributed by ATTR-01 (skillNames whose
+  /** The per-turn skill ids attributed by the bridge (skillNames whose
    *  frozen `<location>` a `read` matched), read back from the bridge's named
    *  carrier. When non-empty, postExecution emits the counts/ids-only
-   *  `memory:skill_used` write-back (the daemon Plan 07 consumes it). Absent /
-   *  empty ⇒ no emit (byte-identical to pre-patch). Ids only — never bodies. */
+   *  `memory:skill_used` write-back (the daemon's learning subscriber consumes
+   *  it). Absent / empty ⇒ no emit. Ids only — never bodies. */
   usedSkillIds?: ReadonlyArray<string>;
   bridge: PostExecutionBridge;
   unsubscribe: () => void;
@@ -274,13 +276,13 @@ export interface PostExecutionParams {
   geminiCachedTokens: number;
   capabilityClass: CapabilityClass | undefined;
   /**
-   * SUMW-02: the turn's budget window — computeTokenBudgetForProfile().windowTokens
+   * The turn's budget window — computeTokenBudgetForProfile().windowTokens
    * = min(reconciled contextWindow, capability class cap). MUST be computed
    * UPSTREAM (pi-executor threads it off the tool-assembly result): this module
    * has no real ModelProfile (only a synthetic scaffold profile), so it can never
    * re-derive the value. Threaded into BOTH LCD after-turn triggers as the
    * REQUIRED utilization denominator — a captured number, dispose-safe on the
-   * deferred (C4) path by construction.
+   * deferred path by construction.
    */
   budgetWindowTokens: number;
   /**
@@ -307,22 +309,22 @@ export interface PostExecutionParams {
     eventBus: TypedEventBus;
     logger: ComisLogger;
     memoryPort?: MemoryPort;
-    /** Optional LCD context store (Phase 128 dag-mode write-path, A1). Present
+    /** Optional LCD context store (the dag-mode write-path). Present
      *  ⇒ the turn's NEW messages are ingested at afterTurn; absent ⇒ skipped
      *  cleanly. TYPE-only core port (the agent↛memory cut). */
     contextStore?: ContextStorePort;
     /** Tenant id for the LCD ingest scope. Threaded from PiExecutorDeps.tenantId
-     *  at the call site so the scope's SECURITY column is never empty
-     *  (T-128-08). Falls back to the session key tenant when absent. */
+     *  at the call site so the scope's SECURITY column is never empty.
+     *  Falls back to the session key tenant when absent. */
     tenantId?: string;
-    /** Getter for the leaf-summarizer deps (Phase 129, C1). Present ⇒ the
+    /** Getter for the leaf-summarizer deps. Present ⇒ the
      *  afterTurn leaf pass is wired live (over threshold ⇒ a leaf summary is
      *  persisted); absent ⇒ the pass is gated off cleanly. Sourced from the
      *  context-engine setup's getCompactionDeps-style getters; TYPE-only (the
      *  agent↛memory cut — the LLM call lives behind the injected summarizer).
-     *  Accepts an optional `modelSnapshot`: the DEFERRED (C4) path passes a model
+     *  Accepts an optional `modelSnapshot`: the DEFERRED path passes a model
      *  identity captured BEFORE `session.dispose()` so a detached pass never
-     *  re-reads a torn-down `session.agent.state` (WR-04). */
+     *  re-reads a torn-down `session.agent.state`. */
     getSummarizerDeps?: (modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps;
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
@@ -490,12 +492,13 @@ export interface StorePairedConversationMemoryArgs {
 /**
  * Persist a paired-conversation memory through the secret-egress firewall.
  *
- * SECURITY (FIX 1): the paired-conversation write is the highest-volume memory
- * path (every qualifying turn) and was the ONLY agent-visible memory write that
- * bypassed `validateMemoryWrite`. A user who pasted a secret into chat had it
- * written VERBATIM to the `memories` table AND embedded into the vector index —
- * recallable across sessions — even though the explicit `memory_store` tool
- * refuses it (cosmetic for data-at-rest). The DERIVED-memory writes
+ * SECURITY: the paired-conversation write is the highest-volume memory
+ * path (every qualifying turn); without this guard it would be the only
+ * agent-visible memory write that bypasses `validateMemoryWrite`. A user who
+ * pasted a secret into chat would have it written VERBATIM to the `memories`
+ * table AND embedded into the vector index — recallable across sessions — even
+ * though the explicit `memory_store` tool refuses it (cosmetic for
+ * data-at-rest). The DERIVED-memory writes
  * (user-representation, consolidation) all run `validateMemoryWrite`
  * FIRST; this helper applies the SAME guard to the paired write for parity.
  *
@@ -615,33 +618,29 @@ export function shouldRunLcdStorePasses(config: {
  * SINGLE SOURCE OF TRUTH for the run's terminal classification: the rollup's
  * `degraded` flag (session-health-rollup.ts) is derived from the value this map
  * yields (degraded := mapped endReason !== "success"), so `endReason` and
- * `degraded` are computed from the SAME table and cannot diverge (Phase 152
- * CR-01/WR-01). Exported so the chokepoint maps once and the unit tests can
+ * `degraded` are computed from the SAME table and cannot diverge.
+ * Exported so the chokepoint maps once and the unit tests can
  * enumerate the finishReason union against it.
  *
  * Every KNOWN, in-union `ExecutionResult.finishReason` is listed EXPLICITLY —
- * including `loop_detected` (turn-loop-detector abort) and `session_reset`,
- * which reach the rollup verbatim and previously relied on the `?? "error"`
- * fallthrough (WR-02). The fallthrough is now reserved for its stated purpose:
+ * including `loop_detected` (turn-loop-detector abort) and `session_reset`.
+ * The `?? "error"` fallthrough is reserved for its stated purpose:
  * a defensive bucket for UNKNOWN provider strings we haven't classified yet,
  * not a silent home for classified in-union reasons. Module-level so the
  * post-execution path doesn't reallocate it on every turn.
  *
- * NOTE: the endReason union's "timeout" literal — dead since the union was
- * written — is ALIVE as of LAT-04 (Phase 177): the `prompt_timeout` entry
- * below is its ONLY source. The WR-02 test that pinned its unreachability
- * became a positive pin (prompt_timeout → "timeout", sole source): the
- * negative pin existed to prevent ACCIDENTAL re-introduction; this mapping
- * is the deliberate one.
+ * NOTE: the `prompt_timeout` entry below is the ONLY source of the endReason
+ * union's "timeout" literal — a test pins that no other mapping produces it,
+ * so the named cause stays deliberate rather than accidental.
  *
- * QT2/QT3 — NAMED degradation causes (Glass Box degradation detectors). The
- * taxonomy used to FLATTEN context-exhaustion into the generic "error" bucket,
- * so obs.explain / obs.fleet.health could not tell a context-exhausted session
- * from a tool crash. The two related context-exhaustion finish reasons —
+ * NAMED degradation causes: flattening context-exhaustion into the generic
+ * "error" bucket would leave obs.explain / obs.fleet.health unable to tell a
+ * context-exhausted session from a tool crash. The two related
+ * context-exhaustion finish reasons —
  * `context_exhausted` (the bridge's hard context-window-guard abort,
  * bridge-safety-controls.ts) and `context_loop` (the loop-on-exhaustion abort) —
- * now FOLD into ONE named cause `"context_exhausted"`. `output_starved` (the
- * chokepoint promotes a terminal output-cap truncation, QT3) is its own named
+ * FOLD into ONE named cause `"context_exhausted"`. `output_starved` (the
+ * chokepoint promotes a terminal output-cap truncation) is its own named
  * cause `"output_starved"`. Both are degraded by construction (≠ "success", so
  * session-health-rollup's CLEAN_END_REASONS derives degraded:true unchanged).
  */
@@ -650,33 +649,32 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   budget_exceeded: "budget_exceeded", budget_exhausted: "budget_exhausted",
   circuit_open: "circuit_open",
   provider_degraded: "provider_degraded", max_steps: "error",
-  // QT2: fold the two context-exhaustion reasons into the single named cause.
+  // Fold the two context-exhaustion reasons into the single named cause.
   context_loop: "context_exhausted", context_exhausted: "context_exhausted",
-  // QT3: the terminal output-cap truncation promoted at the chokepoint.
+  // The terminal output-cap truncation promoted at the chokepoint.
   output_starved: "output_starved",
-  // LAT-04 (177): the deliberate flip of the WR-02 dead-literal pin — PromptTimeoutError
-  // terminals get the NAMED cause (QT2/QT3 precedent). HARD_FAILURE_END_REASONS and the
-  // fleet degradedByCause record are pre-wired for "timeout".
+  // PromptTimeoutError terminals get their own NAMED cause. HARD_FAILURE_END_REASONS
+  // and the fleet degradedByCause record carry "timeout".
   prompt_timeout: "timeout",
-  // WR-2 (177-obs-loop): the dollars kill-switch abort (bridge-safety-controls sets
+  // The dollars kill-switch abort (bridge-safety-controls sets
   // finishReason:"spend_exceeded") gets its OWN named cause instead of the `?? "error"`
   // catch-all — so obs.explain / obs.fleet.health can tell a spend-killed session from
-  // a tool crash (the security-review finding). HARD_FAILURE_END_REASONS (obs-explain-
+  // a tool crash. HARD_FAILURE_END_REASONS (obs-explain-
   // assemble.ts) carries it so the fleet degradedByCause record attributes the CAUSE.
   spend_exceeded: "spend_exceeded",
   completed_with_tool_errors: "completed_with_tool_errors",
-  // Issue-4: the narrate-without-emit terminal promoted at the chokepoint
+  // The narrate-without-emit terminal promoted at the chokepoint
   // (see promoteNarrationStall) — a small/nano turn that ended on intent
   // narration with no tool call and did not recover after the one nudge.
   narration_stall: "narration_stall",
-  // Known in-union reasons — explicit, not via the catch-all fallthrough (WR-02).
+  // Known in-union reasons — explicit, not via the catch-all fallthrough.
   loop_detected: "error",
   session_reset: "error",
 };
 
 /**
- * The SDK-normalized terminal stop reasons that mark an output-cap truncation
- * (QT3). The pi-ai `StopReason` union normalizes the output cap to `"length"`
+ * The SDK-normalized terminal stop reasons that mark an output-cap truncation.
+ * The pi-ai `StopReason` union normalizes the output cap to `"length"`
  * (pi-ai/types.d.ts) — that is the authoritative value. `"max_tokens"` /
  * `"maxTokens"` are accepted defensively in case a future/non-Anthropic provider
  * surfaces a provider-raw variant; the conservative terminal-only gate below
@@ -690,7 +688,7 @@ const TERMINAL_OUTPUT_STARVED_STOP_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * QT3 — promote a PATHOLOGICAL terminal output truncation to the named cause.
+ * Promote a PATHOLOGICAL terminal output truncation to the named cause.
  *
  * Returns `"output_starved"` IFF the run would OTHERWISE end clean
  * (`stop`/`end_turn` → `success`) AND the session's FINAL turn stopped at the
@@ -698,7 +696,7 @@ const TERMINAL_OUTPUT_STARVED_STOP_REASONS: ReadonlySet<string> = new Set([
  * returns `effectiveFinishReason` UNCHANGED.
  *
  * This is deliberately conservative — the hard rule is "do not flag healthy
- * sessions" (the spike's load-bearing guard):
+ * sessions" (the load-bearing guard):
  *   - It fires ONLY on a CLEAN would-be terminal. A run that already settled on
  *     a non-clean cause (tool errors, budget, breaker, context_exhausted, error)
  *     keeps that upstream cause — the truncation is not the headline there.
@@ -731,15 +729,14 @@ export function promoteOutputStarved(
 }
 
 /**
- * Issue-4 (small-model e2e 2026-06-12) — promote a narrate-without-emit
- * terminal to the named cause `narration_stall`.
+ * Promote a narrate-without-emit terminal to the named cause `narration_stall`.
  *
  * Fires IFF the run would OTHERWISE end clean (`stop`/`end_turn`) AND the
  * narrate-nudge FIRED for this turn but did NOT recover a real answer — the
  * delivered response is still mid-task narration ("Now let me run the
- * tool:") with no tool call behind it. Such a turn was previously recorded
- * `degraded:false, endReason:success` (the soft false-clean: live session
- * uc4-uc5-35). Mirrors {@link promoteOutputStarved}'s conservative shape:
+ * tool:") with no tool call behind it. Without this promotion such a turn
+ * records `degraded:false, endReason:success` — a soft false-clean.
+ * Mirrors {@link promoteOutputStarved}'s conservative shape:
  * an already-non-clean cause always wins, and a recovered (or never-fired)
  * nudge changes nothing.
  *
@@ -783,10 +780,10 @@ export function buildSessionEndMetadata(args: {
   totalTokens: number;
   executionId: string;
   traceId: string | undefined;
-  /** T1.4 (F5): the formatted session key, stored so the metadata can drive `comis explain`. */
+  /** The formatted session key, stored so the metadata can drive `comis explain`. */
   sessionKey: string;
   clock: ClockPort;
-  /** F1 health rollup (D5) — the 5 fields spread onto sessionEnd. Computed once
+  /** The health rollup — the 5 fields spread onto sessionEnd. Computed once
    *  at the chokepoint via buildSessionHealthRollup so this builder stays pure. */
   rollup: SessionHealthRollup;
 }): SessionMetadata {
@@ -810,17 +807,17 @@ export function buildSessionEndMetadata(args: {
 }
 
 /**
- * F2 emit: announce `session:summary` on the eventBus once per execution.
+ * Announce `session:summary` on the eventBus once per execution.
  *
  * The payload carries ids + counts + typed flags PLUS `topErrorKinds` and
- * `source` (Phase 159 A1/A2 — OQ1 reversed): both are threaded into the
+ * `source`: both are threaded into the
  * persisted `obs_diagnostics` row so the fleet aggregate
  * (`aggregateSessionsInWindow`) can read them without opening per-session
  * `_session-metadata.json`. Production emits the constant `source: "runtime"`;
  * a synthetic/test row is produced by a caller injecting `source: "test"`.
  * Fire-and-forget by contract: the eventBus is SYNCHRONOUS, so a throwing
- * in-process listener would otherwise abort the caller's teardown (OQ3). The
- * try/catch here is the sanctioned telemetry guard (mirrors the `:983`
+ * in-process listener would otherwise abort the caller's teardown. The
+ * try/catch here is the sanctioned telemetry guard (mirrors the
  * `writeSessionMetadata` guard) — a telemetry failure must never break execution.
  */
 export function emitSessionSummary(
@@ -833,7 +830,7 @@ export function emitSessionSummary(
     rollup: SessionHealthRollup;
     /** The mapped endReason (named degradation cause) — the SAME value derived
      *  once at the chokepoint via END_REASON_MAP and co-persisted on sessionEnd.
-     *  Carried so the row feeds the fleet `degradedByCause` aggregate (QT2/QT3). */
+     *  Carried so the row feeds the fleet `degradedByCause` aggregate. */
     endReason: string;
     clock: ClockPort;
   },
@@ -855,7 +852,7 @@ export function emitSessionSummary(
       timestamp: args.clock.now(),
     });
   } catch (err) {
-    // Fire-and-forget: a throwing listener must not abort the teardown (OQ3).
+    // Fire-and-forget: a throwing listener must not abort the teardown.
     deps.logger?.debug(
       { err, hint: "session:summary listener threw; telemetry dropped, execution unaffected", errorKind: "internal" as const, submodule: "session-summary-emit" },
       "session:summary emit suppressed a listener throw",
@@ -864,7 +861,7 @@ export function emitSessionSummary(
 }
 
 /**
- * WR-04 lifetime guard for the DEFERRED (C4) compaction path.
+ * Lifetime guard for the DEFERRED compaction path.
  *
  * The deferred leaf/condense passes are enqueued DETACHED onto the per-conversation
  * serializer and can run AFTER `postExecution` returns + `session.dispose()` tears
@@ -912,7 +909,7 @@ export function snapshotSummarizerDepsForDefer(
 }
 
 /**
- * Classify failed tools into the subset that was NOT recovered this turn (HR-01).
+ * Classify failed tools into the subset that was NOT recovered this turn.
  *
  * A tool failure is "recovered" when the SAME tool name also has a successful
  * execution in `toolExecResults` for this turn — e.g. the model retried after a
@@ -923,8 +920,8 @@ export function snapshotSummarizerDepsForDefer(
  * an error" because the notice keyed off raw failedTools.
  *
  * Safe fallback: when `toolExecResults` is absent/empty (success record not
- * plumbed on some path) every failed tool is reported as unrecovered — i.e. the
- * pre-HR-01 behavior, so this never HIDES a genuine unrecovered failure.
+ * plumbed on some path) every failed tool is reported as unrecovered —
+ * so this never HIDES a genuine unrecovered failure.
  *
  * Observability is unaffected: effectiveFinishReason / logs / fleet rollup still
  * record the failure. Only the user-facing reply is gated.
@@ -950,10 +947,10 @@ export function unrecoveredFailedToolNames(
  * Surfaced on the execution bookend (`recoveredTools`) so an operator reading
  * `failedTools:["write"]` + `completed_with_tool_errors` can tell a SELF-HEALED
  * turn from a terminally-degraded one without diffing the raw per-call
- * `toolExecResults`. This does NOT change the degraded classification: by the
- * HR-01 design effectiveFinishReason / the rollup STILL record the failure (the
- * tool DID error); this only makes the recovery VISIBLE. (hermes-usecases
- * obs-loop 2026-06-25.) Pure; deduped; empty when nothing was recovered.
+ * `toolExecResults`. This does NOT change the degraded classification: by
+ * design effectiveFinishReason / the rollup STILL record the failure (the
+ * tool DID error); this only makes the recovery VISIBLE.
+ * Pure; deduped; empty when nothing was recovered.
  */
 export function recoveredFailedToolNames(
   failedTools: string[],
@@ -1069,7 +1066,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   if (bridgeResult.finishReason && bridgeResult.finishReason !== "stop") {
     result.finishReason = bridgeResult.finishReason;
   }
-  // R2: Abort redirect — when bridge set an abortResponse (max_steps, budget_exceeded, etc.),
+  // Abort redirect — when bridge set an abortResponse (max_steps, budget_exceeded, etc.),
   // override result.response so the user sees the re-assertion message instead of the
   // partial LLM text emitted before the abort. Only applied when finishReason is non-stop
   // (belt-and-braces: abortResponse is only set at abort sites, so finishReason will be non-stop).
@@ -1095,7 +1092,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     contextEngineRef.current.lastMetrics.cacheWriteTokens = cacheWriteTokens;
     contextEngineRef.current.lastMetrics.cacheMissTokens = inputTokens;  // Already the uncached portion from the API
 
-    // Emit supplementary cache event for pipeline collector (Issue 1 timing fix).
+    // Emit supplementary cache event for the pipeline collector.
     // The context:pipeline event fires pre-LLM with zeros. This event patches actual data.
     if (deps.eventBus) {
       deps.eventBus.emit("context:pipeline:cache", {
@@ -1132,10 +1129,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   }
 
   // Derive effectiveFinishReason BEFORE the bookend log so it is visible there.
-  // WR-02: the bookend must log effectiveFinishReason (not result.finishReason) so that
+  // The bookend must log effectiveFinishReason (not result.finishReason) so that
   // an output_starved turn — which carries result.finishReason="stop" until promoted here —
   // is visible in the bookend as degraded. The variables are declared early and referenced
-  // again by the tool-failure append and CWF-05 gate below (no double-computation).
+  // again by the tool-failure append and degraded-reply gate below (no double-computation).
   const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
   const finishReasonStr = result.finishReason as string;
   const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
@@ -1145,13 +1142,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     hasToolFailures && isStopTurn
       ? "completed_with_tool_errors"
       : result.finishReason;
-  // Stage 2 (QT3): promote a PATHOLOGICAL terminal output truncation. Fires ONLY
+  // Stage 2: promote a PATHOLOGICAL terminal output truncation. Fires ONLY
   // when stage 1 left a CLEAN would-be terminal (stop/end_turn) AND the session's
   // FINAL turn stopped at the output cap (bridge's terminal lastStopReason). A
   // tool-error / budget / breaker / context_exhausted terminal is untouched (the
   // upstream cause wins), and a continued/mid-run length-stop is not flagged
   // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
-  // Stage 3 (Issue-4): promote a narrate-without-emit terminal that the one
+  // Stage 3: promote a narrate-without-emit terminal that the one
   // bounded nudge could not recover — same conservative shape as stage 2.
   const effectiveFinishReason = promoteNarrationStall(
     promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
@@ -1177,7 +1174,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // recoveredTools: failed tools that self-healed in the same turn (in failedTools
   // AND with a later same-name success). Surfaced on the bookend so a self-healed
   // turn is distinguishable from a terminally-degraded one. effectiveFinishReason
-  // STILL records the failure (HR-01 design) — this is visibility only.
+  // STILL records the failure (by design) — this is visibility only.
   const recoveredTools = recoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
@@ -1195,7 +1192,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       toolCalls: result.stepsExecuted,
       llmCalls: result.llmCalls,
       finishReason: result.finishReason,
-      // WR-02 (Phase 169): log the post-promotion effectiveFinishReason so an
+      // Log the post-promotion effectiveFinishReason so an
       // output_starved degradation is visible in the bookend (result.finishReason
       // stays "stop" for output_starved; only effectiveFinishReason reflects the
       // promotion). Emitted only when it differs from finishReason to avoid noise
@@ -1318,7 +1315,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
-  // Notice append is gated (HR-01): surface ONLY tools that failed and were NOT
+  // Notice append is recovery-gated: surface ONLY tools that failed and were NOT
   // recovered (no same-name success this turn) — a fail-then-retry-succeed (e.g.
   // the NVDA pipeline's attempt-1 validation error → attempt-2 launch) must not
   // read as a user-facing failure. Also suppressed when the model already
@@ -1340,10 +1337,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
   }
 
-  // CWF-05: degrade loudly — deliver an honest user-facing reply for named degraded causes.
+  // Degrade loudly — deliver an honest user-facing reply for named degraded causes.
   // APPEND for output_starved (partial text exists); REPLACE for context_exhausted (no usable text).
   // Gate on effectiveFinishReason (NOT result.finishReason — output_starved is only set here).
-  // GEN-02 (DET-02): resolve the reply language ONCE (config > USER.md > inbound
+  // Resolve the reply language ONCE (config > USER.md > inbound
   // script he/ar/ru > en) and pass the tag to all three builders, so a Hebrew
   // user reads the what/why/knob in Hebrew (en/"en" path stays byte-identical).
   const replyLanguage = resolveReplyLanguage({
@@ -1355,16 +1352,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage);
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "output_starved annotation appended" },
-      "CWF-05: output_starved — annotated truncated reply",
+      "output_starved — annotated truncated reply",
     );
   }
   if (effectiveFinishReason === "context_exhausted") {
-    // W4 (obs-llm-troubleshooting): name the exact cap knob for small/nano and
+    // Name the exact cap knob for small/nano and
     // append the incident traceId so `comis explain <traceId>` is one step away
     // from the chat message itself.
-    // Issue-6: recover the exhaustion CAUSE from the message that crossed the
+    // Recover the exhaustion CAUSE from the message that crossed the
     // type-stripping boundary — errorContext.originalError on the top-level
-    // path, lastLlmErrorMessage on the HR-01 mid-turn path — so the reply's
+    // path, lastLlmErrorMessage on the mid-turn path — so the reply's
     // advice names the remedy that actually applies (an oversized HISTORY
     // message is fixed by a session reset, never by "narrowing the ask").
     const incidentTraceId = tryGetContext()?.traceId;
@@ -1379,11 +1376,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     });
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
-      "CWF-05: context_exhausted — synthesized honest reply delivered",
+      "context_exhausted — synthesized honest reply delivered",
     );
   }
   if (effectiveFinishReason === "loop_detected") {
-    // F-15: the loop-guard halted a no-progress repeat (e.g. a tool that kept
+    // The loop-guard halted a no-progress repeat (e.g. a tool that kept
     // failing/being blocked). APPEND an honest note when partial text exists,
     // REPLACE when the turn produced none (a pure tool-loop) — never a silent empty.
     const existing = (result.response ?? "").trim();
@@ -1395,15 +1392,15 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     result.response = existing.length > 0 ? `${existing}\n\n${loopReply}` : loopReply;
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "loop_detected synthesized reply" },
-      "CWF-05: loop_detected — synthesized honest reply delivered",
+      "loop_detected — synthesized honest reply delivered",
     );
   }
 
-  // SD3 (Phase 158): resolve capability-gated verification default before the gate check.
+  // Resolve the capability-gated verification default before the gate check.
   // modelProfile is not in scope at this layer — use a synthetic profile derived from
   // capabilityClass (same approach as buildSyntheticCriticDeps; capabilityClass is threaded
-  // since Phase 155 via PostExecutionParams). Only the isSmallNano distinction
-  // (scaffoldLevel === "max") is load-bearing for resolveScaffoldDefaults' SD3 decision —
+  // via PostExecutionParams). Only the isSmallNano distinction
+  // (scaffoldLevel === "max") is load-bearing for resolveScaffoldDefaults' decision —
   // the non-max value is deliberately collapsed to "light" (nothing here reads scaffoldLevel
   // beyond the isSmallNano check; a real mid profile would be "standard"). small/nano → "max";
   // frontier/mid/unknown → "light" (fail-closed: undefined capabilityClass → frontier).
@@ -1418,7 +1415,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     supportsVision: false, supportsTools: true, supportsPromptCache: false,
     supportsServerToolSearch: false, supportsStructuredOutput: false,
   };
-  // WR-01: criticModel is the DISTINCT CHEAP verification model the cost-gate gated
+  // criticModel is the DISTINCT CHEAP verification model the cost-gate gated
   // on (keyless-guarded). The critic must run on it, NOT the agent primary — running
   // the primary would invert the cost-gate's "never doubles local-CPU latency" rationale.
   // Falls back to the agent's (already-keyless, per shouldRunCritic) primary when undefined.
@@ -1427,8 +1424,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     config,
     { provider, agentModel: config.model, operationModels: config.operationModels ?? {} },
   );
-  // CWF-05 guard: skip the verification critic entirely for degraded turns. The
-  // CWF-05 block above wrote an honest synthesized reply into result.response; the
+  // Degraded-turn guard: skip the verification critic entirely for degraded turns. The
+  // degraded-reply block above wrote an honest synthesized reply into result.response; the
   // critic must never overwrite it with an LLM "not-verified" unmet-list derived
   // from a one-line error message. This guard makes the degraded reply authoritative
   // regardless of future edits to the synthesized strings (no implicit string-match
@@ -1438,17 +1435,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     effectiveFinishReason === "context_exhausted" ||
     effectiveFinishReason === "loop_detected" ||
     effectiveFinishReason === "narration_stall";
-  if (!isDegradedTurn && shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
+  if (!isDegradedTurn && shouldRunCritic({ // critic hook (keyless-only gate)
     capabilityClass, config, executionPlanRef, provider,
     logger: deps.logger,
-    effectiveEnabled: effectiveVerification, // SD3: pre-resolved via cost-gate
+    effectiveEnabled: effectiveVerification, // pre-resolved via cost-gate
   })) {
     const { deps: cd, maxRetries: mr } = buildSyntheticCriticDeps({
       capabilityClass,
-      provider: criticModel?.provider ?? provider, // WR-01: resolved cheap critic, not agent primary
+      provider: criticModel?.provider ?? provider, // resolved cheap critic, not agent primary
       modelId: criticModel?.modelId ?? config.model,
       agentId: effectiveAgentId,
-      canaryToken: generateCanaryToken(formattedKey, executionId), // WR-03: formatted key, not String(obj)
+      canaryToken: generateCanaryToken(formattedKey, executionId), // formatted key, not String(obj)
       minResponseChars: config.verification?.minResponseChars ?? 200, maxRetries: config.honesty?.maxCriticRetries ?? 2,
       clock: deps.clock, logger: deps.logger, eventBus: deps.eventBus,
     });
@@ -1458,17 +1455,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
 
   // Map the settled finishReason to the terminal endReason ONCE via the single
   // authoritative table (END_REASON_MAP). This SAME mapped value drives BOTH the
-  // persisted sessionEnd.endReason (F1, in buildSessionEndMetadata, which re-maps
+  // persisted sessionEnd.endReason (in buildSessionEndMetadata, which re-maps
   // the identical effectiveFinishReason through the identical table) AND the
   // rollup's `degraded` flag below — so a reason that maps to a non-success
   // endReason (e.g. loop_detected / session_reset → "error") can never record
-  // degraded:false alongside it (Phase 152 CR-01). No second closed reason set.
+  // degraded:false alongside it. No second closed reason set.
   const endReason = END_REASON_MAP[effectiveFinishReason] ?? "error";
 
-  // Compute the per-session health rollup ONCE at the chokepoint (D5/F1/F2).
+  // Compute the per-session health rollup ONCE at the chokepoint.
   // degraded is derived from the mapped endReason (≠ "success"); the same record
-  // feeds BOTH sinks below — the sessionEnd metadata (F1) and the session:summary
-  // event (F2) — so persist and emit never diverge.
+  // feeds BOTH sinks below — the sessionEnd metadata and the session:summary
+  // event — so persist and emit never diverge.
   const sessionHealthRollup = buildSessionHealthRollup(bridgeResult, endReason);
 
   // Write session metadata companion file with trace correlation.
@@ -1483,17 +1480,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       totalTokens: result.tokensUsed.total,
       executionId,
       traceId: tryGetContext()?.traceId,
-      sessionKey: formattedKey, // T1.4: the explain-format key, so the metadata is self-describing
+      sessionKey: formattedKey, // the explain-format key, so the metadata is self-describing
       clock: deps.clock,
       rollup: sessionHealthRollup,
     }));
   } catch { /* fire-and-forget */ }
 
-  // F2: announce session:summary once. Own fire-and-forget guard inside
-  // emitSessionSummary — a throwing in-process listener must not abort teardown
-  // (OQ3). The event carries ids + counts + topErrorKinds + source:"runtime"
-  // (Phase 159 A1/A2) PLUS the mapped endReason (the named degradation cause,
-  // QT2/QT3) so the row feeds the fleet aggregate AND its degradedByCause rollup.
+  // Announce session:summary once. Own fire-and-forget guard inside
+  // emitSessionSummary — a throwing in-process listener must not abort teardown.
+  // The event carries ids + counts + topErrorKinds + source:"runtime"
+  // PLUS the mapped endReason (the named degradation cause)
+  // so the row feeds the fleet aggregate AND its degradedByCause rollup.
   // endReason is the SAME value mapped once above and co-persisted on sessionEnd.
   emitSessionSummary(
     { eventBus: deps.eventBus, logger: deps.logger },
@@ -1560,7 +1557,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         "Paired memory skipped: duplicate content within dedup window",
       );
     } else {
-      // SECURITY (FIX 1): route the paired-conversation write through the
+      // SECURITY: route the paired-conversation write through the
       // secret-egress firewall (validateMemoryWrite) — the SAME guard the
       // derived-memory writes (user-representation/consolidation)
       // apply. A user-pasted secret is REJECTED (verdict critical) so it is
@@ -1594,12 +1591,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // LCD afterTurn ingest (Phase 128 dag-mode write-path, A1). Mirrors the
+  // LCD afterTurn ingest (the dag-mode write-path). Mirrors the
   // memoryPort persist above: gated on `deps.contextStore` presence, off the
   // injected clock, non-fatal (ingestTurn wraps each append per-entry). The
   // body lives in lcd-ingest.ts (this file is over the 800L cap).
   //
-  // FIX A: the block is gated on BOTH the store's presence AND the effective
+  // The block is gated on BOTH the store's presence AND the effective
   // engine being dag (`shouldRunLcdStorePasses`). The daemon injects the store
   // unconditionally, but ONLY dag mode READS it (the assembler's dag branch +
   // the ctx_* tools). A pipeline agent that wrote `lcd_messages` and fired
@@ -1609,10 +1606,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // `ContextEngineConfigSchema.parse({})` default); only an explicit
   // `version: "pipeline"` skips the passes. See shouldRunLcdStorePasses.
   //
-  // Idempotency (T-128-09): the high-water mark `getMessages(conversationId).length`
+  // Idempotency: the high-water mark `getMessages(conversationId).length`
   // is the persisted count (survives restarts); the delta `live.slice(persisted)`
   // appends only the not-yet-persisted tail. A retry with no new messages appends
-  // nothing. `ingestTurnGuarded` also guards the WR-01 shrink edge: if a heal ever
+  // nothing. `ingestTurnGuarded` also guards the shrink edge: if a heal ever
   // reassigns `state.messages` SHORTER than the store, it skips the append and
   // WARNs (errorKind `precondition`) rather than slicing past the end and either
   // persisting nothing forever or colliding on the unique (conversationId, seq)
@@ -1621,7 +1618,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     const conversationId = formattedKey;
     const scope: ContextStoreScope = {
       conversationId,
-      // The scope's SECURITY columns must never be empty (T-128-08). tenantId
+      // The scope's SECURITY columns must never be empty. tenantId
       // prefers the explicitly-threaded deps.tenantId, falling back to the
       // session key's tenant (the same source the memoryPort persist uses).
       tenantId: deps.tenantId ?? sessionKey.tenantId,
@@ -1635,10 +1632,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         []) as Parameters<typeof ingestTurnGuarded>[2];
     const store = deps.contextStore;
 
-    // R3 (132-04): route the live ingest write through the per-conversation
+    // Route the live ingest write through the per-conversation
     // single-flight serializer so it shares the queue with the (prior turn's)
     // deferred compaction and can never interleave on (conversation_id, agent_id,
-    // tenant_id, seq) / the context_items ordinals (Pitfall 2). ingestTurnGuarded
+    // tenant_id, seq) / the context_items ordinals. ingestTurnGuarded
     // is NON-FATAL (skip+WARN); on a fail-closed rollover (an ambiguous/malformed
     // scope) it invokes onFailClosed → we emit a content-free context:dag_degraded
     // (reason fail_closed_rollover) so the refusal is observable on the bus. We
@@ -1663,7 +1660,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
             timestamp: deps.clock.now(),
           });
         },
-        // Phase 160 I1: the WR-01 live/store-divergence skip emits a content-free
+        // The live/store-divergence skip emits a content-free
         // context:dag_degraded so the divergence persists as a health_signal row
         // (queryable by the fleet lens) instead of being a Pino-only WARN.
         () => {
@@ -1676,7 +1673,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
             timestamp: deps.clock.now(),
           });
         },
-        // RR6 (Phase 164): a detected epoch re-base that continues emits a distinct
+        // A detected epoch re-base that continues emits a distinct
         // content-free context:dag_degraded reason:"session_rebase" (INFO — a correct
         // continuation, not degradation) so operators can tell "continued after
         // restart/JSONL-housekeeping" from "skipped due to corruption".
@@ -1693,12 +1690,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       ),
     );
 
-    // The two NON-FATAL afterTurn passes (T-129-18 / T-130-07 — never reject):
-    // 129 (C1/C3) leaf threshold sweep, then 130 (C2) condense fold (AFTER the
+    // The two NON-FATAL afterTurn passes (never reject):
+    // the leaf threshold sweep, then the condense fold (AFTER the
     // leaf so the Nth leaf can immediately fold). Bodies live in the trigger
     // modules (this file is over the 800L cap); the calls here stay thin.
     // `summarizerGetter` is the (possibly snapshot-bound) deps getter — the
-    // deferred path passes a model-snapshot-bound getter (WR-04), the inline path
+    // deferred path passes a model-snapshot-bound getter, the inline path
     // reads the live session.
     const runDeferredPasses = async (
       summarizerGetter: typeof deps.getSummarizerDeps,
@@ -1708,11 +1705,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         scope,
         contextEngine: config.contextEngine,
         getSummarizerDeps: summarizerGetter,
-        // SUMW-02: the turn's budget window — the utilization denominator (a
+        // The turn's budget window — the utilization denominator (a
         // captured number; dispose-safe on the deferred path).
         budgetWindowTokens: params.budgetWindowTokens,
         now: deps.clock.now(),
-        // O1: a clock CALLABLE so the trigger times the pass with two reads
+        // A clock CALLABLE so the trigger times the pass with two reads
         // (entry → emit). Bound to the injected ClockPort — never Date.now().
         nowFn: () => deps.clock.now(),
         logger: deps.logger,
@@ -1723,18 +1720,18 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         scope,
         contextEngine: config.contextEngine,
         getCondenseSummarizerDeps: summarizerGetter,
-        // SUMW-02: same denominator as the leaf pass (one window truth) — also
+        // Same denominator as the leaf pass (one window truth) — also
         // feeds the condense pressureHigh hard-fanout gate.
         budgetWindowTokens: params.budgetWindowTokens,
         now: deps.clock.now(),
-        // O1: clock CALLABLE for the two-read pass timing (entry → emit).
+        // Clock CALLABLE for the two-read pass timing (entry → emit).
         nowFn: () => deps.clock.now(),
         logger: deps.logger,
         eventBus: deps.eventBus,
-        // Phase 172-02 (DIST-01): the distillation hook seam. Fires after
+        // The distillation hook seam. Fires after
         // appendCondensedSummary returns, passing summaryId/content/fallback/depth.
         // runDistillationPassAfterTurn is non-fatal end-to-end (mirrors the
-        // condense pass's own T-130-07 wrapping). Only fires when the deps are
+        // condense pass's own non-fatal wrapping). Only fires when the deps are
         // present (memoryPort required; other deps optional).
         onCondensed: deps.memoryPort
           ? (summaryId, content, fallbackFlag, condensedDepth) => {
@@ -1749,7 +1746,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
                   memoryPort: deps.memoryPort!,
                   lcdStore: store,
                   embeddingEnqueue: deps.embeddingEnqueue,
-                  // WR-03: a clock CALLABLE so the runner times its write boundary
+                  // A clock CALLABLE so the runner times its write boundary
                   // (entry → completion) for the durationMs INFO line. Bound to the
                   // injected ClockPort — never Date.now().
                   nowFn: () => deps.clock.now(),
@@ -1770,7 +1767,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       });
     };
 
-    // C4 (132-04): gate on config.contextEngine.deferCompaction (default true).
+    // Deferral gate: config.contextEngine.deferCompaction (default true).
     if (config.contextEngine?.deferCompaction ?? true) {
       // DEFERRED: enqueue the passes onto the SAME per-conversation serializer as
       // a DETACHED unit and do NOT await it — afterTurn returns once the ingest
@@ -1779,7 +1776,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // in suppressError so a rejection is logged, NEVER swallowed by a bare empty
       // catch (AGENTS.md §2.2).
       //
-      // WR-04: snapshot the summarizer model identity NOW (session still alive)
+      // Snapshot the summarizer model identity NOW (session still alive)
       // and bind it into the getter the detached pass uses, so a pass that resolves
       // its deps AFTER the `session.dispose()` below never re-reads a torn-down
       // `session.agent.state.model`. The detached closure then depends only on the
@@ -1792,7 +1789,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       );
       suppressError(deferred, "deferred LCD compaction (R3 serializer)");
     } else {
-      // INLINE: await the passes (the pre-132 deterministic path retained for
+      // INLINE: await the passes (the deterministic path retained for
       // tests). Non-fatal — never surfaces an error to the live turn. Reads the
       // LIVE session model (no snapshot needed — the session is alive inline).
       await runDeferredPasses(deps.getSummarizerDeps);
@@ -1843,12 +1840,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // ATTR-02: emit the counts/ids-only memory:skill_used write-back carrying the
-  // per-turn skill ids attributed by ATTR-01 (the bridge's named carrier, read
+  // Emit the counts/ids-only memory:skill_used write-back carrying the
+  // per-turn skill ids attributed by the bridge (its named carrier, read
   // back at the pi-executor call site). Mirrors the memory:recall_used emit
   // above — PLAIN emit, ids/counts ONLY (never procedure bodies). Gated on a
-  // non-empty usedSkillIds so the no-skill default path is byte-identical to
-  // pre-patch. The daemon subscriber (setup-learning.ts, Plan 07) threads
+  // non-empty usedSkillIds so the no-skill default path is unchanged.
+  // The daemon subscriber (setup-learning.ts) threads
   // usedSkillIds into observe() → the used_skill_ids column. This is the
   // dedicated write-back event — the daemon-emitted outcome event has no
   // usedSkillIds field and is never the carrier's target.
@@ -1867,11 +1864,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // Finding A: emit the surfaced-skill CENSUS stored during prompt-assembly (the reuse near-misses
+  // Emit the surfaced-skill CENSUS stored during prompt-assembly (the reuse near-misses
   // + credited, content-free). Emitted HERE — not inline in prompt-assembly — because the
   // standing-block assembly runs BEFORE the trajectory bridge subscribes (assembleTools precedes
   // attachTrajectoryToEventBus in pi-executor), so an inline emit fired to NO listener (the bridge
-  // wrote nothing — proven live, package-delivery-20260628). Mirrors the memory:skill_used carrier.
+  // wrote nothing). Mirrors the memory:skill_used carrier.
   const surfacedCensus = getSessionPromptSkillSurfacedCensus(formattedKey);
   if (surfacedCensus !== undefined) {
     clearSessionPromptSkillSurfacedCensus(formattedKey);
@@ -1890,7 +1887,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // memory:injected (finding A follow-on): emit the RAG-injection summary stored during assembly.
+  // memory:injected: emit the RAG-injection summary stored during assembly.
   // Like the census above, this is emitted HERE — not inline in prompt-assembly — because the
   // assembly runs BEFORE the trajectory bridge subscribes, so the prior inline emit was lost on
   // EVERY turn (the trajectory never recorded a RAG injection). Content-free: counts + closed

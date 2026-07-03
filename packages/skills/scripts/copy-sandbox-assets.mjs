@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Postbuild asset copy (JAIL-01 + ORCH-03).
+ * Postbuild asset copy: sandbox seccomp blob + orchestrate SDK artifacts.
  *
  * `tsc` emits only the `.js`/`.d.ts` it COMPILES from `.ts` sources — it does
  * NOT copy data assets, and with `allowJs: false` it ignores hand-committed
@@ -15,9 +15,9 @@
  *      `--seccomp`), so the build never fails for lack of the blob.
  *
  *   2. The generated `comis_tools.{d.ts,js}` SDK (emitted from
- *      `TOOL_CAPABILITY_MAP` by `scripts/orchestrate-sdk/generate-comis-tools-sdk.ts`,
- *      ORCH-03). It is committed SOURCE (the byte-identical drift gate pins it),
- *      but tsc skips a hand-written `.js`, so it is copied here so the Plan-04
+ *      `TOOL_CAPABILITY_MAP` by `scripts/orchestrate-sdk/generate-comis-tools-sdk.ts`).
+ *      It is committed SOURCE (the byte-identical drift gate pins it),
+ *      but tsc skips a hand-written `.js`, so it is copied here so the
  *      runner can read it from `dist/` and write it into the jailed workspace,
  *      and so it ships in the published tarball.
  *
@@ -46,7 +46,7 @@ if (existsSync(sandboxSrc)) {
   }
 }
 
-// 2. Orchestrate SDK artifacts (ORCH-03) + the comis-agent manifest (CLI-05):
+// 2. Orchestrate SDK artifacts + the comis-agent manifest:
 //    copy the generated comis_tools.{d.ts,js} AND the committed
 //    comis-agent-manifest.json → dist so the runner / resolveJailAgentCli read
 //    them from dist (via import.meta.url) and they ship in the tarball. tsc

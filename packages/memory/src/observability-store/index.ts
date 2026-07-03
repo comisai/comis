@@ -50,7 +50,7 @@ export type {
   SystemPromptReportRow,
 } from "./observability-store-types.js";
 
-// AUDIT-01: the audit sink helpers (insert/query + the 0600 rotated JSONL writer).
+// The audit sink helpers (insert/query + the 0600 rotated JSONL writer).
 export {
   appendAuditJsonl,
   bindAuditMutations,
@@ -60,7 +60,7 @@ export {
 } from "./audit-mutations.js";
 export type { AuditQueryParams, AppendAuditJsonlParams } from "./audit-mutations.js";
 
-// PERSIST-01 (Phase 176 Plan 04): the cache-break row-builder + the rate-by-reason
+// The cache-break row-builder + the rate-by-reason
 // query the daemon's obs-persistence-wiring consumes. cacheBreakEventToRow builds a
 // content-free category:'cache_break' DiagnosticRow with a computed est-$;
 // queryCacheBreakRateByReason is the GROUP BY over the existing obs_diagnostics index.
@@ -81,17 +81,17 @@ export type { CacheBreakReasonRate } from "./cache-break-queries.js";
 export function createObservabilityStore(db: Database.Database): ObservabilityStore {
   const store: ObservabilityStore = {
     ...bindQueries(db),
-    // COST-03: the 900000-ms quarter-hour aggregate + the pricing-coverage column.
+    // The 900000-ms quarter-hour aggregate + the pricing-coverage column.
     ...bindAggregates(db),
-    // SPEND-03: the spend accumulator's boot rehydration read (getRollingSpendUsd).
+    // The spend accumulator's boot rehydration read (getRollingSpendUsd).
     ...bindSpendQueries(db),
     ...bindMutations(db),
     ...bindReset(db),
-    // AUDIT-01: security-audit insert/query over the dedicated obs_audit_events table.
+    // Security-audit insert/query over the dedicated obs_audit_events table.
     ...bindAuditMutations(db),
     // Durable cache-stats queries over `obs_token_usage`.
     ...buildCacheStatsQueries(db),
-    // WEBUI-02 (179-04): the deps-reachable cache-break rate + $-lost read (the
+    // The deps-reachable cache-break rate + $-lost read (the
     // store-method wrapper around the standalone GROUP BY) the obs.cacheBreaks.byReason
     // RPC consumes — the queryAuditEvents mold.
     queryCacheBreaksByReason: (params = {}) => queryCacheBreakRateByReason(db, params),

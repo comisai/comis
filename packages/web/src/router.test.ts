@@ -214,7 +214,7 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/observe/cache -> ic-cache-health-view, route 'observe/cache', params {} (179-07)", () => {
+    it("#/observe/cache -> ic-cache-health-view, route 'observe/cache', params {}", () => {
       window.location.hash = "#/observe/cache";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({
@@ -225,7 +225,7 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/observe/spend -> ic-spend-governance-view, route 'observe/spend', params {} (179-07)", () => {
+    it("#/observe/spend -> ic-spend-governance-view, route 'observe/spend', params {}", () => {
       window.location.hash = "#/observe/spend";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({
@@ -236,7 +236,7 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/observe/incident -> ic-incident-view, route 'observe/incident', params {} (179-08)", () => {
+    it("#/observe/incident -> ic-incident-view, route 'observe/incident', params {}", () => {
       window.location.hash = "#/observe/incident";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({
@@ -247,13 +247,13 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/observe/incident?ref=<key> -> ic-incident-view carrying the obs.explain ref in query (179-08 drill-down)", () => {
+    it("#/observe/incident?ref=<key> -> ic-incident-view carrying the obs.explain ref in query", () => {
       window.location.hash = "#/observe/incident?ref=agent:default:telegram:12345";
       const router = createRouter(onChange);
       const match = router.current();
       expect(match.view).toBe("ic-incident-view");
       expect(match.route).toBe("observe/incident");
-      // The drill resolves to a VALID obs.explain ref (§11).
+      // The drill resolves to a valid obs.explain ref carried in the query string.
       expect(match.query).toEqual({ ref: "agent:default:telegram:12345" });
     });
 

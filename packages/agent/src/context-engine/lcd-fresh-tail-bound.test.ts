@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the extracted fresh-tail bounding module (B-8 + Issue-1).
- * The end-to-end behavior (assembly-level brick fix, A1/A2 invariants) is
+ * Unit tests for the extracted fresh-tail bounding module.
+ * The end-to-end behavior (the assembly-level session-brick fix, the
+ * referential-no-op and toolCallId-preservation invariants) is
  * pinned in lcd-assembler.test.ts; this file pins the module's own contract:
  * the cap math and the per-role bounding mechanics.
  */
@@ -13,11 +14,11 @@ import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";
 
 describe("computeFreshTailCapChars", () => {
   it("derives the cap from availableHistoryTokens (0.8 × H × 3.5 chars) on small windows", () => {
-    // H = 20000 → 0.8 × 20000 × 3.5 = 56000 chars (below the 100K B-8 ceiling).
+    // H = 20000 → 0.8 × 20000 × 3.5 = 56000 chars (below the 100K absolute ceiling).
     expect(computeFreshTailCapChars(20_000)).toBe(56_000);
   });
 
-  it("degrades to the historical 100K B-8 constant when H is huge (frontier/mid byte-identical)", () => {
+  it("degrades to the absolute 100K per-result constant when H is huge (frontier/mid byte-identical)", () => {
     expect(computeFreshTailCapChars(500_000)).toBe(LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS);
   });
 
@@ -47,7 +48,7 @@ describe("boundFreshTailMessages", () => {
     expect(charsRemoved).toBeGreaterThan(0);
   });
 
-  it("returns messages below the cap referentially unchanged (A1 no-op)", () => {
+  it("returns messages below the cap referentially unchanged (a referential no-op)", () => {
     const small = userString("a normal question");
     const toolResult = {
       role: "toolResult",
@@ -73,7 +74,7 @@ describe("boundFreshTailMessages", () => {
     const { freshTail, boundedResults, boundedMessages } = boundFreshTailMessages([tr], 12_000);
     const blocks = (freshTail[0] as unknown as { content: { text?: string }[] }).content;
     expect(blocks[0]!.text!.length).toBeLessThan(50_000);
-    // toolCallId untouched (A2).
+    // toolCallId untouched — tool_use/tool_result pairing preserved.
     expect((freshTail[0] as unknown as { toolCallId: string }).toolCallId).toBe("tu_big");
     expect(boundedResults).toBe(1);
     expect(boundedMessages).toBe(0);
@@ -102,7 +103,7 @@ describe("boundFreshTailMessages", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ISSUE #3b: boundProtectedFreshTail — residual = window − S − FLOOR headroom −
+// boundProtectedFreshTail — residual = window − S − FLOOR headroom −
 // preamble, using the model's ACTUAL reasoningStyle (the value the pre-flight throws
 // against). A native model reserves the native "low" floor (1792); a none model 768.
 // ---------------------------------------------------------------------------
@@ -118,7 +119,7 @@ function bigTail(): AgentMessage[] {
   return t;
 }
 
-describe("boundProtectedFreshTail — native vs none floor headroom (ISSUE #3b)", () => {
+describe("boundProtectedFreshTail — native vs none floor headroom", () => {
   it("a NATIVE-reasoning model reserves the native floor (1792): trims the tail to window − S − 1792", () => {
     const logger = makeLogger();
     const W = 8_192, S = 1_145;
@@ -165,12 +166,12 @@ describe("boundProtectedFreshTail — native vs none floor headroom (ISSUE #3b)"
   });
 });
 
-describe("boundProtectedFreshTail — instrumentation + the live OpenAI growth repro (Fix C)", () => {
+describe("boundProtectedFreshTail — instrumentation + the live OpenAI growth repro", () => {
   // The live OpenAI gpt-5-nano @8192 shape: S=1145, native, residual ~5255. TINY turns
-  // (a user Q + a short assistant A) that ACCUMULATE — the lead saw the tail GROW
-  // 6493→8083→… because Fix C wasn't trimming. This drives boundProtectedFreshTail with
-  // an over-residual multi-step tail and asserts the trim DOES reduce it ≤ the residual
-  // and the per-step instrumentation is emitted.
+  // (a user Q + a short assistant A) that ACCUMULATE — observed live as the tail
+  // GROWING 6493→8083→… when the total bound was not trimming. This drives
+  // boundProtectedFreshTail with an over-residual multi-step tail and asserts the trim
+  // DOES reduce it ≤ the residual and the per-step instrumentation is emitted.
   it("trims a growing multi-turn tail (small steps) below the native residual and logs the per-step breakdown", () => {
     const logger = makeLogger();
     const W = 8_192, S = 1_145;

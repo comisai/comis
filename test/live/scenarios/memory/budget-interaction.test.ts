@@ -6,15 +6,15 @@
  * Stage-B (COMIS_LIVE, $0): capturedEvents() filtered for "memory:injected" events.
  *
  * OBSERVABLE: real event key is "memory:injected" (NOT "context:memory_injected" — verified
- * from packages/core/src/event-bus/events-agent.ts). Subscription added to
- * ConversationDriver._subscribeToEventBus in this plan (conversation.ts Task 1).
+ * from packages/core/src/event-bus/events-agent.ts). ConversationDriver._subscribeToEventBus
+ * subscribes to it (conversation.ts).
  *
  * PAYLOAD NOTE: memory:injected carries { hitCount, charsInjected, trustTags, pinnedCount?, ... }
  * — NO memoryIds field. Double-count is asserted at the hitCount level (total injected memories
  * bounded by distinct stored facts). Per-ID uniqueness would require a product change
  * to add memoryIds to the event payload — deferred.
  *
- * WARNING-2 fix: recallEvents.length > 0 is a HARD ASSERT (not a guard). If it fails,
+ * recallEvents.length > 0 is a HARD ASSERT (not a guard). If it fails,
  * the subscription is not wired and the test gives an honest failure rather than a silent pass.
  *
  * @module
@@ -65,20 +65,20 @@ describe.skipIf(!isLive)("MEM-08 Stage-B — recall injection in H, no double-co
       await driver.sendTurn("Remember: budget-interaction fact Alpha.");
       await driver.sendTurn("Remember: budget-interaction fact Beta.");
       // Snapshot event count before the recall turn so we can isolate just
-      // the recall turn's events (WR-04 fix: don't conflate cross-turn hits).
+      // the recall turn's events (don't conflate cross-turn hits).
       const beforeRecall = driver.capturedEvents().length;
       // Trigger recall of both facts in one query
       await driver.sendTurn("What are the budget-interaction facts?");
       await flushDaemonLogs(driver);
 
       // Filter for "memory:injected" events emitted ONLY during the recall turn.
-      // Subscription to "memory:injected" added to ConversationDriver._subscribeToEventBus in Task 1.
+      // ConversationDriver._subscribeToEventBus subscribes to "memory:injected".
       const recallEvents = driver.capturedEvents()
         .slice(beforeRecall)
         .filter(e => e.name === "memory:injected");
 
       // MEM-08 HARD ASSERT: events must fire (not a guard that silently passes when 0)
-      // If this fails, the subscription was not wired in conversation.ts Task 1
+      // If this fails, the subscription was not wired in conversation.ts
       expect(recallEvents.length).toBeGreaterThan(0);
 
       // Double-injection guard at hitCount level — scoped to the recall turn only.

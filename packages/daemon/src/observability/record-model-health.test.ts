@@ -5,7 +5,7 @@ import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { recordModelHealth } from "./record-model-health.js";
 
 // ---------------------------------------------------------------------------
-// recordModelHealth (I2 — boot-time model_health snapshot row)
+// recordModelHealth (boot-time model_health snapshot row)
 //
 // A one-shot direct insertDiagnostic at boot capturing the three in-process
 // load-level signals (embedding availability / GGUF reranker load / reranker
@@ -52,7 +52,7 @@ describe("recordModelHealth", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     // EXACTLY the five booleans/"unknown" values — no extra keys, no free text,
-    // no model paths/URIs (I8 content-free contract).
+    // no model paths/URIs (content-free contract).
     expect(details).toEqual({
       embeddingAvailable: true,
       rerankerModelPresent: true,
@@ -134,7 +134,7 @@ describe("recordModelHealth", () => {
     expect(row.severity).toBe("info");
   });
 
-  it("carries NO model URI / path / secret in details — only the five booleans/\"unknown\" keys (I8 content-free)", () => {
+  it("carries NO model URI / path / secret in details — only the five booleans/\"unknown\" keys (content-free)", () => {
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(2900);
 
@@ -170,7 +170,7 @@ describe("recordModelHealth", () => {
     const clock = createFakeClock(3000);
 
     // The ?.-chained call must silently no-op — a disabled-persistence boot
-    // cannot crash startup (Pitfall 5).
+    // cannot crash startup.
     expect(() =>
       recordModelHealth(
         undefined,

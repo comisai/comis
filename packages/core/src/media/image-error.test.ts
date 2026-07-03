@@ -40,7 +40,7 @@ describe("IMAGE_ERR_TO_LOG", () => {
     for (const kind of ALL_IMAGE_ERROR_KINDS) {
       expect(IMAGE_ERR_TO_LOG[kind]).toBeDefined();
     }
-    // No extra keys beyond the 6 domain kinds.
+    // No extra keys beyond the 7 domain kinds.
     expect(Object.keys(IMAGE_ERR_TO_LOG).sort()).toEqual([...ALL_IMAGE_ERROR_KINDS].sort());
   });
 
@@ -50,12 +50,12 @@ describe("IMAGE_ERR_TO_LOG", () => {
     }
   });
 
-  it("pins the load-bearing mappings that RES-03 and OBS-02 rely on", () => {
+  it("pins the load-bearing mappings the resolver hints and log classification rely on", () => {
     expect(IMAGE_ERR_TO_LOG.unsupported_provider).toBe("precondition");
     expect(IMAGE_ERR_TO_LOG.auth_required).toBe("auth");
     expect(IMAGE_ERR_TO_LOG.quota_exceeded).toBe("resource");
     // bad_request is NON-retryable ("precondition", not the retryable
-    // "dependency") — a permanent 4xx must not be retried (the HTTP-400 fix).
+    // "dependency") — a permanent 4xx must not be retried.
     expect(IMAGE_ERR_TO_LOG.bad_request).toBe("precondition");
   });
 });

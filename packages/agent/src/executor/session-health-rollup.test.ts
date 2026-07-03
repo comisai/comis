@@ -11,9 +11,9 @@ import {
 // output field is asserted.
 
 describe("buildSessionHealthRollup", () => {
-  it("criterion #3: 8/10 web_fetch failures + costUsd 1.45 yields degraded with bounded toolStats and topErrorKinds", () => {
+  it("8/10 web_fetch failures + costUsd 1.45 yields degraded with bounded toolStats and topErrorKinds", () => {
     // SYNTHETIC drive — costUsd is 1.45 constructed here, NOT the disk fixture's
-    // 1.320669. The §1.1 replay shape: 2 successful + 8 failed web_fetch calls,
+    // 1.320669. The replay shape: 2 successful + 8 failed web_fetch calls,
     // every failure classified as a "dependency" ErrorKind, one breaker trip.
     const toolExecResults: ReadonlyArray<{
       toolName: string;
@@ -44,8 +44,8 @@ describe("buildSessionHealthRollup", () => {
     expect(rollup.breakerTripCount).toBe(1);
   });
 
-  it("degraded is derived from the mapped endReason: false ONLY for 'success', true for every other endReason (CR-01 single source)", () => {
-    // After CR-01: the rollup's 2nd arg is the ALREADY-MAPPED
+  it("degraded is derived from the mapped endReason: false ONLY for 'success', true for every other endReason (single source)", () => {
+    // The rollup's 2nd arg is the ALREADY-MAPPED
     // SessionMetadata.sessionEnd.endReason (the SAME value persisted onto
     // sessionEnd), not a raw finishReason re-classified against a second closed
     // set. `degraded := endReason !== "success"`. This couples degraded to the
@@ -58,7 +58,7 @@ describe("buildSessionHealthRollup", () => {
     // Every OTHER member of the endReason union is degraded. This is the FULL
     // SessionMetadata.sessionEnd.endReason union — crucially including "error",
     // which is what `loop_detected` and `session_reset` map to via END_REASON_MAP
-    // (the exact pair CR-01 was about: endReason:"error" MUST imply degraded).
+    // (endReason:"error" MUST imply degraded).
     for (const endReason of [
       "error",
       "timeout",
@@ -72,8 +72,8 @@ describe("buildSessionHealthRollup", () => {
     }
   });
 
-  it("CR-01 regression: loop_detected and session_reset are degraded (they map to endReason:'error', never to 'success')", () => {
-    // The exact BLOCKER. `loop_detected` (turn-loop-detector abort) and
+  it("regression: loop_detected and session_reset are degraded (they map to endReason:'error', never to 'success')", () => {
+    // `loop_detected` (turn-loop-detector abort) and
     // `session_reset` both reach the rollup and both map (via END_REASON_MAP's
     // explicit entries) to endReason:"error". Whether the call site passes the
     // mapped "error" OR the raw reason string, the safety property holds: only
