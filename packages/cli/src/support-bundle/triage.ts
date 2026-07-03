@@ -259,6 +259,10 @@ function buildReporterNextSteps(doctor: DoctorResult, signals: readonly string[]
 /** The bundle's allowlisted output files, each with a content-free description. */
 const EVIDENCE_FILES: ReadonlyArray<{ path: string; description: string }> = [
   { path: "issue-summary.md", description: "Human-readable triage summary for a bug report" },
+  {
+    path: "ai-issue-draft.md",
+    description: "AI-fillable GitHub issue draft with the auto-known facts pre-filled",
+  },
   { path: "triage.json", description: "Machine-readable triage verdict" },
   { path: "doctor.json", description: "Full diagnostic findings from the health checks" },
   { path: "fleet.json", description: "Cross-session fleet health digest (counts and short codes)" },
