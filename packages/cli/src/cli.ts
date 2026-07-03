@@ -11,8 +11,8 @@
  * @module
  */
 
-import { createRequire } from "node:module";
 import { Command } from "commander";
+import { readCliVersion } from "./util/cli-version.js";
 import { registerAgentCommand } from "./commands/agent.js";
 import { registerAuthCommand } from "./commands/auth.js";
 import { registerCacheCommand } from "./commands/cache.js";
@@ -43,10 +43,7 @@ import { registerUninstallCommand } from "./commands/uninstall.js";
 
 export const program = new Command();
 
-const cliRequire = createRequire(import.meta.url);
-const cliPkg = cliRequire("../package.json") as { version: string };
-
-program.name("comis").description("Comis AI agent management CLI").version(cliPkg.version);
+program.name("comis").description("Comis AI agent management CLI").version(readCliVersion() ?? "");
 
 // Register command groups
 registerDaemonCommand(program);
