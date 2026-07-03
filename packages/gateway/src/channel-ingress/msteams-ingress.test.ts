@@ -176,6 +176,36 @@ describe("createMsTeamsIngress", () => {
     });
   });
 
+  it("returns the 200 InvokeResponse only for a lone invoke, not a batch that merely contains one", async () => {
+    const { app, handleWebhookEvents } = createApp();
+
+    const res = await post(
+      app,
+      { authorization: "Bearer good" },
+      JSON.stringify([
+        { type: "message", text: "hi" },
+        {
+          type: "invoke",
+          name: "adaptiveCard/action",
+          value: {
+            action: {
+              verb: "comis.approval.resolve",
+              data: { cb: "v1.approve.Abc123Def456.QWERTYuiop123456" },
+            },
+          },
+        },
+      ]),
+    );
+
+    // Bot Framework delivers one activity per POST, so a multi-activity batch is
+    // contract-impossible. If one arrives, the whole batch must NOT be acked with
+    // the invoke's request/response 200 — the co-batched message keeps its bare
+    // 202 fast-ack. Only a lone invoke earns the AdaptiveCardInvokeResponse.
+    expect(res.status).toBe(202);
+    // The batch is still dispatched (the invoke's out-of-band resolution runs).
+    expect(handleWebhookEvents).toHaveBeenCalledOnce();
+  });
+
   it("keeps the bare 202 fast-ack for a normal message activity and dispatches it once", async () => {
     const { app, handleWebhookEvents } = createApp();
 

@@ -145,13 +145,16 @@ export function createMsTeamsIngress(deps: MsTeamsIngressDeps): Hono {
     // The dispatch above already ran for every activity; only the terminal ack
     // branches on type. A card-action invoke is request/response and requires a
     // synchronous AdaptiveCardInvokeResponse; a message activity keeps the bare
-    // 202 fast-ack.
-    const isInvoke = activities.some(
-      (a) =>
-        typeof a === "object" &&
-        a !== null &&
-        (a as { type?: string }).type === "invoke",
-    );
+    // 202 fast-ack. The InvokeResponse is returned only when the POST is that
+    // LONE invoke: Bot Framework delivers one activity per POST, so a
+    // multi-activity batch is contract-impossible — if one arrives, it falls to
+    // the bare 202 rather than mis-acking a co-batched message with the invoke's
+    // request/response value.
+    const soleActivity = activities.length === 1 ? activities[0] : undefined;
+    const isInvoke =
+      typeof soleActivity === "object" &&
+      soleActivity !== null &&
+      (soleActivity as { type?: string }).type === "invoke";
     if (isInvoke) {
       logger.info(
         { step: INGRESS_STEP, durationMs },
