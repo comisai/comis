@@ -16,4 +16,4 @@ export type { CronScheduler } from "./cron-scheduler.js";
 
 // Pre-run wake-gate: pure, fail-open verdict parser
 export { parseWakeGateVerdict } from "./wake-gate-verdict.js";
-export type { WakeGateVerdict, WakeGateRunOutcome } from "./wake-gate-verdict.js";
+export type { WakeGateVerdict } from "./wake-gate-verdict.js";
