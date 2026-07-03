@@ -23,6 +23,7 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +33,21 @@ import {
   OUT_JS,
   OUT_PY,
 } from "../../scripts/orchestrate-sdk/generate-comis-tools-sdk.js";
+
+/**
+ * True if a `python3` interpreter is invocable on this host (macOS dev, the Linux
+ * CI runner, and the Docker image all ship one). A genuinely python-less host
+ * skips only the Python-validity check below rather than hard-failing.
+ */
+function python3Available(): boolean {
+  try {
+    execFileSync("python3", ["--version"], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const PYTHON3_PRESENT = python3Available();
 
 describe("orchestrate comis_tools SDK drift gate", () => {
   it("the comis_tools SDK is byte-identical to a fresh regen from the cap-map", () => {
@@ -158,4 +174,52 @@ describe("orchestrate comis_tools SDK drift gate", () => {
       }
     }
   });
+
+  // The `.py` describe() worked example is the discovery surface a py model reads
+  // to learn how to CHAIN the tools — so it must be valid Python for the
+  // module-level, synchronous `comis_tools.py` SDK, not TypeScript. The drift gate
+  // above only byte-locks the emitted text; the py_compile gate only proves the
+  // MODULE parses (the example is an inert string literal inside DESCRIPTORS, so a
+  // TS example there never trips it). This gate closes that blind spot: it extracts
+  // each committed `.py` example and parses it AS Python. Before this the examples
+  // were TS (`const ref = await comis_tools.grep({ path: … })`) → an instant
+  // SyntaxError for a py author (which the recoverable-stderr classifier also
+  // excluded from one-shot repair). Skipped only on a genuinely python-less host.
+  it.skipIf(!PYTHON3_PRESENT)(
+    "the comis_tools.py describe() examples are valid Python (a py model can copy them verbatim)",
+    () => {
+      const committedPy = readFileSync(OUT_PY, "utf8");
+      const match = committedPy.match(/DESCRIPTORS = (\[[\s\S]*?\n\])/);
+      expect(match, "comis_tools.py: could not locate the DESCRIPTORS array literal").not.toBeNull();
+      const entries = JSON.parse(match![1]!) as Array<{ name: string; example?: unknown }>;
+      // The distinct worked examples (one per capability group).
+      const examples = [
+        ...new Set(
+          entries
+            .map((entry) => entry.example)
+            .filter((example): example is string => typeof example === "string"),
+        ),
+      ];
+      // Non-vacuity: there IS an example per group, so an empty set means the
+      // matcher broke, not that the SDK is clean.
+      expect(
+        examples.length,
+        "comis_tools.py: no example strings parsed from DESCRIPTORS — the matcher likely broke",
+      ).toBeGreaterThan(0);
+      for (const example of examples) {
+        try {
+          // Parse-only (no execution): a SyntaxError exits non-zero → throws here.
+          execFileSync("python3", ["-c", "import ast, sys; ast.parse(sys.stdin.read())"], {
+            input: example,
+            stdio: "pipe",
+          });
+        } catch (e) {
+          expect.fail(
+            `comis_tools.py describe() example is NOT valid Python — a py model copying it ` +
+              `gets an instant SyntaxError:\n  ${example}\n  ${String(e)}`,
+          );
+        }
+      }
+    },
+  );
 });
