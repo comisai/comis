@@ -2052,6 +2052,37 @@ describe("setupSchedulers", () => {
       const dispatched = (deps.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "scheduler:job_result");
       expect(dispatched).toBeDefined();
     });
+
+    it("makes a dropped woke trajectory fact OBSERVABLE via a DEBUG (not a silent no-op) when getRecorder resolves no recorder", async () => {
+      // The woke trajectory record is the ONLY source of the cronWakeGate incident
+      // fact; when the main-session recorder is not open (daemon restart /
+      // monitor-only agent / idle-evicted session) getRecorder resolves undefined
+      // and the fact is dropped. The drop must be observable, not a silent no-op.
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true }, { durationMs: 42, toolCalls: 3 }));
+      const getRecorder = vi.fn(() => undefined); // closed session / restart / monitor-only → no recorder
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate), trajectoryRegistry: { getRecorder } }));
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()(gatedAgentTurnJob());
+
+      // A wake-gate DEBUG now names the drop (pre-fix this was a silent
+      // optional-chain no-op — no debug at all).
+      const debug = deps.schedulerLogger.debug as ReturnType<typeof vi.fn>;
+      const dropDebug = debug.mock.calls.find(
+        ([fields]) =>
+          typeof (fields as { hint?: unknown }).hint === "string" &&
+          /recorder/.test((fields as { hint: string }).hint) &&
+          (fields as { step?: string }).step === "wake-gate",
+      );
+      expect(dropDebug).toBeDefined();
+      // The drop never degrades the fire: status:ok, the fleet emit fired, AND the
+      // model still dispatched (the durable forks stay whole).
+      expect(result.status).toBe("ok");
+      const emit = deps.container.eventBus.emit as ReturnType<typeof vi.fn>;
+      expect(emit.mock.calls.find((c) => c[0] === "scheduler:wake_gate")).toBeDefined();
+      expect(emit.mock.calls.find((c) => c[0] === "scheduler:job_result")).toBeDefined();
+    });
   });
 });
 
