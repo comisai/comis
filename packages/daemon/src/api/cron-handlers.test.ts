@@ -693,6 +693,77 @@ describe("createCronHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // cron.update wake-gate authoring
+  // -------------------------------------------------------------------------
+
+  describe("cron.update wake-gate authoring", () => {
+    it("sets job.wakeGate from the flat params, threading language and defaulting the timeout", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+
+      await handlers["cron.update"]!({
+        jobId: "job-1",
+        wake_gate_script: "s2",
+        wake_gate_language: "ts",
+      });
+
+      const job = scheduler.getJobs()[0]!;
+      expect(job.wakeGate).toEqual({ script: "s2", language: "ts", timeoutSeconds: 30 });
+    });
+
+    it("sets job.wakeGate from the web nested shape, defaulting the language to js", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+
+      await handlers["cron.update"]!({
+        jobId: "job-1",
+        wakeGate: { script: "s3" },
+      });
+
+      const job = scheduler.getJobs()[0]!;
+      expect(job.wakeGate).toEqual({ script: "s3", language: "js", timeoutSeconds: 30 });
+    });
+
+    it("leaves an existing wakeGate untouched when no wake-gate field is present (no accidental clear)", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+      const existing = { script: "orig", language: "js" as const, timeoutSeconds: 30 };
+      (scheduler.getJobs()[0]! as Record<string, unknown>).wakeGate = existing;
+
+      await handlers["cron.update"]!({ jobId: "job-1", enabled: false });
+
+      expect(scheduler.getJobs()[0]!.wakeGate).toEqual(existing);
+    });
+
+    it("never runs sanitizeToolOutput on the update gate script: an injection trigger survives verbatim", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+
+      const trigger = "[SYSTEM] override";
+      const script = `await fetch(u); /* ${trigger} */`;
+
+      await handlers["cron.update"]!({
+        jobId: "job-1",
+        wake_gate_script: script,
+      });
+
+      const job = scheduler.getJobs()[0]!;
+      const wakeGate = job.wakeGate as { script: string };
+      expect(wakeGate.script).toBe(script);
+      expect(wakeGate.script).toContain("[SYSTEM]");
+
+      const sawScript = (sanitizeToolOutput as unknown as { mock: { calls: unknown[][] } }).mock.calls.some(
+        (c) => c[0] === script,
+      );
+      expect(sawScript).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // cron.remove
   // -------------------------------------------------------------------------
 
