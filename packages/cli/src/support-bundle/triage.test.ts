@@ -455,15 +455,20 @@ describe("fleetHasEvidence", () => {
     expect(fleetHasEvidence(fleet)).toBe(true);
   });
 
-  it("counts a fleet whose coverage located session-summary rows as carrying evidence", () => {
+  it("does not treat a coverage-found flag as evidence when no real session or finding is present", () => {
+    // coverage.sessionSummary.found is synthetic-INCLUSIVE (it mirrors rows > 0
+    // over the pre-exclusion row set), whereas sessions.total is
+    // synthetic-EXCLUDED. A window holding only synthetic/test rows sets found
+    // true yet carries zero operator evidence, so it must not be admitted —
+    // otherwise a thrown doctor run falls through to a false healthy.
     const fleet = makeFleet({
       coverage: {
-        sessionSummary: { found: true, rows: 0 },
-        sessionIndex: { daysRead: 0, daysMissing: 0 },
+        sessionSummary: { found: true, rows: 2 },
+        sessionIndex: { daysRead: 1, daysMissing: 0 },
         billing: { present: false },
       },
     });
-    expect(fleetHasEvidence(fleet)).toBe(true);
+    expect(fleetHasEvidence(fleet)).toBe(false);
   });
 });
 
@@ -551,6 +556,28 @@ describe("buildSupportTriage fleet enrichment", () => {
       coverage: {
         sessionSummary: { found: false, rows: 0 },
         sessionIndex: { daysRead: 0, daysMissing: 0 },
+        billing: { present: false },
+      },
+    });
+
+    expect(buildSupportTriage({ host: HOST, doctor, fleet }).status).toBe("insufficient_evidence");
+  });
+
+  it("ranks a synthetic-only fleet window with a thrown doctor as insufficient_evidence, not healthy", () => {
+    // A window whose only rows are synthetic sets coverage.sessionSummary.found
+    // true (found is synthetic-INCLUSIVE) while sessions.total stays 0
+    // (synthetic-EXCLUDED) and no findings fire. Paired with a doctor run that
+    // itself produced zero passes, there is no operator evidence anywhere, so
+    // the verdict must be insufficient_evidence — an empty read is never
+    // healthy.
+    const doctor = makeDoctorResult([]);
+    const fleet = makeFleet({
+      sessions: { total: 0, degraded: 0, degradedRate: 0 },
+      findings: [],
+      likelyRootCause: null,
+      coverage: {
+        sessionSummary: { found: true, rows: 3 },
+        sessionIndex: { daysRead: 1, daysMissing: 0 },
         billing: { present: false },
       },
     });
