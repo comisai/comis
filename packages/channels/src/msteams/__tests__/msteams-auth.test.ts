@@ -74,6 +74,22 @@ describe("createActivityJwtValidator — Bearer pre-gate (no network on reject)"
     expect(result.ok).toBe(false);
     expect(jwksSpy).not.toHaveBeenCalled();
   });
+
+  it("fails closed on an empty expected audience instead of accepting any bot's token", async () => {
+    // jose treats a falsy `audience` as "no audience constraint", so an empty
+    // appId would accept a token minted for a different bot. The validator must
+    // reject before it ever consults the key set.
+    const { privateKey, jwks } = await makeKeyContext();
+    const token = await mintToken(privateKey, { aud: "some-other-app-id" });
+    const jwksSpy = vi.fn(jwks as never);
+    const validate = createActivityJwtValidator({
+      jwks: jwksSpy as unknown as ActivityJwtValidatorOpts["jwks"],
+      issuer: BF_ISSUER,
+    });
+    const result = await validate(`Bearer ${token}`, "");
+    expect(result.ok).toBe(false);
+    expect(jwksSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("createActivityJwtValidator — jose signature + claim verification", () => {

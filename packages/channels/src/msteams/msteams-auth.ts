@@ -71,6 +71,12 @@ export function createActivityJwtValidator(
   const logger = opts?.logger;
 
   return async (authHeader, appId) => {
+    // Fail closed on a falsy expected audience: jose treats an empty `audience`
+    // as "no audience constraint", which would accept a token minted for any
+    // other bot. Reject before any key-set access rather than trust the caller.
+    if (!appId) {
+      return err(new Error("missing expected audience (appId)"));
+    }
     // Cheap pre-gate: no Bearer token → reject before any key-set access.
     if (!authHeader?.startsWith("Bearer ")) {
       return err(new Error("missing bearer token"));
