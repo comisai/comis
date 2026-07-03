@@ -131,6 +131,12 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   // caller id (the tree root). Uses systemNowMs (the sanctioned-root time helper).
   const rootRunId =
     input.callerRootRunId ?? `root-${input.agentId}-${systemNowMs().toString(36)}`;
+  // Extract the budget/session refs ONCE so the assembly capMint AND the per-run
+  // child-lease seam mint against the SAME accounting refs — a child that drifted
+  // onto a different budgetRef/sessionKey would mis-attribute spend and break the
+  // audience-bound sessionKey correlation. budgetRef is a per-assembly id.
+  const budgetRef = `run-${input.agentId}-${systemNowMs().toString(36)}`;
+  const sessionKey = input.sessionKey ? formatSessionKey(input.sessionKey) : input.agentId;
   const capMint: CapabilityMintDeps | undefined =
     handle && resolved.enabled
       ? {
@@ -138,9 +144,8 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           outputGuard: handle.outputGuard,
           capSocketPath: handle.capSocketPath,
           resolvedCaps: resolved.capabilities,
-          // budgetRef is the budget-accounting seam; a per-assembly id.
-          budgetRef: `run-${input.agentId}-${systemNowMs().toString(36)}`,
-          sessionKey: input.sessionKey ? formatSessionKey(input.sessionKey) : input.agentId,
+          budgetRef,
+          sessionKey,
           rootRunId,
           // Anchor the tree root in the bounded-autonomy service right after the
           // mint (the per-root budget wall-clock + the rootRunId↔leaseId index).
@@ -150,6 +155,48 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
       : undefined;
   const brokerSpawnEnv = buildBrokerSpawnEnv(input.brokerContext, input.agentId, capMint);
 
+  // The per-run child-lease mint seam (D5, EXPLAIN-01) — the correlation
+  // keystone. A closure the runner calls ONCE per orchestrate run to mint a
+  // short-TTL CHILD lease off the assembly lease: same caps + SAME rootRunId
+  // (tree accounting untouched — registerRoot is NOT called, so the per-root
+  // budget/semaphore/kill stays keyed on the single registered assembly lease,
+  // INV-7), parentLeaseId = the assembly leaseId, TTL clamped to the run timeout
+  // (ttlMs === maxTtlMs === timeoutMs). The child bearer is registered in
+  // OutputGuard at mint (Pitfall 1 — never logged) BEFORE it leaves the closure.
+  // revokeByRootRun still reaches the child (it scans by the inherited rootRunId),
+  // so kill is preserved. Built ONLY when an assembly lease exists
+  // (brokerSpawnEnv.leaseId present); otherwise undefined → the runner falls back
+  // to the assembly bearer (the older/non-autonomy path — never an
+  // unauthenticated run). A plain closure so @comis/skills never imports the
+  // LeaseManager: the mint is daemon-side, the runner only receives the bearer.
+  const assemblyLeaseId = brokerSpawnEnv?.leaseId;
+  const mintRunLease:
+    | ((runId: string, timeoutMs: number) => { leaseId: string; bearer: string })
+    | undefined =
+    handle && resolved.enabled && assemblyLeaseId !== undefined
+      ? (runId, timeoutMs) => {
+          // runId is the runner's correlator; the child lease minted here is
+          // correlated by its OWN fresh leaseId + the inherited rootRunId.
+          const issued = handle.leaseManager.mintLease({
+            agentId: input.agentId,
+            caps: resolved.capabilities,
+            budgetRef,
+            sessionKey,
+            rootRunId,
+            parentLeaseId: assemblyLeaseId,
+            ttlMs: timeoutMs,
+            maxTtlMs: timeoutMs,
+          });
+          // Register the child bearer BEFORE it leaves the closure (Pitfall 1 —
+          // a NEW bearer that is not registered can leak via a log/model echo).
+          handle.outputGuard.registerSecret(issued.bearer);
+          // Intentionally NO boundedAutonomy.registerRoot for the child (D5) —
+          // the child inherits the assembly's rootRunId, so tree accounting is
+          // untouched (INV-7); revokeByRootRun still reaches it.
+          return { leaseId: issued.leaseId, bearer: issued.bearer };
+        }
+      : undefined;
+
   const orchestrateTool: AgentTool | undefined =
     handle && resolved.enabled && input.sandboxProvider
       ? (createOrchestrateTool({
@@ -158,6 +205,7 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           capSocketPath: handle.capSocketPath,
           sandbox: input.sandboxProvider,
           brokerSpawnEnv, // the SAME minted COMIS_CAP_LEASE/COMIS_ORCH_SOCKET
+          mintRunLease, // per-run child bearer overrides the assembly bearer (D5)
           store: createResultRefStore({ logger: input.logger }),
           baseEnv: input.baseEnv ?? {},
         }) as unknown as AgentTool)
