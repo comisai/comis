@@ -215,3 +215,30 @@ describe("buildSupportDoctorContext gateway URL derivation", () => {
     expect(ctx.gatewayUrl).toBe("https://127.0.0.1:8443");
   });
 });
+
+describe("generateSupportBundle keeps the reducer's trusted strings intact on disk", () => {
+  // Ground-truth end-to-end: the reducer ALWAYS emits the five privacy excludes
+  // and the maintainer hints, both content-free. They must reach triage.json
+  // un-masked, or the on-disk verdict desyncs from the manifest's verbatim
+  // privacy copy and the maintainer hint (`comis explain "<sessionKey>"`) is
+  // mangled into an un-runnable command.
+  it("writes a triage.json privacy block matching the manifest and un-masked maintainer hints", async () => {
+    const result = await generateSupportBundle(makeDeps());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const triage = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "triage.json"), "utf8"),
+    ) as { privacy: unknown; maintainerNextSteps: string[] };
+    const manifest = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "manifest.json"), "utf8"),
+    ) as { privacy: unknown };
+
+    expect(triage.privacy).toEqual(manifest.privacy);
+    expect(triage.privacy).toEqual({
+      redaction: "platform-aware-v1",
+      excludes: ["secrets", "raw-config-values", "message-bodies", "file-contents", ".env"],
+    });
+    expect(triage.maintainerNextSteps).toContain('comis explain "<sessionKey>"');
+  });
+});

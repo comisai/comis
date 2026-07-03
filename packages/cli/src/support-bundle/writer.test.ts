@@ -230,3 +230,89 @@ describe("writeSupportBundle", () => {
     expect(readdirSync(target)).toHaveLength(0);
   });
 });
+
+describe("writeSupportBundle preserves the reducer's own content-free strings", () => {
+  // These strings are authored by the reducer itself — counts, category labels,
+  // signal codes, and static remediation commands. They are content-free by
+  // construction, yet several carry substrings the value-shape masker treats as
+  // secret/payload FIELD NAMES ("key" in `sessionKey`, "secret" in `secrets`,
+  // "message"/"content" in the exclusion labels). Masking them would corrupt the
+  // machine-readable verdict AND desync triage.json's privacy block from the
+  // verbatim copy the manifest writes — so the writer must NOT run the
+  // value-shape pass over triage.json or issue-summary.md.
+  const MAINTAINER_HINT = 'comis explain "<sessionKey>"';
+  const REPORTER_HINT = "Set the variable in the environment or store it via comis secrets set";
+  const PRIVACY_EXCLUDES = [
+    "secrets",
+    "raw-config-values",
+    "message-bodies",
+    "file-contents",
+    ".env",
+  ];
+
+  /** A triage carrying the reducer's real field-name-bearing constants. */
+  function reducerTriage(): SupportTriage {
+    return makeTriage({
+      activeSignals: ["secrets-audit"],
+      doctorSummary: {
+        checksRun: 9,
+        pass: 7,
+        warn: 0,
+        fail: 1,
+        skip: 1,
+        repairable: 0,
+        failing: ["secrets-audit"],
+      },
+      reporterNextSteps: [REPORTER_HINT],
+      maintainerNextSteps: ["comis fleet --since 24", MAINTAINER_HINT],
+      privacy: { redaction: "platform-aware-v1", excludes: [...PRIVACY_EXCLUDES] },
+    });
+  }
+
+  it("writes a triage.json whose privacy block is byte-equal to the manifest's", () => {
+    const result = writeSupportBundle(makeInput({ triage: reducerTriage() }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const triage = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "triage.json"), "utf8"),
+    ) as { privacy: unknown };
+    const manifest = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "manifest.json"), "utf8"),
+    ) as { privacy: unknown };
+
+    // The shared privacy declaration must not drift between the two artifacts.
+    expect(triage.privacy).toEqual(manifest.privacy);
+    expect(triage.privacy).toEqual({
+      redaction: "platform-aware-v1",
+      excludes: PRIVACY_EXCLUDES,
+    });
+  });
+
+  it("does not mask the reducer's command hints or signal labels in triage.json or issue-summary.md", () => {
+    const result = writeSupportBundle(
+      makeInput({
+        triage: reducerTriage(),
+        issueSummaryMd: `# Comis support summary\n\n1. ${REPORTER_HINT}\n`,
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const triageJson = readFileSync(safePath(result.value.bundleDir, "triage.json"), "utf8");
+    const issueSummary = readFileSync(
+      safePath(result.value.bundleDir, "issue-summary.md"),
+      "utf8",
+    );
+
+    // The machine-readable verdict round-trips verbatim — no sentinel over
+    // trusted, content-free text.
+    expect(triageJson).toContain(MAINTAINER_HINT);
+    expect(triageJson).toContain('"secrets-audit"');
+    expect(triageJson).not.toContain("<REDACTED:");
+    // The paste-ready summary keeps a runnable instruction (not `comis
+    // <REDACTED:secret-field>s set`).
+    expect(issueSummary).toContain("comis secrets set");
+    expect(issueSummary).not.toContain("<REDACTED:");
+  });
+});
