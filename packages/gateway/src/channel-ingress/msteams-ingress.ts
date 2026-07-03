@@ -50,12 +50,18 @@ export interface MsTeamsIngressDeps {
  *    wrong-audience token is rejected 401 with the body left unparsed and the
  *    adapter never invoked.
  * 3. Parse guard — a malformed JSON body is rejected 4xx.
- * 4. Fast ack — the handler returns 202 promptly and dispatches the
- *    activities to `handleWebhookEvents` defensively; a throwing dispatch is
- *    contained so it neither blocks the ack nor surfaces internal detail.
+ * 4. Ack — the handler dispatches the activities to `handleWebhookEvents`
+ *    defensively (a throwing dispatch is contained so it neither blocks the
+ *    ack nor surfaces internal detail), then acks by activity type. A message
+ *    activity is fire-and-forget: it gets a prompt bare 202. A card-action
+ *    invoke is request/response: it gets a synchronous 200
+ *    AdaptiveCardInvokeResponse — a content-free message-type value that
+ *    clears the client's button spinner — while its resolution and
+ *    edit-in-place happen out-of-band on the same dispatched activity.
  *
- * All error responses are opaque: they carry a fixed message and never the
- * validator's or dispatch's internal error text.
+ * All responses are opaque: every error carries a fixed message, and the
+ * InvokeResponse value is empty — neither the validator's nor the dispatch's
+ * internal error text is ever surfaced to the caller.
  */
 export function createMsTeamsIngress(deps: MsTeamsIngressDeps): Hono {
   const { validateActivityJwt, handleWebhookEvents, logger } = deps;
@@ -135,6 +141,34 @@ export function createMsTeamsIngress(deps: MsTeamsIngressDeps): Hono {
     }
 
     const durationMs = systemNowMs() - startedAt;
+
+    // The dispatch above already ran for every activity; only the terminal ack
+    // branches on type. A card-action invoke is request/response and requires a
+    // synchronous AdaptiveCardInvokeResponse; a message activity keeps the bare
+    // 202 fast-ack.
+    const isInvoke = activities.some(
+      (a) =>
+        typeof a === "object" &&
+        a !== null &&
+        (a as { type?: string }).type === "invoke",
+    );
+    if (isInvoke) {
+      logger.info(
+        { step: INGRESS_STEP, durationMs },
+        "Inbound invoke acknowledged",
+      );
+      // The InvokeResponse value is content-free: it only clears the button
+      // spinner and carries no internal detail. Resolution is out-of-band.
+      return c.json(
+        {
+          statusCode: 200,
+          type: "application/vnd.microsoft.activity.message",
+          value: "",
+        },
+        200,
+      );
+    }
+
     logger.info(
       { step: INGRESS_STEP, durationMs },
       "Inbound activity accepted",
