@@ -84,6 +84,38 @@ export function deriveDoctorSignals(doctor: DoctorResult): string[] {
 }
 
 /**
+ * Fleet-sourced signals, consumed verbatim — every `finding.code` plus the
+ * report's own `likelyRootCause.code` when it made a verdict. The reducer
+ * forwards the fleet's short codes as-is (no curated allow-list, no threshold
+ * re-derivation): the fleet owns its verdict, so a new finding code surfaces
+ * without a change here. Order follows the report (findings, then the root
+ * cause); the caller dedupes into the active-signal set.
+ */
+export function deriveFleetSignals(fleet: FleetHealthReport): string[] {
+  const codes = fleet.findings.map((f) => f.code);
+  if (fleet.likelyRootCause !== null) {
+    codes.push(fleet.likelyRootCause.code);
+  }
+  return codes;
+}
+
+/**
+ * Whether a fleet report carries any positive evidence — at least one session,
+ * one finding, or a coverage read that located the session-summary store. An
+ * absent report (offline read, no fleet at all) or a coverage-empty one (the
+ * assembler ran but found nothing) is treated as no evidence, so the status
+ * rules never report `healthy` off an empty fleet.
+ */
+export function fleetHasEvidence(fleet?: FleetHealthReport): boolean {
+  return (
+    fleet !== undefined &&
+    (fleet.sessions.total > 0 ||
+      fleet.findings.length > 0 ||
+      fleet.coverage?.sessionSummary.found === true)
+  );
+}
+
+/**
  * Content-free summary of the doctor aggregate. Counts are copied verbatim from
  * the `DoctorResult` (never recomputed); `failing` is the distinct set of
  * failing finding categories — the only per-check identity a pure reducer holds.
@@ -100,6 +132,23 @@ export function buildDoctorSummary(doctor: DoctorResult): SupportTriage["doctorS
     skip: doctor.skipCount,
     repairable: doctor.repairableCount,
     failing,
+  };
+}
+
+/**
+ * Content-free summary of the fleet aggregate — the five fields copied verbatim
+ * from the `FleetHealthReport` (never recomputed). `degradedRate` and the root
+ * `topErrorKinds`/`breakerTripTotal` are consumed as-is, `findingCodes` is the
+ * finding codes in report order, and `likelyRootCause` collapses the report's
+ * nullable verdict object to its code (or `null`).
+ */
+export function buildFleetSummary(fleet: FleetHealthReport): NonNullable<SupportTriage["fleetSummary"]> {
+  return {
+    degradedRate: fleet.sessions.degradedRate,
+    topErrorKinds: fleet.topErrorKinds.map((e) => ({ kind: e.kind, count: e.count })),
+    breakerTripTotal: fleet.breakerTripTotal,
+    findingCodes: fleet.findings.map((f) => f.code),
+    likelyRootCause: fleet.likelyRootCause !== null ? fleet.likelyRootCause.code : null,
   };
 }
 
@@ -134,9 +183,11 @@ const STATUS_RULES: ReadonlyArray<(ctx: StatusContext) => SupportTriageStatus | 
       ? "degraded"
       : null,
   // 3. No positive evidence anywhere -> insufficient_evidence (ranked ABOVE
-  //    healthy so an empty or offline read is never reported healthy).
+  //    healthy so an empty or offline read is never reported healthy). The
+  //    fleet is now always passed, so an absent OR coverage-empty fleet both
+  //    count as no evidence — never re-derive a fleet threshold here.
   (ctx) =>
-    ctx.doctor.passCount === 0 && ctx.fleet === undefined && ctx.explain === undefined
+    ctx.doctor.passCount === 0 && !fleetHasEvidence(ctx.fleet) && ctx.explain === undefined
       ? "insufficient_evidence"
       : null,
   // 4. Otherwise the read is positive and clean -> healthy.
@@ -210,6 +261,11 @@ const EVIDENCE_FILES: ReadonlyArray<{ path: string; description: string }> = [
   { path: "issue-summary.md", description: "Human-readable triage summary for a bug report" },
   { path: "triage.json", description: "Machine-readable triage verdict" },
   { path: "doctor.json", description: "Full diagnostic findings from the health checks" },
+  { path: "fleet.json", description: "Cross-session fleet health digest (counts and short codes)" },
+  {
+    path: "config-posture.json",
+    description: "Which config sections are present, plus flagged-key labels",
+  },
   {
     path: "manifest.json",
     description: "Bundle index with the redaction fingerprint and any warnings",
@@ -235,13 +291,21 @@ const PRIVACY_EXCLUDES: readonly string[] = [
  */
 export function buildSupportTriage(inputs: SupportTriageInputs): SupportTriage {
   const { host, doctor, fleet, explain } = inputs;
-  const activeSignals = deriveDoctorSignals(doctor);
+  // Doctor signals first, then fleet signals, deduped first-seen-wins: a fleet
+  // code that repeats a doctor signal keeps the doctor entry's earlier slot.
+  const activeSignals = [
+    ...new Set([
+      ...deriveDoctorSignals(doctor),
+      ...(fleet !== undefined ? deriveFleetSignals(fleet) : []),
+    ]),
+  ];
   return {
     schemaVersion: 1,
     status: deriveStatus({ doctor, signals: activeSignals, fleet, explain }),
     activeSignals,
     host,
     doctorSummary: buildDoctorSummary(doctor),
+    ...(fleet !== undefined ? { fleetSummary: buildFleetSummary(fleet) } : {}),
     reporterNextSteps: buildReporterNextSteps(doctor, activeSignals),
     maintainerNextSteps: [...MAINTAINER_NEXT_STEPS],
     evidenceFiles: EVIDENCE_FILES.map((file) => ({
