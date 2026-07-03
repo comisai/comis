@@ -121,6 +121,19 @@ describe("createWakeGateRunner — exception-safety (fail-open, never throws)", 
     expect(mintLease).toHaveBeenCalledTimes(1);
     expect(registerSecret).toHaveBeenCalledWith("bearer-x");
   });
+
+  it("resolves to wake (fail-open) and NEVER throws when the lease MINT itself throws", async () => {
+    // A mint fault (LeaseManager/OutputGuard invariant, entropy failure, a future
+    // registerRoot ceiling) must fail OPEN like every other cause. If it escaped,
+    // the scheduler would record status:error → backoff → auto-suspend: the exact
+    // silent-drop the gate exists to prevent. `.resolves` proves it never rejects.
+    const { deps, mintLease } = makeDeps();
+    mintLease.mockImplementation(() => {
+      throw new Error("lease mint boom");
+    });
+    const runner = createWakeGateRunner(deps);
+    await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual({ wake: true });
+  });
 });
 
 describe("createWakeGateRunner — clean-run verdict resolution", () => {
