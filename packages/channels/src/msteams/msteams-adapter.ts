@@ -54,6 +54,7 @@ import {
 } from "./msteams-connector.js";
 import { createConnectorTokenProvider } from "./msteams-auth.js";
 import { normalizeCardAction } from "./msteams-actions.js";
+import { renderMSTeamsCardAttachment } from "./msteams-rich-renderer.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -682,6 +683,16 @@ export function createMsTeamsAdapter(
       if (built.entities.length > 0) activityBody.entities = built.entities;
       // DM → top-level; channel/group → threaded reply under the parent.
       if (replyToId !== undefined) activityBody.replyToId = replyToId;
+      // Render options.buttons/cards into ONE Adaptive Card attachment, attached
+      // only when present so a plain text send stays byte-identical to the bare
+      // { type, text } body — a non-approval send carries no attachments key.
+      const hasButtons = (options?.buttons?.length ?? 0) > 0;
+      const hasCards = (options?.cards?.length ?? 0) > 0;
+      if (hasButtons || hasCards) {
+        activityBody.attachments = [
+          renderMSTeamsCardAttachment(options?.cards ?? [], options?.buttons ?? []),
+        ];
+      }
 
       const responded = await fromPromise(
         (deps.fetchImpl ?? fetch)(url, {
