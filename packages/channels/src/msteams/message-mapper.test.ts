@@ -104,7 +104,7 @@ describe("mapMsTeamsActivityToNormalized", () => {
     expect(result).toBeNull();
   });
 
-  it("stashes teamsActivityId, serviceUrl, tenantId and replyToId in metadata", () => {
+  it("records teamsActivityId, serviceUrl, tenantId and replyToId in metadata", () => {
     const result = mapMsTeamsActivityToNormalized(
       makeActivity({
         id: "act-42",
