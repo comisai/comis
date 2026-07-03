@@ -391,16 +391,39 @@ export async function setupSchedulers(deps: {
               // cap-calls. Off-turn: the cron/daemon context has no live bus bridge,
               // so this mirrors the image / capability-audit direct emits (a
               // per-session recorder call, not a bus subscription) — the incident
-              // fork's feed, wired independently of the fleet emit above. Best-effort
-              // + off-turn safe: an absent registry / a recorder that resolves
-              // undefined is a no-op (the offline assembler is the binding oracle),
-              // never a throw that could degrade the job. A SKIP records NOTHING
-              // here — it opens no session; its lens is the enriched cron.runs row.
+              // fork's feed, wired independently of the fleet emit above.
+              //
+              // BEST-EFFORT enrichment: this trajectory record is the ONLY source of
+              // the woke cronWakeGate fact, so it reaches `comis explain` ONLY when
+              // the main-session recorder is already open. When it is not — a daemon
+              // restart (the registry is empty until the first turn opens the main
+              // session), a monitor-only agent whose main session no turn ever
+              // opens, or an idle-evicted session — getRecorder resolves undefined
+              // and the fact is DROPPED. The fire stays reconstructable from the
+              // DURABLE fleet fork (the cron_wake_gate DiagnosticRow /
+              // cron_wake_gate_efficiency block) and the cap-audit stream
+              // (`explain <rootRunId>`), so the drop degrades one lens, never the
+              // fire's record. Emit a DEBUG on the drop so it is observable rather
+              // than a silent no-op; never throw (a throw here would degrade the
+              // job). A SKIP records NOTHING here — it opens no session; its lens is
+              // the enriched cron.runs row.
               // Content-free (I5): ids / enum / counts ONLY — never the finding.
-              trajectoryRegistry?.getRecorder?.(resolveMainSessionKey(job.agentId))?.recordEvent(
-                "scheduler.wake_gate",
-                { jobId: job.id, agentId: job.agentId, wake: true, durationMs, toolCalls, estTurnsSaved: 0 },
-              );
+              const wakeRecorder = trajectoryRegistry?.getRecorder?.(resolveMainSessionKey(job.agentId));
+              if (wakeRecorder) {
+                wakeRecorder.recordEvent(
+                  "scheduler.wake_gate",
+                  { jobId: job.id, agentId: job.agentId, wake: true, durationMs, toolCalls, estTurnsSaved: 0 },
+                );
+              } else {
+                jobLogger.debug(
+                  {
+                    step: "wake-gate",
+                    wake: true,
+                    hint: "no open main-session recorder — the woke trajectory fact was dropped; the fire is still captured by the fleet cron_wake_gate lens and the cap-audit stream (explain <rootRunId>)",
+                  },
+                  "Wake-gate woke trajectory record dropped (no open session recorder)",
+                );
+              }
             }
           }
 
