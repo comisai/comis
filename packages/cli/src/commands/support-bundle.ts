@@ -94,7 +94,17 @@ export function registerSupportBundleCommand(program: Command): void {
       const startedAtMs = systemNowMs();
       const configPaths = options.config ?? resolveDefaultConfigPaths();
       const dataDir = resolveOfflineDataDir();
+
+      // The window must be a positive number of hours. A non-numeric or
+      // non-positive value would otherwise ride through as NaN/≤0 with no
+      // feedback to the operator and misbehave the moment a fleet read consumes
+      // it — reject it at the boundary (the fleet window is likewise constrained
+      // to a positive number).
       const sinceHours = Number.parseFloat(options.since);
+      if (!Number.isFinite(sinceHours) || sinceHours <= 0) {
+        error("--since must be a positive number of hours");
+        process.exit(ExitCode.UsageError);
+      }
 
       const result = await generateSupportBundle({
         dataDir,
