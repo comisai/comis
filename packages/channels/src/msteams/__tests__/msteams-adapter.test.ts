@@ -2,11 +2,14 @@
 import { describe, it, expect, vi } from "vitest";
 import type {
   ComisLogger,
+  ConversationReference,
   MessageHandler,
+  MsTeamsConversationStorePort,
   NormalizedMessage,
   NormalizedReaction,
   ReactionHandler,
 } from "@comis/core";
+import { ok } from "@comis/shared";
 import { createMsTeamsAdapter, type MsTeamsAdapterDeps } from "../msteams-adapter.js";
 import { createMsTeamsPlugin } from "../msteams-plugin.js";
 import type { TeamsActivity } from "../message-mapper.js";
@@ -16,6 +19,14 @@ import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 
 /** Resolve after the current microtask queue drains (lets fire-and-forget POSTs land). */
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/** A fake conversation store: capture records upserts; get returns the seeded reference. */
+function makeFakeStore(getValue?: ConversationReference) {
+  const capture = vi.fn(async () => ok<void, Error>(undefined));
+  const get = vi.fn(async () => ok<ConversationReference | undefined, Error>(getValue));
+  const store = { capture, get } as unknown as MsTeamsConversationStorePort;
+  return { store, capture, get };
+}
 
 /** The Connector typing POSTs a spy recorded — the {type:"typing"} activity sends. */
 function typingPosts(spy: ReturnType<typeof vi.fn>): Array<[string, RequestInit]> {
@@ -504,19 +515,16 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
     expect(typeof (outboundInfo as { durationMs?: unknown }).durationMs).toBe("number");
   });
 
-  it("resolves the default Connector service URL when none is supplied", async () => {
+  it("errs on a proactive send (no serviceUrl) when no conversation store is wired", async () => {
+    // A bare send with no serviceUrl is a proactive send; without a store to
+    // recover the tenant-correct serviceUrl it must err, never fall to a default
+    // host that would 403 (or leak the token to the wrong region).
     const { fetchImpl, spy } = makeConnectorFetch();
     const { deps } = makeAdapterDeps({ fetchImpl });
     const adapter = createMsTeamsAdapter(deps);
     const result = await adapter.sendMessage("19:dm-convo", "hi");
-    expect(result.ok).toBe(true);
-    const sendCall = findSendCall(spy);
-    expect(sendCall).toBeDefined();
-    const [url] = sendCall!;
-    expect(url.startsWith("https://")).toBe(true);
-    expect(url).toContain(
-      `/v3/conversations/${encodeURIComponent("19:dm-convo")}/activities`,
-    );
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("returns a classified err and warns when the Connector responds non-2xx", async () => {
@@ -892,6 +900,158 @@ describe("createMsTeamsAdapter — typing keepalive over the injected TimerPort"
   });
 });
 
+describe("createMsTeamsAdapter — conversation-reference capture (PROACTIVE-01)", () => {
+  it("captures the RAW conversation reference (tenant from channelData) on a successful inbound", async () => {
+    const { store, capture } = makeFakeStore();
+    const { deps } = makeAdapterDeps({ conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onMessage(vi.fn());
+
+    adapter.handleWebhookEvents([
+      messageActivity({
+        conversation: {
+          id: "19:channel-convo@thread.tacv2;messageid=1700",
+          conversationType: "channel",
+          tenantId: TENANT,
+        },
+        channelData: { tenant: { id: "tenant-from-channeldata" } },
+        serviceUrl: "https://smba.example.com/teams/",
+      }),
+    ]);
+    await flush();
+
+    expect(capture).toHaveBeenCalledOnce();
+    const ref = capture.mock.calls[0]![0] as ConversationReference;
+    // RAW conversation.id — NOT the stripped channelId (keeps the ;messageid= suffix).
+    expect(ref.conversationId).toBe("19:channel-convo@thread.tacv2;messageid=1700");
+    expect(ref.serviceUrl).toBe("https://smba.example.com/teams/");
+    // channelData.tenant.id wins over conversation.tenantId.
+    expect(ref.tenantId).toBe("tenant-from-channeldata");
+    expect(ref.threadId).toBe("1700");
+    expect(typeof ref.updatedAt).toBe("number");
+  });
+
+  it("falls back to conversation.tenantId when channelData carries no tenant", async () => {
+    const { store, capture } = makeFakeStore();
+    const { deps } = makeAdapterDeps({ conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onMessage(vi.fn());
+    adapter.handleWebhookEvents([
+      messageActivity({
+        conversation: { id: "19:dm", conversationType: "personal", tenantId: TENANT },
+        serviceUrl: "https://smba.example.com/teams/",
+      }),
+    ]);
+    await flush();
+    expect((capture.mock.calls[0]![0] as ConversationReference).tenantId).toBe(TENANT);
+  });
+
+  it("does not capture when the inbound carries no serviceUrl (cannot route a proactive send)", async () => {
+    const { store, capture } = makeFakeStore();
+    const { deps } = makeAdapterDeps({ conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onMessage(vi.fn());
+    adapter.handleWebhookEvents([messageActivity({ serviceUrl: undefined })]);
+    await flush();
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("does not break inbound delivery when the store capture rejects", async () => {
+    const capture = vi.fn(async () => {
+      throw new Error("store write failed");
+    });
+    const get = vi.fn(async () => ok<ConversationReference | undefined, Error>(undefined));
+    const store = { capture, get } as unknown as MsTeamsConversationStorePort;
+    const { deps } = makeAdapterDeps({ conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<MessageHandler>();
+    adapter.onMessage(handler);
+    adapter.handleWebhookEvents([messageActivity()]);
+    await flush();
+    expect(handler).toHaveBeenCalledOnce();
+  });
+});
+
+describe("createMsTeamsAdapter — proactive store-fallback send (PROACTIVE-02)", () => {
+  const storedRef: ConversationReference = {
+    conversationId: "19:dm-convo",
+    serviceUrl: "https://smba.trafficmanager.net/emea/",
+    tenantId: "tenant-1",
+    threadId: undefined,
+    updatedAt: FIXED_NOW,
+  };
+
+  it("recovers the stored serviceUrl for a proactive send when the caller supplies none", async () => {
+    const { store, get } = makeFakeStore(storedRef);
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "proactive hi", {});
+
+    expect(result.ok).toBe(true);
+    expect(get).toHaveBeenCalledWith("19:dm-convo");
+    const [url] = findSendCall(spy)!;
+    expect(url.startsWith("https://smba.trafficmanager.net/emea/")).toBe(true);
+  });
+
+  it("re-validates the STORED serviceUrl and refuses a poisoned host (no token minted, no send)", async () => {
+    const { store } = makeFakeStore({ ...storedRef, serviceUrl: "https://attacker.example/" });
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {});
+
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("errs clearly on a proactive send when the conversation was never captured (store miss)", async () => {
+    const { store, get } = makeFakeStore(undefined);
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:never-seen", "hi", {});
+
+    expect(result.ok).toBe(false);
+    expect(get).toHaveBeenCalledWith("19:never-seen");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("leaves the reply path unchanged: an explicit serviceUrl never consults the store", async () => {
+    const { store, get } = makeFakeStore(storedRef);
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "reply", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(get).not.toHaveBeenCalled();
+    expect(findSendCall(spy)![0].startsWith(SERVICE_URL)).toBe(true);
+  });
+
+  it("threads a proactive channel send under the stored threadId when no explicit reply target", async () => {
+    const { store } = makeFakeStore({
+      ...storedRef,
+      conversationId: "19:channel@thread.tacv2",
+      threadId: "thread-root-9",
+    });
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.sendMessage("19:channel@thread.tacv2", "cron notice", {});
+
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as { replyToId?: string };
+    expect(body.replyToId).toBe("thread-root-9");
+  });
+});
+
 describe("createMsTeamsAdapter — editMessage / deleteMessage via the Connector REST", () => {
   it("PUTs an updated activity to the conversation activity path with a Bearer token", async () => {
     const { fetchImpl, spy, token } = makeConnectorFetch();
@@ -1076,19 +1236,19 @@ describe("createMsTeamsAdapter — outbound mention wiring (id-shape gated)", ()
   });
 });
 
-describe("createMsTeamsPlugin — honest text-only capabilities", () => {
-  it("declares every feature flag false, buttons none, and the Teams text limits", () => {
+describe("createMsTeamsPlugin — capability parity metadata", () => {
+  it("declares reactions/editMessages/deleteMessages/typing/threads true, buttons none", () => {
     const { deps } = makeAdapterDeps();
     const plugin = createMsTeamsPlugin(deps);
     expect(plugin.capabilities).toEqual({
       features: {
-        reactions: false,
-        editMessages: false,
-        deleteMessages: false,
+        reactions: true,
+        editMessages: true,
+        deleteMessages: true,
         fetchHistory: false,
         attachments: false,
-        typing: false,
-        threads: false,
+        typing: true,
+        threads: true,
         buttons: "none",
       },
       limits: { maxMessageChars: 28000 },
@@ -1096,12 +1256,12 @@ describe("createMsTeamsPlugin — honest text-only capabilities", () => {
     });
   });
 
-  it("keeps msteams out of the EditPlace union and the adaptivecard button variant", () => {
+  it("keeps buttons off the adaptivecard variant while editMessages routes to edit-in-place", () => {
     const { deps } = makeAdapterDeps();
     const plugin = createMsTeamsPlugin(deps);
-    // editMessages:false keeps msteams out of the closed EditPlaceChannel union.
-    expect(plugin.capabilities.features.editMessages).toBe(false);
-    // buttons "none" — the adaptivecard enum variant is a later phase.
+    // editMessages:true auto-routes the channel to the edit-in-place strategy.
+    expect(plugin.capabilities.features.editMessages).toBe(true);
+    // buttons "none" — the adaptivecard enum variant is a later capability.
     expect(plugin.capabilities.features.buttons).not.toBe("adaptivecard");
   });
 
