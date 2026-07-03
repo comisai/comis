@@ -81,7 +81,12 @@ import type {
 } from "./result-ref-store.js";
 import { estimateSavings } from "./savings-estimate.js";
 import { extractCapabilityFootprint } from "./orchestrate-preflight.js";
-import { classifyRunError, runScriptWithOneShotRepair } from "./orchestrate-repair.js";
+import {
+  classifyRunError,
+  repairEnabledForClass,
+  runScriptWithOneShotRepair,
+  REPAIR_LEASE_BUDGET_MS,
+} from "./orchestrate-repair.js";
 import type {
   OrchestrateFailureClass,
   OrchestrateSpawnFn,
@@ -224,14 +229,16 @@ export interface OrchestrateToolDeps {
    * runner mints a short-TTL CHILD lease per run and injects the returned
    * `bearer` as `COMIS_CAP_LEASE` — OVERRIDING the assembly bearer that rides
    * {@link brokerSpawnEnv}. The child lease shares the assembly's `rootRunId`
-   * (tree accounting untouched) with `parentLeaseId` = the assembly lease and
-   * TTL clamped to `timeoutMs`, so every in-jail cap call for the run audits
-   * under this run's `leaseId` (the INV-1 per-run correlator). Minted daemon-side
-   * and threaded as a plain closure — the runner never imports the LeaseManager.
-   * Absent (older wiring) → the assembly bearer authenticates (no per-run mint;
-   * never an unauthenticated run).
+   * (tree accounting untouched) with `parentLeaseId` = the assembly lease, so
+   * every in-jail cap call for the run audits under this run's `leaseId` (the
+   * INV-1 per-run correlator). The runner SIZES the `ttlMs` it passes: the run
+   * timeout, or the run timeout + the one-shot-repair budget when auto-repair is
+   * enabled (so the single lease outlives the repair-completion await into the
+   * repaired re-run). Minted daemon-side and threaded as a plain closure —
+   * the runner never imports the LeaseManager. Absent (older wiring) → the assembly
+   * bearer authenticates (no per-run mint; never an unauthenticated run).
    */
-  readonly mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+  readonly mintRunLease?: (runId: string, ttlMs: number) => { leaseId: string; bearer: string };
   /**
    * The agent-side event bus, structurally typed to the ONE channel this runner
    * emits (the emit-capability-audit.ts EmitCapabilityAuditDeps precedent). When
@@ -694,11 +701,27 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         //     unauthenticated run). The child bearer is registered in OutputGuard
         //     at mint (daemon side), so logging its leaseId (not the bearer) is safe.
         if (deps.mintRunLease) {
-          const child = deps.mintRunLease(runId, timeoutMs);
+          // Size the child-lease TTL to the run's ACTUAL lifetime. When one-shot
+          // auto-repair is enabled for this run (a repair-eligible class AND a
+          // wired repair seam), the run engine awaits one utility-model completion
+          // — bounded by the seam's abort ceiling — BETWEEN the initial run and the
+          // repaired re-run, all under THIS single lease. A lease sized to the tight
+          // `timeoutMs` would expire during that repair await, so the repaired
+          // re-run's in-jail cap calls would authenticate with a dead lease and be
+          // denied (fails closed, but the repair silently no-ops for exactly the
+          // slow/local small models it targets). Extend the TTL by the repair budget
+          // so the ONE minted lease covers the run+repair window; when repair is off,
+          // keep the tight `timeoutMs`. The lease is only SIZED here, never re-minted
+          // — one leaseId per run (the INV-1 attribution the run_summary keys on) and
+          // the same audience-bound child (INV-7) are both preserved.
+          const repairEnabled =
+            deps.repairSeam !== undefined && repairEnabledForClass(deps.capabilityClass);
+          const leaseTtlMs = repairEnabled ? timeoutMs + REPAIR_LEASE_BUDGET_MS : timeoutMs;
+          const child = deps.mintRunLease(runId, leaseTtlMs);
           childLeaseId = child.leaseId;
           childEnv.COMIS_CAP_LEASE = child.bearer;
           log.debug(
-            { runId, leaseId: childLeaseId, step: "child-lease" },
+            { runId, leaseId: childLeaseId, step: "child-lease", leaseTtlMs, repairEnabled },
             "per-run child lease minted (overrides the assembly bearer)",
           );
         }

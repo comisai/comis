@@ -194,21 +194,24 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   // short-TTL CHILD lease off the assembly lease: same caps + SAME rootRunId
   // (tree accounting untouched — registerRoot is NOT called, so the per-root
   // budget/semaphore/kill stays keyed on the single registered assembly lease,
-  // INV-7), parentLeaseId = the assembly leaseId, TTL clamped to the run timeout
-  // (ttlMs === maxTtlMs === timeoutMs). The child bearer is registered in
-  // OutputGuard at mint (Pitfall 1 — never logged) BEFORE it leaves the closure.
-  // revokeByRootRun still reaches the child (it scans by the inherited rootRunId),
-  // so kill is preserved. Built ONLY when an assembly lease exists
-  // (brokerSpawnEnv.leaseId present); otherwise undefined → the runner falls back
-  // to the assembly bearer (the older/non-autonomy path — never an
-  // unauthenticated run). A plain closure so @comis/skills never imports the
-  // LeaseManager: the mint is daemon-side, the runner only receives the bearer.
+  // INV-7), parentLeaseId = the assembly leaseId, and a TTL the RUNNER sizes and
+  // passes in (ttlMs === maxTtlMs === the runner-passed ttlMs): the run timeout,
+  // or the run timeout + the one-shot-repair budget when auto-repair is enabled,
+  // so the single lease outlives the repair-completion await into the repaired
+  // re-run. The child bearer is registered in OutputGuard at mint
+  // (Pitfall 1 — never logged) BEFORE it leaves the closure. revokeByRootRun still
+  // reaches the child (it scans by the inherited rootRunId), so kill is preserved.
+  // Built ONLY when an assembly lease exists (brokerSpawnEnv.leaseId present);
+  // otherwise undefined → the runner falls back to the assembly bearer (the
+  // older/non-autonomy path — never an unauthenticated run). A plain closure so
+  // @comis/skills never imports the LeaseManager: the mint is daemon-side, the
+  // runner only receives the bearer.
   const assemblyLeaseId = brokerSpawnEnv?.leaseId;
   const mintRunLease:
-    | ((runId: string, timeoutMs: number) => { leaseId: string; bearer: string })
+    | ((runId: string, ttlMs: number) => { leaseId: string; bearer: string })
     | undefined =
     handle && resolved.enabled && assemblyLeaseId !== undefined
-      ? (runId, timeoutMs) => {
+      ? (runId, ttlMs) => {
           // runId is the runner's correlator; the child lease minted here is
           // correlated by its OWN fresh leaseId + the inherited rootRunId.
           const issued = handle.leaseManager.mintLease({
@@ -218,8 +221,8 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
             sessionKey,
             rootRunId,
             parentLeaseId: assemblyLeaseId,
-            ttlMs: timeoutMs,
-            maxTtlMs: timeoutMs,
+            ttlMs,
+            maxTtlMs: ttlMs,
           });
           // Register the child bearer BEFORE it leaves the closure (Pitfall 1 —
           // a NEW bearer that is not registered can leak via a log/model echo).

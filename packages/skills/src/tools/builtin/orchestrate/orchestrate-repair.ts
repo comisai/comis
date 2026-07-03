@@ -92,6 +92,36 @@ export type OrchestrateRepairSeam = (input: {
 export const STDOUT_HARD_CAP_BYTES = 4 * 1024 * 1024;
 
 /**
+ * The wall-clock budget (ms) the runner ADDS to a per-run child lease's TTL when
+ * one-shot auto-repair is enabled for the run, so the single lease minted before
+ * the initial run stays valid through the repair-completion await and into the
+ * repaired re-run's in-jail cap calls. Sized to the repair seam's own hard
+ * completion ceiling (the utility-model abort timeout in `orchestrate-repair-seam.ts`,
+ * 120s): the seam blocks for at most that long between the two runs, so a lease
+ * short by less than this can expire mid-repair and deny the repaired run's cap
+ * calls (fails closed, but the repair silently no-ops for exactly the slow/local
+ * small models it targets). MUST stay >= that seam ceiling — raising the seam
+ * timeout above this reopens the gap. A larger-than-run child lease is harmless:
+ * it is still the short-lived, audience-bound, attenuateCaps-bounded per-run child,
+ * just sized to the real run+repair window rather than the run alone.
+ */
+export const REPAIR_LEASE_BUDGET_MS = 120_000;
+
+/**
+ * Whether one-shot auto-repair is enabled for a run's capability class — the pure
+ * class-gate with the runner's fail-safe default applied (an absent class → the
+ * repair-eligible `small`, matching the platform's fail-closed direction). The
+ * SINGLE source of the class-gate: the runner consults it to size the child-lease
+ * TTL for the repair window (when a seam is also wired), and
+ * {@link runScriptWithOneShotRepair} consults it as part of its larger gate (which
+ * additionally requires a wired seam AND a recoverable failure) — so the lease
+ * sizing and the actual repair decision can never disagree on eligibility.
+ */
+export function repairEnabledForClass(capabilityClass: CapabilityClass | undefined): boolean {
+  return autoRepairForClass(capabilityClass ?? "small");
+}
+
+/**
  * Max chars of the jailed child's stderr retained as a diagnostic TAIL. On the
  * success path stderr is dropped (stdout-only — diagnostic noise stays out of
  * context); on a NON-ZERO exit this bounded tail is the only signal of WHY the
@@ -360,7 +390,7 @@ export async function runScriptWithOneShotRepair(input: {
         : undefined;
     if (
       failureClass === "nonzero_exit" &&
-      autoRepairForClass(capabilityClass ?? "small") &&
+      repairEnabledForClass(capabilityClass) &&
       repairSeam !== undefined &&
       recoverable !== undefined
     ) {
