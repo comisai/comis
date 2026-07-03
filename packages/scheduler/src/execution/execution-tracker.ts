@@ -31,6 +31,8 @@ export interface ExecutionLogEntry {
   costUsd?: number;
   /** Number of tool calls executed. */
   toolCalls?: number;
+  /** Estimated model turns avoided by a wake-gate skip (1 per skipped fire, 0 on wake). Content-free — a count only. */
+  estTurnsSaved?: number;
   /** Number of LLM API calls made. */
   llmCalls?: number;
   /** Names of tools that failed during execution. */
@@ -48,6 +50,7 @@ const ExecutionLogEntrySchema = z.object({
   totalTokens: z.number().optional(),
   costUsd: z.number().optional(),
   toolCalls: z.number().optional(),
+  estTurnsSaved: z.number().optional(),
   llmCalls: z.number().optional(),
   failedTools: z.array(z.string()).optional(),
 });
