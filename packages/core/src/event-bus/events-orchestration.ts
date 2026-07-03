@@ -350,4 +350,61 @@ export interface OrchestrationEvents {
    * escalate/WARN at the source). Each trip is one event (the count is the row count).
    */
   "autonomy:denial_breaker_tripped": { rootRunId: string; timestamp: number };
+
+  /**
+   * A completed `orchestrate` run — the content-free per-run summary
+   * every `comis explain` / `comis fleet` consumer reads. Emitted from the
+   * `orchestrate` TOOL (agent-side, where the threaded eventBus reaches the live
+   * per-session trajectory bridge), NOT a daemon graph handler — the per-session
+   * recordEvent on the graph-handler deps is a permanent no-op. Timing is safe:
+   * the bridge attaches at execute() START; this fires at run COMPLETION.
+   *
+   * Content-free by construction (AGENTS §2.7): ids + closed enums + counts +
+   * token ESTIMATES only. `failureClass` is a CLOSED union — the free-text
+   * failure reason (stderr tail, thrown message) is mapped to a member BEFORE the
+   * emit and stays ONLY on the bounded tool-error surface (the runner's
+   * STDERR_TAIL_MAX_CHARS tail), NEVER on the bus. The bus never carries the
+   * stderr tail, the script body, or the tool params.
+   *
+   * Self-attributing: `rootRunId` + `sessionKey` ride the payload so a
+   * daemon-shared-bus event lands on the right session's report (the
+   * `capability:audited` precedent) — never inferred from ambient state. The
+   * per-run child `leaseId` (absent only when no lease was minted) is the
+   * unforgeable per-run correlator every downstream fold groups on.
+   */
+  "orchestrate:run_summary": {
+    /** The runner's per-run id (`orch-<ts36>-<rand>`). */
+    runId: string;
+    /** The per-run child leaseId — the per-run correlator. Absent only if no lease was minted. */
+    leaseId?: string;
+    /** The tree-stable root the run's lease inherits — an attribution key (the bus fans out to every session bridge). */
+    rootRunId: string;
+    /** The owning session — an attribution key. Absent for a heartbeat/cron run with no session. */
+    sessionKey?: string;
+    /** The script language (mirrors the orchestrate `language` param). */
+    language: "ts" | "js";
+    /** Wall-clock duration of the run (ms). */
+    durationMs: number;
+    /** The jailed child's process exit code (0 on success; the real code on a non-zero exit; a sentinel on kill/spawn-fail). */
+    exitCode: number;
+    /**
+     * CLOSED enum — the run's degradation class, or ABSENT on a clean run. NOT
+     * the engine's free text (a stderr tail / thrown message is mapped to a
+     * member before emit and stays on the tool-error surface).
+     */
+    failureClass?: "timeout" | "stdout_cap" | "nonzero_exit" | "spawn_fail" | "lease_absent";
+    /** Pre-bounce raw stdout byte length. */
+    stdoutBytesRaw: number;
+    /** POST-bounce stdout char count — the tokens that actually re-entered context (the SAVE-01 actual). */
+    stdoutCharsReentered: number;
+    /** Count of materialized ResultRef files the run produced. */
+    resultRefCount: number;
+    /** Total bytes of those materialized ResultRefs (the counterfactual input). */
+    resultRefBytes: number;
+    /** The labeled counterfactual token-savings ESTIMATE (materialized-bytes/4 − post-bounce/4). */
+    estSavedTokens?: number;
+    /** estSavedTokens / wouldBeTokens in [0,1]; absent/0 when nothing was materialized. */
+    savedRatio?: number;
+    timestamp: number;
+  };
 }

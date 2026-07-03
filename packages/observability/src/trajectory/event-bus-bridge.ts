@@ -252,6 +252,15 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // is needed; this mapping is the bridge.
   "terminal:session_evicted": "terminal.session_evicted",
 
+  // A completed `orchestrate` run's content-free per-run summary. Emitted from
+  // the orchestrate TOOL (packages/skills), which the trajectory-event arch test
+  // does NOT scan (it walks agent+orchestrator) — so, like drive_promoted, this
+  // mapping is what the bridge relies on to record it (no arch allowlist entry).
+  // Content-free (translate-orchestration-payload.ts): ids + the closed
+  // failureClass enum + counts + token estimates ONLY — NEVER the stderr tail,
+  // the script body, or tool params (which stay on the bounded tool-error surface).
+  "orchestrate:run_summary": "orchestrate.run_summary",
+
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",
