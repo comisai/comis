@@ -22,6 +22,7 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -40,6 +41,23 @@ function pyImports(src: string): string[] {
   return out;
 }
 
+/**
+ * True if a `python3` interpreter is invocable on this host. macOS dev
+ * (`/usr/bin/python3`), the Linux CI runner, and the Docker image all ship one,
+ * so the compile gate below runs on every normal leg. A genuinely python-less
+ * host skips only that single check — the real in-jail parse is still exercised
+ * by the Linux jail suite under `pnpm validate:full` — rather than hard-failing.
+ */
+function python3Available(): boolean {
+  try {
+    execFileSync("python3", ["--version"], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const PYTHON3_PRESENT = python3Available();
+
 describe("orchestrate SDK python binding is self-contained (stdlib only, no site-packages in the jail)", () => {
   it("comis_tools.py imports only the stdlib the cap-socket wire uses", () => {
     const file = join(ORCH_DIST, "comis_tools.py");
@@ -56,5 +74,27 @@ describe("orchestrate SDK python binding is self-contained (stdlib only, no site
       foreign,
       `comis_tools.py imports non-stdlib module(s) ${JSON.stringify(foreign)} — the jail has no site-packages beyond the host /usr stdlib and no network to pip-install, so the jailed run would fail on import. Use only the stdlib the wire needs (${[...PY_STDLIB_ALLOW].join(", ")}).`,
     ).toEqual([]);
+  });
+
+  // The drift gate (byte-compare) and the import scan above are TEXT-only —
+  // neither parses Python. An emitter regression that renders syntactically
+  // invalid Python (a bad indent, a missing `:`, tab/space mixing) regenerates
+  // deterministically, so both text gates stay green while EVERY jailed
+  // `language: "py"` run fails at interpreter parse — green on the standard
+  // legs, broken in the jail. Compiling the BUILT module here closes that blind
+  // spot on every python-equipped leg instead of leaving it only to the Linux
+  // jail suite under `pnpm validate:full`. Skipped only on a genuinely
+  // python-less host (never a hard fail there — the jail suite still covers it).
+  it.skipIf(!PYTHON3_PRESENT)("comis_tools.py is syntactically valid Python (py_compile)", () => {
+    const file = join(ORCH_DIST, "comis_tools.py");
+    expect(
+      existsSync(file),
+      `${file} missing — run \`pnpm build\` first (copy-sandbox-assets copies comis_tools.py into dist)`,
+    ).toBe(true);
+    try {
+      execFileSync("python3", ["-m", "py_compile", file], { stdio: "pipe" });
+    } catch (e) {
+      expect.fail(`comis_tools.py failed py_compile — the emitter produced invalid Python: ${String(e)}`);
+    }
   });
 });
