@@ -337,6 +337,23 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       if (rawParams.message !== undefined) {
         job.payload = { ...job.payload, kind: "agent_turn" as const, message: rawParams.message as string };
       }
+      // Wake-gate: accept the flat (chat tool) or nested (web) shape. The script
+      // is CODE for the jail, so it is set raw and NEVER passed through
+      // sanitizeToolOutput. Absent -> the existing wakeGate is left untouched
+      // (no accidental clear); language falls back to the store schema value.
+      const wakeGateNested = rawParams.wakeGate as
+        | { script?: string; language?: "js" | "ts"; timeoutSeconds?: number }
+        | undefined;
+      const updateWakeGateScript = (rawParams.wake_gate_script as string | undefined) ?? wakeGateNested?.script;
+      if (updateWakeGateScript !== undefined) {
+        const updateWakeGateLanguage =
+          (rawParams.wake_gate_language as "js" | "ts" | undefined) ?? wakeGateNested?.language;
+        job.wakeGate = {
+          script: updateWakeGateScript,
+          language: updateWakeGateLanguage ?? "js",
+          timeoutSeconds: wakeGateNested?.timeoutSeconds ?? 30,
+        };
+      }
       // Delivery target: set structured target or clear with null
       if (rawParams.deliveryTarget !== undefined) {
         job.deliveryTarget = rawParams.deliveryTarget === null
