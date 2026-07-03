@@ -184,6 +184,24 @@ run arbitrary code safe:
   which the SDK authenticates with; the lease is registered with the OutputGuard at mint so it is
   never logged.
 
+## Pre-flight cap check
+
+Before the jailed child is spawned, the runner statically scans the script for the set of
+capabilities its `comis_tools` calls require. If the script calls a tool needing a capability
+the agent does **not** hold, the run is rejected **pre-spawn** with a capability-named error
+(for example, naming the missing `orch:web`) — so a model that reaches for a capability it
+lacks gets a precise, actionable message in the same turn rather than a mid-run failure after
+a jail has already been built. When the [approval workflow](/security/approvals#orchestrate-pre-flight)
+is enabled, the same pre-flight fires **one** approval on the script's whole capability
+footprint before the spawn.
+
+<Note>
+This pre-flight is **advisory** — a fail-fast and approval-UX aid, not the containment
+boundary. The `--unshare-net` jail and its capability socket remain the sole authoritative
+gate: a script that dodges the static scan (say, via a dynamically-computed method name)
+proceeds past the pre-flight and is still denied at the socket by default-deny-by-absence.
+</Note>
+
 ## Per-run observability
 
 Every run is minted its **own per-run capability lease** — an attenuation of the agent's

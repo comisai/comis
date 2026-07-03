@@ -159,6 +159,44 @@ describe("buildAutonomyToolWiring", () => {
     expect(mockCreateOrchestrateTool).toHaveBeenCalledTimes(1);
   });
 
+  // -------------------------------------------------------------------------
+  // Static pre-flight wiring: the daemon threads the agent's HELD cap set
+  // (resolved.capabilities) as allowedCaps for the pre-spawn cap fail-fast, and
+  // the (approvals.enabled-gated) approvalGate seam — both into
+  // createOrchestrateTool, mirroring the shipped eventBus/mintRunLease threads.
+  // -------------------------------------------------------------------------
+  describe("pre-flight wiring (allowedCaps + approvalGate)", () => {
+    it("threads allowedCaps = resolved.capabilities (the held-cap set) into createOrchestrateTool", () => {
+      const input = baseInput();
+      buildAutonomyToolWiring(input);
+      const handle = input.capEndpointHandle!;
+      const mint = (handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease;
+      // Ground truth: the SAME resolved.capabilities the assembly lease is minted
+      // with — the advisory pre-flight cap set must not drift from the endpoint's.
+      const mintedCaps = (mint.mock.calls[0]![0] as { caps: unknown }).caps;
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as { allowedCaps?: readonly string[] };
+      expect(args.allowedCaps).toBeDefined();
+      expect(args.allowedCaps).toEqual(mintedCaps);
+      // A standard agent holds orch:web — the cap the pre-flight fail-fast keys on.
+      expect(args.allowedCaps).toContain("orch:web");
+    });
+
+    it("threads the approvalGate seam into createOrchestrateTool when one is wired (approvals.enabled)", () => {
+      const approvalGate = { requestApproval: vi.fn() } as never as NonNullable<
+        AutonomyToolInputs["approvalGate"]
+      >;
+      buildAutonomyToolWiring(baseInput({ approvalGate }));
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as { approvalGate?: unknown };
+      expect(args.approvalGate).toBe(approvalGate);
+    });
+
+    it("OMITS the approvalGate key when none is wired (approvals disabled) — the conditional-spread stays off", () => {
+      buildAutonomyToolWiring(baseInput());
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect("approvalGate" in args).toBe(false);
+    });
+  });
+
   it("does NOT mint a lease for a non-autonomy (assistant) agent", () => {
     const input = baseInput({ agentConfig: { autonomy: { profile: "assistant" } } as never });
     const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring(input);

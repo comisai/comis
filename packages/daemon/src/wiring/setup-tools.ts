@@ -582,6 +582,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         brokerContext: deps.brokerContext, sandboxProvider, namespacePreflightOk: deps.namespacePreflightOk,
         sessionKey: options?.sessionKey, logger: skillsLogger, baseEnv: subprocessEnv,
         eventBus, // the run_summary emit channel (reaches the live per-session trajectory bridge)
+        approvalGate, // the orchestrate pre-flight approval seam — undefined unless config.approvals.enabled
       });
       // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.
       // (agentWorkspaceDir + getToolResultsDir are HOISTED above — shared with the ctx_* wiring.)

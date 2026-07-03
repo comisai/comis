@@ -28,6 +28,7 @@ import {
   degradeAutonomy,
   systemNowMs,
   formatSessionKey,
+  type ApprovalGate,
   type ComisLogger,
   type PerAgentConfig,
   type SessionKey,
@@ -95,6 +96,14 @@ export interface AutonomyToolInputs {
    * Absent ⇒ the runner does not emit (no regression to the older wiring).
    */
   readonly eventBus?: TypedEventBus;
+  /**
+   * The approval gate, threaded into the orchestrate runner's static pre-flight:
+   * when present, a run fires ONE approval on its whole capability footprint before
+   * spawn. Present ONLY when `config.approvals.enabled` (the daemon threads it from the
+   * same `deps.approvalGate` exec uses) — so seam-presence IS "approvals configured".
+   * Absent ⇒ no approval fire (no regression to older wiring).
+   */
+  readonly approvalGate?: ApprovalGate;
 }
 
 /** The wiring {@link buildAutonomyToolWiring} returns: the minted env + the orchestrate tool. */
@@ -216,6 +225,15 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           mintRunLease, // per-run child bearer overrides the assembly bearer (D5)
           store: createResultRefStore({ logger: input.logger }),
           baseEnv: input.baseEnv ?? {},
+          // The static pre-flight's held-cap set: the SAME resolved.capabilities the
+          // assembly/child leases are minted with — the advisory pre-spawn cap
+          // fail-fast keys on it (the cap-socket endpoint stays the authoritative
+          // gate). No drift by construction.
+          allowedCaps: resolved.capabilities,
+          // The approval gate — threaded ONLY when the daemon wired one
+          // (config.approvals.enabled), mirroring the eventBus conditional-spread.
+          // Absent ⇒ the runner fires no approval.
+          ...(input.approvalGate !== undefined ? { approvalGate: input.approvalGate } : {}),
           // The run_summary emit channel + the self-attribution keys (the
           // daemon-shared bus fans out to every session bridge — the payload
           // carries rootRunId + sessionKey so it lands on the right report).

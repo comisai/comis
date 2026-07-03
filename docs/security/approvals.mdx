@@ -229,6 +229,28 @@ approvals:
       mode: require               # And config changes need approval too
 ```
 
+## Orchestrate Pre-flight
+
+The [`orchestrate`](/agent-tools/orchestrate) tool adds one approval hook of its own. When
+the approval workflow is enabled, a run's script is statically scanned for the set of
+capabilities its tool calls require, and **one** approval fires on that whole capability
+footprint — the exact set, as a single request — **before** the jailed child is spawned.
+Approve it once and the run proceeds; deny it and the run is refused before any code runs.
+
+The same pre-flight also **fails fast**: if the script calls a tool needing a capability the
+agent does not hold, the run is rejected pre-spawn with a clear, capability-named error — the
+model gets a precise "this needs `orch:web`" message instead of a mid-run failure after the
+jail has already been built.
+
+<Warning>
+The pre-flight is an **advisory** fail-fast and approval-UX layer — it is **not** the security
+boundary. The authoritative gate is the jailed child's capability socket, which denies any
+capability the agent does not hold by default (deny-by-absence). A script that hides its call
+sites from the static scan — for example, a dynamically-computed method name — simply proceeds
+past the pre-flight and is still denied at the socket. Never rely on the pre-flight to contain
+a capability: grant only the capabilities you intend, and the endpoint enforces them regardless.
+</Warning>
+
 ## Using the Dashboard
 
 Pending approvals appear in the [Security dashboard](/web-dashboard/security-view).

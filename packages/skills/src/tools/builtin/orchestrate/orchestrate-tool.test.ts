@@ -123,9 +123,9 @@ describe("orchestrate-tool", () => {
     // Drop the broker lease env so the child gets NO COMIS_CAP_LEASE (the
     // lease_absent run_summary case).
     dropBrokerSpawnEnv?: boolean;
-    // The static pre-flight seams (PREFLIGHT-02/03) + the declared W3 repair
+    // The static pre-flight seams (allowedCaps/approvalGate) + the declared repair
     // contract (capabilityClass/repairSeam — unused by the pre-flight tests,
-    // consumed by the repair wave). Conditional-spread like mintRunLease/eventBus.
+    // consumed by the one-shot repair path). Conditional-spread like mintRunLease/eventBus.
     allowedCaps?: readonly AgentCapability[];
     approvalGate?: {
       requestApproval: (req: {
@@ -687,17 +687,17 @@ describe("orchestrate-tool", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Static pre-flight gate (PREFLIGHT-02 fail-fast + PREFLIGHT-03 approval).
+  // Static pre-flight gate (fail-fast cap check + reused approval fire).
   // The runner scans the model's script for its capability footprint BEFORE the
   // spawn: a cap the agent lacks fails fast pre-spawn with a cap-named error
   // (no jail burned), and — when an approval gate is wired (approvals.enabled) —
-  // one approval fires on the whole cap footprint. R6/INV-1: the pre-flight is
-  // ADVISORY UX only. A script that dodges the static scan (a dynamic/computed
-  // call → empty footprint) still proceeds here; the authoritative cap-socket
-  // endpoint (unchanged this phase) remains the sole boundary.
+  // one approval fires on the whole cap footprint. The pre-flight is ADVISORY UX
+  // only. A script that dodges the static scan (a dynamic/computed call → empty
+  // footprint) still proceeds here; the authoritative cap-socket endpoint
+  // (unchanged this phase) remains the sole boundary.
   // ---------------------------------------------------------------------------
-  describe("static pre-flight gate (PREFLIGHT-02 fail-fast + PREFLIGHT-03 approval + R6 advisory)", () => {
-    it("PREFLIGHT-02: rejects a script needing a cap the agent lacks BEFORE spawning, naming the missing orch:* cap (no child spawned)", async () => {
+  describe("static pre-flight gate (fail-fast cap check + approval fire + advisory-only)", () => {
+    it("rejects a script needing a cap the agent lacks BEFORE spawning, naming the missing orch:* cap (no child spawned)", async () => {
       const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
       // Held caps = orch:read only; the script calls web_fetch (which needs orch:web).
       const { deps } = makeDeps({ spawnFn, allowedCaps: ["orch:read"] });
@@ -714,7 +714,7 @@ describe("orchestrate-tool", () => {
       expect(spawnFn).not.toHaveBeenCalled();
     });
 
-    it("PREFLIGHT-03 (approved): fires requestApproval ONCE on the exact sorted cap set, then proceeds to spawn", async () => {
+    it("when approvals are configured (approved): fires requestApproval ONCE on the exact sorted cap set, then proceeds to spawn", async () => {
       const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
       const requestApproval = vi.fn(async () => ({ approved: true }));
       const { deps } = makeDeps({
@@ -744,7 +744,7 @@ describe("orchestrate-tool", () => {
       expect(spawnFn).toHaveBeenCalledTimes(1);
     });
 
-    it("PREFLIGHT-03 (denied): a !approved resolution refuses the run with the reason in the hint — no child spawned", async () => {
+    it("when approvals are configured (denied): a !approved resolution refuses the run with the reason in the hint — no child spawned", async () => {
       const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
       const requestApproval = vi.fn(async () => ({ approved: false, reason: "operator said no" }));
       const { deps } = makeDeps({
@@ -773,7 +773,7 @@ describe("orchestrate-tool", () => {
       expect(spawnFn).not.toHaveBeenCalled();
     });
 
-    it("R6 (advisory-only): a script whose static footprint is EMPTY (a dynamic/computed call) passes pre-flight and proceeds to spawn — the endpoint stays the sole gate", async () => {
+    it("advisory-only: a script whose static footprint is EMPTY (a dynamic/computed call) passes pre-flight and proceeds to spawn — the endpoint stays the sole gate", async () => {
       const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("dodged\n"));
       // Held caps = orch:read only. The script reaches web_fetch through a computed
       // member (comis_tools[m]) the token scan cannot see → empty footprint. The
