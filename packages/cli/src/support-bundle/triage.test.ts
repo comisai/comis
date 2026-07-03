@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import type { FleetHealthReport } from "@comis/core";
+import type { FleetHealthReport, IncidentReport } from "@comis/core";
 import { runDoctorChecks } from "../doctor/check-runner.js";
 import { configHealthCheck } from "../doctor/checks/config-health.js";
 import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
@@ -23,8 +23,10 @@ import { resolveDoctorConfig } from "../doctor/config-resolve.js";
 import type { DoctorFinding, DoctorResult } from "../doctor/types.js";
 import {
   buildDoctorSummary,
+  buildExplainSummary,
   buildSupportTriage,
   deriveDoctorSignals,
+  deriveExplainSignals,
   deriveFleetSignals,
   fleetHasEvidence,
 } from "./triage.js";
@@ -101,6 +103,33 @@ function makeFleet(over: Partial<FleetHealthReport> = {}): FleetHealthReport {
       sessionIndex: { daysRead: 0, daysMissing: 0 },
       billing: { present: false },
     },
+    ...over,
+  };
+}
+
+/**
+ * Minimal valid IncidentReport fixture — a clean, non-degraded session with no
+ * root cause. Overrides shallow-merge the base, so a test replaces only the
+ * sub-object it exercises (e.g. `outcome`, `likelyRootCause`).
+ */
+function makeIncident(over: Partial<IncidentReport> = {}): IncidentReport {
+  return {
+    schemaVersion: 1,
+    sessionKey: "default:u:c:peer:p",
+    traceId: "trace-abc",
+    agentId: "default",
+    channel: { type: "discord", id: "c" },
+    outcome: { endReason: "completed", degraded: false, severity: "ok" },
+    cost: { costUsd: 0, totalTokens: 0, cacheReadRatio: 0 },
+    timing: { durationMs: 0, turnCount: 0 },
+    toolStats: {},
+    failures: [],
+    breakerTimeline: [],
+    offloads: [],
+    summary: "",
+    likelyRootCause: null,
+    suggestedNextSteps: [],
+    truncations: [],
     ...over,
   };
 }
@@ -651,5 +680,158 @@ describe("buildSupportTriage fleet enrichment", () => {
     for (const entry of triage.evidenceFiles) {
       expect(entry.description.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("deriveExplainSignals", () => {
+  it("surfaces the incident report's likely-root-cause code verbatim", () => {
+    const explain = makeIncident({
+      likelyRootCause: { code: "context_exhausted", detail: "", suggestedNextSteps: [] },
+    });
+
+    expect(deriveExplainSignals(explain)).toEqual(["context_exhausted"]);
+  });
+
+  it("emits no signal when the incident report carries no likely root cause", () => {
+    expect(deriveExplainSignals(makeIncident({ likelyRootCause: null }))).toEqual([]);
+  });
+});
+
+describe("buildExplainSummary", () => {
+  it("copies the outcome and root-cause code verbatim from the incident report", () => {
+    const explain = makeIncident({
+      outcome: { endReason: "context_exhausted", degraded: true, severity: "degraded" },
+      likelyRootCause: { code: "context_exhausted", detail: "", suggestedNextSteps: [] },
+    });
+
+    expect(buildExplainSummary(explain)).toEqual({
+      degraded: true,
+      endReason: "context_exhausted",
+      likelyRootCause: "context_exhausted",
+    });
+  });
+
+  it("collapses a null incident root cause to a null summary likely-root-cause", () => {
+    const explain = makeIncident({
+      outcome: { endReason: "completed", degraded: false, severity: "ok" },
+      likelyRootCause: null,
+    });
+
+    expect(buildExplainSummary(explain)).toEqual({
+      degraded: false,
+      endReason: "completed",
+      likelyRootCause: null,
+    });
+  });
+});
+
+describe("buildSupportTriage explain enrichment", () => {
+  it("populates explainSummary and surfaces the explain root cause as an active signal", () => {
+    const doctor = makeDoctorResult([
+      finding({ category: "config", check: "Config files", status: "pass" }),
+    ]);
+    const explain = makeIncident({
+      outcome: { endReason: "context_exhausted", degraded: true, severity: "degraded" },
+      likelyRootCause: { code: "context_exhausted", detail: "", suggestedNextSteps: [] },
+    });
+
+    const triage = buildSupportTriage({ host: HOST, doctor, explain });
+
+    expect(triage.explainSummary).toEqual({
+      degraded: true,
+      endReason: "context_exhausted",
+      likelyRootCause: "context_exhausted",
+    });
+    expect(triage.activeSignals).toContain("context_exhausted");
+  });
+
+  it("populates a null-root-cause explainSummary and adds no explain signal when none fired", () => {
+    const doctor = makeDoctorResult([
+      finding({ category: "config", check: "Config files", status: "pass" }),
+    ]);
+    const explain = makeIncident({
+      outcome: { endReason: "completed", degraded: false, severity: "ok" },
+      likelyRootCause: null,
+    });
+
+    const triage = buildSupportTriage({ host: HOST, doctor, explain });
+
+    expect(triage.explainSummary?.likelyRootCause).toBeNull();
+    // A null root cause contributes no new code, so the signal set stays exactly
+    // the doctor-derived one (nothing appended from the explain report).
+    expect(triage.activeSignals).toEqual(deriveDoctorSignals(doctor));
+  });
+
+  it("omits explainSummary entirely when no incident report is provided", () => {
+    const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]) });
+
+    expect(triage.explainSummary).toBeUndefined();
+  });
+
+  it("reports degraded when the embedded explain outcome is degraded and the doctor and fleet are clean", () => {
+    const doctor = makeDoctorResult([
+      finding({ category: "config", check: "Config files", status: "pass" }),
+      finding({ category: "daemon", check: "Process alive", status: "pass" }),
+    ]);
+    const fleet = makeFleet({
+      sessions: { total: 3, degraded: 0, degradedRate: 0 },
+      coverage: {
+        sessionSummary: { found: true, rows: 3 },
+        sessionIndex: { daysRead: 1, daysMissing: 0 },
+        billing: { present: true },
+      },
+      likelyRootCause: null,
+    });
+    const explain = makeIncident({
+      outcome: { endReason: "spend_exceeded", degraded: true, severity: "degraded" },
+      likelyRootCause: null,
+    });
+
+    expect(buildSupportTriage({ host: HOST, doctor, fleet, explain }).status).toBe("degraded");
+  });
+
+  it("dedupes an explain root cause that repeats a fleet code, keeping the fleet entry first", () => {
+    // The explain root-cause append runs AFTER the fleet codes, so a shared code
+    // keeps its earlier fleet slot (first-seen-wins across doctor -> fleet -> explain).
+    const doctor = makeDoctorResult([
+      finding({ category: "config", check: "Config files", status: "pass" }),
+    ]);
+    const fleet = makeFleet({
+      findings: [{ code: "context_exhausted", detail: "", count: 1, hint: "" }],
+    });
+    const explain = makeIncident({
+      likelyRootCause: { code: "context_exhausted", detail: "", suggestedNextSteps: [] },
+    });
+
+    expect(buildSupportTriage({ host: HOST, doctor, fleet, explain }).activeSignals).toEqual([
+      "context_exhausted",
+    ]);
+  });
+
+  it("produces a deeply identical verdict for the same explain-enriched input", () => {
+    const doctor = makeDoctorResult([
+      finding({ category: "config", check: "Config files", status: "pass" }),
+    ]);
+    const explain = makeIncident({
+      outcome: { endReason: "context_exhausted", degraded: true, severity: "degraded" },
+      likelyRootCause: { code: "context_exhausted", detail: "", suggestedNextSteps: [] },
+    });
+
+    const first = buildSupportTriage({ host: HOST, doctor, explain });
+    const second = buildSupportTriage({ host: HOST, doctor, explain });
+
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+  });
+
+  it("round-trips an explain-enriched verdict through the strict schema parser", () => {
+    const explain = makeIncident({
+      outcome: { endReason: "context_exhausted", degraded: true, severity: "degraded" },
+      likelyRootCause: { code: "context_exhausted", detail: "", suggestedNextSteps: [] },
+    });
+
+    const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]), explain });
+
+    expect(parseSupportTriage(triage).ok).toBe(true);
   });
 });
