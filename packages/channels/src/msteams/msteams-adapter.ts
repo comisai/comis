@@ -31,6 +31,7 @@ import { runWithContext, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { classifyMsTeamsError } from "./errors.js";
+import { buildMentionEntities } from "./mentions.js";
 import {
   mapMsTeamsActivityToNormalized,
   type TeamsActivity,
@@ -152,6 +153,38 @@ function resolveReplyToId(options?: SendMessageOptions): string | undefined {
     : undefined;
 }
 
+/**
+ * A Connector REST failure that carries the numeric HTTP status — and, for a 429,
+ * the `Retry-After` seconds — as STRUCTURAL fields. The edit-in-place renderer
+ * classifies on these to pick a render variant (429 → back off, 404 → drop the
+ * edit); a bare `Error(message)` would classify as an internal fault and neither
+ * the rate-limit backoff nor the activity-gone drop would ever engage.
+ */
+interface ConnectorRestError extends Error {
+  /** The HTTP status of the Connector response. */
+  status: number;
+  /** Rate-limit backoff in seconds (the `Retry-After` header), when present. */
+  retryAfter?: number;
+}
+
+/** Build a {@link ConnectorRestError} carrying the status (+ retryAfter on a 429). */
+function connectorRestError(status: number, retryAfter?: number): ConnectorRestError {
+  const error = new Error(`connector request returned status ${status}`) as ConnectorRestError;
+  error.status = status;
+  if (retryAfter !== undefined) error.retryAfter = retryAfter;
+  return error;
+}
+
+/** Read the integer `Retry-After` seconds off a Connector response, when present. */
+function parseRetryAfterSeconds(res: {
+  headers?: { get?: (name: string) => string | null };
+}): number | undefined {
+  const raw = res.headers?.get?.("retry-after");
+  if (typeof raw !== "string") return undefined;
+  const seconds = Number.parseInt(raw, 10);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -269,6 +302,130 @@ export function createMsTeamsAdapter(
     );
   }
 
+  /**
+   * Mutate an existing activity via the Connector REST API — a PUT updateActivity
+   * (edit) or a DELETE deleteActivity. Reuses the 228 send scaffolding verbatim:
+   * the cached bearer token, the `isSafeConversationId` guard on BOTH the
+   * conversation id and the message id (T-8, before any interpolation), the
+   * `isSafeServiceUrl` host allowlist (T-3) and the `classifyMsTeamsError` failure
+   * classifier. A non-2xx returns a {@link ConnectorRestError} carrying the
+   * structural status so the edit-in-place renderer can pick its variant.
+   */
+  async function connectorActivityMutation(args: {
+    method: "PUT" | "DELETE";
+    conversationId: string;
+    messageId: string;
+    text?: string;
+    options?: SendMessageOptions;
+    op: "edit" | "delete";
+  }): Promise<Result<void, Error>> {
+    const startedAt = now();
+
+    // Path-safety gate: validate BOTH interpolated ids before building the path.
+    if (
+      !isSafeConversationId(args.conversationId) ||
+      !isSafeConversationId(args.messageId)
+    ) {
+      _lastError = "activity id failed the path-safety check";
+      deps.logger.warn(
+        {
+          channelType: "msteams" as const,
+          op: args.op,
+          hint: "Reject the conversation/message id: it must be free of control chars and '..'",
+          errorKind: "precondition" as const,
+        },
+        "Connector activity mutation blocked: unsafe id",
+      );
+      return err(new Error("unsafe activity id"));
+    }
+
+    const serviceUrl = resolveServiceUrl(args.options);
+    if (!isSafeServiceUrl(serviceUrl)) {
+      _lastError = "service url failed the path-safety check";
+      deps.logger.warn(
+        {
+          channelType: "msteams" as const,
+          op: args.op,
+          hint: "Reject the serviceUrl: it must be an https Bot Framework Connector host free of '..'",
+          errorKind: "precondition" as const,
+        },
+        "Connector activity mutation blocked: unsafe service url",
+      );
+      return err(new Error("unsafe service url"));
+    }
+
+    const tok = await tokens.getToken();
+    if (!tok.ok) {
+      _lastError = tok.error.message;
+      return err(tok.error);
+    }
+
+    const url = `${serviceUrl}v3/conversations/${encodeURIComponent(args.conversationId)}/activities/${encodeURIComponent(args.messageId)}`;
+    const init: RequestInit = {
+      method: args.method,
+      headers: {
+        authorization: `Bearer ${tok.value}`,
+        "content-type": "application/json",
+      },
+    };
+    if (args.text !== undefined) {
+      const built = buildMentionEntities(args.text);
+      const body: Record<string, unknown> = { type: "message", text: built.text };
+      if (built.entities.length > 0) body.entities = built.entities;
+      init.body = JSON.stringify(body);
+    }
+
+    const responded = await fromPromise((deps.fetchImpl ?? fetch)(url, init));
+    if (!responded.ok) {
+      const classified = classifyMsTeamsError(undefined, responded.error);
+      _lastError = responded.error.message;
+      deps.logger.warn(
+        {
+          channelType: "msteams" as const,
+          op: args.op,
+          hint: classified.hint,
+          errorKind: classified.errorKind,
+        },
+        "Connector activity mutation failed: no response from the connector",
+      );
+      return err(responded.error);
+    }
+
+    const res = responded.value;
+    if (!res.ok) {
+      const classified = classifyMsTeamsError(res.status);
+      const retryAfter = parseRetryAfterSeconds(res);
+      _lastError = `connector ${args.op} returned status ${res.status}`;
+      deps.logger.warn(
+        {
+          channelType: "msteams" as const,
+          op: args.op,
+          status: res.status,
+          hint: classified.hint,
+          errorKind: classified.errorKind,
+        },
+        "Connector activity mutation failed: connector returned an error status",
+      );
+      // Structural status so the edit-in-place renderer classifies (429/404/…).
+      return err(connectorRestError(res.status, retryAfter));
+    }
+
+    _lastMessageAt = now();
+    _lastError = undefined;
+    deps.logger.info(
+      {
+        step: "channels-outbound",
+        channelType: "msteams" as const,
+        op: args.op,
+        messageId: args.messageId,
+        chatId: args.conversationId,
+        durationMs: now() - startedAt,
+      },
+      "Outbound activity mutation",
+    );
+    return ok(undefined);
+  }
+
   const adapter: MsTeamsAdapterHandle = {
     get channelId(): string {
       return _channelId;
@@ -360,7 +517,11 @@ export function createMsTeamsAdapter(
       }
 
       const url = `${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
-      const activityBody: Record<string, unknown> = { type: "message", text };
+      // Rewrite id-shape-valid @[Name](id) markup into <at>…</at> tags + paired
+      // mention entities; text with no valid mention markup is left byte-identical.
+      const built = buildMentionEntities(text);
+      const activityBody: Record<string, unknown> = { type: "message", text: built.text };
+      if (built.entities.length > 0) activityBody.entities = built.entities;
       // DM → top-level; channel/group → threaded reply under the parent.
       if (replyToId !== undefined) activityBody.replyToId = replyToId;
 
@@ -424,6 +585,34 @@ export function createMsTeamsAdapter(
         "Outbound message",
       );
       return ok(sentId);
+    },
+
+    async editMessage(
+      channelId: string,
+      messageId: string,
+      text: string,
+      options?: SendMessageOptions,
+    ): Promise<Result<void, Error>> {
+      return connectorActivityMutation({
+        method: "PUT",
+        conversationId: channelId,
+        messageId,
+        text,
+        options,
+        op: "edit",
+      });
+    },
+
+    async deleteMessage(
+      channelId: string,
+      messageId: string,
+    ): Promise<Result<void, Error>> {
+      return connectorActivityMutation({
+        method: "DELETE",
+        conversationId: channelId,
+        messageId,
+        op: "delete",
+      });
     },
 
     async platformAction(
