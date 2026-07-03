@@ -1547,6 +1547,62 @@ describe("setupSchedulers", () => {
       expect(dispatched.indexOf("CI is RED")).toBeLessThan(dispatched.indexOf("do the thing"));
     });
 
+    it("does NOT inject the wrapped context on a verbatim-delivered (non-main) system_event — the wrapper markers must not leak to the channel", async () => {
+      // A non-main system_event with a deliveryTarget is delivered as RAW text,
+      // no model. The wrapExternalContent markers exist to inform the MODEL, so
+      // injecting them here would leak internal framing verbatim to the channel.
+      const runWakeGate = vi.fn(async () => ({ wake: true, context: "disk 91%" }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()({
+        id: "job-verbatim", name: "verbatim-cron", agentId: "agent-1",
+        payload: { kind: "system_event", text: "Scheduled status" },
+        schedule: { kind: "every", everyMs: 60_000 },
+        sessionTarget: "isolated",
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+        wakeGate: GATE,
+      });
+
+      expect(runWakeGate).toHaveBeenCalledTimes(1);
+      const emitCall = (deps.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => c[0] === "scheduler:job_result",
+      );
+      expect(emitCall).toBeDefined();
+      const dispatched = (emitCall![1] as { result: string }).result;
+      // The raw-delivered text is unwrapped — no boundary markers, original intact.
+      expect(dispatched).not.toContain("UNTRUSTED");
+      expect(dispatched).toBe("Scheduled status");
+    });
+
+    it("STILL injects the wrapped context on a main-routed system_event (the heartbeat reaches the model)", async () => {
+      // The main+system_event path enqueues to the heartbeat pipeline (model runs),
+      // so the wrapped context must still be prepended there.
+      const runWakeGate = vi.fn(async () => ({ wake: true, context: "disk 91%" }));
+      const mockQueue = createMockSystemEventQueue();
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, systemEventQueue: mockQueue, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()({
+        id: "job-main-wg", name: "main-gated", agentId: "agent-1",
+        payload: { kind: "system_event", text: "Heartbeat note" },
+        schedule: { kind: "every", everyMs: 60_000 },
+        sessionTarget: "main",
+        wakeMode: "next-heartbeat",
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+        wakeGate: GATE,
+      });
+
+      expect(mockWrapExternalContent).toHaveBeenCalledWith("disk 91%", { source: "unknown" });
+      expect(mockQueue.enqueue).toHaveBeenCalledTimes(1);
+      const enqueuedText = mockQueue.enqueue.mock.calls[0][0] as string;
+      expect(enqueuedText).toContain("UNTRUSTED");
+      expect(enqueuedText).toContain("disk 91%");
+      expect(enqueuedText).toContain("Heartbeat note");
+    });
+
     it("does NOT call the gate and dispatches byte-identically when the job carries no wakeGate", async () => {
       const runWakeGate = vi.fn(async () => ({ wake: false }));
       const setupSchedulers = await getSetupSchedulers();
