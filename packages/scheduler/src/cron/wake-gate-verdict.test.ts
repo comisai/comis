@@ -50,6 +50,24 @@ describe("parseWakeGateVerdict — JSON verdict on the last non-empty line", () 
     const verdict = parseWakeGateVerdict(outcome({ stdout: '{"wake":false,"deliver":123}' }));
     expect(verdict).toEqual({ wake: false });
   });
+
+  it("bounds an explicit-JSON context to the content-light cap (no unbounded prompt injection)", () => {
+    // An explicit {"wake":true,"context":"<huge>"} must honor the SAME 4000-char
+    // bound the fail-open tail applies — otherwise up to the runner's 4 MiB stdout
+    // cap could enter the agent_turn prompt.
+    const bigContext = "C".repeat(5000);
+    const verdict = parseWakeGateVerdict(outcome({ stdout: JSON.stringify({ wake: true, context: bigContext }) }));
+    expect(verdict.wake).toBe(true);
+    expect(verdict.context).toBeDefined();
+    expect((verdict.context ?? "").length).toBeLessThanOrEqual(4000);
+  });
+
+  it("bounds an explicit-JSON deliver to the content-light cap", () => {
+    const bigDeliver = "D".repeat(5000);
+    const verdict = parseWakeGateVerdict(outcome({ stdout: JSON.stringify({ wake: false, deliver: bigDeliver }) }));
+    expect(verdict.wake).toBe(false);
+    expect((verdict.deliver ?? "").length).toBeLessThanOrEqual(4000);
+  });
 });
 
 describe("parseWakeGateVerdict — malformed verdicts fall through to fail-open wake", () => {
