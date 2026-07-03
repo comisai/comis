@@ -202,6 +202,26 @@ gate: a script that dodges the static scan (say, via a dynamically-computed meth
 proceeds past the pre-flight and is still denied at the socket by default-deny-by-absence.
 </Note>
 
+## One-shot repair
+
+When a script exits non-zero on a **recoverable** error — a bad import, a misused
+`comis_tools` call, or a `TypeError` — the runner does **one** utility-model re-prompt
+that regenerates the script and re-runs it **exactly once**. A small model's near-miss
+becomes a working run in the same turn, without bouncing the failure back to the model
+that wrote it.
+
+It is **class-gated off the agent's model capability class** — **on** for `small`/`nano`
+models (which benefit most), **off** for `mid`/`frontier` — with **no config toggle**
+(the model tier is the sole control). See
+[Autonomy → One-shot auto-repair](/agents/autonomy#one-shot-auto-repair) for the class
+table and the no-toggle rationale.
+
+The repair is bounded to a **single** attempt: a repaired-then-failed run surfaces the
+**original** error, never a loop. The regenerated script re-runs in the **identical**
+jail, capability, and lease envelope as the original — the same `--unshare-net` jail and
+the same per-run lease, so a repaired script has the same blast radius and gains no new
+privilege. The repair completion rides normal spend/budget accounting.
+
 ## Per-run observability
 
 Every run is minted its **own per-run capability lease** — an attenuation of the agent's

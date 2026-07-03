@@ -185,6 +185,36 @@ defaulting safe so a runaway agent is bounded out of the box:
 
 See the full field list in the [config reference](/reference/config-yaml#autonomy-agents-autonomy).
 
+## One-shot auto-repair
+
+When an [`orchestrate`](/agent-tools/orchestrate) script fails on a **recoverable**
+error -- a bad import, a misused `comis_tools` call, or a `TypeError` -- the runner
+does **one** utility-model re-prompt that regenerates the script and re-runs it
+**once**. It turns a small model's near-miss into a working run in the same turn,
+without bouncing the failure back to the main model for another inference turn.
+
+This is **class-gated off the model's capability class** -- it is not a profile knob
+and there is no config toggle:
+
+| Capability class | Auto-repair |
+|------------------|-------------|
+| `small`, `nano` | **On** -- the weaker models it helps most |
+| `mid`, `frontier` | **Off** -- a stronger model rarely needs it |
+
+The class is resolved from the agent's model (an operator capability-class override on
+the provider, otherwise the provider family). There is **no `autonomy.autorepair`
+field** to set: the model tier is the whole control, so there is no dead toggle to
+drift out of sync. When the class is absent or unresolved it defaults to the
+repair-eligible side (`small`), so an unknown-tier or keyless local deployment still
+self-repairs rather than silently not.
+
+The repair is bounded to **exactly one attempt** -- a repaired script that fails again
+surfaces the original error, never a retry loop. It runs on a cheap utility model (the
+same keyless-safe path other utility passes use) and **rides normal spend/budget
+accounting**, so the agent's budget bounds it like any other call. The regenerated
+script re-runs in the **identical** jail, capability, and lease envelope as the
+original -- it gains no new privilege.
+
 ## Durability & Resume
 
 By default an in-flight autonomy run lives only in the daemon's memory: kill the
