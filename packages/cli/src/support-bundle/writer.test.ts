@@ -3,13 +3,15 @@
  * Writer tests for the support bundle — the security backbone.
  *
  * These pin the write boundary where a leak or a symlink-escape would occur:
- * exactly the four allowlisted files are written; a seeded secret inside the
- * triage or doctor objects is masked by the redaction backstop before it
- * reaches disk; the manifest round-trips through its parser with the redaction
- * fingerprint, the caller's generatedAt, the privacy declaration, and the
- * warnings; a section that cannot be produced folds into a warning and the
- * other files are still written (partial output, never a crash); and the
- * bundle dir name carries a timestamp only — never a host component.
+ * exactly the four allowlisted files are written; a seeded secret in the doctor
+ * object (the one file that echoes config-derived text) is value-shape masked
+ * before it reaches disk, while the reducer's own content-free strings ride
+ * through un-masked so the verdict is not corrupted; the manifest round-trips
+ * through its parser with the redaction fingerprint, the caller's generatedAt,
+ * the privacy declaration, and the warnings; a section that cannot be produced
+ * folds into a warning and the other files are still written (partial output,
+ * never a crash); and the bundle dir name carries a timestamp only — never a
+ * host component.
  *
  * Temp dirs ONLY — never the real ~/.comis. The 0o700/0o600 mode bits and the
  * symlink refusal are asserted in writer.linux.test.ts (Pitfall: macOS umask
@@ -148,20 +150,20 @@ describe("writeSupportBundle", () => {
     expect(base).toMatch(/^comis-support-[\dTZ.-]+$/);
   });
 
-  it("redacts a seeded secret from the written triage.json and doctor.json", () => {
+  it("value-shape masks a seeded secret in the written doctor.json — the file that echoes config text", () => {
+    // doctor.json is the one bundle file that echoes config-derived free text
+    // (DoctorFinding messages), so it alone carries the value-shape backstop. A
+    // secret planted in a finding is masked before it reaches disk.
     const input = makeInput({
-      triage: makeTriage({ activeSignals: [`leak ${SEEDED_SECRET}`] }),
       doctorJson: { checksRun: 1, findings: [{ note: `credential ${SEEDED_SECRET}` }] },
     });
     const result = writeSupportBundle(input);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const triageJson = readFileSync(safePath(result.value.bundleDir, "triage.json"), "utf8");
     const doctorJson = readFileSync(safePath(result.value.bundleDir, "doctor.json"), "utf8");
-    expect(triageJson).not.toContain(SEEDED_SECRET);
     expect(doctorJson).not.toContain(SEEDED_SECRET);
     // The sentinel proves the backstop ran (not that the field silently vanished).
-    expect(triageJson).toContain("<REDACTED:aws-access-key-id>");
+    expect(doctorJson).toContain("<REDACTED:aws-access-key-id>");
   });
 
   it("writes a manifest that parses with the fingerprint, generatedAt, privacy, and warnings", () => {
@@ -300,6 +302,10 @@ describe("writeSupportBundle preserves the reducer's own content-free strings", 
     if (!result.ok) return;
 
     const triageJson = readFileSync(safePath(result.value.bundleDir, "triage.json"), "utf8");
+    const triage = JSON.parse(triageJson) as {
+      activeSignals: string[];
+      maintainerNextSteps: string[];
+    };
     const issueSummary = readFileSync(
       safePath(result.value.bundleDir, "issue-summary.md"),
       "utf8",
@@ -307,8 +313,8 @@ describe("writeSupportBundle preserves the reducer's own content-free strings", 
 
     // The machine-readable verdict round-trips verbatim — no sentinel over
     // trusted, content-free text.
-    expect(triageJson).toContain(MAINTAINER_HINT);
-    expect(triageJson).toContain('"secrets-audit"');
+    expect(triage.maintainerNextSteps).toContain(MAINTAINER_HINT);
+    expect(triage.activeSignals).toContain("secrets-audit");
     expect(triageJson).not.toContain("<REDACTED:");
     // The paste-ready summary keeps a runnable instruction (not `comis
     // <REDACTED:secret-field>s set`).

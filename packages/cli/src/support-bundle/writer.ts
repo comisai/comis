@@ -9,11 +9,19 @@
  * are deliberately avoided. The write set is an explicit four-file allowlist,
  * never a data-dir glob.
  *
- * Inputs are content-free by construction, so the redaction pass is a
- * belt-and-suspenders backstop: every JSON object is walked and every free-text
- * leaf masked before it reaches disk. A section that cannot be produced folds
- * into a manifest warning and the writer continues (partial output); only a
- * failure to create the bundle directory is a hard error.
+ * Redaction is scoped per file. `doctor.json` echoes config-derived free text
+ * (DoctorFinding messages — e.g. a configured gateway URL with `user:pass@`), so
+ * every string leaf there is value-shape masked before it reaches disk. The
+ * reducer's own outputs (`triage.json`, `issue-summary.md`) are content-free by
+ * construction — counts, category labels, signal codes, version facts, and
+ * static remediation strings — so they get path-token normalization ONLY; the
+ * value-shape pass is withheld there because it treats the reducer's own
+ * field-name-like tokens ("key", "secret", "message") as payloads and would
+ * corrupt the verdict (and desync triage.json's privacy block from the manifest's
+ * verbatim copy). Section-failure and upstream warning strings folded into the
+ * manifest keep the full masking pass (they can carry error text). A section that
+ * cannot be produced folds into a manifest warning and the writer continues
+ * (partial output); only a failure to create the bundle directory is a hard error.
  *
  * @module
  */
@@ -92,6 +100,42 @@ function buildRedactionOpts(dataDir: string): RedactionOpts {
 }
 
 /**
+ * Recurse through a data graph and apply path-token substitution to every string
+ * leaf, leaving numbers/booleans/null untouched. The trusted-leaf counterpart to
+ * `walkAndRedactStrings`: it deliberately omits the value-shape masking pass, so
+ * it never rewrites a field-name token. Safe for the reducer's own content-free
+ * output (counts, labels, signal codes, static remediation strings) while still
+ * normalizing any embedded `$HOME`/`$STATE_DIR`/`$WORKSPACE_DIR` path. Cycles
+ * fold to a marker so a self-referential graph cannot loop; the input is never
+ * mutated.
+ */
+function walkAndSubstitutePaths(
+  value: unknown,
+  opts: RedactionOpts,
+  seen: WeakSet<object> = new WeakSet(),
+): unknown {
+  if (typeof value === "string") {
+    return substitutePathsInString(value, opts);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  const obj = value as object;
+  if (seen.has(obj)) {
+    return { __cycle: true };
+  }
+  seen.add(obj);
+  if (Array.isArray(obj)) {
+    return (obj as unknown[]).map((v) => walkAndSubstitutePaths(v, opts, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    out[k] = walkAndSubstitutePaths(v, opts, seen);
+  }
+  return out;
+}
+
+/**
  * Resolve and create the support-bundles parent and the per-bundle dir under
  * the symlink-safe, real-path-confined primitive. `safePath` throws on a
  * symlink escape and `ensureContainedDir` returns `err` on a refused/failed
@@ -162,9 +206,21 @@ export function writeSupportBundle(
   // path → placeholder substitution (longest-match-wins).
   const redactionOpts = buildRedactionOpts(dataDir);
 
-  // Free-text leaf: mask value shapes, then substitute known paths.
+  // Untrusted free-text leaf (config-derived or error text): mask value shapes,
+  // then substitute known paths. Reserved for doctor.json (which echoes
+  // DoctorFinding messages — e.g. a configured gateway URL with `user:pass@`) and
+  // the section-failure / upstream warning strings folded into the manifest.
   const redactText = (text: string): string =>
     substitutePathsInString(redactString(text), redactionOpts);
+
+  // Trusted, content-free leaf (the reducer's own counts, category labels, signal
+  // codes, version facts, and static remediation strings): normalize known paths
+  // ONLY. The value-shape pass is withheld here — it treats field-name tokens
+  // ("key", "secret", "message", "content") as payloads and would mangle the
+  // reducer's own constants, desyncing triage.json's privacy block from the copy
+  // the manifest writes verbatim.
+  const substitutePathsOnly = (text: string): string =>
+    substitutePathsInString(text, redactionOpts);
 
   const sectionWarnings: SupportBundleWarning[] = [];
   const recordSectionFailure = (name: string, reason: string): void => {
@@ -178,11 +234,14 @@ export function writeSupportBundle(
 
   // The content files — the explicit allowlist. Each body is lazy so a
   // serialization failure is caught per-section rather than crashing the run.
+  // Only doctor.json echoes untrusted config-derived text, so it alone keeps the
+  // value-shape masking pass; triage.json and issue-summary.md are content-free
+  // and get path normalization only.
   const FILE_PLAN: ReadonlyArray<{ name: string; body: () => string }> = [
-    { name: "issue-summary.md", body: () => redactText(issueSummaryMd) },
+    { name: "issue-summary.md", body: () => substitutePathsOnly(issueSummaryMd) },
     {
       name: "triage.json",
-      body: () => JSON.stringify(walkAndRedactStrings(triage, redactionOpts), null, 2),
+      body: () => JSON.stringify(walkAndSubstitutePaths(triage, redactionOpts), null, 2),
     },
     {
       name: "doctor.json",
