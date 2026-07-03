@@ -423,8 +423,8 @@ describe("writeSupportBundle routes explain.json through the UNTRUSTED value-sha
   });
 
   it("id round-trip golden: content-free ids survive VERBATIM through the untrusted leaf", () => {
-    // The HR-01 risk: the value-shape pass masks secrets but must NOT mangle the
-    // report's content-free correlation ids. A UUID traceId, a non-numeric
+    // The correlation-id risk: the value-shape pass masks secrets but must NOT
+    // mangle the report's content-free correlation ids. A UUID traceId, a non-numeric
     // colon-form sessionKey, a tool name, and a clean root-cause code all
     // round-trip byte-for-byte — proven against the real redactor.
     const result = writeSupportBundle({ ...makeInput(), explainJson: explainReport() });
@@ -438,7 +438,7 @@ describe("writeSupportBundle routes explain.json through the UNTRUSTED value-sha
     expect(explain).toContain("spend_exceeded"); // root-cause code
   });
 
-  it("redacts PII-shaped ids (numeric channel ids, keyword-bearing codes) — the accepted A1 tradeoff", () => {
+  it("redacts PII-shaped ids (numeric channel ids, keyword-bearing codes) — the accepted redaction tradeoff", () => {
     // Ground truth pinned so the tradeoff is not a hidden surprise: the untrusted
     // leaf INTENTIONALLY redacts a 9+ digit numeric channel/user id in a
     // sessionKey (a PII shape via long-decimal-id) and masks a root-cause code

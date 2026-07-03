@@ -505,7 +505,7 @@ describe("generateSupportBundle --session / audit / --deep orchestration", () =>
     expect(manifest.warnings?.some((w) => w.source === "audit")).toBe(true);
   });
 
-  it("exports trace-exports/ INTO the bundle dir on --deep, stamping workspaceDir + clock (Pitfall 4)", async () => {
+  it("exports trace-exports/ INTO the bundle dir on --deep, stamping workspaceDir + clock before the manifest", async () => {
     const deps = makeDeps();
     let captured: { workspaceDir: string; clockVal: number; sessionFile: string } | undefined;
     const result = await generateSupportBundle({
