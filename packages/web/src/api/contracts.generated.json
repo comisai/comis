@@ -7974,6 +7974,115 @@
             "additionalProperties": false
           }
         },
+        "orchestrate": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "leaseId": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "success",
+                  "failure"
+                ]
+              },
+              "durationMs": {
+                "type": "number"
+              },
+              "exitCode": {
+                "type": "number"
+              },
+              "failureClass": {
+                "type": "string",
+                "enum": [
+                  "timeout",
+                  "stdout_cap",
+                  "nonzero_exit",
+                  "spawn_fail",
+                  "lease_absent"
+                ]
+              },
+              "toolCalls": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tool": {
+                      "type": "string"
+                    },
+                    "capability": {
+                      "type": "string"
+                    },
+                    "decision": {
+                      "type": "string",
+                      "enum": [
+                        "allow",
+                        "deny"
+                      ]
+                    },
+                    "count": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "tool",
+                    "capability",
+                    "decision",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "resultRefs": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "type": "number"
+                  },
+                  "bytes": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "count",
+                  "bytes"
+                ],
+                "additionalProperties": false
+              },
+              "savings": {
+                "type": "object",
+                "properties": {
+                  "estSavedTokens": {
+                    "type": "number"
+                  },
+                  "savedRatio": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "estSavedTokens",
+                  "savedRatio"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "runId",
+              "outcome",
+              "durationMs",
+              "exitCode",
+              "toolCalls",
+              "resultRefs"
+            ],
+            "additionalProperties": false
+          }
+        },
         "contextBudget": {
           "type": "object",
           "properties": {
