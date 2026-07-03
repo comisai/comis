@@ -18,8 +18,8 @@ A non-autonomy agent, or a host with no sandbox provider, does not get the tool.
 
 | Parameter | Type | Notes |
 |-----------|------|-------|
-| `script` | string | The script body. It may `import { comis_tools } from "./comis_tools.js"` and chain tools; only its stdout re-enters context. |
-| `language` | `"ts"` \| `"js"` | The script language. |
+| `script` | string | The script body. A TypeScript/JavaScript script may `import { comis_tools } from "./comis_tools.js"`; a Python script (`language: "py"`) uses the module form `import comis_tools`. Either way it chains tools and only its stdout re-enters context. |
+| `language` | `"ts"` \| `"js"` \| `"py"` | The script language. |
 | `timeoutMs` | number (optional) | Hard wall-clock timeout for the jailed run. Default 60000. |
 | `captureStdout` | boolean (optional) | Reserved — stdout is always the (only) captured channel. |
 
@@ -132,6 +132,36 @@ console.log(summaries.join("\n---\n"));
 
 The three searches and three fetches — and all their intermediate payloads — happen inside the
 jail in **one** turn. The model's context only ever sees the final `console.log`.
+
+## Python (`language: "py"`)
+
+Set `language: "py"` to write the script in Python instead of TypeScript/JavaScript. It runs in
+the **identical** jail — `--unshare-net`, workspace-confined, reachable only through the same
+`0600` capability socket — and reaches tools through a generated, self-contained `comis_tools`
+module that speaks the **same** `{ bearer, method, params }` cap-socket wire as the TypeScript
+SDK (no `pip install`: the jail has no network). Only the language idiom differs — import the
+module rather than a named export, and the calls are **synchronous** (no `await`):
+
+```python
+import comis_tools
+
+# Each call dials the same cap-socket wire as the TypeScript SDK; only the idiom
+# differs (synchronous, module-level). web_fetch runs daemon-side, DNS-pinned.
+page = comis_tools.web_fetch({"url": "https://example.com/big"})  # a ResultRef, not a wall of text
+hits = page.grep("error")     # slice the materialized file in-jail
+head = page.read(0, 40)       # read a 40-line/byte slice
+
+print(head)                   # only this slice re-enters the conversation
+```
+
+A high-volume return is a `ResultRef` here too, carrying the same in-jail slicing methods —
+`.read(offset, limit)` / `.grep(pattern)` / `.jq(expr)` / `.sql(query)` / `.jsonpath(expr)` — so
+only the rows/lines you extract re-enter context, never the full payload. As with the TypeScript
+path, the jail stays `--unshare-net` and only what the script prints to stdout re-enters the
+conversation.
+
+The interpreter is the host's own `python3`, available read-only inside the jail. A host with no
+`python3` **refuses the run with a clear error** — never a silent, unjailed fallback.
 
 ## The containment contract
 
