@@ -496,4 +496,52 @@ describe("createWakeGateRunner — scoped, leak-safe capability:audited toolCall
 
     expect(result).toEqual(outcome({ wake: false }, { toolCalls: 0 }));
   });
+
+  it("two CONCURRENT fires of the SAME job in the same millisecond derive DISTINCT roots and do NOT cross-count toolCalls", async () => {
+    // `now()` has millisecond resolution, so two same-job fires that start in the
+    // same millisecond would derive an identical `-<ts>` suffix. With only the ts
+    // both roots collide, so EACH fire's scoped counter matches BOTH fires'
+    // allow-events and cross-counts the other's cap-calls. A per-fire nonce must
+    // make each root unique regardless of clock resolution.
+    const bus = new TypedEventBus();
+    // Each fire's own root is captured in fire order as it is anchored at mint.
+    const roots: string[] = [];
+    const registerRoot = vi.fn((rootRunId: string) => {
+      roots.push(rootRunId);
+    });
+    // A barrier so BOTH fires are inside their run region (listener subscribed)
+    // before EITHER emits — the concurrency the cross-count needs. Without it the
+    // first fire's finally removes its listener before the second subscribes and
+    // the bug cannot surface.
+    let entered = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runJailedScriptFn = vi.fn(async () => {
+      const myRoot = roots[roots.length - 1]!; // this fire's just-anchored root
+      entered += 1;
+      if (entered === 2) release();
+      await barrier;
+      // Each fire emits exactly ONE allow under its OWN root.
+      bus.emit("capability:audited", makeAudit(myRoot, "allow"));
+      return '{"wake":false}';
+    });
+    const { deps } = makeDeps({
+      eventBus: bus,
+      registerRoot,
+      runJailedScriptFn,
+      now: () => 1_700_000_000_000, // a FIXED clock ⇒ both fires compute the same `-<ts>`
+    });
+    const runner = createWakeGateRunner(deps);
+
+    const [a, b] = await Promise.all([runner.runWakeGate(GATE, CTX), runner.runWakeGate(GATE, CTX)]);
+
+    // Distinct per-fire roots even under the identical clock (pre-fix: identical).
+    expect(roots).toHaveLength(2);
+    expect(roots[0]).not.toBe(roots[1]);
+    // Each fire counts ONLY its own allow — no cross-count (pre-fix: both see 2).
+    expect(a).toEqual(outcome({ wake: false }, { toolCalls: 1 }));
+    expect(b).toEqual(outcome({ wake: false }, { toolCalls: 1 }));
+  });
 });
