@@ -18,7 +18,7 @@
  *     the scheduler — a broken gate can never silently drop a monitored job
  *     (which would fail CLOSED: status:error → backoff → auto-suspend).
  *   - LEAST-PRIVILEGE, per fire. Each fire mints a FRESH attenuated lease under a
- *     distinct `root-wakegate-<jobId>-<ts>` root, registers the bearer with the
+ *     distinct `root-wakegate-<jobId>-<ts>-<nonce>` root, registers the bearer with the
  *     OutputGuard so it is never logged, and threads it into the jail env as
  *     `COMIS_CAP_LEASE` (+ `COMIS_ORCH_SOCKET`). The gate's tool reach is bounded
  *     by the agent's RESOLVED autonomy capabilities enforced at the cap socket —
@@ -155,6 +155,11 @@ function classifyWakeGateFailure(err: unknown): ErrorKind {
  */
 export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
   const log = deps.logger.child({ submodule: "wake-gate-runner" });
+  // A per-runner monotonic nonce disambiguates two fires of the SAME job that
+  // start within one millisecond: `now()` has millisecond resolution, so the
+  // `-<ts>` root suffix alone can repeat. Captured in this closure, the counter
+  // is deterministic and collision-free within a process (no entropy source).
+  let fireSeq = 0;
 
   return {
     async runWakeGate(gate, ctx) {
@@ -194,8 +199,12 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
         //    COMIS_CAP_LEASE/COMIS_ORCH_SOCKET). Caps are the agent's RESOLVED
         //    autonomy caps enforced at the cap socket — never a job tool policy.
         //    A fault here is caught below and fails OPEN (waking), never closed.
+        //    The `-<nonce>` suffix keeps the root unique even for two same-job
+        //    fires that start in the same millisecond, so the scoped toolCalls
+        //    counter (which filters by THIS root) can never cross-count a
+        //    concurrent fire and the per-fire lease/root index never collides.
         const ts = now().toString(36);
-        const rootRunId = `root-wakegate-${ctx.jobId}-${ts}`;
+        const rootRunId = `root-wakegate-${ctx.jobId}-${ts}-${(fireSeq++).toString(36)}`;
         const capMint: CapabilityMintDeps = {
           leaseManager: deps.leaseManager,
           outputGuard: deps.outputGuard,
