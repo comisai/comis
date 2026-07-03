@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { SchedulerConfigSchema, resolveCronWakeGateEnabled } from "./schema-scheduler.js";
+import { PerAgentCronConfigSchema } from "./schema-agent/schema-agent-runtime.js";
 
 describe("CronConfigSchema — wakeGate operator toggle", () => {
   it("omits wakeGate entirely when the key is absent (optional, never defaulted) so parse stays byte-identical", () => {
@@ -52,5 +53,26 @@ describe("resolveCronWakeGateEnabled — tri-state resolution", () => {
     expect(resolveCronWakeGateEnabled(undefined, true)).toBe(true);
     expect(resolveCronWakeGateEnabled(undefined, false)).toBe(false);
     expect(resolveCronWakeGateEnabled(undefined, undefined)).toBe(false);
+  });
+});
+
+describe("PerAgentCronConfigSchema — wakeGate override", () => {
+  // The daemon resolves effectiveCron = agentConfig.scheduler.cron ?? global
+  // cron, and `??` swaps in the WHOLE per-agent cron object — so the per-agent
+  // override must carry the same optional toggle, or setting a per-agent cron
+  // would silently drop the operator's wakeGate choice.
+  it("omits wakeGate when absent so a per-agent cron override stays additive", () => {
+    const cron = PerAgentCronConfigSchema.parse({});
+    expect("wakeGate" in cron).toBe(false);
+    expect(cron.wakeGate).toBeUndefined();
+  });
+
+  it("parses an explicit per-agent true/false toggle", () => {
+    expect(PerAgentCronConfigSchema.parse({ wakeGate: true }).wakeGate).toBe(true);
+    expect(PerAgentCronConfigSchema.parse({ wakeGate: false }).wakeGate).toBe(false);
+  });
+
+  it("rejects a non-boolean per-agent toggle", () => {
+    expect(() => PerAgentCronConfigSchema.parse({ wakeGate: "yes" })).toThrow();
   });
 });
