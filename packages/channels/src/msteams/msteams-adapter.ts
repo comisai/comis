@@ -82,16 +82,24 @@ export interface MsTeamsAdapterHandle extends ChannelPort {
  */
 const DEFAULT_SERVICE_URL = "https://smba.trafficmanager.net/teams/";
 
-/**
- * A conservative conversation-id charset: the characters Teams conversation ids
- * use, with path separators and control characters excluded so the id cannot
- * escape the Connector REST path it is interpolated into.
- */
-const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9:@._=+;-]+$/;
+/** True if the id carries an ASCII control character (never valid, always dropped). */
+function hasControlChar(id: string): boolean {
+  for (let i = 0; i < id.length; i++) {
+    const code = id.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
 
-/** Reject a conversation id that is empty, `..`-escaping, or out of charset. */
+/**
+ * Reject a conversation id that is empty, `..`-escaping, or carries a control
+ * character. The charset is otherwise unconstrained: the id is URL-encoded
+ * before it is interpolated into the REST path, so path separators (standard
+ * base64 `@thread.v2` ids carry `/`) are transported safely rather than
+ * false-rejected.
+ */
 function isSafeConversationId(id: string): boolean {
-  return id.length > 0 && !id.includes("..") && CONVERSATION_ID_PATTERN.test(id);
+  return id.length > 0 && !id.includes("..") && !hasControlChar(id);
 }
 
 /**
@@ -345,7 +353,7 @@ export function createMsTeamsAdapter(
         return err(tok.error);
       }
 
-      const url = `${serviceUrl}v3/conversations/${conversationId}/activities`;
+      const url = `${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
       const activityBody: Record<string, unknown> = { type: "message", text };
       // DM → top-level; channel/group → threaded reply under the parent.
       if (replyToId !== undefined) activityBody.replyToId = replyToId;

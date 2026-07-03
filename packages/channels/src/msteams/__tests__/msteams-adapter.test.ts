@@ -372,7 +372,9 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
     const sendCall = findSendCall(spy);
     expect(sendCall).toBeDefined();
     const [url, init] = sendCall!;
-    expect(url).toBe(`${SERVICE_URL}v3/conversations/19:dm-convo/activities`);
+    expect(url).toBe(
+      `${SERVICE_URL}v3/conversations/${encodeURIComponent("19:dm-convo")}/activities`,
+    );
     expect(init.method).toBe("POST");
     const headers = init.headers as Record<string, string>;
     expect(headers.authorization).toBe(`Bearer ${token}`);
@@ -432,7 +434,9 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
     expect(sendCall).toBeDefined();
     const [url] = sendCall!;
     expect(url.startsWith("https://")).toBe(true);
-    expect(url).toContain("/v3/conversations/19:dm-convo/activities");
+    expect(url).toContain(
+      `/v3/conversations/${encodeURIComponent("19:dm-convo")}/activities`,
+    );
   });
 
   it("returns a classified err and warns when the Connector responds non-2xx", async () => {
@@ -528,6 +532,42 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
           (p as { errorKind?: string }).errorKind === "precondition",
       );
     expect(preconditionWarn).toBeDefined();
+  });
+
+  it("URL-encodes a standard-base64 conversation id containing '/' and still sends", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    // A meeting-chat @thread.v2 id whose thread component is standard base64
+    // carries '/', '+' and '=' — all legitimate, none allowed to split the path.
+    const convoId = "19:aB/cD+eF=@thread.v2";
+    const result = await adapter.sendMessage(convoId, "hi", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(true);
+    const sendCall = findSendCall(spy);
+    expect(sendCall).toBeDefined();
+    const [url] = sendCall!;
+    expect(url).toBe(
+      `${SERVICE_URL}v3/conversations/${encodeURIComponent(convoId)}/activities`,
+    );
+    // The raw '/' must be percent-encoded so it cannot introduce a path segment.
+    expect(url).not.toContain("aB/cD");
+  });
+
+  it("still rejects a '..'-escaping conversation id after relaxing the charset", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:../../evil", "hi", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("rejects a non-https service URL with a precondition err before any fetch", async () => {
