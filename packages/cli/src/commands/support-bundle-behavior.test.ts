@@ -63,6 +63,15 @@ const healthyBundle = ok({
   warnings: [],
 });
 
+/** A degraded bundle that also carries a worst-session hint (surfaced only when no --session was given). */
+const degradedBundleWithWorstSession = ok({
+  bundleDir: "/tmp/test-home/.comis/support-bundles/comis-support-2026-07-03T02-00-00-000Z",
+  status: "degraded",
+  activeSignals: ["daemon_down"],
+  warnings: [],
+  worstSessionKey: "tenant-a:telegram:chat-1",
+});
+
 /** The one hard failure: the bundle directory could not be produced. */
 const unproducible = err({
   kind: "bundle-unproducible",
@@ -309,5 +318,132 @@ describe("support-bundle --since validation", () => {
 
     expect(exitSpy.spy).toHaveBeenCalledWith(ExitCode.UsageError);
     expect(vi.mocked(generateSupportBundle)).not.toHaveBeenCalled();
+  });
+});
+
+describe("support-bundle session/deep passthrough", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    envState = {};
+    vi.mocked(generateSupportBundle).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("forwards --session and --deep to the orchestrator so the per-session evidence is embedded", async () => {
+    vi.mocked(generateSupportBundle).mockResolvedValue(degradedBundle as never);
+
+    const program = createTestProgram();
+    registerSupportBundleCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "support-bundle",
+        "--session",
+        "t:u:c",
+        "--deep",
+        "--format",
+        "json",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(ExitCode.Success);
+    // The session ref and the deep flag both reach the generator — otherwise the
+    // orchestrator never embeds explain.json or the deep trace bundle.
+    expect(vi.mocked(generateSupportBundle)).toHaveBeenCalledWith(
+      expect.objectContaining({ session: "t:u:c", deep: true }),
+    );
+  });
+
+  it("accepts --session on its own and forwards it without setting deep", async () => {
+    vi.mocked(generateSupportBundle).mockResolvedValue(degradedBundle as never);
+
+    const program = createTestProgram();
+    registerSupportBundleCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "support-bundle",
+        "--session",
+        "t:u:c",
+        "--format",
+        "json",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    // --session is valid on its own: no usage error, the orchestrator runs.
+    expect(exitSpy.spy).toHaveBeenCalledWith(ExitCode.Success);
+    const forwarded = vi.mocked(generateSupportBundle).mock.calls[0]?.[0];
+    expect(forwarded).toMatchObject({ session: "t:u:c" });
+    // Without --deep the deep flag is not forwarded as true.
+    expect((forwarded as { deep?: boolean }).deep).not.toBe(true);
+  });
+});
+
+describe("support-bundle worst-session tip", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    envState = {};
+    vi.mocked(generateSupportBundle).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("prints a tip naming --session <key> --deep when the orchestrator returns a worst-session key", async () => {
+    vi.mocked(generateSupportBundle).mockResolvedValue(degradedBundleWithWorstSession as never);
+
+    const program = createTestProgram();
+    registerSupportBundleCommand(program);
+
+    try {
+      await program.parseAsync(["node", "test", "support-bundle", "--config", "/x/config.yaml"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(ExitCode.Success);
+    const output = getSpyOutput(consoleSpy.log);
+    // The tip names the ranked session and the exact focused re-run invocation.
+    expect(output).toContain("tenant-a:telegram:chat-1");
+    expect(output).toContain("--session tenant-a:telegram:chat-1 --deep");
+  });
+
+  it("prints no worst-session tip when the orchestrator returns no key", async () => {
+    vi.mocked(generateSupportBundle).mockResolvedValue(degradedBundle as never);
+
+    const program = createTestProgram();
+    registerSupportBundleCommand(program);
+
+    try {
+      await program.parseAsync(["node", "test", "support-bundle", "--config", "/x/config.yaml"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    const output = getSpyOutput(consoleSpy.log);
+    // No ranked session → the command does not synthesize a tip.
+    expect(output).not.toContain("most-degraded session in a local scan");
   });
 });
