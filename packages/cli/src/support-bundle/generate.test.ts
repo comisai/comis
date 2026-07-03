@@ -5,19 +5,27 @@
  * These drive the REAL nine doctor checks against a temp `~/.comis`-shaped
  * layout (never the machine's real data dir), so they pin the ground-truth
  * offline behavior rather than a hand-shaped `DoctorResult`:
- *  - a dead daemon (no daemon.pid) still produces the five-file bundle, surfaces
+ *  - a dead daemon (no daemon.pid) still produces the seven-file bundle, surfaces
  *    the `daemon_down` signal, and is NEVER reported `healthy`;
  *  - a corrupt config yields `misconfigured` + `config_corrupt` and still
  *    generates (a section failure is a warning, never a crash);
  *  - `doctor.json` carries the real `buildDoctorJson` shape from a genuine run
  *    (nine checks), and `triage.json` round-trips through its parser;
+ *  - the injected fleet assembler's report is written verbatim as `fleet.json`
+ *    and its finding + root-cause codes reach `triage.json`'s active signals; a
+ *    thrown or coverage-empty fleet folds into a `{source:"fleet"}` manifest
+ *    warning without crashing;
+ *  - `config-posture.json` lists the present config sections when the config
+ *    parsed, and is omitted with a `{source:"config-posture"}` warning when it
+ *    did not (while `config_corrupt` still surfaces from the doctor run);
  *  - a write that cannot land folds into the manifest warnings.
  *
  * The local doctor-context builder's gateway-URL remap (wildcard bind address →
  * loopback, tls → https) is unit-asserted directly.
  *
  * Temp dirs ONLY. The daemon-liveness probe is stubbed down so the host
- * snapshot opens no socket.
+ * snapshot opens no socket, and the fleet assembler is injected with a hermetic
+ * fixture so no case loads the @comis/daemon runtime graph.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -33,6 +41,7 @@ import {
 import { tmpdir } from "node:os";
 
 import { safePath } from "@comis/core";
+import type { FleetHealthReport } from "@comis/core";
 
 import { generateSupportBundle, buildSupportDoctorContext } from "./generate.js";
 import { parseSupportTriage } from "./types.js";
@@ -74,12 +83,57 @@ afterEach(() => {
 });
 
 /**
- * Base deps for the orchestrator: a temp data dir, the config path under it, and
- * the daemon-down stub. `configBody` defaults to a valid config whose gateway
- * points at an unused loopback port so the connectivity probe fails fast and
- * deterministically instead of touching a real daemon.
+ * Minimal valid FleetHealthReport fixture — an empty, coverage-empty window
+ * (the shape the offline assembler returns against a data dir with no
+ * `memory.db`). Overrides shallow-merge the base, so a case replaces only the
+ * sub-object it exercises (`findings`, `coverage`, `likelyRootCause`, …).
  */
-function makeDeps(overrides: { dataDir?: string; configBody?: string } = {}) {
+function makeFleet(over: Partial<FleetHealthReport> = {}): FleetHealthReport {
+  return {
+    schemaVersion: 1,
+    windowHours: 24,
+    sessions: { total: 0, degraded: 0, degradedRate: 0 },
+    topErrorKinds: [],
+    degradedByCause: {},
+    breakerTripTotal: 0,
+    toolStats: {},
+    cost: { costUsd: 0, totalTokens: 0 },
+    activity: {
+      activeAgents: [],
+      activeChannels: [],
+      exitReasons: {},
+      turnTotal: 0,
+      tokenTotal: 0,
+    },
+    findings: [],
+    likelyRootCause: null,
+    suggestedNextSteps: [],
+    truncations: [],
+    coverage: {
+      sessionSummary: { found: false, rows: 0 },
+      sessionIndex: { daysRead: 0, daysMissing: 0 },
+      billing: { present: false },
+    },
+    ...over,
+  };
+}
+
+/**
+ * Base deps for the orchestrator: a temp data dir, the config path under it, the
+ * daemon-down stub, and an injected fleet assembler. `configBody` defaults to a
+ * valid config whose gateway points at an unused loopback port so the
+ * connectivity probe fails fast and deterministically instead of touching a real
+ * daemon. `assembleFleet` defaults to a hermetic empty-window fixture so no case
+ * loads the @comis/daemon runtime graph; individual cases override it to
+ * exercise the write, the signal flow, or the degradation branches.
+ */
+function makeDeps(
+  overrides: {
+    dataDir?: string;
+    configBody?: string;
+    assembleFleet?: (dataDir: string, sinceHours: number) => Promise<FleetHealthReport>;
+  } = {},
+) {
   const dataDir = overrides.dataDir ?? makeDataDir();
   const configBody =
     overrides.configBody ?? "gateway:\n  host: 127.0.0.1\n  port: 59237\n";
@@ -90,6 +144,8 @@ function makeDeps(overrides: { dataDir?: string; configBody?: string } = {}) {
     sinceHours: 24,
     nowMs: NOW_MS,
     isDaemonRunning: daemonDown.isDaemonRunning,
+    assembleFleet:
+      overrides.assembleFleet ?? (async (): Promise<FleetHealthReport> => makeFleet()),
   };
 }
 
@@ -100,7 +156,7 @@ function expectedBundleDir(dataDir: string): string {
 }
 
 describe("generateSupportBundle offline against a dead daemon", () => {
-  it("produces the five-file bundle and surfaces daemon_down without reporting healthy", async () => {
+  it("produces the seven-file bundle and surfaces daemon_down without reporting healthy", async () => {
     const result = await generateSupportBundle(makeDeps());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -108,7 +164,9 @@ describe("generateSupportBundle offline against a dead daemon", () => {
     const files = readdirSync(result.value.bundleDir).sort();
     expect(files).toEqual([
       "ai-issue-draft.md",
+      "config-posture.json",
       "doctor.json",
+      "fleet.json",
       "issue-summary.md",
       "manifest.json",
       "triage.json",
@@ -164,10 +222,13 @@ describe("generateSupportBundle honest degradation", () => {
 
     expect(result.value.status).toBe("misconfigured");
     expect(result.value.activeSignals).toContain("config_corrupt");
+    // config-posture.json is OMITTED on an unparseable config (no raw keys), so
+    // the corrupt-config bundle is six files — fleet.json is still written.
     const files = readdirSync(result.value.bundleDir).sort();
     expect(files).toEqual([
       "ai-issue-draft.md",
       "doctor.json",
+      "fleet.json",
       "issue-summary.md",
       "manifest.json",
       "triage.json",
@@ -252,5 +313,113 @@ describe("generateSupportBundle keeps the reducer's trusted strings intact on di
       excludes: ["secrets", "raw-config-values", "message-bodies", "file-contents", ".env"],
     });
     expect(triage.maintainerNextSteps).toContain('comis explain "<sessionKey>"');
+  });
+});
+
+describe("generateSupportBundle fleet composition", () => {
+  it("writes a fleet.json that round-trips the injected report's schemaVersion and finding codes", async () => {
+    const fleet = makeFleet({
+      sessions: { total: 3, degraded: 1, degradedRate: 0.33 },
+      findings: [
+        { code: "config_posture", detail: "gateway.tls (off)", count: 1, hint: "Enable TLS" },
+      ],
+      coverage: {
+        sessionSummary: { found: true, rows: 3 },
+        sessionIndex: { daysRead: 1, daysMissing: 0 },
+        billing: { present: true },
+      },
+    });
+    const result = await generateSupportBundle(makeDeps({ assembleFleet: async () => fleet }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const written = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "fleet.json"), "utf8"),
+    ) as { schemaVersion: number; findings: Array<{ code: string }> };
+    expect(written.schemaVersion).toBe(1);
+    expect(written.findings.map((f) => f.code)).toContain("config_posture");
+  });
+
+  it("surfaces the injected fleet finding and root-cause codes in the triage.json active signals", async () => {
+    const fleet = makeFleet({
+      sessions: { total: 5, degraded: 3, degradedRate: 0.6 },
+      findings: [{ code: "model_health:embedder_not_multilingual", detail: "", count: 1, hint: "" }],
+      likelyRootCause: { code: "fleet_high_degraded_rate", detail: "", suggestedNextSteps: [] },
+      coverage: {
+        sessionSummary: { found: true, rows: 5 },
+        sessionIndex: { daysRead: 1, daysMissing: 0 },
+        billing: { present: true },
+      },
+    });
+    const result = await generateSupportBundle(makeDeps({ assembleFleet: async () => fleet }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const triage = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "triage.json"), "utf8"),
+    ) as { activeSignals: string[] };
+    expect(triage.activeSignals).toContain("model_health:embedder_not_multilingual");
+    expect(triage.activeSignals).toContain("fleet_high_degraded_rate");
+  });
+
+  it("folds a coverage-empty fleet read into a manifest fleet warning while still writing fleet.json", async () => {
+    // The default fixture is the coverage-empty window the offline assembler
+    // returns against a data dir with no memory.db — a valid empty report that
+    // is still written, with an honest {source:"fleet"} warning.
+    const result = await generateSupportBundle(makeDeps({ assembleFleet: async () => makeFleet() }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.warnings.some((w) => w.source === "fleet")).toBe(true);
+    expect(existsSync(safePath(result.value.bundleDir, "fleet.json"))).toBe(true);
+    const manifest = JSON.parse(
+      readFileSync(safePath(result.value.bundleDir, "manifest.json"), "utf8"),
+    ) as { warnings?: Array<{ source: string }> };
+    expect(manifest.warnings?.some((w) => w.source === "fleet")).toBe(true);
+  });
+
+  it("folds a thrown fleet assembler into a manifest fleet warning and omits fleet.json without crashing", async () => {
+    const result = await generateSupportBundle(
+      makeDeps({
+        assembleFleet: async () => {
+          throw new Error("memory.db unreadable");
+        },
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.warnings.some((w) => w.source === "fleet")).toBe(true);
+    // A thrown assembler leaves fleet undefined, so fleet.json is omitted.
+    expect(existsSync(safePath(result.value.bundleDir, "fleet.json"))).toBe(false);
+  });
+});
+
+describe("generateSupportBundle config-posture composition", () => {
+  it("writes a config-posture.json naming the present sections with no config value", async () => {
+    const configBody =
+      "gateway:\n  host: 127.0.0.1\n  port: 59237\nchannels: {}\n";
+    const result = await generateSupportBundle(makeDeps({ configBody }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const raw = readFileSync(safePath(result.value.bundleDir, "config-posture.json"), "utf8");
+    const posture = JSON.parse(raw) as { sections: string[] };
+    expect(posture.sections).toContain("gateway");
+    expect(posture.sections).toContain("channels");
+    // Membership is NAMES only — the configured port value never leaks.
+    expect(raw).not.toContain("59237");
+  });
+
+  it("omits config-posture.json and warns while config_corrupt still surfaces on an unparseable config", async () => {
+    const result = await generateSupportBundle(makeDeps({ configBody: "gateway: [1, 2" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(existsSync(safePath(result.value.bundleDir, "config-posture.json"))).toBe(false);
+    expect(result.value.warnings.some((w) => w.source === "config-posture")).toBe(true);
+    // The doctor run still emits config_corrupt from the config-health check.
+    expect(result.value.activeSignals).toContain("config_corrupt");
+    expect(result.value.status).toBe("misconfigured");
   });
 });

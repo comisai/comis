@@ -3,7 +3,7 @@
  * Writer tests for the support bundle — the security backbone.
  *
  * These pin the write boundary where a leak or a symlink-escape would occur:
- * exactly the five allowlisted files are written; a seeded secret in the doctor
+ * exactly the allowlisted files are written; a seeded secret in the doctor
  * object (the one file that echoes config-derived text) is value-shape masked
  * before it reaches disk, while the reducer's own content-free strings ride
  * through un-masked so the verdict is not corrupted; the manifest round-trips
@@ -130,7 +130,9 @@ function expectedBundleDir(dataDir: string): string {
 }
 
 describe("writeSupportBundle", () => {
-  it("writes exactly the five allowlisted files into the bundle dir", () => {
+  it("writes exactly the allowlisted files into the bundle dir with no fleet or config-posture input", () => {
+    // makeInput passes no fleetJson/configPostureJson, so the write set is the
+    // five base files — the two digest files are spread in only when present.
     const result = writeSupportBundle(makeInput());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -322,5 +324,53 @@ describe("writeSupportBundle preserves the reducer's own content-free strings", 
     // <REDACTED:secret-field>s set`).
     expect(issueSummary).toContain("comis secrets set");
     expect(issueSummary).not.toContain("<REDACTED:");
+  });
+});
+
+describe("writeSupportBundle routes fleet.json and config-posture.json through the trusted leaf", () => {
+  // Both new digest files are content-free BY CONSTRUCTION, so they ride the
+  // trusted-leaf path (path substitution only) exactly like triage.json — NOT
+  // the doctor.json value-shape pass, which would mangle a legitimate token-like
+  // id or a field-name-bearing label. These pin the WRITER's routing decision;
+  // the digests' actual content-freeness is guaranteed upstream (buildConfigPosture
+  // / the fleet assembler) and swept by no-secret-survives.
+  it("leaves a value-shape-maskable token in fleet.json and config-posture.json un-mangled", () => {
+    const fleetJson = {
+      schemaVersion: 1,
+      findings: [{ code: "config_posture", detail: "gateway.tls (off)", count: 1, hint: "" }],
+      autonomy: { worstRootRunId: SEEDED_SECRET },
+    };
+    const configPostureJson = {
+      schemaVersion: 1,
+      sections: ["gateway", "channels"],
+      configPosture: { detail: `flagged run ${SEEDED_SECRET}`, count: 1, hint: "" },
+    };
+    const result = writeSupportBundle({ ...makeInput(), fleetJson, configPostureJson });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const fleet = readFileSync(safePath(result.value.bundleDir, "fleet.json"), "utf8");
+    const posture = readFileSync(safePath(result.value.bundleDir, "config-posture.json"), "utf8");
+
+    // The maskable token survives verbatim — proving neither file ran the
+    // value-shape pass (contrast the doctor.json case above, masked to a sentinel).
+    expect(fleet).toContain(SEEDED_SECRET);
+    expect(posture).toContain(SEEDED_SECRET);
+    expect(fleet).not.toContain("<REDACTED:");
+    expect(posture).not.toContain("<REDACTED:");
+    // The content-free label rides through unchanged (value-shape would corrupt it).
+    expect(fleet).toContain("gateway.tls (off)");
+  });
+
+  it("omits config-posture.json from the write set when its input is undefined but keeps fleet.json", () => {
+    // Each digest is spread into the file plan ONLY when its JSON is defined, so
+    // a caller that could not build config-posture (a config parse failure)
+    // yields a bundle without that file while fleet.json still lands.
+    const result = writeSupportBundle({ ...makeInput(), fleetJson: { schemaVersion: 1 } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const files = readdirSync(result.value.bundleDir).sort();
+    expect(files).toContain("fleet.json");
+    expect(files).not.toContain("config-posture.json");
   });
 });
