@@ -65,6 +65,17 @@ export const SupportTriageStatusSchema = z.enum([
 export type SupportTriageStatus = z.infer<typeof SupportTriageStatusSchema>;
 
 /**
+ * The machine-readable privacy declaration shared by the triage and the
+ * manifest: the redaction fingerprint plus the enumerated exclusion set that
+ * every downstream render and writer honors. A single source keeps the two
+ * artifacts from drifting on either the fingerprint or the exclusion contract.
+ */
+const PrivacyDeclarationSchema = z.strictObject({
+  redaction: z.literal("platform-aware-v1"),
+  excludes: z.array(z.string()),
+});
+
+/**
  * The deterministic triage verdict — the machine-readable core of the bundle.
  *
  * `schemaVersion` is the literal 1 and `status` is the closed four-value set,
@@ -108,10 +119,7 @@ export const SupportTriageSchema = z.strictObject({
   reporterNextSteps: z.array(z.string()),
   maintainerNextSteps: z.array(z.string()),
   evidenceFiles: z.array(z.strictObject({ path: z.string(), description: z.string() })),
-  privacy: z.strictObject({
-    redaction: z.literal("platform-aware-v1"),
-    excludes: z.array(z.string()),
-  }),
+  privacy: PrivacyDeclarationSchema,
 });
 
 export type SupportTriage = z.infer<typeof SupportTriageSchema>;
@@ -147,10 +155,7 @@ export const SupportBundleManifestSchema = z.strictObject({
   bundle: z.string(),
   generatedAt: z.string(),
   redaction: z.strictObject({ policy: z.literal("platform-aware-v1") }),
-  privacy: z.strictObject({
-    redaction: z.literal("platform-aware-v1"),
-    excludes: z.array(z.string()),
-  }),
+  privacy: PrivacyDeclarationSchema,
   warnings: z.array(SupportBundleWarningSchema).optional(),
 });
 
