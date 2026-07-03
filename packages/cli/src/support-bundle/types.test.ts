@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseSupportTriage } from "./types.js";
+import { parseSupportTriage, parseSupportBundleManifest } from "./types.js";
 
 /**
  * Build a well-formed triage object, merging any overrides last so a test can
@@ -126,6 +126,78 @@ describe("parseSupportTriage", () => {
     const invalid = makeValidTriage({ status: "degraded" });
     delete invalid.host;
     const result = parseSupportTriage(invalid);
+    expect(result.ok).toBe(false);
+  });
+});
+
+/**
+ * Build a well-formed bundle manifest, merging overrides last so a test can
+ * inject an unknown key or a drifted redaction policy over a valid baseline.
+ */
+function makeValidManifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    bundle: "comis-support",
+    generatedAt: "2026-07-03T12:00:00.000Z",
+    redaction: { policy: "platform-aware-v1" },
+    privacy: { redaction: "platform-aware-v1", excludes: ["secrets", "raw-config-values"] },
+    ...overrides,
+  };
+}
+
+describe("parseSupportBundleManifest", () => {
+  it("returns ok for a well-formed bundle manifest", () => {
+    const result = parseSupportBundleManifest(makeValidManifest());
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.schemaVersion).toBe(1);
+      expect(result.value.redaction.policy).toBe("platform-aware-v1");
+      expect(result.value.warnings).toBeUndefined();
+    }
+  });
+
+  it("rejects a manifest carrying an unknown top-level key", () => {
+    const result = parseSupportBundleManifest(makeValidManifest({ bogus: 1 }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("returns ok when the optional warnings array is omitted", () => {
+    const result = parseSupportBundleManifest(makeValidManifest());
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns ok when a warnings array of valid entries is present", () => {
+    const result = parseSupportBundleManifest(
+      makeValidManifest({
+        warnings: [
+          { source: "doctor", code: "doctor_run_failed", count: 1, message: "doctor checks could not run" },
+          {
+            source: "writer",
+            code: "section_write_failed",
+            count: 2,
+            rows: [0, 1],
+            message: "two files were not written",
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.warnings).toHaveLength(2);
+    }
+  });
+
+  it("rejects a redaction policy other than the pinned literal", () => {
+    const result = parseSupportBundleManifest(makeValidManifest({ redaction: { policy: "some-other-policy" } }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a warning entry that carries an unknown key", () => {
+    const result = parseSupportBundleManifest(
+      makeValidManifest({
+        warnings: [{ source: "host", code: "x", count: 1, message: "m", bogus: true }],
+      }),
+    );
     expect(result.ok).toBe(false);
   });
 });
