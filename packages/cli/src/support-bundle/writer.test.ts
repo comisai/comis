@@ -378,9 +378,7 @@ describe("writeSupportBundle routes fleet.json and config-posture.json through t
 
 describe("writeSupportBundle routes explain.json through the UNTRUSTED value-shape leaf", () => {
   // An AWS-access-key-id planted in a free-text incident field — a value-shape
-  // the backstop redacts. (An `sk-…`-style key is deliberately NOT used: it is
-  // outside the value-shape pattern set, so it would prove nothing about the
-  // leaf; the AWS shape is the same one the doctor.json case pins.)
+  // the backstop redacts (the same shape the doctor.json case pins).
   const FREE_TEXT_SECRET = "AKIAIOSFODNN7EXAMPLE";
 
   /**

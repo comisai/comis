@@ -157,9 +157,9 @@ jq '.redaction.policy' manifest.json
 # "platform-aware-v1"
 ```
 
-### 11 Value-Shape Patterns
+### 13 Value-Shape Patterns
 
-The redactor applies 11 value-shape regex patterns to every string leaf in the bundle:
+The redactor applies 13 value-shape regex patterns to every string leaf in the bundle:
 
 | Pattern | Catches |
 |---------|---------|
@@ -168,6 +168,8 @@ The redactor applies 11 value-shape regex patterns to every string leaf in the b
 | Identifier fields | Platform-specific user or chat ID fields |
 | AWS access keys | `AKIA[0-9A-Z]{16}` and similar formats |
 | JWTs | `eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+` |
+| OpenAI/Anthropic keys | `sk-` followed by 16+ token characters |
+| Bearer tokens | `Bearer <18+ character token>` |
 | URL userinfo | `https://user:pass@host/...` |
 | URL params | Sensitive query-string parameters |
 | Basic auth | `Basic <base64>` |

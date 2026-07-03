@@ -489,7 +489,7 @@ export async function exportTrajectoryBundle(
       : [];
 
   // Step 6b: apply bundle-time redaction.
-  // The 11 value-shape patterns plus path substitution apply to every
+  // The 13 value-shape patterns plus path substitution apply to every
   // string-typed leaf in event.data. Number-typed fields (timestamps,
   // counts, seq) pass through untouched — prevents false positives on
   // numeric IDs.
