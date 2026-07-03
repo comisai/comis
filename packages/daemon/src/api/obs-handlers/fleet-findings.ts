@@ -114,6 +114,16 @@ const REFLECT_ADMISSION_OUTCOMES: ReadonlySet<string> = new Set([
   "untrusted_origin", "empty_reflection", "no_successes",
 ]);
 
+/** The orchestrate failure classes that SIGKILL the child MID-run — the wall-clock
+ *  timeout and the stdout hard cap. runAggregate reports the bytes materialized
+ *  BEFORE the kill, but the run never sliced/consumed them, so their estSavedTokens
+ *  is phantom (nothing was actually kept out of any context). Excluded from the
+ *  summed fleet savings while the run still counts (degraded). A COMPLETED run —
+ *  clean, `nonzero_exit`, or `lease_absent` — really did keep its materialized bytes
+ *  out of context, so its savings are real and counted; `spawn_fail` materializes
+ *  nothing (empty results/) so it never inflates the sum either. */
+const ORCHESTRATE_HARD_KILL_CLASSES: ReadonlySet<string> = new Set(["timeout", "stdout_cap"]);
+
 export function buildFindings(
   healthSignals: readonly DiagnosticRow[],
   modelHealth: readonly DiagnosticRow[],
@@ -245,7 +255,11 @@ export function buildFindings(
   // runId, the stdout, the resultRefBytes, or the stderr tail (safe to paste). Zero-
   // traffic guard (the voice_health if-pattern). estSavedTokens coerces to 0 for a
   // run that materialized nothing, so it still counts as a run without inflating the
-  // sum.
+  // sum; a HARD-KILLED run (timeout / stdout_cap) is counted (degraded) but its
+  // PHANTOM savings are EXCLUDED from the summed estimate (see
+  // ORCHESTRATE_HARD_KILL_CLASSES) — the child was SIGKILLed before it consumed the
+  // bytes runAggregate measured, so those tokens were never actually kept out of
+  // context.
   let orchestrateRunCount = 0;
   let orchestrateEstSavedTotal = 0;
   let orchestrateDegradedRuns = 0;
@@ -253,8 +267,13 @@ export function buildFindings(
     const parsed = orchestrateEfficiencyFromRow(row);
     if (parsed === null) continue;
     orchestrateRunCount += 1;
-    orchestrateEstSavedTotal += parsed.estSavedTokens;
     if (parsed.failureClass !== undefined) orchestrateDegradedRuns += 1;
+    // Sum only savings that were REALLY kept out of context: a completed run
+    // (clean / nonzero_exit / lease_absent) or the coerced-0 no-materialization run.
+    // A hard-killed run's materialized bytes were never consumed — exclude them.
+    if (parsed.failureClass === undefined || !ORCHESTRATE_HARD_KILL_CLASSES.has(parsed.failureClass)) {
+      orchestrateEstSavedTotal += parsed.estSavedTokens;
+    }
   }
   if (orchestrateRunCount > 0) {
     const base = `${orchestrateRunCount} orchestrate run(s), ~${orchestrateEstSavedTotal} est. tokens saved`;

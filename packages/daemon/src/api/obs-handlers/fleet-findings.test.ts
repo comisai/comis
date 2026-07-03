@@ -1237,6 +1237,50 @@ describe("buildFindings — orchestrate_efficiency finding", () => {
     expect(f.detail).toMatch(/1 degraded/);
   });
 
+  it("EXCLUDES hard-killed runs (timeout / stdout_cap) from the summed savings but still counts them as (degraded) runs", () => {
+    // A hard kill SIGKILLs the child mid-materialization: runAggregate reports the
+    // bytes materialized BEFORE the kill, but the run never sliced/consumed them —
+    // those "savings" were never actually kept out of any context. They must NOT
+    // inflate the headline measured savings; the run still counts (degraded).
+    const findings = buildFindings(
+      [
+        orchestrateEfficiencyRow(1_000, 5000), // clean run — real savings
+        orchestrateEfficiencyRow(2_000, 10_000_000, { failureClass: "timeout" }), // hard-killed → phantom
+        orchestrateEfficiencyRow(3_000, 8_000_000, { failureClass: "stdout_cap" }), // hard-killed → phantom
+      ],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === ORCH_CODE)!;
+    // All three runs count toward the run total...
+    expect(f.count).toBe(3);
+    // ...two of them degraded (the hard kills)...
+    expect(f.detail).toMatch(/2 degraded/);
+    // ...but ONLY the clean run's 5000 tokens enter the summed savings — the 18M
+    // phantom tokens from the two hard-killed runs are excluded.
+    expect(f.detail).toMatch(/~5000 est\. tokens saved/);
+    expect(f.detail).not.toMatch(/10000000|8000000|18005000/);
+  });
+
+  it("KEEPS a completed-but-degraded run's savings (nonzero_exit / lease_absent ran to completion — real savings)", () => {
+    // nonzero_exit and lease_absent runs ran to COMPLETION, so their materialized
+    // bytes really were kept out of context — their savings are real and summed
+    // (only the interrupted timeout/stdout_cap classes are phantom). spawn_fail
+    // materializes nothing (empty results/), so it does not inflate either.
+    const findings = buildFindings(
+      [
+        orchestrateEfficiencyRow(1_000, 6000, { failureClass: "nonzero_exit" }),
+        orchestrateEfficiencyRow(2_000, 4000, { failureClass: "lease_absent" }),
+      ],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === ORCH_CODE)!;
+    expect(f.count).toBe(2);
+    expect(f.detail).toMatch(/2 degraded/);
+    expect(f.detail).toMatch(/~10000 est\. tokens saved/); // 6000 + 4000, both real
+  });
+
   it("does NOT emit when there are zero orchestrate_efficiency rows (zero-traffic guard)", () => {
     const findings = buildFindings(
       [{ timestamp: 1, category: "health_signal", severity: "warning", message: "h", details: JSON.stringify({ signal: "lcd_divergence" }) }],
