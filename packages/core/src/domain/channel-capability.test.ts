@@ -40,6 +40,7 @@ describe("ChannelCapability feature flags", () => {
       "blockkit",
       "quickreply",
       "none",
+      "adaptivecard",
     ] as const) {
       const cap = ChannelCapabilitySchema.parse({
         features: { buttons },

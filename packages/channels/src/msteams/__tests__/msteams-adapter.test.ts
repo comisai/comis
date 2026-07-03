@@ -1331,7 +1331,7 @@ describe("createMsTeamsAdapter — outbound mention wiring (id-shape gated)", ()
 });
 
 describe("createMsTeamsPlugin — capability parity metadata", () => {
-  it("declares reactions/editMessages/deleteMessages/typing/threads true, buttons none", () => {
+  it("declares reactions/editMessages/deleteMessages/typing/threads true, buttons adaptivecard", () => {
     const { deps } = makeAdapterDeps();
     const plugin = createMsTeamsPlugin(deps);
     expect(plugin.capabilities).toEqual({
@@ -1343,20 +1343,20 @@ describe("createMsTeamsPlugin — capability parity metadata", () => {
         attachments: false,
         typing: true,
         threads: true,
-        buttons: "none",
+        buttons: "adaptivecard",
       },
       limits: { maxMessageChars: 28000 },
       replyToMetaKey: "teamsActivityId",
     });
   });
 
-  it("keeps buttons off the adaptivecard variant while editMessages routes to edit-in-place", () => {
+  it("declares the adaptivecard buttons variant while editMessages routes to edit-in-place", () => {
     const { deps } = makeAdapterDeps();
     const plugin = createMsTeamsPlugin(deps);
     // editMessages:true auto-routes the channel to the edit-in-place strategy.
     expect(plugin.capabilities.features.editMessages).toBe(true);
-    // buttons "none" — the adaptivecard enum variant is a later capability.
-    expect(plugin.capabilities.features.buttons).not.toBe("adaptivecard");
+    // buttons "adaptivecard" — the channel advertises an Adaptive Card button surface.
+    expect(plugin.capabilities.features.buttons).toBe("adaptivecard");
   });
 
   it("exposes the plugin metadata and a msteams adapter", () => {
