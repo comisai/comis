@@ -399,6 +399,39 @@ describe("result-ref-store", () => {
     });
     expect(existsSync(foreign)).toBe(false);
   });
+
+  describe("runAggregate", () => {
+    it("returns the per-run materialized count and total bytes before cleanup", async () => {
+      const store = makeStore();
+      const size = 40 * 1024; // 40 KB — over the ResultRef threshold, under the per-file cap.
+
+      for (let i = 0; i < 3; i++) {
+        const ref = await store.materialize("x".repeat(size), "web_fetch", {
+          workspacePath,
+          runId,
+          nowMs,
+        });
+        if (ref === undefined || "error" in ref) throw new Error("materialize failed");
+      }
+
+      const resultsDir = join(workspacePath, "results");
+      expect(readdirSync(resultsDir).length).toBe(3);
+
+      // The aggregate the runner captures BEFORE cleanup wipes results/: Σ file sizes.
+      const agg = store.runAggregate?.({ workspacePath });
+      expect(agg).toEqual({ count: 3, bytes: 3 * size }); // 122880
+
+      // Read-only: the call evicts nothing — all three files remain on disk.
+      expect(readdirSync(resultsDir).length).toBe(3);
+    });
+
+    it("returns a zero aggregate (no throw) when the run has no results dir", () => {
+      const store = makeStore();
+      // Fresh workspace, nothing materialized → an empty aggregate, never a throw.
+      const agg = store.runAggregate?.({ workspacePath });
+      expect(agg).toEqual({ count: 0, bytes: 0 });
+    });
+  });
 });
 
 describe("result-ref-store pure helpers", () => {
