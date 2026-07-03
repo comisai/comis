@@ -12,7 +12,7 @@
  */
 
 import type { AppContainer, SkillsConfig, ClockPort, TimerPort } from "@comis/core";
-import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout, resolveAutonomy, wrapExternalContent } from "@comis/core";
+import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout, resolveAutonomy, resolveCronWakeGateEnabled, wrapExternalContent } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
 import type { createSessionStore } from "@comis/memory";
@@ -254,8 +254,21 @@ export async function setupSchedulers(deps: {
           // runWakeGate never throws (it fails open to wake), so a broken gate can
           // never silently drop a monitored job. A job without `wakeGate` (or with no
           // runner ref) is byte-identical to today.
+          // Consult the operator toggle BEFORE running the gate. A
+          // scheduler-initiated gate is a distinct trust context — no human or
+          // model in the loop at fire time — so an operator can allow
+          // model-initiated orchestrate while disabling these gates. When the
+          // toggle resolves OFF (explicit false, or unset with the agent's
+          // script surface off), runWakeGate is never called and the job falls
+          // straight through to the existing dispatch, byte-identical to a
+          // no-wakeGate job. The gate rides the agent's existing caps at the cap
+          // socket; the toggle grants none.
           const gateRunner = wakeGateRunnerRef?.ref;
-          if (job.wakeGate && gateRunner) {
+          if (
+            job.wakeGate &&
+            gateRunner &&
+            resolveCronWakeGateEnabled(effectiveCron.wakeGate, agentConfig.autonomy?.script)
+          ) {
             const outcome = await gateRunner.runWakeGate(job.wakeGate, {
               agentId: job.agentId,
               jobId: job.id,
