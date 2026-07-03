@@ -282,7 +282,13 @@ function buildReporterNextSteps(doctor: DoctorResult, signals: readonly string[]
 
 // --- evidence + privacy ----------------------------------------------------
 
-/** The bundle's allowlisted output files, each with a content-free description. */
+/**
+ * The bundle's allowlisted output files, in writer order (manifest last), each
+ * with a content-free description. `explain.json` is present only under
+ * `--session` and is filtered out of the index otherwise; `audit-summary.json`
+ * is attempted on every run and omitted only on an unreadable store (exactly
+ * like `fleet.json`/`config-posture.json`).
+ */
 const EVIDENCE_FILES: ReadonlyArray<{ path: string; description: string }> = [
   { path: "issue-summary.md", description: "Human-readable triage summary for a bug report" },
   {
@@ -295,6 +301,14 @@ const EVIDENCE_FILES: ReadonlyArray<{ path: string; description: string }> = [
   {
     path: "config-posture.json",
     description: "Which config sections are present, plus flagged-key labels",
+  },
+  {
+    path: "explain.json",
+    description: "Per-session incident digest, present with --session",
+  },
+  {
+    path: "audit-summary.json",
+    description: "Window-scoped audit event counts by kind, omitted when the store is unreadable",
   },
   {
     path: "manifest.json",
@@ -340,10 +354,11 @@ export function buildSupportTriage(inputs: SupportTriageInputs): SupportTriage {
     ...(explain !== undefined ? { explainSummary: buildExplainSummary(explain) } : {}),
     reporterNextSteps: buildReporterNextSteps(doctor, activeSignals),
     maintainerNextSteps: [...MAINTAINER_NEXT_STEPS],
-    evidenceFiles: EVIDENCE_FILES.map((file) => ({
-      path: file.path,
-      description: file.description,
-    })),
+    // explain.json is written only under --session; drop it from the index when
+    // no session was embedded. Every other file is attempted on every run.
+    evidenceFiles: EVIDENCE_FILES.filter(
+      (file) => file.path !== "explain.json" || explain !== undefined,
+    ).map((file) => ({ path: file.path, description: file.description })),
     privacy: { redaction: "platform-aware-v1", excludes: [...PRIVACY_EXCLUDES] },
   };
 }
