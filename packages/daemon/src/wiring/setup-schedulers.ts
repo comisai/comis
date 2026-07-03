@@ -32,6 +32,7 @@ import {
   type ExecutionTracker,
 } from "@comis/scheduler";
 import type { ComputeDailyResetNextRun } from "@comis/core";
+import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import type { WakeGateRunner } from "./wake-gate-runner.js";
 
 /**
@@ -180,8 +181,15 @@ export async function setupSchedulers(deps: {
    *  so executeJob reads `ref` at FIRE time. Absent / `ref` undefined ⇒ no gate (a job
    *  runs exactly as today). A job WITHOUT `wakeGate` never consults it. */
   wakeGateRunnerRef?: { ref?: WakeGateRunner };
+  /** The daemon-wide per-session trajectory recorder registry. A WOKE wake-gate
+   *  fire opens the job's main session, so the hook records a content-free
+   *  wake-gate event directly onto that session's trajectory (off-turn: the
+   *  cron/daemon context has no live bus bridge). Best-effort: an absent registry
+   *  / a recorder that resolves undefined ⇒ no record (never a throw). A SKIP
+   *  records nothing (it opens no session). */
+  trajectoryRegistry?: SessionTrajectoryHandleRegistry;
 }): Promise<SchedulersResult> {
-  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers, leaseManager, boundedAutonomyHolder, wakeGateRunnerRef } = deps;
+  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers, leaseManager, boundedAutonomyHolder, wakeGateRunnerRef, trajectoryRegistry } = deps;
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
@@ -377,6 +385,22 @@ export async function setupSchedulers(deps: {
                   );
                 }
               }
+              // A woke fire runs the model in the job's main session — record a
+              // content-free wake-gate event DIRECTLY onto that session's trajectory
+              // so `comis explain <sessionKey|rootRunId>` folds the fire and its
+              // cap-calls. Off-turn: the cron/daemon context has no live bus bridge,
+              // so this mirrors the image / capability-audit direct emits (a
+              // per-session recorder call, not a bus subscription) — the incident
+              // fork's feed, wired independently of the fleet emit above. Best-effort
+              // + off-turn safe: an absent registry / a recorder that resolves
+              // undefined is a no-op (the offline assembler is the binding oracle),
+              // never a throw that could degrade the job. A SKIP records NOTHING
+              // here — it opens no session; its lens is the enriched cron.runs row.
+              // Content-free (I5): ids / enum / counts ONLY — never the finding.
+              trajectoryRegistry?.getRecorder?.(resolveMainSessionKey(job.agentId))?.recordEvent(
+                "scheduler.wake_gate",
+                { jobId: job.id, agentId: job.agentId, wake: true, durationMs, toolCalls, estTurnsSaved: 0 },
+              );
             }
           }
 

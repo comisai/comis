@@ -1896,7 +1896,7 @@ async function bootAgents(
         );
       }
     },
-    clock, timers, wakeGateRunnerRef, // wakeGateRunnerRef: the late-bound pre-payload wake-gate runner; executeJob reads .ref at fire time
+    clock, timers, wakeGateRunnerRef, trajectoryRegistry, // wakeGateRunnerRef: late-bound pre-payload wake-gate runner (executeJob reads .ref at fire time); trajectoryRegistry: a woke fire's direct per-session wake-gate trajectory record
     leaseManager: sharedLeaseManager, boundedAutonomyHolder: boundedAutonomyBudgetHolder, // the cron-fire fresh-lease mint (shared LeaseManager + late-bound holder)
   });
 
