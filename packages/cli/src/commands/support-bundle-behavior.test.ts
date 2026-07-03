@@ -447,3 +447,59 @@ describe("support-bundle worst-session tip", () => {
     expect(output).not.toContain("most-degraded session in a local scan");
   });
 });
+
+describe("support-bundle privacy notice escalation", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    envState = {};
+    vi.mocked(generateSupportBundle).mockReset();
+    vi.mocked(generateSupportBundle).mockResolvedValue(degradedBundle as never);
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("escalates the privacy notice to the trace-bundle wording under --deep", async () => {
+    const program = createTestProgram();
+    registerSupportBundleCommand(program);
+
+    try {
+      await program.parseAsync(["node", "test", "support-bundle", "--session", "t:u:c", "--deep"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(ExitCode.Success);
+    const output = getSpyOutput(consoleSpy.log);
+    // The escalated notice names the raw-trajectory sensitivity the default digest lacks.
+    expect(output).toContain("PII-adjacent");
+    expect(output.toLowerCase()).toContain("trajectory");
+    // ...while keeping the share/delete discipline of the trace-bundle policy.
+    expect(output.toLowerCase()).toContain("authorized engineers");
+    expect(output.toLowerCase()).toContain("delete it after triage");
+  });
+
+  it("keeps the digest-level privacy notice and omits the escalated wording without --deep", async () => {
+    const program = createTestProgram();
+    registerSupportBundleCommand(program);
+
+    try {
+      await program.parseAsync(["node", "test", "support-bundle", "--config", "/x/config.yaml"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(ExitCode.Success);
+    const output = getSpyOutput(consoleSpy.log);
+    // The default bundle carries the digest-level notice...
+    expect(output.toLowerCase()).toContain("excludes secrets");
+    // ...and never the escalated raw-trajectory wording.
+    expect(output).not.toContain("PII-adjacent");
+  });
+});
