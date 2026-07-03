@@ -528,7 +528,7 @@ export function accumulateOrchestrateRunSummaryRecord(
 /**
  * Fold one `capability.audited` trajectory record into the per-run tool-call
  * tally `orchestrateToolCallsByLease` — keyed by the record's `leaseId` (the
- * daemon-minted PER-RUN child lease), then by the `${tool}\0${capability}\0${decision}`
+ * daemon-minted PER-RUN child lease), then by the `${tool} ${capability} ${decision}`
  * tuple → a `{tool,capability,decision,count}` running count. This is EXPLAIN-04:
  * because the leaseId is per-run, a `decision:"deny"` groups under THE RUN that made
  * the call, not the assembly. Reads the SAME records the spawn-tree fold sees (called
@@ -549,7 +549,7 @@ export function accumulateOrchestrateToolCall(
   const decision = data.decision === "allow" ? "allow" : data.decision === "deny" ? "deny" : undefined;
   if (tool === undefined || capability === undefined || decision === undefined) return;
   const inner = orchestrateToolCallsByLease.get(leaseId) ?? new Map<string, OrchestrateToolCallFold>();
-  const key = `${tool} ${capability} ${decision}`;
+  const key = `${tool} ${capability} ${decision}`;
   const prev = inner.get(key);
   if (prev !== undefined) prev.count += 1;
   else inner.set(key, { tool, capability, decision, count: 1 });
