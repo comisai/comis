@@ -58,6 +58,9 @@ export interface Acc {
   /** The per-turn context-budget CASCADE (the progression toward `contextBudget`). Deduped on
    *  transition + most-recent-40 capped (see the context.budget fold). Surfaced only when ≥2 states. */
   contextBudgetHistory: IncidentContextBudgetHistoryEntry[];
+  /** The LAST `scheduler.wake_gate` record (a woke fire's content-free wake-gate
+   *  fact). Present ONLY for a fire the gate woke — a skip opens no session. */
+  cronWakeGate?: IncidentSignals["cronWakeGate"];
   /** The LAST execution.prompt_timeout record (the terminal kill
    *  explains the end state — a retry-path kill earlier in the session is
    *  superseded by the kill that actually ended it). */
