@@ -1,10 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import type { ComisLogger, MessageHandler, NormalizedMessage } from "@comis/core";
+import type {
+  ComisLogger,
+  MessageHandler,
+  NormalizedMessage,
+  NormalizedReaction,
+  ReactionHandler,
+} from "@comis/core";
 import { createMsTeamsAdapter, type MsTeamsAdapterDeps } from "../msteams-adapter.js";
 import { createMsTeamsPlugin } from "../msteams-plugin.js";
 import type { TeamsActivity } from "../message-mapper.js";
+import type { TeamsReactionActivity } from "../msteams-reaction-binder.js";
 import { classifyMSTeamsError } from "../msteams-activity.js";
+import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
+
+/** Resolve after the current microtask queue drains (lets fire-and-forget POSTs land). */
+const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/** The Connector typing POSTs a spy recorded — the {type:"typing"} activity sends. */
+function typingPosts(spy: ReturnType<typeof vi.fn>): Array<[string, RequestInit]> {
+  return spy.mock.calls.filter(([u, init]) => {
+    if (!String(u).includes("/activities")) return false;
+    const raw = (init as RequestInit | undefined)?.body;
+    if (typeof raw !== "string") return false;
+    return (JSON.parse(raw) as { type?: string }).type === "typing";
+  }) as Array<[string, RequestInit]>;
+}
 
 // A fixed clock so lastMessageAt / uptime / durationMs are deterministic.
 const FIXED_NOW = 1_700_000_000_000;
@@ -687,6 +708,189 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
 
 /** A shape-valid Bot Framework bot id (`28:<guid>`) — mentionable. */
 const MENTIONABLE_BOT_ID = "28:6f2c8e1a-1b2c-3d4e-5f6a-7b8c9d0e1f2a";
+
+/** A well-formed inbound Teams messageReaction activity (allowlisted reactor). */
+function reactionActivity(overrides: Partial<TeamsReactionActivity> = {}): TeamsReactionActivity {
+  return {
+    type: "messageReaction",
+    id: "reacted-activity",
+    conversation: {
+      id: "19:channel-convo@thread.tacv2",
+      conversationType: "channel",
+      tenantId: TENANT,
+    },
+    from: { id: "29:user", aadObjectId: "allowed-aad", name: "User" },
+    replyToId: "parent-msg-id",
+    reactionsAdded: [{ type: "like" }],
+    serviceUrl: "https://smba.example.com/teams/",
+    ...overrides,
+  };
+}
+
+describe("createMsTeamsAdapter — inbound reaction fanout (onReaction)", () => {
+  it("fans an inbound messageReaction out to the registered onReaction handler", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<ReactionHandler>();
+    expect(adapter.onReaction).toBeInstanceOf(Function);
+    adapter.onReaction!(handler);
+
+    adapter.handleWebhookEvents([reactionActivity()]);
+
+    expect(handler).toHaveBeenCalledOnce();
+    const reaction = handler.mock.calls[0]![0] as NormalizedReaction;
+    expect(reaction.channelType).toBe("msteams");
+    expect(reaction.emoji).toBe("👍");
+    expect(reaction.reactorId).toBe("allowed-aad");
+    expect(reaction.messageId).toBe("parent-msg-id");
+  });
+
+  it("does NOT invoke reaction handlers for a non-reaction message activity", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const onMsg = vi.fn<MessageHandler>();
+    const onReact = vi.fn<ReactionHandler>();
+    adapter.onMessage(onMsg);
+    adapter.onReaction!(onReact);
+
+    adapter.handleWebhookEvents([messageActivity()]);
+
+    expect(onMsg).toHaveBeenCalledOnce();
+    expect(onReact).not.toHaveBeenCalled();
+  });
+
+  it("drops a reaction from a non-allowlisted reactor and never fans out", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<ReactionHandler>();
+    adapter.onReaction!(handler);
+    adapter.handleWebhookEvents([
+      reactionActivity({ from: { id: "29:stranger", aadObjectId: "stranger-aad" } }),
+    ]);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not crash the fanout loop when a reaction handler throws or rejects", async () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onReaction!(() => {
+      throw new Error("sync reaction boom");
+    });
+    adapter.onReaction!(() => Promise.reject(new Error("async reaction boom")));
+    const survivor = vi.fn<ReactionHandler>();
+    adapter.onReaction!(survivor);
+
+    adapter.handleWebhookEvents([reactionActivity()]);
+    await flush();
+
+    expect(survivor).toHaveBeenCalledOnce();
+    const internalError = loggerSpy.error.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "internal",
+      );
+    expect(internalError).toBeDefined();
+  });
+});
+
+describe("createMsTeamsAdapter — typing keepalive over the injected TimerPort", () => {
+  it("POSTs a typing activity on sendTyping and refreshes it on the fake timer", async () => {
+    const timer = createFakeTimers();
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, timer });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.platformAction("sendTyping", {
+      chatId: "19:convo",
+      serviceUrl: SERVICE_URL,
+    });
+    await flush();
+    expect(typingPosts(spy).length).toBe(1);
+
+    timer.advance(8_000);
+    await flush();
+    timer.advance(8_000);
+    await flush();
+    expect(typingPosts(spy).length).toBeGreaterThan(1);
+  });
+
+  it("cancels the keepalive on stopTyping so no further typing posts fire", async () => {
+    const timer = createFakeTimers();
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, timer });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.platformAction("sendTyping", { chatId: "19:convo", serviceUrl: SERVICE_URL });
+    await flush();
+    await adapter.platformAction("stopTyping", { chatId: "19:convo" });
+    const before = typingPosts(spy).length;
+
+    timer.advance(8_000 * 5);
+    await flush();
+    expect(typingPosts(spy).length).toBe(before);
+  });
+
+  it("caps the keepalive refresh so it stops rearming long after the turn (TTL backstop)", async () => {
+    const timer = createFakeTimers();
+    const { fetchImpl } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, timer });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.platformAction("sendTyping", { chatId: "19:convo", serviceUrl: SERVICE_URL });
+    // Advance well past any plausible TTL, twice — a bounded keepalive stops
+    // rearming, so the scheduled-timer count is identical across the two sweeps.
+    timer.advance(24 * 60 * 60 * 1000);
+    const c1 = timer.unrefRecord().filter((e) => e.kind === "timeout").length;
+    timer.advance(24 * 60 * 60 * 1000);
+    const c2 = timer.unrefRecord().filter((e) => e.kind === "timeout").length;
+    expect(c1).toBeGreaterThan(1); // it did refresh repeatedly
+    expect(c2).toBe(c1); // …but capped: no further rearming
+  });
+
+  it("does not start the keepalive when the streaming suppression flag is set", async () => {
+    const timer = createFakeTimers();
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, timer });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.platformAction("sendTyping", {
+      chatId: "19:convo",
+      serviceUrl: SERVICE_URL,
+      streaming: true,
+    });
+    await flush();
+
+    expect(result.ok).toBe(true);
+    expect(typingPosts(spy).length).toBe(0);
+    expect(timer.unrefRecord().length).toBe(0);
+  });
+
+  it("is a no-op (no POST) when no TimerPort is injected", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl }); // no timer
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.platformAction("sendTyping", {
+      chatId: "19:convo",
+      serviceUrl: SERVICE_URL,
+    });
+    await flush();
+
+    expect(result.ok).toBe(true);
+    expect(typingPosts(spy).length).toBe(0);
+  });
+
+  it("still returns a validation err for an unrelated unsupported action", async () => {
+    const timer = createFakeTimers();
+    const { deps } = makeAdapterDeps({ timer });
+    const adapter = createMsTeamsAdapter(deps);
+    const result = await adapter.platformAction("pin", { messageId: "x" });
+    expect(result.ok).toBe(false);
+  });
+});
 
 describe("createMsTeamsAdapter — editMessage / deleteMessage via the Connector REST", () => {
   it("PUTs an updated activity to the conversation activity path with a Bearer token", async () => {
