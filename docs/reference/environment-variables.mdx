@@ -616,6 +616,14 @@ Required only for channels you enable in `config.yaml`. Each value can also be s
 | `LINE_CHANNEL_ACCESS_TOKEN` | Long-lived channel access token |
 | `LINE_CHANNEL_SECRET` | Channel secret for HMAC verification |
 
+### Microsoft Teams
+
+| Variable | Purpose |
+|----------|---------|
+| `MSTEAMS_APP_PASSWORD` | Bot app password (client secret) for secret-mode auth — the fallback source for `channels.msteams.appPassword` (also settable inline in config or as a SecretRef) |
+
+The bot app id (`channels.msteams.appId`) and directory/tenant id (`channels.msteams.tenantId`) are plain configuration values, not secrets, and are set in `config.yaml` rather than as environment variables.
+
 ### IRC
 
 | Variable | Purpose |
