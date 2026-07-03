@@ -5,7 +5,7 @@
  * These drive the REAL nine doctor checks against a temp `~/.comis`-shaped
  * layout (never the machine's real data dir), so they pin the ground-truth
  * offline behavior rather than a hand-shaped `DoctorResult`:
- *  - a dead daemon (no daemon.pid) still produces the four-file bundle, surfaces
+ *  - a dead daemon (no daemon.pid) still produces the five-file bundle, surfaces
  *    the `daemon_down` signal, and is NEVER reported `healthy`;
  *  - a corrupt config yields `misconfigured` + `config_corrupt` and still
  *    generates (a section failure is a warning, never a crash);
@@ -100,13 +100,19 @@ function expectedBundleDir(dataDir: string): string {
 }
 
 describe("generateSupportBundle offline against a dead daemon", () => {
-  it("produces the four-file bundle and surfaces daemon_down without reporting healthy", async () => {
+  it("produces the five-file bundle and surfaces daemon_down without reporting healthy", async () => {
     const result = await generateSupportBundle(makeDeps());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
     const files = readdirSync(result.value.bundleDir).sort();
-    expect(files).toEqual(["doctor.json", "issue-summary.md", "manifest.json", "triage.json"]);
+    expect(files).toEqual([
+      "ai-issue-draft.md",
+      "doctor.json",
+      "issue-summary.md",
+      "manifest.json",
+      "triage.json",
+    ]);
     expect(result.value.activeSignals).toContain("daemon_down");
     expect(result.value.status).not.toBe("healthy");
   });
@@ -159,7 +165,13 @@ describe("generateSupportBundle honest degradation", () => {
     expect(result.value.status).toBe("misconfigured");
     expect(result.value.activeSignals).toContain("config_corrupt");
     const files = readdirSync(result.value.bundleDir).sort();
-    expect(files).toEqual(["doctor.json", "issue-summary.md", "manifest.json", "triage.json"]);
+    expect(files).toEqual([
+      "ai-issue-draft.md",
+      "doctor.json",
+      "issue-summary.md",
+      "manifest.json",
+      "triage.json",
+    ]);
   });
 
   it("folds an unwritable section into the manifest warnings without crashing the run", async () => {

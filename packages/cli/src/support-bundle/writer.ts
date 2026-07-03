@@ -6,14 +6,15 @@
  * confined to the data dir, symlinked-dir refusal); every file is written via
  * `writeRegularFile` (0o600, O_NOFOLLOW, unlink-before-open); every path is
  * composed with `safePath`. The raw path-join and unchecked file-write calls
- * are deliberately avoided. The write set is an explicit four-file allowlist,
+ * are deliberately avoided. The write set is an explicit five-file allowlist,
  * never a data-dir glob.
  *
  * Redaction is scoped per file. `doctor.json` echoes config-derived free text
  * (DoctorFinding messages — e.g. a configured gateway URL with `user:pass@`), so
  * every string leaf there is value-shape masked before it reaches disk. The
- * reducer's own outputs (`triage.json`, `issue-summary.md`) are content-free by
- * construction — counts, category labels, signal codes, version facts, and
+ * reducer's own outputs (`triage.json`, `issue-summary.md`, `ai-issue-draft.md`)
+ * are content-free by construction — counts, category labels, signal codes,
+ * version facts, static placeholders, and
  * static remediation strings — so they get path-token normalization ONLY; the
  * value-shape pass is withheld there because it treats the reducer's own
  * field-name-like tokens ("key", "secret", "message") as payloads and would
@@ -53,6 +54,8 @@ export interface WriteSupportBundleInput {
   readonly triage: SupportTriage;
   /** The rendered issue summary (written as issue-summary.md). */
   readonly issueSummaryMd: string;
+  /** The rendered AI issue draft (written as ai-issue-draft.md). */
+  readonly aiIssueDraftMd: string;
   /** The doctor diagnostic object (written as doctor.json). */
   readonly doctorJson: unknown;
   /** Upstream coverage/section warnings folded into the manifest. */
@@ -172,13 +175,14 @@ function prepareBundleDir(
 }
 
 /**
- * Write the four-file support bundle under `<dataDir>/support-bundles/`.
+ * Write the five-file support bundle under `<dataDir>/support-bundles/`.
  *
  * Creates `comis-support-<tsIso>/` (a timestamp-only name — no host component)
- * and writes `issue-summary.md`, `triage.json`, `doctor.json`, and
- * `manifest.json`, each through the symlink-safe primitives with the redaction
- * backstop applied. The manifest is written last so it records every section
- * that failed. Returns `err` only when the directory itself cannot be created.
+ * and writes `issue-summary.md`, `ai-issue-draft.md`, `triage.json`,
+ * `doctor.json`, and `manifest.json`, each through the symlink-safe primitives
+ * with the redaction backstop applied. The manifest is written last so it
+ * records every section that failed. Returns `err` only when the directory
+ * itself cannot be created.
  *
  * @param input - The bundle inputs (all pre-read by the caller).
  * @returns `ok({ bundleDir, warnings })` on a full or partial write, or
@@ -187,7 +191,7 @@ function prepareBundleDir(
 export function writeSupportBundle(
   input: WriteSupportBundleInput,
 ): Result<WriteSupportBundleSuccess, WriteSupportBundleError> {
-  const { dataDir, generatedAtMs, triage, issueSummaryMd, doctorJson } = input;
+  const { dataDir, generatedAtMs, triage, issueSummaryMd, aiIssueDraftMd, doctorJson } = input;
 
   // The dir name carries a timestamp only, never a host component.
   const generatedAt = systemDateFrom(generatedAtMs).toISOString();
@@ -235,10 +239,13 @@ export function writeSupportBundle(
   // The content files — the explicit allowlist. Each body is lazy so a
   // serialization failure is caught per-section rather than crashing the run.
   // Only doctor.json echoes untrusted config-derived text, so it alone keeps the
-  // value-shape masking pass; triage.json and issue-summary.md are content-free
-  // and get path normalization only.
+  // value-shape masking pass; triage.json, issue-summary.md, and ai-issue-draft.md
+  // are content-free and get path normalization only. ai-issue-draft.md rides the
+  // trusted leaf like issue-summary.md — the value-shape pass would treat its
+  // `<REQUIRED: …>` idiom and field-name-like tokens as payloads and mangle it.
   const FILE_PLAN: ReadonlyArray<{ name: string; body: () => string }> = [
     { name: "issue-summary.md", body: () => substitutePathsOnly(issueSummaryMd) },
+    { name: "ai-issue-draft.md", body: () => substitutePathsOnly(aiIssueDraftMd) },
     {
       name: "triage.json",
       body: () => JSON.stringify(walkAndSubstitutePaths(triage, redactionOpts), null, 2),

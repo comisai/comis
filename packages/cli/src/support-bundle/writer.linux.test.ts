@@ -97,6 +97,7 @@ function makeInput(dataDir: string) {
     generatedAtMs: GENERATED_AT_MS,
     triage: makeTriage(),
     issueSummaryMd: "# Comis support summary\n\n- ok\n",
+    aiIssueDraftMd: "# Comis issue draft\n\n<REQUIRED: paste repro steps — do not invent>\n",
     doctorJson: {
       checksRun: 9,
       summary: { pass: 7, fail: 1, warn: 1, skip: 0, repairable: 1 },
@@ -115,6 +116,7 @@ describe.skipIf(!isLinux)("writeSupportBundle filesystem enforcement (Linux only
     expect(statSync(safePath(result.value.bundleDir, "triage.json")).mode & 0o777).toBe(0o600);
     expect(statSync(safePath(result.value.bundleDir, "doctor.json")).mode & 0o777).toBe(0o600);
     expect(statSync(safePath(result.value.bundleDir, "issue-summary.md")).mode & 0o777).toBe(0o600);
+    expect(statSync(safePath(result.value.bundleDir, "ai-issue-draft.md")).mode & 0o777).toBe(0o600);
     expect(statSync(safePath(result.value.bundleDir, "manifest.json")).mode & 0o777).toBe(0o600);
   });
 

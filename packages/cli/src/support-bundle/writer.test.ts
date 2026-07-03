@@ -3,7 +3,7 @@
  * Writer tests for the support bundle — the security backbone.
  *
  * These pin the write boundary where a leak or a symlink-escape would occur:
- * exactly the four allowlisted files are written; a seeded secret in the doctor
+ * exactly the five allowlisted files are written; a seeded secret in the doctor
  * object (the one file that echoes config-derived text) is value-shape masked
  * before it reaches disk, while the reducer's own content-free strings ride
  * through un-masked so the verdict is not corrupted; the manifest round-trips
@@ -111,6 +111,7 @@ function makeInput(
     generatedAtMs: GENERATED_AT_MS,
     triage: overrides.triage ?? makeTriage(),
     issueSummaryMd: overrides.issueSummaryMd ?? "# Comis support summary\n\n- ok\n",
+    aiIssueDraftMd: "# Comis issue draft\n\n<REQUIRED: paste repro steps — do not invent>\n",
     doctorJson:
       overrides.doctorJson ??
       ({
@@ -129,12 +130,13 @@ function expectedBundleDir(dataDir: string): string {
 }
 
 describe("writeSupportBundle", () => {
-  it("writes exactly the four allowlisted files into the bundle dir", () => {
+  it("writes exactly the five allowlisted files into the bundle dir", () => {
     const result = writeSupportBundle(makeInput());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const files = readdirSync(result.value.bundleDir).sort();
     expect(files).toEqual([
+      "ai-issue-draft.md",
       "doctor.json",
       "issue-summary.md",
       "manifest.json",

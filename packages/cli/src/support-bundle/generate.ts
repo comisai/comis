@@ -9,8 +9,8 @@
  *     short-circuited when the daemon is down),
  *  2. build a local doctor context and run the nine health checks daemon-down,
  *  3. fold the aggregate into the deterministic triage verdict,
- *  4. shape `doctor.json`, render the issue summary,
- *  5. write the four-file bundle through the symlink-safe writer.
+ *  4. shape `doctor.json`, render the issue summary and the AI issue draft,
+ *  5. write the five-file bundle through the symlink-safe writer.
  *
  * Everything is `Result`-chained: the orchestrator throws nothing (the command
  * that invokes it owns the throw boundary and surfaces the completion/failure
@@ -50,6 +50,7 @@ import type { DoctorCheck, DoctorContext, DoctorResult } from "../doctor/types.j
 import { buildSupportTriage } from "./triage.js";
 import { collectHostSnapshot, type CollectHostSnapshotDeps } from "./host-snapshot.js";
 import { renderIssueSummary } from "./render-issue.js";
+import { renderAiIssueDraft } from "./render-ai-draft.js";
 import { writeSupportBundle } from "./writer.js";
 import type { SupportBundleWarning } from "./types.js";
 
@@ -229,8 +230,9 @@ export async function generateSupportBundle(
   const triage = buildSupportTriage({ host, doctor });
   const doctorJson = buildDoctorJson(doctor);
   const issueSummaryMd = renderIssueSummary(triage);
+  const aiIssueDraftMd = renderAiIssueDraft(triage);
 
-  // Safe write: exactly the four allowlisted files through the symlink-safe
+  // Safe write: exactly the five allowlisted files through the symlink-safe
   // primitives with the redaction backstop. Section-level write failures fold
   // into warnings; only an unproducible bundle dir is a hard error.
   const writeResult = writeSupportBundle({
@@ -238,6 +240,7 @@ export async function generateSupportBundle(
     generatedAtMs: deps.nowMs,
     triage,
     issueSummaryMd,
+    aiIssueDraftMd,
     doctorJson,
     warnings: sectionWarnings,
   });
