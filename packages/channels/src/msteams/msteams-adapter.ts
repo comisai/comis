@@ -29,11 +29,10 @@ import type {
   NormalizedReaction,
   ReactionHandler,
   SendMessageOptions,
-  TimerHandle,
   TimerPort,
 } from "@comis/core";
 import { runWithContext, systemNowMs } from "@comis/core";
-import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { classifyMsTeamsError } from "./errors.js";
 import { buildMentionEntities } from "./mentions.js";
@@ -46,6 +45,11 @@ import {
   type TeamsReactionActivity,
 } from "./msteams-reaction-binder.js";
 import { rebuildConversationReference } from "./msteams-proactive.js";
+import {
+  createMsTeamsConnector,
+  isSafeConversationId,
+  isSafeServiceUrl,
+} from "./msteams-connector.js";
 import { createConnectorTokenProvider } from "./msteams-auth.js";
 
 // ---------------------------------------------------------------------------
@@ -99,61 +103,6 @@ export interface MsTeamsAdapterHandle extends ChannelPort {
 // Outbound send helpers (pure)
 // ---------------------------------------------------------------------------
 
-/**
- * A Bot Framework typing activity lapses after roughly half a minute, so the
- * keepalive re-POSTs one every {@link TYPING_REFRESH_MS} to hold the indicator
- * open. {@link TYPING_TTL_MS} caps the total keepalive lifetime so an
- * un-stopped indicator (a missed stop signal) can never refresh forever;
- * {@link MAX_TYPING_REFRESHES} expresses that cap as a refresh count so it holds
- * regardless of the injected clock. Internal constants — not operator-tunable.
- */
-const TYPING_REFRESH_MS = 8_000;
-const TYPING_TTL_MS = 600_000;
-const MAX_TYPING_REFRESHES = Math.ceil(TYPING_TTL_MS / TYPING_REFRESH_MS);
-
-/** True if the id carries an ASCII control character (never valid, always dropped). */
-function hasControlChar(id: string): boolean {
-  for (let i = 0; i < id.length; i++) {
-    const code = id.charCodeAt(i);
-    if (code <= 0x1f || code === 0x7f) return true;
-  }
-  return false;
-}
-
-/**
- * Reject a conversation id that is empty, `..`-escaping, or carries a control
- * character. The charset is otherwise unconstrained: the id is URL-encoded
- * before it is interpolated into the REST path, so path separators (standard
- * base64 `@thread.v2` ids carry `/`) are transported safely rather than
- * false-rejected.
- */
-function isSafeConversationId(id: string): boolean {
-  return id.length > 0 && !id.includes("..") && !hasControlChar(id);
-}
-
-/**
- * Bot Framework Connector service-host suffixes. A minted Connector bearer token
- * is only ever transmitted to a host under one of these, so an inbound activity
- * bearing a hostile serviceUrl cannot exfiltrate the token to an arbitrary
- * origin. A static defense-in-depth allowlist.
- */
-const BF_SERVICE_HOST_SUFFIXES = [".botframework.com", ".trafficmanager.net"];
-
-/**
- * A send target is safe only over https, free of a `..` traversal segment, and
- * hosted under a Bot Framework Connector service host — so the bearer token is
- * never sent to an arbitrary origin.
- */
-function isSafeServiceUrl(serviceUrl: string): boolean {
-  if (serviceUrl.includes("..")) return false;
-  const parsed = tryCatch(() => new URL(serviceUrl));
-  if (!parsed.ok || parsed.value.protocol !== "https:") return false;
-  const host = parsed.value.hostname.toLowerCase();
-  return BF_SERVICE_HOST_SUFFIXES.some(
-    (suffix) => host === suffix.slice(1) || host.endsWith(suffix),
-  );
-}
-
 /** Ensure a service base URL ends in a single trailing slash for path composition. */
 function withTrailingSlash(raw: string): string {
   return raw.endsWith("/") ? raw : `${raw}/`;
@@ -183,38 +132,6 @@ function resolveReplyToId(
     : undefined;
 }
 
-/**
- * A Connector REST failure that carries the numeric HTTP status — and, for a 429,
- * the `Retry-After` seconds — as STRUCTURAL fields. The edit-in-place renderer
- * classifies on these to pick a render variant (429 → back off, 404 → drop the
- * edit); a bare `Error(message)` would classify as an internal fault and neither
- * the rate-limit backoff nor the activity-gone drop would ever engage.
- */
-interface ConnectorRestError extends Error {
-  /** The HTTP status of the Connector response. */
-  status: number;
-  /** Rate-limit backoff in seconds (the `Retry-After` header), when present. */
-  retryAfter?: number;
-}
-
-/** Build a {@link ConnectorRestError} carrying the status (+ retryAfter on a 429). */
-function connectorRestError(status: number, retryAfter?: number): ConnectorRestError {
-  const error = new Error(`connector request returned status ${status}`) as ConnectorRestError;
-  error.status = status;
-  if (retryAfter !== undefined) error.retryAfter = retryAfter;
-  return error;
-}
-
-/** Read the integer `Retry-After` seconds off a Connector response, when present. */
-function parseRetryAfterSeconds(res: {
-  headers?: { get?: (name: string) => string | null };
-}): number | undefined {
-  const raw = res.headers?.get?.("retry-after");
-  if (typeof raw !== "string") return undefined;
-  const seconds = Number.parseInt(raw, 10);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
-}
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -241,6 +158,16 @@ export function createMsTeamsAdapter(
     now: deps.now,
   });
 
+  // Connector transport: the edit/delete REST mutations + the typing keepalive.
+  // Shares the cached token; the adapter resolves the routing context and drives it.
+  const connector = createMsTeamsConnector({
+    tokens,
+    fetchImpl: deps.fetchImpl,
+    logger: deps.logger,
+    now,
+    timer: deps.timer,
+  });
+
   const handlers: MessageHandler[] = [];
   // Teams surfaces inbound reactions as messageReaction activities on the same
   // webhook; the send-reaction port methods stay omitted (Teams exposes no
@@ -249,12 +176,6 @@ export function createMsTeamsAdapter(
   // Stable channel identity. This webhook adapter has no self-identity fetch
   // (unlike Slack resolving botUserId at start), so it reports a constant id.
   const _channelId = "msteams";
-
-  // Typing keepalive state. A single active keepalive per adapter; a fresh
-  // sendTyping restarts it (cancel + re-POST + reschedule), stopTyping cancels
-  // it, and the refresh count is bounded by MAX_TYPING_REFRESHES (the TTL cap).
-  let typingHandle: TimerHandle | undefined;
-  let typingRefreshCount = 0;
 
   // Health tracking. `_lastError` is a string because ChannelStatus.error is a
   // string; the message is captured on failure branches for getStatus().
@@ -517,146 +438,6 @@ export function createMsTeamsAdapter(
     );
   }
 
-  /**
-   * Mutate an existing activity via the Connector REST API — a PUT updateActivity
-   * (edit) or a DELETE deleteActivity. Reuses the 228 send scaffolding verbatim:
-   * the cached bearer token, the `isSafeConversationId` guard on BOTH the
-   * conversation id and the message id (T-8, before any interpolation), the
-   * `isSafeServiceUrl` host allowlist (T-3) and the `classifyMsTeamsError` failure
-   * classifier. A non-2xx returns a {@link ConnectorRestError} carrying the
-   * structural status so the edit-in-place renderer can pick its variant.
-   */
-  async function connectorActivityMutation(args: {
-    method: "PUT" | "DELETE";
-    conversationId: string;
-    messageId: string;
-    text?: string;
-    options?: SendMessageOptions;
-    op: "edit" | "delete";
-  }): Promise<Result<void, Error>> {
-    const startedAt = now();
-
-    // Path-safety gate: validate BOTH interpolated ids before building the path.
-    if (
-      !isSafeConversationId(args.conversationId) ||
-      !isSafeConversationId(args.messageId)
-    ) {
-      _lastError = "activity id failed the path-safety check";
-      deps.logger.warn(
-        {
-          channelType: "msteams" as const,
-          op: args.op,
-          hint: "Reject the conversation/message id: it must be free of control chars and '..'",
-          errorKind: "precondition" as const,
-        },
-        "Connector activity mutation blocked: unsafe id",
-      );
-      return err(new Error("unsafe activity id"));
-    }
-
-    // Reply → the caller's serviceUrl; an in-place edit/delete with none recovers
-    // the stored reference (the edit-in-place renderer supplies no serviceUrl).
-    const ctx = await resolveConnectorServiceContext(args.conversationId, args.options);
-    if (!ctx.ok) {
-      _lastError = ctx.error.message;
-      deps.logger.warn(
-        {
-          channelType: "msteams" as const,
-          op: args.op,
-          hint: "Pass serviceUrl in extra, or capture an inbound so the edit/delete can recover its routing tuple",
-          errorKind: "precondition" as const,
-        },
-        "Connector activity mutation blocked: no usable service url",
-      );
-      return err(ctx.error);
-    }
-    const serviceUrl = ctx.value.serviceUrl;
-    if (!isSafeServiceUrl(serviceUrl)) {
-      _lastError = "service url failed the path-safety check";
-      deps.logger.warn(
-        {
-          channelType: "msteams" as const,
-          op: args.op,
-          hint: "Reject the serviceUrl: it must be an https Bot Framework Connector host free of '..'",
-          errorKind: "precondition" as const,
-        },
-        "Connector activity mutation blocked: unsafe service url",
-      );
-      return err(new Error("unsafe service url"));
-    }
-
-    const tok = await tokens.getToken();
-    if (!tok.ok) {
-      _lastError = tok.error.message;
-      return err(tok.error);
-    }
-
-    const url = `${serviceUrl}v3/conversations/${encodeURIComponent(args.conversationId)}/activities/${encodeURIComponent(args.messageId)}`;
-    const init: RequestInit = {
-      method: args.method,
-      headers: {
-        authorization: `Bearer ${tok.value}`,
-        "content-type": "application/json",
-      },
-    };
-    if (args.text !== undefined) {
-      const built = buildMentionEntities(args.text);
-      const body: Record<string, unknown> = { type: "message", text: built.text };
-      if (built.entities.length > 0) body.entities = built.entities;
-      init.body = JSON.stringify(body);
-    }
-
-    const responded = await fromPromise((deps.fetchImpl ?? fetch)(url, init));
-    if (!responded.ok) {
-      const classified = classifyMsTeamsError(undefined, responded.error);
-      _lastError = responded.error.message;
-      deps.logger.warn(
-        {
-          channelType: "msteams" as const,
-          op: args.op,
-          hint: classified.hint,
-          errorKind: classified.errorKind,
-        },
-        "Connector activity mutation failed: no response from the connector",
-      );
-      return err(responded.error);
-    }
-
-    const res = responded.value;
-    if (!res.ok) {
-      const classified = classifyMsTeamsError(res.status);
-      const retryAfter = parseRetryAfterSeconds(res);
-      _lastError = `connector ${args.op} returned status ${res.status}`;
-      deps.logger.warn(
-        {
-          channelType: "msteams" as const,
-          op: args.op,
-          status: res.status,
-          hint: classified.hint,
-          errorKind: classified.errorKind,
-        },
-        "Connector activity mutation failed: connector returned an error status",
-      );
-      // Structural status so the edit-in-place renderer classifies (429/404/…).
-      return err(connectorRestError(res.status, retryAfter));
-    }
-
-    _lastMessageAt = now();
-    _lastError = undefined;
-    deps.logger.info(
-      {
-        step: "channels-outbound",
-        channelType: "msteams" as const,
-        op: args.op,
-        messageId: args.messageId,
-        chatId: args.conversationId,
-        durationMs: now() - startedAt,
-      },
-      "Outbound activity mutation",
-    );
-    return ok(undefined);
-  }
-
   /** Extract an explicit typing serviceUrl from the action params (direct or under extra). */
   function resolveTypingServiceUrl(
     params: Record<string, unknown>,
@@ -673,81 +454,33 @@ export function createMsTeamsAdapter(
     return direct ?? fromExtra;
   }
 
-  /** Cancel the active typing keepalive, if any. Idempotent + cancel-safe. */
-  function stopTypingKeepalive(): void {
-    if (typingHandle !== undefined && !typingHandle.cancelled) typingHandle.cancel();
-    typingHandle = undefined;
+  /** Health-state update for an edit/delete Connector result (the connector logs the branch). */
+  function recordMutation(result: Result<void, Error>): Result<void, Error> {
+    if (result.ok) {
+      _lastMessageAt = now();
+      _lastError = undefined;
+    } else {
+      _lastError = result.error.message;
+    }
+    return result;
   }
 
-  /** POST a single {type:"typing"} activity (best-effort; failures log at DEBUG). */
-  async function sendTypingActivity(
-    conversationId: string,
-    serviceUrl: string,
-  ): Promise<void> {
-    const tok = await tokens.getToken();
-    if (!tok.ok) return; // the token provider already logged its failure branch
-    const url = `${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
-    const responded = await fromPromise(
-      (deps.fetchImpl ?? fetch)(url, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${tok.value}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ type: "typing" }),
-      }),
+  /** A proactive edit/delete that could not recover a serviceUrl: WARN + record + err. */
+  function mutationContextError(
+    error: Error,
+    op: "edit" | "delete",
+  ): Result<void, Error> {
+    _lastError = error.message;
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        op,
+        hint: "Pass serviceUrl in extra, or capture an inbound so the edit/delete can recover its routing tuple",
+        errorKind: "precondition" as const,
+      },
+      "Connector activity mutation blocked: no usable service url",
     );
-    if (!responded.ok) {
-      const classified = classifyMsTeamsError(undefined, responded.error);
-      deps.logger.debug(
-        {
-          channelType: "msteams" as const,
-          hint: classified.hint,
-          errorKind: classified.errorKind,
-        },
-        "Typing keepalive post failed to reach the connector",
-      );
-      return;
-    }
-    if (!responded.value.ok) {
-      const classified = classifyMsTeamsError(responded.value.status);
-      deps.logger.debug(
-        {
-          channelType: "msteams" as const,
-          status: responded.value.status,
-          hint: classified.hint,
-          errorKind: classified.errorKind,
-        },
-        "Typing keepalive post rejected by the connector",
-      );
-    }
-  }
-
-  /** Reschedule the next keepalive refresh over the injected timer, bounded by the TTL cap. */
-  function scheduleTypingRefresh(conversationId: string, serviceUrl: string): void {
-    const timer = deps.timer;
-    if (timer === undefined) return;
-    if (typingRefreshCount >= MAX_TYPING_REFRESHES) {
-      // TTL backstop: stop rearming even without an explicit stopTyping.
-      stopTypingKeepalive();
-      return;
-    }
-    const handle = timer.setTimeout(() => {
-      typingHandle = undefined;
-      typingRefreshCount += 1;
-      void sendTypingActivity(conversationId, serviceUrl);
-      scheduleTypingRefresh(conversationId, serviceUrl);
-    }, TYPING_REFRESH_MS);
-    handle.unref();
-    typingHandle = handle;
-  }
-
-  /** (Re)start the keepalive: cancel any prior one, POST now, and schedule refreshes. */
-  function startTypingKeepalive(conversationId: string, serviceUrl: string): void {
-    stopTypingKeepalive();
-    typingRefreshCount = 0;
-    void sendTypingActivity(conversationId, serviceUrl);
-    scheduleTypingRefresh(conversationId, serviceUrl);
+    return err(error);
   }
 
   const adapter: MsTeamsAdapterHandle = {
@@ -793,7 +526,7 @@ export function createMsTeamsAdapter(
 
     async stop(): Promise<Result<void, Error>> {
       // No persistent connection to tear down; cancel any running typing keepalive.
-      stopTypingKeepalive();
+      connector.stopTyping();
       _connected = false;
       deps.logger.info({ channelType: "msteams" as const }, "Adapter stopped");
       return ok(undefined);
@@ -934,26 +667,26 @@ export function createMsTeamsAdapter(
       text: string,
       options?: SendMessageOptions,
     ): Promise<Result<void, Error>> {
-      return connectorActivityMutation({
-        method: "PUT",
-        conversationId: channelId,
-        messageId,
-        text,
-        options,
-        op: "edit",
-      });
+      // Reply → the caller's serviceUrl; an in-place edit with none recovers the
+      // stored reference (the edit-in-place renderer supplies no serviceUrl).
+      const ctx = await resolveConnectorServiceContext(channelId, options);
+      if (!ctx.ok) return mutationContextError(ctx.error, "edit");
+      return recordMutation(
+        await connector.editActivity(ctx.value.serviceUrl, channelId, messageId, text),
+      );
     },
 
     async deleteMessage(
       channelId: string,
       messageId: string,
     ): Promise<Result<void, Error>> {
-      return connectorActivityMutation({
-        method: "DELETE",
-        conversationId: channelId,
-        messageId,
-        op: "delete",
-      });
+      // deleteMessage carries no options, so it always recovers the serviceUrl the
+      // inbound captured — exactly how the edit-in-place renderer calls it.
+      const ctx = await resolveConnectorServiceContext(channelId);
+      if (!ctx.ok) return mutationContextError(ctx.error, "delete");
+      return recordMutation(
+        await connector.deleteActivity(ctx.value.serviceUrl, channelId, messageId),
+      );
     },
 
     async platformAction(
@@ -964,7 +697,7 @@ export function createMsTeamsAdapter(
         // Suppressed during streaming (the streamed text is itself the activity):
         // cancel any running keepalive and do not start a new one.
         if (params.streaming === true) {
-          stopTypingKeepalive();
+          connector.stopTyping();
           return ok({ typing: false });
         }
         // No timer injected → the keepalive degrades to a no-op.
@@ -990,12 +723,12 @@ export function createMsTeamsAdapter(
         if (!ctx.ok || !isSafeServiceUrl(ctx.value.serviceUrl)) {
           return ok({ typing: false });
         }
-        startTypingKeepalive(conversationId, ctx.value.serviceUrl);
+        connector.startTyping(conversationId, ctx.value.serviceUrl);
         return ok({ typing: true });
       }
 
       if (action === "stopTyping") {
-        stopTypingKeepalive();
+        connector.stopTyping();
         return ok({ typing: false });
       }
 
