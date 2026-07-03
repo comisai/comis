@@ -73,6 +73,11 @@ vi.mock("@comis/core", () => ({
   resolveAutonomy: mockResolveAutonomy,
   // The wake-gate hook wraps a wake:true finding before prepending it.
   wrapExternalContent: mockWrapExternalContent,
+  // Faithful pure stand-in for the shipped resolver (its three-state truth
+  // table is unit-pinned in core): true → on; false → off; undefined →
+  // follow the agent's script surface (on iff explicitly true).
+  resolveCronWakeGateEnabled: (toggle?: boolean, scriptSurfaceOn?: boolean) =>
+    toggle !== undefined ? toggle : scriptSurfaceOn === true,
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -103,6 +108,10 @@ function createContainer(opts: {
         builtinTools: { browser: false, exec: false, process: false },
       },
       session: { resetPolicy: { mode: "none" } },
+      // Default the script surface on so the wake-gate hook's BEHAVIOR tests
+      // (which leave scheduler.cron.wakeGate unset) resolve the toggle ON and
+      // still exercise the gate; the tri-state TOGGLE cases pass explicit agents.
+      autonomy: { script: true },
     },
   };
 
@@ -1517,6 +1526,24 @@ describe("setupSchedulers", () => {
       return { verdict, durationMs: counts.durationMs ?? 0, toolCalls: counts.toolCalls ?? 0 };
     }
 
+    /** An agents map whose agent-1 drives the two inputs of the gate-run toggle:
+     *  the per-agent `scheduler.cron.wakeGate` (effectiveCron.wakeGate) and the
+     *  `autonomy.script` surface. Only-set keys are attached, so each is genuinely
+     *  tri-state (an omitted opt stays undefined). */
+    function agentsWith(opts: { wakeGate?: boolean; script?: boolean }) {
+      const cron: Record<string, unknown> = { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 };
+      if (opts.wakeGate !== undefined) cron.wakeGate = opts.wakeGate;
+      return {
+        "agent-1": {
+          name: "Agent 1",
+          skills: { builtinTools: { browser: false, exec: false, process: false } },
+          session: { resetPolicy: { mode: "none" } },
+          scheduler: { cron },
+          ...(opts.script !== undefined ? { autonomy: { script: opts.script } } : {}),
+        },
+      };
+    }
+
     it("runs the gate and SKIPS the payload on wake:false — no scheduler:job_result dispatch, a status:skipped row, and status:ok re-arm", async () => {
       const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }));
       const setupSchedulers = await getSetupSchedulers();
@@ -1694,6 +1721,65 @@ describe("setupSchedulers", () => {
         "scheduler:job_result",
         expect.objectContaining({ result: "Hello from cron" }),
       );
+    });
+
+    // -------------------------------------------------------------------------
+    // The scheduler.cron.wakeGate operator toggle. A scheduler-initiated gate is
+    // a distinct trust context (no human/model in the loop at fire time), so it
+    // runs ONLY when the toggle resolves ON: true → on; false → off; undefined →
+    // follow the agent's autonomy.script surface. With it off, a gated job runs
+    // exactly as today — runWakeGate is never called and the payload dispatches
+    // unchanged. The toggle grants no capability.
+    // -------------------------------------------------------------------------
+    it("does NOT run the gate when the wakeGate toggle is false — dispatches as today, no scheduler:wake_gate", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ agents: agentsWith({ wakeGate: false }), wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()(gatedAgentTurnJob());
+
+      // Toggle off → the gate never runs; the job falls straight through.
+      expect(runWakeGate).not.toHaveBeenCalled();
+      expect(deps.container.eventBus.emit).not.toHaveBeenCalledWith("scheduler:wake_gate", expect.anything());
+      // Runs exactly as today: the payload dispatches with the ORIGINAL message.
+      const emitCall = (deps.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "scheduler:job_result");
+      expect(emitCall).toBeDefined();
+      expect((emitCall![1] as { result: string }).result).toBe("do the thing");
+      expect(result.status).toBe("ok");
+    });
+
+    it("runs the gate when the wakeGate toggle is true", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ agents: agentsWith({ wakeGate: true }), wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+      expect(runWakeGate).toHaveBeenCalledTimes(1);
+    });
+
+    it("runs the gate when the toggle is undefined and the agent's autonomy.script surface is on", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ agents: agentsWith({ script: true }), wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+      expect(runWakeGate).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT run the gate when the toggle is undefined and the script surface is off — runs as today", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ agents: agentsWith({ script: false }), wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()(gatedAgentTurnJob());
+      expect(runWakeGate).not.toHaveBeenCalled();
+      expect(result.status).toBe("ok");
+      // Dispatches as today with the original message.
+      expect(deps.container.eventBus.emit).toHaveBeenCalledWith("scheduler:job_result", expect.objectContaining({ result: "do the thing" }));
     });
 
     // -------------------------------------------------------------------------
