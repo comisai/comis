@@ -218,6 +218,7 @@
     "impit": "0.14.2",
     "ipaddr.js": "2.4.0",
     "irc-framework": "4.14.0",
+    "jose": "6.2.3",
     "json-rpc-2.0": "1.7.1",
     "linkedom": "0.18.12",
     "lru-cache": "11.5.1",
