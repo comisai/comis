@@ -23,6 +23,7 @@ import {
   createCronScheduler,
   createCronStore,
   createExecutionTracker,
+  isInQuietHours,
   resolveEffectiveHeartbeatConfig,
   resolveHeartbeatSessionKey,
   type CronScheduler,
@@ -254,12 +255,44 @@ export async function setupSchedulers(deps: {
             });
             if (!("runAsToday" in verdict)) {
               if (!verdict.wake) {
-                // wake:false → skip. Deliver-on-skip is a later slice; this phase
-                // skips regardless of verdict.deliver — the model does not run.
-                jobLogger.info(
-                  { step: "wake-gate", wake: false },
-                  "Wake-gate skipped the job (no model turn)",
-                );
+                // Deliver-on-skip: a routine ✓ status delivered directly with NO
+                // model turn. verdict.deliver is already OutputGuard-scrubbed by the
+                // runner (safe to ship verbatim). Reuse the existing cron delivery
+                // path (scheduler:job_result) with payloadKind:"system_event" (→ the
+                // listener's raw verbatim branch) and NO onComplete (the deferred
+                // resolver is the sole model trigger — omitting it means the model
+                // never runs). Honor quiet-hours: a routine ✓ must not ping off-hours;
+                // when quiet, suppress the delivery but STILL record the skip.
+                const nowMs = systemNowMs();
+                if (verdict.deliver && job.deliveryTarget) {
+                  if (isInQuietHours(schedulerConfig.quietHours, nowMs)) {
+                    jobLogger.debug(
+                      { step: "wake-gate", wake: false, quietHours: true },
+                      "Wake-gate deliver suppressed (quiet hours) — recording skip only",
+                    );
+                  } else {
+                    container.eventBus.emit("scheduler:job_result", {
+                      jobId: job.id,
+                      jobName: job.name,
+                      agentId: job.agentId,
+                      result: verdict.deliver, // pre-scrubbed by the runner
+                      success: true,
+                      deliveryTarget: job.deliveryTarget,
+                      timestamp: nowMs,
+                      payloadKind: "system_event", // force the raw verbatim branch — NO model turn
+                      // onComplete OMITTED → nothing runs the model
+                    });
+                    jobLogger.info(
+                      { step: "wake-gate", wake: false, delivered: true },
+                      "Wake-gate delivered a routine status (no model turn)",
+                    );
+                  }
+                } else {
+                  jobLogger.info(
+                    { step: "wake-gate", wake: false },
+                    "Wake-gate skipped the job (no model turn)",
+                  );
+                }
                 await agentExecTracker.record({
                   ts: systemNowMs(), jobId: job.id, status: "skipped",
                   durationMs: systemNowMs() - startTs, summary: "wake-gate: skipped",
