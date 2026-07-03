@@ -261,3 +261,53 @@ describe("support-bundle table output", () => {
     expect(output).not.toContain("section(s) were partial");
   });
 });
+
+describe("support-bundle --since validation", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    envState = {};
+    vi.mocked(generateSupportBundle).mockReset();
+    // A valid window would produce a bundle — so if the guard did NOT fire, the
+    // orchestrator would run and the command would exit success.
+    vi.mocked(generateSupportBundle).mockResolvedValue(healthyBundle as never);
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("exits with a usage error naming the flag and never runs the orchestrator on a non-numeric --since", async () => {
+    const program = createTestProgram();
+    registerSupportBundleCommand(program);
+
+    try {
+      await program.parseAsync(["node", "test", "support-bundle", "--since", "abc"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(ExitCode.UsageError);
+    // A garbage window is rejected at the boundary — no bundle is assembled.
+    expect(vi.mocked(generateSupportBundle)).not.toHaveBeenCalled();
+    expect(getSpyOutput(consoleSpy.error)).toContain("--since");
+  });
+
+  it("exits with a usage error on a non-positive --since window", async () => {
+    const program = createTestProgram();
+    registerSupportBundleCommand(program);
+
+    try {
+      await program.parseAsync(["node", "test", "support-bundle", "--since", "0"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(ExitCode.UsageError);
+    expect(vi.mocked(generateSupportBundle)).not.toHaveBeenCalled();
+  });
+});
