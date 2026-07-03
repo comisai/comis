@@ -160,6 +160,10 @@ export type { StartupInvariantsDeps, StartupInvariants } from "./wiring/setup-st
 export { assembleIncidentReportFromSources } from "./api/obs-handlers/obs-explain.js";
 export { makeRealReader } from "./api/obs-handlers/obs-explain-readers.js";
 export type { IncidentSourceReader } from "./api/obs-handlers/obs-explain-readers.js";
+// Public sessionKey → real session `.jsonl` resolver (pointer discipline).
+// Re-exported so the CLI support-bundle seam resolves a session file the ONE
+// authoritative way — never a hand-built flat `<dataDir>/sessions/<id>` path.
+export { resolveSessionFilePath } from "./api/obs-handlers/obs-explain-readers.js";
 
 // Fleet-health assembler RE-PROVE seam — mirrors the obs-explain
 // precedent above. Re-exported from the TOP-LEVEL barrel so the keyless fleet

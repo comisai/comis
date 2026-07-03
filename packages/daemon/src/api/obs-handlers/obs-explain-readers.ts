@@ -250,6 +250,40 @@ function resolveSessionFile(sessionKey: string, sessionsBase: string): string | 
 }
 
 /**
+ * Public sessionKey → real session `.jsonl` resolver — the authoritative
+ * pointer-discipline mapping, shared by the daemon `/export-trajectory` closure
+ * and the CLI support-bundle seam.
+ *
+ * Mirrors `makeRealReader`'s workspace base
+ * (`<dataDir>/workspace/sessions`, NOT a flat `<dataDir>/sessions`) and
+ * delegates to the private `resolveSessionFile` (fast path via
+ * `sessionKeyToPath`, then the on-disk pointer-`sessionId` fallback for
+ * lossy keys). Every path component runs through `safePath`, so a
+ * traversal-bearing key cannot escape the sessions base.
+ *
+ * The private resolver soft-fails to the fast path even on a miss (so
+ * `makeRealReader` can read an empty `[]`); this wrapper converts that into an
+ * HONEST `undefined` — it returns a path ONLY when the session artifacts (the
+ * `.jsonl`, its pointer, or its `_session-metadata.json`) exist on disk. A
+ * caller (the export closure) can then warn instead of stat-failing on a
+ * fabricated path.
+ *
+ * @param dataDir - the `~/.comis` root (empty → the default `~/.comis`).
+ * @param sessionKey - a formatted SessionKey (`tenant:user:channel[:peer:...]`).
+ * @returns the absolute session `.jsonl` path, or `undefined` on a genuine miss
+ *   (no artifacts) or an unparseable key.
+ */
+export function resolveSessionFilePath(dataDir: string, sessionKey: string): string | undefined {
+  const base = dataDir.length > 0 ? dataDir : defaultDataDir();
+  const sessionsBase = safePath(base, "workspace", "sessions");
+  const resolved = resolveSessionFile(sessionKey, sessionsBase);
+  // Convert the private resolver's soft-fail (fast path returned even on a miss)
+  // into an honest undefined — a path is returned ONLY when it exists on disk.
+  if (resolved === undefined || !sessionArtifactsExist(resolved)) return undefined;
+  return resolved;
+}
+
+/**
  * Resolve the trajectory JSONL path for a session file, the canonical way:
  *   1. Read `<sessionFile>.trajectory-path.json` (pointer); if it fence-checks
  *      (`traceSchema === "comis-trajectory-pointer"`, `schemaVersion === 1`,
