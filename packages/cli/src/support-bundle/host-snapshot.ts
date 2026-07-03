@@ -10,15 +10,27 @@
  * environment value, and all repository state, so no host-enumerating field
  * can leak into a pasted bundle (omission beats hashing).
  *
- * `daemonVersion` is the only live-daemon read and is added as a best-effort
- * probe through the injectable `deps` seam below.
+ * `daemonVersion` is the only live-daemon read: a best-effort admin
+ * `gateway.status` call, gated on a bounded liveness probe so a dead daemon
+ * short-circuits with no network call, and swallowed to undefined on any
+ * rejection (auth / transport / parse) — a missing daemon build version is
+ * never a failure of the snapshot.
  *
  * @module
  */
 
+import { GatewayStatusContract } from "@comis/core";
 import type { HostSnapshot } from "./types.js";
 import { readCliVersion } from "../util/cli-version.js";
-import type { RpcClient } from "../client/rpc-client.js";
+import { isDaemonRunning as defaultIsDaemonRunning } from "../sync-tooling/daemon-guard.js";
+import {
+  withClient as defaultWithClient,
+  callTyped,
+  type RpcClient,
+} from "../client/rpc-client.js";
+
+/** Bounded liveness deadline before the daemonVersion probe opens any socket. */
+const LIVENESS_TIMEOUT_MS = 1_000;
 
 /**
  * Injection seam for the best-effort `daemonVersion` probe. Both hooks default
@@ -32,18 +44,56 @@ export interface CollectHostSnapshotDeps {
 }
 
 /**
+ * Best-effort daemon build version via the admin `gateway.status` read.
+ *
+ * Gated on a bounded liveness probe so a dead daemon short-circuits with no
+ * network call. Returns `undefined` — never throws — when the daemon is down,
+ * the admin call is rejected (auth / transport / parse), or the daemon reports
+ * no version. The live call goes through `callTyped` so the request and
+ * response are validated against the shared contract.
+ */
+async function collectDaemonVersion(
+  deps: CollectHostSnapshotDeps,
+): Promise<string | undefined> {
+  const isDaemonRunning = deps.isDaemonRunning ?? defaultIsDaemonRunning;
+  const withClient = deps.withClient ?? defaultWithClient;
+
+  if (!(await isDaemonRunning(LIVENESS_TIMEOUT_MS))) {
+    return undefined;
+  }
+  try {
+    const status = await withClient((client) =>
+      callTyped(client, GatewayStatusContract, {}),
+    );
+    return typeof status.version === "string" ? status.version : undefined;
+  } catch {
+    // Auth rejection / transport error / contract-parse failure — best-effort,
+    // stays undefined so a missing daemon version never fails the snapshot.
+    return undefined;
+  }
+}
+
+/**
  * Collect the content-free `HostSnapshot` for the support bundle.
  *
  * `cliVersion`/`nodeVersion`/`platform`/`arch` are inherent, non-identifying
- * facts. Never throws.
+ * facts; `daemonVersion` is a best-effort live read that is simply absent when
+ * the daemon is down or the admin call is rejected. Never throws.
  */
 export async function collectHostSnapshot(
-  _deps: CollectHostSnapshotDeps = {},
+  deps: CollectHostSnapshotDeps = {},
 ): Promise<HostSnapshot> {
-  return {
+  const snapshot: HostSnapshot = {
     cliVersion: readCliVersion(),
     nodeVersion: process.version,
     platform: process.platform,
     arch: process.arch,
   };
+
+  const daemonVersion = await collectDaemonVersion(deps);
+  if (daemonVersion !== undefined) {
+    snapshot.daemonVersion = daemonVersion;
+  }
+
+  return snapshot;
 }
